@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-metadata"
+description = "Key/value tree comparison: media tags, executable version info, registry files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

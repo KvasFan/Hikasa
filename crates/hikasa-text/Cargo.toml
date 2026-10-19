@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-text"
+description = "Text document model and Text Compare/Merge/Edit/Patch session logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

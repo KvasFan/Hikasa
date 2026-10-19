@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/hikasa-core",
+    "crates/hikasa-vfs",
+    "crates/hikasa-diff",
+    "crates/hikasa-formats",
+    "crates/hikasa-folder",
+    "crates/hikasa-text",
+    "crates/hikasa-table",
+    "crates/hikasa-hex",
+    "crates/hikasa-picture",
+    "crates/hikasa-metadata",
+    "crates/hikasa-report",
+    "crates/hikasa-script",
+    "crates/hikasa-session",
+    "crates/hikasa-cli",
+    "crates/hikasa-app",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KvasFan/Hikasa"
+authors = ["Hikasa contributors"]
+rust-version = "1.85"
+
+# Dependencies are intentionally not declared yet (version 0.0.0 = specification only).
+# See docs/02-tech-stack.md for the approved crate list.
+[workspace.dependencies]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

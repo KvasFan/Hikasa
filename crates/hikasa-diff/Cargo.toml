@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-diff"
+description = "Alignment engines (standard, Myers/histogram, patience, closeness) and importance classification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

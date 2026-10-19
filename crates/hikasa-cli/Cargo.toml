@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-cli"
+description = "Command-line entry point: argument parsing, exit codes, IPC to the running GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

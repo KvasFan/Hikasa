@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-vfs"
+description = "Virtual file system: local, archives, snapshots, remote back-ends, clipboard, HTTP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

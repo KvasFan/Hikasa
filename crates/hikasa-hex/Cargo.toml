@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-hex"
+description = "Binary document model and Hex Compare"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]

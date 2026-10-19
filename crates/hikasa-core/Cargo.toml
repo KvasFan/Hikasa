@@ -1,0 +1,11 @@
+[package]
+name = "hikasa-core"
+description = "Shared types: specs, sides, errors, cancellation, progress, settings schema, localization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
