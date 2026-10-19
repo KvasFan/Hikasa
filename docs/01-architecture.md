@@ -1,5 +1,52 @@
 # Architecture
 
+## 0. Three layers: core, CLI, GUI
+
+The product is organised in three strictly layered groups of crates:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ gui/      hikasa-gui      desktop application (Dioxus)           │  presents
+│                           hosts the IPC endpoint "open a view"   │
+├──────────────────────────────────────────────────────────────────┤
+│ cli/      hikasa-cli      `hikasa` binary: every function of the │  exposes
+│                           product as a subcommand, headless,     │
+│                           machine-readable output, exit codes;   │
+│                           `hikasa gui …` connects to the GUI     │
+├──────────────────────────────────────────────────────────────────┤
+│ core/     hikasa-core, -vfs, -diff, -formats, -folder, -text,    │  computes
+│           -table, -hex, -picture, -metadata, -report, -script,   │
+│           -session   — libraries only, no UI, no process I/O     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+- **ARCH-L1** (P0): **Core** crates are libraries. They contain all comparison,
+  merge, sync, conversion, report, script and settings logic. They never link a UI
+  toolkit, never print to a terminal, never read environment/arguments. They are the
+  only place where product behaviour is implemented.
+- **ARCH-L2** (P0): **CLI-first rule.** Every tool and every function of the product
+  is available from the `hikasa` command line, headless, before (or at the same time
+  as) it is available in the GUI. A feature without a CLI subcommand is not done
+  (see `17-agent-workflow.md`). The CLI is a thin adapter: argument parsing, output
+  formatting (human text, `--json`), exit codes, progress on stderr. It calls core
+  directly; it does not need the GUI to run.
+- **ARCH-L3** (P0): The **GUI** is a second thin adapter over the same core crates.
+  It must not reimplement anything that exists in core, and it must not call the CLI
+  binary to do work. GUI and CLI share the session/settings files, so a session
+  created from the CLI opens unchanged in the GUI and vice versa.
+- **ARCH-L4** (P0): **CLI → GUI connection.** The GUI process listens on a local IPC
+  endpoint (Unix domain socket / Windows named pipe, per user, authenticated by file
+  permissions). `hikasa gui <subcommand>` (and the legacy positional forms,
+  `12-cli-and-scripting.md`) send a request to open a view (compare, merge, sync, edit,
+  patch, session, workspace), optionally wait for the view to close, and relay its
+  result as the exit code. If no GUI is running, the CLI starts it (unless
+  `--no-launch`). The IPC protocol is JSON over length-prefixed frames and is
+  documented and versioned in `hikasa-session::ipc` so that other tools (editors,
+  version-control front-ends) can use it.
+- **ARCH-L5** (P1): The GUI can also *embed a terminal-less CLI pane* ("Command"
+  panel) that runs any `hikasa` subcommand in-process through the same core APIs, so
+  users can learn the CLI from the GUI (every GUI action can show its CLI equivalent).
+
 ## 1. Principles
 
 - **ARCH-001** (P0): The product is a Cargo workspace of small crates. Every crate
@@ -27,7 +74,7 @@
 ```
 Hikasa/
 ├── Cargo.toml                 # workspace, version 0.0.0
-├── crates/
+├── core/                      # layer 1: libraries only
 │   ├── hikasa-core/           # shared types: Side, Spec, errors, cancellation, progress, settings schema, localization
 │   ├── hikasa-vfs/            # virtual file system: local, archive, snapshot, remote back-ends, clipboard, http
 │   ├── hikasa-diff/           # alignment engines (standard, Myers, patience, closeness, column), importance classification
@@ -40,33 +87,39 @@ Hikasa/
 │   ├── hikasa-metadata/       # media tags, executable version info, registry files (tree-of-values compare)
 │   ├── hikasa-report/         # report generation (text, HTML, XML, patch, statistics, print model)
 │   ├── hikasa-script/         # script language parser + interpreter (drives hikasa-folder headless)
-│   ├── hikasa-session/        # session/workspace/profile/options persistence, import/export packages
-│   ├── hikasa-cli/            # `hikasa` command-line entry: argument parsing, exit codes, IPC to running instance
-│   └── hikasa-app/            # GUI (Dioxus desktop): windows, tabs, views, dialogs
+│   └── hikasa-session/        # session/workspace/profile/options persistence, import/export packages, IPC protocol
+├── cli/                       # layer 2
+│   └── hikasa-cli/            # `hikasa` binary: every function as a subcommand; `hikasa gui …` talks to the GUI
+├── gui/                       # layer 3
+│   └── hikasa-gui/            # desktop application (Dioxus): windows, tabs, views, dialogs, IPC server
 └── docs/
 ```
 
 Dependency direction (arrows point to dependencies):
 
 ```
-hikasa-app ──► hikasa-session ──► hikasa-folder ──► hikasa-vfs ──► hikasa-core
-    │               │                  │               ▲
-    │               ├──► hikasa-text ──┼──► hikasa-diff ┘
-    │               ├──► hikasa-table ─┤
-    │               ├──► hikasa-hex ───┤
-    │               ├──► hikasa-picture┤
-    │               ├──► hikasa-metadata
-    │               ├──► hikasa-formats
-    │               ├──► hikasa-report
-    │               └──► hikasa-script
-hikasa-cli ──► hikasa-session, hikasa-script, hikasa-report
+gui/hikasa-gui ──► hikasa-session ──► hikasa-folder ──► hikasa-vfs ──► hikasa-core
+cli/hikasa-cli ──┘      │                  │               ▲
+                        ├──► hikasa-text ──┼──► hikasa-diff ┘
+                        ├──► hikasa-table ─┤
+                        ├──► hikasa-hex ───┤
+                        ├──► hikasa-picture┤
+                        ├──► hikasa-metadata
+                        ├──► hikasa-formats
+                        ├──► hikasa-report
+                        └──► hikasa-script
 ```
 
 - **ARCH-010** (P0): `hikasa-core` has no dependency on any other workspace crate.
 - **ARCH-011** (P0): Engine crates (`diff`, `text`, `table`, `hex`, `picture`,
-  `metadata`) must not depend on `hikasa-app` or `hikasa-session`.
-- **ARCH-012** (P0): `hikasa-app` contains no comparison logic; it maps engine
-  results to widgets and user input to session commands.
+  `metadata`) must not depend on `hikasa-gui`, `hikasa-cli` or `hikasa-session`.
+- **ARCH-012** (P0): `hikasa-gui` and `hikasa-cli` contain no comparison logic; they
+  map core results to widgets/output and user input to core calls. CI enforces that no
+  `core/` crate depends on `cli/` or `gui/` (`cargo deny` bans + a workspace test).
+- **ARCH-013** (P0): Every public operation of `hikasa-session` (open session, run
+  comparison, apply operation, save, report, …) is exposed as a **service API**
+  (`hikasa_session::api`) consumed identically by the CLI and by the GUI. New
+  behaviour is added to the API first, then wired to both adapters.
 
 ## 3. Key abstractions
 
@@ -152,7 +205,7 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
 - **ARCH-061** (P0): Comparison priority (Normal / Below normal / Idle) is a program
   option applied to the work pool.
 
-### 3.6 Commands (hikasa-app)
+### 3.6 Commands (hikasa-gui, catalogue shared with the CLI)
 
 - **ARCH-070** (P0): Every user action is a `Command { id, category, caption, hint,
   default_shortcut, secondary_shortcuts, menu: bool, toolbar: bool, enabled_when }`
@@ -178,9 +231,18 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
 ## 5. Single instance and IPC
 
 - **ARCH-090** (P0): Only one GUI instance runs per user unless `--solo` is given. A
-  second launch forwards its command line to the running instance over a local socket
-  (Unix domain socket / Windows named pipe) and exits; the `hikasa-cli` "wait" mode
-  stays alive until the forwarded view closes and returns its exit code.
+  second GUI launch forwards its command line to the running instance over the IPC
+  endpoint and exits.
+- **ARCH-091** (P0): IPC protocol (`hikasa_session::ipc`): JSON messages, length-
+  prefixed, over a per-user local socket (`$XDG_RUNTIME_DIR/hikasa.sock`,
+  `\\.\pipe\hikasa-<user>`). Requests: `Hello{version}`, `OpenView{kind, specs,
+  options, wait}`, `LoadSession{name}`, `LoadWorkspace{name}`, `RunScript{path,args}`,
+  `ListViews`, `CloseView{id}`, `Ping`, `Shutdown`. Responses carry a view id, and
+  when `wait` was requested a final `ViewClosed{id, result, exit_code}`. Unknown
+  fields are ignored; the version is negotiated in `Hello`.
+- **ARCH-092** (P0): `hikasa gui …` (CLI) implements the client side; `hikasa-gui`
+  the server side. The CLI "wait" mode stays alive until the view closes and returns
+  its exit code, which is what version-control systems need.
 
 ## 6. Data flow example — Folder Compare with child Text Compare
 

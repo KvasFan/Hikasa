@@ -1,6 +1,6 @@
 [package]
-name = "hikasa-app"
-description = "Desktop GUI (Dioxus): windows, tabs, views, dialogs"
+name = "hikasa-cli"
+description = "Command-line interface exposing every core function headless, plus IPC to the running GUI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

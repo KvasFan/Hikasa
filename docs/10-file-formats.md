@@ -145,6 +145,6 @@ in Pascal).
 | Registry Files | Registry | `*.reg` | |
 
 - **FF-040** (P0): Keyword lists for the presets are maintained as data files under
-  `crates/hikasa-formats/presets/` (TOML), not in code.
+  `core/hikasa-formats/presets/` (TOML), not in code.
 - **FF-041** (P1): Additional formats can be imported from community packages
   (settings package containing only formats).

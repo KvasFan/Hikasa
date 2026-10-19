@@ -15,14 +15,17 @@ This repository currently contains:
 - `docs/` — the complete functional and technical specification, written as
   instructions for AI coding agents and human contributors. Start with
   [`docs/00-overview.md`](docs/00-overview.md).
-- `crates/` — the Cargo workspace skeleton (empty crates matching the architecture in
-  [`docs/01-architecture.md`](docs/01-architecture.md)).
+- `core/`, `cli/`, `gui/` — the Cargo workspace skeleton (empty crates) in three
+  layers: **core** libraries hold all logic; the **`hikasa` CLI** exposes every
+  function headless and connects to the GUI over IPC; the **GUI** is a thin desktop
+  front-end over the same core (see [`docs/01-architecture.md`](docs/01-architecture.md)).
 - `deny.toml` — the dependency license policy.
 
 ## Principles
 
 - Rust only, open-source dependencies only (MIT / Apache-2.0 / BSD / MPL-2.0 / CC0 …).
-- Pure, testable comparison engines; UI-agnostic core; a GUI built with Dioxus
+- Pure, testable comparison engines; UI-agnostic core; **CLI-first**: every tool is a
+  `hikasa` subcommand before it is a GUI view; a GUI built with Dioxus
   (see [`docs/02-tech-stack.md`](docs/02-tech-stack.md) for the evaluation and the
   performance gate).
 - Linux first, then Windows and macOS.

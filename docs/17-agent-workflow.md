@@ -14,7 +14,12 @@ These rules are binding for any agent (or human) implementing Hikasa.
 1. Rust stable, edition 2024, `#![forbid(unsafe_code)]` in every crate except an
    explicitly audited low-level crate.
 2. Engines are pure (no I/O, no UI); I/O goes through `hikasa-vfs`; UI through
-   `hikasa-app` only.
+   `gui/hikasa-gui` only.
+2b. **Core → CLI → GUI order.** Implement a feature in `core/` first, expose it as a
+   `hikasa` subcommand in `cli/` (with `--json` output and tests) second, and only then
+   wire it into `gui/`. A feature without a CLI subcommand is not done. The GUI never
+   contains logic that the CLI cannot reach, and the CLI never calls the GUI except
+   through `hikasa gui …` (IPC).
 3. Public APIs are documented (`#![deny(missing_docs)]` in library crates).
 4. Errors: `thiserror` enums in libraries, `anyhow` only in binaries. No `unwrap()` on
    user-controlled data; no panics in jobs (panics are caught and reported).

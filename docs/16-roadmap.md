@@ -11,9 +11,12 @@ acceptance criteria below verified by automated tests where possible.
   patience, closeness), `hikasa-formats` (model, tokenizer, 10 presets),
   `hikasa-text` document model, `hikasa-folder` scan/compare (quick tests, CRC,
   binary, rules-based), name filters.
-- CLI `--qc` with exit codes; `text-report` side-by-side/summary/patch to text/HTML.
+- CLI first: `hikasa quick`, `hikasa text compare` (unified/side-by-side/summary/
+  patch reports), `hikasa folder compare` (`--json`), `hikasa format tokens`, with
+  exit codes and `--json`.
 - GUI prototype: one window, Folder Compare + Text Compare views, virtualized text
-  panes. **Performance gate ARCH-GUI-003 decided here.**
+  panes, IPC server; `hikasa gui open … --wait`. **Performance gate ARCH-GUI-003
+  decided here.**
 - Acceptance: golden diffs; 1M-line scroll test; 100k-file folder scan < 5 s on SSD.
 
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT

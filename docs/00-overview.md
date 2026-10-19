@@ -18,9 +18,13 @@ It covers the whole comparison workflow in one tool:
    text (2-way compare, 3-way merge, single-pane edit, patch viewer), tables
    (CSV/spreadsheet, cell-by-cell), hex (byte-by-byte), pictures (pixel-by-pixel),
    media tags, executable version info, and registry dumps.
-3. **Automation** — a command-line interface with exit codes for scripts and
-   version-control systems, a text script language that drives folder sessions
-   without UI, and HTML/text/XML/patch reports.
+3. **Automation** — a complete command-line interface (`hikasa`) that exposes every
+   tool headless with exit codes and JSON output, connects to the GUI over IPC, runs a
+   text script language, and produces HTML/text/XML/patch reports.
+
+The code is organised in three layers — **core** libraries (all logic), the **CLI**
+(every function as a subcommand) and the **GUI** (a thin front-end over core that the
+CLI can drive) — see `01-architecture.md` §0.
 
 The product targets developers, system administrators, QA engineers and anyone who
 needs to understand *what changed* between two sets of data and to reconcile it.
@@ -95,7 +99,7 @@ needs to understand *what changed* between two sets of data and to reconcile it.
 | `09-metadata-views.md` | Media Compare, Version Compare, Registry Compare |
 | `10-file-formats.md` | File format model, grammar items, conversions, built-in formats |
 | `11-vfs-remote-archives.md` | Virtual file system: local, archives, snapshots, FTP/SFTP/WebDAV/S3/cloud, clipboard, HTTP |
-| `12-cli-and-scripting.md` | Command line, exit codes, script language |
+| `12-cli-and-scripting.md` | CLI subcommand surface (CLI-first contract), `hikasa gui` IPC client, exit codes, script language |
 | `13-reports.md` | Report layouts and outputs |
 | `14-ui-and-commands.md` | Window/tab model, Home view, menus, toolbars, display-filter modes, theming |
 | `15-options-reference.md` | Every program option page and setting |

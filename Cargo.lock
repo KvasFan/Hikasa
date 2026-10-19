@@ -3,10 +3,6 @@
 version = 4
 
 [[package]]
-name = "hikasa-app"
-version = "0.0.0"
-
-[[package]]
 name = "hikasa-cli"
 version = "0.0.0"
 
@@ -24,6 +20,10 @@ version = "0.0.0"
 
 [[package]]
 name = "hikasa-formats"
+version = "0.0.0"
+
+[[package]]
+name = "hikasa-gui"
 version = "0.0.0"
 
 [[package]]

@@ -57,7 +57,8 @@ writing and must be re-checked when the dependency is actually added.
 | Filesystem extras | `filetime` (set mtime), `trash` (recycle bin), `memmap2` (mmap), `same-file`, `fs-err` | MIT/Apache | |
 | Unicode | `unicode-normalization`, `unicode-width`, `unicode-segmentation` | MIT/Apache | NFC/NFD filename alignment, column widths, grapheme-aware cursor. |
 | Clipboard / dialogs / open | `arboard` (MIT/Apache), `rfd` (MIT), `open` (MIT) | — | Clipboard specs, native file dialogs, "open with associated application". |
-| CLI | `clap` 4 | MIT OR Apache-2.0 | Argument parsing with both `/switch` (Windows style) and `--switch` forms. |
+| CLI | `clap` 4 (+ `clap_complete`) | MIT OR Apache-2.0 | Subcommand tree, shell completions; accepts `/switch` (Windows style) and `--switch` forms for legacy options. |
+| IPC | `interprocess` (MIT/Apache) + `serde_json` | — | Local socket / named pipe between `hikasa` and `hikasa-gui`. |
 | Logging | `tracing` + `tracing-subscriber` | MIT | Structured logs; Log panel subscribes to a tracing layer. |
 | Config dirs | `directories` 6 | MIT OR Apache-2.0 | Per-platform config/cache paths. |
 | Property testing | `proptest`, `criterion` (dev) | MIT/Apache | |

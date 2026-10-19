@@ -1,11 +1,65 @@
 # Command Line and Scripting
 
-## 1. Executables
+The command line is the **primary, complete interface** of the product
+(`01-architecture.md` §0, ARCH-L2). Every tool is a subcommand that runs headless
+on the core crates; the GUI is reached through the `gui` subcommand.
+
+## 0. Executables
 
 | Binary | Behaviour |
 |--------|-----------|
-| `hikasa` | GUI application. Single instance per user: a second invocation forwards its arguments to the running instance and exits immediately (unless `--solo`). |
-| `hikasa-cli` (`hkcmp`) | Console helper: forwards to the GUI instance and **waits** until the resulting view closes, then exits with that view's exit code. Use from version-control systems and scripts. Also runs scripts and quick compares headless when no GUI is needed. |
+| `hikasa` | The CLI. Subcommands for every function (§1). Runs headless; never needs the GUI. `hikasa gui …` connects to (or starts) the GUI over IPC. |
+| `hikasa-gui` | The desktop application. Single instance per user: a second launch forwards its arguments to the running instance over IPC and exits (unless `--solo`). Accepts the same positional arguments and switches as `hikasa gui` so that double-click, drag & drop and shell integration work without the CLI. |
+
+## 1. Subcommand surface (CLI-first contract)
+
+- **CLI-000** (P0): Every subcommand supports `--json` (machine-readable result on
+  stdout, progress and logs on stderr), `--quiet`, `--log <file>`, `--config-dir
+  <dir>`, `--no-color`, and documented exit codes (§2). Output in human mode is stable
+  enough for scripts (one record per line where applicable).
+
+| Subcommand | Function (core crate) | Notes |
+|------------|------------------------|-------|
+| `hikasa folder compare <left> <right> [rules…] [--filters] [--expand-all] [--criteria …] [--display …] [--report …]` | `hikasa-folder` | Prints the aligned tree with states; `--json` emits the result model. Exit code reflects the overall state. |
+| `hikasa folder sync <left> <right> (--update-left\|--update-right\|--update-both\|--mirror-left\|--mirror-right\|--custom <matrix>) [--dry-run] [--create-empty] [--recycle]` | `hikasa-folder` | `--dry-run` prints the plan; otherwise executes with progress. |
+| `hikasa folder merge <left> <right> [--center <ancestor>] --output <dir> [--dry-run]` | `hikasa-folder` + `hikasa-text` | Automatic 3-way merge; conflicts listed; exit 14 when conflicts remain. |
+| `hikasa folder op (copy\|move\|delete\|rename\|touch\|attrib\|mkdir\|copyto\|moveto) …` | `hikasa-folder` | File operations on a selection (`--select` masks as in scripts). |
+| `hikasa folder snapshot <folder> --output <file.hksnap> [--crc] [--versions] [--expand-archives] [--follow-symlinks] [--include-empty] [--no-filters]` | `hikasa-folder` | |
+| `hikasa text compare <left> <right> [--format <name>] [--rules …] [--ignore-unimportant] [--context N] [--report <layout>] [--output <file>]` | `hikasa-text` | Default output: unified diff with importance markers; `--report` for side-by-side/summary/interleaved/patch/statistics/xml. |
+| `hikasa text merge <left> <right> [--center <file>] --output <file> [--favor-left\|--favor-right] [--force] [--ignore-unimportant]` | `hikasa-text` | Headless 3-way merge (`--automerge` semantics). |
+| `hikasa text patch apply <patch> [--base <dir\|file>] [-p N] [--dry-run]` / `hikasa text patch show <patch>` | `hikasa-text` | |
+| `hikasa text convert <file> (--trim-trailing\|--tabs-to-spaces\|--spaces-to-tabs\|--line-endings lf\|crlf\|cr) [--in-place\|--output]` | `hikasa-text` | |
+| `hikasa text find <pattern> <folder> [--mask] [--regex] [--case] [--word] [--recursive]` | `hikasa-text` | Find in Files. |
+| `hikasa table compare <left> <right> [--format] [--key <cols>] [--sheet …] [--report …]` | `hikasa-table` | |
+| `hikasa hex compare <left> <right> [--alignment none\|fast\|complete] [--report …]` | `hikasa-hex` | |
+| `hikasa picture compare <left> <right> [--mode tolerance\|range\|blend] [--tolerance N] [--diff-output <png>] [--metadata] [--report …]` | `hikasa-picture` | |
+| `hikasa media compare <left> <right>` / `hikasa version compare <left> <right>` / `hikasa registry compare <left> <right>` | `hikasa-metadata` | |
+| `hikasa quick <left> <right> [--size\|--crc\|--binary\|--rules]` | all | Quick compare: no output, exit code only (`--qc`). |
+| `hikasa report <type> …` | `hikasa-report` | Shared report options (`13-reports.md`); every `compare` subcommand accepts `--report` as a shortcut. |
+| `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. |
+| `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. |
+| `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | |
+| `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). |
+| `hikasa profile (list\|show\|new\|edit\|delete\|test) …` | `hikasa-session` + `hikasa-vfs` | Secrets prompted interactively or read from `--password-stdin`. |
+| `hikasa vfs (ls\|stat\|cat\|cp\|mv\|rm\|mkdir\|touch) <spec>…` | `hikasa-vfs` | Generic access to any back-end (archives, remote, snapshots). |
+| `hikasa settings (get\|set\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Program options. |
+| `hikasa gui …` | IPC client | See §1.1. |
+| `hikasa completions <shell>`, `hikasa help [topic]`, `hikasa version` | | |
+
+### 1.1 `hikasa gui` — connecting to the GUI
+
+- **CLI-G01** (P0): `hikasa gui open <specs…> [view options]` opens a view in the
+  running GUI (starting it when needed, unless `--no-launch`). `--wait` blocks until
+  the view closes and returns its exit code. All legacy positional forms and switches
+  below (`--fv`, `--ro`, `--title1`, `--automerge --reviewconflicts`, …) are accepted
+  by `hikasa gui open` and by `hikasa-gui` itself.
+- **CLI-G02** (P0): `hikasa gui session <name> [--wait]`, `hikasa gui workspace
+  <name>`, `hikasa gui script <file>` (run with the status window), `hikasa gui list`
+  (open views), `hikasa gui close <id>`, `hikasa gui ping`, `hikasa gui quit`.
+- **CLI-G03** (P0): Any headless subcommand accepts `--gui` to show its result in
+  the GUI instead of printing it (e.g. `hikasa text compare a b --gui`).
+
+## 2. Legacy positional forms and switches (accepted by `hikasa gui open` and `hikasa-gui`)
 
 - **CLI-001** (P0): Switches accept `--name`, `-name` and Windows-style `/name`
   spellings; values with `=`; quote arguments containing spaces. `--help` prints usage.
@@ -50,7 +104,7 @@
 | `--config-dir=<dir>` | Use an alternative settings directory (also enables portable behaviour). |
 | `--log=<file>`, `--verbose` | Diagnostic logging. |
 
-- **CLI-004** (P0): Exit codes:
+- **CLI-004** (P0): Exit codes (shared by all subcommands):
 
 | Code | Meaning |
 |------|---------|
@@ -78,14 +132,19 @@
   Center, Open for Compare, Edit, View Patch, Compare to Clipboard), macOS Finder
   extension; configurable in the Startup options page.
 
-## 2. Return-code semantics for version control
+## 2b. Return-code semantics for version control
 
-- **CLI-010** (P0): `hikasa-cli left right` returns only after the user closes the
-  view; `--qc` returns immediately. Document the recommended configuration for git
-  (`difftool`/`mergetool` with `--automerge --reviewconflicts --mergeoutput`),
-  Mercurial, Subversion and Perforce in the user manual.
+- **CLI-010** (P0): `hikasa gui open left right --wait` returns only after the user
+  closes the view; `hikasa quick` and headless `compare` subcommands return
+  immediately. Document the recommended configuration for git
+  (`difftool`/`mergetool` with `hikasa text merge … --gui --wait` or
+  `--automerge --reviewconflicts --mergeoutput`), Mercurial, Subversion and Perforce
+  in the user manual.
 
 ## 3. Script language
+
+Scripts remain supported as a batch layer on top of the same core; `hikasa script
+run` executes them headless and `hikasa gui script` runs them with the status window.
 
 A script is a UTF-8 text file; one command per line; `#` starts a comment; blank lines
 ignored; commands are case-insensitive; arguments separated by spaces, quoted with `"`

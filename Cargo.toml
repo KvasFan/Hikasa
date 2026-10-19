@@ -1,21 +1,24 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/hikasa-core",
-    "crates/hikasa-vfs",
-    "crates/hikasa-diff",
-    "crates/hikasa-formats",
-    "crates/hikasa-folder",
-    "crates/hikasa-text",
-    "crates/hikasa-table",
-    "crates/hikasa-hex",
-    "crates/hikasa-picture",
-    "crates/hikasa-metadata",
-    "crates/hikasa-report",
-    "crates/hikasa-script",
-    "crates/hikasa-session",
-    "crates/hikasa-cli",
-    "crates/hikasa-app",
+    # core: UI-agnostic engines and services (no I/O in engines, no UI anywhere)
+    "core/hikasa-core",
+    "core/hikasa-vfs",
+    "core/hikasa-diff",
+    "core/hikasa-formats",
+    "core/hikasa-folder",
+    "core/hikasa-text",
+    "core/hikasa-table",
+    "core/hikasa-hex",
+    "core/hikasa-picture",
+    "core/hikasa-metadata",
+    "core/hikasa-report",
+    "core/hikasa-script",
+    "core/hikasa-session",
+    # cli: the complete headless interface to every function
+    "cli/hikasa-cli",
+    # gui: desktop application built on core, reachable from the CLI over IPC
+    "gui/hikasa-gui",
 ]
 
 [workspace.package]
