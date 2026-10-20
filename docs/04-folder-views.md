@@ -128,6 +128,54 @@ Tests that require reading files:
 - **FC-052** (P0): **Exclude** action: offers to exclude the selected item(s), or all
   files of that type (`-*.ext`), adding to the session's exclude lists.
 
+**Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
+is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
+tables are in `design/m1-contracts.md` §2.2 and §2.3.
+
+- **Syntax (D-07).** A mask list is `;`-separated; items are trimmed of ASCII spaces and tabs, and empty
+  items are ignored. A leading `-` excludes. `\` and `/` are both separators; a **trailing** separator marks a
+  folder mask (folder masks never match files, file masks never match folders). `?` matches one character,
+  `*` any run (including the empty run), `[az]` / `[a-z]` a set or range, `[!az]` a negated set; `]` right
+  after `[` or `[!` is literal, `-` first or last in a set is literal (`[-]` matches a literal `-`), `\` and
+  `/` inside a set are literal, and only `!` negates (`[^a]` is the set of `^` and `a`). Errors (rejected
+  when the filter is parsed, never during a scan): an unclosed `[`, an inverted range such as `[z-a]`, an empty
+  component (`a\\b`, a lone `-`), and `.` anywhere but first or `..` anywhere. The four lists of the Name
+  Filters tab hold the same items without the `-` prefix (the list says whether they exclude); an item of a
+  folder list without a trailing separator is taken as a folder mask. List items are trimmed like toolbar
+  items, so the lists write a mask that starts with a blank as a one-character set: the toolbar item `- x`
+  excludes the name ` x` (blanks after the `-` belong to the mask) and appears in the Exclude Files list as
+  `[ ]x`; toolbar text and lists always describe the same filter. The canonical toolbar text lists include
+  files, include folders, exclude files, exclude folders: `*.c;*.h;-*.bak;-obj\;src\` is shown as
+  `*.c;*.h;src\;-*.bak;-obj\`.
+- **Case and Unicode (D-07).** Case-insensitive matching uses the simple 1:1 lower-case mapping only (no
+  locale tailoring, no expansion: `STRASSE` does not match `straße`; `İ`, whose full lower case has two
+  characters, maps to itself); a character is in a range `[lo-hi]` when the character itself, its simple lower
+  case or its simple upper case is in the range (so `[A-Z]*` matches `zeta` case-insensitively). Names and
+  masks are compared in Unicode NFC: a name is normalised before it is matched and a mask before it is parsed,
+  so `café.txt` typed in NFC matches a file stored in NFD, and a mask pasted from an NFD name means the same,
+  including set members and range bounds (a set holding `e` followed by a combining acute accent is the set
+  `[é]`, and a KELVIN SIGN inside a set is the letter `K`). Case folding is applied to the NFC characters, so
+  a name and its lower-case spelling match the same masks, except for the rare names where folding changes the
+  NFC composition (`I` + combining dot above is `İ`, which keeps its case) or where a character is neither
+  lower case nor the upper case of its lower case (title-case letters such as `ǅ` inside a range).
+- **Extensions (D-07).** A name has an extension when it contains a `.` that is neither its first nor its
+  last character (`.bashrc` and `a.` have none). A mask ending in a literal `.` means "no extension"
+  (`*.` matches `Makefile` and `.bashrc`, not `a.out`). A mask ending in `.*` also matches names without an
+  extension (`*.*` matches every name; `abc.*` matches `abc` but not `abcd`). The same rules apply to every
+  component of a relative mask.
+- **Paths (D-08).** A mask without separators matches the item **name** at any depth (`*.c` matches
+  `src/util/x.c`). A relative mask (`p\f`) is anchored at the base folder (`src\*.c` matches `src/a.c`, not
+  `lib/src/a.c`); `.\f` matches in the base folder only; a leading separator anchors as well (`\docs\`).
+  `...` is a path component that matches zero or more folders anywhere in the mask (`...\test\*.py`,
+  `src\...\*.rs`); a mask that starts with `...` is not anchored.
+- **Folder inclusion (D-09).** Filters are evaluated top-down, per side. Exclusion always wins: an excluded
+  folder excludes its whole subtree. An include-folder mask includes the whole subtree of a matching folder
+  (`src\` includes `src/a/b.c`). Folders that are only *prefixes* of an anchored include-folder mask are
+  traversed but not themselves "included": with `src\core\`, the folder `src` is scanned but its files are
+  excluded, while `src/core` and everything below it are included. A simple include-folder mask such as
+  `src\` makes every other folder traversable in the same way (a `lib/src` could exist below it). The base
+  folder is always included; its files are subject to the file masks only.
+
 ### 6.2 Other filters
 
 - **FC-053** (P1): Rules ▸ Other Filters: list of items — *date modified* (older/newer

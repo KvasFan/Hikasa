@@ -1730,7 +1730,7 @@ impl ContentSource for VfsSource<'_> {
 }
 ```
 
-#### 1.2.6 The `mmap` module: the only `unsafe` in the workspace
+#### 1.2.6 The `mmap` module: the only `unsafe` in library and program code
 
 ```rust
 // core/hikasa-vfs/src/mmap.rs   (lib.rs: `#[allow(unsafe_code)] mod mmap;`)
@@ -1759,8 +1759,15 @@ fn map_read_only(file: &File) -> std::io::Result<memmap2::Mmap> {
 ```
 
 The architecture test (§6.1) fails if the `unsafe` keyword (regex `\bunsafe\s*(\{|fn\b|impl\b|trait\b|extern\b)`)
-appears in any `.rs` file under `core/`, `cli/` or `gui/` other than `core/hikasa-vfs/src/mmap.rs`, or if that
-file contains an `unsafe` block without a preceding `// SAFETY:` comment.
+appears in any `.rs` file under `core/`, `cli/` or `gui/` other than `core/hikasa-vfs/src/mmap.rs` and the
+allocation-counting test and bench binaries, or if an allowed occurrence has no preceding `// SAFETY:` comment.
+The allocation-counting exemption (§6.1 check 1) covers exactly the files in a crate's own `tests/` or `benches/`
+directory (`<top>/<crate>/tests/…`, `<top>/<crate>/benches/…`) whose code installs a `#[global_allocator]`:
+`GlobalAlloc` is an `unsafe` trait, so a counting allocator cannot be written without `unsafe`. Such a file says
+`#![allow(unsafe_code)]` (the workspace lint is `deny`), and each of its `unsafe` occurrences has a preceding
+`// SAFETY:` comment. Library code never qualifies (not even a `src/tests/` module): every library crate keeps
+`#![forbid(unsafe_code)]`, and `hikasa-vfs` keeps `#![deny(unsafe_code)]` with the single `mmap` allow, so
+`mmap.rs` remains the only `unsafe` in library and program code.
 
 ### 1.3 hikasa-diff
 
@@ -7704,7 +7711,13 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 - **Architecture test** (`core/hikasa-session/tests/architecture.rs`; it reads the workspace sources via
   `CARGO_MANIFEST_DIR/../..`) checks:
   1. the `unsafe` keyword (regex of §1.2.6) appears only in `core/hikasa-vfs/src/mmap.rs`, and each occurrence
-     has a preceding `// SAFETY:`;
+     has a preceding `// SAFETY:`. The one exemption is allocation counting (below): a file in a crate's own
+     `tests/` or `benches/` directory (`<top>/<crate>/tests/…` or `<top>/<crate>/benches/…`, where `<top>` is
+     `core`, `cli` or `gui`) whose code (not a comment or string) installs a `#[global_allocator]` may use
+     `unsafe`, because `GlobalAlloc` cannot be implemented without it. Such a file must say
+     `#![allow(unsafe_code)]`, and each `unsafe` in it still needs a preceding `// SAFETY:`. Library code never
+     qualifies, not even a `src/tests/` module; library crates keep their crate-root lint (§0.4 rule 2:
+     `forbid(unsafe_code)`, or in `hikasa-vfs` `deny(unsafe_code)` with the one `mmap` allow);
   2. no banned tokens in `core/*/src`: `std::env::`, `SystemTime::now`, `Instant::now`, `thread::sleep`,
      `thread_local!`, `static mut`, `println!`, `eprintln!`, `print!`, `dbg!` and `process::exit`. There are
      exactly three allow-points, each with a comment naming this rule:

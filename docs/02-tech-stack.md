@@ -64,6 +64,63 @@ writing and must be re-checked when the dependency is actually added.
 | Property testing | `proptest`, `criterion` (dev) | MIT/Apache | |
 | License audit | `cargo-deny` (CI tool) | — | Enforces the license policy. |
 
+### M1 dependency constraints (binding for milestone M1)
+
+Milestone M1 builds only with the crates listed in `[workspace.dependencies]` of the root `Cargo.toml`
+(`docs/design/m1-contracts.md` §0.5 assigns them to crates). Several crates of the tables above are therefore
+**not available in M1**; the consequences below are part of the M1 design, and adding any of these crates
+needs the approval process of `17-agent-workflow.md` §2.6.
+
+| Missing crate | Consequence in M1 |
+|---|---|
+| `tokio` | IPC is blocking: one accept thread plus one thread per connection (ARCH-080's tokio runtime is deferred). |
+| `ignore`, `globset` | In-house folder walker (`hikasa-folder` scanner) and mask engine (`hikasa_core::mask`, `04-folder-views.md` §6.1). |
+| `notify` | No file watching: FC-017 automatic refresh, TC-006 and SES-053 change detection are M2+. |
+| `arboard` | `clipboard://` resolves only when an adapter injects the clipboard content; the CLI reports "unsupported"; `gui open clipboard://` is rejected. |
+| `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
+| `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
+| a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
+| `dioxus` | The GUI (M1 wave 6) needs approval first. |
+| `tempfile` (dev-only) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). |
+
+Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
+uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (one LCS implementation,
+`imara-diff`, keeps behaviour single-sourced; patch apply is P1).
+
+**Feature notes.** No workspace-level feature is changed for M1; the default feature sets shape the design:
+
+- **`toml`** (1.x) is used without `preserve_order`: every table deserialises through a `BTreeMap`, so no code
+  may depend on the key order of a TOML table (arrays keep their order). Grammar element ids follow the order
+  of first use in the `grammar` array, not the `[elements]` table.
+- **`serde_json`** is used without `preserve_order`: JSON produced from structs keeps declaration order, while
+  `serde_json::Value` objects sort their keys.
+- **`interprocess`** (2.x) is used with its default features only (no `tokio`/`async`): the IPC client and
+  server use blocking local sockets and named pipes; timeouts use the stream's receive timeout.
+- **`chardetng`** (1.0) exposes `find_score` only behind a testing-only feature, so a format's fallback
+  encoding applies only to content without non-ASCII evidence.
+- **`jiff`** has no `serde` feature enabled: timestamps (`hikasa_core::FileTime`) have hand-written serde
+  implementations (RFC 3339 UTC text for the years 0000–9999 that RFC 3339 can write, `@<secs>.<nanos>`
+  otherwise; a native TOML offset date-time is accepted when reading). jiff is not part of `hikasa-core`'s
+  public API.
+- **`ropey`** keeps its default Unicode line breaks, so Hikasa keeps its own line table (lines end only at CR,
+  LF or CRLF).
+
+**mmap residual risk.** `memmap2::Mmap::map` is `unsafe`, because another process may modify or truncate a
+file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs
+(`core/hikasa-vfs/src/mmap.rs`, ARCH-005). Mitigations: the map is read-only and private to that module; it is
+created only for local regular files confirmed after opening; the bytes are only compared or hashed in bounded
+chunks; a mapping lives for one call; and after the call both files are re-stat'ed, so a changed length or
+modification time discards the mapped result in favour of streaming (`11-vfs-remote-archives.md` §3).
+**Accepted residual risk:** a concurrent truncation of an input file while it is mapped can terminate the
+process (SIGBUS on Unix). Setting the mmap policy to "never" disables the mapped path.
+
+**Test-only `unsafe`.** Every library crate other than `hikasa-vfs` is `#![forbid(unsafe_code)]`. The only other
+`unsafe` in the repository is in allocation tests and benches: a file in a crate's own `tests/` or `benches/`
+directory that installs a counting `#[global_allocator]` needs `unsafe`, because `GlobalAlloc` is an `unsafe`
+trait. Such a file says `#![allow(unsafe_code)]` (the workspace lint is `deny`) and has a `// SAFETY:` comment
+before each `unsafe`. The architecture test allows `unsafe` in exactly these files and in `mmap.rs`, and nowhere
+else, not in any library module (`src/tests/` included); see `design/m1-contracts.md` §1.2.6 and §6.1 check 1.
+
 ## 2. GUI toolkit decision
 
 Requirements that drive the choice:

@@ -1,0 +1,53 @@
+{
+  "kinds": [
+    "not_found",
+    "permission_denied",
+    "already_exists",
+    "not_a_directory",
+    "is_a_directory",
+    "invalid_input",
+    "invalid_data",
+    "unsupported",
+    "cancelled",
+    "io",
+    "too_large",
+    "protocol",
+    "internal"
+  ],
+  "report": {
+    "kind": "internal",
+    "message": "panic: boom",
+    "spec": null,
+    "causes": []
+  },
+  "warning_codes": [
+    "binary_content",
+    "lossy_decode",
+    "regex_runtime_error",
+    "fell_back_to_binary",
+    "rules_size_limit",
+    "closeness_ignored",
+    "work_budget_exhausted",
+    "closeness_budget_exhausted",
+    "format_mismatch",
+    "capability_missing",
+    "unknown_config_key",
+    "user_format_skipped",
+    "patch_lossy_eol",
+    "symlink_loop",
+    "entry_error",
+    "switch_ignored"
+  ],
+  "warnings": [
+    {
+      "code": "format_mismatch",
+      "message": "left is C, right is Python",
+      "spec": null
+    },
+    {
+      "code": "symlink_loop",
+      "message": "symbolic link loop",
+      "spec": "/w/loop"
+    }
+  ]
+}

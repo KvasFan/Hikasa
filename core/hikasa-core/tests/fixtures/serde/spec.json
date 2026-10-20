@@ -1,0 +1,27 @@
+{
+  "styles": [
+    "unix",
+    "windows"
+  ],
+  "schemes": [
+    "ftp",
+    "ftps",
+    "sftp",
+    "dav",
+    "davs",
+    "s3",
+    "svn",
+    "svn_http",
+    "svn_https",
+    "svn_ssh",
+    "mtp"
+  ],
+  "specs": [
+    "-",
+    "clipboard://",
+    "profile:My Prof?dir/f.txt",
+    "sftp://u@h:2222/p",
+    "https://example.com/a?b",
+    "http://u@example.com:8080/a"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "lists": {
+    "include_files": [
+      "*.c",
+      "*.h"
+    ],
+    "exclude_files": [
+      "*.bak"
+    ],
+    "include_folders": [
+      "src\\"
+    ],
+    "exclude_folders": [
+      "obj\\"
+    ]
+  },
+  "options": [
+    {
+      "case": "sensitive"
+    },
+    {
+      "case": "insensitive"
+    }
+  ],
+  "targets": [
+    "files",
+    "folders"
+  ],
+  "polarities": [
+    "include",
+    "exclude"
+  ],
+  "verdicts": [
+    "base",
+    "included",
+    "pass_through",
+    "excluded"
+  ],
+  "paths": [
+    "",
+    "src/core/a.c"
+  ]
+}

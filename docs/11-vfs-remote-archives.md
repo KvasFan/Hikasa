@@ -58,12 +58,60 @@ clipboard://        -            mtp://MyPhone/DCIM
   canonicalizes for display and persistence. Passwords in URLs are stripped from
   persisted forms and moved to the keychain.
 
+**Parsing and canonical form (binding interpretation of ARCH-020/VFS-010; decisions D-05, D-06).** The parser
+is `hikasa_core::spec`; the normative algorithm and its 30-row test table are in `design/m1-contracts.md` §2.1.
+Parsing is style-explicit (Unix or Windows rules, so the Windows rules are tested on every platform) and takes
+the current and home directories from values captured once by the adapter.
+
+- **Order.** A NUL character is an error and blank input is empty; otherwise the input is **not** trimmed
+  (leading and trailing spaces are legal in file names). `-` is standard input; `clipboard://` (any case) is
+  the clipboard; a `profile:` prefix (any case) is a profile spec `profile:Name[?path]`; text matching
+  `scheme://` is a URL; anything else is a local path.
+- **Schemes (D-05).** The recognised but unsupported schemes — `ftp`, `ftps`, `sftp`, `dav`, `davs`, `s3`,
+  `svn`, `svn+http`, `svn+https`, `svn+ssh`, `mtp`, `profile:` and `http(s)` — **parse successfully**, so specs
+  written by later versions stay readable and round-trip; resolving them in M1 fails with "unsupported". An
+  unknown `scheme://` fails to parse; it is never silently reinterpreted as a local path. On Windows a
+  one-letter scheme is a drive letter (`C://x` is `C:\x`).
+- **URLs.** `scheme://[user[:password]@]host[:port][/path]`: the user information is split at the last `@`,
+  user and password at the first `:`; an IPv6 host keeps its brackets (`[::1]:22`); the port must be 1–65535;
+  the host must not be empty. Scheme and host are lower-cased; the user and the path are kept verbatim (no
+  percent-decoding in M1). The canonical form never contains the password, and error messages replace it with
+  `***` (conservatively: when a `/` inside a password ends the authority early, everything from the first `:`
+  after `://` to the last `@` is masked). An `http(s)` authority ends at the first `/`, `?` or `#` and is
+  parsed the same way; its user information is accepted and **dropped**, because the M1 single-file URL has no
+  credential fields and its canonical form is `http[s]://host[:port]rest`.
+- **Local paths on Unix (D-06).** `~` and `~/…` expand to the home directory (`~user` is not supported); a
+  relative path is resolved against the current directory; empty and `.` components are dropped; `..` is
+  **kept**, because removing it lexically is unsound across symbolic links, except that `/..` collapses to
+  `/`; there is no trailing `/` except for the root. A backslash is an ordinary character.
+- **Local paths on Windows (D-06).** `/` becomes `\`; `\\?\…` (verbatim) is kept unchanged; `\\.\…`
+  (device namespace) is rejected; UNC roots are `\\server\share` (a missing share is an error); drive letters
+  are upper-cased; `C:foo` resolves against a current directory on drive `C:` (otherwise it is an error) and
+  `\foo` against the root of the current directory; `..` is resolved lexically, as Windows itself does;
+  there is no trailing `\` except at `C:\`. A relative, rooted or drive-relative input (and `~\…`) is
+  normalised component by component also when the current or home directory is itself a verbatim path (as
+  `std::fs::canonicalize` returns them): with the current directory `\\?\C:\w`, `..\x` is `\\?\C:\x`.
+  Only an input that is verbatim itself stays unchanged.
+- **Round trip.** For every input that parses, parsing the canonical form again gives the same spec without
+  its password (ARCH-020). A non-UTF-8 local path is accepted from the command line; its canonical form is
+  lossy and such a spec is never persisted: serialising it is an error.
+
 ## 3. Content fingerprints and CRC
 
 - **VFS-020** (P0): `crc32` is the "CRC comparison" primitive (compatibility with
   archives and snapshots). BLAKE3 is used internally for caches (per-file content
   identity across sessions, P1) and for "binary same" shortcuts when both sides already
   have a known hash.
+
+**Memory-mapped comparison and CRC (M1).** Large local regular files are compared and hashed through a
+read-only memory map (ARCH-081), in 8 MiB chunks with a cancellation check per chunk. Because another process
+can change a file while it is mapped, both files are **re-stat'ed after** a mapped comparison or CRC: when the
+length and the modification time are unchanged the mapped result is kept; when either changed, the mapped
+result is discarded and the content is compared or hashed again by streaming. The mapped, streaming and naive
+whole-buffer comparisons give the same result, including the offset of the first difference. **Residual risk
+(accepted):** a concurrent truncation of an input file while it is mapped can terminate the process (SIGBUS on
+Unix); the mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's
+libraries and programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
 
 ## 4. Snapshot format
 
