@@ -106,6 +106,7 @@ needs to understand *what changed* between two sets of data and to reconcile it.
 | `16-roadmap.md` | Milestones and acceptance criteria |
 | `17-agent-workflow.md` | Rules for AI agents working on this repository |
 | `reference/commands.md` | Complete command catalogue with default shortcuts |
+| `design/m1-contracts.md` | Binding API contracts for milestone M1 |
 
 ## 6. Requirement notation
 

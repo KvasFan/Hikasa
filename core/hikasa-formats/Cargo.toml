@@ -18,12 +18,14 @@ encoding_rs.workspace = true
 chardetng.workspace = true
 thiserror.workspace = true
 memchr.workspace = true
-indexmap.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

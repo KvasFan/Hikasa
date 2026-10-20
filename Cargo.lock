@@ -475,6 +475,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
+name = "diffy"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e3dc2f773b6aaa63b1a7684b8589f670a8a0146a510b74d23a401c882364b49"
+dependencies = [
+ "hashbrown 0.17.1",
+]
+
+[[package]]
 name = "directories"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -592,6 +601,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -644,7 +659,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -652,6 +667,9 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -691,10 +709,15 @@ name = "hikasa-core"
 version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
+ "criterion",
+ "jiff",
  "pretty_assertions",
  "proptest",
+ "regex",
  "serde",
+ "serde_json",
  "thiserror",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -707,6 +730,7 @@ dependencies = [
  "pretty_assertions",
  "proptest",
  "serde",
+ "serde_json",
  "similar",
  "smallvec",
  "thiserror",
@@ -716,17 +740,22 @@ dependencies = [
 name = "hikasa-folder"
 version = "0.0.0"
 dependencies = [
+ "bitflags 2.13.2",
+ "criterion",
  "crossbeam-channel",
  "filetime",
  "hikasa-core",
  "hikasa-vfs",
+ "jiff",
  "parking_lot",
  "pretty_assertions",
  "proptest",
  "rayon",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
+ "toml",
  "unicode-normalization",
 ]
 
@@ -735,15 +764,17 @@ name = "hikasa-formats"
 version = "0.0.0"
 dependencies = [
  "chardetng",
+ "criterion",
  "encoding_rs",
  "fancy-regex",
  "hikasa-core",
- "indexmap",
  "memchr",
  "pretty_assertions",
  "proptest",
+ "rayon",
  "regex",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",
@@ -769,12 +800,16 @@ version = "0.0.0"
 name = "hikasa-report"
 version = "0.0.0"
 dependencies = [
+ "bitflags 2.13.2",
+ "diffy",
  "hikasa-core",
  "hikasa-diff",
  "hikasa-folder",
  "hikasa-text",
+ "hikasa-vfs",
  "jiff",
  "pretty_assertions",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",
@@ -790,6 +825,7 @@ version = "0.0.0"
 name = "hikasa-session"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
  "directories",
  "hikasa-core",
  "hikasa-diff",
@@ -799,7 +835,11 @@ dependencies = [
  "hikasa-text",
  "hikasa-vfs",
  "interprocess",
+ "jiff",
+ "parking_lot",
  "pretty_assertions",
+ "proptest",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
@@ -816,6 +856,7 @@ version = "0.0.0"
 name = "hikasa-text"
 version = "0.0.0"
 dependencies = [
+ "bitflags 2.13.2",
  "criterion",
  "encoding_rs",
  "hikasa-core",
@@ -825,11 +866,14 @@ dependencies = [
  "memchr",
  "pretty_assertions",
  "proptest",
+ "rayon",
  "regex",
  "ropey",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
+ "toml",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -840,9 +884,11 @@ version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
  "crc32fast",
+ "criterion",
  "filetime",
  "hikasa-core",
  "memmap2",
+ "pretty_assertions",
  "proptest",
  "same-file",
  "serde",
@@ -868,8 +914,6 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
- "serde",
- "serde_core",
 ]
 
 [[package]]
