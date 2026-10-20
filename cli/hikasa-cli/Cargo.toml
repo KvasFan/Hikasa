@@ -9,3 +9,33 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-vfs.workspace = true
+hikasa-diff.workspace = true
+hikasa-formats.workspace = true
+hikasa-text.workspace = true
+hikasa-folder.workspace = true
+hikasa-report.workspace = true
+hikasa-session.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+pretty_assertions.workspace = true
+filetime.workspace = true
+
+[[bin]]
+name = "hikasa"
+path = "src/main.rs"
+
+[lints]
+workspace = true

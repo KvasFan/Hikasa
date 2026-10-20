@@ -9,3 +9,20 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-vfs.workspace = true
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+filetime.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

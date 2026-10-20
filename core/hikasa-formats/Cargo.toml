@@ -9,3 +9,21 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+serde.workspace = true
+toml.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+encoding_rs.workspace = true
+chardetng.workspace = true
+thiserror.workspace = true
+memchr.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

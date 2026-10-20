@@ -9,3 +9,18 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+crc32fast.workspace = true
+memmap2.workspace = true
+filetime.workspace = true
+bitflags.workspace = true
+same-file.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -9,3 +9,24 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-diff.workspace = true
+hikasa-formats.workspace = true
+hikasa-vfs.workspace = true
+ropey.workspace = true
+encoding_rs.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+regex.workspace = true
+memchr.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+
+[lints]
+workspace = true

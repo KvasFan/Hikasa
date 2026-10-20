@@ -9,3 +9,17 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+imara-diff.workspace = true
+similar.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+criterion.workspace = true
+
+[lints]
+workspace = true
