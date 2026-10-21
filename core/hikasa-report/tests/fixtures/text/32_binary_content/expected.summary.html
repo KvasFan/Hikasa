@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Text Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.sbs { width: 100%; table-layout: fixed; font-family: monospace; }
+table.sbs col.n { width: 5em; }
+table.sbs col.m { width: 1.5em; }
+table.sbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.3em; overflow-wrap: anywhere; }
+table.sbs td { vertical-align: top; padding: 0 0.3em; }
+table.sbs td.n { text-align: right; color: #808080; }
+table.sbs td.m { text-align: center; }
+table.sbs td.t { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.sbs tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+tr.imp td.t { background: #ffe8e8; }
+tr.unimp td.t { background: #e8eeff; }
+tr.lo td.t.l, tr.ro td.t.r, td.lo, td.ro { background: #f6e8fa; }
+tr.lo.imp td.t.l, tr.ro.imp td.t.r { color: #c00000; }
+tr.lo.unimp td.t.l, tr.ro.unimp td.t.r { color: #0030c0; }
+span.imp, td.imp { color: #c00000; background: #ffc8c8; }
+span.unimp, td.unimp { color: #0030c0; background: #c8d4ff; }
+span.repl, td.repl { color: #805000; background: #ffe8b0; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+td.x { background: #f2f2f2; }
+</style>
+</head>
+<body>
+<h1>Text Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.bin (windows-1252, mixed, binary)</td></tr>
+<tr><th>Right</th><td>/r/right.bin (windows-1252, mixed, binary)</td></tr>
+<tr><th>Mode</th><td>display: all; ignore unimportant: no</td></tr>
+<tr><th>Rules</th><td>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important</td></tr>
+<tr class="warning"><th>Warning</th><td>binary_content: /l/left.bin: binary content (Png signature); the verdict is a binary comparison (D-12)</td></tr>
+<tr class="warning"><th>Warning</th><td>binary_content: /r/right.bin: binary content (Png signature); the verdict is a binary comparison (D-12)</td></tr>
+</table>
+<table class="summary">
+<tr><th>Verdict</th><td>binary content differs</td></tr>
+<tr><th>Ignore unimportant</th><td>no</td></tr>
+<tr><th>Rows</th><td class="num">3</td></tr>
+<tr><th>Same rows</th><td class="num">2</td></tr>
+<tr><th>Changed rows</th><td class="num">1</td></tr>
+<tr><th>Left-only rows</th><td class="num">0</td></tr>
+<tr><th>Right-only rows</th><td class="num">0</td></tr>
+<tr><th>Important rows</th><td class="num">1</td></tr>
+<tr><th>Unimportant rows</th><td class="num">0</td></tr>
+<tr><th>Sections</th><td class="num">1</td></tr>
+<tr><th>Important sections</th><td class="num">1</td></tr>
+<tr><th>Unimportant sections</th><td class="num">0</td></tr>
+<tr><th>Important lines</th><td>added 0, deleted 0, changed 1, original 1</td></tr>
+<tr><th>Unimportant lines</th><td>added 0, deleted 0, changed 0, original 0</td></tr>
+<tr><th>Left lines</th><td class="num">3</td></tr>
+<tr><th>Right lines</th><td class="num">3</td></tr>
+</table>
+</body>
+</html>

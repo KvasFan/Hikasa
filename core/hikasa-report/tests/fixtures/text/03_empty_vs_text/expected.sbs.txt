@@ -1,0 +1,9 @@
+Text Compare
+Left: /l/left.txt (UTF-8, none)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+  /l/left.txt                              /r/right.txt
+                                       > 1 alpha
+                                       > 2 beta

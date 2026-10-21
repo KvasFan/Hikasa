@@ -1,0 +1,57 @@
+{
+  "id": "badre",
+  "origin": "user",
+  "path": "<TMP>/config/formats/badre.toml",
+  "enabled": true,
+  "format": {
+    "schema_version": 1,
+    "id": "badre",
+    "name": "Bad regex",
+    "description": "",
+    "kind": "text",
+    "mask": "*.bad",
+    "conversion": {
+      "method": "none",
+      "load": null,
+      "save": null,
+      "filename_encoding": null,
+      "timeout_secs": null
+    },
+    "encoding": {
+      "mode": "auto",
+      "fallback": null,
+      "label": null
+    },
+    "text": {
+      "tab_size": 4,
+      "tab_as_spaces": false,
+      "chars_per_line_limit": null,
+      "lines_independent": false,
+      "column_based": false,
+      "ctrl_z_eof": false,
+      "save_trim_trailing_ws": false,
+      "save_leading_spaces_to_tabs": false,
+      "word_chars": ""
+    },
+    "elements": {},
+    "grammar": [
+      {
+        "element": "X",
+        "kind": "basic",
+        "text": "(",
+        "regex": true,
+        "match_case": true
+      }
+    ],
+    "line_weight": [],
+    "table": null
+  },
+  "compile_error": {
+    "kind": "invalid_data",
+    "message": "format badre: grammar[0].text: pattern \"(\": regex parse error: ( ^ error: unclosed group; Parsing error at position 1: Opening parenthesis without closing parenthesis",
+    "spec": null,
+    "causes": [
+      "pattern \"(\": regex parse error: ( ^ error: unclosed group; Parsing error at position 1: Opening parenthesis without closing parenthesis"
+    ]
+  }
+}

@@ -1,0 +1,269 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 189,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 5,
+    "encoding": "UTF-8",
+    "encoding_source": "utf8_valid",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 188,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 5,
+    "encoding": "UTF-8",
+    "encoding_source": "utf8_valid",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 5,
+    "same_rows": 1,
+    "changed_rows": 4,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 4,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 4,
+      "original": 4
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 5,
+    "right_lines": 5
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        1,
+        5
+      ],
+      "left_lines": [
+        2,
+        6
+      ],
+      "right_lines": [
+        2,
+        6
+      ]
+    }
+  ],
+  "display": {
+    "mode": "all",
+    "lines": null,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "row",
+      "row": 0,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 1,
+        "text": "\tindented with a tab"
+      },
+      "right": {
+        "line": 1,
+        "text": "\tindented with a tab"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 2,
+        "text": "日本語のテキストと漢字"
+      },
+      "right": {
+        "line": 2,
+        "text": "日本語のテキストと漢宇"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 30,
+            "end": 33,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 30,
+            "end": 33,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 2,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 3,
+        "text": "café au lait"
+      },
+      "right": {
+        "line": 3,
+        "text": "café au lait"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 3,
+            "end": 6,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 3,
+            "end": 5,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 3,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 4,
+        "text": "The quick brown fox jumps over the lazy dog and keeps running far beyond the edge of the column width."
+      },
+      "right": {
+        "line": 4,
+        "text": "The quick brown fox leaps over the lazy dog and keeps running far beyond the edge of the column width!"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 20,
+            "end": 23,
+            "important": true
+          },
+          {
+            "start": 101,
+            "end": 102,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 20,
+            "end": 23,
+            "important": true
+          },
+          {
+            "start": 101,
+            "end": 102,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 4,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 5,
+        "text": "emoji 😀 here"
+      },
+      "right": {
+        "line": 5,
+        "text": "emoji 😃 here"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 10,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 10,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    }
+  ]
+}

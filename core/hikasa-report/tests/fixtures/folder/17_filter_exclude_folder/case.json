@@ -1,0 +1,4 @@
+{
+  "description": "An excluded folder (name-only on both sides) is not shown without Suppress Filters",
+  "source": "hikasa-folder/17_filter_exclude_folder"
+}

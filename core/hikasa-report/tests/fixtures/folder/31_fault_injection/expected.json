@@ -1,0 +1,357 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "left": {
+    "spec": "/l",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "right": {
+    "spec": "/r",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "rules": {
+    "schema_version": 1,
+    "criteria": {
+      "size": true,
+      "timestamps": {
+        "enabled": true,
+        "tolerance_secs": 2,
+        "ignore_dst": false,
+        "ignore_timezone": false,
+        "offset": null
+      },
+      "filename_case": false,
+      "dos_attributes": "",
+      "unix": {
+        "permissions": false,
+        "owner": false,
+        "group": false
+      },
+      "content": {
+        "method": "binary",
+        "skip_if_quick_same": false,
+        "override_quick": true
+      }
+    },
+    "alignment": {
+      "case": "auto",
+      "align_extensions": false,
+      "align_normalization": false
+    },
+    "filters": {
+      "names": {
+        "include_files": [],
+        "exclude_files": [],
+        "include_folders": [],
+        "exclude_folders": []
+      },
+      "other": {
+        "exclude_protected": true,
+        "size": null,
+        "date": null
+      }
+    },
+    "handling": {
+      "follow_symlinks": false,
+      "flatten": false,
+      "scan_orphan_folders": true
+    }
+  },
+  "case": "sensitive",
+  "complete": true,
+  "display": {
+    "filter": "all",
+    "folders": "compare_structure",
+    "ignore_unimportant": false,
+    "suppress_filters": false,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "left_newer",
+      "right_newer",
+      "differences"
+    ]
+  },
+  "verdict": "incomplete",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 2,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 1
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 1,
+      "not_compared": 0
+    }
+  },
+  "items": [
+    {
+      "path": "locked",
+      "depth": 0,
+      "kind": "folder",
+      "state": "error",
+      "category": "error",
+      "scan": "failed",
+      "aggregate": [],
+      "diffs": [],
+      "flags": [
+        "left_error",
+        "right_error"
+      ],
+      "time": null,
+      "content": null,
+      "errors": [
+        {
+          "side": "left",
+          "error": {
+            "kind": "permission_denied",
+            "message": "/l/locked: permission denied",
+            "spec": "/l/locked",
+            "causes": []
+          }
+        },
+        {
+          "side": "right",
+          "error": {
+            "kind": "permission_denied",
+            "message": "/r/locked: permission denied",
+            "spec": "/r/locked",
+            "causes": []
+          }
+        }
+      ],
+      "left": {
+        "name": "locked",
+        "name_lossy": false,
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "locked",
+        "name_lossy": false,
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "read_fails.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "error",
+      "category": "error",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [],
+      "flags": [],
+      "time": "same",
+      "content": {
+        "method": "binary",
+        "result": {
+          "result": "error",
+          "error": {
+            "kind": "io",
+            "message": "/r/read_fails.txt: Open failed: injected fault",
+            "spec": "/r/read_fails.txt",
+            "causes": [
+              "injected fault"
+            ]
+          }
+        },
+        "warnings": []
+      },
+      "errors": [
+        {
+          "side": null,
+          "error": {
+            "kind": "io",
+            "message": "/r/read_fails.txt: Open failed: injected fault",
+            "spec": "/r/read_fails.txt",
+            "causes": [
+              "injected fault"
+            ]
+          }
+        }
+      ],
+      "left": {
+        "name": "read_fails.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "read_fails.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "stat_fails.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "error",
+      "category": "error",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [],
+      "flags": [
+        "left_error"
+      ],
+      "time": null,
+      "content": null,
+      "errors": [
+        {
+          "side": "left",
+          "error": {
+            "kind": "permission_denied",
+            "message": "/l/stat_fails.txt: permission denied",
+            "spec": "/l/stat_fails.txt",
+            "causes": []
+          }
+        }
+      ],
+      "left": {
+        "name": "stat_fails.txt",
+        "name_lossy": false,
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "stat_fails.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    }
+  ]
+}

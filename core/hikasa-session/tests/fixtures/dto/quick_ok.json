@@ -1,0 +1,27 @@
+{
+  "schema": "hikasa.quick.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": "<TMP>/work/x.c",
+    "right": "<TMP>/work/y.c",
+    "method": "rules",
+    "result": {
+      "result": "important_differences"
+    },
+    "ignore_unimportant": false,
+    "format": {
+      "id": "c-cpp",
+      "name": "C, C++, C#, ObjC Source",
+      "kind": "text",
+      "reason": {
+        "reason": "mask",
+        "id": "c-cpp",
+        "mask": "*.c"
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

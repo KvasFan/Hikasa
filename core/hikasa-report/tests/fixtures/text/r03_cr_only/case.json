@@ -1,0 +1,3 @@
+{
+  "description": "Lone-CR line endings: the patches write them as LF and warn (patch_lossy_eol) for both sides"
+}

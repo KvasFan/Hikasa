@@ -1,0 +1,6 @@
+{
+  "description": "Tabs (expanded to 4), wide CJK characters, combining marks and emoji in a 60-column side-by-side view with word wrapping",
+  "width": 60,
+  "wrap": "word",
+  "ansi": true
+}

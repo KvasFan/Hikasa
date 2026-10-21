@@ -1,0 +1,335 @@
+{
+  "schema": "hikasa.format_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "config_dir": "<TMP>/config",
+    "formats": [
+      {
+        "position": 1,
+        "id": "bash",
+        "name": "Bash Scripts",
+        "kind": "text",
+        "mask": "*.sh;*.bash;*.zsh",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 2,
+        "id": "c-cpp",
+        "name": "C, C++, C#, ObjC Source",
+        "kind": "text",
+        "mask": "*.c;*.cc;*.cpp;*.cxx;*.cs;*.h;*.hpp;*.hh;*.m;*.mm",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 3,
+        "id": "cobol",
+        "name": "COBOL Source",
+        "kind": "text",
+        "mask": "*.cbl;*.cob;*.cpy",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 4,
+        "id": "pascal-forms",
+        "name": "Object Pascal Forms",
+        "kind": "text",
+        "mask": "*.dfm;*.fmx",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 5,
+        "id": "pascal",
+        "name": "Object Pascal Source",
+        "kind": "text",
+        "mask": "*.pas;*.dpr;*.dpk;*.inc",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 6,
+        "id": "html",
+        "name": "HTML",
+        "kind": "text",
+        "mask": "*.htm;*.html;*.xhtml;*.asp;*.aspx;*.ascx",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 7,
+        "id": "java",
+        "name": "Java Source",
+        "kind": "text",
+        "mask": "*.java;*.jav;*.kt",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 8,
+        "id": "javascript",
+        "name": "JavaScript Source",
+        "kind": "text",
+        "mask": "*.js;*.mjs;*.ts;*.jsx;*.tsx",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 9,
+        "id": "perl",
+        "name": "Perl Scripts",
+        "kind": "text",
+        "mask": "*.pl;*.pm",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 10,
+        "id": "python",
+        "name": "Python Scripts",
+        "kind": "text",
+        "mask": "*.py;*.pyw",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 11,
+        "id": "ini-reg",
+        "name": "Registry Dumps / INI",
+        "kind": "text",
+        "mask": "*.reg;*.ini",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 12,
+        "id": "sql",
+        "name": "SQL",
+        "kind": "text",
+        "mask": "*.sql;*.dsql",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 13,
+        "id": "visual-basic",
+        "name": "Visual Basic Source",
+        "kind": "text",
+        "mask": "*.bas;*.cls;*.frm;*.vb;*.vbs;*.ctl;*.vbp",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 14,
+        "id": "xml",
+        "name": "XML",
+        "kind": "text",
+        "mask": "*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.plist",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 15,
+        "id": "rust",
+        "name": "Rust Source",
+        "kind": "text",
+        "mask": "*.rs",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 16,
+        "id": "sorted",
+        "name": "Sorted",
+        "kind": "text",
+        "mask": "",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "manual_only",
+          "by": []
+        }
+      },
+      {
+        "position": 17,
+        "id": "csv",
+        "name": "Comma Separated Values",
+        "kind": "table",
+        "mask": "*.csv;*.tsv",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 18,
+        "id": "pictures",
+        "name": "Picture Files",
+        "kind": "picture",
+        "mask": "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 19,
+        "id": "media",
+        "name": "Media Files",
+        "kind": "media",
+        "mask": "*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 20,
+        "id": "executables",
+        "name": "Executables",
+        "kind": "version",
+        "mask": "*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 21,
+        "id": "registry-files",
+        "name": "Registry Files",
+        "kind": "registry",
+        "mask": "*.reg",
+        "enabled": false,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "disabled",
+          "by": []
+        }
+      },
+      {
+        "position": 22,
+        "id": "badre",
+        "name": "Bad regex",
+        "kind": "text",
+        "mask": "*.bad",
+        "enabled": true,
+        "origin": "user",
+        "path": "<TMP>/config/formats/badre.toml",
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 23,
+        "id": "upper",
+        "name": "Upper",
+        "kind": "text",
+        "mask": "*.up",
+        "enabled": true,
+        "origin": "user",
+        "path": "<TMP>/config/formats/upper.toml",
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

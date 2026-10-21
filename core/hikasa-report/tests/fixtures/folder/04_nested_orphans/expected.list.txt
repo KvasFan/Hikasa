@@ -1,0 +1,11 @@
++  new/
++  new/c.txt
+-  old/
+-  old/deep/
+-  old/deep/a.txt
+-  old/b.txt
+!  shared/
++  shared/sub/
++  shared/sub/d.txt
+=  shared/x.txt
+# 1 same, 0 left newer, 0 right newer, 0 different, 2 left only, 2 right only, 0 unknown, 0 errors

@@ -1,0 +1,107 @@
+{
+  "id": "ini-reg",
+  "origin": "built_in",
+  "path": null,
+  "enabled": true,
+  "format": {
+    "schema_version": 1,
+    "id": "ini-reg",
+    "name": "Registry Dumps / INI",
+    "description": "INI configuration files and registry export files.",
+    "kind": "text",
+    "mask": "*.reg;*.ini",
+    "conversion": {
+      "method": "none",
+      "load": null,
+      "save": null,
+      "filename_encoding": null,
+      "timeout_secs": null
+    },
+    "encoding": {
+      "mode": "auto",
+      "fallback": null,
+      "label": null
+    },
+    "text": {
+      "tab_size": 4,
+      "tab_as_spaces": false,
+      "chars_per_line_limit": null,
+      "lines_independent": false,
+      "column_based": false,
+      "ctrl_z_eof": false,
+      "save_trim_trailing_ws": false,
+      "save_leading_spaces_to_tabs": false,
+      "word_chars": ""
+    },
+    "elements": {
+      "Keyword": {
+        "case_sensitive": false,
+        "important": true
+      }
+    },
+    "grammar": [
+      {
+        "element": "Comment",
+        "kind": "delimited",
+        "from": ";",
+        "to": null,
+        "escape": null,
+        "stop_at_eol": true,
+        "regex": false,
+        "match_case": true
+      },
+      {
+        "element": "Comment",
+        "kind": "basic",
+        "text": "^\\s*#(?:.*\\S)?",
+        "regex": true,
+        "match_case": true
+      },
+      {
+        "element": "Keyword",
+        "kind": "basic",
+        "text": "^\\s*\\[[^\\]]*\\]",
+        "regex": true,
+        "match_case": true
+      },
+      {
+        "element": "Keyword",
+        "kind": "basic",
+        "text": "^\\s*(?:\"[^\"]*\"|[^=;\\[\\s][^=]*?)(?=\\s*=)",
+        "regex": true,
+        "match_case": true
+      },
+      {
+        "element": "Keyword",
+        "kind": "list",
+        "tokens": [
+          "dword",
+          "qword",
+          "hex"
+        ],
+        "regex": false,
+        "match_case": false
+      },
+      {
+        "element": "String",
+        "kind": "delimited",
+        "from": "\"",
+        "to": "\"",
+        "escape": "\\",
+        "stop_at_eol": true,
+        "regex": false,
+        "match_case": true
+      },
+      {
+        "element": "Operator",
+        "kind": "basic",
+        "text": "=",
+        "regex": false,
+        "match_case": true
+      }
+    ],
+    "line_weight": [],
+    "table": null
+  },
+  "compile_error": null
+}

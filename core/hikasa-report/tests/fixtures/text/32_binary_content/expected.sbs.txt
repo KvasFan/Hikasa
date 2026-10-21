@@ -1,0 +1,12 @@
+Text Compare
+Left: /l/left.bin (windows-1252, mixed, binary)
+Right: /r/right.bin (windows-1252, mixed, binary)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+Warning: binary_content: /l/left.bin: binary content (Png signature); the verdict is a binary comparison (D-12)
+Warning: binary_content: /r/right.bin: binary content (Png signature); the verdict is a binary comparison (D-12)
+
+  /l/left.bin                              /r/right.bin
+1 ‰PNG                                   1 ‰PNG
+2 \u{1a}                                 2 \u{1a}
+3 abc\u{0}def                          | 3 abc\u{0}deg

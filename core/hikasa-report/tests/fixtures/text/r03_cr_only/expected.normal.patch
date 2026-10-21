@@ -1,0 +1,14 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, cr)
+# Right: /r/right.txt (UTF-8, cr)
+# Mode: display: differences; ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+# Warning: patch_lossy_eol: left lines ending in a lone CR are written with LF in the patch (/l/left.txt)
+# Warning: patch_lossy_eol: right lines ending in a lone CR are written with LF in the patch (/r/right.txt)
+#
+2c2
+< two
+---
+> TWO
+3a4
+> four

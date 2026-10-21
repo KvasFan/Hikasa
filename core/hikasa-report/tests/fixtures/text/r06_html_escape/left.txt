@@ -1,0 +1,5 @@
+<script>alert("x")</script>
+a & b < c > d
+quote ' and " marks
+ctrl  and [31m escape
+plain line

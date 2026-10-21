@@ -1,0 +1,22 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (standard); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: important unless trivial
+
+Verdict:               unimportant differences only
+Ignore unimportant:    no
+Rows:                  5
+Same rows:             3
+Changed rows:          0
+Left-only rows:        1
+Right-only rows:       1
+Important rows:        0
+Unimportant rows:      2
+Sections:              2
+Important sections:    0
+Unimportant sections:  2
+Important lines:       added 0, deleted 0, changed 0, original 0
+Unimportant lines:     added 1, deleted 1, changed 0, original 0
+Left lines:            4
+Right lines:           4

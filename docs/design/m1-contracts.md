@@ -1198,6 +1198,7 @@ pub enum WarningCode {
     WorkBudgetExhausted, ClosenessBudgetExhausted, FormatMismatch, CapabilityMissing, UnknownConfigKey,
     UserFormatSkipped, PatchLossyEol, SymlinkLoop, EntryError, SwitchIgnored,
     AlignmentDegraded,   // wave 2: hikasa-text maps hikasa_diff::Alignment::diff_warnings() to it (§1.3.3)
+    PatchEncoding,       // wave 4: a patch written in UTF-8 for a file stored in another encoding (§1.7)
 }
 
 /// Outcome of a schema check.
@@ -5563,6 +5564,185 @@ pub enum ReportError {
 }
 ```
 
+#### 1.7.3 Accepted additions and deviations (wave 4)
+
+The wave-4 review of hikasa-report (adversarial and conformance findings, maintainer decisions 1–8) accepted the
+following public items, interpretations, deviations and amendments. They are part of the contract: hikasa-session
+(wave 4), hikasa-cli (wave 5) and the GUI build on them and must not assume the text above where an item here
+refines it. No signature of §1.7.2 changes; every change is additive. Amended normative text: §3.4 (report
+layouts), §4.3.2 (`display`), §4.3.3 (the JSON folder report, name escaping, the summary line), §6.2.7 and
+Appendix B (INV-RPT-2). Where §2.18 says that the patch renderers use exactly the Context view, item 1 below
+refines it for patches.
+
+**Additive API** (complete list beyond §1.7.2):
+
+```rust
+// Modules `folder`, `json` and `text` are public; the items below are also re-exported at the crate root,
+// except the DTO building blocks, which stay in `json`.
+pub enum ReportError {
+    // … the variants of §1.7.2, plus:
+    /// A word of the report vocabulary is not recognised (SCR-001; T11: the parsers live here).
+    #[error("invalid {option} {value:?} (expected {expected})")]
+    InvalidOption { option: &'static str, value: String, expected: &'static str },
+}
+impl Classify for ReportError;   // Unsupported → unsupported; InvalidOption → invalid_input; Io → io_error_kind;
+                                 // Json → internal
+// The vocabulary parsers (ASCII case-insensitive, `_` equals `-`, the SCR-001 prefixes accepted) and their names.
+impl DisplayMode { pub fn parse(word: &str, context_lines: u32) -> Result<DisplayMode, ReportError>;
+                   pub fn describe(self) -> String; }               // "all", "differences", "context (3 lines)", "same"
+impl Wrap { pub fn parse(word: &str) -> Result<Wrap, ReportError>; pub const fn as_str(self) -> &'static str; }
+impl OutputFormat { pub fn parse(word: &str) -> Result<OutputFormat, ReportError>;   // text, ansi, html, html-mono
+                    pub const fn name(self) -> &'static str; }
+impl PatchStyle { pub fn parse(word: &str, lines: u32) -> Result<PatchStyle, ReportError>;
+                  pub const fn as_str(self) -> &'static str; }
+impl TextLayout { pub fn parse(word: &str, patch: PatchStyle, lines: u32) -> Result<TextLayout, ReportError>;
+                  pub const fn name(self) -> &'static str; }       // the `layout` of ReportError::Unsupported
+impl FolderLayout { pub fn parse(word: &str) -> Result<FolderLayout, ReportError>;
+                    pub const fn name(self) -> &'static str; }
+impl FolderColumns { pub fn parse_list(list: &str) -> Result<FolderColumns, ReportError>;
+                     pub fn names(self) -> Vec<&'static str>; }
+pub fn parse_folder_mode(word: &str) -> Result<FolderMode, ReportError>;   // --folders always|structure|files-only
+pub const fn folder_mode_word(mode: FolderMode) -> &'static str;
+// Defaults (13-reports): DisplayMode::All; OutputFormat::Text { ansi: false }; FolderColumns SIZE | MODIFIED;
+// TextReportOptions = AnnotatedUnified { lines: 3 }, display All, ignore-unimportant off, line numbers, width 160,
+// character wrapping, plain text; FolderReportOptions = List, display (All, CompareStructure, iu off, suppress
+// off), SIZE | MODIFIED, plain text.
+impl Default for DisplayMode; impl Default for OutputFormat; impl Default for FolderColumns;
+impl Default for TextReportOptions; impl Default for FolderReportOptions;
+impl ReportMeta { #[must_use] pub fn with_title(self, title: impl Into<String>) -> ReportMeta; }   // --title
+/// Styling inputs that do not fit the `Copy` options: RPT-002 `html-custom`. API only in M1 (no CLI flag).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct HtmlStyle { pub custom_css: Option<String> }
+impl HtmlStyle { pub fn custom(css: impl Into<String>) -> HtmlStyle; }
+/// `render_text_report` with a style; returns the rendering's own warnings (`patch_lossy_eol`,
+/// `patch_encoding`), which the report header also shows.
+pub fn render_text_report_with(cmp: &TextComparison, opts: &TextReportOptions, meta: &ReportMeta,
+                               style: &HtmlStyle, out: &mut dyn Write) -> Result<Vec<Warning>, ReportError>;
+pub fn render_folder_report_with(cmp: &FolderComparison, opts: &FolderReportOptions, meta: &ReportMeta,
+                                 style: &HtmlStyle, out: &mut dyn Write) -> Result<(), ReportError>;
+pub mod json {
+    pub const TEXT_COMPARE_SCHEMA: &str = "hikasa.text_compare.v1";
+    pub const FOLDER_COMPARE_SCHEMA: &str = "hikasa.folder_compare.v1";
+    pub struct FormatJson { pub id: Option<String>, pub name: String, pub kind: &'static str,
+                            pub reason: Option<DetectReasonJson> }
+    impl FormatJson { pub fn new(format: &CompiledFormat, reason: Option<&DetectReason>) -> FormatJson; }
+    pub struct DetectReasonJson { pub reason: &'static str, pub id: Option<String>, pub mask: Option<String> }
+    impl TextCompareJson {
+        /// Sets `format.reason` and `detection`, which only the caller that chose the format knows.
+        pub fn with_detection(self, format: Option<&DetectReason>, left: Option<&DetectReason>,
+                              right: Option<&DetectReason>) -> TextCompareJson;
+    }
+    // Every DTO of §4.3.2 and §4.3.3 is a public struct with public fields, built by `new` constructors
+    // (TextDisplayJson, TextSideJson, TextRulesJson, FolderRulesJson, FolderDisplayJson, EntryJson, …).
+    pub struct FolderDisplayJson { /* …, */ pub toggles: Vec<&'static str> }   // additive field (item 6)
+    /// The JSON folder report: `schema` first, then the fields of FolderCompareJson (decision 4).
+    #[derive(Serialize)]
+    pub struct FolderReportJson<'a> { pub schema: &'static str, #[serde(flatten)] pub result: &'a FolderCompareJson }
+    impl<'a> FolderReportJson<'a> { pub fn new(result: &'a FolderCompareJson) -> FolderReportJson<'a>; }
+}
+```
+
+`WarningCode::PatchEncoding` (`"patch_encoding"`, §1.1.11) is added in hikasa-core for item 2.
+
+**Amendments (maintainer decisions 1–6).**
+
+1. *Exact patches (decision 1).* A row is written as patch context only when its two lines are byte-for-byte
+   identical: a `Same` row whose two terminators are equal and whose written BOM (item 2) is the same. Every other
+   row is written as its deletion and its insertion, whatever the rules say (a `Same` row whose endings differ
+   under D-04, or whose last line lacks the final newline on one side only, is a change of the patch). Hunks are
+   the maximal runs of such rows ("groups"), clustered when at most `2 × N` identical rows apart and widened by
+   `N` identical rows on each side (clamped to the file); with line endings compared and no BOM difference this
+   is exactly the Context view of §2.18. Inside a hunk each group is written as all its left lines, then all its
+   right lines. Context lines (both parts of a context diff included) are written from the left file. The normal
+   diff writes one command per group with `N = 0` (one per differing row for a `lines_independent` format, like
+   its sections, §2.17.2). Consequences: `\ No newline at end of file` only follows the true last line of a side
+   and never sits in the middle of a hunk (a `-` line so marked can only be followed by `+` lines); every style
+   (unified, annotated unified, context, normal) reproduces the right file byte for byte when applied to the left
+   file, under any rules; the patch of a comparison that is "same" under the rules but not byte-identical has
+   hunks. Ignore Unimportant drops the clusters without an important row (the patch then deliberately does not
+   carry them); the rows of the kept clusters are exact. A hunk's annotation is ` important` when it holds an
+   important row, else ` unimportant` (also for a hunk of ending-only differences); ANSI colours them red and
+   blue. In a context diff an empty range after line `l` is written `l+1,l` (`0` at the start): patch programs
+   read a lone non-zero number as one line, so the `diff -c` form `l` makes them reject a zero-context deletion.
+2. *Encodings (decision 2).* For a UTF-8 file with a BOM, the patch writes U+FEFF at the start of line 1
+   wherever line 1 appears (context, deletion or insertion), so the patch applies to the bytes. Other sources
+   stay UTF-8 text, and the rendering warns `patch_encoding` once per affected side: a side stored in another
+   encoding than UTF-8 (windows-1252, UTF-16, …) or decoded lossily (`malformed > 0`), whenever the files
+   differ (the patch has a hunk, or the bytes differ: two files whose text is the same in different encodings
+   give no hunk); and a side holding nothing but a UTF-8 BOM when the other side does not (no line can carry
+   it). Lone-CR endings and artificial breaks are still written as LF with `patch_lossy_eol` (a context line
+   counts for both sides); the patch then reproduces the right file with those endings as LF.
+3. *P-RPT-1 oracle (decision 3).* `diffy` is used only for context ≥ 1: for a zero-context hunk with an empty
+   new range it starts its search one line early and can delete the wrong one of two duplicate lines from a
+   correct patch. Zero-context patches, and every style at every context, are checked with position-exact,
+   byte-exact appliers written in the tests; the property is extended to the default rules (line endings not
+   compared, or compared) with random LF, CRLF and lone-CR endings, missing final newlines and BOMs; GNU patch
+   (no fuzz, every style) and `git apply` (unified) check a fixed corpus when on PATH (a missing tool is
+   reported on stderr; `HIKASA_REQUIRE_PATCH_TOOLS=1` makes it a failure). The failing seeds are committed in
+   `tests/proptest-regressions/props.txt`, and the review's two shrunk cases are explicit regression tests.
+4. *JSON (decision 4).* `display.toggles` of the text document is always an array: the toggle bits in toggles
+   mode, else the categories the mode shows (`all`: `same`, `left_orphans`, `right_orphans`, `differences`;
+   `mismatches` and `context`: the three difference categories, `context` adding the same rows around them;
+   `matches`: `same`; `none`: `[]`). The field keeps its type `Option<Vec<&str>>`; `new` always sets it and
+   `None` is written as `[]`. `display.lines` stays `null` except for `context`. The JSON folder *report*
+   (`FolderLayout::Json`) writes `"schema": "hikasa.folder_compare.v1"` as its first key (§4.1 rule 10); under
+   `--json` the envelope carries the schema and `result` is the bare `FolderCompareJson`.
+5. *Escaping (decision 5).* Bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A–U+202E,
+   U+2066–U+2069) are escaped (`\u{202e}`) wherever control characters are: names, headers, side-by-side text and
+   HTML, ANSI patches. Names (and flatten-mode folders) in the folder list and side-by-side reports also escape a
+   backslash as `\\`, so every printed name maps back to exactly one name; symbolic-link targets and header values
+   escape control and bidirectional characters only. With ANSI colours, patches escape the control (except TAB)
+   and bidirectional characters of the file content, as the side-by-side report does; plain patches keep the
+   bytes.
+6. *Side-by-side (decision 6).* Widths are `unicode-width` string widths of character clusters: a base character
+   with its combining marks, variation selectors, emoji modifiers, tag characters and ZWJ-joined successors, and
+   a pair of regional indicators, is one unit of the string's width that never straddles a break (no new
+   dependency). Side-by-side text and HTML number lines by source line (`TextDocument::physical_line`): the pieces
+   of a line broken by a characters-per-line limit show that line's number. The folder side-by-side shows blank
+   columns for an entry of which only the name is known (name-only, D-45, folders included; or a failed stat:
+   the side's error flag with no time, no attributes and size 0, which is all the scanner keeps), and a blank
+   Size for a folder with an error on that side (its listing failed: the total is unknown).
+
+**Accepted interpretations and deviations.**
+
+- *Patch header.* Patches start with the RPT-004 header, every line prefixed `# ` (patch programs skip leading
+  text; no title or path can read as patch syntax); the generation line is `Generated: <RFC 3339 with offset> by
+  <generator>`, omitted when `generated_at` is `None`. `Mode:` shows the patch's own context (`display: context (N
+  lines)`; the normal diff `display: differences`).
+- *Ignore Unimportant in patches:* hunks and normal-diff commands without an important row are dropped (item 1).
+- *CR and artificial breaks* are written as LF, with `patch_lossy_eol` (item 2).
+- *JSON `display`:* `lines` is `null` outside `context`; `toggles` per item 4. The folder DTO's additive
+  `display.toggles` lists the categories of the filter (never null). JSON `line` numbers and section line
+  ranges stay logical (1-based indices of the document's lines), so that they agree with each other and with the
+  rows; only the human side-by-side views show source lines under a characters-per-line limit (item 6).
+- *`~` marker and summary line.* Text side-by-side `~` marks an unimportant change (` ` under Ignore
+  Unimportant); the folder list `~` marks a "different" item whose differences are all unimportant (`=` under
+  Ignore Unimportant, where it counts as same). The list's `#` summary line counts files (the `files` counters of
+  the statistics) and is left out when the comparison holds no item. It is report output on stdout: `--quiet`
+  keeps it (CLI invariant 3 of §1.9.2 wins over the former "`--quiet` omits it" of §4.3.3, amended).
+- *`HtmlStyle`* carries the custom CSS (RPT-002 `html-custom`), embedded after the built-in stylesheet with `</`
+  neutralised and control characters CSS-escaped; API only in M1 (no CLI flag).
+- *Defaults* as listed in the API block.
+- *Goldens* compare inputs with the Everything Else format only (no hikasa-formats dev-dependency, §0.5);
+  grammar-dependent paths (another tab size, `lines_independent` normal diffs, the `format: <name>` wording,
+  `format_mismatch`) are covered by hikasa-session Service tests and the wave-5 CLI goldens. The goldens hold
+  Unix host paths and are `#[cfg_attr(not(unix), ignore)]` elsewhere (visible as ignored). ANSI goldens:
+  `expected.annotated.ansi`, `expected.context.ansi`, `expected.sbs.ansi.txt` (three text cases) and
+  `expected.list.ansi.txt`, `expected.sbs.ansi.txt` (two folder cases).
+- *TOML-subset reader.* The report tests read the hikasa-folder `tree.toml` fixtures with a small reader of the
+  TOML subset they use (the crate has no `toml` dependency).
+- *Read guard (§3.4, §5.2).* The folder renderers collect the visible rows by one traversal under one read
+  guard, then format them reading the model in chunks of 4096 rows, each under its own guard. Accepted for M1:
+  the traversal is linear and a finished comparison has no writer waiting.
+- *No `Ctl` (§5.3, §5.4 vs §1.7.2).* The renderers take no cancel token and no progress sink, as §1.7.2
+  specifies, so a report is not cancellable and reports no `reporting` progress, contrary to the general text of
+  §5.3 and §5.4. Accepted for M1: rendering is one linear pass over a finished model, and `--output` writes
+  atomically, so no partial report appears. A `Ctl`-taking variant (with a `Cancelled` error) is additive later.
+- *Module tree.* Beyond §1.7.1: the private modules `cells.rs` (display cells, cluster widths, the side-by-side
+  wrapper), `style.rs` (SGR sequences, the stylesheets, the HTML skeleton) and `text/patch.rs` (the hunk planner
+  of item 1, ranges, line writing and the patch warnings, shared by the three patch writers).
+- *Not in M1:* the XML dump, interleaved layouts, printing and links to file reports (13-reports).
+
 ### 1.8 hikasa-session
 
 **Purpose.** The service API used identically by the CLI and the GUI (ARCH-013). Also: configuration location
@@ -8247,36 +8427,54 @@ implements it. Only `hikasa-session` knows both crates (ARCH-010/011).
 
 ```
 render_text_report(cmp, opts, meta, out):
-  header (RPT-004): title; "Generated: <meta.generated_at RFC 3339 with offset>" (omitted if None);
+  header (RPT-004): title; "Generated: <meta.generated_at RFC 3339 with offset> by <generator>" (omitted if None);
                     "Left: <spec> (<encoding>, <eol>)", "Right: …"; "Mode: <meta.mode>"; "Rules: <meta.filters>";
-                    per-side errors (meta.errors) and per-side warnings
-  layout:
-    AnnotatedUnified{n} / Patch(Unified{n}) → view = cmp.view(Context{n}); each maximal visible run is a hunk;
+                    per-side errors (meta.errors) and per-side warnings (the comparison's and the rendering's);
+                    in patches every header line starts with "# "
+  layout (patches as amended in wave 4, §1.7.3 item 1):
+    identical(row) = state Same, equal terminators, same written BOM (byte-for-byte equal lines);
+    groups = maximal runs of rows that are not identical; hunks = groups clustered when ≤ 2n identical rows apart,
+        widened by n identical rows each side (clamped); iu drops the clusters without an important row
+    AnnotatedUnified{n} / Patch(Unified{n}) → one "@@" hunk per cluster;
         header "@@ -l,s +l,s @@" (",1" omitted when s = 1; when s = 0, l = the line before),
-        annotated: suffix " important" or " unimportant"; lines ' '/'-'/'+' + text + original terminator
-        (CRLF kept; CR-only → LF with warning patch_lossy_eol); "\ No newline at end of file" after a
-        line whose ending is None.
-    Patch(Context{n}) → "***************", "*** a,b ****" / "--- c,d ----", markers "! " "- " "+ " "  "
-    Patch(Normal)     → per section: "<l>a<r1>,<r2>" | "<l1>,<l2>d<r>" | "<l1>,<l2>c<r1>,<r2>", "< " / "---" / "> "
+        annotated: suffix " important" or " unimportant"; identical rows ' ' (from the left file), each group
+        as its '-' lines then its '+' lines; text + original terminator (CRLF kept; lone CR and artificial
+        break → LF with warning patch_lossy_eol); U+FEFF before line 1 of a UTF-8 file with a BOM;
+        "\ No newline at end of file" after a line whose ending is None (always the last line of its side);
+        patch_encoding for a non-UTF-8 or lossily decoded side when the files differ (§1.7.3 item 2)
+    Patch(Context{n}) → "***************", "*** a,b ****" / "--- c,d ----" (empty range after line l: "l+1,l",
+        at the start "0"), markers "! " (group with lines on both sides) "- " "+ " "  " (identical rows, from the
+        left file); a part without group lines is written as its range line only
+    Patch(Normal)     → per group (n = 0; per differing row for lines_independent formats):
+        "<l>a<r1>,<r2>" | "<l1>,<l2>d<r>" | "<l1>,<l2>c<r1>,<r2>", "< " / "---" / "> "
+    every patch, applied to the left file, reproduces the right file byte for byte (INV-RPT-2)
     SideBySide (text) → columns: line no | left text | marker | line no | right text; marker ' ' same, '|'
         changed, '~' unimportant change, '<' left only, '>' right only; tabs expanded to the format's tab size;
-        widths via unicode-width; wrap per Wrap; hidden runs → "      … N lines hidden …"
+        widths via unicode-width (string width of character clusters); control and bidirectional formatting
+        characters escaped; source line numbers (physical_line); wrap per Wrap; hidden runs →
+        "      … N lines hidden …"
     SideBySide (HTML) → one self-contained document; <style> embedded; classes .imp/.unimp/.lo/.ro/.gap;
         inline ranges as <span class="imp|unimp">; every text node HTML-escaped; legend table; no scripts,
         no external resources; no ids derived from memory addresses or time
     Summary           → the counts of TextStats + verdict (text or HTML)
     Statistics        → §2.17.4 CSV
-render_folder_report(cmp, opts, meta, out):          (reads through cmp.read(), in chunks of 4096 rows)
-    List       → "<marker> <path>[/]" per visible row (§4.3.3), then "# <summary>" unless empty
+render_folder_report(cmp, opts, meta, out):   (collects the visible rows under one cmp.read() guard, then formats
+                                               them reading the model in chunks of 4096 rows; §1.7.3)
+    List       → "<marker> <path>[/]" per visible row (§4.3.3; names escaped, "\" as "\\"), then "# <summary>"
+                 unless empty
     SideBySide → header; per visible row: indent(depth) name | columns… | marker | name | columns…
-                 (folder Size = the subtree total of that side, FC-040)
+                 (folder Size = the subtree total of that side, FC-040; blank columns for name-only and
+                 stat-failed entries, a blank Size for a folder whose listing failed on that side)
     Summary    → FolderStats per category (13-reports: same, left/right newer, left/right orphan, different, …)
-    Json       → serde_json::to_writer_pretty(folder_compare_json(cmp, &opts.display))
+    Json       → serde_json::to_writer_pretty(json::FolderReportJson::new(&folder_compare_json(cmp, &opts.display)))
+                 ("schema" first, then the result fields), followed by "\n"
 ReportMeta::for_text / for_folder build `mode` and `filters` with fixed English wording from the options and
 rules (deterministic; no locale).
 ```
 
-Determinism (INV-RPT-1): byte-identical output for identical `(cmp, opts, meta)`. RPT-011 is satisfied
+Determinism (INV-RPT-1): byte-identical output for identical `(cmp, opts, meta)`. Exactness (INV-RPT-2): every
+patch reproduces the right file from the left one; what it cannot carry is warned (`patch_lossy_eol`,
+`patch_encoding`), and with Ignore Unimportant the dropped hunks are by design. RPT-011 is satisfied
 because the GUI's "Report…" command calls the same functions through `Service::render_*`.
 
 ### 3.5 CLI command → API, and rules precedence
@@ -8442,7 +8640,7 @@ object (an `ErrorReport`).
   "sections": [
     { "id": 0, "kind": "change", "importance": "important", "rows": [10, 14], "left_lines": [11, 14], "right_lines": [11, 15] }
   ],
-  "display": { "mode": "mismatches" },
+  "display": { "mode": "mismatches", "lines": null, "toggles": ["left_orphans", "right_orphans", "differences"] },
   "items": [
     { "type": "gap", "rows": [0, 10] },
     { "type": "row", "row": 10, "state": "changed", "importance": "important",
@@ -8457,7 +8655,10 @@ object (an `ErrorReport`).
 ```
 
 `display` defaults to `mismatches` for JSON, unless `--display` or `--context` is given. Human output defaults to
-the annotated unified diff with `context_lines` (default 3).
+the annotated unified diff with `context_lines` (default 3). `display.lines` is set for `context` only (else
+`null`); `display.toggles` is always an array: the shown categories (§1.7.3 item 4). `line` numbers and section line
+ranges are logical (1-based indices of the document's lines); they equal the source line numbers unless a
+characters-per-line limit broke lines (the human side-by-side views show source lines, §1.7.3 item 6).
 
 #### 4.3.3 `hikasa.folder_compare.v1` (D-29)
 
@@ -8468,7 +8669,8 @@ the annotated unified diff with `context_lines` (default 3).
   "rules": { "schema_version": 1, "criteria": { "…": "…" }, "alignment": { "…": "…" }, "filters": { "…": "…" }, "handling": { "…": "…" } },
   "case": "sensitive",
   "complete": true,
-  "display": { "filter": "differences", "folders": "compare_structure", "ignore_unimportant": false, "suppress_filters": false },
+  "display": { "filter": "differences", "folders": "compare_structure", "ignore_unimportant": false, "suppress_filters": false,
+               "toggles": ["left_orphans", "right_orphans", "left_newer", "right_newer", "differences"] },
   "verdict": "differences",
   "stats": { "files":   { "same": 120, "left_newer": 0, "right_newer": 1, "different": 1, "left_orphan": 1, "right_orphan": 1, "unknown": 0, "error": 0, "filtered": 3 },
              "folders": { "same": 10, "left_newer": 0, "right_newer": 0, "different": 2, "left_orphan": 0, "right_orphan": 0, "unknown": 0, "error": 0, "filtered": 0 },
@@ -8514,11 +8716,16 @@ lists the categories whose descendant count (files and folders, same `iu`) is no
 `flags` are `NodeFlags` names; `errors` are `{ "side": "left"|"right"|null, "error": ErrorReport }`. In a side
 object, a folder's `size` is the total size of the files below it on that side (FC-040), `stat_skipped` marks a
 name-only entry (D-45), and `dir` is the containing folder in flatten mode (else `null`). Node ids are never
-printed.
+printed. `display.toggles` (additive) lists the categories the filter shows. The JSON folder *report*
+(`--report json`, `FolderLayout::Json`) is this document with `"schema": "hikasa.folder_compare.v1"` as its first
+key (§4.1 rule 10); under `--json` the envelope carries the schema and `result` is the document above (§1.7.3
+item 4).
 
-Folders end with `/`. Control characters in names are escaped (`\n`, `\t`, `\u{…}`). The last line is
-`# <n> same, <n> left newer, <n> right newer, <n> different, <n> left only, <n> right only, <n> unknown, <n> errors`,
-and `--quiet` omits it.
+Folders end with `/`. Control and bidirectional formatting characters in names are escaped (`\n`, `\t`, `\u{…}`),
+and a backslash is written `\\`, so every printed path names exactly one item (§1.7.3 item 5). The last line
+counts files: `# <n> same, <n> left newer, <n> right newer, <n> different, <n> left only, <n> right only, <n>
+unknown, <n> errors`; it is left out when the comparison holds no item. *Amended in wave 4:* `--quiet` keeps it
+(CLI invariant 3: `--quiet` never changes stdout).
 
 ```
 !  src/
@@ -9184,10 +9391,18 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 - **Golden fixtures:** these reuse the text and folder cases. Text cases produce `expected.annotated.diff`,
   `expected.unified.patch`, `expected.context.patch`, `expected.normal.patch`, `expected.sbs.txt`,
   `expected.sbs.html`, `expected.summary.txt` and `expected.stats.csv`. Folder cases produce `expected.list.txt`,
-  `expected.sbs.txt`, `expected.sbs.html`, `expected.summary.txt` and `expected.json`.
+  `expected.sbs.txt`, `expected.sbs.html`, `expected.summary.txt` and `expected.json`. *Wave 4:* also
+  `expected.summary.html` and the text `expected.json`; ANSI goldens for some cases (§1.7.3); the goldens are
+  ignored, visibly, off Unix (they hold Unix host paths).
 - **Properties:**
-  - P-RPT-1: `diffy::apply(left, parse(unified(cmp))) == right` for generated LF documents with
-    `compare_line_endings = true` and `ignore_unimportant = false`.
+  - P-RPT-1: every patch reproduces the right side from the left one. (a) Generated LF documents with
+    `compare_line_endings = true` and `ignore_unimportant = false`: `diffy::apply(left, parse(unified(cmp))) ==
+    right` for context ≥ 1 (wave 4: `diffy` mis-places zero-context deletions of duplicate lines), and every style
+    at every context with position-exact, byte-exact appliers written in the tests. (b) *Wave 4:* the default
+    rules (line endings not compared, or compared) with random LF, CRLF and lone-CR endings, missing final
+    newlines and BOMs; byte-exact for every style (lone CR as LF, warned), and `\ No newline at end of file` only
+    after the last line of a side. A fixed corpus is also applied with GNU patch (no fuzz, every style) and `git
+    apply` (unified) when they are on PATH.
   - P-RPT-2: rendering twice gives identical bytes.
   - P-RPT-3: the HTML is well-formed according to a small tag-balance and escaping checker.
 - **Unit tests:** HTML, CSV and control-character escaping; hunk header formatting (`,1` omitted; `s = 0`);
@@ -9705,6 +9920,7 @@ Implementation notes for preset authors (normative):
 | INV-FOLDER-10 | ignore-unimportant monotonicity: a difference category under `iu = true` is a difference under `iu = false`; Unknown/Error do not depend on `iu` | P-FOLDER-8 |
 | INV-EVT-1..3 | `Started` first and `Finished` last; `FolderListed{F}` precedes every event naming a child of F; every event is sent after its mutation is visible, so re-reading the named nodes, the children of listed folders and the ancestors of both (`TreeRead::ancestors`; amended in §1.6.8 item 21: ancestors' counters change without being named) at each event ends with exactly the final tree | P-FOLDER-4 |
 | INV-RPT-1 | reports are byte-identical for identical inputs | P-RPT-2 |
+| INV-RPT-2 | a patch applied to the left file reproduces the right file byte for byte (lone CR and artificial breaks as LF with `patch_lossy_eol`; other encodings warned `patch_encoding`; with Ignore Unimportant, the hunks without an important row are left out) | P-RPT-1, `tests/apply.rs` (wave 4) |
 | INV-CLI-1..6 | the CLI invariants of §1.9.2 | §6.3 |
 | INV-IPC-1..4 | one immediate response per request; at most one `ViewClosed` per wait; frames ≤ `MAX_FRAME_LEN`; an unknown `type` or a body that does not decode is answered with the request's own id (D-46) | IPC tests |
 | INV-BUDGET-1 | the bytes held by content tests never exceed the `ByteBudget` capacity | `ByteBudget` tests |

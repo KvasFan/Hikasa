@@ -1,0 +1,13 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name         Size  Modified                 Name         Size  Modified
+empty/          0  2026-01-01T00:00:00Z  =  empty/          0  2026-01-01T00:00:00Z
+src/           25                        =  src/           25
+  lib/         13                        =    lib/         13
+    util.rs    13  2026-01-01T00:00:00Z  =      util.rs    13  2026-01-01T00:00:00Z
+  main.rs      12  2026-01-01T00:00:00Z  =    main.rs      12  2026-01-01T00:00:00Z
+a.txt           5  2026-01-01T00:00:00Z  =  a.txt           5  2026-01-01T00:00:00Z

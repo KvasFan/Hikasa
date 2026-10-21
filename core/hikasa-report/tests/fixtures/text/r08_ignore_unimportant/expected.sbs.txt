@@ -1,0 +1,11 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: differences; ignore unimportant: yes
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: whitespace, case; line endings: ignored; orphan lines: always important
+
+  /l/left.txt                              /r/right.txt
+      … 4 lines hidden …
+5 value = 1                            | 5 value = 2
+      … 2 lines hidden …
+                                       > 8 new line

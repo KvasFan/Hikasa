@@ -1,0 +1,6 @@
+{
+  "description": "A size filter: small files filtered after stat",
+  "source": "hikasa-folder/23_filter_size",
+  "suppress_filters": true,
+  "columns": "size"
+}

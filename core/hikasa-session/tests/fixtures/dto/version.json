@@ -1,0 +1,22 @@
+{
+  "version": "<VERSION>",
+  "ipc_protocol": 1,
+  "schemas": [
+    "hikasa.quick.v1",
+    "hikasa.text_compare.v1",
+    "hikasa.folder_compare.v1",
+    "hikasa.format_list.v1",
+    "hikasa.format_show.v1",
+    "hikasa.format_detect.v1",
+    "hikasa.format_tokens.v1",
+    "hikasa.vfs_list.v1",
+    "hikasa.vfs_stat.v1",
+    "hikasa.vfs_cat.v1",
+    "hikasa.gui_open.v1",
+    "hikasa.gui_ping.v1",
+    "hikasa.gui_list.v1",
+    "hikasa.gui_close.v1",
+    "hikasa.gui_quit.v1",
+    "hikasa.version.v1"
+  ]
+}

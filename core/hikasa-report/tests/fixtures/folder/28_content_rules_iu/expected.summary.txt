@@ -1,0 +1,38 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: yes; suppress filters: no
+Rules: size, timestamps (2 s), content: rules; filters: none
+Warning: rules_size_limit: compared by bytes
+
+Verdict:            differences
+Ignore unimportant: yes (unimportant differences count as same)
+Complete:           yes
+
+Items:
+  Category     Files  Folders
+  Same             4        1
+  Left newer       0        0
+  Right newer      0        0
+  Different        1        0
+  Left only        0        0
+  Right only       0        0
+  Unknown          0        0
+  Errors           1        0
+  Filtered         0        0
+
+Totals:
+           Left  Right
+  Files       6      6
+  Folders     1      1
+  Bytes      46     36
+
+Content comparisons:
+  Result                        Pairs
+  Binary same                       1
+  Rules same                        1
+  Unimportant differences only      2
+  Important differences             1
+  Binary different                  0
+  Errors                            1
+  Not compared                      0

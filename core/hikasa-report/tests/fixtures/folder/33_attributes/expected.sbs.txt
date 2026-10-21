@@ -1,0 +1,10 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), attributes (HR), owner, group; filters: none
+
+Name             Attributes  Owner  Group     Name             Attributes  Owner  Group
+dos_differs.txt  AH                        !  dos_differs.txt  A
+dos_ignored.txt  AS                        =  dos_ignored.txt  A
+owner.txt        -rw-r--r--   1000    100  !  owner.txt        -rw-r--r--   1001    101

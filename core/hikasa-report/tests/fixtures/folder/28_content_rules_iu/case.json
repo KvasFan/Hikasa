@@ -1,0 +1,7 @@
+{
+  "description": "The same with ignore-unimportant: unimportant-only pairs are same; verdict and statistics change",
+  "source": "hikasa-folder/28_content_rules",
+  "ignore_unimportant": true,
+  "columns": "status",
+  "mono": true
+}

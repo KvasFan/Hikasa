@@ -1,0 +1,17 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+# Warning: lossy_decode: /l/left.txt: 1 malformed byte sequence(s) replaced with U+FFFD while decoding as UTF-8
+# Warning: patch_encoding: the left file is not valid UTF-8 (1 malformed sequence replaced with U+FFFD); the patch is written in UTF-8 and may not apply to its bytes (/l/left.txt)
+#
+*** /l/left.txt	2026-10-19T13:12:00Z
+--- /r/right.txt	2026-10-19T14:00:00Z
+***************
+*** 1,2 ****
+  café crème brûlée café crème brûlée café crème brûlée café crème brûlée 
+! tail�
+--- 1,2 ----
+  café crème brûlée café crème brûlée café crème brûlée café crème brûlée 
+! tail

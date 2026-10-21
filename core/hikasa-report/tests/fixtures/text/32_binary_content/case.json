@@ -1,0 +1,4 @@
+{
+  "description": "Binary content (PNG signature, NUL byte): binary_content warning; control characters escaped",
+  "source": "hikasa-text/32_binary_content"
+}

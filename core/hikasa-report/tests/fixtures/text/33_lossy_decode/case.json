@@ -1,0 +1,5 @@
+{
+  "description": "Lossy UTF-8 decoding: lossy_decode warning, U+FFFD in the text",
+  "source": "hikasa-text/33_lossy_decode",
+  "display": "matches"
+}

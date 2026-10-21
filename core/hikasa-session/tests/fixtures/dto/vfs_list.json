@@ -1,0 +1,54 @@
+{
+  "spec": "<TMP>/work/v",
+  "entries": [
+    {
+      "name": "a.bin",
+      "name_lossy": false,
+      "kind": "file",
+      "size": 4,
+      "mtime": "2026-10-21T12:00:00Z",
+      "ctime": "<CTIME>",
+      "attrs": null,
+      "mode": 416,
+      "permissions": "-rw-r-----",
+      "uid": "<UID>",
+      "gid": "<GID>",
+      "link_target": null,
+      "followed": false,
+      "crc32": null
+    },
+    {
+      "name": "b.txt",
+      "name_lossy": false,
+      "kind": "file",
+      "size": 6,
+      "mtime": "2026-10-21T12:00:00Z",
+      "ctime": "<CTIME>",
+      "attrs": null,
+      "mode": 416,
+      "permissions": "-rw-r-----",
+      "uid": "<UID>",
+      "gid": "<GID>",
+      "link_target": null,
+      "followed": false,
+      "crc32": null
+    },
+    {
+      "name": "sub",
+      "name_lossy": false,
+      "kind": "dir",
+      "size": 0,
+      "mtime": "2026-10-21T12:00:00Z",
+      "ctime": "<CTIME>",
+      "attrs": null,
+      "mode": 488,
+      "permissions": "drwxr-x---",
+      "uid": "<UID>",
+      "gid": "<GID>",
+      "link_target": null,
+      "followed": false,
+      "crc32": null
+    }
+  ],
+  "errors": []
+}

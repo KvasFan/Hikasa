@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), name case, attributes (R), permissions, content: rules; filters: none; case-insensitive names
+
+Name           Attributes    Status     Name           Attributes
+attrs.txt      R           ! different  attrs.txt      A
+Case.txt                   ! different  case.txt
+perm.txt       -rw-r--r--  ! different  perm.txt       -rw-------
+time_size.txt              = same       time_size.txt

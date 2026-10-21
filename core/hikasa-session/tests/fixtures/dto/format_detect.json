@@ -1,0 +1,54 @@
+[
+  {
+    "file": "<TMP>/work/dir/x.c",
+    "format": {
+      "id": "c-cpp",
+      "name": "C, C++, C#, ObjC Source",
+      "kind": "text"
+    },
+    "reason": {
+      "reason": "mask",
+      "id": "c-cpp",
+      "mask": "*.c"
+    }
+  },
+  {
+    "file": "-",
+    "format": {
+      "id": "python",
+      "name": "Python Scripts",
+      "kind": "text"
+    },
+    "reason": {
+      "reason": "mask",
+      "id": "python",
+      "mask": "*.py"
+    }
+  },
+  {
+    "file": "<TMP>/work/README",
+    "format": {
+      "id": null,
+      "name": "Everything Else",
+      "kind": "text"
+    },
+    "reason": {
+      "reason": "fallback",
+      "id": null,
+      "mask": null
+    }
+  },
+  {
+    "file": "<TMP>/work/data.CSV",
+    "format": {
+      "id": "csv",
+      "name": "Comma Separated Values",
+      "kind": "table"
+    },
+    "reason": {
+      "reason": "mask",
+      "id": "csv",
+      "mask": "*.csv"
+    }
+  }
+]

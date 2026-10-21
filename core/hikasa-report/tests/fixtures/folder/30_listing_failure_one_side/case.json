@@ -1,0 +1,5 @@
+{
+  "description": "A failed listing: error folder, unknown children, verdict incomplete",
+  "source": "hikasa-folder/30_listing_failure_one_side",
+  "columns": "status,size"
+}

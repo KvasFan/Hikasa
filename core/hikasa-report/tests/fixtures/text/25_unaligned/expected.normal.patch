@@ -1,0 +1,25 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: differences; ignore unimportant: no
+# Rules: format: Everything Else; algorithm: unaligned (unaligned); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+6c6
+< line 05 of the sample
+---
+> line 05 of the sample, edited
+13c13
+< line 12 of the sample
+---
+> a brand new line
+16,20c16,19
+< line 15 of the sample
+< line 16 of the sample
+< line 17 of the sample
+< line 18 of the sample
+< line 19 of the sample
+---
+> line 16 of the sample
+> line 17 of the sample
+> line 18 of the sample
+> line 19 of the sample

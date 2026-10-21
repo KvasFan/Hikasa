@@ -1,0 +1,36 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: context (3 lines); ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+   /l/left.txt                              /r/right.txt
+ 1 line 01 of the report sample           1 line 01 of the report sample
+ 2 line 02 of the report sample           2 line 02 of the report sample
+ 3 line 03 of the report sample        [31m|[0m  3 line 03 of the report sample[31m, chang[0m
+                                       [31m|[0m    [31med[0m
+ 4 line 04 of the report sample           4 line 04 of the report sample
+ 5 line 05 of the report sample           5 line 05 of the report sample
+ 6 line 06 of the report sample           6 line 06 of the report sample
+ 7 line 07 of the report sample           7 line 07 of the report sample
+ 8 line 08 of the report sample           8 line 08 of the report sample
+ 9 [31mline 09 of the report sample[0m        [31m<[0m
+10 line [31m10[0m of the report sample        [31m|[0m  9 line [31mten[0m of the report sample
+11 line 11 of the report sample          10 line 11 of the report sample
+12 line 12 of the report sample          11 line 12 of the report sample
+13 line 13 of the report sample          12 line 13 of the report sample
+[90m      … 4 lines hidden …[0m
+18 line 18 of the report sample          17 line 18 of the report sample
+19 line 19 of the report sample          18 line 19 of the report sample
+20 line 20 of the report sample          19 line 20 of the report sample
+                                       [31m>[0m 20 [31minserted line A[0m
+                                       [31m>[0m 21 [31minserted line B[0m
+21 line 21 of the report sample          22 line 21 of the report sample
+22 line 22 of the report sample          23 line 22 of the report sample
+23 line 23 of the report sample          24 line 23 of the report sample
+[90m      … 3 lines hidden …[0m
+27 line 27 of the report sample          28 line 27 of the report sample
+28 line 28 of the report sample          29 line 28 of the report sample
+29 line 29 of the report sample          30 line 29 of the report sample
+30 line 30 of the report sample        [31m|[0m 31 line 30 of the report sample[31m, chang[0m
+                                       [31m|[0m    [31med[0m

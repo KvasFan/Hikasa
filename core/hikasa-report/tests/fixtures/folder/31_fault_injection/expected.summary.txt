@@ -1,0 +1,40 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: binary; filters: none
+Warning: entry_error: /l/locked: permission denied
+Warning: entry_error: /l/stat_fails.txt: permission denied
+Warning: entry_error: /r/locked: permission denied
+
+Verdict:            incomplete
+Ignore unimportant: no
+Complete:           yes
+
+Items:
+  Category     Files  Folders
+  Same             0        0
+  Left newer       0        0
+  Right newer      0        0
+  Different        0        0
+  Left only        0        0
+  Right only       0        0
+  Unknown          0        0
+  Errors           2        1
+  Filtered         0        0
+
+Totals:
+           Left  Right
+  Files       2      2
+  Folders     1      1
+  Bytes       1      2
+
+Content comparisons:
+  Result                        Pairs
+  Binary same                       0
+  Rules same                        0
+  Unimportant differences only      0
+  Important differences             0
+  Binary different                  0
+  Errors                            1
+  Not compared                      0

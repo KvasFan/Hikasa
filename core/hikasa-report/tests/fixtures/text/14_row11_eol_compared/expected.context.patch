@@ -1,0 +1,15 @@
+# Text Compare
+# Left: /l/left.c (UTF-8, lf)
+# Right: /r/right.c (UTF-8, mixed)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: compared; orphan lines: always important
+#
+*** /l/left.c	2026-10-19T13:12:00Z
+--- /r/right.c	2026-10-19T14:00:00Z
+***************
+*** 1,2 ****
+! x
+  y
+--- 1,2 ----
+! x
+  y

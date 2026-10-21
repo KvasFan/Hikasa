@@ -1,0 +1,4 @@
+{
+  "description": "UTF-16LE with BOM against UTF-8: rules same; encodings in the header",
+  "source": "hikasa-text/34_utf16_vs_utf8"
+}

@@ -1,0 +1,4 @@
+{
+  "description": "Unfollowed symlinks: names with `-> target`, link-target differences",
+  "source": "hikasa-folder/12_symlinks_unfollowed"
+}

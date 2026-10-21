@@ -1,0 +1,37 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; align NFC/NFD names
+
+Verdict:            no differences
+Ignore unimportant: no
+Complete:           yes
+
+Items:
+  Category     Files  Folders
+  Same             1        0
+  Left newer       0        0
+  Right newer      0        0
+  Different        0        0
+  Left only        0        0
+  Right only       0        0
+  Unknown          0        0
+  Errors           0        0
+  Filtered         0        0
+
+Totals:
+           Left  Right
+  Files       1      1
+  Folders     0      0
+  Bytes       1      1
+
+Content comparisons:
+  Result                        Pairs
+  Binary same                       0
+  Rules same                        0
+  Unimportant differences only      0
+  Important differences             0
+  Binary different                  0
+  Errors                            0
+  Not compared                      0

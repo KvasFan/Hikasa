@@ -1,0 +1,2 @@
+SourceFile,CompareFile,Total,IAdded,IDeleted,IChanged,IOriginal,UAdded,UDeleted,UChanged,UOriginal,Errors
+/l/left.txt,/r/right.txt,25,5,5,0,0,0,0,0,0,

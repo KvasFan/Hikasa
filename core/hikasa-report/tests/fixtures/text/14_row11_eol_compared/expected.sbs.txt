@@ -1,0 +1,9 @@
+Text Compare
+Left: /l/left.c (UTF-8, lf)
+Right: /r/right.c (UTF-8, mixed)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: compared; orphan lines: always important
+
+  /l/left.c                                /r/right.c
+1 x                                    | 1 x
+2 y                                      2 y

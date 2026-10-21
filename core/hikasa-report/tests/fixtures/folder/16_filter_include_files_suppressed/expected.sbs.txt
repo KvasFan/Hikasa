@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: yes
+Rules: size, timestamps (2 s); filters: *.c
+
+Name   Size  Modified                 Name   Size  Modified
+x/        1                        !  x/        2
+  y.c     1  2026-01-01T00:00:00Z  !    y.c     2  2026-01-01T00:00:00Z
+a.c       1  2026-01-01T00:00:00Z  =  a.c       1  2026-01-01T00:00:00Z
+a.h                                .  a.h

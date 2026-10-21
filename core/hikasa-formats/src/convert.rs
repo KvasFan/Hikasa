@@ -295,6 +295,8 @@ impl PrivateDir {
         input.len().hash(&mut seed);
         input.get(..input.len().min(4096)).hash(&mut seed);
         let seed = seed.finish();
+        // `mut` is only needed for the Unix permission bits below.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {

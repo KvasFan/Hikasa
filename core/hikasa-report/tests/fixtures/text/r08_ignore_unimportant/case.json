@@ -1,0 +1,6 @@
+{
+  "description": "The r07 inputs with ignore-unimportant: unimportant-only hunks and sections are dropped, unimportant rows look same",
+  "source": "text/r07_unimportant_mix",
+  "display": "mismatches",
+  "ignore_unimportant": true
+}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Text Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.sbs { width: 100%; table-layout: fixed; font-family: monospace; }
+table.sbs col.n { width: 5em; }
+table.sbs col.m { width: 1.5em; }
+table.sbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.3em; overflow-wrap: anywhere; }
+table.sbs td { vertical-align: top; padding: 0 0.3em; }
+table.sbs td.n { text-align: right; color: #808080; }
+table.sbs td.m { text-align: center; }
+table.sbs td.t { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.sbs tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+tr.imp td.t { background: #ffe8e8; }
+tr.unimp td.t { background: #e8eeff; }
+tr.lo td.t.l, tr.ro td.t.r, td.lo, td.ro { background: #f6e8fa; }
+tr.lo.imp td.t.l, tr.ro.imp td.t.r { color: #c00000; }
+tr.lo.unimp td.t.l, tr.ro.unimp td.t.r { color: #0030c0; }
+span.imp, td.imp { color: #c00000; background: #ffc8c8; }
+span.unimp, td.unimp { color: #0030c0; background: #c8d4ff; }
+span.repl, td.repl { color: #805000; background: #ffe8b0; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+td.x { background: #f2f2f2; }
+</style>
+</head>
+<body>
+<h1>Text Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.txt (UTF-8, lf)</td></tr>
+<tr><th>Right</th><td>/r/right.txt (UTF-8, lf)</td></tr>
+<tr><th>Mode</th><td>display: all; ignore unimportant: no</td></tr>
+<tr><th>Rules</th><td>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: regex &quot;\\$Id:[^$]*\\$&quot;; line endings: ignored; orphan lines: always important</td></tr>
+</table>
+<table class="legend">
+<tr><td class="imp">Important difference</td><td class="unimp">Unimportant difference</td><td class="lo">Orphan (one side only)</td><td class="repl">Replacement</td><td class="gap">Hidden lines</td></tr>
+</table>
+<table class="sbs" style="tab-size:4">
+<colgroup><col class="n"><col class="t"><col class="m"><col class="n"><col class="t"></colgroup>
+<thead><tr><th></th><th>/l/left.txt</th><th></th><th></th><th>/r/right.txt</th></tr></thead>
+<tbody>
+<tr class="unimp"><td class="n">1</td><td class="t l">$Id: 1<span class="unimp">2</span> $</td><td class="m">~</td><td class="n">1</td><td class="t r">$Id: 1<span class="unimp">3</span> $</td></tr>
+<tr><td class="n">2</td><td class="t l">body</td><td class="m"> </td><td class="n">2</td><td class="t r">body</td></tr>
+</tbody>
+</table>
+</body>
+</html>

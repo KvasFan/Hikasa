@@ -97,6 +97,67 @@
   running instance or by hand are detected (file watch) and reloaded with a notice
   ("Session changed on disk. Reopen?").
 
+### 5.1 M1 implementation (binding interpretation; contract §1.8.2, §2.12.4, §2.22; D-21, D-25, D-31, D-49)
+
+**Configuration folder.** Chosen in this order (`hikasa_session::resolve_config_dir`):
+
+1. `--config-dir <dir>` (made absolute against the current directory; `.` components are
+   dropped);
+2. portable mode: the folder of the executable, when `hikasa-portable.toml` exists there;
+3. the per-user default: `$XDG_CONFIG_HOME/hikasa` when `XDG_CONFIG_HOME` is an absolute
+   path, else `~/.config/hikasa` (Linux and other Unix systems);
+   `~/Library/Application Support/Hikasa` (macOS); `%APPDATA%\Hikasa` (Windows). Without
+   the needed home or application-data folder the command fails ("cannot determine the
+   configuration folder").
+
+A configuration folder that equals the per-user default keeps the default IPC endpoint;
+any other folder gets its own endpoint and single-instance lock (D-47,
+`01-architecture.md` §5.1).
+
+**Cache folder.** Next to explicit and portable configurations it is `<config>/cache`.
+For the per-user configuration it is `$XDG_CACHE_HOME/hikasa` (absolute values only),
+else `~/.cache/hikasa` (Linux and other Unix systems), `~/Library/Caches/Hikasa`
+(macOS), `%LOCALAPPDATA%\Hikasa\cache` (Windows); when the needed folder is unknown,
+`<temp>/hikasa-cache`. M1 uses it for one thing: `hikasa gui open -` spools standard
+input to `<cache>/stdin/<n>/<name>` (`<name>` is the file name of `--stdin-name`, else
+`stdin.txt`; `<n>` is the first free number, so concurrent invocations never share a
+file) and sends that absolute path to the GUI, which has another current directory and
+no access to the CLI's standard input; with `--wait` the file and its folder are deleted
+after the view closes (D-49).
+
+**Read-only commands never create either folder.** Missing files mean defaults.
+
+**`options.toml` (D-31).** A missing file means defaults. A `schema_version` newer than
+this build supports is an error (SES-052); an older one is read as it is. Unknown keys
+inside the top-level sections of `15-options-reference.md` (`startup`, `tabs`,
+`appearance`, `text_editing`, `next_difference`, `backups`, `file_operations`,
+`archive_types`, `commands`, `open_with`, `tweaks`) are ignored silently, because M2 writes
+the whole file and M1 reads only a few keys; with `--verbose` every ignored key is logged
+(a log line, not a warning). An unknown top-level section (usually a typo) produces the
+warning `unknown_config_key`. A TOML syntax error or a value of the wrong type or range in
+a key that M1 reads is an error. M1 never writes `options.toml`, so every key it does not
+use is preserved. The keys read in M1 are listed in `15-options-reference.md` ("Keys read
+in M1"); among them `[tweaks.file_operations] content_memory_budget_mib`, the memory budget
+of content tests in folder comparisons (D-25).
+
+**File formats (SES-051, FF-004).** The registry is the built-in formats in their
+canonical order, merged with `formats/*.toml` (sorted by file name; `order.toml` is not a
+format). A user format whose id equals a built-in's replaces it in place; a new id is
+appended (sorted by id). A user file that cannot be read or parsed, whose id is not its
+file name, whose mask does not compile, or whose id another user file took, is skipped
+with the warning `user_format_skipped` — the built-ins and every other format stay usable,
+and `format list --json` shows the warnings. Unknown keys in a format file produce
+`unknown_config_key`. `formats/order.toml` (`schema_version = 1`, then `[[format]] id = "…"
+enabled = true|false`) lists the ids first, in its order (unknown ids warn), followed by
+the unlisted formats; its enabled flags override the defaults. An id listed twice, or an
+`order.toml` from a newer version, is an error. Read-only commands never write the
+built-ins into the configuration folder (D-21); that happens only on the GUI's first start
+and with the `format` write commands of M2, and never overwrites an existing file.
+
+**Atomic writes (SES-053).** Every configuration and report file is written to a
+temporary file in the same folder (created exclusively), flushed to disk and renamed over
+the target; on any failure the target is untouched and the temporary file is removed.
+
 ## 6. Import, export, restore defaults, support package
 
 - **SES-060** (P0): **Export Settings** wizard: choose categories — Program Options;

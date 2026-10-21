@@ -1,0 +1,29 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: histogram (histogram); skew: 300; closeness: 500‰; never align: yes; unimportant: none; line endings: ignored; orphan lines: always important
+
+   /l/left.txt                              /r/right.txt
+ 1 line 00 of the sample                  1 line 00 of the sample
+ 2 line 01 of the sample                  2 line 01 of the sample
+ 3 line 02 of the sample                  3 line 02 of the sample
+ 4 line 03 of the sample                  4 line 03 of the sample
+ 5 line 04 of the sample                  5 line 04 of the sample
+ 6 line 05 of the sample               <
+                                       >  6 line 05 of the sample, edited
+ 7 line 06 of the sample                  7 line 06 of the sample
+ 8 line 07 of the sample                  8 line 07 of the sample
+ 9 line 08 of the sample                  9 line 08 of the sample
+10 line 09 of the sample                 10 line 09 of the sample
+11 line 10 of the sample                 11 line 10 of the sample
+12 line 11 of the sample                 12 line 11 of the sample
+13 line 12 of the sample               <
+                                       > 13 a brand new line
+14 line 13 of the sample                 14 line 13 of the sample
+15 line 14 of the sample                 15 line 14 of the sample
+16 line 15 of the sample               <
+17 line 16 of the sample                 16 line 16 of the sample
+18 line 17 of the sample                 17 line 17 of the sample
+19 line 18 of the sample                 18 line 18 of the sample
+20 line 19 of the sample                 19 line 19 of the sample

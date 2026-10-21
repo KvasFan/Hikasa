@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; orphan folders not scanned
+
+Name     Size  Modified                 Name     Size  Modified
+                                     +  new/        0
+old/        0                        -
+shared/     1                        =  shared/     1
+  x.txt     1  2026-01-01T00:00:00Z  =    x.txt     1  2026-01-01T00:00:00Z

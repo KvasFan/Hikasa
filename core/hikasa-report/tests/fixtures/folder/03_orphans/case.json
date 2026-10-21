@@ -1,0 +1,5 @@
+{
+  "description": "Orphan files and folders: `-` and `+`, the absent side blank",
+  "source": "hikasa-folder/03_orphans",
+  "columns": "status,size,modified"
+}

@@ -1,0 +1,8 @@
+{
+  "description": "No wrapping and no line numbers in 40 columns (long lines are cut); display same; monochrome HTML",
+  "width": 40,
+  "wrap": "none",
+  "line_numbers": false,
+  "display": "matches",
+  "mono": true
+}

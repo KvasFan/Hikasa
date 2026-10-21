@@ -1,0 +1,242 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 440,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 20,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 421,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 19,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "histogram",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "histogram",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 21,
+    "same_rows": 17,
+    "changed_rows": 1,
+    "left_only_rows": 2,
+    "right_only_rows": 1,
+    "important_rows": 4,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 1,
+      "changed": 2,
+      "original": 2
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 3,
+    "important_sections": 3,
+    "left_lines": 20,
+    "right_lines": 19
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        5,
+        6
+      ],
+      "left_lines": [
+        6,
+        7
+      ],
+      "right_lines": [
+        6,
+        7
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        12,
+        14
+      ],
+      "left_lines": [
+        13,
+        14
+      ],
+      "right_lines": [
+        13,
+        14
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "delete",
+      "importance": "important",
+      "rows": [
+        16,
+        17
+      ],
+      "left_lines": [
+        16,
+        17
+      ],
+      "right_lines": [
+        16,
+        16
+      ]
+    }
+  ],
+  "display": {
+    "mode": "mismatches",
+    "lines": null,
+    "toggles": [
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "gap",
+      "rows": [
+        0,
+        5
+      ]
+    },
+    {
+      "type": "row",
+      "row": 5,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 6,
+        "text": "line 05 of the sample"
+      },
+      "right": {
+        "line": 6,
+        "text": "line 05 of the sample, edited"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 21,
+            "end": 29,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "gap",
+      "rows": [
+        6,
+        12
+      ]
+    },
+    {
+      "type": "row",
+      "row": 12,
+      "state": "left_only",
+      "importance": "important",
+      "left": {
+        "line": 13,
+        "text": "line 12 of the sample"
+      },
+      "right": null,
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 13,
+      "state": "right_only",
+      "importance": "important",
+      "left": null,
+      "right": {
+        "line": 13,
+        "text": "a brand new line"
+      },
+      "inline": null
+    },
+    {
+      "type": "gap",
+      "rows": [
+        14,
+        16
+      ]
+    },
+    {
+      "type": "row",
+      "row": 16,
+      "state": "left_only",
+      "importance": "important",
+      "left": {
+        "line": 16,
+        "text": "line 15 of the sample"
+      },
+      "right": null,
+      "inline": null
+    },
+    {
+      "type": "gap",
+      "rows": [
+        17,
+        21
+      ]
+    }
+  ]
+}

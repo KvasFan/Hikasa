@@ -31,8 +31,9 @@ right; Apply / OK / Cancel. Every setting below maps to a key in `options.toml`
 
 ## Text Editing
 - Auto indent; Backspace unindents; Initialize "Text to find" to be current word;
-  Show filtered line counts; Number of context lines (default 3). (Tab stops are per
-  file format.)
+  Show filtered line counts; Number of context lines (default 3;
+  `[text_editing] number_of_context_lines`, also the default of `--context` and of the
+  patch reports). (Tab stops are per file format.)
 
 ## Next Difference
 - When loading new files, go to first difference; Go to next difference in files after
@@ -78,7 +79,14 @@ right; Apply / OK / Cancel. Every setting below maps to a key in `options.toml`
 - **File Operations**: Beep after long file operations; Remove read-only flag when
   copying from read-only media; Check for files changed on disk; Automatically reload
   unless changes will be discarded; Use IPv6 when available; Comparison priority
-  (Normal / Below normal / Idle); Buffer size for binary compare (bytes).
+  (Normal / Below normal / Idle; not applied in M1, see `01-architecture.md` §5.1);
+  Buffer size for binary compare (bytes; `buffer_size_for_binary_compare`, default
+  1 MiB, used between 4 KiB and 64 MiB); Content-test memory budget (MiB;
+  `content_memory_budget_mib`, default 1024): the file content that the content tests of
+  one folder comparison may hold in memory at the same time, across all worker threads
+  (D-25). A test needs `min(left size + right size, budget)` bytes and waits until they
+  are free, so memory stays bounded whatever the thread count; the rules-based method
+  also compares files above 128 MiB by bytes (warning `rules_size_limit`).
 - **Home View**: Sticky session selection.
 - **Interface**: Show hints for toolbar buttons; Show keyboard shortcut in hints; ESC
   key closes file views; Single vertical scrollbar; Sticky splitter position; Thumbnail
@@ -91,3 +99,37 @@ right; Apply / OK / Cancel. Every setting below maps to a key in `options.toml`
 - **Name Filter Presets**: list of name + mask (e.g. `Web files = *.htm;*.html;*.css;*.js`).
 - **Scripts**: Beep when finished; Close when finished; Shared scripts folder.
 - **Shared Sessions File**: path to a settings package whose sessions appear read-only.
+
+## The file in M1 (binding interpretation; contract §1.8.2; D-25, D-31)
+
+`options.toml` lives in the configuration folder (`03-sessions-settings-profiles.md`
+§5.1). Every page above is a top-level table, named by its heading in `snake_case`:
+`startup`, `tabs`, `appearance`, `text_editing`, `next_difference`, `backups`,
+`file_operations`, `archive_types`, `commands`, `open_with`, `tweaks`; Tweaks
+sub-pages are sub-tables (`[tweaks.file_operations]`). The file may carry
+`schema_version = 1`.
+
+**Keys read in M1** (all other keys are kept as they are; M1 never writes the file):
+
+| Key | Type | Default | Used by |
+|---|---|---|---|
+| `[text_editing] number_of_context_lines` | integer ≥ 0 | 3 | default `--context` of `text compare` and the context of the patch reports |
+| `[tweaks.file_operations] buffer_size_for_binary_compare` | integer (bytes) | 1048576 | binary and CRC content tests (clamped to 4 KiB … 64 MiB) |
+| `[tweaks.file_operations] content_memory_budget_mib` | integer (MiB) | 1024 | memory budget of the content tests of one folder comparison (D-25; 0 counts as 1) |
+
+```toml
+schema_version = 1
+
+[text_editing]
+number_of_context_lines = 5
+
+[tweaks.file_operations]
+buffer_size_for_binary_compare = 4194304
+content_memory_budget_mib = 512
+```
+
+**Loading rules (D-31).** A missing file means the defaults. A `schema_version` newer
+than this build supports stops the program with an error (SES-052). Unknown keys inside
+the sections above are ignored silently (`--verbose` logs each one); an unknown
+top-level section produces the warning `unknown_config_key`. A syntax error, or a value
+of the wrong type or range in a key of the table, is an error.

@@ -1,0 +1,12 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name           Size  Modified                Status      Name            Size  Modified
+left_dir/         0  2026-01-01T00:00:00Z  - left only
+                                           + right only  right_dir/         0  2026-01-01T00:00:00Z
+both.txt          1  2026-01-01T00:00:00Z  = same        both.txt           1  2026-01-01T00:00:00Z
+left_only.txt     1  2026-01-01T00:00:00Z  - left only
+                                           + right only  right_only.txt     1  2026-01-01T00:00:00Z

@@ -12,13 +12,21 @@
 //!    (and hikasa-session's own tests). Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
 //!    `.elapsed()` counts as a clock read;
+//! 3. every dependency of every workspace member is `workspace = true` and listed in `[workspace.dependencies]`,
+//!    each member's `[dependencies]` and `[dev-dependencies]` equal the §0.5 table, there are no other dependency
+//!    sections, and the dependency direction holds: no `core/*` crate depends on cli/gui, and the engine crates
+//!    do not depend on hikasa-session (ARCH-010/011/012);
 //! 4. the stub crates export no `pub` items (§1.11);
-//! 5. `[profile.release]` does not set `panic = "abort"` (§5.6).
-//!
-//! Checks 3, 6 and 7 are added in wave 4, when every manifest has its final form (§6.5, A1.5).
+//! 5. `[profile.release]` does not set `panic = "abort"` (§5.6);
+//! 6. no `HashMap`/`HashSet` type appears in a DTO or persisted config struct: the files under `json/` or
+//!    `model/` folders and the files named `dto.rs`, `protocol.rs`, `rules.rs` and `model.rs` in `core/*/src`;
+//! 7. `cli/` and `gui/` sources contain no `impl FromStr` and no matching or comparing against string literals of
+//!    the core vocabularies (`--display`, `--folders`, `--criteria`, `--unimportant`, the legacy `gui open`
+//!    switches): those parsers live in core (T11).
 //!
 //! The checks look at code only: comments, string literals and char literals are blanked first, so prose that
-//! mentions a banned token never fails the build, and the patterns below can be written as plain strings.
+//! mentions a banned token never fails the build, and the patterns below can be written as plain strings
+//! (check 7 alone reads string literals, from comment-free text).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -815,6 +823,724 @@ fn panic_abort_violations(manifest: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// Check 3: manifests match §0.5; dependency direction
+// ---------------------------------------------------------------------------------------------------------
+
+/// The §0.5 table: `(crate, [dependencies], [dev-dependencies])` of every workspace member.
+const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
+    (
+        "hikasa-core",
+        &[
+            "serde",
+            "thiserror",
+            "bitflags",
+            "jiff",
+            "unicode-normalization",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "regex",
+            "serde_json",
+            "criterion",
+        ],
+    ),
+    (
+        "hikasa-vfs",
+        &[
+            "hikasa-core",
+            "serde",
+            "thiserror",
+            "crc32fast",
+            "memmap2",
+            "filetime",
+            "bitflags",
+            "same-file",
+        ],
+        &["tempfile", "proptest", "pretty_assertions", "criterion"],
+    ),
+    (
+        "hikasa-diff",
+        &[
+            "hikasa-core",
+            "imara-diff",
+            "serde",
+            "thiserror",
+            "smallvec",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "criterion",
+            "similar",
+            "serde_json",
+        ],
+    ),
+    (
+        "hikasa-formats",
+        &[
+            "hikasa-core",
+            "serde",
+            "toml",
+            "regex",
+            "fancy-regex",
+            "encoding_rs",
+            "chardetng",
+            "thiserror",
+            "memchr",
+            "rayon",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "tempfile",
+            "criterion",
+            "serde_json",
+        ],
+    ),
+    (
+        "hikasa-text",
+        &[
+            "hikasa-core",
+            "hikasa-diff",
+            "hikasa-formats",
+            "hikasa-vfs",
+            "ropey",
+            "serde",
+            "thiserror",
+            "unicode-segmentation",
+            "memchr",
+            "rayon",
+            "toml",
+            "bitflags",
+            "encoding_rs",
+            "regex",
+            "unicode-width",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "tempfile",
+            "criterion",
+            "serde_json",
+        ],
+    ),
+    (
+        "hikasa-folder",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "rayon",
+            "serde",
+            "thiserror",
+            "unicode-normalization",
+            "crossbeam-channel",
+            "parking_lot",
+            "jiff",
+            "bitflags",
+            "toml",
+        ],
+        &[
+            "tempfile",
+            "filetime",
+            "proptest",
+            "pretty_assertions",
+            "criterion",
+            "serde_json",
+        ],
+    ),
+    (
+        "hikasa-report",
+        &[
+            "hikasa-core",
+            "hikasa-diff",
+            "hikasa-text",
+            "hikasa-folder",
+            "serde",
+            "serde_json",
+            "jiff",
+            "thiserror",
+            "unicode-width",
+            "bitflags",
+        ],
+        &[
+            "pretty_assertions",
+            "tempfile",
+            "diffy",
+            "proptest",
+            "hikasa-vfs",
+        ],
+    ),
+    (
+        "hikasa-session",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "hikasa-diff",
+            "hikasa-formats",
+            "hikasa-text",
+            "hikasa-folder",
+            "hikasa-report",
+            "serde",
+            "serde_json",
+            "toml",
+            "directories",
+            "interprocess",
+            "thiserror",
+            "tracing",
+            "rayon",
+            "jiff",
+            "parking_lot",
+            "crossbeam-channel",
+        ],
+        &["tempfile", "pretty_assertions", "proptest"],
+    ),
+    (
+        "hikasa-cli",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "hikasa-diff",
+            "hikasa-formats",
+            "hikasa-text",
+            "hikasa-folder",
+            "hikasa-report",
+            "hikasa-session",
+            "clap",
+            "clap_complete",
+            "anyhow",
+            "serde",
+            "serde_json",
+            "tracing",
+            "tracing-subscriber",
+            "jiff",
+        ],
+        &[
+            "assert_cmd",
+            "predicates",
+            "tempfile",
+            "pretty_assertions",
+            "filetime",
+        ],
+    ),
+    // Waves 1–5: no dependencies; wave 6 adds the approved GUI toolkit (D-56) and updates this row.
+    ("hikasa-gui", &[], &[]),
+    ("hikasa-table", &[], &[]),
+    ("hikasa-hex", &[], &[]),
+    ("hikasa-picture", &[], &[]),
+    ("hikasa-metadata", &[], &[]),
+    ("hikasa-script", &[], &[]),
+];
+
+/// The engine crates, which must never depend on the session layer or an adapter (ARCH-010/011/012).
+const ENGINE_CRATES: &[&str] = &[
+    "hikasa-core",
+    "hikasa-vfs",
+    "hikasa-diff",
+    "hikasa-formats",
+    "hikasa-text",
+    "hikasa-folder",
+    "hikasa-report",
+    "hikasa-table",
+    "hikasa-hex",
+    "hikasa-picture",
+    "hikasa-metadata",
+    "hikasa-script",
+];
+
+/// Dependency sections of a manifest (top-level and `[target.<cfg>.*]`), as `(section name, table)`.
+fn dependency_sections(manifest: &toml::Table) -> Vec<(String, &toml::Table)> {
+    let mut out = Vec::new();
+    for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(toml::Value::Table(t)) = manifest.get(kind) {
+            out.push((kind.to_owned(), t));
+        }
+    }
+    if let Some(toml::Value::Table(targets)) = manifest.get("target") {
+        for (cfg, value) in targets {
+            if let toml::Value::Table(target) = value {
+                for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(toml::Value::Table(t)) = target.get(kind) {
+                        out.push((format!("target.{cfg}.{kind}"), t));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Check 3 for one member manifest (`rel` names it in messages).
+fn manifest_violations(
+    rel: &str,
+    manifest: &toml::Table,
+    workspace_deps: &toml::Table,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(name) = manifest
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(toml::Value::as_str)
+    else {
+        return vec![format!("{rel}: no [package] name")];
+    };
+    let mut normal: Vec<String> = Vec::new();
+    let mut dev: Vec<String> = Vec::new();
+    for (section, table) in dependency_sections(manifest) {
+        for (dep, spec) in table {
+            let inherited = spec
+                .as_table()
+                .and_then(|t| t.get("workspace"))
+                .and_then(toml::Value::as_bool)
+                == Some(true);
+            if !inherited {
+                violations.push(format!(
+                    "{rel}: [{section}] {dep} is not `workspace = true`"
+                ));
+            }
+            if !workspace_deps.contains_key(dep) {
+                violations.push(format!(
+                    "{rel}: [{section}] {dep} is not in [workspace.dependencies]"
+                ));
+            }
+            match section.as_str() {
+                "dependencies" => normal.push(dep.clone()),
+                "dev-dependencies" => dev.push(dep.clone()),
+                other => violations.push(format!("{rel}: [{other}] is not in the §0.5 table")),
+            }
+            let is_adapter = dep == "hikasa-cli" || dep == "hikasa-gui";
+            if rel.starts_with("core/") && is_adapter {
+                violations.push(format!("{rel}: a core crate depends on {dep}"));
+            }
+            if ENGINE_CRATES.contains(&name) && dep == "hikasa-session" {
+                violations.push(format!(
+                    "{rel}: the engine crate {name} depends on hikasa-session"
+                ));
+            }
+        }
+    }
+    match DEPENDENCY_TABLE
+        .iter()
+        .find(|(crate_name, _, _)| *crate_name == name)
+    {
+        Some((_, expected_normal, expected_dev)) => {
+            for (kind, actual, expected) in [
+                ("[dependencies]", &normal, *expected_normal),
+                ("[dev-dependencies]", &dev, *expected_dev),
+            ] {
+                let mut actual: Vec<&str> = actual.iter().map(String::as_str).collect();
+                let mut expected: Vec<&str> = expected.to_vec();
+                actual.sort_unstable();
+                expected.sort_unstable();
+                if actual != expected {
+                    violations.push(format!(
+                        "{rel}: {kind} {actual:?} differ from the §0.5 table {expected:?}"
+                    ));
+                }
+            }
+        }
+        None => violations.push(format!("{rel}: crate {name} is not in the §0.5 table")),
+    }
+    violations
+}
+
+fn check_manifests(root: &Path) -> Vec<String> {
+    let parse = |path: &Path| -> Option<toml::Table> {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| toml::from_str(&text).ok())
+    };
+    let Some(workspace) = parse(&root.join("Cargo.toml")) else {
+        return vec!["Cargo.toml: cannot be parsed".into()];
+    };
+    let ws = workspace.get("workspace").and_then(toml::Value::as_table);
+    let deps = ws
+        .and_then(|w| w.get("dependencies"))
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default();
+    let members: Vec<String> = ws
+        .and_then(|w| w.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|m| {
+            m.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if members.is_empty() {
+        return vec!["Cargo.toml: no workspace members".into()];
+    }
+    let mut violations = Vec::new();
+    let mut seen = Vec::new();
+    for member in &members {
+        let rel = format!("{member}/Cargo.toml");
+        match parse(&root.join(member).join("Cargo.toml")) {
+            Some(manifest) => {
+                if let Some(name) = manifest
+                    .get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(toml::Value::as_str)
+                {
+                    seen.push(name.to_owned());
+                }
+                violations.extend(manifest_violations(&rel, &manifest, &deps));
+            }
+            None => violations.push(format!("{rel}: missing or not valid TOML")),
+        }
+    }
+    for (name, _, _) in DEPENDENCY_TABLE {
+        if !seen.iter().any(|s| s == name) {
+            violations.push(format!("the §0.5 crate {name} is not a workspace member"));
+        }
+    }
+    violations
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Check 6: no HashMap/HashSet in DTOs and persisted configs
+// ---------------------------------------------------------------------------------------------------------
+
+/// True for the files whose types are DTOs or persisted configuration (check 6).
+fn is_dto_file(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let file = parts.last().copied().unwrap_or("");
+    let in_src = parts.len() >= 4 && parts[0] == "core" && parts[2] == "src";
+    in_src
+        && (matches!(file, "dto.rs" | "protocol.rs" | "rules.rs" | "model.rs")
+            || parts[3..parts.len() - 1]
+                .iter()
+                .any(|d| *d == "json" || *d == "model"))
+}
+
+/// `HashMap`/`HashSet` uses in one file's code.
+fn hash_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in ["HashMap", "HashSet"] {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in a DTO or persisted config file (T5: use BTreeMap/BTreeSet)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
+}
+
+fn check_no_hash_collections(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("core")) {
+        let rel = relative(root, &file);
+        if !is_dto_file(&rel) {
+            continue;
+        }
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(hash_violations(&rel, &raw));
+        }
+    }
+    violations
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Check 7: no vocabulary parsing in the adapters
+// ---------------------------------------------------------------------------------------------------------
+
+/// The words of the core vocabularies (lower case, without `--`, `-`, `/` or `display-` prefixes): `--display`
+/// (folders and text), `--folders`, `--criteria`, `--unimportant`, and the legacy `gui open` switches. Generic
+/// global flags (`json`, `quiet`, `log`, `verbose`, `help`, `format`, `config-dir`, `no-color`) are left out: the
+/// adapters own them through clap.
+const VOCABULARY: &[&str] = &[
+    // --display
+    "all",
+    "differences",
+    "mismatches",
+    "same",
+    "matches",
+    "context",
+    "none",
+    "no-orphans",
+    "differences-no-orphans",
+    "mismatches-no-orphans",
+    "orphans",
+    "left-newer",
+    "right-newer",
+    "left-newer-orphans",
+    "left-newer-and-left-orphans",
+    "right-newer-orphans",
+    "right-newer-and-right-orphans",
+    "left-orphans",
+    "right-orphans",
+    // --folders
+    "always",
+    "structure",
+    "files-only",
+    "always-show",
+    "always-show-folders",
+    "compare-structure",
+    "only-files",
+    "only-compare-files",
+    // --criteria
+    "size",
+    "owner",
+    "group",
+    "permissions",
+    "filename-case",
+    "follow-symlinks",
+    "ignore-unimportant",
+    "crc",
+    "binary",
+    "rules-based",
+    "rules",
+    "timestamp",
+    // --unimportant
+    "leading-ws",
+    "embedded-ws",
+    "trailing-ws",
+    "whitespace",
+    "case",
+    "everything-else",
+    // legacy gui open switches (CLI-001…003)
+    "wait",
+    "no-launch",
+    "nolaunch",
+    "fv",
+    "fileviewer",
+    "title1",
+    "title2",
+    "title3",
+    "title4",
+    "lefttitle",
+    "righttitle",
+    "centertitle",
+    "outputtitle",
+    "ro",
+    "readonly",
+    "ro1",
+    "lro",
+    "leftreadonly",
+    "ro2",
+    "rro",
+    "rightreadonly",
+    "filters",
+    "expandall",
+    "expand-all",
+    "iu",
+    "ignoreunimportant",
+    "stdin-name",
+    "solo",
+    "automerge",
+    "center",
+    "mergeoutput",
+    "force",
+    "reviewconflicts",
+    "favorleft",
+    "favorright",
+    "closescript",
+    "silent",
+    "edit",
+    "sync",
+    "nobackups",
+    "qc",
+    "quickcompare",
+    "savetarget",
+    "vcs1",
+    "vcs2",
+    "vcs3",
+    "vcs4",
+    "vcsleft",
+    "vcsright",
+    "vcscenter",
+    "vcsoutput",
+];
+
+/// Prefixes of the parameterised vocabulary words (`timestamp:2sec`, `timezone:left+1`, `attrib:HRS`,
+/// `element:Comment`).
+const VOCABULARY_PREFIXES: &[&str] = &["timestamp:", "timezone:", "attrib:", "element:"];
+
+/// True when a string literal's content is a vocabulary word.
+fn is_vocabulary_word(literal: &str) -> bool {
+    let lower = literal.trim().to_ascii_lowercase();
+    let word = lower
+        .trim_start_matches("--")
+        .trim_start_matches(['-', '/'])
+        .trim_start_matches("display-");
+    let word = word.split('=').next().unwrap_or(word);
+    !word.is_empty()
+        && (VOCABULARY.contains(&word) || VOCABULARY_PREFIXES.iter().any(|p| word.starts_with(p)))
+}
+
+/// `src` with comments blanked but string literals kept (check 7 reads the literals).
+fn without_comments(src: &str) -> String {
+    let code = code_only(src);
+    // `code_only` keeps one char per char, so both sequences align: a char that `code_only` blanked outside a
+    // comment belongs to a string or char literal and is restored from the original.
+    let mut out = String::with_capacity(src.len());
+    let original: Vec<char> = src.chars().collect();
+    let blanked: Vec<char> = code.chars().collect();
+    let comments = comment_mask(&original);
+    for (k, &c) in original.iter().enumerate() {
+        let kept = blanked.get(k).copied().unwrap_or(' ');
+        if comments.get(k).copied().unwrap_or(false) {
+            out.push(if c == '\n' { '\n' } else { ' ' });
+        } else if kept == ' ' && c != ' ' {
+            out.push(c);
+        } else {
+            out.push(kept);
+        }
+    }
+    out
+}
+
+/// For each char of `chars`, whether it is part of a comment (line or nested block), skipping string and char
+/// literals so that `"//"` inside a string is not a comment.
+fn comment_mask(chars: &[char]) -> Vec<bool> {
+    let mut mask = vec![false; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        // Char literals that hold a quote or an escape (`'"'`, `'\"'`, `'\n'`): skip them whole.
+        if c == '\'' && next == Some('"') && chars.get(i + 2) == Some(&'\'') {
+            i += 3;
+            continue;
+        }
+        if c == '\'' && next == Some('\\') {
+            let close = (i + 3..chars.len().min(i + 12)).find(|&k| chars[k] == '\'');
+            i = close.map_or(i + 1, |k| k + 1);
+            continue;
+        }
+        if c == '"' {
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                i += if chars[i] == '\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                mask[i] = true;
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && next == Some('*') {
+            let mut depth = 0usize;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    mask[i] = true;
+                    mask[i + 1] = true;
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    mask[i] = true;
+                    mask[i + 1] = true;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    mask[i] = true;
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    mask
+}
+
+/// String literals of `text` (comment-free) that sit where a match pattern or an equality comparison is:
+/// followed by `=>`, `|`, `if` (a guard) or `==`/`!=`, or preceded by `|`, `==` or `!=`. Returns
+/// `(byte offset, content)`.
+fn compared_literals(text: &str) -> Vec<(usize, String)> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j] != b'"' {
+            j += if bytes[j] == b'\\' { 2 } else { 1 };
+        }
+        let end = (j + 1).min(bytes.len());
+        let content = text
+            .get(start + 1..end.saturating_sub(1))
+            .unwrap_or("")
+            .to_owned();
+        let after = text.get(end..).unwrap_or("").trim_start();
+        let before = text.get(..start).unwrap_or("").trim_end();
+        let followed = after.starts_with("=>")
+            || (after.starts_with('|') && !after.starts_with("||"))
+            || after.starts_with("==")
+            || after.starts_with("!=")
+            || after
+                .strip_prefix("if")
+                .is_some_and(|r| r.starts_with(char::is_whitespace));
+        let preceded = (before.ends_with('|') && !before.ends_with("||"))
+            || before.ends_with("==")
+            || before.ends_with("!=");
+        if followed || preceded {
+            out.push((start, content));
+        }
+        i = end;
+    }
+    out
+}
+
+/// Check 7 for one adapter source file.
+fn adapter_violations(rel: &str, raw: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let code = code_only(raw);
+    for at in find_token(&code, "impl") {
+        let header_end = code[at..].find('{').map_or(code.len(), |p| at + p);
+        let header = &code[at..header_end];
+        if !find_token(header, "FromStr").is_empty() {
+            violations.push(format!(
+                "{rel}:{}: `impl FromStr` in an adapter (T11: vocabulary parsers live in core)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    let text = without_comments(raw);
+    for (at, literal) in compared_literals(&text) {
+        if is_vocabulary_word(&literal) {
+            violations.push(format!(
+                "{rel}:{}: matches or compares the vocabulary word {literal:?} (T11: use the core parser)",
+                line_of(&text, at)
+            ));
+        }
+    }
+    violations
+}
+
+fn check_adapters(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            let parts: Vec<&str> = rel.split('/').collect();
+            let is_source =
+                parts.get(2).is_some_and(|p| *p == "src") || parts.last() == Some(&"build.rs");
+            if !is_source {
+                continue;
+            }
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(adapter_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // The checks
 // ---------------------------------------------------------------------------------------------------------
 
@@ -840,6 +1566,11 @@ fn check_2_no_banned_tokens_in_core() {
 }
 
 #[test]
+fn check_3_manifests_match_the_dependency_table() {
+    assert_none("3 (manifests, §0.5)", check_manifests(&workspace_root()));
+}
+
+#[test]
 fn check_4_stub_crates_export_nothing() {
     assert_none("4 (stub crates)", check_stub_crates(&workspace_root()));
 }
@@ -849,6 +1580,22 @@ fn check_5_release_profile_unwinds() {
     let manifest =
         fs::read_to_string(workspace_root().join("Cargo.toml")).expect("workspace Cargo.toml");
     assert_none("5 (panic = \"abort\")", panic_abort_violations(&manifest));
+}
+
+#[test]
+fn check_6_no_hash_collections_in_dtos() {
+    assert_none(
+        "6 (HashMap/HashSet in DTOs)",
+        check_no_hash_collections(&workspace_root()),
+    );
+}
+
+#[test]
+fn check_7_adapters_parse_no_vocabulary() {
+    assert_none(
+        "7 (vocabulary parsing in cli/gui)",
+        check_adapters(&workspace_root()),
+    );
 }
 
 #[test]
@@ -1092,4 +1839,121 @@ fn panic_abort_is_detected() {
         panic_abort_violations("[profile.bench]\npanic='abort'\n").len(),
         1
     );
+}
+
+#[test]
+fn manifest_rules_are_enforced() {
+    let workspace: toml::Table = toml::from_str(
+        "[dependencies]\nserde = \"1\"\nthiserror = \"2\"\nbitflags = \"2\"\njiff = \"0.2\"\n\
+         unicode-normalization = \"0.1\"\nproptest = \"1\"\npretty_assertions = \"1\"\nregex = \"1\"\n\
+         serde_json = \"1\"\ncriterion = \"0.8\"\nhikasa-session = { path = \"x\" }\n",
+    )
+    .unwrap();
+    let deps = workspace["dependencies"].as_table().unwrap().clone();
+    let good: toml::Table = toml::from_str(
+        "[package]\nname = \"hikasa-core\"\n[dependencies]\nserde.workspace = true\nthiserror.workspace = true\n\
+         bitflags.workspace = true\njiff.workspace = true\nunicode-normalization.workspace = true\n\
+         [dev-dependencies]\nproptest.workspace = true\npretty_assertions.workspace = true\n\
+         regex.workspace = true\nserde_json.workspace = true\ncriterion = { workspace = true }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        manifest_violations("core/hikasa-core/Cargo.toml", &good, &deps),
+        Vec::<String>::new()
+    );
+    let mut bad = good.clone();
+    let normal = bad["dependencies"].as_table_mut().unwrap();
+    normal.insert("serde".into(), toml::Value::String("1".into()));
+    normal.insert(
+        "hikasa-session".into(),
+        toml::from_str("workspace = true").unwrap(),
+    );
+    normal.insert("rand".into(), toml::from_str("workspace = true").unwrap());
+    bad.insert(
+        "build-dependencies".into(),
+        toml::from_str("cc = { workspace = true }").unwrap(),
+    );
+    let violations = manifest_violations("core/hikasa-core/Cargo.toml", &bad, &deps);
+    let joined = violations.join("\n");
+    for expected in [
+        "serde is not `workspace = true`",
+        "rand is not in [workspace.dependencies]",
+        "depends on hikasa-session",
+        "[build-dependencies] is not in the §0.5 table",
+        "differ from the §0.5 table",
+    ] {
+        assert!(
+            joined.contains(expected),
+            "{expected} missing from:\n{joined}"
+        );
+    }
+    let adapter: toml::Table = toml::from_str(
+        "[package]\nname = \"hikasa-vfs\"\n[dev-dependencies]\nhikasa-cli = { workspace = true }\n",
+    )
+    .unwrap();
+    let joined = manifest_violations("core/hikasa-vfs/Cargo.toml", &adapter, &deps).join("\n");
+    assert!(
+        joined.contains("a core crate depends on hikasa-cli"),
+        "{joined}"
+    );
+    let unknown: toml::Table = toml::from_str("[package]\nname = \"hikasa-new\"\n").unwrap();
+    assert!(
+        manifest_violations("core/hikasa-new/Cargo.toml", &unknown, &deps)[0]
+            .contains("not in the §0.5 table")
+    );
+}
+
+#[test]
+fn hash_collections_in_dtos_are_found() {
+    assert!(is_dto_file("core/hikasa-report/src/json/text.rs"));
+    assert!(is_dto_file("core/hikasa-folder/src/model/store.rs"));
+    assert!(is_dto_file("core/hikasa-session/src/api/dto.rs"));
+    assert!(is_dto_file("core/hikasa-session/src/ipc/protocol.rs"));
+    assert!(is_dto_file("core/hikasa-text/src/rules.rs"));
+    assert!(is_dto_file("core/hikasa-formats/src/model.rs"));
+    assert!(!is_dto_file("core/hikasa-diff/src/intern.rs"));
+    assert!(!is_dto_file("core/hikasa-session/tests/dto.rs"));
+    assert!(!is_dto_file("cli/hikasa-cli/src/dto.rs"));
+    let bad = "use std::collections::HashMap;\npub struct X { m: std::collections::HashSet<u8> }\n";
+    assert_eq!(hash_violations("core/x/src/dto.rs", bad).len(), 2);
+    let fine = "// a HashMap would break T5\npub struct X { m: BTreeMap<String, u8>, s: &'static str }\nconst N: &str = \"HashMap\";\n";
+    assert!(hash_violations("core/x/src/dto.rs", fine).is_empty());
+}
+
+#[test]
+fn adapter_vocabulary_checks() {
+    let parse_display = "fn f(s: &str) -> u8 {\n    match s {\n        \"all\" => 1,\n        \"mismatches\" | \"differences\" => 2,\n        _ => 3,\n    }\n}\n";
+    let v = adapter_violations("cli/hikasa-cli/src/x.rs", parse_display);
+    assert_eq!(v.len(), 3, "{v:?}");
+    assert!(v[0].contains(":3:"), "{v:?}");
+    let compare = "fn g(a: &str) -> bool { a == \"--ro\" || \"leading-ws\" != a || a == \"timestamp:2sec\" }\n";
+    assert_eq!(
+        adapter_violations("cli/hikasa-cli/src/x.rs", compare).len(),
+        3
+    );
+    let from_str = "impl std::str::FromStr for Mode { type Err = (); fn from_str(s: &str) -> Result<Self, ()> { Err(()) } }\n\
+                    impl<T> core::str::FromStr for W<T> {}\n";
+    assert_eq!(
+        adapter_violations("cli/hikasa-cli/src/x.rs", from_str).len(),
+        2
+    );
+    // Presentation logic, clap attributes, comments and unrelated words are fine.
+    let fine = "#[arg(long, value_name = \"DIR\", default_value = \"all\")]\nstruct A;\n\
+                // match s { \"all\" => 1 }\n\
+                fn h(shell: &str, s: &str) -> bool { let msg = \"all good\"; matches!(shell, \"bash\" | \"zsh\") && s == \"json-ish\" && !msg.is_empty() }\n\
+                const DOC: &str = \"use --display all\";\nfn i(x: bool) -> bool { x || \"a\".is_empty() }\n";
+    let v = adapter_violations("cli/hikasa-cli/src/x.rs", fine);
+    assert!(v.is_empty(), "{v:?}");
+    assert!(is_vocabulary_word("--Display-Mismatches"));
+    assert!(is_vocabulary_word("/ro"));
+    assert!(is_vocabulary_word("-lefttitle=x"));
+    assert!(is_vocabulary_word("element:Comment"));
+    assert!(!is_vocabulary_word("bash"));
+    assert!(!is_vocabulary_word(""));
+    // Comment-free text keeps literals, even ones containing `//`.
+    let text = without_comments(
+        "let u = \"http://x\"; let q = '\"'; // gone \"all\" =>\n/* \"none\" => */ let k = '\\n';",
+    );
+    assert!(text.contains("\"http://x\""));
+    assert!(!text.contains("gone") && !text.contains("none"));
 }

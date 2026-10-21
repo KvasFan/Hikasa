@@ -1,0 +1,12 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (standard); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: important unless trivial
+
+  /l/left.txt                              /r/right.txt
+1 x                                      1 x
+2                                        2
+3                                      <
+4 y                                      3 y
+                                       > 4

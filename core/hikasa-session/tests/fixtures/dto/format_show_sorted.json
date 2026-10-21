@@ -1,0 +1,42 @@
+{
+  "id": "sorted",
+  "origin": "built_in",
+  "path": null,
+  "enabled": true,
+  "format": {
+    "schema_version": 1,
+    "id": "sorted",
+    "name": "Sorted",
+    "description": "Plain text whose lines are sorted before comparing (read-only). Select it manually.",
+    "kind": "text",
+    "mask": "",
+    "conversion": {
+      "method": "sorted",
+      "load": null,
+      "save": null,
+      "filename_encoding": null,
+      "timeout_secs": null
+    },
+    "encoding": {
+      "mode": "auto",
+      "fallback": null,
+      "label": null
+    },
+    "text": {
+      "tab_size": 4,
+      "tab_as_spaces": false,
+      "chars_per_line_limit": null,
+      "lines_independent": false,
+      "column_based": false,
+      "ctrl_z_eof": false,
+      "save_trim_trailing_ws": false,
+      "save_leading_spaces_to_tabs": false,
+      "word_chars": ""
+    },
+    "elements": {},
+    "grammar": [],
+    "line_weight": [],
+    "table": null
+  },
+  "compile_error": null
+}

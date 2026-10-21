@@ -1,0 +1,46 @@
+{
+  "id": "csv",
+  "origin": "built_in",
+  "path": null,
+  "enabled": true,
+  "format": {
+    "schema_version": 1,
+    "id": "csv",
+    "name": "Comma Separated Values",
+    "description": "Delimited tables. Compared as plain text until the table view exists (D-11); *.tsv is detected as tab-delimited by the table engine.",
+    "kind": "table",
+    "mask": "*.csv;*.tsv",
+    "conversion": {
+      "method": "none",
+      "load": null,
+      "save": null,
+      "filename_encoding": null,
+      "timeout_secs": null
+    },
+    "encoding": {
+      "mode": "auto",
+      "fallback": null,
+      "label": null
+    },
+    "text": {
+      "tab_size": 4,
+      "tab_as_spaces": false,
+      "chars_per_line_limit": null,
+      "lines_independent": false,
+      "column_based": false,
+      "ctrl_z_eof": false,
+      "save_trim_trailing_ws": false,
+      "save_leading_spaces_to_tabs": false,
+      "word_chars": ""
+    },
+    "elements": {},
+    "grammar": [],
+    "line_weight": [],
+    "table": {
+      "delimiter": ",",
+      "qualifier": "\"",
+      "consecutive_as_one": false
+    }
+  },
+  "compile_error": null
+}

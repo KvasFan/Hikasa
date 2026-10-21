@@ -1,0 +1,7 @@
+{
+  "description": "The r01 inputs with one context line: more, smaller hunks; display context; monochrome HTML",
+  "source": "text/r01_hunks",
+  "context": 1,
+  "display": "context",
+  "mono": true
+}

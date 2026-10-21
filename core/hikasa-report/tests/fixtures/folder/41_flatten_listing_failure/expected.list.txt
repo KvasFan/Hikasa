@@ -1,0 +1,5 @@
+E  sub/
+?  sub/w.txt
+?  sub/x.txt
+?  sub/deep/y.txt
+# 2 same, 0 left newer, 0 right newer, 0 different, 0 left only, 0 right only, 3 unknown, 0 errors

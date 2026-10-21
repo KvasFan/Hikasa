@@ -1,0 +1,38 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: differences without orphans; folders: always show folders; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; flatten
+Warning: entry_error: /l/sub: permission denied
+
+Verdict:            incomplete
+Ignore unimportant: no
+Complete:           yes
+
+Items:
+  Category     Files  Folders
+  Same             2        0
+  Left newer       0        0
+  Right newer      0        0
+  Different        0        0
+  Left only        0        0
+  Right only       0        0
+  Unknown          3        0
+  Errors           0        1
+  Filtered         0        0
+
+Totals:
+           Left  Right
+  Files       2      5
+  Folders     1      0
+  Bytes       2      5
+
+Content comparisons:
+  Result                        Pairs
+  Binary same                       0
+  Rules same                        0
+  Unimportant differences only      0
+  Important differences             0
+  Binary different                  0
+  Errors                            0
+  Not compared                      0

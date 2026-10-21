@@ -1,0 +1,172 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 15,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 2,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 15,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 2,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [
+        {
+          "pattern": "\\$Id:[^$]*\\$",
+          "regex": true,
+          "match_case": true
+        }
+      ],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "unimportant_only"
+  },
+  "stats": {
+    "rows": 2,
+    "same_rows": 1,
+    "changed_rows": 1,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 0,
+    "unimportant_rows": 1,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 1,
+      "original": 1
+    },
+    "sections": 1,
+    "important_sections": 0,
+    "left_lines": 2,
+    "right_lines": 2
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "unimportant",
+      "rows": [
+        0,
+        1
+      ],
+      "left_lines": [
+        1,
+        2
+      ],
+      "right_lines": [
+        1,
+        2
+      ]
+    }
+  ],
+  "display": {
+    "mode": "all",
+    "lines": null,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "row",
+      "row": 0,
+      "state": "changed",
+      "importance": "unimportant",
+      "left": {
+        "line": 1,
+        "text": "$Id: 12 $"
+      },
+      "right": {
+        "line": 1,
+        "text": "$Id: 13 $"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": false
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": false
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 2,
+        "text": "body"
+      },
+      "right": {
+        "line": 2,
+        "text": "body"
+      },
+      "inline": null
+    }
+  ]
+}

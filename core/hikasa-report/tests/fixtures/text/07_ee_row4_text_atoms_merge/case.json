@@ -1,0 +1,4 @@
+{
+  "description": "Whitespace unimportant: `a b` vs `ab` is an unimportant change (blue, `~`)",
+  "source": "hikasa-text/07_ee_row4_text_atoms_merge"
+}

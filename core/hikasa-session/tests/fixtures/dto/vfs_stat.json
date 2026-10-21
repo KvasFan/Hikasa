@@ -1,0 +1,32 @@
+{
+  "spec": "<TMP>/work/v/b.txt",
+  "entry": {
+    "name": "b.txt",
+    "name_lossy": false,
+    "kind": "file",
+    "size": 6,
+    "mtime": "2026-10-21T12:00:00Z",
+    "ctime": "<CTIME>",
+    "attrs": null,
+    "mode": 416,
+    "permissions": "-rw-r-----",
+    "uid": "<UID>",
+    "gid": "<GID>",
+    "link_target": null,
+    "followed": false,
+    "crc32": null
+  },
+  "capabilities": [
+    "read",
+    "write",
+    "list",
+    "seek",
+    "mtime",
+    "ctime",
+    "unix_mode",
+    "unix_owner",
+    "symlinks",
+    "local_path",
+    "case_sensitive"
+  ]
+}

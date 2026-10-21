@@ -1,0 +1,17 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+--- /l/left.txt	2026-10-19T13:12:00Z
++++ /r/right.txt	2026-10-19T14:00:00Z
+@@ -1,5 +1,5 @@
+-<script>alert("x")</script>
+-a & b < c > d
++<script>alert("y")</script>
++a && b < c > d
+ quote ' and " marks
+-ctrl  and [31m escape
++ctrl  and [32m escape
+ plain line

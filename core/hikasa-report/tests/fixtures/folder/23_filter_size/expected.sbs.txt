@@ -1,0 +1,9 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: yes
+Rules: size, timestamps (2 s); filters: none; size > 1048576 bytes
+
+Name          Size     Name          Size
+big.bin    2097152  =  big.bin    2097152
+small.txt        1  .  small.txt        9

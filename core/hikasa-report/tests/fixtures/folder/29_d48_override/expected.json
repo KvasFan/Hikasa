@@ -1,0 +1,383 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "left": {
+    "spec": "/l",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "right": {
+    "spec": "/r",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "rules": {
+    "schema_version": 1,
+    "criteria": {
+      "size": true,
+      "timestamps": {
+        "enabled": true,
+        "tolerance_secs": 2,
+        "ignore_dst": false,
+        "ignore_timezone": false,
+        "offset": null
+      },
+      "filename_case": true,
+      "dos_attributes": "R",
+      "unix": {
+        "permissions": true,
+        "owner": false,
+        "group": false
+      },
+      "content": {
+        "method": "rules",
+        "skip_if_quick_same": false,
+        "override_quick": true
+      }
+    },
+    "alignment": {
+      "case": "insensitive",
+      "align_extensions": false,
+      "align_normalization": false
+    },
+    "filters": {
+      "names": {
+        "include_files": [],
+        "exclude_files": [],
+        "include_folders": [],
+        "exclude_folders": []
+      },
+      "other": {
+        "exclude_protected": true,
+        "size": null,
+        "date": null
+      }
+    },
+    "handling": {
+      "follow_symlinks": false,
+      "flatten": false,
+      "scan_orphan_folders": true
+    }
+  },
+  "case": "insensitive",
+  "complete": true,
+  "display": {
+    "filter": "all",
+    "folders": "compare_structure",
+    "ignore_unimportant": false,
+    "suppress_filters": false,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "left_newer",
+      "right_newer",
+      "differences"
+    ]
+  },
+  "verdict": "differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 3,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 4,
+      "folders": 0,
+      "bytes": 13
+    },
+    "right": {
+      "files": 4,
+      "folders": 0,
+      "bytes": 10
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 3,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "items": [
+    {
+      "path": "attrs.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "different",
+      "category": "different",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "time",
+        "attributes"
+      ],
+      "flags": [],
+      "time": "left_newer",
+      "content": {
+        "method": "rules",
+        "result": {
+          "result": "binary_same"
+        },
+        "warnings": []
+      },
+      "errors": [],
+      "left": {
+        "name": "attrs.txt",
+        "name_lossy": false,
+        "size": 4,
+        "mtime": "2026-05-01T00:00:00Z",
+        "ctime": null,
+        "attrs": "R",
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "attrs.txt",
+        "name_lossy": false,
+        "size": 4,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": "A",
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "Case.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "different",
+      "category": "different",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size",
+        "name_case"
+      ],
+      "flags": [],
+      "time": "same",
+      "content": {
+        "method": "rules",
+        "result": {
+          "result": "rules_same"
+        },
+        "warnings": []
+      },
+      "errors": [],
+      "left": {
+        "name": "Case.txt",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "case.txt",
+        "name_lossy": false,
+        "size": 2,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "perm.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "different",
+      "category": "different",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size",
+        "permissions"
+      ],
+      "flags": [],
+      "time": "same",
+      "content": {
+        "method": "rules",
+        "result": {
+          "result": "rules_same"
+        },
+        "warnings": []
+      },
+      "errors": [],
+      "left": {
+        "name": "perm.txt",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": 420,
+        "permissions": "-rw-r--r--",
+        "uid": 1000,
+        "gid": 1000,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "perm.txt",
+        "name_lossy": false,
+        "size": 2,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": 384,
+        "permissions": "-rw-------",
+        "uid": 1000,
+        "gid": 1000,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "time_size.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "same",
+      "category": "same",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size",
+        "time"
+      ],
+      "flags": [],
+      "time": "left_newer",
+      "content": {
+        "method": "rules",
+        "result": {
+          "result": "rules_same"
+        },
+        "warnings": []
+      },
+      "errors": [],
+      "left": {
+        "name": "time_size.txt",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": "2026-05-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "time_size.txt",
+        "name_lossy": false,
+        "size": 2,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    }
+  ]
+}

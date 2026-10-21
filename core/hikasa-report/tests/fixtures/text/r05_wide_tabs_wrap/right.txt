@@ -1,0 +1,5 @@
+	indented with a tab
+日本語のテキストと漢宇
+café au lait
+The quick brown fox leaps over the lazy dog and keeps running far beyond the edge of the column width!
+emoji 😃 here

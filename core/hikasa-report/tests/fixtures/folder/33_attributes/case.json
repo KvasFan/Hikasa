@@ -1,0 +1,5 @@
+{
+  "description": "DOS attributes and Unix owner/group columns",
+  "source": "hikasa-folder/33_attributes",
+  "columns": "attributes,owner,group"
+}

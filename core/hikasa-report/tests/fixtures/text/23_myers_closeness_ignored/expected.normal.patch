@@ -1,0 +1,17 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: differences; ignore unimportant: no
+# Rules: format: Everything Else; algorithm: myers (myers); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+# Warning: closeness_ignored: closeness matching does not apply to the Myers algorithm; differing lines are paired by position
+#
+6c6
+< line 05 of the sample
+---
+> line 05 of the sample, edited
+13c13
+< line 12 of the sample
+---
+> a brand new line
+16d15
+< line 15 of the sample

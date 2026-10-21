@@ -1,0 +1,15 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: rules; filters: none
+Warning: rules_size_limit: compared by bytes
+
+Name                    Size    Status                   Name                    Size
+sub/                       4  ~ unimportant differences  sub/                       3
+  only_unimportant.txt     4  ~ unimportant differences    only_unimportant.txt     3
+big.txt                   19  = same                     big.txt                   19
+broken.txt                11  E error                    broken.txt                 4
+crlf.txt                   6  = same                     crlf.txt                   5
+important.txt              3  ! different                important.txt              3
+spaces.txt                 3  ~ unimportant differences  spaces.txt                 2

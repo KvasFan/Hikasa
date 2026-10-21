@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Folder Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.fsbs { font-family: monospace; }
+table.fsbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.5em; }
+table.fsbs td { padding: 0 0.5em; white-space: pre; vertical-align: top; }
+table.fsbs td.num { text-align: right; }
+table.fsbs td.m { text-align: center; }
+.c-same { color: #000000; }
+.c-newer { color: #c00000; }
+.c-unimp { color: #0030c0; }
+.c-orphan { color: #800080; }
+.c-older { color: #808080; }
+.c-filtered { color: #008080; }
+.c-error { color: #a04000; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Folder Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l</td></tr>
+<tr><th>Right</th><td>/r</td></tr>
+<tr><th>Mode</th><td>display: all; folders: compare structure; ignore unimportant: no; suppress filters: no</td></tr>
+<tr><th>Rules</th><td>size, timestamps (2 s); filters: none; orphan folders not scanned</td></tr>
+</table>
+<table class="legend">
+<tr><td class="c-same">Same</td><td class="c-newer">Newer or different</td><td class="c-unimp">Unimportant differences only</td><td class="c-orphan">Orphan</td><td class="c-older">Older or unknown</td><td class="c-filtered">Filtered</td><td class="c-error">Error</td></tr>
+</table>
+<table class="fsbs">
+<thead><tr><th>Name</th><th>Size</th><th>Modified</th><th class="m"></th><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+<tbody>
+<tr><td class="name c-absent"></td><td class="c-absent"></td><td class="c-absent"></td><td class="m c-orphan">+</td><td class="name c-orphan" style="padding-left:1ch">new/</td><td class="c-orphan num">0</td><td class="c-orphan"></td></tr>
+<tr><td class="name c-orphan" style="padding-left:1ch">old/</td><td class="c-orphan num">0</td><td class="c-orphan"></td><td class="m c-orphan">-</td><td class="name c-absent"></td><td class="c-absent"></td><td class="c-absent"></td></tr>
+<tr><td class="name c-same" style="padding-left:1ch">shared/</td><td class="c-same num">1</td><td class="c-same"></td><td class="m c-same">=</td><td class="name c-same" style="padding-left:1ch">shared/</td><td class="c-same num">1</td><td class="c-same"></td></tr>
+<tr><td class="name c-same" style="padding-left:3ch">x.txt</td><td class="c-same num">1</td><td class="c-same">2026-01-01T00:00:00Z</td><td class="m c-same">=</td><td class="name c-same" style="padding-left:3ch">x.txt</td><td class="c-same num">1</td><td class="c-same">2026-01-01T00:00:00Z</td></tr>
+</tbody>
+</table>
+</body>
+</html>

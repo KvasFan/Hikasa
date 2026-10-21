@@ -54,6 +54,8 @@ pub enum WarningCode {
     SwitchIgnored,
     /// Standard alignment exceeded its fallback budget and paired part of a gap by position (D-16).
     AlignmentDegraded,
+    /// A patch was written in UTF-8 for a file stored in another encoding, so it may not apply to the file's bytes.
+    PatchEncoding,
 }
 
 impl WarningCode {
@@ -77,6 +79,7 @@ impl WarningCode {
             WarningCode::EntryError => "entry_error",
             WarningCode::SwitchIgnored => "switch_ignored",
             WarningCode::AlignmentDegraded => "alignment_degraded",
+            WarningCode::PatchEncoding => "patch_encoding",
         }
     }
 }
@@ -112,6 +115,7 @@ mod tests {
             WarningCode::EntryError,
             WarningCode::SwitchIgnored,
             WarningCode::AlignmentDegraded,
+            WarningCode::PatchEncoding,
         ];
         for code in all {
             assert_eq!(

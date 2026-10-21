@@ -37,7 +37,8 @@
     "symlink_loop",
     "entry_error",
     "switch_ignored",
-    "alignment_degraded"
+    "alignment_degraded",
+    "patch_encoding"
   ],
   "warnings": [
     {

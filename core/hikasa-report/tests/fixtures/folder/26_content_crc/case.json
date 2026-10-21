@@ -1,0 +1,5 @@
+{
+  "description": "CRC content test: binary same (time overridden) and binary different",
+  "source": "hikasa-folder/26_content_crc",
+  "columns": "status,size,modified,crc"
+}
