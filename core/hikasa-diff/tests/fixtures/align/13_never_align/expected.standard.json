@@ -1,0 +1,13 @@
+{
+  "algorithm": "standard",
+  "rows": 8,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "delete", "left": [1, 3], "right": [1, 1]},
+    {"kind": "insert", "left": [3, 3], "right": [1, 2]},
+    {"kind": "equal", "left": [3, 4], "right": [2, 3]},
+    {"kind": "delete", "left": [4, 5], "right": [3, 3]},
+    {"kind": "insert", "left": [5, 5], "right": [3, 5]}
+  ]
+}

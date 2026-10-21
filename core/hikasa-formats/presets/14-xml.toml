@@ -1,0 +1,66 @@
+# Sources: W3C Extensible Markup Language (XML) 1.0 (comments, CDATA sections, processing instructions,
+# document type declarations, attribute values, entity and character references). Written for Hikasa.
+schema_version = 1
+id = "xml"
+name = "XML"
+description = "XML documents, schemas, stylesheets, SVG images and property lists."
+kind = "text"
+mask = "*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.plist"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 2
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "<!--"
+to = "-->"
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "<![CDATA["
+to = "]]>"
+
+# Processing instructions (<?xml …?>) and declarations (<!DOCTYPE …>).
+[[grammar]]
+element = "Directive"
+kind = "delimited"
+from = "<?"
+to = "?>"
+
+[[grammar]]
+element = "Directive"
+kind = "delimited"
+from = "<!"
+to = ">"
+
+# Attribute values: a quote right after `=` (or `= `) up to the closing quote on the same line (values cannot
+# contain '<'). Quotes elsewhere (an apostrophe in character data) never start a string. Values that span lines
+# are not recognised (the grammar is line-based and not context-sensitive, docs/10 §3.1).
+[[grammar]]
+element = "String"
+kind = "basic"
+text = '(?<==|=\s)"[^"<]*"'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "basic"
+text = "(?<==|=\\s)'[^'<]*'"
+regex = true
+
+[[grammar]]
+element = "Entity"
+kind = "basic"
+text = '&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z_][\w.-]*);'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '</?|/?>|='
+regex = true

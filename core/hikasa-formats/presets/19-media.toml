@@ -1,0 +1,7 @@
+# Sources: docs/10-file-formats.md §5. Written for Hikasa.
+schema_version = 1
+id = "media"
+name = "Media Files"
+description = "Audio and video files (compared as binary content in M1)."
+kind = "media"
+mask = "*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus"

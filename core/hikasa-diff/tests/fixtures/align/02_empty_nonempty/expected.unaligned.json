@@ -1,0 +1,8 @@
+{
+  "algorithm": "unaligned",
+  "rows": 3,
+  "warnings": [],
+  "runs": [
+    {"kind": "insert", "left": [0, 0], "right": [0, 3]}
+  ]
+}

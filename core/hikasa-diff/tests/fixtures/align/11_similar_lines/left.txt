@@ -1,0 +1,3 @@
+let total = price * quantity;
+let tax = total * rate;
+print(total + tax);

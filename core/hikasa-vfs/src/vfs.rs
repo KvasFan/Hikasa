@@ -1,0 +1,267 @@
+//! The [`Vfs`] trait (VFS-001) and its companions: [`ReadSeek`], [`AtomicWrite`], [`FollowLinks`],
+//! [`ListOptions`], [`Prefilter`], [`Listing`], [`NameOnly`], [`EntryError`], [`WriteOptions`].
+
+use std::cmp::Ordering;
+use std::collections::HashSet;
+use std::fmt;
+use std::io::{Read, Seek, Write};
+use std::path::PathBuf;
+
+use hikasa_core::{CancelToken, ErrorReport, Spec};
+use serde::{Deserialize, Serialize};
+
+use crate::caps::Capabilities;
+use crate::entry::{Entry, EntryKind, FileName};
+use crate::error::VfsError;
+
+/// Whether symlinks are followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowLinks {
+    /// Report the link itself (lstat).
+    #[default]
+    No,
+    /// Report the target (stat); broken links are reported unfollowed with an `EntryError`.
+    Yes,
+}
+
+/// Decides, from the name and the kind found in the directory record, whether an entry is stat'ed
+/// (`true`) or reported name-only (`false`, D-45). Called before any per-entry system call.
+pub type Prefilter<'a> = &'a (dyn Fn(&str, EntryKind) -> bool + Sync);
+
+/// Listing options.
+#[derive(Clone, Copy, Default)]
+pub struct ListOptions<'a> {
+    /// Symlink handling.
+    pub follow: FollowLinks,
+    /// Optional prefilter. Back-ends call it only when the directory record states the kind (`d_type`,
+    /// Windows find data); entries of unknown kind and symlinks are always stat'ed and never passed to it.
+    /// `LocalVfs` reads the kind through `std::fs::DirEntry::file_type`, which `lstat`s an entry whose record
+    /// states no kind; that entry is then passed to the prefilter with the kind found (results are the same,
+    /// only the saved `stat` is lost on such file systems).
+    pub prefilter: Option<Prefilter<'a>>,
+}
+
+impl fmt::Debug for ListOptions<'_> {
+    /// Prints `follow` and whether a prefilter is set.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ListOptions")
+            .field("follow", &self.follow)
+            .field("prefilter", &self.prefilter.is_some())
+            .finish()
+    }
+}
+
+/// An entry reported without metadata because the prefilter declined it (D-45).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameOnly {
+    /// The entry name.
+    pub name: FileName,
+    /// Kind from the directory record (`Dir`, `File` or `Other`; never `Symlink`).
+    pub kind: EntryKind,
+}
+
+/// Result of `list`. Order of `entries` and `name_only` is UNSPECIFIED (consumers must sort; INV-VFS-1).
+#[derive(Debug, Clone, Default)]
+pub struct Listing {
+    /// Entries that could be described.
+    pub entries: Vec<Entry>,
+    /// Entries the prefilter declined (not stat'ed).
+    pub name_only: Vec<NameOnly>,
+    /// Names whose metadata could not be read (the listing itself succeeded). **Not disjoint from `entries`:**
+    /// with `FollowLinks::Yes` a symlink whose target cannot be stat'ed (broken link, loop) is in `entries`
+    /// (unfollowed) and has an error here; a consumer attaches the error to that entry instead of creating a
+    /// second item for the name.
+    pub errors: Vec<EntryError>,
+}
+
+/// Total order of names: the UTF-8 (possibly lossy) bytes, then the exact OS name (two lossy names can share
+/// their UTF-8 text).
+fn name_order(a: &FileName, b: &FileName) -> Ordering {
+    a.as_str().cmp(b.as_str()).then_with(|| {
+        a.to_os_string()
+            .as_encoded_bytes()
+            .cmp(b.to_os_string().as_encoded_bytes())
+    })
+}
+
+impl Listing {
+    /// Sorts `entries`, `name_only` and `errors` by name bytes (the order of `hikasa vfs ls`, §4.3.4). The sort
+    /// is total, so the result does not depend on the order in which the back-end listed the folder.
+    pub fn sort_by_name(&mut self) {
+        self.entries.sort_by(|a, b| name_order(&a.name, &b.name));
+        self.name_only.sort_by(|a, b| name_order(&a.name, &b.name));
+        self.errors.sort_by(|a, b| {
+            name_order(&a.name, &b.name).then_with(|| a.error.message.cmp(&b.error.message))
+        });
+    }
+
+    /// Number of distinct names in the listing: described and name-only entries, plus the failed names that are
+    /// not also described. A broken or looping followed symlink is in `entries` **and** in `errors` (the lists
+    /// are not disjoint) but is one name.
+    pub fn len(&self) -> usize {
+        let described: HashSet<&FileName> = if self.errors.is_empty() {
+            HashSet::new()
+        } else {
+            self.entries.iter().map(|e| &e.name).collect()
+        };
+        let failed_only: HashSet<&FileName> = self
+            .errors
+            .iter()
+            .map(|e| &e.name)
+            .filter(|name| !described.contains(name))
+            .collect();
+        self.entries.len() + self.name_only.len() + failed_only.len()
+    }
+
+    /// True when the listing holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.name_only.is_empty() && self.errors.is_empty()
+    }
+}
+
+/// A per-entry failure inside a successful listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryError {
+    /// The entry name.
+    pub name: FileName,
+    /// The failure.
+    pub error: ErrorReport,
+}
+
+/// Write options (minimal in M1: report output files).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WriteOptions {
+    /// Create missing parent folders.
+    pub create_parents: bool,
+    /// Replace an existing file (otherwise `AlreadyExists`).
+    pub overwrite: bool,
+}
+
+/// `Read + Seek + Send`.
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+/// An atomic writer: nothing is visible at the target until `commit`; dropping without `commit` discards the
+/// temporary file (SES-053, INV-VFS-3).
+pub trait AtomicWrite: Write + Send {
+    /// Flushes, syncs and atomically renames onto the target.
+    fn commit(self: Box<Self>) -> Result<(), VfsError>;
+}
+
+/// A virtual file system back-end (VFS-001). Implementations are `Send + Sync` and stateless per call
+/// (the CLI and GUI share one instance across threads).
+pub trait Vfs: Send + Sync {
+    /// Capabilities at `at` (may depend on the mount for local paths; M1 uses platform defaults).
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError>;
+    /// Metadata of `spec`.
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError>;
+    /// Lists a folder. Checks `cancel` at least every 1024 entries. Honours `opts.prefilter` (D-45).
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError>;
+    /// Opens for streaming reads.
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError>;
+    /// Opens an atomic writer.
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError>;
+    /// The spec of child `name` inside folder `dir`.
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError>;
+    /// A local path for `spec` when it is a local regular file (enables mmap). The default body names its
+    /// parameter `_spec` (§0.4 rule 6).
+    fn local_path(&self, _spec: &Spec) -> Option<PathBuf> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hikasa_core::ErrorKind;
+
+    fn report(message: &str) -> ErrorReport {
+        ErrorReport {
+            kind: ErrorKind::Io,
+            message: message.into(),
+            spec: None,
+            causes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sort_by_name_is_total() {
+        let mut listing = Listing {
+            entries: ["b", "a", "c"]
+                .map(|n| Entry::new(FileName::new(n).unwrap(), EntryKind::File))
+                .to_vec(),
+            name_only: ["z", "y"]
+                .map(|n| NameOnly {
+                    name: FileName::new(n).unwrap(),
+                    kind: EntryKind::Dir,
+                })
+                .to_vec(),
+            errors: vec![
+                EntryError {
+                    name: FileName::new("e").unwrap(),
+                    error: report("2"),
+                },
+                EntryError {
+                    name: FileName::new("e").unwrap(),
+                    error: report("1"),
+                },
+            ],
+        };
+        listing.sort_by_name();
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(listing.name_only[0].name.as_str(), "y");
+        assert_eq!(listing.errors[0].error.message, "1");
+        // Distinct names: 3 entries, 2 name-only, 1 failed name ("e" twice).
+        assert_eq!(listing.len(), 6);
+        assert!(!listing.is_empty());
+        assert!(Listing::default().is_empty());
+    }
+
+    /// Regression: a followed broken link is in `entries` and in `errors` but counts as one name.
+    #[test]
+    fn len_counts_a_failed_described_name_once() {
+        let link = FileName::new("broken").unwrap();
+        let listing = Listing {
+            entries: vec![
+                Entry::new(link.clone(), EntryKind::Symlink),
+                Entry::new(FileName::new("ok").unwrap(), EntryKind::File),
+            ],
+            name_only: Vec::new(),
+            errors: vec![EntryError {
+                name: link,
+                error: report("not found"),
+            }],
+        };
+        assert_eq!(listing.len(), 2);
+        let only_errors = Listing {
+            errors: listing.errors.clone(),
+            ..Listing::default()
+        };
+        assert_eq!(only_errors.len(), 1);
+        assert!(!only_errors.is_empty());
+    }
+
+    #[test]
+    fn list_options_debug_hides_the_closure() {
+        let accept = |_: &str, _: EntryKind| true;
+        let opts = ListOptions {
+            follow: FollowLinks::Yes,
+            prefilter: Some(&accept),
+        };
+        assert_eq!(
+            format!("{opts:?}"),
+            "ListOptions { follow: Yes, prefilter: true }"
+        );
+    }
+}

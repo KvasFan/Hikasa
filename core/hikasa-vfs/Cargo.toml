@@ -26,3 +26,11 @@ criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "binary_compare_2gb"
+harness = false
+
+[[bench]]
+name = "crc32_1gb"
+harness = false

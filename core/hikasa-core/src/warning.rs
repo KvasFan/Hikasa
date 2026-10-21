@@ -52,6 +52,8 @@ pub enum WarningCode {
     EntryError,
     /// A legacy command-line switch was accepted but ignored.
     SwitchIgnored,
+    /// Standard alignment exceeded its fallback budget and paired part of a gap by position (D-16).
+    AlignmentDegraded,
 }
 
 impl WarningCode {
@@ -74,6 +76,7 @@ impl WarningCode {
             WarningCode::SymlinkLoop => "symlink_loop",
             WarningCode::EntryError => "entry_error",
             WarningCode::SwitchIgnored => "switch_ignored",
+            WarningCode::AlignmentDegraded => "alignment_degraded",
         }
     }
 }
@@ -108,6 +111,7 @@ mod tests {
             WarningCode::SymlinkLoop,
             WarningCode::EntryError,
             WarningCode::SwitchIgnored,
+            WarningCode::AlignmentDegraded,
         ];
         for code in all {
             assert_eq!(

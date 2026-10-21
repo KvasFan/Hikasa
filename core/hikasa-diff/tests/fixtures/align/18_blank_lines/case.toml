@@ -1,0 +1,1 @@
+description = "blank (trivial) lines never anchor; closeness pairs them only when keys are equal"

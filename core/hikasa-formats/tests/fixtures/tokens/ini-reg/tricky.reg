@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Demo]
+@="default value"
+"Count"=dword:0000000a
+"Path"="C:\\Program Files\\Demo"
+"Blob"=hex:01,02,ff
+"Expand"=hex(2):25,00,00,00
+[-HKEY_CURRENT_USER\Software\Old]

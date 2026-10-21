@@ -1,0 +1,2 @@
+description = "four lines appended with skew 2: anchors stay reachable through the start diagonal"
+skew = 2

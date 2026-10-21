@@ -1,0 +1,97 @@
+# Sources: the Java Language Specification (keywords, contextual keywords, literals, text blocks) and the
+# Kotlin language specification (hard, soft and modifier keywords, raw strings). Written for Hikasa.
+schema_version = 1
+id = "java"
+name = "Java Source"
+description = "Java and Kotlin source files."
+kind = "text"
+mask = "*.java;*.jav;*.kt"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[elements]
+Number = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "//"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "/*"
+to = "*/"
+
+# Java text blocks and Kotlin raw strings.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"""'
+to = '"""'
+escape = '\'
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "Annotation"
+kind = "basic"
+text = '@\w+'
+regex = true
+
+# "non-sealed" contains a non-word char, so it is tried on its own (word boundaries still apply).
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  # Java
+  "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const", "continue",
+  "default", "do", "double", "else", "enum", "exports", "extends", "final", "finally", "float", "for", "goto",
+  "if", "implements", "import", "instanceof", "int", "interface", "long", "module", "native", "new",
+  "non-sealed", "open", "opens", "package", "permits", "private", "protected", "provides", "public", "record",
+  "requires", "return", "sealed", "short", "static", "strictfp", "super", "switch", "synchronized", "this",
+  "throw", "throws", "to", "transient", "transitive", "try", "uses", "var", "void", "volatile", "when",
+  "while", "with", "yield", "true", "false", "null",
+  # Kotlin
+  "actual", "annotation", "as", "by", "companion", "constructor", "crossinline", "data", "dynamic", "expect",
+  "external", "field", "fun", "get", "infix", "init", "inner", "internal", "is", "lateinit", "noinline",
+  "object", "operator", "out", "override", "reified", "set", "suspend", "tailrec", "typealias", "val", "value",
+  "vararg", "where",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_$][\w$]*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f_]+[lLuU]*|0[bB][01_]+[lLuU]*|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?[fFdDlLuU]*|\.\d[\d_]*(?:[eE][+-]?\d+)?[fFdD]?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>?:.]+|[;,()\[\]{}@#\\]'
+regex = true

@@ -1,0 +1,16 @@
+{
+  "algorithm": "patience",
+  "rows": 43,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "delete", "left": [1, 5], "right": [1, 1]},
+    {"kind": "equal", "left": [5, 14], "right": [1, 10]},
+    {"kind": "insert", "left": [14, 14], "right": [10, 14]},
+    {"kind": "equal", "left": [14, 18], "right": [14, 18]},
+    {"kind": "delete", "left": [18, 22], "right": [18, 18]},
+    {"kind": "equal", "left": [22, 33], "right": [18, 29]},
+    {"kind": "delete", "left": [33, 34], "right": [29, 29]},
+    {"kind": "insert", "left": [34, 34], "right": [29, 34]}
+  ]
+}

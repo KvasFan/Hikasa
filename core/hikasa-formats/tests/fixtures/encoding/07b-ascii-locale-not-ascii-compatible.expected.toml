@@ -1,0 +1,9 @@
+# A locale that is not ASCII-compatible is skipped: UTF-8.
+[options]
+locale = "UTF-16LE"
+
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "ascii"
+text = "hello"

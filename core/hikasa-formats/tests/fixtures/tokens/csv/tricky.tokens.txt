@@ -1,0 +1,3 @@
+L1:0-12	Everything Else	id\tname\tnote
+L2:0-30	Everything Else	1\t"quoted ""text"""\t  padded  
+L3:0-3	Everything Else	2\t\t

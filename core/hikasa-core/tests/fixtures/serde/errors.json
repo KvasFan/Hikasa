@@ -36,7 +36,8 @@
     "patch_lossy_eol",
     "symlink_loop",
     "entry_error",
-    "switch_ignored"
+    "switch_ignored",
+    "alignment_degraded"
   ],
   "warnings": [
     {

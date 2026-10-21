@@ -1,0 +1,85 @@
+L1:0-6	LineNum	000100
+L1:6-11	Everything Else	     
+L1:11-13	Keyword	IF
+L1:13-14	Everything Else	 
+L1:14-28	Identifier	WS-END-OF-FILE
+L1:28-31	Everything Else	 = 
+L1:31-34	String	"Y"
+L2:0-6	LineNum	000200
+L2:6-14	Everything Else	        
+L2:14-21	Keyword	PERFORM
+L2:21-22	Everything Else	 
+L2:22-33	Identifier	CLOSE-FILES
+L3:0-6	LineNum	000300
+L3:6-11	Everything Else	     
+L3:11-17	Keyword	END-IF
+L3:17-18	Everything Else	.
+L4:0-6	LineNum	000400
+L4:6-11	Everything Else	     
+L4:11-15	Keyword	move
+L4:15-16	Everything Else	 
+L4:16-23	String	'it''s'
+L4:23-24	Everything Else	 
+L4:24-26	Keyword	to
+L4:26-27	Everything Else	 
+L4:27-34	Identifier	ws-text
+L5:0-6	LineNum	000500
+L5:6-29	Comment	/    PAGE EJECT COMMENT
+L6:0-6	LineNum	000600
+L6:6-11	Everything Else	     
+L6:11-14	Keyword	ADD
+L6:14-15	Everything Else	 
+L6:15-18	Number	1.5
+L6:18-19	Everything Else	 
+L6:19-21	Keyword	TO
+L6:21-22	Everything Else	 
+L6:22-31	Identifier	COUNTER-A
+L6:31-32	Everything Else	 
+L6:32-39	Keyword	END-ADD
+L7:0-6	LineNum	001   
+L7:6-7	Everything Else	 
+L7:7-12	Identifier	SHORT
+L7:12-13	Everything Else	 
+L7:13-17	Keyword	LINE
+L8:0-6	LineNum	000700
+L8:6-11	Everything Else	     
+L8:11-18	Keyword	COMPUTE
+L8:18-19	Everything Else	 
+L8:19-20	Identifier	X
+L8:20-23	Everything Else	 = 
+L8:23-24	Identifier	Y
+L8:24-27	Everything Else	 * 
+L8:27-28	Number	2
+L8:28-72	Everything Else	.                                           
+L8:72-80	Identification	CHANGED!
+L9:0-6	LineNum	000800
+L9:6-11	Everything Else	     
+L9:11-18	Keyword	DISPLAY
+L9:18-19	Everything Else	 
+L9:19-72	String	"THIS IS A VERY LONG LITERAL THAT CONTINUES ON THE NE
+L9:72-80	Identification	PROG0008
+L10:0-6	LineNum	000900
+L10:6-11	Everything Else	     
+L10:11-15	Keyword	MOVE
+L10:15-16	Everything Else	 
+L10:16-30	Identifier	WS-ALPHA-VALUE
+L10:30-31	Everything Else	 
+L10:31-33	Keyword	TO
+L10:33-34	Everything Else	 
+L10:34-72	Identifier	WS-BETA-VALUE-WITH-A-LONG-NAME-XYZABCD
+L10:72-80	Identification	PROG0009
+L11:0-6	LineNum	001000
+L11:6-32	Comment	*    A PADDED COMMENT LINE
+L11:32-72	Everything Else	                                        
+L11:72-80	Identification	PROG0010
+L12:0-6	LineNum	001100
+L12:6-11	Everything Else	     
+L12:11-15	Keyword	MOVE
+L12:15-16	Everything Else	 
+L12:16-17	Number	1
+L12:17-18	Everything Else	 
+L12:18-20	Keyword	TO
+L12:20-21	Everything Else	 
+L12:21-31	Identifier	WS-COUNTER
+L12:31-72	Everything Else	.                                        
+L12:72-80	Identification	PROG0011

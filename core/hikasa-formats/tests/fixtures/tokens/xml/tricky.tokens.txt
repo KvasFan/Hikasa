@@ -1,0 +1,47 @@
+L1:0-98	Directive	<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+L2:0-1	Operator	<
+L2:1-10	Everything Else	svg width
+L2:10-11	Operator	=
+L2:11-15	String	"10"
+L2:15-22	Everything Else	 height
+L2:22-23	Operator	=
+L2:23-27	String	"10"
+L2:27-28	Operator	>
+L2:28-29	Operator	<
+L2:29-35	Everything Else	script
+L2:35-36	Operator	>
+L2:36-75	String	<![CDATA[ if (a < b && c > d) { go(); }
+L3:0-1	Everything Else	 
+L3:1-4	String	]]>
+L3:4-6	Operator	</
+L3:6-12	Everything Else	script
+L3:12-13	Operator	>
+L4:0-1	Operator	<
+L4:1-5	Everything Else	text
+L4:5-6	Operator	>
+L4:6-12	Everything Else	Don't 
+L4:12-18	Entity	&#x27;
+L4:18-23	Everything Else	quote
+L4:23-28	Entity	&#39;
+L4:28-30	Operator	</
+L4:30-34	Everything Else	text
+L4:34-35	Operator	>
+L4:35-45	Comment	<!-- multi
+L5:0-16	Comment	line comment -->
+L5:16-18	Operator	</
+L5:18-21	Everything Else	svg
+L5:21-22	Operator	>
+L6:0-1	Operator	<
+L6:1-11	Everything Else	path class
+L6:11-12	Operator	=
+L6:12-18	String	"icon"
+L6:18-20	Everything Else	 d
+L6:20-21	Operator	=
+L6:21-27	Everything Else	"M 0 0
+L7:0-22	Everything Else	         L 10 10" fill
+L7:22-23	Operator	=
+L7:23-28	String	"red"
+L7:28-35	Everything Else	 stroke
+L7:35-36	Operator	=
+L7:36-42	String	"blue"
+L7:42-44	Operator	/>

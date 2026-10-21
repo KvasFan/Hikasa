@@ -1,0 +1,10 @@
+{
+  "algorithm": "unaligned",
+  "rows": 9,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "delete", "left": [1, 5], "right": [1, 1]},
+    {"kind": "insert", "left": [5, 5], "right": [1, 5]}
+  ]
+}

@@ -24,3 +24,11 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "align"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

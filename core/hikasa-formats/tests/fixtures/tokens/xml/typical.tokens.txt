@@ -1,0 +1,43 @@
+L1:0-38	Directive	<?xml version="1.0" encoding="UTF-8"?>
+L2:0-21	Comment	<!-- Order export -->
+L3:0-1	Operator	<
+L3:1-13	Everything Else	orders xmlns
+L3:13-14	Operator	=
+L3:14-34	String	"urn:example:orders"
+L3:34-35	Operator	>
+L4:0-2	Everything Else	  
+L4:2-3	Operator	<
+L4:3-11	Everything Else	order id
+L4:11-12	Operator	=
+L4:12-18	String	"1001"
+L4:18-25	Everything Else	 status
+L4:25-26	Operator	=
+L4:26-32	String	'open'
+L4:32-33	Operator	>
+L5:0-4	Everything Else	    
+L5:4-5	Operator	<
+L5:5-13	Everything Else	customer
+L5:13-14	Operator	>
+L5:14-18	Everything Else	Ada 
+L5:18-23	Entity	&amp;
+L5:23-32	Everything Else	 Partners
+L5:32-34	Operator	</
+L5:34-42	Everything Else	customer
+L5:42-43	Operator	>
+L6:0-4	Everything Else	    
+L6:4-5	Operator	<
+L6:5-19	Everything Else	total currency
+L6:19-20	Operator	=
+L6:20-25	String	"EUR"
+L6:25-26	Operator	>
+L6:26-31	Everything Else	12.50
+L6:31-33	Operator	</
+L6:33-38	Everything Else	total
+L6:38-39	Operator	>
+L7:0-2	Everything Else	  
+L7:2-4	Operator	</
+L7:4-9	Everything Else	order
+L7:9-10	Operator	>
+L8:0-2	Operator	</
+L8:2-8	Everything Else	orders
+L8:8-9	Operator	>

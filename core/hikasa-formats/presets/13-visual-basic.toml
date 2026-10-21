@@ -1,0 +1,81 @@
+# Sources: the Visual Basic language reference (keywords, comments with ' and Rem, string literals with doubled
+# quotes, &H and &O literals, type characters). Written for Hikasa.
+schema_version = 1
+id = "visual-basic"
+name = "Visual Basic Source"
+description = "Visual Basic source, class, form, control and project files, and scripts."
+kind = "text"
+mask = "*.bas;*.cls;*.frm;*.vb;*.vbs;*.ctl;*.vbp"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[elements]
+# Visual Basic is case-insensitive.
+Keyword = { case_sensitive = false }
+Identifier = { case_sensitive = false }
+Number = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "'"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "basic"
+text = '\brem\b(?:.*\S)?'
+regex = true
+match_case = false
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '"'
+stop_at_eol = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = [
+  "AddHandler", "AddressOf", "Alias", "And", "AndAlso", "As", "Boolean", "ByRef", "Byte", "ByVal", "Call",
+  "Case", "Catch", "CBool", "CByte", "CChar", "CDate", "CDbl", "CDec", "Char", "CInt", "Class", "CLng", "CObj",
+  "Const", "Continue", "CSByte", "CShort", "CSng", "CStr", "CType", "CUInt", "CULng", "CUShort", "Date",
+  "Decimal", "Declare", "Default", "Delegate", "Dim", "DirectCast", "Do", "Double", "Each", "Else", "ElseIf",
+  "End", "EndIf", "Enum", "Erase", "Error", "Event", "Exit", "False", "Finally", "For", "Friend", "Function",
+  "Get", "GetType", "Global", "GoSub", "GoTo", "Handles", "If", "Implements", "Imports", "In", "Inherits",
+  "Integer", "Interface", "Is", "IsNot", "Let", "Lib", "Like", "Long", "Loop", "Me", "Mod", "Module",
+  "MustInherit", "MustOverride", "MyBase", "MyClass", "Namespace", "Narrowing", "New", "Next", "Not", "Nothing",
+  "NotInheritable", "NotOverridable", "Object", "Of", "On", "Operator", "Option", "Optional", "Or", "OrElse",
+  "Overloads", "Overridable", "Overrides", "ParamArray", "Partial", "Private", "Property", "Protected",
+  "Public", "RaiseEvent", "ReadOnly", "ReDim", "RemoveHandler", "Resume", "Return", "SByte", "Select", "Set",
+  "Shadows", "Shared", "Short", "Single", "Static", "Step", "Stop", "String", "Structure", "Sub", "SyncLock",
+  "Then", "Throw", "To", "True", "Try", "TryCast", "TypeOf", "UInteger", "ULong", "UShort", "Using", "Variant",
+  "Wend", "When", "While", "Widening", "With", "WithEvents", "WriteOnly", "Xor",
+]
+
+# Identifiers may end with a type character ($ % & ! # @).
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_]\w*[$%&!#@]?'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '&[Hh][0-9A-Fa-f]+&?|&[Oo][0-7]+&?|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?[%&!#@DFRSILdfrsil]?|\.\d+(?:[eE][+-]?\d+)?[!#@DFRdfr]?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/\\^&=<>.:]+|[,;()\[\]{}!?#_]'
+regex = true

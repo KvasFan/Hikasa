@@ -1,0 +1,11 @@
+# Invalid UTF-8 decoded as the fixed UTF-8: two replacements.
+[setting]
+mode = "fixed"
+label = "utf-8"
+
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "fixed"
+text = "ok\ufffd\ufffd("
+malformed = 2

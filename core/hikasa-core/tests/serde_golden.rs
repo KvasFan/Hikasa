@@ -116,6 +116,7 @@ fn error_and_warning_shapes() {
             WarningCode::SymlinkLoop,
             WarningCode::EntryError,
             WarningCode::SwitchIgnored,
+            WarningCode::AlignmentDegraded,
         ],
         warnings: vec![
             Warning {

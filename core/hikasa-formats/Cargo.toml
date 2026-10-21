@@ -29,3 +29,7 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "tokenize_c_1m"
+harness = false

@@ -1,0 +1,18 @@
+{
+  "algorithm": "myers",
+  "rows": 39,
+  "warnings": ["closeness_ignored"],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "delete", "left": [1, 5], "right": [1, 1]},
+    {"kind": "equal", "left": [5, 16], "right": [1, 12]},
+    {"kind": "delete", "left": [16, 17], "right": [12, 12]},
+    {"kind": "equal", "left": [17, 18], "right": [12, 13]},
+    {"kind": "changed", "left": [18, 19], "right": [13, 14]},
+    {"kind": "equal", "left": [19, 21], "right": [14, 16]},
+    {"kind": "insert", "left": [21, 21], "right": [16, 17]},
+    {"kind": "equal", "left": [21, 33], "right": [17, 29]},
+    {"kind": "changed", "left": [33, 34], "right": [29, 30]},
+    {"kind": "insert", "left": [34, 34], "right": [30, 34]}
+  ]
+}

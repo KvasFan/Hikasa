@@ -1,0 +1,7 @@
+# Sources: docs/10-file-formats.md §5. Written for Hikasa.
+schema_version = 1
+id = "pictures"
+name = "Picture Files"
+description = "Images (compared as binary content in M1)."
+kind = "picture"
+mask = "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds"

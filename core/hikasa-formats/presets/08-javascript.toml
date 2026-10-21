@@ -1,0 +1,97 @@
+# Sources: ECMA-262 (reserved words, contextual words, literals, template literals, regular expression
+# literals) and the TypeScript handbook (type keywords and modifiers). Written for Hikasa.
+schema_version = 1
+id = "javascript"
+name = "JavaScript Source"
+description = "JavaScript and TypeScript source files."
+kind = "text"
+mask = "*.js;*.mjs;*.ts;*.jsx;*.tsx"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 2
+tab_as_spaces = true
+
+[elements]
+Number = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "//"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "/*"
+to = "*/"
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = '\'
+stop_at_eol = true
+
+# Template literals may span lines.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "`"
+to = "`"
+escape = '\'
+
+# A regular expression literal can only follow one of ( , = : [ ! & | ? { } ; (a division never does). The
+# token deliberately includes that punctuation and the whitespace before the slash, because the context cannot
+# be expressed without variable-length look-behind ("simple by design", FF-026). The first body char excludes
+# '*' and '/', so comments are never taken for regexes; the pattern stays linear-time (no look-around).
+[[grammar]]
+element = "RegexLiteral"
+kind = "basic"
+text = '[(,=:\[!&|?{};]\s*/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^*/\\\[])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\[])*/[dgimsuvy]*'
+regex = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  # ECMAScript
+  "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
+  "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "import", "in",
+  "instanceof", "let", "new", "null", "return", "static", "super", "switch", "this", "throw", "true", "try",
+  "typeof", "undefined", "var", "void", "while", "with", "yield", "async", "of", "get", "set",
+  # TypeScript
+  "abstract", "accessor", "any", "as", "asserts", "bigint", "boolean", "declare", "implements", "infer",
+  "interface", "is", "keyof", "module", "namespace", "never", "number", "object", "override", "private",
+  "protected", "public", "readonly", "require", "satisfies", "string", "symbol", "type", "unique", "unknown",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_$][\w$]*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f_]+n?|0[oO][0-7_]+n?|0[bB][01_]+n?|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?n?|\.\d[\d_]*(?:[eE][+-]?\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>?:.]+|[;,()\[\]{}@#\\]'
+regex = true

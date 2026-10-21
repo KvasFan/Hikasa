@@ -1,0 +1,112 @@
+# Sources: the Rust Reference (strict, reserved and weak keywords; comments; attributes; string, raw string,
+# byte and C string literals; character literals and escapes; lifetimes; integer and float literals with
+# suffixes; raw identifiers). Written for Hikasa.
+schema_version = 1
+id = "rust"
+name = "Rust Source"
+description = "Rust source files."
+kind = "text"
+mask = "*.rs"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "//"
+stop_at_eol = true
+
+# Block comments nest in Rust; the grammar approximates them as non-nesting ("simple by design").
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "/*"
+to = "*/"
+
+[[grammar]]
+element = "Attribute"
+kind = "basic"
+text = '#!?\[[^\]]*\]'
+regex = true
+
+# Raw strings (optionally byte or C strings): r"…", r#"…"#, r##"…"##.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[bc]?r##"'
+to = '"##'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[bc]?r#"'
+to = '"#'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[bc]?r"'
+to = '"'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[bc]?"'
+to = '"'
+escape = '\'
+regex = true
+
+# Character literals come before lifetimes: 'a' is a char, 'a a lifetime.
+[[grammar]]
+element = "Char"
+kind = "basic"
+text = '''b?'(?:\\(?:u\{[0-9A-Fa-f_]{1,8}\}|x[0-9A-Fa-f]{2}|.)|[^\\'])''''
+regex = true
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = "'[A-Za-z_]\\w*"
+regex = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  # strict
+  "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn",
+  "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self",
+  "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+  # reserved
+  "abstract", "become", "box", "do", "final", "gen", "macro", "override", "priv", "try", "typeof", "unsized",
+  "virtual", "yield",
+  # weak
+  "union", "macro_rules",
+]
+
+# Raw identifiers (r#type) and Unicode identifiers (a word char that is not a digit, then word chars; a close,
+# linear-time approximation of XID_Start/XID_Continue).
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = 'r#[A-Za-z_]\w*|[^\W\d]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0x[0-9A-Fa-f_]+(?:[iu](?:8|16|32|64|128|size))?|0o[0-7_]+(?:[iu](?:8|16|32|64|128|size))?|0b[01_]+(?:[iu](?:8|16|32|64|128|size))?|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?[\d_]+)?(?:[iu](?:8|16|32|64|128|size)|f32|f64)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>?:.@]+|[;,()\[\]{}#$\\]'
+regex = true

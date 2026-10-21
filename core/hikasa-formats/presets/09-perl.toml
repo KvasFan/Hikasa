@@ -1,0 +1,84 @@
+# Sources: perlsyn (comments, POD blocks, statements), perlfunc (named operators and functions) and perlop
+# (operators, quote-like literals). Written for Hikasa.
+schema_version = 1
+id = "perl"
+name = "Perl Scripts"
+description = "Perl scripts and modules."
+kind = "text"
+mask = "*.pl;*.pm"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+# POD documentation: from a line starting with =word to the line starting with =cut.
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = '^=[A-Za-z]\w*'
+to = '^=cut\b.*'
+regex = true
+
+# Variables come before comments, so that $#array and $# are not taken for comments.
+[[grammar]]
+element = "Variable"
+kind = "basic"
+text = '\$#\{?[\w:]*\}?|[$@%][\w:]+'
+regex = true
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "#"
+stop_at_eol = true
+
+# Quotes in regexes and quote-like operators (s/'//, qw(it's)) are not recognised, so strings stop at the end
+# of the line instead of swallowing the rest of the file.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  "if", "elsif", "else", "unless", "while", "until", "for", "foreach", "do", "last", "next", "redo", "return",
+  "goto", "my", "our", "local", "state", "sub", "package", "use", "no", "require", "BEGIN", "END", "INIT",
+  "CHECK", "UNITCHECK", "and", "or", "not", "xor", "eq", "ne", "lt", "gt", "le", "ge", "cmp", "print",
+  "printf", "say", "die", "warn", "eval", "defined", "undef", "ref", "bless", "shift", "unshift", "push", "pop",
+  "splice", "keys", "values", "each", "exists", "delete", "scalar", "wantarray", "open", "close", "chomp",
+  "chop", "split", "join", "map", "grep", "sort", "reverse", "sprintf", "length", "substr", "index", "lc", "uc",
+  "__PACKAGE__", "__FILE__", "__LINE__", "__END__", "__DATA__",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>?:.\\]+|[;,()\[\]{}]'
+regex = true

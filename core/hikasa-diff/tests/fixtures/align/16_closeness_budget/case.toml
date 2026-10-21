@@ -1,0 +1,2 @@
+description = "a per-gap cell cap of 4: a 3x3 gap is paired by position (closeness_budget_exhausted)"
+max_cells_per_gap = 4

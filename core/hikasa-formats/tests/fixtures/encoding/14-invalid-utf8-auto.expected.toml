@@ -1,0 +1,7 @@
+# Invalid UTF-8 with Auto: the detector decides (windows-1252 maps 0x80 to the euro sign).
+[expected]
+encoding = "windows-1252"
+bom_len = 0
+source = "detector"
+text = "price: 10\u20ac only"
+malformed = 0

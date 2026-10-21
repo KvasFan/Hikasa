@@ -1,0 +1,99 @@
+# Sources: ISO/IEC 9075 (SQL) reserved words, comments, character string literals with doubled quotes,
+# national character strings and delimited identifiers; bracketed and @/# prefixed identifiers as used by common
+# database dialects. Written for Hikasa.
+schema_version = 1
+id = "sql"
+name = "SQL"
+description = "SQL scripts."
+kind = "text"
+mask = "*.sql;*.dsql"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[elements]
+Keyword = { case_sensitive = false }
+Number = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "--"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "/*"
+to = "*/"
+
+# National character strings (N'…'); quotes are doubled inside, and strings may span lines.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "N'"
+to = "'"
+escape = "'"
+match_case = false
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = "'"
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = [
+  "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BEGIN", "BETWEEN", "BIGINT", "BOOLEAN", "BY", "CASCADE",
+  "CASE", "CAST", "CHAR", "CHECK", "CLOSE", "COLUMN", "COMMIT", "CONSTRAINT", "CREATE", "CROSS", "CURSOR",
+  "DATABASE", "DATE", "DECIMAL", "DECLARE", "DEFAULT", "DELETE", "DESC", "DISTINCT", "DROP", "ELSE", "END",
+  "ESCAPE", "EXCEPT", "EXEC", "EXECUTE", "EXISTS", "FETCH", "FLOAT", "FOREIGN", "FROM", "FULL", "FUNCTION",
+  "GRANT", "GROUP", "HAVING", "IF", "IN", "INDEX", "INNER", "INSERT", "INT", "INTEGER", "INTERSECT", "INTO",
+  "IS", "JOIN", "KEY", "LEFT", "LIKE", "LIMIT", "MERGE", "NATURAL", "NOT", "NULL", "NUMERIC", "NVARCHAR",
+  "OFFSET", "ON", "OPEN", "OR", "ORDER", "OUTER", "OVER", "PARTITION", "PRIMARY", "PROCEDURE", "REAL",
+  "RECURSIVE", "REFERENCES", "RETURN", "RETURNS", "REVOKE", "RIGHT", "ROLLBACK", "ROW", "ROWS", "SCHEMA",
+  "SELECT", "SET", "SMALLINT", "TABLE", "TEXT", "THEN", "TIMESTAMP", "TOP", "TRANSACTION", "TRIGGER",
+  "TRUNCATE", "UNION", "UNIQUE", "UPDATE", "USING", "VALUES", "VARCHAR", "VIEW", "WHEN", "WHERE", "WHILE",
+  "WITH",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[@#]?[A-Za-z_][\w$#]*'
+regex = true
+
+# Delimited identifiers: "name" (doubled quotes inside) and [name].
+[[grammar]]
+element = "Identifier"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '"'
+stop_at_eol = true
+
+[[grammar]]
+element = "Identifier"
+kind = "delimited"
+from = "["
+to = "]"
+stop_at_eol = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=<>!|&^~:.]+|[;,()]'
+regex = true

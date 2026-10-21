@@ -1,0 +1,6 @@
+# §2.8 row 8.
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "utf8_valid"
+text = "caf\u00e9"

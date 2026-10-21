@@ -1,0 +1,5 @@
+header
+// note
+value = compute(alpha, gamma);
+result = value * 3;
+footer

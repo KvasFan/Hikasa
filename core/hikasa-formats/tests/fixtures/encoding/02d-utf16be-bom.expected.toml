@@ -1,0 +1,5 @@
+[expected]
+encoding = "UTF-16BE"
+bom_len = 2
+source = "bom"
+text = "a\u00e9"

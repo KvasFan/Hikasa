@@ -1,0 +1,7 @@
+[options]
+locale = "windows-1251"
+
+[expected]
+encoding = "windows-1251"
+bom_len = 0
+source = "locale_fallback"

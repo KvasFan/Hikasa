@@ -1,0 +1,6 @@
+# BOM-less UTF-16LE text in one non-Latin alphabet (Cyrillic, high byte 0x04, mixed with ASCII spaces and
+# punctuation): the one-alphabet rule of utf_pattern (§2.8).
+[expected]
+encoding = "UTF-16LE"
+bom_len = 0
+source = "utf_pattern"

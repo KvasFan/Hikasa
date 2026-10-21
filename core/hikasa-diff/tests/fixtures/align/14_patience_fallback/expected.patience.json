@@ -1,0 +1,11 @@
+{
+  "algorithm": "patience",
+  "rows": 7,
+  "warnings": [],
+  "runs": [
+    {"kind": "delete", "left": [0, 1], "right": [0, 0]},
+    {"kind": "equal", "left": [1, 4], "right": [0, 3]},
+    {"kind": "insert", "left": [4, 4], "right": [3, 4]},
+    {"kind": "equal", "left": [4, 6], "right": [4, 6]}
+  ]
+}

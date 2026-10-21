@@ -1,0 +1,10 @@
+{
+  "algorithm": "patience",
+  "rows": 4,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "changed", "left": [1, 2], "right": [1, 2]},
+    {"kind": "equal", "left": [2, 4], "right": [2, 4]}
+  ]
+}

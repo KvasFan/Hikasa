@@ -1,0 +1,21 @@
+L1:0-36	Everything Else	Windows Registry Editor Version 5.00
+L3:0-33	Keyword	[HKEY_CURRENT_USER\\Software\\Demo]
+L4:0-1	Keyword	@
+L4:1-2	Operator	=
+L4:2-17	String	"default value"
+L5:0-7	Keyword	"Count"
+L5:7-8	Operator	=
+L5:8-13	Keyword	dword
+L5:13-22	Everything Else	:0000000a
+L6:0-6	Keyword	"Path"
+L6:6-7	Operator	=
+L6:7-32	String	"C:\\\\Program Files\\\\Demo"
+L7:0-6	Keyword	"Blob"
+L7:6-7	Operator	=
+L7:7-10	Keyword	hex
+L7:10-19	Everything Else	:01,02,ff
+L8:0-8	Keyword	"Expand"
+L8:8-9	Operator	=
+L8:9-12	Keyword	hex
+L8:12-27	Everything Else	(2):25,00,00,00
+L9:0-33	Keyword	[-HKEY_CURRENT_USER\\Software\\Old]

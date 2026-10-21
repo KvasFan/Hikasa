@@ -1,0 +1,7 @@
+# Sources: docs/10-file-formats.md §5. Written for Hikasa.
+schema_version = 1
+id = "executables"
+name = "Executables"
+description = "Programs and libraries (version view in a later release; compared as binary content in M1)."
+kind = "version"
+mask = "*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib"

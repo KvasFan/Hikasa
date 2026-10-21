@@ -44,7 +44,7 @@
 | In scope (designed in full here) | Stays a stub, or out of scope |
 |---|---|
 | `hikasa-core`: Side, Spec (parse/display), errors, CancelToken, Progress and sinks, Job ids, the file-mask engine, NameFilter, ContentComparator, ContentKind, ExitCode | `hikasa-table`, `-hex`, `-picture`, `-metadata`, `-script` (crates stay empty) |
-| `hikasa-vfs`: Entry model, the Vfs trait (with name-only prefiltered listings), LocalVfs, MemoryVfs, the stdin and clipboard blobs, the router, CRC32, binary compare, mmap (the only `unsafe`) | Archives, snapshots, remote back-ends, HTTP (these specs parse; resolving them reports `Unsupported`) |
+| `hikasa-vfs`: Entry model, the Vfs trait (with name-only prefiltered listings), LocalVfs, MemoryVfs, the stdin and clipboard blobs, the router, CRC32, binary compare, mmap (the only `unsafe` in library and program code; test and bench allocation counters are exempt, §6.1) | Archives, snapshots, remote back-ends, HTTP (these specs parse; resolving them reports `Unsupported`) |
 | `hikasa-diff`: interner, DenseRemap, Unaligned/Standard/Myers/Histogram/Patience, closeness, never-align, inline diff, run model | Merge (3-way), alignment overrides (TC-013, FC-011) |
 | `hikasa-formats`: model (TOML), grammar, tokenizer, regex engine selection, registry and shadowing, presets with complete keyword lists, encoding detection, binary detection, conversions None/Sorted/External | Spreadsheet/Word/RTF/PDF converters, syntect highlighting, table parsing |
 | `hikasa-text`: TextDocument, TextRules, compare engine (identity fast path, progressive observer), rows, sections, stats, thumbnail, display filters, rules-based quick compare | Editing, undo, save, replacements (TC-023), "Ignored" marks (TC-024 marks), merge, patch apply |
@@ -163,7 +163,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-13 | Whitespace classes (leading, embedded, trailing) apply only to text that is not covered by a grammar token. A token piece created by line continuation excludes the line's leading-whitespace prefix. A token piece ended by end-of-line excludes the trailing-whitespace suffix. | Re-indenting a block comment must stay unimportant when leading whitespace is unimportant; Python's explicit `Indent` item still wins. | 10 §3 |
 | D-14 | Line keys are built from atoms (§2.13). Grammar tokens are atomic: `int x` ≠ `intx`. "Everything else" text concatenates across removed whitespace, like `diff -w`: in plain text `a b` equals `ab` when embedded whitespace is unimportant. | Avoids both false "unimportant" results on code and false "important" results on prose. | 05 §3 |
 | D-15 | One **effective format** per text comparison: the forced format (`--format`); else detection on the first side that has a file name (left, then right); for a stdin side the name is the `--stdin-name` hint. When both sides have names and their detections differ, warning `format_mismatch` is emitted. No name at all → "Everything Else". | Keys from two different grammars are not comparable; `hikasa text compare - x.c` must still use the C grammar. | 05 §11 |
-| D-16 | Standard alignment = staged anchors (unique, weighted LIS → best block → trivial block) in a two-diagonal skew window, with a deterministic work budget. When the budget runs out, the remaining gaps are aligned by Histogram (§2.14.5). Every imara-diff call on a (sub-)range goes through `DenseRemap` (§2.14.3). | Bounded time with reproducible output; imara allocates O(max token id) per call. | 05 §2 |
+| D-16 | Standard alignment = staged anchors (unique, weighted LIS → best block → trivial block) in a two-diagonal skew window, with a deterministic work budget. When the budget runs out, each remaining range is aligned by Histogram only while its estimated cost `|A|·|B|` fits a second deterministic budget, the fallback budget (128·(n+m) + 32,000,000 cells); beyond it the range is split once at lines unique on both sides (patience LIS) and its gaps are paired per §2.15, with warning `alignment_degraded` (§2.14.5; amended in wave 2, §1.3.3 item 3). Standard is O(n log n) plus its budgets on every input. Explicitly chosen Histogram, Myers and Patience stay exact (never degraded, no budget): their adversarial worst case is super-linear, and they stay cancellable. Every imara-diff call on a (sub-)range goes through `DenseRemap` (§2.14.3). | Bounded time with reproducible output; imara-diff is roughly quadratic on adversarial input and allocates O(max token id) per call. | 05 §2 |
 | D-17 | Closeness matching (§2.15) is applied to the gaps of Standard, Histogram and Patience. Unaligned pairs by position. Myers pairs by position and, when closeness is on, adds warning `closeness_ignored` (TC-010: Myers has no closeness). | Source code (Auto = Histogram, D-36) gets changed lines with inline highlights (TC-011). | 05 §2 |
 | D-18 | Statistics (RPT text "Statistics") are counted per section: `added`/`deleted` for one-sided sections, `original`/`changed` for two-sided ones. The I/U class is the section's importance (§2.17.3). | Gives the normal-diff `a`/`d`/`c` semantics. | 13 |
 | D-19 | In folder display filters, Unknown and Error nodes belong to the atomic category *Differences*. | Conservative: they surface when you look for problems. | 04 §6.3 |
@@ -189,7 +189,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-39 | External conversion command lines are split into argv by Hikasa's own quoting rules and run **without a shell** (§2.10.8). | Deterministic and safe against injection. | 10 §4 |
 | D-40 | When `--json` is given, JSON goes to stdout; progress and logs go to stderr; `--quiet` suppresses both progress and non-error stderr output. Human output is one record per line where applicable (CLI-000). | CLI-000. | 12 §1 |
 | D-41 | `ElementId`s are dense: 0 = "Everything Else"; then the elements in order of first use in the `grammar` array; then elements declared in `[elements]` but never used, in lexicographic name order. `[elements]` is an unordered settings map (`BTreeMap`). | `toml` 1.x without `preserve_order` deserialises every table through a `BTreeMap`; arrays keep their order. No workspace feature change is needed. | 10 §3 |
-| D-42 | Encoding detection order (§2.8): override → BOM → Fixed → BOM-less UTF-16/32 pattern → pure ASCII (format fallback, then the injected locale encoding, each only if ASCII-compatible, else UTF-8) → valid UTF-8 → chardetng guess (UTF-8 denied, ISO-2022-JP denied). One heuristic function serves detection and binary sniffing. chardetng 1.0's `find_score` is a test-only API, so a format fallback is used only for content without non-ASCII evidence. | ASCII-range UTF-16 is valid UTF-8, so the pattern test must come first; docs order "BOM → chardetng → format default → locale". | 05 TC-001, 10 FF-032 |
+| D-42 | Encoding detection order (§2.8): override → BOM → Fixed → BOM-less UTF-16/32 pattern → pure ASCII (format fallback, then the injected locale encoding, each only if ASCII-compatible, else UTF-8) → valid UTF-8 → mostly valid UTF-8 (at least one valid multi-byte sequence, at most 16 malformed sequences and at least 8 valid multi-byte sequences per malformed one: decoded as UTF-8 with U+FFFD, source `utf8_lossy`, warning `lossy_decode`) → chardetng guess (UTF-8 denied, ISO-2022-JP denied). One heuristic function serves detection and binary sniffing; it accepts a zero-byte pattern (or BOM-less UTF-16 in one non-Latin alphabet) only when the decoded sample is plausible text (≤ 10 % control characters). chardetng 1.0's `find_score` is a test-only API, so a format fallback is used only for content without non-ASCII evidence. *Amended in the wave-2 review:* one stray byte in a UTF-8 file no longer re-decodes the whole file in a legacy encoding, and arrays of small integers are no longer text. | ASCII-range UTF-16 is valid UTF-8, so the pattern test must come first; docs order "BOM → chardetng → format default → locale". Valid multi-byte UTF-8 is strong evidence: legacy text almost never forms it. | 05 TC-001, 10 FF-032 |
 | D-43 | Document limits: at most 4 GiB − 1 source bytes and at most `i32::MAX − 2` lines (imara-diff asserts `len < i32::MAX`). Larger inputs are rejected with `TextError::TooLarge` / `TooManyLines` when the line table is built, before any alignment. | T9: no user input may reach an assertion. | 05 §1 |
 | D-44 | *Suppress Filters* (FC-057) reveals items hidden by **file filters** (name and other filters): they become visible in teal. Display filters (FC-055) keep applying to every other item. | FC-030/FC-031/FC-054 tie Suppress Filters to file filters. | 04 §6.3 |
 | D-45 | Entries excluded by **name masks** on a side are listed *name-only* when the back-end can tell their kind from the directory record (no `stat`): they carry name and kind, size 0, no times and no attributes, and `stat_skipped = true`. They still appear as filtered (teal) items under Suppress Filters; the filtered side of an FC-054 pair (its counterpart is visible) is stat'ed after alignment. Entries hidden by size, date or attribute filters are stat'ed normally. Symlinks and entries of unknown kind are always stat'ed. | Saves the dominant scan cost (`stat`) for excluded names without losing FC-054/FC-057. | 04 §6 |
@@ -201,7 +201,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-51 | The legacy `gui open` argument handling (CLI-001 spellings, CLI-002 positional forms, CLI-003 switches) lives in `hikasa_session::api::gui` (`normalize_legacy_args`, `parse_open_args`); `hikasa gui open` and `hikasa-gui` call the same functions. | ARCH-L3: the GUI must not duplicate CLI logic. | 12 §2 |
 | D-52 | `TimestampRule` has an explicit `enabled` flag (no `Option`, because TOML has no null), plus an optional `offset: TzOffset` (shift one side by whole hours, the script `timezone:left+N` criterion). | FolderRules must round-trip through TOML. | 04 §3 |
 | D-53 | Identity fast path: when the rules make every char of every line important and case-sensitive (D-04 defaults, and no unimportant element in the format), a line's key is its raw text (prefixed by its line-ending code when line endings are compared) and no tokenisation runs. Results are identical to the general path. | The default rules must be cheap. | 05 §3 |
-| D-54 | Long imara-diff calls (more than 200,000 tokens on either side) run on a helper thread; the caller polls its `CancelToken` every 10 ms and returns `Err(Cancelled)` without waiting for the call (the result is discarded). | ≤ 100 ms cancellation latency without changing results (T6). | 05 §2 |
+| D-54 | Long imara-diff calls (more than 4,096 tokens on either side; 200,000 before wave 2, §1.3.3 item 1) run on a helper thread; the caller polls its `CancelToken` every 10 ms and returns `Err(Cancelled)` without waiting for the call (the result is discarded). imara-diff cannot be interrupted, so the helper of a cancelled call runs until its call ends; at most 2 such abandoned helpers run per process, and a new helper call waits (polling its `CancelToken`) while 2 are running (§1.3.3 item 2). | ≤ 100 ms cancellation latency without changing results (T6); bounded CPU after repeated cancellations. | 05 §2 |
 | D-55 | Folder aggregates are **counters**: every folder holds per-category counts of its descendants (files and folders separately), for both values of ignore-unimportant, maintained incrementally (`dec(old)/inc(new)` on every ancestor). Folder state, colour, visibility, statistics and verdict are O(1) per folder, on partial trees too. | Live model for the GUI (ARCH-004, FC-016), O(1) Ignore-Unimportant toggling (FC-057). | 04 §4 |
 | D-56 | The GUI toolkit (Dioxus 0.7, ARCH-GUI-001) is not in `[workspace.dependencies]`; wave 6 starts after the maintainer approves adding it (17-agent-workflow §2.6). | No new dependency without approval. | 02 |
 | D-57 | `--criteria <list>` (folder compare) follows the script `criteria` syntax (SCR): items separated by `,` or spaces; listed criteria are on, unlisted quick tests and the content method are off. Hikasa adds `filename-case` (FC-022). `version` (FC-028, P1) is rejected in M1. | One vocabulary for CLI and scripts (T11). | 12 §3.1 |
@@ -240,7 +240,7 @@ contract < 3 s, design target < 1.5 s:
 | read | 2 × 48 MB through `Vfs::open_read` into exact-size buffers | ≤ 100 ms warm | the raw bytes (dropped after decoding) |
 | decode + line table | UTF-8 validation or decoding, rope build, `memchr` line split | ≤ 150 ms | rope ≈ 1.05 × text, line table 8 B/line |
 | keys | identity fast path: raw lines into per-chunk arenas; grammar path: `tokenize_all` in parallel 8192-line chunks | ≤ 100 ms identity, ≤ 400 ms grammar | arenas ≤ 1 × text (transient) + 8 B/line |
-| intern | sequential hash interning, left then right | ≤ 150 ms | 4 B/line ids + ≤ 24 B per distinct key |
+| intern | sequential hash interning, left then right | ≤ 150 ms | 4 B/line ids + one hash-table entry per distinct key: 28–57 B, ≈ 30 B on this input (§1.3.3 item 11) |
 | align | Histogram ≤ 300 ms; Standard ≤ 1 s | | O(n + m) |
 | pair + classify | closeness DP inside its budgets, rows, sections, statistics | ≤ 200 ms | rows 12 B/row |
 | **total** | | **< 3 s** | **≤ 3 × input bytes + 64 B/line + 32 MiB** |
@@ -446,6 +446,8 @@ impl RemoteScheme {
 pub struct Secret(String);
 
 impl Secret {
+    /// Wraps a credential (additive API, §1.1.12).
+    pub fn new(value: impl Into<String>) -> Secret;
     /// Reveals the value (only for back-ends; M1 never calls this).
     pub fn expose(&self) -> &str;
 }
@@ -467,11 +469,16 @@ pub struct RemoteUrl {
     pub path: String,
 }
 
-/// An `http(s)://` single-file URL (P1 back-end).
+/// An `http(s)://[user[:password]@]host[:port][rest]` single-file URL (P1 back-end). The user information is
+/// kept exactly like `RemoteUrl`'s: the user verbatim, the password as a `Secret` that never appears.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HttpUrl {
     /// `https` when true.
     pub secure: bool,
+    /// User name (percent-decoding is not applied in M1; stored verbatim).
+    pub user: Option<String>,
+    /// Password; omitted from every canonical form (VFS-010).
+    pub password: Option<Secret>,
     /// Lower-cased host.
     pub host: String,
     /// Explicit port.
@@ -516,12 +523,13 @@ impl Spec {
     pub fn scheme_name(&self) -> &'static str;
     /// Final name component for format detection ("-" → None, Clipboard → None).
     pub fn file_name(&self) -> Option<String>;
-    /// Returns a copy with every secret removed (`RemoteUrl::password = None`).
+    /// Returns a copy with every secret removed (`RemoteUrl::password = None`, `HttpUrl::password = None`).
     pub fn without_secrets(&self) -> Spec;
 }
 
 impl fmt::Display for Spec { /* canonical form, §2.1 */ }
-impl Serialize for Spec { /* canonical string */ }
+impl Serialize for Spec { /* canonical string; a lossy spec (`is_lossy()`) is a serialisation error, so it
+                              can never be persisted */ }
 impl<'de> Deserialize<'de> for Spec { /* Spec::parse with SpecContext::absolute_only(PathStyle::HOST) */ }
 
 /// Spec parsing errors (all carry the offending input; messages are stable, see §6.2.1).
@@ -710,7 +718,8 @@ impl MaskList {
     pub fn to_list_string(&self) -> String;
 }
 
-/// Mask syntax errors (position `at` is a char index into the item).
+/// Mask syntax errors. `mask` is the item after trimming and NFC normalisation; the position `at` counts chars of
+/// that NFC item (which looks the same as the item as typed).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MaskError {
@@ -969,8 +978,11 @@ impl<F: Fn(Progress) + Send + Sync> ProgressSink for F { /* calls the closure */
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NullProgress;
 
-/// Forwards at most one report per `interval` per phase. A phase change, or `done == total`, is always
-/// forwarded. Uses `Instant::now()`, which affects only progress delivery, never results (allowed by T1).
+/// Forwards at most one report per `interval` per phase. Each phase has its own throttle, so phases that report
+/// concurrently (folder compare: `scanning` and `comparing_content`) never open each other's throttle. A report
+/// of a phase is due when nothing of that phase was forwarded yet or `interval` has elapsed since the last
+/// forwarded report of that phase; a completion (`done == total`) is always forwarded. Uses `Instant::now()`,
+/// which affects only progress delivery, never results (allowed by T1).
 pub struct ThrottledSink<S: ProgressSink> { inner: S, interval: Duration, state: Mutex<ThrottleState> }
 
 impl<S: ProgressSink> ThrottledSink<S> {
@@ -978,8 +990,9 @@ impl<S: ProgressSink> ThrottledSink<S> {
     pub fn new(inner: S, interval: Duration) -> Self;
 }
 impl<S: ProgressSink> ProgressSink for ThrottledSink<S> {
-    /* report: forwards per the rules above. due: true when `phase` differs from the last forwarded phase or
-       `interval` has elapsed since the last forwarded report of `phase`. */
+    /* report: forwards when the report completes its phase (`done == total`) or `due(phase)`, and then records
+       the time for that phase. due: true when nothing of `phase` was forwarded yet or `interval` has elapsed
+       since the last forwarded report of `phase` (per phase; other phases do not matter). */
 }
 
 /// Cancellation and progress for one long operation.
@@ -1184,6 +1197,7 @@ pub enum WarningCode {
     BinaryContent, LossyDecode, RegexRuntimeError, FellBackToBinary, RulesSizeLimit, ClosenessIgnored,
     WorkBudgetExhausted, ClosenessBudgetExhausted, FormatMismatch, CapabilityMissing, UnknownConfigKey,
     UserFormatSkipped, PatchLossyEol, SymlinkLoop, EntryError, SwitchIgnored,
+    AlignmentDegraded,   // wave 2: hikasa-text maps hikasa_diff::Alignment::diff_warnings() to it (§1.3.3)
 }
 
 /// Outcome of a schema check.
@@ -1203,6 +1217,42 @@ pub struct SchemaError { pub found: u32, pub supported: u32 }
 /// SES-052 check used by every TOML loader.
 pub const fn check_schema_version(found: u32, supported: u32) -> Result<SchemaCompat, SchemaError>;
 ```
+
+#### 1.1.12 Accepted additive API (wave 1)
+
+Wave 1 added the following public items. They are part of the contract: later waves may use them, and they
+change no signature above.
+
+```rust
+impl Secret { pub fn new(value: impl Into<String>) -> Secret; }          // wraps a credential
+impl RemoteScheme { pub const ALL: [RemoteScheme; 11]; }                // declaration order
+impl ContentKind  { pub const ALL: [ContentKind; 6]; }                  // declaration order
+impl ExitCode     { pub const ALL: [ExitCode; 14]; }                    // numeric order
+
+/// The `TryFrom<u8>` error of `ExitCode` (serde `try_from = "u8"`). `Classify`: `invalid_data`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("unknown exit code {0}")]
+pub struct UnknownExitCode(pub u8);
+
+impl MaskList { pub fn options(&self) -> MaskOptions; }                 // the options of every item
+
+// Stable snake_case names, identical to the serde forms:
+impl ContentMethod { pub const fn as_str(self) -> &'static str; }
+impl ErrorKind     { pub const fn as_str(self) -> &'static str; }
+impl WarningCode   { pub const fn as_str(self) -> &'static str; }
+impl Phase         { pub const fn as_str(self) -> &'static str; }
+impl JobKind       { pub const fn as_str(self) -> &'static str; }
+// Display: ContentKind, CompareVerdict, ErrorKind, WarningCode (as_str); ExitCode and JobId (the number);
+// RelPath (the '/'-joined string); ErrorReport (the message); RemoteUrl and HttpUrl (canonical, no password).
+
+impl<S: ProgressSink + ?Sized> ProgressSink for Arc<S> { /* forwards report and due */ }
+impl From<Cancelled> for ReadError { /* ReadError::Cancelled */ }
+// Classify: RelPathError, TimeParseError (invalid_input); SchemaError (unsupported); UnknownExitCode
+// (invalid_data); std::io::Error (io_error_kind); Cancelled (cancelled); ErrorReport (its kind);
+// InvariantViolation (internal). io_error_kind maps an io::Error that wraps `Cancelled` to `cancelled`.
+```
+
+`MaskError` positions (`at`) count chars of the item after trimming and NFC normalisation (§1.1.5).
 
 ### 1.2 hikasa-vfs
 
@@ -1230,7 +1280,8 @@ core/hikasa-vfs/src/
 ├── source.rs       VfsSource (impl hikasa_core::ContentSource)
 ├── stream.rs       StreamOptions, MmapPolicy, crc32_reader, compare_readers
 ├── compare.rs      BinaryOutcome, crc32_source, compare_sources, CrcComparator, BinaryComparator
-└── mmap.rs         ONLY `unsafe` in the workspace: mapped compare and mapped CRC with re-stat; slices never escape
+└── mmap.rs         ONLY `unsafe` in library and program code (§6.1 exempts test/bench allocation counters):
+                    mapped compare and mapped CRC with re-stat; slices never escape
 ```
 
 #### 1.2.2 Entry model
@@ -1352,11 +1403,12 @@ pub struct FileId {
 /// Metadata of one entry (ARCH 3.2). Pure data; equality is field-wise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Name within its parent.
+    /// Name within its parent (a root, and the stdin and clipboard blobs, carry their spec text, §1.2.7).
     pub name: FileName,
     /// Kind (of the target when `followed`).
     pub kind: EntryKind,
-    /// Files: byte length. Folders: 0. Unfollowed symlinks: byte length of the target text.
+    /// Files: byte length. Folders: 0. Unfollowed symlinks: byte length of the exact target (raw OS bytes on
+    /// Unix, UTF-8 on Windows; equals `link_target.len()` unless the target is lossy).
     pub size: u64,
     /// Last modification time.
     pub mtime: Option<FileTime>,
@@ -1364,13 +1416,17 @@ pub struct Entry {
     pub ctime: Option<FileTime>,
     /// Attributes.
     pub attrs: Attrs,
-    /// Symlink target text (for unfollowed links, and for followed ones for display).
+    /// Symlink target text (for unfollowed links, and for followed ones for display); UTF-8, lossy when the
+    /// target is not (see `link_target_raw`).
     pub link_target: Option<String>,
+    /// The exact OS target when `link_target` is lossy (`Some` only then, like `FileName`'s raw name;
+    /// INV-NAME-1). Wave 2 (§1.2.7); exact comparisons use `Entry::link_target_os()`.
+    pub link_target_raw: Option<OsString>,
     /// True when this entry is a symlink that was followed (the other fields describe the target).
     pub followed: bool,
     /// CRC32 provided by the back-end, or computed earlier in this run.
     pub crc32: Option<u32>,
-    /// Identity for loop detection (Unix; `None` elsewhere).
+    /// Identity for loop detection (Unix, and `MemoryVfs` with `dev` 0 and a node id; `None` elsewhere).
     pub file_id: Option<FileId>,
 }
 ```
@@ -1420,7 +1476,8 @@ pub enum FollowLinks {
     /// Report the link itself (lstat).
     #[default]
     No,
-    /// Report the target (stat); broken links are reported unfollowed with an `EntryError`.
+    /// Report the target (stat); broken links are reported unfollowed with an `EntryError` (in `list`: in
+    /// `entries` and in `errors`, §1.2.7).
     Yes,
 }
 
@@ -1435,6 +1492,8 @@ pub struct ListOptions<'a> {
     pub follow: FollowLinks,
     /// Optional prefilter. Back-ends call it only when the directory record states the kind (`d_type`,
     /// Windows find data); entries of unknown kind and symlinks are always stat'ed and never passed to it.
+    /// `LocalVfs`: when the record states no kind, std's `DirEntry::file_type` `lstat`s the entry and the
+    /// prefilter receives the kind found (accepted deviation, §1.2.7).
     pub prefilter: Option<Prefilter<'a>>,
 }
 impl fmt::Debug for ListOptions<'_> { /* prints `follow` and whether a prefilter is set */ }
@@ -1455,7 +1514,9 @@ pub struct Listing {
     pub entries: Vec<Entry>,
     /// Entries the prefilter declined (not stat'ed).
     pub name_only: Vec<NameOnly>,
-    /// Names whose metadata could not be read (the listing itself succeeded).
+    /// Names whose metadata could not be read (the listing itself succeeded). NOT disjoint from `entries`: with
+    /// `FollowLinks::Yes` a broken or looping symlink is in `entries` (unfollowed) and has an error here; the
+    /// consumer attaches the error to that entry instead of creating a second item (§1.2.7).
     pub errors: Vec<EntryError>,
 }
 
@@ -1547,6 +1608,10 @@ pub enum VfsError {
     /// Cancelled during a VFS call.
     #[error("operation cancelled")]
     Cancelled,
+    /// DOS attribute letters outside `A C D E H I L M N O P R S T U Z` (`DosAttrs::parse_letters`). Wave 2
+    /// (§1.2.7); `Classify`: `invalid_input`.
+    #[error("invalid DOS attribute letters {input:?}")]
+    InvalidAttributes { input: String },
 }
 ```
 
@@ -1571,8 +1636,8 @@ impl LocalVfs {
 impl Vfs for LocalVfs { /* Spec::Local only; other variants → Unsupported("non-local spec") */ }
 
 /// Deterministic in-memory file system for tests (and future clipboard/stdin trees). Paths are
-/// `Spec::Local` absolute paths. Thread-safe (std `RwLock` inside).
-#[derive(Debug, Default)]
+/// `Spec::Local` absolute paths. Thread-safe (std `RwLock` inside). `Debug` (counts, not contents) and
+/// `Default` (case-sensitive) are implemented by hand (§1.2.7).
 pub struct MemoryVfs { /* tree + options */ }
 
 /// Metadata for inserted entries.
@@ -1605,9 +1670,10 @@ pub enum ListingOrder {
 pub struct Fault {
     /// Affected path.
     pub path: String,
-    /// Operation that fails.
+    /// Operation that fails (`Map` has no effect: `MemoryVfs` has no local paths, so nothing is mapped).
     pub op: VfsOp,
-    /// Resulting error kind.
+    /// Resulting error kind (`protocol` and `internal`, which no file system error carries, give
+    /// `VfsError::Io` classified `io`).
     pub kind: ErrorKind,
 }
 
@@ -1627,10 +1693,15 @@ impl MemoryVfs {
     /// Content of a file written through `open_write` (for asserting report outputs).
     pub fn read_back(&self, path: &str) -> Option<Arc<[u8]>>;
 }
-impl Vfs for MemoryVfs { /* full semantics incl. FollowLinks, loops and the prefilter (every kind is known) */ }
+impl Vfs for MemoryVfs {
+    /* full semantics incl. FollowLinks, loops (the local file system's ELOOP error) and the prefilter (every kind
+       is known unless `set_kind_unknown` says otherwise, §1.2.7); `list` checks `cancel` every 1024 entries while
+       filtering and while describing */
+}
 
-/// In-memory content injected by an adapter (stdin bytes read once; clipboard text).
-#[derive(Debug, Clone)]
+/// In-memory content injected by an adapter (stdin bytes read once; clipboard text). `Debug` is implemented by
+/// hand: it shows the length, not the bytes (§1.2.7).
+#[derive(Clone)]
 pub struct Blob {
     /// Bytes.
     pub bytes: Arc<[u8]>,
@@ -1663,20 +1734,26 @@ Router dispatch (normative):
 | Spec | `stat`/`open_read` | `list` | `open_write` | `capabilities` |
 |---|---|---|---|---|
 | `Local` | `LocalVfs` | `LocalVfs` | `LocalVfs` (atomic temp + rename) | platform set |
-| `Stdin` | blob (name `-`, kind File, mtime from blob), else `Unsupported{what:"stdin was not provided"}` | `NotADirectory` | `Unsupported` | READ \| SEEK \| MTIME |
-| `Clipboard` | blob, else `Unsupported{what:"clipboard access"}` | `NotADirectory` | `Unsupported` | READ \| SEEK \| MTIME |
+| `Stdin` | blob (name `-`, kind File, mtime from blob), else `Unsupported{what:"stdin was not provided"}` | `NotADirectory` | `Unsupported{what:"writing to standard input"}` | READ \| SEEK \| MTIME |
+| `Clipboard` | blob (name `clipboard://`, kind File, mtime from blob), else `Unsupported{what:"clipboard access"}` | `NotADirectory` | `Unsupported{what:"writing to the clipboard"}` | READ \| SEEK \| MTIME |
 | `ArchiveMember`, `Snapshot`, `Remote`, `Profile`, `Http` | `Unsupported{what:"<scheme> specs"}` | same | same | `Unsupported` |
 
 #### 1.2.5 Content helpers (FC-025, VFS-020, ARCH-081)
 
 ```rust
-/// Streaming parameters. `Default` = 1 MiB buffers, `MmapPolicy::Auto { min_len: 16 MiB }`.
+/// Streaming parameters. `Default` = 1 MiB buffers, `MmapPolicy::Auto { min_len: 16 MiB }`, one thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamOptions {
     /// Read buffer per side (OPT "Buffer size for binary compare"); clamped to [4 KiB, 64 MiB]. Default 1 MiB.
     pub buffer_size: usize,
     /// When to memory-map local files.
     pub mmap: MmapPolicy,
+    /// Threads that process one memory-mapped file (CRC) or file pair (comparison): the calling thread plus up
+    /// to `threads - 1` scoped helper threads that end before the call returns (§5.1). Clamped to [1, 16] and
+    /// to the number of 8 MiB chunks. Default 1 (the engine API starts no thread unless asked);
+    /// `hikasa-session` passes `min(4, its pool size)`. Results never depend on it (T2, §2.20). The streaming
+    /// path always runs on the calling thread. Wave 2 (§1.2.7).
+    pub threads: usize,
 }
 
 /// mmap policy (the streaming path is the reference implementation; INV-VFS-2: both give equal results).
@@ -1698,9 +1775,11 @@ pub enum BinaryOutcome {
     Different { first_difference: Option<u64> },
 }
 
-/// CRC32 (IEEE, `crc32fast`) of a reader. Progress in bytes; cancellation checked per buffer.
+/// CRC32 (IEEE, `crc32fast`) of a reader. Progress in bytes; cancellation checked per buffer and between the
+/// partial reads that fill it. Read errors name the reader `<reader>` (§1.2.7).
 pub fn crc32_reader(r: &mut dyn Read, opts: &StreamOptions, ctl: &Ctl<'_>) -> Result<u32, VfsError>;
-/// Byte-wise comparison of two readers (alternating fills of equal-sized chunks).
+/// Byte-wise comparison of two readers (alternating fills of equal-sized chunks). Read errors name the reader
+/// `<first reader>` or `<second reader>`.
 pub fn compare_readers(a: &mut dyn Read, b: &mut dyn Read, opts: &StreamOptions, ctl: &Ctl<'_>)
     -> Result<BinaryOutcome, VfsError>;
 /// CRC of a source: `known_crc32()` first, then mmap (policy permitting), then streaming.
@@ -1719,14 +1798,17 @@ impl ContentComparator for CrcComparator { /* BinarySame | BinaryDifferent | Err
 impl ContentComparator for BinaryComparator { /* BinarySame | BinaryDifferent | Error */ }
 
 /// A file reachable through a `Vfs`, as a `ContentSource`.
-pub struct VfsSource<'a> { vfs: &'a dyn Vfs, spec: Spec, entry: Entry, local: Option<PathBuf> }
+pub struct VfsSource<'a> { vfs: &'a dyn Vfs, spec: Spec, entry: Entry, local: OnceLock<Option<PathBuf>> }
 impl<'a> VfsSource<'a> {
-    /// Builds a source (`entry` must describe `spec`).
+    /// Builds a source (`entry` must describe `spec`). Makes no back-end call.
     pub fn new(vfs: &'a dyn Vfs, spec: Spec, entry: Entry) -> VfsSource<'a>;
 }
 impl ContentSource for VfsSource<'_> {
-    /* name = entry name; len = entry size (files); known_crc32 = entry.crc32; local_path = Vfs::local_path;
-       open = Vfs::open_read; read_all = exact-size read via open_read with a cancellation check per 1 MiB */
+    /* name = entry name; len = entry size (files); known_crc32 = entry.crc32; local_path = Vfs::local_path for
+       files, asked on first use and cached; open = Vfs::open_read; read_all = exact-size read via open_read with
+       a cancellation check per 1 MiB and between partial reads; cancellation carried by an error (a
+       `VfsError::Cancelled` from open_read, a reader error that wraps `Cancelled`) → `ReadError::Cancelled`; a
+       reported size ≤ 4096 bytes is not trusted for the `limit` check (§2.20 step 2) */
 }
 ```
 
@@ -1736,25 +1818,34 @@ impl ContentSource for VfsSource<'_> {
 // core/hikasa-vfs/src/mmap.rs   (lib.rs: `#[allow(unsafe_code)] mod mmap;`)
 // Public surface is crate-private and safe. Mapped slices never leave this module.
 
-/// Compares two local regular files by mapping them. Returns `Ok(None)` when either cannot be mapped
-/// (empty file, not a regular file, mapping refused) **or when a re-stat after the comparison shows that the
-/// length or the modification time of either file changed**; the caller then streams (§2.20).
-pub(crate) fn compare_files_mapped(a: &Path, b: &Path, chunk: usize, ctl: &Ctl<'_>)
+/// Compares two local regular files by mapping them one chunk at a time, on `threads` threads (the calling
+/// thread plus scoped helpers, §5.1; the outcome does not depend on the count). Returns `Ok(None)` when either
+/// cannot be mapped (empty file, not a regular file, a chunk below the first difference whose mapping or
+/// pre-faulting is refused) **or when a re-stat after the comparison shows that the length or the
+/// modification time of either file changed**; the caller then streams (§2.20).
+pub(crate) fn compare_files_mapped(a: &Path, b: &Path, chunk: usize, threads: usize, ctl: &Ctl<'_>)
     -> std::io::Result<Option<BinaryOutcome>>;
-/// CRC32 of a mapped local regular file (`Ok(None)` as above, including the re-stat check).
-pub(crate) fn crc32_file_mapped(path: &Path, chunk: usize, ctl: &Ctl<'_>) -> std::io::Result<Option<u32>>;
+/// CRC32 of a mapped local regular file (`Ok(None)` as above, including the re-stat check); the chunk CRCs are
+/// combined in offset order with `crc32fast::Hasher::combine`.
+pub(crate) fn crc32_file_mapped(path: &Path, chunk: usize, threads: usize, ctl: &Ctl<'_>)
+    -> std::io::Result<Option<u32>>;
 
-fn map_read_only(file: &File) -> std::io::Result<memmap2::Mmap> {
-    // SAFETY: `memmap2::Mmap::map` is unsafe because another process may modify or truncate the file
+fn map_read_only(file: &File, offset: u64, len: usize) -> std::io::Result<memmap2::Mmap> {
+    // SAFETY: `memmap2::MmapOptions::map` is unsafe because another process may modify or truncate the file
     // while it is mapped. A modification can change the slice's bytes; a truncation can raise SIGBUS.
     // Mitigations: (1) the map is read-only and private to this module; (2) it is created only for
     // local *regular* files that `metadata()` confirms after opening; (3) the bytes are only compared
     // or hashed in bounded chunks, so changed bytes can make the *result* stale but cannot break memory
-    // safety elsewhere; (4) the mapping lives only for the duration of one call; (5) after the call the file
-    // is re-stat'ed, and a changed length or mtime discards the mapped result in favour of streaming.
-    // Residual risk (accepted, documented in docs/11 §3): concurrent truncation of an input file can
-    // terminate the process. MmapPolicy::Never disables this path.
-    unsafe { memmap2::Mmap::map(file) }
+    // safety elsewhere; (4) a mapping covers one chunk and lives only while that chunk is processed, inside
+    // one call; (5) after the call the file is re-stat'ed, and a changed length or mtime discards the mapped
+    // result in favour of streaming; (6) on Linux each chunk is pre-faulted with MADV_POPULATE_READ before it
+    // is read, which fails instead of raising SIGBUS when a truncation has cut the chunk off, and the attempt
+    // is then abandoned; (7) helper threads are scoped (`thread::scope`): each one maps, reads and drops its
+    // own chunk mappings, and all of them end before the call returns.
+    // Residual risk (accepted, documented in docs/11 §3): a truncation between populating a chunk and
+    // reading it (or any truncation on other systems, or on Linux before 5.14) can terminate the process.
+    // MmapPolicy::Never disables this path.
+    unsafe { memmap2::MmapOptions::new().offset(offset).len(len).map(file) }
 }
 ```
 
@@ -1768,6 +1859,141 @@ directory (`<top>/<crate>/tests/…`, `<top>/<crate>/benches/…`) whose code in
 `// SAFETY:` comment. Library code never qualifies (not even a `src/tests/` module): every library crate keeps
 `#![forbid(unsafe_code)]`, and `hikasa-vfs` keeps `#![deny(unsafe_code)]` with the single `mmap` allow, so
 `mmap.rs` remains the only `unsafe` in library and program code.
+
+#### 1.2.7 Accepted additions and deviations (wave 2)
+
+The review of wave 2 accepted the following public items, field additions, deviations and clarifications. They
+are part of the contract: later waves may use them and must not assume the text above where an item here
+refines it.
+
+**Additive API** (no signature above changes):
+
+```rust
+impl VfsError {
+    /// The most specific variant for an I/O failure of `op` on `spec`: not found, permission denied, not a
+    /// folder, is a folder and already exists get their variants; an error that wraps `Cancelled` becomes
+    /// `Cancelled`; an error that wraps a `VfsError` is unwrapped; everything else is `Io`.
+    pub fn from_io(spec: impl Into<String>, op: VfsOp, error: std::io::Error) -> VfsError;
+    /// The spec the error is about (`None` for `InvalidName`, `InvalidAttributes` and `Cancelled`).
+    pub fn spec(&self) -> Option<&str>;
+    /// `Classify::kind(self) == cancelled`.
+    pub fn is_cancelled(&self) -> bool;
+}
+impl From<Cancelled> for VfsError { /* VfsError::Cancelled */ }
+impl From<VfsError> for std::io::Error { /* io_error_kind(result) == kind(error); from_io recovers the original */ }
+impl VfsOp     { pub const ALL: [VfsOp; 7]; pub const fn as_str(self) -> &'static str; }     // serde names
+impl EntryKind { pub const ALL: [EntryKind; 4]; pub const fn as_str(self) -> &'static str; } // serde names
+// Display: EntryKind (as_str), FileName (as_str).
+impl Attrs { pub fn dos(&self) -> Option<DosAttrs>; pub fn unix(&self) -> Option<UnixMeta>; }
+impl Entry {
+    /// Name and kind, no metadata: size 0, no times, `Attrs::None`, no link target, not followed, no CRC, no id.
+    pub fn new(name: FileName, kind: EntryKind) -> Entry;
+    /// The exact symlink target: `link_target_raw` when the text is lossy, else `link_target`.
+    pub fn link_target_os(&self) -> Option<OsString>;
+}
+impl Capabilities {
+    /// The set flags as snake_case names in bit order, the JSON form of bit sets (§4.1 rule 9).
+    pub fn names(self) -> Vec<&'static str>;
+    /// Inverse of `names` for one name (`None` for unknown names).
+    pub fn parse_name(name: &str) -> Option<Capabilities>;
+}
+impl Listing {
+    /// Sorts `entries`, `name_only` and `errors` by name bytes, then exact OS name (errors then by message): the
+    /// order of `hikasa vfs ls` (§4.3.4); total, so independent of the back-end's order.
+    pub fn sort_by_name(&mut self);
+    /// Distinct names: described + name-only + failed names that are not also described (item 2 below).
+    pub fn len(&self) -> usize;
+    /// True when all three lists are empty.
+    pub fn is_empty(&self) -> bool;
+}
+impl LocalVfs { pub fn options(&self) -> LocalOptions; }
+impl MemoryVfs {
+    /// Replaces the capabilities reported for every local spec.
+    pub fn set_capabilities(&self, caps: Capabilities);
+    /// Removes every fault.
+    pub fn clear_faults(&self);
+    /// Metadata reads so far: `stat` calls plus the per-entry reads of `list` (declined entries are not read).
+    pub fn stat_calls(&self) -> u64;
+    /// The directory record of the entry at `path` states no kind (like `DT_UNKNOWN`): `list` always stats it
+    /// and never passes it to the prefilter (the §6.2.2 test "unknown kinds are stat'ed").
+    pub fn set_kind_unknown(&self, path: &str) -> Result<(), VfsError>;
+}
+impl VfsRouter { pub fn local(&self) -> &LocalVfs; }
+impl<'a> VfsSource<'a> { pub fn spec(&self) -> &Spec; pub fn entry(&self) -> &Entry; }
+impl StreamOptions {
+    pub const DEFAULT_BUFFER_SIZE: usize = 1 << 20;
+    pub const MIN_BUFFER_SIZE: usize = 4 << 10;
+    pub const MAX_BUFFER_SIZE: usize = 64 << 20;
+    pub const MAPPED_CHUNK: usize = 8 << 20;     // mapped chunk between two cancellation checks
+    pub const MAX_THREADS: usize = 16;
+    pub const UNRELIABLE_SIZE_MAX: u64 = 4096;   // §2.20 step 2
+    pub fn effective_buffer_size(&self) -> usize; // buffer_size clamped to [MIN_BUFFER_SIZE, MAX_BUFFER_SIZE]
+    pub fn effective_threads(&self) -> usize;     // threads clamped to [1, MAX_THREADS]
+}
+impl MmapPolicy { pub const DEFAULT_MIN_LEN: u64 = 16 << 20; pub fn maps(self, len: u64) -> bool; }
+impl BinaryOutcome { pub fn is_same(self) -> bool; }
+```
+
+`Blob` implements `Debug` by hand (its length, not its bytes); `MemoryVfs` implements `Debug` (counts) and
+`Default` (case-sensitive) by hand. The trait sets are those of §1.2.4.
+
+**Field additions** (breaking for struct literals; made in wave 2, before any consumer existed; literals use
+`..StreamOptions::default()` and `Entry::new`):
+
+- `StreamOptions::threads: usize`: threads of one mapped CRC or comparison (§1.2.5, §2.20, §5.1). Default 1.
+- `Entry::link_target_raw: Option<OsString>`: the exact target when `link_target` is lossy (item 9).
+
+**Deviations and clarifications:**
+
+1. `VfsError::InvalidAttributes { input }` belongs to the §1.2.3 enum: the error of `DosAttrs::parse_letters`
+   (`Classify`: `invalid_input`).
+2. **Listings are not disjoint.** With `FollowLinks::Yes`, a symlink whose target cannot be stat'ed (a broken
+   link, a loop) is listed unfollowed in `Listing::entries` **and** with an `EntryError` of the same name in
+   `Listing::errors` (`LocalVfs` and `MemoryVfs`). The folder scanner (§1.6) attaches the error to that entry
+   (one node with the side's error flag) and never creates a second node for the name. `Listing::len` counts
+   the name once.
+3. **Prefilter on `LocalVfs`.** The kind comes from `std::fs::DirEntry::file_type`, which reads `d_type` (or the
+   Windows find data) and `lstat`s the entry when the record states no kind (`DT_UNKNOWN`). Such an entry is then
+   passed to the prefilter with the kind found and, when declined, reported name-only although it was stat'ed.
+   Verdicts are unchanged; only the D-45 saving is lost on those file systems (std reads no `d_type` without the
+   fallback, and `libc` is not approved, §0.7). `MemoryVfs` keeps the rule "unknown kinds are stat'ed and never
+   passed to the prefilter" (`set_kind_unknown`).
+4. **Router texts.** `open_write` on `Spec::Stdin` is `Unsupported { what: "writing to standard input" }`, on
+   `Spec::Clipboard` `Unsupported { what: "writing to the clipboard" }` (with or without a blob). A blob entry is
+   named after the spec's canonical text, `-` or `clipboard://`, as a root entry carries its path text; such a
+   name is not a valid `FileName::new` input, and `ContentSource::name` returns it (format detection uses the
+   name hint, D-15).
+5. **`MemoryVfs` identities and faults.** `Entry::file_id` is `Some(FileId { dev: 0, ino: node index + 1 })`, so
+   D-33 loop tests run on `MemoryVfs`. `Fault { kind: protocol | internal }` gives `VfsError::Io` classified
+   `io` (no file system error carries those kinds); `Fault { op: Map }` has no effect (nothing is mapped). A
+   symlink loop gives the local file system's error: the OS error `ELOOP` (Linux, macOS, the BSDs) or
+   `ERROR_CANT_RESOLVE_FILENAME` (Windows), with the same `std::io::ErrorKind` and message as `LocalVfs`.
+6. **Pre-faulting.** On Linux each mapped chunk is pre-faulted with `MADV_POPULATE_READ` (kernel 5.14 or later)
+   before it is read. A failure, e.g. after a concurrent truncation, abandons the mapped attempt (`Ok(None)`)
+   and the caller streams; a kernel older than 5.14 answers `EINVAL` and the chunks are demand-faulted, with the
+   residual risk of other systems (§1.2.6 SAFETY (6), docs/11 §3, docs/02 "mmap residual risk").
+7. **Reader placeholders.** `crc32_reader` and `compare_readers` name a failed reader `<reader>`,
+   `<first reader>` or `<second reader>` in `VfsError::Io { spec, .. }`; `crc32_source` and `compare_sources`
+   name the source's spec instead.
+8. **Unreliable sizes** (§2.20 step 2). A reported size of at most 4096 bytes (`StreamOptions::UNRELIABLE_SIZE_MAX`)
+   never decides "different" by itself — in `compare_sources`, in `CrcComparator` and in the `read_all` limit
+   check — because procfs reports 0 and sysfs 4096 for files of other lengths; such files are read. `Entry::size`
+   stays what the OS reports, so metadata comparisons (the SIZE quick test) see the reported value.
+9. **Symlink sizes and exact targets.** An unfollowed symlink's `size` is the byte length of the exact target
+   that `read_link` returned, on every platform (procfs links report 0 in `lstat`; Windows reports 0).
+   `link_target` is UTF-8 (lossy when needed) and `link_target_raw` keeps the exact target when it is lossy, so
+   two targets that differ only in bytes that are not UTF-8 are different entries. Exact comparisons of link
+   targets (the LINK_TARGET quick test, §2.6.1) compare `Entry::link_target_os()`, not the lossy text.
+10. **Lazy local path.** `VfsSource::new` makes no back-end call. `ContentSource::local_path` asks
+    `Vfs::local_path` (a `stat` on `LocalVfs`) on first use and caches the answer; `crc32_source` asks only when
+    the mmap policy would map the file's length.
+11. **Cancellation and progress** (§5.3, §5.4). The streaming loops (and `read_all`) check the token between the
+    partial reads that fill one buffer, so a slow reader delays cancellation by at most one `read` call (a single
+    blocking `read` is not interruptible). `MemoryVfs::list` checks it every 1024 entries while filtering and
+    while describing. Every finished CRC or comparison (streamed or mapped) ends with one unconditional
+    completion report (`Ctl::progress_now`, `done == total` = the bytes processed: the length, or the offset that
+    decided), so a throttled progress bar reaches its end. Mapped helper threads never report; the calling
+    thread reports the shared byte count, so `done` never decreases.
 
 ### 1.3 hikasa-diff
 
@@ -1789,8 +2015,10 @@ core/hikasa-diff/src/
 ├── algo/
 │   ├── mod.rs       align() dispatcher, prefix/suffix stripping, gap pairing (§2.15)
 │   ├── unaligned.rs
-│   ├── lcs.rs       imara-diff adapter (Myers, Histogram): DenseRemap, helper thread for > 200k tokens
-│   │                (D-54), hunk → run conversion
+│   ├── lcs.rs       imara-diff adapter (Myers, Histogram): DenseRemap, helper thread for > 4,096 tokens
+│   │                per side and the cap on abandoned helpers (D-54), hunk → run conversion
+│   ├── fallback.rs  Standard's bounded fallback: Histogram within the fallback budget, else the unique-line
+│   │                split and gap pairing (§2.14.5, D-16)
 │   ├── patience.rs  unique-line anchors + LIS, Myers fallback in gaps
 │   ├── standard.rs  staged anchors, two-diagonal skew window, weights, budget (§2.14.5)
 │   └── lis.rs       weighted LIS with a Fenwick tree (deterministic tie-breaking)
@@ -2006,10 +2234,12 @@ pub trait PairScorer: Sync {
 }
 
 /// Aligns two sequences (§2.14–2.15). Pure; cancellation is checked at least every 65 536 elementary steps.
-/// An imara-diff call on at most 200,000 tokens per side runs inline (cancellation checked before and after);
+/// An imara-diff call on at most 4,096 tokens per side runs inline (cancellation checked before and after);
 /// a larger call runs on a helper thread that owns copies of the remapped tokens, while the caller polls
 /// `cancel` every 10 ms (`Receiver::recv_timeout`) and returns `Err(Cancelled)` at once, discarding the
-/// helper's result (D-54). Results never depend on which path ran (T6).
+/// helper's result; while 2 abandoned helpers are still running, a new helper call first waits for one of them
+/// (D-54, §1.3.3). Results never depend on which path ran (T6). Standard is bounded (O(n log n) plus its
+/// budgets, §2.14.5); Myers, Histogram and Patience have no budget.
 pub fn align(
     input: &AlignInput<'_>,
     opts: &AlignOptions,
@@ -2072,6 +2302,161 @@ pub enum DiffError {
     Cancelled,
 }
 ```
+
+#### 1.3.3 Accepted additions and deviations (wave 2)
+
+The review of wave 2 accepted the following public items, deviations and clarifications of hikasa-diff. They are
+part of the contract: hikasa-text (wave 3) and later waves may use them and must not assume the text above where
+an item here refines it. No signature of §1.3.2 changes.
+
+**Additive API** (no signature above changes):
+
+```rust
+impl Algorithm {
+    pub const ALL: [Algorithm; 5];                              // declaration order
+    pub const fn as_str(self) -> &'static str;                  // the serde names; Display writes them
+}
+impl RunKind { pub const fn as_str(self) -> &'static str; }     // the serde names
+impl Run { pub fn rows(&self) -> u32; }                         // max(|left|, |right|)
+impl Closeness {
+    pub const DEFAULT: Closeness;                               // 500 ‰, 4,000,000 cells per gap, automatic total
+    pub fn total_cells(&self, n: usize, m: usize) -> u64;       // max_cells_total, or 32·(n+m) + 4,000,000
+}
+impl AlignOptions {
+    /// The D-04 defaults for an explicit algorithm: skew 300, closeness on (500 ‰), never-align off, automatic
+    /// work budget.
+    pub const fn with_algorithm(algorithm: Algorithm) -> AlignOptions;
+    pub fn work_budget_for(&self, n: usize, m: usize) -> u64;   // work_budget, or 64·(n+m) + 1,000,000
+    pub fn fallback_budget_for(n: usize, m: usize) -> u64;      // 128·(n+m) + 32,000,000 cells (item 3)
+}
+impl InlineOptions { pub const DEFAULT: InlineOptions; }        // 10,000 chars per line, refinement ≤ 512 chars
+// Default: Closeness (DEFAULT), InlineOptions (DEFAULT), Interner (new), AlignOptions (item 7).
+impl BigramProfile { pub fn char_count(&self) -> u32; pub fn bigram_count(&self) -> usize; }
+impl<F: Fn(u32, u32) -> u16 + Sync> PairScorer for F { /* calls the closure */ }
+impl From<Cancelled> for DiffError { /* DiffError::Cancelled */ }
+// Classify for DiffError: InputTooLarge → too_large; WeightsLength (a caller bug) → internal; Cancelled → cancelled.
+
+/// Codes of the warnings that `hikasa_core::WarningCode` does not have yet; the snake_case names are the stable
+/// codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DiffWarningCode { AlignmentDegraded }                  // as_str / Display: "alignment_degraded"
+/// `hikasa_core::Warning` without the spec (an alignment concerns no spec).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DiffWarning { pub code: DiffWarningCode, pub message: String }
+impl Alignment {
+    /// Warnings whose codes `hikasa_core::WarningCode` lacks (each code at most once).
+    pub fn diff_warnings(&self) -> &[DiffWarning];
+}
+
+/// Test support, **not a stable API** (`#[doc(hidden)]`, may change in any release): public only because timing
+/// tests must live outside `src/` (§6.1 check 2).
+#[doc(hidden)]
+pub mod testing {
+    /// `align` with the D-54 helper threshold set to `helper_threshold` tokens per side (the test-only option of
+    /// §6.2.3; 0 runs every imara-diff call on a helper).
+    pub fn align_with_helper_threshold(
+        input: &AlignInput<'_>, opts: &AlignOptions, scorer: Option<&dyn PairScorer>,
+        sink: Option<&mut dyn RunSink>, cancel: &CancelToken, helper_threshold: usize,
+    ) -> Result<Alignment, DiffError>;
+    /// The production threshold (4,096).
+    pub const HELPER_THRESHOLD_TOKENS: usize;
+    /// `align` with Standard's fallback budget set to `fallback_budget` cells instead of
+    /// `AlignOptions::fallback_budget_for(n, m)`, so that small inputs reach the degraded split (P-ALIGN-10).
+    pub fn align_with_fallback_budget(
+        input: &AlignInput<'_>, opts: &AlignOptions, scorer: Option<&dyn PairScorer>,
+        sink: Option<&mut dyn RunSink>, cancel: &CancelToken, fallback_budget: u64,
+    ) -> Result<Alignment, DiffError>;
+    /// Abandoned helpers still running, process-wide (item 2).
+    pub fn abandoned_helpers() -> usize;
+}
+```
+
+The modules `classify`, `error`, `inline`, `input`, `intern`, `model`, `options` and `similarity` are public as
+well; every public item is also re-exported at the crate root.
+
+**Upstream change for hikasa-core.** `WarningCode` needs the variant `AlignmentDegraded` (`"alignment_degraded"`:
+"Standard alignment's fallback budget ran out; some ranges were aligned at unique lines and paired by position or
+similarity", D-16). hikasa-diff does not edit hikasa-core in wave 2: it reports the warning as a `DiffWarning` in
+`Alignment::diff_warnings()`, and hikasa-text maps every entry to the core `Warning` of the same code (same
+message, `spec: None`) once the variant exists.
+
+**Deviations and clarifications:**
+
+1. **Helper threshold 4,096 tokens per side** (D-54, §1.3.1, §1.3.2, §2.14.3, §5.1; was 200,000). imara-diff is
+   roughly quadratic on adversarial input (random tokens over 50 symbols: 40,000 per side ≈ 0.4 s, 80,000 ≈
+   1.7 s, so 200,000 ≈ 10 s), and an inline call cannot be cancelled, so 200,000 tokens could not meet the
+   100 ms latency of §5.3. The slowest inline calls measured at 4,096 tokens per side (release build; periodic
+   sequences against their reversal, random sequences over 2–100 symbols) took 10–16 ms at moderate load on the
+   development machine; an independent measurement on the same machine found up to 40 ms (best of three) and
+   60–80 ms under heavy load. The margin under 100 ms is therefore about 2.5×. A larger call pays one thread
+   spawn (tens of µs). P-ALIGN-7 runs every imara-diff call on a helper (threshold 0) and checks that the result
+   is identical.
+2. **Abandoned helpers are capped** (D-54, §5.1). imara-diff has no cancellation hook, so the helper of a
+   cancelled call computes until its call ends: seconds to minutes on adversarial input for an explicitly chosen
+   Histogram or Myers. At most 2 abandoned helpers run per process. A helper call made while 2 are running waits
+   for one of them to end, polling its own `CancelToken` every 10 ms (`Condvar::wait_timeout`), so it stays
+   cancellable within 100 ms. Abandoned helpers are therefore at most 2 + the number of concurrent `align` calls.
+   The count is a process-wide `static Mutex<usize>` with a `Condvar`, the crate's only mutable static: an
+   accepted exception to T7, because it decides only *when* a helper call starts, never what any call returns
+   (T6). The cost: after two cancellations of slow calls, a new call above the threshold may wait until an
+   abandoned helper ends. Standard's own helper calls are bounded by its fallback budget (item 3).
+3. **Bounded Standard** (D-16, §2.14.5). "The fallback costs O(n + m) in total" held for DenseRemap's
+   allocations, not for time: Histogram is roughly quadratic, so Standard on 1,000,000 random lines over 50
+   symbols would have taken about a minute (≈ 6.6 s already at 320,000). After the work budget runs out, a range
+   is aligned by Histogram only while its estimated cost `|A|·|B|` fits the fallback budget
+   (`AlignOptions::fallback_budget_for`: 128·(n+m) + 32,000,000 cells; imara-diff's Histogram measured ≤ ≈ 1.6 ns
+   per cell for every input shape tried). Beyond it, the range is split once at keys unique on both sides (patience
+   LIS, anchors extended to blocks), and each gap goes to Histogram if it fits the remaining budget, else to gap
+   pairing (§2.15); the diff warning `alignment_degraded` is added. Standard is O((n+m) log(n+m)) plus its budgets
+   on every input: 1,000,000 random lines per side over 50 symbols take 0.72 s (release), and the test
+   `bounded_standard` asserts < 2 s in release and the growth for ×8 the input in debug. Costs are counted in
+   operations, never time, so results stay deterministic and independent of the thread count. Explicitly chosen
+   Histogram, Myers and Patience stay exact (never degraded, no budget): their adversarial worst case is
+   super-linear (about quadratic), and they stay cancellable.
+4. **Stage B/C skip rule** (§2.14.5 step 4). A candidate `(i, j)` is skipped when `(i−1, j−1)` is a match *of the
+   same stage* (non-trivial in Stage B, trivial in Stage C), not any match. With the literal rule a block whose
+   first line is a matching trivial line (a blank line before repeated code) is never scored by Stage B, and a
+   worse block can win: left `["", x, y, e1]`, right `[x, y, "", x, y, e2]` aligned 2 lines instead of 3 (the
+   LCS, which Myers, Histogram and Patience find as well). A block started behind a trivial match lies on the
+   diagonal of its maximal block, with the same displacement and a lower score, so the rule never makes a worse
+   block win. In Stage C both rules coincide. hikasa-text goldens depend on this rule.
+5. **P-ALIGN-8 needs work to do.** `work_budget = 0` gives the Histogram result, plus warning
+   `work_budget_exhausted` whenever the stripped middle has both sides non-empty (identical inputs or a pure
+   insertion need no work and get no warning, as §2.14.5 says "when the budget is exceeded"). Property-sized
+   inputs always fit the fallback budget.
+6. **Closeness without a scorer** (§2.15.2). With closeness on and `scorer = None`, every pair of different keys
+   has similarity 0, so with `threshold_permille ≥ 1` only equal keys pair (with 0, every pair is allowed, as the
+   formula says). Weights above 4 count as 4 and scorer values above 1000 as 1000 (totality, T9).
+7. **`AlignOptions::default()` is `with_algorithm(Standard)`**, not D-36's `Auto`: `Auto` is resolved by
+   hikasa-text from the effective format (D-36), and hikasa-diff has no `Auto` variant.
+8. **Myers is not a minimal LCS** (TC-010, §2.14.3). imara-diff's Myers is a heuristic O(ND) diff: its
+   preprocessing prunes tokens that occur often in the other side when their neighbours are unmatched, and a
+   pruned token never matches. `[a, a]` against `[b, c, a, d, b]` gives no Equal pair although the LCS is 1
+   (Histogram finds it). Patience's Myers fallback inherits this. No test claims minimality: P-ALIGN-4 checks
+   `Equal pairs ≤ LCS`, and the test `myers_is_not_guaranteed_minimal` pins the example.
+9. **Progress** (§5.4). `diff::align` has no progress sink (§1.3.2 gives it only the `CancelToken`), so it emits
+   no `aligning` progress; hikasa-text reports that phase from the `RunSink` calls. Standard and Unaligned report
+   progressively (Unaligned every 4,096 pairs); Myers and Histogram send the common prefix in a call of its own
+   before the imara-diff call, then the runs after each hunk once the call has returned (§1.5
+   `CompareObserver::partial`).
+10. **Cancellation granularity** (§5.3). Every linear scan over tokens (the dense renumbering of out-of-range ids,
+    the common prefix and suffix, block extension, the stage tables) checks the token at least every 65,536
+    tokens. The closeness DP checks it every 4,096 cells, also inside one row of a 1 × 4,000,000 gap, and keeps
+    its totals along the shorter side of the gap: O(min(p, q)) besides the direction byte per cell (§5.7). Every
+    gap counts as one step, so a run of tiny gaps also reaches a check point.
+11. **Intern memory** (§0.8). `intern_pair` sizes its table by the distinct keys, not by the line count: it starts
+    at 4,096 entries and, after 65,536 keys, reserves room for (distinct keys so far / 65,536) × the longer side.
+    Each distinct key costs one std hash-table entry (a 16 B borrowed key, the 4 B id, padding and a control byte:
+    25 B per bucket at 44–88 % load), so 28–57 B per distinct key: 30.5 B on the §0.8 1,000,000-line input, where
+    pre-sizing by lines gave 61 B, at the same speed. The 24 B of §0.8 is not reachable with borrowed keys: the
+    16 B key reference alone leaves 8 B for the id and the table's free slots. A table of `u32` ids with the keys in
+    a separate vector measured 29.5 B per key at 1.5–2× the time, so the std table stays (the phase's 150 ms is
+    the tighter budget). The table's capacity never influences an id (T1).
+12. **`TrivialSet` memory.** The set costs one bit per id up to the largest id inserted (`TokenId(u32::MAX)` →
+    512 MiB), so callers insert interner ids (< `distinct`). Ids far beyond 4·(n+m) in the sequences are renumbered
+    densely inside `align`; the caller's set is sized by the caller.
 
 ### 1.4 hikasa-formats
 
@@ -2686,6 +3071,8 @@ pub enum EncodingSource {
     Ascii,
     /// The content is valid UTF-8.
     Utf8Valid,
+    /// Valid UTF-8 apart from a few malformed sequences (§2.8 step 4d; added in the wave-2 review).
+    Utf8Lossy,
     /// chardetng's guess.
     Detector,
 }
@@ -2798,8 +3185,9 @@ pub struct ConversionVars {
 /// Splits `template` into argv and substitutes variables (pure; D-39, §2.10.8).
 pub fn build_argv(template: &str, vars: &ConversionVars) -> Result<Vec<OsString>, ConvertError>;
 
-/// Runs an external load conversion: writes `input` to `<temp_dir>/hikasa-conv-<n>.src`, runs the program,
-/// reads `%t`. Success = exit status 0 AND non-empty target (FF-030). Temp files are removed in all cases.
+/// Runs an external load conversion: writes `input` to `hikasa-conv.src` in a private, exclusively created
+/// directory `<temp_dir>/hikasa-conv-<16 hex>` (§2.10.8), runs the program, reads `%t` (`hikasa-conv.out`).
+/// Success = exit status 0 AND non-empty target (FF-030). The directory is removed in all cases.
 pub fn run_external(
     conv: &ExternalConversion,
     input: &[u8],
@@ -2875,6 +3263,156 @@ pub enum ConvertError {
     Cancelled,
 }
 ```
+
+#### 1.4.8 Accepted additions and deviations (wave 2)
+
+The review of wave 2 accepted the following public items, deviations and clarifications. They are part of the
+contract: later waves may use them and must not assume the text above where an item here refines it.
+
+**Additive API** (no signature above changes):
+
+```rust
+impl FormatId {
+    pub fn new(id: impl Into<String>) -> Result<FormatId, InvalidName>;   // also TryFrom<String>, FromStr
+    pub fn as_str(&self) -> &str;                                          // Display, AsRef<str>
+}
+impl ElementName {
+    pub fn new(name: impl Into<String>) -> Result<ElementName, InvalidName>;
+    pub fn as_str(&self) -> &str;
+}
+/// The error of `FormatId::new` / `ElementName::new` (and of their serde `try_from`).
+pub struct InvalidName { pub what: &'static str, pub value: String, pub reason: &'static str }
+impl FileFormat { pub fn new(id: FormatId, name: impl Into<String>, kind: FormatKind) -> FileFormat; }
+impl FormatKind { pub const fn as_str(self) -> &'static str; }             // Display
+impl ItemKind { pub const fn name(&self) -> &'static str; }               // "basic", "delimited", …
+pub struct RawGrammarItem { /* the TOML shim of §1.4.3, public for tools */ }
+pub struct GrammarItemError(pub String);                                   // its TryFrom error
+
+impl RegistryEntry {
+    pub fn new(format: Arc<FileFormat>, enabled: bool, origin: Origin) -> RegistryEntry; // mask compiled on join
+    pub fn id(&self) -> &FormatId;
+    pub fn mask(&self) -> Option<&MaskList>;
+    pub fn is_enabled(&self, overrides: &EnabledOverrides) -> bool;
+}
+impl FormatRegistry {
+    pub fn builtin_with_limits(limits: RegexLimits) -> Result<FormatRegistry, FormatError>;
+    pub fn force(&self, id_or_name: &str) -> Result<Detection, FormatError>;     // §2.12.2, reason Forced
+    pub fn everything_else(&self) -> &Arc<CompiledFormat>;
+    pub fn limits(&self) -> &RegexLimits;
+    pub fn into_entries(self) -> Vec<RegistryEntry>;
+    /// §2.12.4 step 2. Skips (warning `user_format_skipped`) a format whose id is not its file stem, whose mask
+    /// does not compile, or whose id another user format took; never fails, never loses the built-ins.
+    pub fn with_user_formats(self, user: Vec<(Arc<FileFormat>, PathBuf)>) -> (FormatRegistry, Vec<Warning>);
+    /// §2.12.4 steps 3–4 (unknown ids → `unknown_config_key` warnings; an id listed twice → `DuplicateId`).
+    pub fn with_order(self, order: &FormatOrder) -> Result<(FormatRegistry, Vec<Warning>), FormatError>;
+}
+pub const ORDER_SCHEMA_VERSION: u32 = 1;
+/// `formats/order.toml`: `schema_version`, then `[[format]] id = "…" enabled = true` (enabled optional).
+pub struct FormatOrder { pub schema_version: u32, pub formats: Vec<OrderItem> }   // serde: `format`
+pub struct OrderItem { pub id: FormatId, pub enabled: Option<bool> }
+impl FormatOrder {
+    pub fn from_registry(registry: &FormatRegistry) -> FormatOrder;
+    pub fn parse(toml_text: &str, origin: &str) -> Result<(FormatOrder, Vec<Warning>), FormatError>;
+    pub fn to_toml(&self) -> String;
+}
+impl Preset { pub fn origin(&self) -> String; }                            // "built-in:<file>"
+
+pub const EVERYTHING_ELSE: &str = "Everything Else";
+impl ElementTable { pub fn iter(&self) -> impl Iterator<Item = (ElementId, &str)> + '_; pub fn is_empty(&self) -> bool; }
+impl CompiledGrammar { pub fn item_count(&self) -> usize; }
+impl CompiledFormat {
+    pub fn mask(&self) -> Option<&MaskList>;
+    pub fn has_line_weights(&self) -> bool;
+    /// `line_weight` plus the runtime-limit hits of the weight regexes (each counts as "not found"; §2.10.7).
+    pub fn line_weight_with_errors(&self, line: &str) -> (u8, u32);
+}
+impl Pattern {
+    pub fn source(&self) -> &str;
+    pub fn case_insensitive(&self) -> bool;
+    pub fn is_accelerated(&self) -> bool;            // the exact ASCII accelerator of §2.10.5 applies
+}
+
+impl Token { pub fn text<'l>(&self, line: &'l str) -> &'l str; }
+/// INV-TOK-1..3 for one line's tokens.
+pub fn check_tokens(line: &str, tokens: &[Token]) -> Result<(), InvariantViolation>;
+impl<'g> Tokenizer<'g> {
+    pub fn grammar(&self) -> &'g CompiledGrammar;
+    /// `tokenize_line` that also observes `cancel` inside the line (every 64 KiB of scanned text and before
+    /// every regex engine call); on cancellation `out` is cleared. `tokenize_all` uses it.
+    pub fn tokenize_line_cancellable(&mut self, line: &str, line_no: u32, state: LineState, out: &mut Vec<Token>,
+                                     cancel: &CancelToken) -> Result<LineOutcome, Cancelled>;
+    #[doc(hidden)] pub fn reference(grammar: &'g CompiledGrammar) -> Tokenizer<'g>;   // tests: no fast paths
+}
+#[doc(hidden)] pub fn tokenize_all_with_chunk<F>(/* tokenize_all + chunk_lines: u32 */);  // P-TOK-5
+impl LineSource for [&str] / [String] / Vec<&str> / Vec<String>;
+impl LineBytes { pub fn patched_lines(&self) -> u32; }
+impl TokenizedLines { pub fn check_invariants(&self) -> Result<(), InvariantViolation>; }  // T4
+/// The text dump of `hikasa format tokens`: `L<line>:<start>-<end>\t<element>\t<escaped text>\n` per token.
+pub fn write_token_dump(out: &mut String, line_number: u32, line: &str, tokens: &[Token], elements: &ElementTable);
+pub fn escape_token_text(text: &str) -> String;   // `\` `\t` `\r` `\n`, other controls `\u{XX}`
+
+impl TextEncoding {
+    pub const UTF_16LE: TextEncoding;
+    pub const UTF_16BE: TextEncoding;
+    pub fn is_ascii_compatible(self) -> bool;
+    pub fn bom(self) -> &'static [u8];               // empty for encodings without one
+}
+impl Display for TextEncoding;                       // name()
+impl Default for DecodeOptions;                      // no override, UTF-8 locale, 1 MiB detect limit
+pub const UTF_PATTERN_SAMPLE: usize = 4096;
+/// Encodes without a BOM; UTF-16/32 by Hikasa, the rest by encoding_rs (unmappable → numeric references).
+pub fn encode(text: &str, enc: TextEncoding) -> (Vec<u8>, bool);
+pub enum EncodingSource { /* …, */ Utf8Lossy /* , … */ }   // §2.8 step 4d, serde `utf8_lossy`
+pub const MAGIC: &[(MagicKind, &[u8])];
+pub fn magic(bytes: &[u8]) -> Option<MagicKind>;
+/// The Sorted conversion (D-38) as a pure text function.
+pub fn sort_lines(text: &str) -> String;
+impl From<Cancelled> for ConvertError;               // ConvertError::Cancelled
+#[derive(Clone)] pub enum FormatError { /* … */ }    // the registry hands out a cached compile error
+```
+
+**Deviations and clarifications:**
+
+1. `with_user_formats` returns `(FormatRegistry, Vec<Warning>)`; the wave-2 implementation returned
+   `Result<FormatRegistry, FormatError>` and failed (consuming the registry) on one bad user mask. This is the
+   only signature change of the review; no later wave used the old one.
+2. `EncodingSource::Utf8Lossy` is a new variant (§2.8 step 4d, D-42 as amended). Downstream matches over
+   `EncodingSource` must handle it.
+3. `FormatError::Schema` classifies as `unsupported`, as `SchemaError` itself (§1.1.12); §5.5 rule 4 says so.
+   A `schema_version` that does not fit a `u32` is `Schema` (reported as 4294967295), not a type error.
+4. `ElementName` also rejects control characters (names appear in the token dump and in JSON); the name
+   "Everything Else" is reserved (a grammar item or `[elements]` key with it is `FormatError::Invalid`).
+5. `TextEncoding::for_label`: labels that WHATWG maps to the replacement encoding (ISO-2022-KR, HZ-GB-2312, …)
+   give `None`; "utf-32", "utf32" and "utf32le" mean UTF-32LE (as WHATWG's "utf-16" means UTF-16LE), "utf32be"
+   means UTF-32BE.
+6. Detection and `--format` matching use the last path component of the name (anything up to the last `/` or
+   `\` is ignored, D-10). A mask with exclude items only can never match: `ShadowStatus::ManualOnly`.
+7. `LineBytes` equality compares the logical content (the bytes of every line), not the arena layout, so a
+   patched parallel run equals the sequential one (INV-TOK-5).
+8. `tokenize_all` reports no progress (§1.4.4); hikasa-text reports the `tokenizing` phase from its callback
+   (§5.4 as amended).
+9. Field boundaries for Columns items (§2.10.2 as amended): tokens of other items never cross the first column
+   of a Columns item. Regex items are defined equivalently by anchored matches (§2.10.2), which the reference
+   tokenizer uses at every position.
+10. `FileFormat`'s serde form is the canonical TOML one: empty `elements`, `grammar` and `line_weight` and the
+    default fields of grammar items are omitted (INV-FMT-1 holds). JSON shapes are owned by DTOs (T5): the
+    `format` member of `hikasa.format_show.v1` (§4.3.4) is built by the session DTO with every section present
+    (`elements: {}`, `grammar: []`, `line_weight: []`, `table: null`, every grammar-item field of its kind),
+    so §4.1 rule 3 holds there.
+11. External conversions run in a private directory (§2.10.8): the names of `%s` and `%t` changed from
+    `<temp_dir>/hikasa-conv-<n>.{src,out}` to `<temp_dir>/hikasa-conv-<16 hex>/hikasa-conv.{src,out}`. The name
+    uses a per-process counter (a `static AtomicU64`): an accepted T7 exception, because it only names
+    temporary directories and never influences a result. Descendants of a killed program are not killed (no
+    approved process-group API, §0.7).
+12. The global-pool trap of this crate (§5.1) builds the rayon global pool with recognisable thread names and
+    records every callback that runs on one of them, instead of a panicking `start_handler`: rayon starts the
+    global pool's threads when the pool is built, so a start handler cannot see later implicit use. Every
+    `tokenize_all` work item calls the callback, so any implicit use is seen.
+13. The ASCII accelerator, the first-char prefilter, the keyword hash set and the next-match cache are the
+    performance design of §2.10.5; they never change a result (P-TOK-REF compares them with the reference
+    tokenizer, including the regex error counts).
+14. `LineWeight` regexes that hit the runtime limit are counted through `line_weight_with_errors`;
+    `line_weight` itself keeps the §1.4.4 signature.
 
 ### 1.5 hikasa-text
 
@@ -5610,8 +6148,8 @@ Each subsection is normative. Tests must be derived from the tables. "✓" means
    non-empty (`MalformedProfile`). `path` is the text after `?`, or `None` when there is no `?`.
 5. If `input` matches `^[A-Za-z][A-Za-z0-9+.-]*://`, then:
    - with a one-letter scheme and `PathStyle::Windows` → it is a drive letter; continue at step 6;
-   - `http`/`https` → `Http`. The authority is parsed as below; `rest` is everything from the first `/`, `?`
-     or `#` after it;
+   - `http`/`https` → `Http`. The authority is parsed as below (user information included: `user` and
+     `password` as for `Remote`); `rest` is everything from the first `/`, `?` or `#` after it;
    - a `RemoteScheme` → `Remote`. Authority = text up to the first `/`. `userinfo@hostport` is split at the
      **last** `@`. `user[:password]` is split at the first `:`. `host[:port]` can use `[v6]:port`; the port
      must be 1–65535 (`MalformedUrl`). The host must be non-empty. `path` = the rest, verbatim;
@@ -5642,9 +6180,11 @@ Each subsection is normative. Tests must be derived from the tables. "✓" means
 **Canonical form** (`Display`): `Local` → the stored path (lossy display for non-UTF-8 paths, with
 `is_lossy() == true`); `Stdin` → `-`; `Clipboard` → `clipboard://`; `Profile` → `profile:<name>[?<path>]`;
 `Remote` → `<scheme>://[<user>@]<host>[:<port>]<path>` (lower-case scheme and host, **never** a password);
-`Http` → `http[s]://<host>[:<port>]<rest>`.
+`Http` → `http[s]://[<user>@]<host>[:<port>]<rest>` (never a password). A lossy `Local` spec (non-UTF-8 path)
+cannot be serialised (`Serialize` returns an error), so it is never persisted.
 
-INV-SPEC-4 (round trip): for every UTF-8 input that parses, `parse(canonical(s), ctx) == s.without_secrets()`.
+INV-SPEC-4 (round trip): for every UTF-8 input that parses, `parse(canonical(s), ctx) == s.without_secrets()`
+(`without_secrets` clears the password of both `RemoteUrl` and `HttpUrl`).
 
 | # | Input | Style | cwd | home | Result |
 |---|---|---|---|---|---|
@@ -5747,7 +6287,8 @@ component in the same way:
   `parent.components()` followed by `name` without building a joined path; per-char folding uses
   `case::simple_lower` on the fly; `case::nfc` borrows for ASCII names and for names that pass
   `unicode_normalization::is_nfc_quick`, so the common case allocates nothing. Simple masks compare only
-  `name`. Bench `mask_match` (§6.4): ≥ 20 M matches/s on a 20-item list over ASCII names.
+  `name`. Bench `mask_match` (§6.4): ≥ 20 M matches/s on a 20-item list over ASCII names, where one match is
+  one name checked against the **whole** 20-item list (`NameFilter::file`/`folder`, `MaskList::matches_name`).
 
 #### 2.2.4 Examples (normative test table)
 
@@ -6194,7 +6735,10 @@ detect(bytes, setting, opts):
          else opts.locale_fallback is ASCII-compatible                      → (locale, 0, LocaleFallback)
          else                                                               → (UTF-8, 0, Ascii)
     c. std::str::from_utf8(bytes) is Ok                                     → (UTF-8, 0, Utf8Valid)
-    d. chardetng: d = EncodingDetector::new(Iso2022JpDetection::Deny);
+    d. mostly_utf8(bytes) (whole content): V = valid multi-byte sequences (chars ≥ U+0080),
+       M = malformed sequences (maximal subparts, exactly the units `decode` replaces; a truncated sequence at
+       the end counts); V ≥ 1 && M ≤ 16 && 8 × M ≤ V                       → (UTF-8, 0, Utf8Lossy)
+    e. chardetng: d = EncodingDetector::new(Iso2022JpDetection::Deny);
        w = bytes[..min(len, opts.detect_limit)]; d.feed(w, w.len() == len); d.guess(None, Utf8Detection::Deny)
                                                                             → (guess, 0, Detector)
 
@@ -6203,7 +6747,13 @@ utf_pattern(s):                              // shared with binary::sniff (one f
           and every unit is a Unicode scalar value (≤ 0x10FFFF, not a surrogate); BE mirrored ([0, 0, y, x]).
   UTF-16: P = ⌊|s| / 2⌋ pairs (P ≥ 2); ZO = zero bytes at odd offsets, ZE = zero bytes at even offsets.
           ZO × 100 ≥ 40 × P && ZE × 100 ≤ 5 × P → UTF-16LE; ZE × 100 ≥ 40 × P && ZO × 100 ≤ 5 × P → UTF-16BE.
-  UTF-32 is tested first (ASCII UTF-32 also has many zero bytes at odd offsets).
+  UTF-16, one alphabet (BOM-less non-Latin text mixed with ASCII), LE shown (BE: high and low bytes swap):
+          H[v] = units whose high (odd-offset) byte is v; v* = the most frequent v ≠ 0 (the smallest on a tie).
+          v* ∈ 0x01..=0x2F && H[v*] ≥ 30 % P && H[0] ≥ 5 % P && H[0] + H[v*] ≥ 90 % P && ZE ≤ 5 % P → UTF-16LE.
+  Candidates in order: UTF-32LE, UTF-32BE, UTF-16LE, UTF-16BE, one-alphabet LE, one-alphabet BE. A candidate
+  is accepted only when its decoded sample is plausible text: bad × 10 ≤ units, where bad counts control
+  characters other than HT, LF, VT, FF, CR, BS, SUB and ESC (C0 plus DEL and C1 U+0080–U+009F) and unpaired
+  surrogates. UTF-32 is tested first (ASCII UTF-32 also has many zero bytes at odd offsets).
 
 decode(bytes, enc): strip bom_len; WHATWG encodings use encoding_rs `Decoder::decode_to_string_without_replacement`
   in a loop that counts every `DecoderResult::Malformed` and inserts U+FFFD; UTF-32 uses Hikasa's decoder
@@ -6215,6 +6765,20 @@ test must run before the ASCII and UTF-8 tests; the docs order "BOM → chardetn
 locale" is kept for content with non-ASCII evidence, and the fallbacks apply only to content without it.
 chardetng 1.0's `find_score` is gated behind a test-only feature, so a plausible format fallback cannot be
 preferred over the detector's guess (D-42).
+
+Why step d (amended in the wave-2 review): one stray byte in an otherwise UTF-8 file (a Latin-1 "ï", a
+truncated last char) used to send the whole file to chardetng with UTF-8 denied, so every non-ASCII char of
+every line came out as mojibake. Valid multi-byte UTF-8 sequences are strong evidence of UTF-8: legacy
+single-byte text almost never forms them (an accented letter is followed by an ASCII byte, not by a byte in
+0x80–0xBF), and nearly every non-ASCII byte of legacy text is malformed UTF-8. The ratio and the cap keep
+legacy files with an accidental valid sequence on the detector path.
+
+Why the plausibility check (wave-2 review): arrays of small 16- or 32-bit integers have the zero-byte pattern
+of ASCII UTF-16/32 but decode to control characters; without the check they were "text" (D-12 bypassed). The
+one-alphabet rule recognises BOM-less UTF-16 Cyrillic, Greek, Hebrew, Arabic and similar text, which used to be
+pure ASCII bytes with NULs (decoded as garbage, sniffed binary). Limitation: BOM-less UTF-16 in scripts whose
+high bytes spread over many values (CJK, Hangul) and BOM-less non-Latin UTF-32 are still not recognised; they
+need a BOM or an encoding override.
 
 `malformed > 0` sets the warning `lossy_decode`. INV-ENC-1: decoding is total, never panics, and for UTF-8,
 UTF-16 and UTF-32 `decode(encode(s)) == s` (property test with encoding_rs encoders and Hikasa's UTF-32 encoder).
@@ -6232,6 +6796,10 @@ UTF-16 and UTF-32 `decode(encode(s)) == s` (property test with encoding_rs encod
 | 9 | a 1 KiB French sample in windows-1252 (`caf\xE9 …`) | windows-1252, `detector` |
 | 10 | a 1 KiB Japanese sample in Shift_JIS | Shift_JIS, `detector` |
 | 11 | any content with override KOI8-R | KOI8-R, `override` |
+| 12 | Cyrillic UTF-8 plus one `FF` byte | UTF-8, `utf8_lossy`, 1 malformed |
+| 13 | French UTF-8 with one windows-1252 `EF` byte | UTF-8, `utf8_lossy`, 1 malformed |
+| 14 | windows-1252 text with one accidental valid UTF-8 sequence (1 valid, 6 malformed) | windows-1252, `detector` |
+| 15 | BOM-less UTF-16LE Cyrillic text | UTF-16LE, `utf_pattern` |
 
 ### 2.9 Binary detection (TC-003)
 
@@ -6257,7 +6825,9 @@ magic(bytes) at offset 0 (in-house table replacing `infer`, §0.7):
 Binary content does not stop a text comparison. The document is decoded (lossy if needed), the warning
 `binary_content` is added, and the verdict becomes binary (§2.17.5). Rules-based quick compare and
 `RulesComparator` use binary comparison (D-12). Fixtures (§6.2.4): each magic kind, BOM-less UTF-16LE/BE and
-UTF-32LE text, text with ESC sequences, an 11 % control-byte buffer.
+UTF-32LE text, BOM-less UTF-16LE Cyrillic text, arrays of small 16- and 32-bit integers (binary: the
+plausibility check of `utf_pattern` rejects them, then the NUL rule applies), text with ESC sequences, an 11 %
+control-byte buffer.
 
 ### 2.10 Tokenizer (FF-020…FF-027; D-13, D-41, D-58)
 
@@ -6308,6 +6878,23 @@ tokenize_line(line, line_no, state) -> (tokens, end_state)
 | List | some token matches at `p` with word boundaries (below); the **longest** wins | end of match | Normal |
 | Columns | the char column of `p` (0-based) equals `from_column − 1` | byte offset of char column `to_column` (inclusive), or EOL trimmed per D-13 when `to_column` is None; clamped to `len` | Normal |
 | Lines | `p == 0` and (`or_line_one && line_no == 0` or `heading` is found anywhere in the line) | EOL (trimmed per D-13) | `InLines{item, next_lines}` if `next_lines > 0`, else Normal |
+
+**Regex items** match at `p` when the leftmost match found by `find_at(line, p)` starts at `p`;
+equivalently, when an anchored match at `p` exists, with the same end (the leftmost search returns a match at
+`p` whenever one exists). The implementation decides it either way (§2.10.5). A fancy-regex runtime-limit hit
+of that decision counts as no match and is counted in `LineOutcome::regex_errors`.
+
+**Field boundaries (Columns items; added in the wave-2 review).** The first column of every Columns item
+(`from_column`, when > 1) is a field boundary. Every item sees the line *up to the next boundary* as the whole
+line: no token crosses a boundary, `$` and the List word boundaries apply at it, and a token that would run to
+the end of the line (an unterminated Delimited item, a Columns item without `to_column`, a Lines item) ends at
+the boundary, trimmed per D-13 (the blanks before the boundary are an EE token). `^` and look-behind still see
+the real start of the line. The scan then goes on at the boundary, where the Columns item (or an earlier item
+in list order) matches. The end state of the line is the non-`Normal` next state of the last
+end-of-line-terminated token (so a multi-line construct cut at a boundary still continues on the next line),
+or `Normal`. A continuation (step (a)) also ends at the first boundary. Without Columns items (every preset but
+COBOL) nothing changes. This is what keeps COBOL's columns 73–80 the Identification element when a literal or
+an identifier reaches column 72 (§2.13.3 row 16).
 
 **Word boundaries for List items.** If the matched text starts with a word char, then `p == 0` or
 `!is_word(char before p)`. If it ends with a word char, then `end == len` or `!is_word(char at end)`. A List
@@ -6360,11 +6947,32 @@ find_close(item, line, x) -> Option<end>
 - A first-char prefilter: a 128-bit ASCII bitmap plus an "any" flag per item. Literals contribute their first
   char, in both cases when `!match_case`. Regex items contribute "any" unless their first byte set can be
   computed trivially (a literal prefix). Positions whose char cannot start any item are added to the EE run
-  without trying any item.
-- A next-match cache per regex item: `find_at` runs only when `p` has passed the cached match start, so each
-  regex item scans a line amortised once.
+  without trying any item. Case folding crosses the ASCII boundary (KELVIN SIGN U+212A folds to `k`, LONG S
+  U+017F to `s`), so a case-insensitive set that admits a non-ASCII char also admits `k`, `K`, `s` and `S`.
+- A next-match cache per regex item and haystack: an unanchored `find_at(line, p)` gives the leftmost match
+  `(s, e)` at or after `p`, which answers every position up to `s` in O(1); "no match after `p`" is cached for
+  the rest of the line. The cache is consulted first.
+- An exact ASCII accelerator for simple patterns (sequences of character classes, optional groups,
+  alternation) decides the anchored question without the engine. Each decision examines at most 512 bytes; a
+  decision that examined more than 16 bytes without a match primes the cache instead, so a run is scanned
+  once, not once per position.
+- Unanchored searches are charged the bytes they cover. When matches are skipped (another item's token covers
+  them), later searches cover the same bytes again; once an item's charge on a haystack exceeds
+  `2 × len + 4096`, the item switches to anchored attempts, which never look past the match at hand. So each
+  item scans a line amortised a bounded number of times (wave-2 review: lines of blanks before a non-blank,
+  `${`/`#[` without a closer, and strings containing `rem` used to cost quadratic time in the line length).
+  Every built-in preset tokenises any line in time linear in its length (`tests/long_lines.rs` and a stress
+  run over all presets with 1 MiB lines of repeated fragments). A user pattern whose anchored attempts fail
+  late (for example `x.*y` on a long run of `x`, once the item's search budget is spent) can still cost up to
+  the line length per position; the backtrack limit bounds fancy patterns, and cancellation stays responsive.
 - `fancy-regex` runtime-limit errors count as "no match" and are counted (`LineOutcome::regex_errors`). They
-  surface as warning `regex_runtime_error`, which is deterministic because the backtrack limit counts steps.
+  surface as warning `regex_runtime_error`, which is deterministic because the backtrack limit counts steps. An
+  unanchored search that hits the limit is not counted (the hit lies somewhere after `p`) and is never cached
+  as "no match": the item switches to anchored attempts, which count their own hits exactly as the reference
+  algorithm (one anchored attempt per position, no fast paths) does.
+- Cancellation (§5.3): besides the per-chunk check, `tokenize_all` checks the token inside a line every 64 KiB
+  of scanned text and before every regex engine call, so one multi-megabyte line cannot delay a cancel beyond
+  G4.
 
 #### 2.10.6 Parallel speculative tokenisation (`tokenize_all` with a pool)
 
@@ -6392,6 +7000,9 @@ which is sequential cost plus one wasted parallel pass.
 `line_weight(line)` = the maximum `priority` over the weights whose pattern is found anywhere in the raw line
 (substring with case per `match_case`, or regex search). 0 when none matches. Weights are computed (with the
 same chunked parallelism as keys) only when the algorithm resolves to Standard, the only engine that uses them.
+A weight regex whose search hits the fancy-regex runtime limit counts as not found;
+`line_weight_with_errors(line) -> (u8, u32)` also returns those hits, which hikasa-text adds to `regex_errors`
+(warning `regex_runtime_error`; §5.5 rule 3).
 
 #### 2.10.8 External conversion command lines (FF-030; D-39)
 
@@ -6404,6 +7015,16 @@ same chunked parallelism as keys) only when the algorithm resolves to Standard, 
 - The program runs without a shell, with stdin null and stdout/stderr discarded.
 - Success requires exit status 0 **and** a non-empty `%t` file. Temporary files are removed on every path.
 - Cancellation and the timeout kill the child.
+- Temporary files (wave-2 review): each conversion creates its own directory
+  `<temp_dir>/hikasa-conv-<16 hex digits>` exclusively (`mkdir` fails on any existing entry, a symbolic link
+  included, so nothing pre-planted in a shared temporary folder is followed) with mode 0700 on Unix; `%s` is
+  `hikasa-conv.src` and `%t` is `hikasa-conv.out` inside it. The name hashes injected data (temporary folder,
+  original name, input length and first bytes) with the process id and a per-process counter: hard to guess,
+  with no clock and no randomness (T1); a taken name is skipped. The directory is removed with everything in
+  it after the runner has reaped the child, on every path (retried when something wrote into it meanwhile).
+- Limitation: only the direct child is killed. Killing its descendants needs a process-group kill, an OS API
+  that no approved crate provides (§0.7). A descendant that outlives the child cannot write `%t` afterwards,
+  because the directory is gone; it may keep running until it ends by itself.
 
 ### 2.11 Regex engine selection (FF-020…FF-022, TC-020)
 
@@ -6465,7 +7086,12 @@ analysis incomplete. A property test checks soundness on random names:
    `parse_format`. The id must equal the file stem (else warning `user_format_skipped`). The same id as a
    built-in **replaces** the built-in definition (origin `User`), keeping its position. A new id is appended
    to a user list, sorted by id. A file that fails to parse is skipped with `user_format_skipped` (the CLI
-   stays usable); `format list --json` shows the skip warnings.
+   stays usable); `format list --json` shows the skip warnings. The pure merge is
+   `FormatRegistry::with_user_formats(self, Vec<(Arc<FileFormat>, PathBuf)>) -> (FormatRegistry, Vec<Warning>)`
+   (§1.4.8): it skips, with `user_format_skipped`, a format whose id is not its file stem, whose mask does not
+   compile (syntax, or an item with a separator), or whose id another user format already took; one broken
+   file never costs the built-ins or the other formats. Compile errors of the rest of a format (patterns,
+   ranges) still surface only when that format is selected (§2.12.1).
 3. If `formats/order.toml` exists (`schema_version = 1`, `[[format]] id = "…" enabled = true`), the final
    order is the listed ids (unknown ids → warning), followed by unlisted entries in their step-1/2 order.
    Enabled flags come from the list where it gives one.
@@ -6585,12 +7211,14 @@ under never-align). The rest becomes `Delete` or `Insert`. Skew, weights and clo
 imara_call(algorithm, A, B):                          // every imara-diff call in the crate goes through this
   k = dense.remap(A, B, &mut before, &mut after)       // DenseRemap: local alphabet 0..k (D-16)
   debug_assert!(every token in before/after < k)
-  if |A| ≤ 200_000 && |B| ≤ 200_000:
+  if |A| ≤ 4_096 && |B| ≤ 4_096:                       // D-54 as amended (§1.3.3 item 1)
       cancel.check()?; diff.compute_with(algorithm, &before, &after, k); cancel.check()?
   else:                                                // D-54
+      while 2 abandoned helpers still run: wait ≤ 10 ms for one to end; cancel.check()?   // §1.3.3 item 2
       spawn a helper thread that owns `before`, `after` and runs compute_with + postprocess,
       sending the hunks through a std mpsc channel; the caller loops on recv_timeout(10 ms) and checks
-      `cancel` between waits → Err(Cancelled) without joining (the helper's result is dropped)
+      `cancel` between waits → Err(Cancelled) without joining (the helper's result is dropped; the helper
+      counts as abandoned until its computation ends)
   diff.postprocess_with(&before, &after, NoSliderHeuristic)   // merges hunks, moves sliders down (deterministic)
   return hunks (local indices = indices into A and B)
 
@@ -6602,6 +7230,13 @@ DenseRemap matters because imara-diff allocates O(max token id) per call (Myers 
 vector of size max id + 1; Histogram allocates `num_tokens` list heads). Without it, thousands of small calls on
 sub-ranges of a 1M-line input would cost O(calls × distinct keys); with it every call costs O(|A| + |B|). The
 bench `align_pathological` (§6.4) runs ≥ 10,000 anchor-less gaps.
+
+imara-diff's Myers is a heuristic O(ND) diff, not a guaranteed minimal LCS: its preprocessing prunes tokens that
+occur often in the other side when their neighbours are unmatched, and a pruned token never matches (`[a, a]`
+against `[b, c, a, d, b]` gives no Equal pair; the LCS is 1; §1.3.3 item 8). Myers and Histogram have no work
+budget: on adversarial input (random tokens over a small alphabet) their cost is roughly quadratic (80,000 tokens
+per side ≈ 1.7 s), and they stay cancellable through the helper thread. Histogram measured ≤ ≈ 1.6 ns per cell of
+`|A|·|B|` for every input shape tried, which is the estimate of Standard's fallback budget (§2.14.5).
 
 #### 2.14.4 Patience
 
@@ -6636,7 +7271,8 @@ process(range = (a0..a1, b0..b1)):                 // ranges are processed in do
                 previous or next block
   4. if blocks is empty → Stage B (best block):
        for i in A (ascending), non-trivial a[i]: for j ∈ positions_B(a[i]) ∩ window-interval(i):
-           skip if (i−1, j−1) is a match inside the range (not a block start)
+           skip if (i−1, j−1) is a match of this stage inside the range (non-trivial in Stage B, trivial in
+                Stage C), so each maximal block is scored once, from its first line of the stage (§1.3.3 item 4)
            extend forward while equal → block (i, j, len)
            score = Σ over non-trivial lines of the block (1 + WEIGHT_FACTOR × max(w_a, w_b))
        best = max by (score ↓, min(|start disp|, |end disp|) ↑, i ↑, j ↑)
@@ -6645,9 +7281,19 @@ process(range = (a0..a1, b0..b1)):                 // ranges are processed in do
   7. otherwise: process(gap before the first block); emit Equal(block); … ; process(gap after the last block)
   8. emit Equal(common suffix)
 budget: every examined candidate pair, extension step and hash insertion costs 1. When the budget is exceeded,
-        every pending range is aligned with Histogram through imara_call (§2.14.3, one DenseRemap per range, so
-        the fallback costs O(n + m) in total) in document order, its gaps resolved per §2.15, and warning
-        work_budget_exhausted is added. Alignment::algorithm() stays Standard.
+        warning work_budget_exhausted is added and every pending range (the current one first, then the others
+        in document order) goes to the fallback. Alignment::algorithm() stays Standard.
+fallback(range):                                   // D-16 as amended in wave 2 (§1.3.3 item 3)
+  emit Equal(common prefix); remember the common suffix
+  cells = |A|·|B|                                  // estimated Histogram cost; fallback budget F = 128·(n+m) + 32,000,000
+  if cells ≤ F − spent: spent += cells; Histogram through imara_call (§2.14.3, one DenseRemap per range),
+        its gaps resolved per §2.15
+  else: diff warning alignment_degraded (Alignment::diff_warnings, §1.3.3)
+        U = pairs whose key is unique in A and in B and not trivial; U empty → the range is a gap (§2.15)
+        chain = LIS of U by j (patience sorting, O(k log k)); each chain pair extended backward and forward
+        while equal, without crossing a neighbour → blocks; emit gap, Equal(block), …, gap, where every gap is:
+        strip; Histogram if its cells fit F − spent (spent += cells), else resolved per §2.15 (never split again)
+  emit Equal(common suffix)
 progressive output: when the leftmost pending range is fully resolved, its runs go to the RunSink (ARCH-004).
 ```
 
@@ -6657,8 +7303,12 @@ Properties that tests check: INV-ALIGN-1…7, plus these:
 - a weighted line (priority 4) wins over up to 16 crossing unweighted unique lines;
 - given the same budget, results are identical with or without a `RunSink`.
 
-Complexity: one level costs O((n+m)·c), where c is the number of candidates in the window. The budget makes
-total work O(n+m) before the deterministic fallback.
+Complexity: one level costs O((n+m)·c), where c is the number of candidates in the window. The work budget
+bounds Standard's own work; the fallback budget bounds the Histogram work (≤ ≈ 1.6 ns per cell measured, so
+≤ ≈ 0.05 s + 0.2 µs per token); the unique-line split is O(n log n); gap pairing is positional or bounded by the
+closeness budgets. Standard is therefore O((n+m) log(n+m)) on every input (test `bounded_standard`: 1,000,000
+random lines per side over 50 symbols in < 2 s in release; measured 0.72 s). Histogram, Myers and Patience have
+no budget (§2.14.3).
 
 ### 2.15 Gap pairing, closeness matching, never-align (TC-011; D-17)
 
@@ -6690,6 +7340,11 @@ budget: if p·q > max_cells_per_gap, or the cumulative cells would exceed max_ce
 
 INV-CLOSE-1: the pairs are strictly increasing in both coordinates. INV-CLOSE-2: every pair has
 `sim ≥ threshold`. INV-CLOSE-3: the total similarity is maximal, checked by brute force for `p, q ≤ 6`.
+
+Without a scorer (`scorer = None`) every pair of different keys has similarity 0, so with
+`threshold_permille ≥ 1` only equal keys pair (§1.3.3 item 6). The DP keeps one direction byte per cell and its
+totals along the shorter side of the gap: it fills the table with the longer side in the outer loop (the values
+and the traceback are those of the formula above, ties included) and checks cancellation every 4,096 cells.
 
 #### 2.15.3 Bigram similarity
 
@@ -6851,21 +7506,35 @@ A property test checks the theorem for every algorithm and both values of `orpha
 ```
 compare_sources(a, b, opts):
   1. both local and same_file::is_same_file(pa, pb)       → Same          (same object)
-  2. both lengths known and different                      → Different{first_difference: None}
+  2. both lengths known, different, and both > 4096 bytes  → Different{first_difference: None}
+     (a reported size ≤ StreamOptions::UNRELIABLE_SIZE_MAX = 4096 never decides alone: procfs reports 0 and
+     sysfs 4096 for files of other lengths; such files are read, which is cheap)
   3. policy Auto, both local, length ≥ min_len:
-        mmap::compare_files_mapped (8 MiB chunks, cancel checked per chunk); afterwards both files are
-        re-stat'ed: an unchanged (length, mtime) pair keeps the result, a change discards it (None)
+        mmap::compare_files_mapped: 8 MiB chunks claimed in increasing order by opts.threads threads (the
+        caller plus scoped helpers, §5.1); each chunk is mapped, pre-faulted (Linux MADV_POPULATE_READ),
+        compared and unmapped by the thread that claimed it; cancel is checked before every claim; the lowest
+        differing offset wins (no chunk below it is skipped), so the outcome does not depend on the thread
+        count; a chunk below the first difference that cannot be mapped or pre-faulted abandons the attempt
+        (None); afterwards both files are re-stat'ed: an unchanged (length, mtime) pair keeps the result, a
+        change discards it (None)
         → result unless None
-  4. streaming: fill buf_a fully, fill buf_b with the same length; compare slices; the first unequal index
-     gives the offset; EOF on one side first → Different{first_difference: offset}
-crc32_source(s): known_crc32 → mmap (policy; same re-stat rule) → streaming crc32fast::Hasher
-CrcComparator:    lengths known and different → BinaryDifferent; else crc(a) == crc(b) ? BinarySame : BinaryDifferent
+  4. streaming: fill buf_a fully, fill buf_b with the same length (cancel checked before every buffer and
+     between the partial reads that fill it); compare slices; the first unequal index gives the offset; EOF on
+     one side first → Different{first_difference: offset}
+crc32_source(s): known_crc32 → mmap (policy first, then local_path; the chunk CRCs of opts.threads threads are
+                 combined in offset order with crc32fast::Hasher::combine, which is exact; same abandon and
+                 re-stat rules) → streaming crc32fast::Hasher
+CrcComparator:    lengths known, different and both > 4096 → BinaryDifferent;
+                  else crc(a) == crc(b) ? BinarySame : BinaryDifferent
 BinaryComparator: compare_sources → Same ? BinarySame : BinaryDifferent
 ```
 
-Errors become `ContentResult::Error`, and cancellation becomes `Err(Cancelled)`. INV-VFS-2: the mmap, streaming
-and naive whole-buffer comparisons give the same outcome, including `first_difference`, for all inputs and
-buffer sizes. A property test with random contents and buffer sizes from 4 KiB to 1 MiB checks this.
+Errors become `ContentResult::Error`, and cancellation becomes `Err(Cancelled)`. Every finished CRC or comparison
+ends with one unconditional completion report (`Ctl::progress_now`, `done == total` = the bytes processed).
+INV-VFS-2: the mmap path (for every thread count), the streaming path and the naive whole-buffer comparison give
+the same outcome, including `first_difference`, for all inputs and buffer sizes. A property test with random
+contents, buffer sizes from 4 KiB to 1 MiB and 1–4 threads checks this on whole files; a unit property checks
+files of up to 256 mapped chunks of 1 byte to 64 KiB with 1–8 threads.
 
 ### 2.21 Exit-code mapping (CLI-004; D-01, D-02, D-03, D-22, D-23, D-35)
 
@@ -7571,7 +8240,8 @@ Wire examples (one frame per line):
 | Component | Threads | Rule |
 |---|---|---|
 | Engines (diff, formats, text, folder) | none of their own, except the imara helper thread (D-54) | Synchronous APIs (ARCH-080). Parallel work runs **only** on the `Option<&rayon::ThreadPool>` passed in, through `pool.install` / `pool.scope` / `pool.join`. `None` means the current thread. The rayon global pool is never touched (T7). |
-| imara helper (`hikasa-diff`) | 1 short-lived `std::thread` per imara call on > 200,000 tokens per side | Owns copies of the remapped tokens; the caller polls `cancel` every 10 ms (`recv_timeout`) and abandons the helper on cancellation (D-54). |
+| imara helper (`hikasa-diff`) | 1 short-lived `std::thread` per imara call on > 4,096 tokens per side; at most 2 abandoned helpers per process (D-54, §1.3.3) | Owns copies of the remapped tokens; the caller polls `cancel` every 10 ms (`recv_timeout`) and abandons the helper on cancellation (D-54). The helper of a cancelled call runs until its call ends; while 2 such helpers run, a new helper call waits for one of them, polling `cancel` every 10 ms (`Condvar::wait_timeout`). |
+| VFS mapped helpers (`hikasa-vfs`) | up to `StreamOptions::threads - 1` short-lived `std::thread::scope` threads per mapped CRC or comparison (`crc32_source`, `compare_sources`, the comparators); none by default (`threads = 1`) | Bounded (≤ 15) and scoped: started and joined inside one call, no pool, no global state (T7). They claim 8 MiB chunks from a shared counter and check `cancel` before every claim, so a cancel waits for at most one chunk per thread, as on one thread (≤ 100 ms on a warm cache; on a cold slow device the chunk's read time sets the latency, as before); results never depend on the count (T2, §2.20). A thread the OS refuses is skipped. `hikasa-session` passes `min(4, its pool size)`; a content task on the service pool may therefore run up to 3 helpers (G3: one thread cannot reach the page-cache read rate, §6.4). |
 | `hikasa-session::Service` | one `rayon::ThreadPool` (`available_parallelism`, thread names `hikasa-worker-N`) | Owned by the service and shared by every job. |
 | Jobs (`Service::spawn`, GUI) | one `std::thread` per job (`hikasa-job-<id>`) | The job body enters the service pool with `install`; panics are caught (§5.6). |
 | Folder scanner | tasks on the service pool | Both sides are listed with `join`. Each child folder pair is a task, and each content test is a task that first acquires bytes from the `ByteBudget` (D-25). |
@@ -7601,8 +8271,10 @@ model's lock is uncontended).
 ### 5.3 Cancellation
 
 - `CancelToken::check()` runs at these check points: every 1024 directory entries listed; every stream buffer
-  (or 8 MiB mapped chunk) in binary compare and CRC; every 1 MiB in `ContentSource::read_all` and document
-  loading; every 8192-line chunk in tokenisation; every 65,536 alignment steps; before and after each inline
+  and every partial read that fills it, and every 8 MiB mapped chunk (on every mapped helper thread), in binary
+  compare and CRC; every 1 MiB and every partial read in `ContentSource::read_all`, and every 1 MiB in document
+  loading; every 8192-line chunk in tokenisation, and inside a line every 64 KiB of scanned text and before
+  every regex engine call (one line may be megabytes long); every 65,536 alignment steps; before and after each inline
   imara call, and every 10 ms while a helper thread runs a large one; every closeness gap; every 4096 rows built;
   every 10 ms while waiting for content-test budget; every 20 ms while waiting for an external conversion.
 - Latency target: ≤ 100 ms from `cancel()` to return (gate G4, §6.4). There is no exception: large imara calls
@@ -7622,8 +8294,8 @@ model's lock is uncontended).
 |---|---|---|
 | reading | bytes | `text::load_document`, `vfs::*` streaming |
 | decoding | bytes | `TextDocument::from_bytes` |
-| tokenizing | lines | `formats::tokenize_all` (and the identity-path key build) |
-| aligning | items (resolved ranges) | `diff::align` (Standard) / indeterminate (imara) |
+| tokenizing | lines | hikasa-text around `formats::tokenize_all` (from its per-line callback, which receives every line number; `tokenize_all` has no progress parameter, §1.4.4) and the identity-path key build |
+| aligning | items (resolved ranges) | hikasa-text, from the `RunSink` calls of `diff::align`, which has no progress sink (§1.3.3 item 9): Standard and Unaligned progressively; Myers and Histogram the common prefix, then the rest after the imara-diff call (indeterminate meanwhile) |
 | classifying | lines | text rows/sections |
 | scanning | folders (`current` = relative path) | `folder::compare_into` |
 | comparing_content | bytes per pair + items overall | folder content tests |
@@ -7653,14 +8325,15 @@ crate errors (thiserror)            ─Classify→ ErrorKind ─┐
    unless important differences exist (D-02).
 2. **Warnings** (`Vec<Warning>`) never change exit codes by themselves. Examples: budget exhaustion, lossy
    decoding, a missing capability for a criterion, a skipped user format, `closeness_ignored`,
-   `rules_size_limit`, `switch_ignored`.
+   `rules_size_limit`, `switch_ignored`, `alignment_degraded`.
 3. **Nothing is silent.** Every swallowed failure becomes a warning, a node error, or a counted
    `regex_errors`. A fault-injection test (`MemoryVfs::inject`, fake `ProcessRunner`) covers each injection
    point.
 4. `Classify` mapping (selection): `NotFound` → `not_found`; `PermissionDenied` → `permission_denied`;
    `Unsupported` → `unsupported`; `TooLarge`/`TooManyLines` → `too_large`; `Cancelled` → `cancelled`;
    `Io{source}` → `io_error_kind(source)`; `FormatError::*` → `invalid_data`, or `invalid_input` for an unknown
-   format or encoding; `IpcError::Protocol`/`BadMessage`/`IncompatibleVersion` → `protocol`; `InvariantViolation`
+   format or encoding, or `unsupported` for `FormatError::Schema` (a file from a newer version, as
+   `SchemaError` itself, §1.1.12); `IpcError::Protocol`/`BadMessage`/`IncompatibleVersion` → `protocol`; `InvariantViolation`
    and panics → `internal`.
 
 ### 5.6 Panics
@@ -7759,7 +8432,12 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
     (dev-dependency), on random masks over `{a, b, ., *, ?, [, ], !, -}` and random names, in both case modes;
     `matches(parent, name) == matches_path(parent.join(name))`.
   - P-MASK-2: `MaskList::parse ∘ to_list_string` is the identity.
-  - P-MASK-3: case-insensitive matches are invariant under `fold(name)`.
+  - P-MASK-3: case-insensitive matches are invariant under `fold(name)` for every *regular* name, i.e. one
+    that meets both conditions of the test's `fold_is_regular`: (1) its case fold commutes with NFC
+    (`nfc(fold(n)) == fold(nfc(n))` char by char), and (2) every char `c` of its NFC form is its own lower case
+    or the upper case of its lower case (`c == simple_lower(c) || c == simple_upper(simple_lower(c))`). An
+    irregular name matches exactly like its NFC form: `"I\u{307}"` (whose NFC form `İ` folds to itself) and
+    `"W\u{30A}"` fail (1); `ǅ`, `ẞ` and `ϴ` commute with NFC but fail (2).
   - P-MASK-4: NFC invariance, `match(m, n) == match(m, nfd(n))`.
   - P-FILTER-1: adding an exclude mask never adds included items.
   - P-FILTER-2: `Excluded` propagates to every descendant.
@@ -7776,7 +8454,8 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   discards, `overwrite = false` gives `AlreadyExists`); `ContentSource::read_all` (limit → `TooLarge`,
   cancellation → `ReadError::Cancelled`).
 - **Prefilter:** `LocalVfs` and `MemoryVfs` report declined entries in `name_only` without stat (a counting
-  `Vfs` wrapper over `MemoryVfs` proves no `stat` call); symlinks and unknown kinds are stat'ed.
+  `Vfs` wrapper over `MemoryVfs` proves no `stat` call); symlinks and unknown kinds are stat'ed (unknown kinds
+  through `MemoryVfs::set_kind_unknown`; `LocalVfs`: §1.2.7 item 3).
 - **mmap re-stat:** a test-only hook changes the file length between the mapped comparison and the re-stat; the
   result comes from streaming.
 - **LocalVfs integration on Unix:** files, folders, symlinks, a broken symlink (`EntryError`), a non-UTF-8 name
@@ -7784,7 +8463,8 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 - **Properties:**
   - P-VFS-1: `compare_readers` equals naive whole-buffer comparison, including `first_difference`, for random
     contents and buffer sizes. A test-only path also exercises 1–64 byte buffers.
-  - P-VFS-2: the mmap path equals the stream path (INV-VFS-2).
+  - P-VFS-2: the mmap path equals the stream path (INV-VFS-2), for every thread count, also across many mapped
+    chunks (a unit property with chunks of 1 byte to 64 KiB and 1–8 threads).
   - P-VFS-3: `crc32_reader` equals `crc32fast::hash`.
   - P-VFS-4: `MemoryVfs` listing orders all give the same entry sets.
 - **Fault injection:** every `VfsOp` × `ErrorKind` combination surfaces the documented error.
@@ -7808,18 +8488,28 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   - P-ALIGN-6: Standard with `S = 0`, `n = m` and closeness off gives `i = j` for every Equal pair.
   - P-ALIGN-7: two runs give equal results, the result is the same with and without a `RunSink`, and the
     concatenated sink output equals `runs()`.
-  - P-ALIGN-8: `work_budget = 0` gives the Histogram result plus warning `work_budget_exhausted`.
+  - P-ALIGN-8: `work_budget = 0` gives the Histogram result, plus warning `work_budget_exhausted` whenever the
+    stripped middle has both sides non-empty (property-sized inputs fit the fallback budget; §1.3.3 item 5).
   - P-ALIGN-9: `DenseRemap` preserves token equality and first-occurrence order, and every remapped id is
     `< k` (the debug assertion is active in tests).
+  - P-ALIGN-10 (wave 2, §1.3.3 item 3): Standard with any work budget and any fallback budget (down to 0, through
+    `testing::align_with_fallback_budget`, so small inputs reach the degraded split) keeps INV-ALIGN-1..7,
+    reconstructs the right side, pairs at most the LCS and gives the same result with and without a `RunSink`;
+    with both budgets 0, any work gives `alignment_degraded`.
   - P-CLOSE-1..3, including the brute-force optimality check for p, q ≤ 6, for Standard, Histogram and Patience.
   - P-SIM-1: bigram similarity is symmetric, lies in [0, 1000], and is 1000 iff the multisets are equal.
   - P-INLINE-1..4.
   - P-INTERN-1: interned ids are dense and in first-seen order.
 - **Unit tests:** `MAX_SEQUENCE_LEN` boundary (`len = MAX_SEQUENCE_LEN + 1` → `InputTooLarge`, checked by the
   length guard without allocating such a sequence); the helper-thread path (a test lowers the threshold through a
-  test-only option and cancels mid-call: `Err(Cancelled)` within 100 ms).
+  test-only option and cancels mid-call: `Err(Cancelled)` within 100 ms). Added in wave 2 (§1.3.3): bounded
+  Standard (`bounded_standard`: 1,000,000 random lines over 50 symbols < 2 s in release, ×8 the input < ×32 the
+  time in debug; the degraded split and the pairing of a residual gap beyond the fallback budget); the cap on
+  abandoned helpers (`abandoned_helpers`, its own test binary); single-shot cancellation inside a 1 × 4,000,000
+  closeness gap; cancellable linear scans; Myers and Histogram send the common prefix first.
 - **Benches:** `align_1m_histogram`, `align_1m_standard` (1M lines, 1 % changes), `align_pathological`
-  (≥ 10,000 anchor-less gaps on highly repetitive input; checks DenseRemap and the budget fallback time).
+  (≥ 10,000 anchor-less gaps on highly repetitive input; checks DenseRemap and the budget fallback time),
+  `align_random_standard` (wave 2: 1M random lines over 50 symbols; checks the bounded fallback).
 
 #### 6.2.4 hikasa-formats
 
@@ -7837,7 +8527,12 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   - the escape table (§2.10.3);
   - tokenizer edge cases: empty line, zero-length regex, columns past EOL, Lines with `or_line_one`, longest
     List match, word boundaries, `word_chars` (COBOL `END-IF` keyword, `END-OF-FILE` identifier), Java
-    `non-sealed`, Unicode identifiers;
+    `non-sealed`, Unicode identifiers; field boundaries of Columns items (COBOL columns 73–80 behind a literal
+    or an identifier that reaches column 72); runtime-limit hits that must not hide a later match (fast paths
+    and reference agree on tokens and error counts);
+  - long single lines (wave-2 review, `tests/long_lines.rs`): the adversarial lines of Python, Bash, Rust and
+    Visual Basic tokenise in linear time (a scaling ratio in debug builds, 1 MiB in < 500 ms in release), and a
+    cancel during one 1 MiB line returns within 100 ms (G4), sequentially and on a pool;
   - `build_argv` table;
   - `run_external` with a fake runner (exit codes, empty output, timeout, cancellation), and on Unix with `cat`
     and `sort`.
@@ -8003,13 +8698,14 @@ unless stated, headless (§0.8).
 |---|---|---|---|
 | G1 | `text_compare_1m_auto`, `text_compare_1m_standard`, `text_compare_1m_identity` | text | < 3 s end-to-end from bytes; peak RSS ≤ 3 × (L + R bytes) + 64 B × (L + R lines) + 32 MiB (`perf_rss`) |
 | G2 | `folder_scan_100k` | folder | < 5 s scan + quick tests cold on SSD (perf runner with dropped caches); < 1.5 s warm (CI) |
-| G3 | `binary_compare_2gb`, `crc32_1gb` | vfs | ≥ 90 % of the sequential-read throughput of the same files |
+| G3 | `binary_compare_2gb`, `crc32_1gb` | vfs | ≥ 90 % of the sequential-read throughput of the same files (warm page cache of a disk file system, not tmpfs; the mapped path with `StreamOptions::threads = 4`, the session's configuration; the baseline is one thread of 1 MiB `read` calls; the 1-thread figures are reported alongside) |
 | G4 | `cancel_latency` (cancel at 50 % of G1 and of G2; also a large imara call) | text, folder, diff | ≤ 100 ms from `cancel()` to return |
 | G5 | `gui_enablers` on the G1 result | text | `TextComparison::row` < 200 ns, `FilteredView::get` < 200 ns, `TextComparison::inline` p99 < 50 µs |
 | — | `align_1m_histogram` / `align_1m_standard` | diff | < 0.3 s / < 1.0 s |
 | — | `align_pathological` (≥ 10,000 anchor-less gaps) | diff | < 1.0 s; allocated bytes O(n + m) (DenseRemap) |
+| — | `align_random_standard` (1,000,000 random lines per side over 50 symbols; wave 2) | diff | < 2.0 s (bounded Standard, §2.14.5) |
 | — | `tokenize_c_1m` | formats | ≥ 50 MB/s per core; parallel scaling ≥ 0.6 × cores (up to 8); allocations ≤ 4 per chunk |
-| — | `mask_match` | core | ≥ 20 M matches/s on a 20-item list; zero allocations for ASCII names |
+| — | `mask_match` | core | ≥ 20 M matches/s on a 20-item list (one match = one name checked against the whole list); zero allocations for ASCII names |
 | — | `folder_model_1m` | folder | ≤ 256 B per node with both sides' metadata, excluding name bytes |
 
 ### 6.5 Implementation waves and acceptance criteria
@@ -8021,7 +8717,7 @@ carries the doc updates of §0.9 for its wave.
 
 | Wave | Scope (parallel agents) | Acceptance criteria |
 |---|---|---|
-| **1 — core** | hikasa-core (1 agent) | A1.1 every §1.1 item implemented and documented; the §0.5 Cargo changes of hikasa-core. A1.2 table tests for §2.1, §2.2.4, §2.3 and the content/verdict rows of §2.21 pass. A1.3 P-SPEC-1/2, P-MASK-1..4, P-FILTER-1/2, P-TIME-1, P-CASE-1 pass with 4096 cases. A1.4 no `unsafe`; no dependencies beyond §0.5; the `mask_match` gate and the ASCII zero-allocation test. A1.5 the architecture test (`core/hikasa-session/tests/architecture.rs`; the stub crate can hold tests) lands with checks 1, 2, 4 and 5; checks 3, 6 and 7 are added in wave 4, when every manifest has its final form. A1.6 wave-1 doc updates of §0.9. |
+| **1 — core** | hikasa-core (1 agent) | A1.1 every §1.1 item implemented and documented; the §0.5 Cargo changes of hikasa-core. A1.2 table tests for §2.1, §2.2.4, §2.3 and the content/verdict rows of §2.21 pass. A1.3 P-SPEC-1/2, P-MASK-1..4, P-FILTER-1/2, P-TIME-1, P-CASE-1 pass with 4096 cases. A1.4 no `unsafe` in library code (the counting `#[global_allocator]` of a test or bench binary is the §6.1 exemption); no dependencies beyond §0.5; the `mask_match` gate and the ASCII zero-allocation test. A1.5 the architecture test (`core/hikasa-session/tests/architecture.rs`; the stub crate can hold tests) lands with checks 1, 2, 4 and 5; checks 3, 6 and 7 are added in wave 4, when every manifest has its final form. A1.6 wave-1 doc updates of §0.9. |
 | **2 — vfs, diff, formats** | three agents; each depends on core only | **vfs**: §1.2 complete; P-VFS-1..4; router table; prefilter and re-stat tests; LocalVfs integration; `mmap.rs` is the only `unsafe` (check 1); G3. **diff**: §1.3 complete; P-ALIGN-1..9, P-CLOSE-1..3, P-SIM-1, P-INLINE-1..4, P-INTERN-1; ≥ 14 golden cases × 5 algorithms; `align_1m_*` and `align_pathological` gates; helper-thread cancellation test. **formats**: §1.4 complete; all 21 presets parse, compile and round-trip, each with a `# Sources:` comment and the Appendix A keyword lists, written from language references; a reviewer confirms independence from other products (17-agent-workflow §5.1); ≥ 2 token goldens per text preset; encoding and binary fixtures (§2.8 table, magic kinds); P-TOK-1..5, P-ENC-1..3, P-SHADOW-1, P-ARGV-1; `tokenize_c_1m` gate. End of wave: `cargo test --workspace` green; wave-2 doc updates. |
 | **3 — text, folder** | two agents | **text**: §1.5 complete; the §2.13.3 table; ≥ 25 compare goldens; P-TC-1..8 including the consistency theorem and the identity equivalence; G1, G5 and the text part of G4. **folder**: §1.6 complete; the tables of §2.4–§2.7; ≥ 22 tree goldens; P-FOLDER-1..8, P-RULES-2; prefilter counting test; LocalVfs integration; G2, `folder_model_1m` and the folder part of G4. Rules content uses a fake comparator here; the real one is checked in wave 4. Wave-3 doc updates. |
 | **4 — report, session** | two agents; the report API skeleton is merged first | **report**: §1.7 complete; goldens for every layout and format; P-RPT-1..3; RPT-004 header tests. **session**: §1.8 complete; config, cache, endpoint, options and format-store tables; legacy argument tables; IPC framing, protocol (incl. forward-compatibility goldens) and socket integration; jobs; Service integration including the end-to-end `RulesComparator` injection and `folder_prepare`/`folder_run`; the panic boundary; the full architecture test (checks 1–7). Wave-4 doc updates. |
@@ -8247,19 +8943,19 @@ important = true }`, `word_chars` is empty, and the line weights are none.
 
 | File | id / name | Mask | Grammar (in order), element settings and notes |
 |---|---|---|---|
-| 01-bash.toml | `bash` / Bash Scripts | `*.sh;*.bash;*.zsh` | EnvironmentVar (`\$\{[^}]*\}`, `\$[A-Za-z_]\w*`, `\$[0-9#?$!@*-]`), Comment (Basic regex `(?:^\|(?<=\s))#.*`: `#` at line start or after whitespace; look-behind → fancy-regex), String (`$'…'` esc `\`; `'…'` no escape, multi-line; `"…"` esc `\`, multi-line), Keyword list (§A.3), Identifier, Number, Operator; tab 4 |
-| 03-cobol.toml | `cobol` / COBOL Source | `*.cbl;*.cob;*.cpy` | LineNum (Columns 1–6), Comment (Basic regex `(?<=^.{6})[*/].*`, i.e. `*` or `/` in column 7; fixed-length look-behind → fancy-regex, anchored so cheap), Identification (Columns 73–80, the identification area; `important = false`, so docs/10's "column 73–80 ignored" holds by default), String (`"…"` and `'…'`, doubled-delimiter escape), Keyword (§A.3; `match_case = false`; element `case_sensitive = false`), Identifier (`[A-Za-z][A-Za-z0-9-]*`), Number; `word_chars = "-"` (D-58) |
+| 01-bash.toml | `bash` / Bash Scripts | `*.sh;*.bash;*.zsh` | EnvironmentVar (`\$\{[^}]*\}`, `\$[A-Za-z_]\w*`, `\$[0-9#?$!@*-]`), Comment (Delimited, regex `from` `(?:^\|(?<=\s))#`, to EOL: `#` at line start or after whitespace; look-behind → fancy-regex; to EOL so that trailing whitespace stays outside, D-13), String (`$'…'` esc `\`; `'…'` no escape, multi-line; `"…"` esc `\`, multi-line), Keyword list (§A.3), Identifier, Number, Operator; tab 4. Limitation: here-documents are not recognised, so an apostrophe in one (`Don't`) opens a `'…'` string that runs to the next apostrophe |
+| 03-cobol.toml | `cobol` / COBOL Source | `*.cbl;*.cob;*.cpy` | LineNum (Columns 1–6), Comment (Basic regex `(?<=^.{6})[*/](?:.*\S)?`, i.e. `*` or `/` in column 7, up to its last non-blank char; fixed-length look-behind → fancy-regex, anchored so cheap), Identification (Columns 73–80, the identification area; `important = false`, so docs/10's "column 73–80 ignored" holds by default; column 73 is a field boundary, §2.10.2, so a literal or an identifier that reaches column 72 never swallows it and the blank padding before it is EE), String (`"…"` and `'…'`, doubled-delimiter escape, stop at EOL — a literal continued in the next line's indicator area is not modelled), Keyword (§A.3; `match_case = false`; element `case_sensitive = false`), Identifier (`[A-Za-z][A-Za-z0-9-]*`), Number; `word_chars = "-"` (D-58) |
 | 04-pascal-forms.toml | `pascal-forms` / Object Pascal Forms | `*.dfm;*.fmx` | String (`'…'` doubled), Keyword (§A.3, case-insensitive; element `case_sensitive = false`), Identifier, Number, Operator; line weight `^\s*object` (regex, priority 4); tab 2, spaces |
 | 05-pascal.toml | `pascal` / Object Pascal Source | `*.pas;*.dpr;*.dpk;*.inc` | Directive (`{$` … `}`), Comment (`//` EOL, `{` … `}`, `(*` … `*)`), String (`'…'` doubled), Keyword (§A.3, case-insensitive; element `case_sensitive = false`), Identifier (element `case_sensitive = false`: Pascal identifiers are case-insensitive), Number (`\$[0-9A-Fa-f]+` and decimals), Operator; weight `=\s*class\s*\(` priority 4 |
-| 06-html.toml | `html` / HTML | `*.htm;*.html;*.xhtml;*.asp;*.aspx;*.ascx` | Comment (`<!--` … `-->`), String (`"…"`, `'…'`), Keyword (tag and attribute names, §A.3, case-insensitive; element `case_sensitive = false`), Entity (`&#?\w+;`), Operator (`</?`, `/?>`, `=`) |
+| 06-html.toml | `html` / HTML | `*.htm;*.html;*.xhtml;*.asp;*.aspx;*.ascx` | Comment (`<!--` … `-->`), String (attribute values: Basic regexes `(?<==\|=\s)"[^"<]*"` and `(?<==\|=\s)'[^'<]*'`, a quote right after `=` or `= ` up to the closing quote on the same line), Keyword (tag names: Basic regex `(?<=<\|</)[A-Za-z][\w.:-]*`; attribute names: Basic regex `[A-Za-z_:][\w.:-]*(?=\s*=)`; both fancy-regex; element `case_sensitive = false`), Entity (`&#?\w+;`), Operator (`</?`, `/?>`, `=`). Changed in the wave-2 review: the §A.3 word list matched words of running text everywhere ("The Table" → "The table" was unimportant); keywords are now found by position only. Limitations: valueless attributes (`disabled`) are EE; values that span lines or contain `<` are not strings |
 | 07-java.toml | `java` / Java Source | `*.java;*.jav;*.kt` | as C (comments, strings, char), Annotation (`@\w+`), Keyword (Java plus Kotlin, §A.3; `non-sealed` is a non-word token tried individually), Identifier, Number, Operator |
 | 08-javascript.toml | `javascript` / JavaScript Source | `*.js;*.mjs;*.ts;*.jsx;*.tsx` | as C (comments, `"…"`/`'…'` strings) + template strings (`` ` `` … `` ` `` multi-line, esc `\`), RegexLiteral (Basic regex `[(,=:\[!&\|?{};]\s*/(?![*/])(?:\\.\|\[(?:\\.\|[^\]\\])*\]\|[^/\\])+/[dgimsuvy]*`; the token deliberately includes the preceding punctuation, because context cannot be expressed without variable-length look-behind — "simple by design"), Keyword (ECMAScript plus TypeScript, §A.3), Identifier (`[A-Za-z_$][\w$]*`), Number, Operator; tab 2, spaces |
 | 09-perl.toml | `perl` / Perl Scripts | `*.pl;*.pm` | POD (Delimited regex `^=[A-Za-z]\w*` … `^=cut\b.*`, element "Comment"), Comment (`#` EOL), String (`'…'`, `"…"` esc `\`), Variable (`[$@%][\w:]+`), Keyword (§A.3), Identifier, Number, Operator |
-| 10-python.toml | `python` / Python Scripts | `*.py;*.pyw` | Indent (Basic regex `^[ \t]+(?=\S)`; look-ahead → fancy-regex, anchored so cheap; whitespace-only lines are not Indent), Comment (`#` EOL), String (prefix-aware `from` regexes `[rRbBuUfF]{0,2}'''` / `"""` multi-line esc `\`, then `'…'` / `"…"` stop at EOL), Keyword (§A.3), Identifier, Number (`0[xob]…`, `_` separators, `j` suffix), Operator, Whitespace (Basic regex `[ \t]+$`: the doc's "trailing whitespace item"; element `important = false`, so trailing whitespace in Python is unimportant by default while `Indent` stays important; `--unimportant` cannot make it important, but a rules file `elements = { Whitespace = true }` can) |
+| 10-python.toml | `python` / Python Scripts | `*.py;*.pyw` | Indent (Basic regex `^[ \t]+(?=\S)`; look-ahead → fancy-regex, anchored so cheap; whitespace-only lines are not Indent), Comment (Basic regex `#(?:.*\S)?`: up to its last non-blank char, so that trailing blanks after a comment reach the Whitespace item; an end-of-line-terminated `#` item would end the line scan, §2.10.2), String (prefix-aware `from` regexes `[rRbBuUfF]{0,2}'''` / `"""` multi-line esc `\`, then `'…'` / `"…"` stop at EOL), Keyword (§A.3), Identifier, Number (`0[xob]…`, `_` separators, `j` suffix), Operator, Whitespace (Basic regex `[ \t]+$`: the doc's "trailing whitespace item"; element `important = false`, so trailing whitespace in Python is unimportant by default while `Indent` stays important; `--unimportant` cannot make it important, but a rules file `elements = { Whitespace = true }` can) |
 | 11-ini-reg.toml | `ini-reg` / Registry Dumps / INI | `*.reg;*.ini` | Comment (`;` EOL; Basic regex `^\s*#.*`), Keyword: section headers (Basic regex `^\s*\[[^\]]*\]`), Keyword: value names (Basic regex `^\s*(?:"[^"]*"\|[^=;\[\s][^=]*?)(?=\s*=)`; look-ahead → fancy-regex, anchored), Keyword: value types (List `dword qword hex`, case-insensitive), String (`"…"` esc `\`), Operator (`=`) |
 | 12-sql.toml | `sql` / SQL | `*.sql;*.dsql` | Comment (`--` EOL, `/*` … `*/`), String (`[nN]?'…'` doubled `''`), Keyword (§A.3, `match_case = false`, element `case_sensitive = false`), Identifier (`[@#]?[A-Za-z_][\w$#]*`, `"…"`, `[…]`), Number, Operator |
 | 13-visual-basic.toml | `visual-basic` / Visual Basic Source | `*.bas;*.cls;*.frm;*.vb;*.vbs;*.ctl;*.vbp` | Comment (`'` EOL; Basic regex `(?i)\brem\b.*`), String (`"…"` doubled), Keyword (§A.3, case-insensitive; element `case_sensitive = false`), Identifier (element `case_sensitive = false`), Number (`&H[0-9A-F]+`, decimals), Operator |
-| 14-xml.toml | `xml` / XML | `*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.plist` | Comment (`<!--` … `-->`), CDATA (`<![CDATA[` … `]]>`, element "String"), Directive (`<?` … `?>`), String (`"…"`, `'…'`), Operator (`</?`, `/?>`, `=`) |
+| 14-xml.toml | `xml` / XML | `*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.plist` | Comment (`<!--` … `-->`), CDATA (`<![CDATA[` … `]]>`, element "String"), Directive (`<?` … `?>`; also `<!` … `>` for declarations such as `<!DOCTYPE …>`), String (attribute values as in HTML: a quote right after `=` or `= `, on one line, without `<`), Entity (`&(?:#[0-9]+\|#x[0-9A-Fa-f]+\|[A-Za-z_][\w.-]*);`), Operator (`</?`, `/?>`, `=`). Limitation: an attribute value that spans lines (SVG path data) is not a string; the attributes after it still pair correctly |
 | 15-rust.toml | `rust` / Rust Source | `*.rs` | Comment (`//` EOL; `/*` … `*/`, nesting approximated as non-nesting), Attribute (Basic regex `#!?\[[^\]]*\]`, single line), String (raw forms as three Delimited items `r"`…`"`, `r#"`…`"#`, `r##"`…`"##`, each also with a `b`/`c` prefix via regex `from`; then `[bc]?"` … `"` esc `\`, multi-line), Char (`b?'(?:\\.\|[^\\'])'`, listed before Lifetime), Lifetime (`'[A-Za-z_]\w*`, element "Identifier"), Keyword (§A.3), Identifier, Number (suffixes `u8…u128 i8…i128 usize isize f32 f64`, `_` separators), Operator |
 | 16-sorted.toml | `sorted` / Sorted | (empty: manual only) | conversion `sorted`; no grammar |
 | 17-csv.toml | `csv` / Comma Separated Values | `*.csv;*.tsv` (D-26) | kind `table`; `[table] delimiter = ","` (`*.tsv` is detected by the table engine in M2); compared as plain text in M1 (D-11) |
@@ -8268,10 +8964,36 @@ important = true }`, `word_chars` is empty, and the line weights are none.
 | 20-executables.toml | `executables` / Executables | `*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib` | kind `version`, mask only |
 | 21-registry-files.toml | `registry-files` / Registry Files | `*.reg` | kind `registry`, mask only; `Preset::enabled = false` (D-27) |
 
+**Refinements accepted in the wave-2 review** (beyond the rows above; each is visible in the token goldens of
+§6.2.4, which are the review artefact):
+
+- **Number elements** are `case_sensitive = false` in c-cpp (A.1), java and javascript ("as C"), and also in
+  pascal, python, sql and visual-basic (`0XFF` = `0xff`, `1E5` = `1e5`, `&HFF` = `&hff`).
+- **bash**: `$'…'` strings are multi-line like the other quotes.
+- **cobol**: strings stop at EOL; Comment and Identification as in the row (field boundary, §2.10.2).
+- **pascal-forms**: String also `#\d+` (control-character literals); Number also `$` hex.
+- **pascal**: String also `#(?:\$[0-9A-Fa-f]+|\d+)`; Identifier also `&name` (escaped reserved words);
+  Number also `%` binary and `&` octal; the line weight `=\s*class\s*\(` is `match_case = false`.
+- **java**: text blocks `"""` … `"""` (multi-line) before `"…"`; Number with `_` separators and suffixes.
+- **javascript**: RegexLiteral as a linear-time `regex` form without look-ahead (the first body char may not be
+  `*` or `/`): `[(,=:\[!&|?{};]\s*/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^*/\\\[])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\[])*/[dgimsuvy]*`;
+  Number with BigInt `n`, `0o`, `0b`, `_`.
+- **perl**: Variable (`\$#\{?[\w:]*\}?|[$@%][\w:]+`) comes before the `#` comment, so `$#array` is a variable.
+- **python**: the soft keyword `_` is in the list; Identifier is Unicode (`[^\W\d]\w*`); Number also `.5`
+  forms; Comment as in the row.
+- **ini-reg**: the `#` comment is `^\s*#(?:.*\S)?` (D-13 spirit).
+- **sql**: the `N'…'` string is a separate Delimited item with `match_case = false`; strings are multi-line;
+  `"…"` and `[…]` identifiers stop at EOL.
+- **visual-basic**: the REM comment is `\brem\b(?:.*\S)?` with `match_case = false` (instead of an inline
+  `(?i)`, so the prefilter applies) and ends at its last non-blank char; Identifier with a type character
+  (`[$%&!#@]?`); Number with `&O` octal and type suffixes.
+- **html**, **xml**: as in the rows (positional keywords, strings after `=`, XML `<!…>` and Entity).
+- **rust**: Char with `\u{…}`, `\x..` and one-char escapes; raw identifiers `r#name`; Unicode identifiers.
+
 `# Sources:` lines of the other presets: bash — the GNU Bash reference manual (reserved words, builtins);
 cobol — ISO/IEC 1989 (reserved words, reference format); pascal and pascal-forms — the Object Pascal language
-guide (reserved words, directives, form-file text syntax); html — the WHATWG HTML Living Standard (elements,
-attributes); java — the Java Language Specification (keywords, contextual keywords) and the Kotlin language
+guide (reserved words, directives, form-file text syntax); html — the WHATWG HTML Living Standard (tag and
+attribute name syntax, attribute value quoting, comments, character references); java — the Java Language Specification (keywords, contextual keywords) and the Kotlin language
 specification (hard, soft and modifier keywords); javascript — ECMA-262 (reserved words) and the TypeScript
 handbook (type keywords); perl — perlsyn, perlfunc and perlop; python — the Python language reference (keywords,
 soft keywords); ini-reg — INI conventions and the registry export text format; sql — ISO/IEC 9075 reserved words;
@@ -8313,7 +9035,9 @@ Case-sensitive unless marked; case-insensitive lists use `match_case = false` an
   nodefault overload override platform private protected public published read readonly reference register
   reintroduce requires resident safecall sealed static stdcall stored strict unsafe varargs virtual write
   writeonly`.
-- **html** (case-insensitive): tags `html head body title meta link script style div span p a img ul ol li
+- **html** (case-insensitive; *superseded in the wave-2 review*: the preset finds tag and attribute names by
+  position instead, Appendix A.2, so this list is no longer shipped; it is kept as the reference vocabulary):
+  tags `html head body title meta link script style div span p a img ul ol li
   table tr td th thead tbody tfoot caption col colgroup form input button select option optgroup textarea
   label fieldset legend datalist output progress meter h1 h2 h3 h4 h5 h6 br hr nav header footer section
   article aside main figure figcaption iframe pre code em strong b i u s small sub sup blockquote q cite abbr
@@ -8391,7 +9115,7 @@ Implementation notes for preset authors (normative):
 | INV-TIME-1 | `nanos < 1e9` | constructor, P-TIME-1 |
 | INV-NAME-1 | `FileName::raw` is `Some` iff the name is lossy | unit tests |
 | INV-VFS-1 | listing order is unspecified; consumers sort | shuffled `MemoryVfs` in P-FOLDER-2 |
-| INV-VFS-2 | mmap = stream = naive comparison (including the offset) | P-VFS-1/2 |
+| INV-VFS-2 | mmap (every thread count) = stream = naive comparison (including the offset); mapped CRC = streamed CRC | P-VFS-1/2, `p_vfs_2_multi_chunk` |
 | INV-VFS-3 | atomic writes: nothing is visible before `commit`; drop discards | unit tests |
 | INV-INTERN-1 | ids are dense, in first-seen order (left then right) | P-INTERN-1 |
 | INV-DENSE-1 | every imara-diff call receives tokens remapped by `DenseRemap` to `0..k`, with `num_tokens = k` and every token `< k` (debug assertion) | P-ALIGN-9, `align_pathological` |

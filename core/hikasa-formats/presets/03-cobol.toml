@@ -1,0 +1,100 @@
+# Sources: ISO/IEC 1989:2023 (COBOL reserved words; fixed reference format: sequence number area in columns
+# 1–6, indicator area in column 7, program text up to column 72, program-name area in columns 73–80).
+# Written for Hikasa.
+schema_version = 1
+id = "cobol"
+name = "COBOL Source"
+description = "COBOL programs and copybooks in fixed reference format."
+kind = "text"
+mask = "*.cbl;*.cob;*.cpy"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+# Hyphens join words: END-IF is one keyword, END-OF-FILE one identifier (D-58).
+word_chars = "-"
+
+[elements]
+# The program-name area (columns 73–80) is unimportant by default.
+Identification = { important = false }
+Keyword = { case_sensitive = false }
+
+[[grammar]]
+element = "LineNum"
+kind = "columns"
+from_column = 1
+to_column = 6
+
+# '*' or '/' in the indicator area (column 7) marks a comment line. It ends at its last non-blank char: the
+# Identification item below makes column 73 a field boundary, so no token reaches past column 72, and the
+# blank padding before column 73 stays outside the comment (D-13).
+[[grammar]]
+element = "Comment"
+kind = "basic"
+text = '(?<=^.{6})[*/](?:.*\S)?'
+regex = true
+
+# The program-name area. A Columns item starts a field: tokens of the other items end before column 73 at
+# the latest (a literal continued past column 72, an identifier that reaches column 72), so columns 73–80
+# are always this element (§2.10.2).
+[[grammar]]
+element = "Identification"
+kind = "columns"
+from_column = 73
+to_column = 80
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '"'
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = "'"
+stop_at_eol = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = [
+  "ACCEPT", "ACCESS", "ADD", "ADVANCING", "AFTER", "ALL", "ALSO", "ALTER", "AND", "ARE", "AREA", "ASCENDING",
+  "ASSIGN", "AT", "AUTHOR", "BEFORE", "BLANK", "BLOCK", "BY", "CALL", "CANCEL", "CHARACTER", "CHARACTERS",
+  "CLOSE", "COMP", "COMP-3", "COMPUTATIONAL", "COMPUTE", "CONFIGURATION", "CONTINUE", "COPY", "CORRESPONDING",
+  "COUNT", "DATA", "DATE", "DELETE", "DELIMITED", "DELIMITER", "DEPENDING", "DESCENDING", "DISPLAY", "DIVIDE",
+  "DIVISION", "DOWN", "DUPLICATES", "DYNAMIC", "ELSE", "END", "END-ADD", "END-CALL", "END-COMPUTE",
+  "END-DELETE", "END-DIVIDE", "END-EVALUATE", "END-IF", "END-MULTIPLY", "END-PERFORM", "END-READ",
+  "END-RETURN", "END-REWRITE", "END-SEARCH", "END-START", "END-STRING", "END-SUBTRACT", "END-UNSTRING",
+  "END-WRITE", "ENVIRONMENT", "EQUAL", "ERROR", "EVALUATE", "EXCEPTION", "EXIT", "EXTEND", "FD", "FILE",
+  "FILE-CONTROL", "FILLER", "FIRST", "FOR", "FROM", "FUNCTION", "GIVING", "GO", "GOBACK", "GREATER",
+  "HIGH-VALUE", "HIGH-VALUES", "IDENTIFICATION", "IF", "IN", "INDEX", "INDEXED", "INITIALIZE", "INPUT",
+  "INPUT-OUTPUT", "INSPECT", "INTO", "INVALID", "IS", "JUSTIFIED", "KEY", "LEADING", "LESS", "LINE", "LINES",
+  "LINKAGE", "LOW-VALUE", "LOW-VALUES", "MERGE", "MODE", "MOVE", "MULTIPLY", "NEXT", "NOT", "NUMERIC", "OCCURS",
+  "OF", "OFF", "ON", "OPEN", "OR", "ORGANIZATION", "OTHER", "OUTPUT", "OVERFLOW", "PERFORM", "PIC", "PICTURE",
+  "PROCEDURE", "PROGRAM", "PROGRAM-ID", "RANDOM", "READ", "RECORD", "RECORDS", "REDEFINES", "RELATIVE",
+  "RELEASE", "REMAINDER", "REPLACING", "RETURN", "REWRITE", "ROUNDED", "RUN", "SEARCH", "SECTION", "SELECT",
+  "SENTENCE", "SEQUENTIAL", "SET", "SIGN", "SIZE", "SORT", "SPACE", "SPACES", "STANDARD", "START", "STATUS",
+  "STOP", "STRING", "SUBTRACT", "TALLYING", "THAN", "THEN", "THROUGH", "THRU", "TIMES", "TO", "TRAILING",
+  "UNSTRING", "UNTIL", "UP", "UPON", "USAGE", "USING", "VALUE", "VALUES", "VARYING", "WHEN", "WITH",
+  "WORKING-STORAGE", "WRITE", "ZERO", "ZEROES", "ZEROS",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z][A-Za-z0-9-]*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '\d+(?:\.\d+)?'
+regex = true

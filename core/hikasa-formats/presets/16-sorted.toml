@@ -1,0 +1,13 @@
+# Sources: docs/10-file-formats.md §4 and §5 (FF-030 Sorted conversion; D-38). Written for Hikasa.
+schema_version = 1
+id = "sorted"
+name = "Sorted"
+description = "Plain text whose lines are sorted before comparing (read-only). Select it manually."
+kind = "text"
+mask = ""
+
+[conversion]
+method = "sorted"
+
+[encoding]
+mode = "auto"

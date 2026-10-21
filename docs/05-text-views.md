@@ -39,11 +39,27 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   `imara-diff`; whole-file; no closeness), *Patience Diff* (unique-line anchors, falls
   back to Myers in gaps). **Histogram** is also offered (imara-diff) as the default
   for source code.
+  *M1 engine notes (D-16, D-54; contract §1.3.3, §2.14):* Myers is imara-diff's
+  heuristic O(ND) diff and is not guaranteed to find a minimal LCS: its preprocessing
+  can prune a line that occurs often on the other side, which then never matches (Patience
+  inherits this in its Myers fallback). Histogram, Myers and Patience run without a work
+  budget: on adversarial input (such as random lines over a small alphabet) they are
+  roughly quadratic but stay cancellable. Standard alignment is bounded: when its work
+  budget runs out, the remaining ranges are aligned with Histogram while a second,
+  deterministic fallback budget lasts; beyond it they are split at lines that are unique
+  on both sides and the gaps between them are paired by position or similarity (warning
+  `alignment_degraded`), so Standard stays O(n log n) on every input.
 - **TC-011** (P0): *Skew tolerance* (lines to look ahead/behind for a match in
   standard alignment, default 300); *Use closeness matching* (pair remaining
   mismatched lines by similarity so they render as *changed* lines with in-line
   character highlights rather than delete+insert); *Never align differences* (always
   show changes as delete+insert blocks).
+  *M1 notes:* the skew tolerance limits Standard's own anchor search only; ranges that
+  Standard's budget fallback aligns (Histogram, or the unique-line split) are not
+  limited by it. Closeness matching runs within a per-gap and a total cell budget;
+  beyond them a gap is paired by position (warning `closeness_budget_exhausted`).
+  Without a similarity scorer only identical lines pair. Myers has no closeness
+  matching: its gaps are paired by position (warning `closeness_ignored`).
 - **TC-012** (P0): Alignment operates on **important text** only when the rules say
   unimportant text is ignorable, i.e. lines differing only in unimportant tokens match
   as *unimportant difference* lines; **line weights** from the file format (regex

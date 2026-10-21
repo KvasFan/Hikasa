@@ -1,0 +1,10 @@
+{
+  "algorithm": "histogram",
+  "rows": 6,
+  "warnings": [],
+  "runs": [
+    {"kind": "insert", "left": [0, 0], "right": [0, 1]},
+    {"kind": "equal", "left": [0, 4], "right": [1, 5]},
+    {"kind": "insert", "left": [4, 4], "right": [5, 6]}
+  ]
+}

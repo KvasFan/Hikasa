@@ -1,0 +1,6 @@
+# §2.8 row 4: BOM-less ASCII UTF-16BE.
+[expected]
+encoding = "UTF-16BE"
+bom_len = 0
+source = "utf_pattern"
+text = "ab\r\n"

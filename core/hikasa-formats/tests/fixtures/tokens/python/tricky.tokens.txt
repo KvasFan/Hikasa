@@ -1,0 +1,85 @@
+L1:0-5	Keyword	class
+L1:5-6	Everything Else	 
+L1:6-11	Identifier	Point
+L1:11-12	Operator	:
+L1:12-15	Whitespace	   
+L2:0-4	Indent	    
+L2:4-15	String	"""A point.
+L4:0-4	Everything Else	    
+L4:4-21	String	Docs continue."""
+L5:0-4	Indent	    
+L5:4-5	Identifier	x
+L5:5-6	Operator	:
+L5:6-7	Everything Else	 
+L5:7-10	Identifier	int
+L5:10-11	Everything Else	 
+L5:11-12	Operator	=
+L5:12-13	Everything Else	 
+L5:13-18	Number	0x_FF
+L5:18-20	Whitespace	  
+L6:0-1	Indent	\t
+L6:1-4	Keyword	def
+L6:4-5	Everything Else	 
+L6:5-9	Identifier	norm
+L6:9-10	Operator	(
+L6:10-14	Identifier	self
+L6:14-15	Operator	)
+L6:15-16	Operator	:
+L6:16-17	Everything Else	 
+L6:17-23	Keyword	return
+L6:23-24	Everything Else	 
+L6:24-25	Operator	(
+L6:25-29	Identifier	self
+L6:29-30	Operator	.
+L6:30-31	Identifier	x
+L6:31-32	Everything Else	 
+L6:32-34	Operator	**
+L6:34-35	Everything Else	 
+L6:35-36	Number	2
+L6:36-37	Operator	)
+L6:37-38	Everything Else	 
+L6:38-40	Operator	**
+L6:40-41	Everything Else	 
+L6:41-44	Number	.5j
+L7:0-5	Keyword	match
+L7:5-6	Everything Else	 
+L7:6-9	Identifier	cmd
+L7:9-10	Operator	:
+L8:0-4	Indent	    
+L8:4-8	Keyword	case
+L8:8-9	Everything Else	 
+L8:9-10	Operator	[
+L8:10-11	Identifier	x
+L8:11-12	Operator	,
+L8:12-13	Everything Else	 
+L8:13-14	Operator	*
+L8:14-15	Keyword	_
+L8:15-16	Operator	]
+L8:16-17	Operator	:
+L8:17-18	Everything Else	 
+L8:18-19	Identifier	s
+L8:19-20	Everything Else	 
+L8:20-21	Operator	=
+L8:21-22	Everything Else	 
+L8:22-29	String	rb'\\d+'
+L8:29-30	Everything Else	 
+L8:30-31	Operator	+
+L8:31-32	Everything Else	 
+L8:32-40	String	f"{x!r}"
+L9:0-4	Whitespace	    
+L10:0-6	Keyword	lambda
+L10:6-7	Everything Else	 
+L10:7-14	Identifier	größe
+L10:14-15	Operator	:
+L10:15-16	Everything Else	 
+L10:16-23	Identifier	größe
+L11:0-1	Identifier	x
+L11:1-2	Everything Else	 
+L11:2-3	Operator	=
+L11:3-4	Everything Else	 
+L11:4-5	Number	1
+L11:5-7	Everything Else	  
+L11:7-13	Comment	# note
+L11:13-16	Whitespace	   
+L12:0-1	Comment	#
+L12:1-4	Whitespace	   

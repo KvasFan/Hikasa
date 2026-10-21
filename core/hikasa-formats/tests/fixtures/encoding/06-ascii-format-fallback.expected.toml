@@ -1,0 +1,10 @@
+# §2.8 row 6: pure ASCII with the format fallback windows-1252.
+[setting]
+mode = "auto"
+fallback = "windows-1252"
+
+[expected]
+encoding = "windows-1252"
+bom_len = 0
+source = "format_fallback"
+text = "hello"

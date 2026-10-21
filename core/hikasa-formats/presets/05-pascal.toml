@@ -1,0 +1,105 @@
+# Sources: the Object Pascal language guide (reserved words, directives, comments and compiler directives,
+# string literals with doubled quotes and #nn character codes, $hex, %binary and &octal numbers).
+# Written for Hikasa.
+schema_version = 1
+id = "pascal"
+name = "Object Pascal Source"
+description = "Object Pascal units, programs, packages and include files."
+kind = "text"
+mask = "*.pas;*.dpr;*.dpk;*.inc"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 2
+
+[elements]
+Keyword = { case_sensitive = false }
+# Pascal identifiers are case-insensitive.
+Identifier = { case_sensitive = false }
+Number = { case_sensitive = false }
+
+[[grammar]]
+element = "Directive"
+kind = "delimited"
+from = "{$"
+to = "}"
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "//"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "{"
+to = "}"
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "(*"
+to = "*)"
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = "'"
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "basic"
+text = '#(?:\$[0-9A-Fa-f]+|\d+)'
+regex = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = [
+  # reserved words
+  "and", "array", "as", "asm", "begin", "case", "class", "const", "constructor", "destructor",
+  "dispinterface", "div", "do", "downto", "else", "end", "except", "exports", "file", "finalization",
+  "finally", "for", "function", "goto", "if", "implementation", "in", "inherited", "initialization", "inline",
+  "interface", "is", "label", "library", "mod", "nil", "not", "object", "of", "operator", "or", "out",
+  "packed", "procedure", "program", "property", "raise", "record", "repeat", "resourcestring", "set", "shl",
+  "shr", "string", "then", "threadvar", "to", "try", "type", "unit", "until", "uses", "var", "while", "with",
+  "xor",
+  # directives
+  "absolute", "abstract", "assembler", "automated", "cdecl", "default", "deprecated", "dynamic", "export",
+  "external", "far", "forward", "helper", "implements", "index", "message", "name", "near", "nodefault",
+  "overload", "override", "platform", "private", "protected", "public", "published", "read", "readonly",
+  "reference", "register", "reintroduce", "requires", "resident", "safecall", "sealed", "static", "stdcall",
+  "stored", "strict", "unsafe", "varargs", "virtual", "write", "writeonly",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '&?[A-Za-z_]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '\$[0-9A-Fa-f]+|%[01]+|&[0-7]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = ':=|<>|<=|>=|\.\.|[-+*/=<>@^.,;:()\[\]]'
+regex = true
+
+# Class declarations are the best anchors when units are compared.
+[[line_weight]]
+pattern = '=\s*class\s*\('
+regex = true
+match_case = false
+priority = 4

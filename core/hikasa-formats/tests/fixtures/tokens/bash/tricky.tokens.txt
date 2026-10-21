@@ -1,0 +1,45 @@
+L1:0-4	Keyword	echo
+L1:4-5	Everything Else	 
+L1:5-6	Identifier	a
+L1:6-7	Everything Else	#
+L1:7-8	Identifier	b
+L1:8-11	Everything Else	   
+L1:11-40	Comment	# only this part is a comment
+L1:40-43	Everything Else	   
+L2:0-5	Identifier	count
+L2:5-6	Operator	=
+L2:6-8	EnvironmentVar	$#
+L2:8-9	Operator	;
+L2:9-10	Everything Else	 
+L2:10-16	Identifier	status
+L2:16-17	Operator	=
+L2:17-19	EnvironmentVar	$?
+L2:19-20	Operator	;
+L2:20-21	Everything Else	 
+L2:21-24	Identifier	pid
+L2:24-25	Operator	=
+L2:25-27	EnvironmentVar	$$
+L3:0-3	Identifier	msg
+L3:3-4	Operator	=
+L3:4-49	String	'single quotes keep $HOME and \\n as they are'
+L4:0-6	Keyword	printf
+L4:6-7	Everything Else	 
+L4:7-21	String	$'tab\\there\\n'
+L5:0-5	Identifier	multi
+L5:5-6	Operator	=
+L5:6-17	String	"first line
+L6:0-28	String	second line with \\"quotes\\""
+L7:0-4	Keyword	echo
+L7:4-5	Everything Else	 
+L7:5-17	EnvironmentVar	${#array[@]}
+L7:17-18	Everything Else	 
+L7:18-28	EnvironmentVar	${var%%.*}
+L8:0-3	Identifier	cat
+L8:3-4	Everything Else	 
+L8:4-6	Operator	<<
+L8:6-9	Identifier	EOF
+L9:0-3	Identifier	Don
+L9:3-11	String	't panic
+L10:0-3	String	EOF
+L11:0-11	String	# a comment
+L12:0-9	String	echo done

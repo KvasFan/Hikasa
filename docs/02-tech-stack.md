@@ -105,14 +105,18 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 - **`ropey`** keeps its default Unicode line breaks, so Hikasa keeps its own line table (lines end only at CR,
   LF or CRLF).
 
-**mmap residual risk.** `memmap2::Mmap::map` is `unsafe`, because another process may modify or truncate a
-file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs
+**mmap residual risk.** Mapping a file with `memmap2` is `unsafe`, because another process may modify or
+truncate a file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs
 (`core/hikasa-vfs/src/mmap.rs`, ARCH-005). Mitigations: the map is read-only and private to that module; it is
-created only for local regular files confirmed after opening; the bytes are only compared or hashed in bounded
-chunks; a mapping lives for one call; and after the call both files are re-stat'ed, so a changed length or
-modification time discards the mapped result in favour of streaming (`11-vfs-remote-archives.md` §3).
-**Accepted residual risk:** a concurrent truncation of an input file while it is mapped can terminate the
-process (SIGBUS on Unix). Setting the mmap policy to "never" disables the mapped path.
+created only for local regular files confirmed after opening; a mapping covers one 8 MiB chunk and lives only
+while that chunk is compared or hashed, inside one call (the optional helper threads of a call are scoped and
+end before it returns); on Linux each chunk is pre-faulted with `MADV_POPULATE_READ` (kernel 5.14 or later)
+before it is read, which reports a chunk cut off by a truncation as an error instead of raising SIGBUS, and the
+comparison or CRC then falls back to streaming; and after the call both files are re-stat'ed, so a changed
+length or modification time discards the mapped result in favour of streaming (`11-vfs-remote-archives.md` §3).
+**Accepted residual risk:** a concurrent truncation of an input file between pre-faulting a chunk and reading
+it — or at any time while a chunk is mapped on other systems and on Linux kernels older than 5.14 — can
+terminate the process (SIGBUS on Unix). Setting the mmap policy to "never" disables the mapped path.
 
 **Test-only `unsafe`.** Every library crate other than `hikasa-vfs` is `#![forbid(unsafe_code)]`. The only other
 `unsafe` in the repository is in allocation tests and benches: a file in a crate's own `tests/` or `benches/`

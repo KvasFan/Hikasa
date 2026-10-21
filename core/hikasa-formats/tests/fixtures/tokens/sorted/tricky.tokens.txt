@@ -1,0 +1,3 @@
+L1:0-28	Everything Else	line with trailing spaces   
+L2:0-12	Everything Else	\tTabbed line
+L3:0-13	Everything Else	unicode été

@@ -78,8 +78,9 @@ the current and home directories from values captured once by the adapter.
   percent-decoding in M1). The canonical form never contains the password, and error messages replace it with
   `***` (conservatively: when a `/` inside a password ends the authority early, everything from the first `:`
   after `://` to the last `@` is masked). An `http(s)` authority ends at the first `/`, `?` or `#` and is
-  parsed the same way; its user information is accepted and **dropped**, because the M1 single-file URL has no
-  credential fields and its canonical form is `http[s]://host[:port]rest`.
+  parsed the same way. Its user information is **kept** like that of the other schemes: the user name
+  verbatim, the password as a secret that never appears in the canonical form, in debug output or in an
+  error message. The canonical form is `http[s]://[user@]host[:port]rest`.
 - **Local paths on Unix (D-06).** `~` and `~/…` expand to the home directory (`~user` is not supported); a
   relative path is resolved against the current directory; empty and `.` components are dropped; `..` is
   **kept**, because removing it lexically is unsound across symbolic links, except that `/..` collapses to
@@ -93,8 +94,9 @@ the current and home directories from values captured once by the adapter.
   `std::fs::canonicalize` returns them): with the current directory `\\?\C:\w`, `..\x` is `\\?\C:\x`.
   Only an input that is verbatim itself stays unchanged.
 - **Round trip.** For every input that parses, parsing the canonical form again gives the same spec without
-  its password (ARCH-020). A non-UTF-8 local path is accepted from the command line; its canonical form is
-  lossy and such a spec is never persisted: serialising it is an error.
+  its password (ARCH-020; removing the secrets clears the password of both remote and `http(s)` URLs). A
+  non-UTF-8 local path is accepted from the command line; its canonical form is lossy and such a spec is never
+  persisted: serialising it is an error.
 
 ## 3. Content fingerprints and CRC
 
@@ -103,15 +105,28 @@ the current and home directories from values captured once by the adapter.
   identity across sessions, P1) and for "binary same" shortcuts when both sides already
   have a known hash.
 
-**Memory-mapped comparison and CRC (M1).** Large local regular files are compared and hashed through a
-read-only memory map (ARCH-081), in 8 MiB chunks with a cancellation check per chunk. Because another process
-can change a file while it is mapped, both files are **re-stat'ed after** a mapped comparison or CRC: when the
-length and the modification time are unchanged the mapped result is kept; when either changed, the mapped
-result is discarded and the content is compared or hashed again by streaming. The mapped, streaming and naive
-whole-buffer comparisons give the same result, including the offset of the first difference. **Residual risk
-(accepted):** a concurrent truncation of an input file while it is mapped can terminate the process (SIGBUS on
-Unix); the mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's
-libraries and programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
+**Memory-mapped comparison and CRC (M1).** Large local regular files are compared and hashed through
+read-only memory maps (ARCH-081), one 8 MiB chunk at a time with a cancellation check per chunk. A call may
+use several threads (the caller plus scoped helper threads, at most `StreamOptions::threads`; the session uses
+up to 4): the threads claim chunks in increasing order, and each maps, pre-faults, compares or hashes, and
+unmaps its own chunks. The results never depend on the number of threads: chunk CRCs are combined exactly in
+offset order, and a comparison reports the lowest differing offset. Because another process can change a file
+while it is mapped, both files are **re-stat'ed after** a mapped comparison or CRC: when the length and the
+modification time are unchanged the mapped result is kept; when either changed, the mapped result is discarded
+and the content is compared or hashed again by streaming. The mapped, streaming and naive whole-buffer
+comparisons give the same result, including the offset of the first difference. On Linux each chunk is also
+pre-faulted (`MADV_POPULATE_READ`, kernel 5.14 or later) before it is read: when a concurrent truncation has
+cut the chunk off, pre-faulting reports an error instead of raising SIGBUS, and the comparison or CRC falls
+back to streaming without touching the chunk. **Residual risk (accepted):** a truncation of an input file
+between pre-faulting a chunk and reading it — on other systems, and on Linux kernels older than 5.14 (which do
+not know the advice), at any time while a chunk is mapped — can terminate the process (SIGBUS on Unix); the
+mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's libraries and
+programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
+
+**Pseudo-files.** A reported size of at most 4096 bytes never decides "different" by itself: procfs reports 0
+and sysfs 4096 for files of other lengths, so such files are read (cheap for small files). Unfollowed symlinks
+report the byte length of their exact target, and a target that is not valid UTF-8 keeps its exact bytes next
+to the displayed text.
 
 ## 4. Snapshot format
 
