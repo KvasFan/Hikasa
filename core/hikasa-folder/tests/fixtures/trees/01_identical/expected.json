@@ -1,0 +1,266 @@
+{
+  "description": "Identical trees: every pair Same, folders Same, verdict no_differences",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 3,
+      "bytes": 30
+    },
+    "right": {
+      "files": 3,
+      "folders": 3,
+      "bytes": 30
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 3,
+      "bytes": 30
+    },
+    "right": {
+      "files": 3,
+      "folders": 3,
+      "bytes": 30
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "empty",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "empty",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "empty",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "src",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "src",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "src",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "lib",
+              "kind": "folder",
+              "state": "same",
+              "scan": "scanned",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "lib",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "lib",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "children": [
+                {
+                  "name": "util.rs",
+                  "kind": "file",
+                  "state": "same",
+                  "scan": "not_applicable",
+                  "diffs": [],
+                  "time": "same",
+                  "content": null,
+                  "flags": [],
+                  "errors": [],
+                  "left": {
+                    "name": "util.rs",
+                    "kind": "file",
+                    "size": 13,
+                    "dir": null
+                  },
+                  "right": {
+                    "name": "util.rs",
+                    "kind": "file",
+                    "size": 13,
+                    "dir": null
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "main.rs",
+              "kind": "file",
+              "state": "same",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": "same",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "main.rs",
+                "kind": "file",
+                "size": 12,
+                "dir": null
+              },
+              "right": {
+                "name": "main.rs",
+                "kind": "file",
+                "size": 12,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "a.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "a.txt",
+            "kind": "file",
+            "size": 5,
+            "dir": null
+          },
+          "right": {
+            "name": "a.txt",
+            "kind": "file",
+            "size": 5,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

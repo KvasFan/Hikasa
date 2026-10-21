@@ -1,0 +1,79 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "insert",
+      "left": [
+        0,
+        0
+      ],
+      "right": [
+        0,
+        2
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        2
+      ],
+      "state": "right_only",
+      "importance": "important"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "add",
+      "importance": "important",
+      "rows": [
+        0,
+        2
+      ],
+      "left_lines": [
+        0,
+        0
+      ],
+      "right_lines": [
+        0,
+        2
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 2,
+    "same_rows": 0,
+    "changed_rows": 0,
+    "left_only_rows": 0,
+    "right_only_rows": 2,
+    "important_rows": 2,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 2,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 0,
+    "right_lines": 2
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": []
+}

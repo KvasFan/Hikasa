@@ -1,0 +1,61 @@
+{
+  "format": "Sorted",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        3
+      ],
+      "right": [
+        0,
+        3
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        3
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [],
+  "stats": {
+    "rows": 3,
+    "same_rows": 3,
+    "changed_rows": 0,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 0,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 0,
+    "important_sections": 0,
+    "left_lines": 3,
+    "right_lines": 3
+  },
+  "verdict": {
+    "result": "rules_same"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "rules_same"
+  },
+  "warnings": [],
+  "inline": []
+}

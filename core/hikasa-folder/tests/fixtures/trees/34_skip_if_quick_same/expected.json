@@ -1,0 +1,172 @@
+{
+  "description": "skip_if_quick_same (FC-026): quick-same pairs skip the content test (CONTENT_SKIPPED, not_compared); others run it",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "right": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 1
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "right": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 1
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "newer.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [
+            "time"
+          ],
+          "time": "left_newer",
+          "content": "binary_same",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "newer.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "newer.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "quick_same.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [
+            "content_skipped"
+          ],
+          "errors": [],
+          "left": {
+            "name": "quick_same.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "quick_same.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+description = "§2.3 row 10: -*.bak with align_extensions: x.bak (left, filtered, stat'ed after alignment) pairs with x.txt; the pair is compared normally"
+[[left]]
+path = "x.bak"
+content = "same"
+mtime = "2026-02-01T00:00:00Z"
+[[right]]
+path = "x.txt"
+content = "same"
+[[left]]
+path = "y.bak"
+content = "gone"

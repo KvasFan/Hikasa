@@ -1,0 +1,39 @@
+description = "Rules content with the scripted fake comparator: RulesSame (CRLF), UnimportantOnly (Different, Same under ignore-unimportant), ImportantDifferences, Error, and the size-limit fallback (RULES_SKIPPED_SIZE)"
+[options]
+rules_limit = 16
+[[left]]
+path = "crlf.txt"
+content = "line\r\n"
+[[right]]
+path = "crlf.txt"
+content = "line\n"
+[[left]]
+path = "spaces.txt"
+content = "a b"
+[[right]]
+path = "spaces.txt"
+content = "ab"
+[[left]]
+path = "important.txt"
+content = "one"
+[[right]]
+path = "important.txt"
+content = "two"
+[[left]]
+path = "broken.txt"
+content = "!error left"
+[[right]]
+path = "broken.txt"
+content = "fine"
+[[left]]
+path = "big.txt"
+content = "0123456789abcdefXYZ"
+[[right]]
+path = "big.txt"
+content = "0123456789abcdefXYZ"
+[[left]]
+path = "sub/only_unimportant.txt"
+content = "x  y"
+[[right]]
+path = "sub/only_unimportant.txt"
+content = "x y"

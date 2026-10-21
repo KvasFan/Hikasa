@@ -1,0 +1,20 @@
+description = "Precedence (§2.3, §2.6.2): items whose present sides are all filtered are Filtered even with an error attached — a broken followed link and an entry whose stat fails (only its name is known, so the file masks apply to the name), both excluded by -*.lnk. The errors stay on the nodes (flags, errors, warnings) but the verdict is not incomplete"
+[[left]]
+path = "dead.lnk"
+kind = "symlink"
+target = "missing"
+[[left]]
+path = "gone.lnk"
+kind = "symlink"
+target = "top.txt"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "top.txt"
+content = "t"
+[[faults]]
+side = "left"
+path = "gone.lnk"
+op = "stat"
+kind = "permission_denied"

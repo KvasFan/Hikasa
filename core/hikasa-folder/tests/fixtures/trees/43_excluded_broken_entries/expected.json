@@ -1,0 +1,201 @@
+{
+  "description": "Precedence (§2.3, §2.6.2): items whose present sides are all filtered are Filtered even with an error attached — a broken followed link and an entry whose stat fails (only its name is known, so the file masks apply to the name), both excluded by -*.lnk. The errors stay on the nodes (flags, errors, warnings) but the verdict is not incomplete",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [
+    "entry_error",
+    "entry_error"
+  ],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "top.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "dead.lnk",
+          "kind": "symlink",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "left_error"
+          ],
+          "errors": [
+            {
+              "side": "left",
+              "kind": "not_found"
+            }
+          ],
+          "left": {
+            "name": "dead.lnk",
+            "kind": "symlink",
+            "size": 7,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        },
+        {
+          "name": "gone.lnk",
+          "kind": "other",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "left_error"
+          ],
+          "errors": [
+            {
+              "side": "left",
+              "kind": "permission_denied"
+            }
+          ],
+          "left": {
+            "name": "gone.lnk",
+            "kind": "other",
+            "size": 0,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        }
+      ]
+    }
+  }
+}

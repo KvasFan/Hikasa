@@ -1,0 +1,274 @@
+{
+  "description": "Timestamps: inclusive 2 s tolerance, left/right newer, a size difference (Different) and time+size (newer wins)",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 2,
+      "right_newer": 1,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 9
+    },
+    "right": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 13
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 2,
+      "right_newer": 1,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 9
+    },
+    "right": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 13
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "dir",
+          "kind": "folder",
+          "state": "different",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "dir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "dir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "size_and_time.txt",
+              "kind": "file",
+              "state": "left_newer",
+              "scan": "not_applicable",
+              "diffs": [
+                "size",
+                "time"
+              ],
+              "time": "left_newer",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "size_and_time.txt",
+                "kind": "file",
+                "size": 3,
+                "dir": null
+              },
+              "right": {
+                "name": "size_and_time.txt",
+                "kind": "file",
+                "size": 6,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "left_newer.txt",
+          "kind": "file",
+          "state": "left_newer",
+          "scan": "not_applicable",
+          "diffs": [
+            "time"
+          ],
+          "time": "left_newer",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "left_newer.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "left_newer.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "right_newer.txt",
+          "kind": "file",
+          "state": "right_newer",
+          "scan": "not_applicable",
+          "diffs": [
+            "time"
+          ],
+          "time": "right_newer",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "right_newer.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "right_newer.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "same_within_tolerance.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "same_within_tolerance.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "same_within_tolerance.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "size_only.txt",
+          "kind": "file",
+          "state": "different",
+          "scan": "not_applicable",
+          "diffs": [
+            "size"
+          ],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "size_only.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "size_only.txt",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

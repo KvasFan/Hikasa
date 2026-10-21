@@ -1,0 +1,19 @@
+description = "§2.3 row 2: *.c includes a.c and x/y.c; a.h is excluded (name-only, filtered)"
+[[left]]
+path = "a.c"
+content = "c"
+[[right]]
+path = "a.c"
+content = "c"
+[[left]]
+path = "x/y.c"
+content = "y"
+[[right]]
+path = "x/y.c"
+content = "y2"
+[[left]]
+path = "a.h"
+content = "h"
+[[right]]
+path = "a.h"
+content = "h different"

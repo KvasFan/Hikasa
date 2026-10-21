@@ -1,0 +1,24 @@
+description = "follow_symlinks: links are compared as their targets (a link to a folder is a folder pair and is scanned)"
+[[left]]
+path = "real/f.txt"
+content = "f"
+[[right]]
+path = "real/f.txt"
+content = "f"
+[[left]]
+path = "via"
+kind = "symlink"
+target = "real"
+[[right]]
+path = "via"
+kind = "dir"
+[[right]]
+path = "via/f.txt"
+content = "f"
+[[left]]
+path = "file_link"
+kind = "symlink"
+target = "real/f.txt"
+[[right]]
+path = "file_link"
+content = "different content"

@@ -1,0 +1,173 @@
+{
+  "description": "Binary content test with override off: TIME + BinarySame stays LeftNewer (§2.6.2 row 5); different sizes are Different with SIZE and CONTENT",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 1,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "right": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 7
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 1,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 0,
+      "left_newer": 1,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 6
+    },
+    "right": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 7
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 1,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "newer_same.txt",
+          "kind": "file",
+          "state": "left_newer",
+          "scan": "not_applicable",
+          "diffs": [
+            "time"
+          ],
+          "time": "left_newer",
+          "content": "binary_same",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "newer_same.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "newer_same.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "size.txt",
+          "kind": "file",
+          "state": "different",
+          "scan": "not_applicable",
+          "diffs": [
+            "size",
+            "content"
+          ],
+          "time": "same",
+          "content": "binary_different",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "size.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "size.txt",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

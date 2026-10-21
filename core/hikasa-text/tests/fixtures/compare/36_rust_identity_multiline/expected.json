@@ -1,0 +1,203 @@
+{
+  "format": "Rust Source",
+  "algorithm": "histogram",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        1
+      ],
+      "right": [
+        0,
+        1
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        1,
+        2
+      ],
+      "right": [
+        1,
+        2
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        2,
+        3
+      ],
+      "right": [
+        2,
+        3
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        3,
+        4
+      ],
+      "right": [
+        3,
+        4
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        4,
+        5
+      ],
+      "right": [
+        4,
+        5
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        1
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        1,
+        2
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        2,
+        3
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        3,
+        4
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        4,
+        5
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        1,
+        2
+      ],
+      "left_lines": [
+        1,
+        2
+      ],
+      "right_lines": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        3,
+        4
+      ],
+      "left_lines": [
+        3,
+        4
+      ],
+      "right_lines": [
+        3,
+        4
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 5,
+    "same_rows": 3,
+    "changed_rows": 2,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 2,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 2,
+      "original": 2
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 2,
+    "important_sections": 2,
+    "left_lines": 5,
+    "right_lines": 5
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": [
+    {
+      "row": 1,
+      "left": [],
+      "right": [
+        [
+          10,
+          19,
+          true
+        ]
+      ],
+      "whole_line": false
+    },
+    {
+      "row": 3,
+      "left": [
+        [
+          12,
+          13,
+          true
+        ]
+      ],
+      "right": [
+        [
+          12,
+          13,
+          true
+        ]
+      ],
+      "whole_line": false
+    }
+  ]
+}

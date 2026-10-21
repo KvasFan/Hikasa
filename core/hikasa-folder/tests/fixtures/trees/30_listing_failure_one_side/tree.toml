@@ -1,0 +1,24 @@
+description = "A folder listing fails on the left: the folder is Failed/Error, the right side's entries are Unknown children (not orphans) and are not scanned further"
+[[left]]
+path = "bad/a.txt"
+content = "a"
+[[right]]
+path = "bad/a.txt"
+content = "a"
+[[right]]
+path = "bad/b.txt"
+content = "b"
+[[right]]
+path = "bad/inner/c.txt"
+content = "c"
+[[left]]
+path = "good.txt"
+content = "g"
+[[right]]
+path = "good.txt"
+content = "g"
+[[faults]]
+side = "left"
+path = "bad"
+op = "list"
+kind = "permission_denied"

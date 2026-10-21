@@ -31,3 +31,15 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "folder_scan_100k"
+harness = false
+
+[[bench]]
+name = "folder_model_1m"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

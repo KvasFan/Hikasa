@@ -1,0 +1,25 @@
+description = "§2.3 rows 4–6: with src\\ base files keep file masks, src's subtree is included, lib is PassThrough (lib/x.c excluded, lib/src included)"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "top.txt"
+content = "t"
+[[left]]
+path = "src/a/b.c"
+content = "b"
+[[right]]
+path = "src/a/b.c"
+content = "b"
+[[left]]
+path = "lib/x.c"
+content = "x"
+[[right]]
+path = "lib/x.c"
+content = "x changed"
+[[left]]
+path = "lib/src/y.c"
+content = "y"
+[[right]]
+path = "lib/src/y.c"
+content = "y"

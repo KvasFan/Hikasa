@@ -131,8 +131,8 @@ table (architecture test check 3).
 | hikasa-vfs | hikasa-core, serde, thiserror, crc32fast, memmap2, filetime (tests; M2 touch), bitflags, same-file | tempfile, proptest, **pretty_assertions**, **criterion** | lib.rs: `forbid` becomes `deny(unsafe_code)` plus one `allow` on `mod mmap`; +dev pretty_assertions, criterion (binary/CRC benches) |
 | hikasa-diff | hikasa-core, imara-diff, serde, thiserror, smallvec | proptest, pretty_assertions, criterion, **similar** (oracle), **serde_json** | `similar` →dev (used only as an independent LCS oracle); +dev serde_json (golden files) |
 | hikasa-formats | hikasa-core, serde, toml, regex, fancy-regex, encoding_rs, chardetng, thiserror, memchr, **rayon** | proptest, pretty_assertions, tempfile, **criterion**, **serde_json** | + rayon (parallel speculative tokenisation, §2.10.6); − indexmap (no code depends on TOML key order, D-41); +dev criterion, serde_json |
-| hikasa-text | hikasa-core, hikasa-diff, hikasa-formats, hikasa-vfs, ropey, serde, thiserror, unicode-segmentation, memchr, **rayon**, **toml**, **bitflags**; declared but unused in M1: encoding_rs, unicode-width, regex | proptest, pretty_assertions, tempfile, criterion, **serde_json** | + rayon (parallel keys); + toml (`TextRules` files); + bitflags (`TextToggles`, `ThumbCell`); +dev serde_json |
-| hikasa-folder | hikasa-core, hikasa-vfs, rayon, serde, thiserror, unicode-normalization, crossbeam-channel, parking_lot, **jiff**, **bitflags**, **toml** | tempfile, filetime, proptest, pretty_assertions, **criterion**, **serde_json** | + jiff (date filters relative to local midnight); + bitflags (`DiffFlags`, `NodeFlags`, `FolderToggles`); + toml (`FolderRules` files); +dev criterion, serde_json |
+| hikasa-text | hikasa-core, hikasa-diff, hikasa-formats, hikasa-vfs, ropey, serde, thiserror, unicode-segmentation, memchr, **rayon**, **toml**, **bitflags**, encoding_rs (chunked, cancellable decoding, §1.5.7), regex (`regex::escape` of plain unimportant-text patterns, §1.5.7); declared but unused in M1: unicode-width | proptest, pretty_assertions, tempfile, criterion, **serde_json** | + rayon (parallel keys); + toml (`TextRules` files); + bitflags (`TextToggles`, `ThumbCell`); +dev serde_json |
+| hikasa-folder | hikasa-core, hikasa-vfs, rayon, serde, thiserror, unicode-normalization (declared but unused in M1: NFC folding comes from `hikasa_core::case`), crossbeam-channel, parking_lot, **jiff**, **bitflags**, **toml** | tempfile, filetime, proptest, pretty_assertions, **criterion**, **serde_json** | + jiff (date filters relative to local midnight); + bitflags (`DiffFlags`, `NodeFlags`, `FolderToggles`); + toml (`FolderRules` files); +dev criterion, serde_json |
 | hikasa-report | hikasa-core, hikasa-diff, hikasa-text, hikasa-folder, serde, serde_json, jiff, thiserror, unicode-width, **bitflags** | pretty_assertions, tempfile, **diffy** (patch-apply oracle), **proptest**, **hikasa-vfs** (`MemoryVfs` fixtures) | + bitflags (`FolderColumns`); +dev diffy, proptest, hikasa-vfs. No normal edge to hikasa-formats or hikasa-vfs: rule 8 of §0.4 supplies the types |
 | hikasa-session | hikasa-core, -vfs, -diff, -formats, -text, -folder, -report, serde, serde_json, toml, directories, interprocess, thiserror, tracing, **rayon**, **jiff**, **parking_lot**, **crossbeam-channel** | tempfile, pretty_assertions, **proptest** | + rayon (owns the explicit `ThreadPool`); + jiff (clock and zone values); + parking_lot (job registry, IPC waiters); + crossbeam-channel (`JobHandle` channels); +dev proptest |
 | hikasa-cli | unchanged list | unchanged list | none. `clap_complete`, `tracing-subscriber` and `jiff` are used as listed |
@@ -183,7 +183,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-33 | Following symlinks: loops are detected by `FileId` (Unix dev+ino; Windows `same-file` handles). A loop yields an Error node with flag `SYMLINK_LOOP`, and depth is capped at 256. | FC-013. | 04 §2 |
 | D-34 | `skip_if_quick_same` (FC-026) defaults to **off**: when content comparison is requested, it runs. | Correctness-first default; the docs give none. | 04 §3 |
 | D-35 | clap usage errors exit with **100**, not clap's default 2 (2 means "rules-based same"). Panics are caught and exit with **100**, not Rust's default 101 (101 means "conflicts, output not written"). A broken pipe on stdout stops output and keeps the computed exit code. | Exit codes must never lie. | 12 §2 |
-| D-36 | `AlgorithmChoice::Auto` = Histogram when the effective format has a non-empty grammar ("source code"), Standard otherwise. | TC-010. | 05 §2 |
+| D-36 | `AlgorithmChoice::Auto` = Histogram when the effective format has a non-empty grammar ("source code"), Standard otherwise. *Amended in wave 3 (review decision 4):* for source code, `Auto` is Histogram only while the estimated cost of its stripped middle, `|A|·|B|` cells after removing the common prefix and suffix of the interned key sequences, fits hikasa-diff's fallback budget `AlignOptions::fallback_budget_for(n, m)` (128·(n+m) + 32,000,000, §1.3.3 item 3); beyond it `Auto` is the bounded Standard (with line weights). Only lengths decide (deterministic, T6); `TextComparison::algorithm` reports the engine used. Explicitly chosen Histogram, Myers and Patience are unchanged (D-16). | TC-010; an uncancelled run of `Auto` must stay bounded (repetitive 2 × 7 MiB C files: 9.2 s with Histogram, 0.2 s now). | 05 §2 |
 | D-37 | Size units in filters are binary: KB = 1024, MB = 1024², GB = 1024³, TB = 1024⁴. | Common convention for file tools. | 04 §6.2 |
 | D-38 | The Sorted conversion sorts lines by Unicode code point (stable sort). Each output line gets the document's dominant line ending, and the document ends with an EOL only if the original did. A sorted document is read-only. | FF-030. | 10 §4 |
 | D-39 | External conversion command lines are split into argv by Hikasa's own quoting rules and run **without a shell** (§2.10.8). | Deterministic and safe against injection. | 10 §4 |
@@ -200,7 +200,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-50 | `--gui` on `text compare` and `folder compare` (CLI-G03) sends the same specs, rules file paths, rules patches and view options through `Service::gui_open`, instead of comparing locally. `--wait` and `--no-launch` apply as for `gui open`. | CLI-G03 is P0. | 12 §1.1 |
 | D-51 | The legacy `gui open` argument handling (CLI-001 spellings, CLI-002 positional forms, CLI-003 switches) lives in `hikasa_session::api::gui` (`normalize_legacy_args`, `parse_open_args`); `hikasa gui open` and `hikasa-gui` call the same functions. | ARCH-L3: the GUI must not duplicate CLI logic. | 12 §2 |
 | D-52 | `TimestampRule` has an explicit `enabled` flag (no `Option`, because TOML has no null), plus an optional `offset: TzOffset` (shift one side by whole hours, the script `timezone:left+N` criterion). | FolderRules must round-trip through TOML. | 04 §3 |
-| D-53 | Identity fast path: when the rules make every char of every line important and case-sensitive (D-04 defaults, and no unimportant element in the format), a line's key is its raw text (prefixed by its line-ending code when line endings are compared) and no tokenisation runs. Results are identical to the general path. | The default rules must be cheap. | 05 §3 |
+| D-53 | Identity fast path: when the rules make every char of every line important and case-sensitive (D-04 defaults, and no unimportant element in the format), a line's key is its raw text (prefixed by its line-ending code when line endings are compared) and no tokenisation runs. Results are identical to the general path. *Amended in wave 3 (review decision 2):* the identity key is the raw text followed by the end markers of §2.13.2 (`ART`, or `EOL kind` when endings are compared), and the general key emits token boundaries and element ids only where an unimportant char was actually dropped (§2.13.2), so the general key of a line from which nothing is dropped or folded is byte-identical to its identity key, whatever the tokenizer state. The equivalence (INV-KEY-3) therefore holds for every grammar, multi-line items included, and an unimportant-text pattern that never matches does not change a result (P-TC-7). D-14 is kept: `int x` ≠ `intx` under ws-off. | The default rules must be cheap; results must not depend on an internal switch. | 05 §3 |
 | D-54 | Long imara-diff calls (more than 4,096 tokens on either side; 200,000 before wave 2, §1.3.3 item 1) run on a helper thread; the caller polls its `CancelToken` every 10 ms and returns `Err(Cancelled)` without waiting for the call (the result is discarded). imara-diff cannot be interrupted, so the helper of a cancelled call runs until its call ends; at most 2 such abandoned helpers run per process, and a new helper call waits (polling its `CancelToken`) while 2 are running (§1.3.3 item 2). | ≤ 100 ms cancellation latency without changing results (T6); bounded CPU after repeated cancellations. | 05 §2 |
 | D-55 | Folder aggregates are **counters**: every folder holds per-category counts of its descendants (files and folders separately), for both values of ignore-unimportant, maintained incrementally (`dec(old)/inc(new)` on every ancestor). Folder state, colour, visibility, statistics and verdict are O(1) per folder, on partial trees too. | Live model for the GUI (ARCH-004, FC-016), O(1) Ignore-Unimportant toggling (FC-057). | 04 §4 |
 | D-56 | The GUI toolkit (Dioxus 0.7, ARCH-GUI-001) is not in `[workspace.dependencies]`; wave 6 starts after the maintainer approves adding it (17-agent-workflow §2.6). | No new dependency without approval. | 02 |
@@ -239,10 +239,10 @@ contract < 3 s, design target < 1.5 s:
 |---|---|---|---|
 | read | 2 × 48 MB through `Vfs::open_read` into exact-size buffers | ≤ 100 ms warm | the raw bytes (dropped after decoding) |
 | decode + line table | UTF-8 validation or decoding, rope build, `memchr` line split | ≤ 150 ms | rope ≈ 1.05 × text, line table 8 B/line |
-| keys | identity fast path: raw lines into per-chunk arenas; grammar path: `tokenize_all` in parallel 8192-line chunks | ≤ 100 ms identity, ≤ 400 ms grammar | arenas ≤ 1 × text (transient) + 8 B/line |
+| keys | identity fast path: raw lines into per-chunk arenas; grammar path: `tokenize_all` in parallel 8192-line chunks | ≤ 100 ms identity, ≤ 400 ms grammar | arenas ≤ 1 × text (transient) + 8 B/line; *wave 3:* a key is the kept text plus markers (§2.13.2), so ≈ 1 × text on both paths (G1: 294 MiB total peak); worst case ≈ 2 × text + 2 B/line for token-dense lines whose separating whitespace is removed (`a b c` under ws-off), 3 × with more than 127 elements |
 | intern | sequential hash interning, left then right | ≤ 150 ms | 4 B/line ids + one hash-table entry per distinct key: 28–57 B, ≈ 30 B on this input (§1.3.3 item 11) |
 | align | Histogram ≤ 300 ms; Standard ≤ 1 s | | O(n + m) |
-| pair + classify | closeness DP inside its budgets, rows, sections, statistics | ≤ 200 ms | rows 12 B/row |
+| pair + classify | closeness DP inside its budgets (cells in hikasa-diff; scorer work units in hikasa-text, §2.15.2), rows, sections, statistics | ≤ 200 ms (*wave 3:* the scorer budget is ≈ 0.1 s of work on the worst input) | rows 12 B/row |
 | **total** | | **< 3 s** | **≤ 3 × input bytes + 64 B/line + 32 MiB** |
 
 **Folder compare, 100,000 files per side** (10,000 folders, depth ≤ 8); contract < 5 s cold, < 1.5 s warm:
@@ -3452,7 +3452,10 @@ core/hikasa-text/src/
 │   ├── sections.rs  SectionId, Section, SectionKind (§2.17)
 │   ├── inline.rs    ClassifiedInline, InlineRange (TC-014)
 │   ├── thumb.rs     ThumbCell, thumbnail (TC-032)
-│   └── nav.rs       Direction, next/previous section, row_for_line
+│   ├── nav.rs       Direction, next/previous section, row_for_line
+│   ├── keys.rs      (wave 3, private) per-side key arenas, line weights, the context-free check of §2.19 step 5
+│   ├── score.rs     (wave 3, private) the closeness scorer of §2.15.3 and its work budget
+│   └── check.rs     (private) TextComparison::check_invariants
 ├── stats.rs         TextStats, ChangeCounts
 ├── view.rs          TextDisplayFilter, TextToggles, ViewOptions, FilteredView, ViewItem (§2.18)
 ├── quick.rs         RulesComparator, quick_compare_bytes, DEFAULT_RULES_MAX_BYTES (§2.19)
@@ -3940,6 +3943,8 @@ impl TextComparison {
     /// Thumbnail (TC-032): `buckets` cells covering the rows evenly (bucket `b` covers rows
     /// `[b·rows/buckets, (b+1)·rows/buckets)`), built from the sections in O(S + buckets).
     /// With `ignore_unimportant`, unimportant sections count as SAME.
+    /// (Wave 3, §1.5.7: built from the class runs in O(runs + buckets); unimportant *rows* count as SAME;
+    /// buckets that cover no row are empty.)
     pub fn thumbnail(&self, buckets: u32, ignore_unimportant: bool) -> Vec<ThumbCell>;
     /// Statistics (§2.17.3).
     pub fn stats(&self) -> &TextStats;
@@ -3948,6 +3953,7 @@ impl TextComparison {
     /// Filtered view (§2.18).
     pub fn view(&self, opts: &ViewOptions) -> FilteredView;
     /// Warnings (binary content, lossy decode, format mismatch, budgets, closeness ignored …).
+    /// (Wave 3, §1.5.7: `format_mismatch` is emitted by the caller that chooses the format, not by `compare`.)
     pub fn warnings(&self) -> &[Warning];
     /// Re-checks INV-TC-1..8.
     pub fn check_invariants(&self) -> Result<(), InvariantViolation>;
@@ -4127,6 +4133,159 @@ pub enum TextError {
 }
 ```
 
+#### 1.5.7 Accepted additions and deviations (wave 3)
+
+The wave-3 review (adversarial and conformance findings, maintainer decisions 1–9) accepted the following
+public items, deviations and amendments of hikasa-text. They are part of the contract: hikasa-report and
+hikasa-session (wave 4) build on them and must not assume the text above where an item here refines it. No
+signature of §1.5.1–§1.5.6 changes; every change is additive. Amended normative text: D-36, D-53 (§0.6), §0.5,
+§0.8 and §5.7 text rows, §2.13.2–§2.13.4, §2.15.2–§2.15.3, §2.16, §2.17.1, §2.19, §6.2.5, Appendix B.
+
+**Additive API** (complete list beyond §1.5.1–§1.5.6):
+
+```rust
+// Modules: classify, compare, document, error, quick, rules, stats, view are public; every item is also
+// re-exported at the crate root.
+// document
+pub const MAX_DOCUMENT_BYTES: u64 = u32::MAX as u64;            // default and hard cap of LoadOptions::max_bytes
+impl Default for LoadOptions { /* default decoding, the format's CPL limit, MAX_DOCUMENT_BYTES */ }
+impl LoadOptions { pub fn effective_max_bytes(&self) -> u64; }  // max_bytes clamped to the hard cap
+impl Default for DocOrigin;  impl DocOrigin { pub fn display(&self) -> String; }   // canonical spec or "<memory>"
+impl LineEnding { pub const fn as_text(self) -> &'static str; pub const fn as_str(self) -> &'static str; }
+impl EolStyle { pub const fn as_str(self) -> &'static str; }
+impl TextDocument {
+    pub fn line_byte_range(&self, idx: LineIdx) -> Option<Range<usize>>;   // the line's content in the rope
+    pub fn truncated(&self) -> bool;    // from_text cut text beyond D-43 (comparisons warn lossy_decode)
+}
+// rules
+impl Default for TextRules / ImportanceRules / AlignmentRules;            // D-04
+impl TextPattern { pub fn plain(text: impl Into<String>) -> TextPattern; pub fn regex(source: impl Into<String>) -> TextPattern; }
+impl Display for UnimportantItem; impl TryFrom<String> for UnimportantItem; impl From<UnimportantItem> for String;
+impl AlgorithmChoice {
+    pub const ALL: [AlgorithmChoice; 6];
+    pub const fn as_str(self) -> &'static str;                // the serde names; Display writes them
+    pub fn parse(name: &str) -> Option<AlgorithmChoice>;      // ASCII-case-insensitive
+    pub fn resolve(self, format: &CompiledFormat) -> Algorithm;  // before the D-36 size check (compare applies it)
+}
+impl TextRules { pub fn algorithm_for(&self, format: &CompiledFormat) -> Algorithm; }  // resolve() of the choice
+// classify, compare, sections, rows
+impl CharClass { pub const fn as_str(self) -> &'static str; }
+impl RowState { pub const fn as_str(self) -> &'static str; }
+impl Importance { pub const fn as_str(self) -> &'static str; }
+impl SectionKind { pub const fn as_str(self) -> &'static str; }
+pub fn compare_with_limits(input: CompareInput, limits: &RegexLimits, pool: Option<&rayon::ThreadPool>,
+    ctl: &Ctl<'_>, observer: Option<&mut dyn CompareObserver>) -> Result<TextComparison, TextError>;
+pub const SPAN_LIMIT_BYTES: usize = 256 * 1024;   // bytes of a line that spans()/inline() classify
+impl TextComparison {
+    pub fn runs(&self) -> &[Run];                 // the alignment runs (stable run ids = indices, ARCH-050)
+    pub fn bytes_identical(&self) -> bool;
+    pub fn used_identity_path(&self) -> bool;     // D-53 (benches and tests)
+}
+// view, stats
+impl Default for ViewOptions { /* All, iu off, no expanded ranges */ }
+impl FilteredView {
+    pub fn visible_runs(&self) -> impl Iterator<Item = Range<u32>> + '_;   // maximal runs of visible rows
+    pub fn check_invariants(&self) -> Result<(), InvariantViolation>;      // INV-VIEW-1..3
+}
+impl TextStats { pub fn identities_hold(&self) -> bool; }                 // P-TC-5
+// quick
+#[derive(Clone, Copy, Default)]
+pub struct QuickOptions<'a> {
+    pub limits: RegexLimits,                                   // the registry's limits()
+    pub external: Option<(&'a Path, &'a dyn ProcessRunner)>,   // as load_document takes it
+}
+pub fn quick_compare_bytes_with(left: (&[u8], &str), right: (&[u8], &str), format: &CompiledFormat,
+    rules: &TextRules, load: &LoadOptions, opts: &QuickOptions<'_>, ctl: &Ctl<'_>)
+    -> Result<ContentOutcome, Cancelled>;   // quick_compare_bytes = this with QuickOptions::default()
+impl RulesComparator {
+    pub fn rules(&self) -> &TextRules;
+    pub fn with_external(self, temp_dir: PathBuf, runner: Arc<dyn ProcessRunner>) -> RulesComparator;
+    pub fn with_stream_options(self, stream: StreamOptions) -> RulesComparator;  // byte comparisons (D-25, D-11)
+}
+// error
+pub enum TextError { /* … */ Schema(SchemaError) /* a newer rules schema: classifies unsupported */ }
+impl TextError {
+    pub fn with_side(self, side: Side) -> TextError;   // sets the side of a Load error (load_document reports Left)
+    pub fn is_cancelled(&self) -> bool;
+}
+impl From<Cancelled> for TextError;   // TextError::Cancelled
+impl From<DiffError> for TextError;   // DiffError::Cancelled → TextError::Cancelled; others → TextError::Diff
+```
+
+**Accepted deviations (declared in wave 3):**
+
+1. `load_document` does not know the side: VFS failures are `TextError::Load { side: Side::Left, .. }`; callers
+   apply `TextError::with_side`.
+2. `TextError::Schema` (a rules file with a newer `schema_version`, kind `unsupported`) and the hand-written
+   `From<DiffError>` (cancellation is never an error state, T3) replace `Diff(#[from] DiffError)`.
+3. An External conversion without a runner fails with `TextError::Convert` (kind `unsupported`) in `load_document`;
+   the binary verdict of a converted document comes from the converted bytes. *Decision 7:* the quick compare and
+   `RulesComparator` now apply External conversions exactly like `load_document` (`QuickOptions::external`,
+   `RulesComparator::with_external`), and without a runner fail with the same error (§2.19 steps 0 and 1b).
+4. Serde names follow `rename_all = "snake_case"` literally: `LineEnding::CrLf` and `EolStyle::CrLf` are `"cr_lf"`.
+5. Key memory: the original grammar-path keys were ≈ 2 × text (G1 still passed). With the wave-3 encoding
+   (§2.13.2) keys are ≈ 1 × text on both paths; the worst case is ≈ 2 × text + 2 B/line (3 × with more than 127
+   elements) for token-dense lines whose separators are removed; §0.8 and §5.7 state it.
+6. `RegexLimits`: `compare` and `quick_compare_bytes` keep using `RegexLimits::default()`; `compare_with_limits` and
+   `quick_compare_bytes_with` take the session registry's limits, which `RulesComparator` uses (decision 8; TC-016
+   holds when the session passes the same limits on every path).
+7. `format_mismatch` is emitted by the caller that chooses the effective format (`Service::text_compare`,
+   `RulesComparator`), not by `compare` (one effective format is its input); `TextComparison::warnings` says so.
+8. `TextDocument::from_text` is total: text beyond the D-43 limits is cut; `TextDocument::truncated()` reports it
+   and `compare` adds a `lossy_decode` warning naming the cut.
+9. The thumbnail is built from the class runs (maximal runs of non-Same rows with one state and importance) in
+   O(runs + buckets); with `ignore_unimportant` unimportant rows count as SAME (§2.18 `cat`); buckets that cover no
+   row are empty. `next_section` is defined by section start rows (`Backward` from inside a section returns that
+   section).
+10. hikasa-text uses the `regex` crate (`regex::escape` of plain unimportant patterns, so they share §2.11's engine
+    selection and case handling) and `encoding_rs` (the chunked decoder of decision 3); §0.5 lists both.
+11. D-04 says that a default comparison is "exact apart from line endings, encoding and BOM": that holds for the
+    elements a format marks important and case-sensitive; formats can declare elements case-insensitive (C
+    numbers, SQL keywords) or ship them unimportant (Python `Whitespace`, COBOL `Identification`), and then the
+    identity fast path does not apply (docs/05 §3 states it; D-04's text is unchanged).
+
+**Amendments by decision:**
+
+- *Decision 1 (row 15 and short lines):* the scorer of §2.15.3 (wave 3): 999 for texts equal after removing
+  whitespace, char-multiset Dice when either text has fewer than 3 chars (`}` vs `};` = 666), bigram Dice
+  otherwise, capped at 999. §2.13.3 row 15 is normative and holds with every engine (golden 18, key-table test).
+- *Decision 2 (D-53, INV-KEY-3):* the key of §2.13.2 (wave 3) emits token boundaries and element ids only where an
+  unimportant char was dropped; under all-important rules the general key equals the identity key byte for byte,
+  for every grammar. Changed pairs of raw-equal lines are Changed/Unimportant (§2.17.1); the quick compare's step 5
+  is guarded (§2.19).
+- *Decision 3 (budgets and cancellation):* the closeness scorer works on 256-char samples under a deterministic unit
+  budget (§2.15.2) and returns 0 after cancellation; `load_document` decodes in 1 MiB steps (UTF-8 validation,
+  `encoding_rs` streaming decoder, UTF-32), sorts (Sorted) with a cancellable stable merge sort, counts lines and
+  builds the line table and the rope in 1 MiB steps, runs a large encoding detection (≥ 8 MiB) on a helper thread
+  polled every 10 ms, checks the token after the build and never returns `Ok` after a cancellation;
+  `from_bytes` runs the same pipeline with `CancelToken::never()`. Unimportant-pattern matches are streamed
+  (O(patterns) memory) with the token checked before every regex call and every 64 KiB of a line. Further
+  uninterruptible O(n) steps found while measuring G4 were removed: each decoded piece goes through a small reused
+  buffer (encoding_rs initialises one byte per page of the destination's spare capacity on every call, so a
+  worst-case reservation of the whole output was faulted in at once); keys of ≥ 64 KiB are interned through
+  surrogates of their exact equivalence classes (fingerprint and exact comparison in 1 MiB steps), so
+  `intern_pair` never hashes a huge key in one call; lines of ≥ 64 KiB are compared piecewise from the ropes and
+  copied into identity keys piecewise; and when a cancellation unwinds, buffers that can reach hundreds of MiB
+  (raw bytes, decoded text, partial ropes and line tables, key arenas) are freed on a short-lived background
+  thread. Residual bound: hikasa-formats' `tokenize_all` takes each line through `LineSource::line`, which copies
+  a line that spans rope chunks in one step: O(line length), about 10–40 ms per 100 MiB line. Measured with
+  `g4_cancel_latency_adversarial` (load ≈ 2): worst 37 ms. A session computing `bytes_identical` for `text compare`
+  should compare the raw bytes in 1 MiB steps with cancellation checks and drop them off its thread, as the gate
+  harness does (wave 4, §3.2).
+- *Decision 4 (D-36):* `Auto` for source code is Histogram only within the fallback budget, else Standard.
+- *Decision 5 (characters-per-line limit):* the key marks artificial breaks (`ART`), always; raw equality includes
+  it (§2.17.1).
+- *Decision 6 (inline):* every inline range of a Changed/Unimportant row is unimportant (§2.16 step 0).
+- *Decision 8 (other findings):* `--unimportant "Everything Else"` (any ASCII case) is the word `everything-else`;
+  `element:Everything Else` and a rules-file `elements` key `"Everything Else"` are `TextError::Rules`.
+  `inline()`/`spans()` are bounded on long lines (§2.16, `SPAN_LIMIT_BYTES`). The D-43 line guard counts the pieces
+  of wrapped lines before the table is allocated (and allocation failures are `TooLarge`). The quick compare's step 6
+  does not repeat `lossy_decode`/`binary_content` (the per-side warnings name the sides). A right-side format that
+  fails to compile no longer fails a `RulesComparator` pair when the left format is used (`format_mismatch` names
+  the error). A future `DiffWarningCode` without a core counterpart is reported as `alignment_degraded` with its
+  code in the message, never dropped. `RulesComparator::with_stream_options` lets the session pass its binary
+  comparator's options (§3.3).
+
 ### 1.6 hikasa-folder
 
 **Purpose.** Folder Compare: rules (FC-020…FC-027) with the script `criteria` vocabulary (D-57), filters
@@ -4192,7 +4351,8 @@ pub struct FolderRules {
     pub handling: Handling,
 }
 
-/// Comparison criteria (FC-020…FC-027).
+/// Comparison criteria (FC-020…FC-027). The quick tests apply to file-like pairs only: folder pairs are compared
+/// through their contents (§2.6.1 as amended, §1.6.8 item 5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Criteria {
@@ -4313,12 +4473,14 @@ pub enum DateCutoff {
 pub struct DateFilter { pub cmp: Cmp, pub cutoff: DateCutoff }
 
 impl SizeFilter {
-    /// Parses the script/CLI vocabulary `[<|>]<n>[KB|MB|GB|TB]` (D-37; `none` handled by the caller).
+    /// Parses the script/CLI vocabulary `[<|>]<n>[KB|MB|GB|TB]` (D-37; `none` handled by the caller). Without an
+    /// operator the filter keeps smaller files (`Less`, §1.6.8 item 11).
     pub fn parse(s: &str) -> Result<SizeFilter, FolderError>;
 }
 impl DateFilter {
     /// Parses `[<|>](<YYYY-MM-DD>|<RFC 3339>|<n>days)`. A bare date is local midnight in the zone of
-    /// `zone` (the adapter's zone, injected; core never reads it).
+    /// `zone` (the adapter's zone, injected; core never reads it). Without an operator the filter keeps files
+    /// modified after the cutoff (`Greater`, "newer than", §1.6.8 item 11).
     pub fn parse(s: &str, zone: &jiff::tz::TimeZone) -> Result<DateFilter, FolderError>;
 }
 
@@ -4737,7 +4899,8 @@ pub struct FolderEnv<'a> {
 
 /// Scans `model` (created by `FolderModel::new`, never scanned before: else `AlreadyScanned`). Loads the bases
 /// (errors → `BaseNotLoadable` / `BaseNotFolder`), then fills the model (§2.5–§2.6, §3.3). Cancellation after the
-/// bases are loaded returns `Ok` with `is_complete() == false`.
+/// bases are loaded returns `Ok` with `is_complete() == false`. The bases are loaded when both are stat'ed and
+/// listed. The model is marked finished on every exit path, unwinding included (then also incomplete; §1.6.8).
 pub fn compare_into(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison, FolderError>;
 
 /// `FolderModel::new` + `compare_into` (headless callers).
@@ -4760,8 +4923,9 @@ impl ByteBudget {
 #[derive(Debug)]
 pub struct BudgetGuard<'a> { /* &'a ByteBudget, bytes */ }
 
-/// Incremental scan events (ARCH-004). They carry ids only; consumers read details from the model.
-/// Ordering guarantees INV-EVT-1..3 (Appendix B).
+/// Incremental scan events (ARCH-004). They carry ids only (hints, §1.10); consumers read details from the model
+/// and re-read the ancestors of the nodes they refresh (`TreeRead::ancestors`), whose counters change with every
+/// batch. Ordering guarantees INV-EVT-1..3 (Appendix B, as amended in §1.6.8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScanEvent {
     /// The base folders were loaded (`TreeRead::bases` is set); the root exists.
@@ -4770,7 +4934,7 @@ pub enum ScanEvent {
     /// test states.
     FolderListed { folder: NodeId },
     /// Nodes whose state, content result or flags changed since they were last announced (deduplicated batch
-    /// of at most 256 ids; the counters of their ancestors changed too).
+    /// of at most 256 ids; the counters of their ancestors changed too and are not named: consumers re-read them).
     NodesUpdated { nodes: Vec<NodeId> },
     /// The scan ended (`complete == false` after cancellation). Always the last event.
     Finished { complete: bool },
@@ -4945,6 +5109,234 @@ pub enum FolderError {
     Cancelled,
 }
 ```
+
+#### 1.6.8 Accepted additions and deviations (wave 3)
+
+The reviews of wave 3 (conformance and adversarial) and the maintainer's decisions accepted the following public
+items, deviations and amendments. They are part of the contract: later waves (report, session, GUI) may use them
+and must not assume the text above where an item here refines it. The algorithm sections (§2.3–§2.7), §6.2.6 and
+Appendix B carry the same amendments in place.
+
+**Additive API** (no signature above changes; no breaking change):
+
+```rust
+pub enum FolderError {
+    // … the variants of §1.6.7, plus:
+    /// A rules file written by a newer version (`schema_version` newer than `FOLDER_RULES_SCHEMA_VERSION`, D-31,
+    /// SES-052). Classified `unsupported`, as `SchemaError` itself (§1.1.12).
+    #[error("folder rules: {0}")]
+    Schema(#[from] SchemaError),
+}
+impl FolderRules {
+    /// The checks of `FolderModel::new` (masks compile, ranges).
+    pub fn validate(&self) -> Result<(), FolderError>;
+}
+impl Cmp {
+    /// `Less`: `a < b`; `Greater`: `a > b`.
+    pub fn holds<T: PartialOrd>(self, a: T, b: T) -> bool;
+}
+impl<T> Change<T> {
+    /// `Set(v)` → `Some(v)`, `Clear` → `None`.
+    pub fn into_option(self) -> Option<T>;
+}
+
+/// The alignment and quick-test functions §1.6.1 names, with their inputs.
+pub struct AlignInput<'a> { pub name: &'a FileName, pub kind: EntryKind, pub dir: &'a str }
+pub struct AlignOptions { pub case: CaseSensitivity, pub align_extensions: bool, pub align_normalization: bool }
+pub fn align_names(left: &[AlignInput<'_>], right: &[AlignInput<'_>], opts: &AlignOptions)
+    -> Vec<Pair<Option<usize>>>;                                         // canonical child order (§2.5.4)
+pub fn align_flat(left: &[AlignInput<'_>], right: &[AlignInput<'_>], opts: &AlignOptions)
+    -> Vec<Pair<Option<usize>>>;
+pub fn quick_tests(left: &Entry, right: &Entry, criteria: &Criteria) -> (DiffFlags, Option<TimeRelation>);
+
+impl DiffFlags { pub fn names(self) -> Vec<&'static str>; }           // JSON form of bit sets (§4.1 rule 9)
+impl NodeFlags {
+    pub fn names(self) -> Vec<&'static str>;
+    pub const fn filtered(side: Side) -> NodeFlags;
+    pub const fn stat_skipped(side: Side) -> NodeFlags;
+    pub const fn error(side: Side) -> NodeFlags;
+}
+impl CompareState {
+    pub const ALL: [CompareState; 9];
+    pub const fn as_str(self) -> &'static str;
+    pub const fn category(self) -> Category;
+    pub const fn mirrored(self) -> CompareState;                         // orphans and newer swap
+}
+impl Category {
+    pub const ALL: [Category; 9];
+    pub const fn index(self) -> usize;
+    pub const fn as_str(self) -> &'static str;
+    pub const fn is_difference(self) -> bool;                            // counted by `differences()`
+    pub const fn state(self) -> CompareState;
+}
+impl NodeKind {
+    pub const fn of(kind: EntryKind) -> NodeKind;
+    pub const fn entry_kind(self) -> EntryKind;
+    pub const fn as_str(self) -> &'static str;
+}
+impl ScanStatus { pub const fn as_str(self) -> &'static str; }
+impl TimeRelation { pub fn mirrored(self) -> TimeRelation; }
+/// The pure §2.6.2/§2.6.3 functions.
+pub mod state {
+    pub const OVERRIDABLE: DiffFlags;                                    // SIZE | TIME (D-48)
+    pub fn base_state(diffs: DiffFlags, time: Option<TimeRelation>) -> CompareState;
+    pub fn pair_state(diffs: DiffFlags, time: Option<TimeRelation>, content: Option<ContentKind>,
+                      override_quick: bool) -> (CompareState, DiffFlags);
+    pub fn state_if_rules_same(diffs: DiffFlags, time: Option<TimeRelation>, override_quick: bool)
+        -> CompareState;
+    pub fn file_category(state: CompareState, diffs: DiffFlags, time: Option<TimeRelation>,
+                         content: Option<ContentKind>, override_quick: bool, ignore_unimportant: bool)
+        -> Category;
+}
+impl CategoryCounts { pub fn plus(&self, other: &CategoryCounts) -> CategoryCounts; }
+impl Aggregate { /** `files + folders`, field-wise */ pub fn both(&self) -> CategoryCounts; }
+impl ContentCounts { pub fn get(&self, kind: ContentKind) -> u32; }
+impl ByteBudget { pub fn capacity(&self) -> u64; pub fn available(&self) -> u64; }
+impl BudgetGuard<'_> { pub fn bytes(&self) -> u64; }
+impl ContentEngines {
+    /// The hikasa-vfs CRC and binary comparators with `stream` (the caller chooses `threads`), plus `rules`.
+    pub fn with_stream_options(stream: StreamOptions, rules: Option<Arc<dyn ContentComparator>>) -> ContentEngines;
+    pub fn get(&self, method: ContentMethod) -> Option<&Arc<dyn ContentComparator>>;
+}
+impl FolderToggles {
+    pub const fn atom(category: Category) -> Option<FolderToggles>;    // None for Filtered (§2.7)
+    pub fn accepts(self, category: Category) -> bool;
+}
+impl FolderDisplayFilter { pub const PRESETS: [FolderDisplayFilter; 13]; }
+impl FolderMode { pub const ALL: [FolderMode; 3]; }
+impl VisibleTree { pub fn is_empty(&self) -> bool; }
+impl<'a> NodeView<'a> {
+    pub fn side(&self, side: Side) -> Option<&EntryView<'a>>;
+    pub fn representative(&self) -> Option<&EntryView<'a>>;             // left when present
+    pub fn is_folder(&self) -> bool;
+}
+impl TreeRead<'_> {
+    pub fn is_empty(&self) -> bool;
+    pub fn rules(&self) -> &FolderRules;
+    /// Ids of `id`'s ancestors, nearest first (the event consumer protocol of INV-EVT-3).
+    pub fn ancestors(&self, id: NodeId) -> Vec<NodeId>;
+}
+/// INV-FOLDER-1..10 on a live model (P-FOLDER-6).
+pub fn check_tree_invariants(tree: &TreeRead<'_>) -> Result<(), InvariantViolation>;
+/// The layout of `CanonicalTree` (golden files).
+pub struct CanonicalTree { pub complete: bool, pub root: CanonicalNode }
+pub struct CanonicalNode {
+    pub name: String, pub kind: NodeKind, pub state: CompareState, pub scan: ScanStatus, pub diffs: Vec<String>,
+    pub time: Option<TimeRelation>, pub content: Option<ContentKind>, pub flags: Vec<String>,
+    pub errors: Vec<CanonicalError>, pub left: Option<CanonicalEntry>, pub right: Option<CanonicalEntry>,
+    pub children: Vec<CanonicalNode>,
+}
+pub struct CanonicalEntry { pub name: String, pub kind: EntryKind, pub size: u64, pub dir: Option<String> }
+pub struct CanonicalError { pub side: Option<Side>, pub kind: ErrorKind }
+/// Depth limit of a scan that follows symbolic links (D-33).
+pub const MAX_FOLLOW_DEPTH: u32 = 256;
+// Debug: FolderModel, TreeRead, FolderEnv, ContentEngines, ChannelObserver. Clone: ChannelObserver.
+// `#[doc(hidden)] FolderModel::reserved_bytes` serves the `folder_model_1m` bench and is not API.
+```
+
+**Deviations, clarifications and amendments** (the maintainer's wave-3 decisions are marked *decision n*):
+
+1. **`FolderError::Schema`** (above): a rules file from a newer version is `Schema`, not `InvalidRules`.
+2. **Folder category order** (§2.6.4 amended, *decision 3*): `own_category(F)` is, first match wins: no present
+   side → Unknown; every present side filtered → Filtered (also for an orphan, §2.3); `ScanStatus::Failed` →
+   Error, **also when the folder has one side only** (a failure is never claimed as an orphan, D-02); a child of a
+   failed listing → Unknown; one side only → LeftOrphan / RightOrphan; `NotScanned` → Unknown; then the counters.
+   A folder's colour follows the same order (`Failed` → Error before Orphan).
+3. **Precedence of file-like nodes** (§2.6.2 amended, *decision 4*): every present side filtered → Filtered, also
+   when an error is attached (the side flag, the `NodeError` and the `entry_error`/`symlink_loop` warning stay, so
+   nothing is silent); then a per-entry error → Error; a child of a failed listing → Unknown; one side → orphan;
+   else the quick-test/content state. An entry known by name only because its stat failed (`Listing::errors`
+   without a matching entry) is filtered when the name masks exclude its name (its kind is unknown: the file
+   masks); it is never name-only (INV-FOLDER-7 amended). An excluded broken link therefore never makes the verdict
+   Incomplete.
+4. **Pairing of entries whose stat failed** (*decision 5*): they pair by name with each other or with an orphan of
+   the other side — same folder and exact name (flatten), exact name, then the case-folded exact name when
+   case-insensitive — through hash maps (O(n) per level, cancellable), candidates taken in (exact name, folder)
+   order, so the result does not depend on the listing order.
+5. **No quick tests on folders** (*decision 7*; §2.6.1 amended; docs/04 §3): folders are compared by aggregating
+   their contents. A folder's own size, time, name case, DOS attributes, permissions, owner and group are not
+   compared; `diffs` and `time` of a folder node are always empty/`None`.
+6. **Bases loaded = stat'ed and listed**: a failure of a base's listing is `BaseNotLoadable` (a cancellation
+   meanwhile `Cancelled`), before any event.
+7. **Capability switch-off for both sides**: a criterion whose capability either base lacks is switched off for the
+   whole comparison (also on the side that has it), with one `capability_missing` warning per (criterion, side
+   lacking it); a stat'ed entry without a modification time on a back-end that reports `MTIME` adds one
+   `capability_missing` warning per side.
+8. **Depth cap only when following links**: `MAX_FOLLOW_DEPTH` (256, D-33) applies with `follow_symlinks` only;
+   without links the file system bounds the depth and the scanner is iterative.
+9. **Flatten specifics** (FC-014; *decision 3*): (a) every folder of each side is collected first; the files are
+   then aligned, planned and inserted as **one batch** under the root, with the folder table in the same mutation —
+   a flattened scan shows no live rows, and a cancelled one inserts nothing; (b) folders do not appear, except a
+   folder that could not be listed, closed a loop or hit the depth limit: a one-sided Folder row with
+   `ScanStatus::Failed` and category Error (two failed folders of one path pair); (c) the other side's files at or
+   below a failed folder's path (paths matched with the alignment's case and normalisation options) are not
+   aligned: they are Unknown rows, never orphans (§2.6.2), so the error is counted and the verdict is Incomplete
+   unless real differences exist — as in the folder tree; (d) a folder hidden by `exclude_protected` only (not by
+   the name masks) is collected once a folder of the same path was collected on the other side (rounds until
+   nothing changes), so a folder protected on one side only does not turn its files into orphans, while a folder
+   protected on every side stays hidden.
+10. **Exclude protected and folders** (§2.3 amended, *decision 2*): a folder side is listed iff its **name-mask**
+    verdict is not `Excluded`; in addition, a folder whose present sides are all filtered (by any filter: SYSTEM +
+    HIDDEN on every side, a protected orphan) is not listed (state Filtered). A folder protected on one side only is
+    listed on both sides, its protected side flagged filtered (FC-054), and identical contents give NoDifferences
+    (exit 2), not orphans.
+11. **Operator-less filters**: `SizeFilter::parse` without `<`/`>` keeps smaller files (`Less`); `DateFilter::parse`
+    without an operator keeps newer files (`Greater`).
+12. **TOML forms**: `DosAttrs` as letters (D-30); `DateCutoff` tagged `type = "absolute" | "days_ago"`;
+    `timestamps.offset`, `filters.other.size` and `filters.other.date` are omitted when `None` (TOML has no null);
+    `Change` is `"clear"` / `{"set": …}` in JSON. The serde form of `FolderRules` is this TOML form, so the `rules`
+    object embedded in `hikasa.folder_compare.v1` (§4.3.3) would omit those keys, whereas §4.1 rule 3 wants
+    absent optionals as `null`: that is the report DTO's concern (hikasa-report renders `rules` through its own
+    DTO, T5) and is flagged for wave 4; `FolderRules`' serde form does not change.
+13. **P-FOLDER-5 amendment**: "more exclusions never add visible nodes" holds for the display filter All, and for
+    Differences when no FC-054 pair can arise. With extension alignment, a newly filtered side turns a
+    content-tested pair into an FC-054 pair, which gets no content test (§2.6.2), so D-48 can no longer cancel its
+    TIME/SIZE differences and the pair can become visible under Differences.
+14. **Criteria vocabulary** (§2.6.6): only the documented spellings are accepted — the tolerance unit is `sec`
+    (`timestamp:3sec`; no `s`, `secs` or bare number), the offset sides are `left` and `right` (no `lt`/`rt`).
+15. **Names that are not valid Unicode** (§2.5.1 amended): `k2` folds the exact OS form (valid UTF-8 runs folded,
+    other bytes kept), never the lossy text; such a name has no `k3`/`k4` beyond `k2`; `NAME_CASE` compares the same
+    folded exact forms. Two different non-UTF-8 names never pair and never "differ only in case".
+16. **Link cycles reported as `ELOOP`** (D-33): an entry error that is the back-end's report of a symbolic-link
+    cycle (the OS error `ELOOP`, or `ERROR_CANT_RESOLVE_FILENAME` on Windows, in its message or causes, as
+    LocalVfs passes it on and MemoryVfs imitates it, §1.2.7 item 5) gives the node `SYMLINK_LOOP` and the warning
+    `symlink_loop`, like a followed link back to an ancestor, in both scan modes.
+17. **Quick tests on filtered pairs** (§2.3 as written): a pair whose present sides are all filtered and which has
+    two stat'ed sides (size, date or attribute filters) gets its quick tests (`diffs`, `time`); its state stays
+    Filtered and no content test runs.
+18. **Cancellation inside a batch** (§5.3, *decision 6*): every step of a folder batch — building the items, each
+    alignment level, the special pairing, the planning (and before every FC-054 re-stat), the canonical order and
+    the preparation of the nodes — polls the token at least every 1,024 entries. A batch cancelled before its
+    insertion is dropped: the folder stays `NotScanned`/Unknown and the scan reports `complete == false`; an
+    insertion is all or nothing (INV-FOLDER-3). The nodes of a batch are prepared outside the write lock (with
+    touched node chunks for large batches), and the lock only appends them. With a pool, a large batch is freed on
+    the pool (`ThreadPool::spawn`, fire and forget) so that returning after a cancellation does not wait for a
+    million entries to be freed; without a pool it is freed on the calling thread (tens of milliseconds for a
+    million entries, the one step a pool-less scan cannot interrupt). Measured with the `cancel_latency` bench
+    (release, 8-thread pool, shared 16-thread machine, load average 7–20): the 100k scan of G2 cancelled
+    half-way ≤ 5 ms; one folder of 1,000,000 entries per side cancelled at 15 points of its batch ≤ 20 ms
+    (load ≈ 8) and ≤ 51 ms (load ≈ 17); 200,000 re-stats cancelled half-way ≤ 0.6 ms (was 1.1 s and 0.23 s,
+    with `complete == true`).
+19. **Memory per batch** (§5.7): a batch keeps each listed entry once (the listing's own vector, with a parallel
+    vector of scan facts of ~24 B) and ~64 B per planned child (rare parts boxed); keys are sorted as indices; the
+    listing is freed before the node chunks are prepared. One folder of 1,000,000 entries per side peaks at
+    0.72 GiB above the start without a pool and 0.78 GiB with one (the pool frees the listing concurrently), the
+    two listings (2 × 200 MB) and the model (185 MB) included — was 1.97 GiB. `folder_model_1m` is unchanged
+    (161.3 B per node excluding names, gate ≤ 256).
+20. **Finishing**: `compare_into` marks the model finished on every exit path, unwinding included (and
+    incomplete unless the scan returned normally), so a GUI polling the shared model never waits for a scan that
+    ended with a panic.
+21. **INV-EVT-3 amended** (*decision 8*; the consumer protocol was chosen over naming every ancestor): events are
+    id-only hints (§1.10). A consumer that mirrors the tree re-reads, at each event, the named nodes, the children of
+    listed folders, and the ancestors of both (`TreeRead::ancestors`): ancestors' counters — and so their states —
+    change with every batch and content result and are not named. Replaying under this protocol ends with exactly
+    `to_canonical()` (P-FOLDER-4).
+22. **Tests read no ambient zone** (T1, *decision 1*): tests inside `src/` build zones from POSIX rules
+    (`TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3")`), never from the system tz database, and assert
+    unconditionally; architecture check 2 holds for the crate.
+23. **`unicode-normalization`** is declared in the manifest (the §0.5 row) but not used by hikasa-folder: NFC comes
+    from `hikasa_core::case::nfc`. The §0.5 row should say "declared but unused in M1" (or the dependency be
+    dropped); §0.5 is outside this crate's sections and is left to the maintainer.
 
 ### 1.7 hikasa-report
 
@@ -6363,7 +6755,10 @@ file(p, n, parent) -> bool
 How the scanner uses the verdicts (FC-054, D-44, D-45):
 
 - A folder node is listed on side S iff S's verdict is not `Excluded`. A folder node is skipped entirely (its
-  children are not listed) only when every present side is `Excluded`.
+  children are not listed) only when every present side is `Excluded`. *Amended (§1.6.8 item 10):* a folder whose
+  present sides are all filtered — by any filter, e.g. SYSTEM + HIDDEN on every side — is not listed either; a
+  side hidden by the other filters only is listed whenever the pair is not filtered on every side (FC-054), so a
+  folder protected on one side only compares its contents instead of reporting them as orphans.
 - **Prefilter (D-45).** When listing a folder of side S, the scanner passes `ListOptions::prefilter` =
   `|name, kind| !(excluded by name masks)`, i.e. `kind == Dir ? folder(p, name, v) != Excluded : file(p, name, v)`
   with `v` = the folder's verdict on S. Declined entries arrive in `Listing::name_only` and become name-only
@@ -6373,10 +6768,15 @@ How the scanner uses the verdicts (FC-054, D-44, D-45):
   `RIGHT_FILTERED`), and the pair is still compared. When the filtered side is name-only, the scanner stats it
   after alignment (one `Vfs::stat` per such pair, which is rare) so that both sides have metadata. That side
   is drawn teal.
-- A node whose present sides are all filtered has state `Filtered`. No content test runs for it; quick tests run
-  only when both sides were stat'ed (otherwise `diffs` is empty and `time` is `None`).
+- A node whose present sides are all filtered has state `Filtered`, also when an error is attached (the side
+  flag, the `NodeError` and the warning stay; §1.6.8 item 3). No content test runs for it; quick tests run
+  only when both sides were stat'ed (otherwise `diffs` is empty and `time` is `None`). An entry known only by its
+  name because its stat failed is filtered when the name masks exclude that name (its kind is unknown: the file
+  masks).
 - `exclude_protected` (FC-053) marks an entry filtered when its `DosAttrs` contain both SYSTEM and HIDDEN. On
-  back-ends without DOS attributes it never applies, so on Linux dotfiles are never excluded by it.
+  back-ends without DOS attributes it never applies, so on Linux dotfiles are never excluded by it. In flatten
+  mode a folder protected on one side is collected once a folder of the same path was collected on the other
+  side (§1.6.8 item 9d).
 - Size and date filters (FC-053) apply to files only and need metadata, so they never use the prefilter. An
   entry fails the size filter when `cmp(size, bytes)` is false (`Less`: `size < bytes`; `Greater`:
   `size > bytes`). An entry fails the date filter when `mtime` is missing or `cmp(mtime, cutoff)` is false.
@@ -6448,6 +6848,9 @@ For an entry with name `n`, after symlink resolution when `follow_symlinks` is s
 - `k3` = `nfc(k2)` if `align_normalization`, else `k2`.
 - `k4` = the stem of `k3` (`FileName::stem` semantics) if `align_extensions` **and** the entry is a file,
   else `k3`.
+- *Amended (§1.6.8 item 15):* for a name that is not valid Unicode, `k2` folds the exact OS form (the valid
+  UTF-8 runs are folded, the other bytes kept), never the lossy text, and `k3 = k4 = k2`; two different such names
+  never share a key.
 
 #### 2.5.2 Pairing (deterministic)
 
@@ -6473,7 +6876,9 @@ every `(kind_class, key)` group with left list `A` and right list `B`, each sort
 Every file of every subfolder is collected per side, together with its containing `RelPath`. Alignment uses a
 level L0 first: exact `(dir, k1)`. Then L1–L4 use names only. Within a group, entries are sorted by
 `(dir, k1)`. Folders do not appear in the flattened tree; each side's `EntryView::dir` keeps that side's
-containing folder (FC-014 Path column).
+containing folder (FC-014 Path column). *Amended (§1.6.8 item 9):* the files are inserted as one batch after every
+folder was collected; a folder that could not be listed is a one-sided Folder row (`Failed`, Error), and the other
+side's files at or below its path are not aligned but inserted as Unknown rows.
 
 #### 2.5.4 Canonical child order
 
@@ -6490,7 +6895,9 @@ This order is total (INV-FOLDER-3) and independent of listing order and thread c
 
 #### 2.6.1 Quick tests (pure, `quick_tests`)
 
-For two present entries of the same kind, both stat'ed (name-only entries skip every quick test):
+For two present file-like entries (File, Symlink, Other) of the same kind, both stat'ed (name-only entries skip
+every quick test). *Amended (§1.6.8 item 5, maintainer decision):* folder pairs are not quick-tested — a folder is
+compared by aggregating its contents (§2.6.4), so its `diffs` are empty and its `time` is `None`.
 
 ```
 diffs = ∅; time = None
@@ -6498,6 +6905,7 @@ size:        criteria.size && kind == File && l.size ≠ r.size                 
 timestamps:  rule.enabled && both mtimes present:
                  time = compare_times(l.mtime, r.mtime, rule); time ≠ Same             → TIME
 case:        criteria.filename_case && l.name ≠ r.name && eq_folded(l.name, r.name)   → NAME_CASE
+             (a name that is not valid Unicode is folded on its exact OS form, §2.5.1)
 attributes:  !criteria.dos_attributes.is_empty() && both Attrs::Dos &&
                  (l.attrs ^ r.attrs) & criteria.dos_attributes ≠ 0                     → ATTRIBUTES
 unix:        both Attrs::Unix: permissions → mode ≠; owner → uid ≠; group → gid ≠      → PERMISSIONS/OWNER/GROUP
@@ -6550,11 +6958,13 @@ The stored `diffs` keep every flag found, including those an override cancelled 
 | 14 | TIME (left newer) | UnimportantOnly | on | LeftNewer (+CONTENT); category Same under ignore-unimportant |
 | 15 | TIME (left newer) | UnimportantOnly | off | LeftNewer (+CONTENT); category LeftNewer under ignore-unimportant |
 
-Other nodes: a node with one side only → `LeftOrphan`/`RightOrphan`; a node whose present sides are all
-filtered → `Filtered`; a per-entry stat error on either side → `Error` (flag `LEFT_ERROR`/`RIGHT_ERROR`). When a
-folder listing fails on one side, the folder gets `ScanStatus::Failed` and state `Error`, and the other side's
-entries are inserted as children with state `Unknown` (they are not orphans: the failing side is unknown) and
-are not scanned further.
+Other nodes (first match wins; *amended*, §1.6.8 item 3): a node whose present sides are all filtered →
+`Filtered`, also with an error attached; a per-entry stat error on either side → `Error` (flag
+`LEFT_ERROR`/`RIGHT_ERROR`); a child of a failed listing → `Unknown`; a node with one side only →
+`LeftOrphan`/`RightOrphan`. When a folder listing fails on one side, the folder gets `ScanStatus::Failed` and
+state `Error`, and the other side's entries are inserted as children with state `Unknown` (they are not orphans:
+the failing side is unknown) and are not scanned further. Flatten mode does the same with the files at or below
+the failed folder's path (§2.5.3).
 
 #### 2.6.3 Category (display) function
 
@@ -6580,10 +6990,11 @@ itself excluded). Contributions:
 file-like node n (File, Symlink, Other):   files[category(n, iu)]       += 1
 folder node F (not the root):               folders[own_category(F, iu)] += 1
 
-own_category(F, iu):
+own_category(F, iu):                                  (order amended in wave 3, §1.6.8 item 2)
+  every present side filtered              → Filtered  (also an orphan)
+  ScanStatus::Failed                       → Error     (also with one side only: a failure is never an orphan)
+  F is a child of a failed listing         → Unknown
   F has one side only                      → LeftOrphan / RightOrphan
-  every present side filtered              → Filtered
-  ScanStatus::Failed                       → Error
   ScanStatus::NotScanned                   → Unknown   (pending, cancelled, or an orphan folder not scanned)
   scanned pair, a = F.aggregates.get(iu):
       a.files.differences() + a.folders.differences() > 0   → Different
@@ -6614,7 +7025,7 @@ Colour classes (FC-031, `TreeRead::colour(node, side, iu)`, O(1)). For folders `
 | file: RightNewer (side Right / Left) | NewerOrDifferent / OlderOrUnknown |
 | file: LeftOrphan, RightOrphan | Orphan |
 | file: Unknown | OlderOrUnknown |
-| folder: one side only / `Failed` | Orphan / Error |
+| folder: `Failed` / a child of a failed listing / one side only (in this order, §1.6.8 item 2) | Error / OlderOrUnknown / Orphan |
 | folder: `c.different > 0` or this side's newer > 0 | NewerOrDifferent ("contains newer/different") |
 | folder: `c.left_orphan + c.right_orphan > 0` | Orphan ("contains orphans") |
 | folder: the other side's newer > 0, `c.unknown > 0`, or `NotScanned` | OlderOrUnknown ("contains older") |
@@ -6663,6 +7074,10 @@ Criteria::parse_list(list):
   version                                → InvalidRules("criterion `version` (FC-028) is not available in this version")
   anything else                          → InvalidRules("unknown criterion `<word>`")
 ```
+
+Only these spellings are accepted (one vocabulary for the CLI and scripts, T11): the tolerance unit is `sec`, the
+offset sides are `left` and `right`; `timestamp:3`, `timestamp:3s`, `timestamp:3secs`, `timezone:lt+2` are
+`InvalidRules` (§1.6.8 item 14).
 
 | # | `--criteria` | Effect |
 |---|---|---|
@@ -7124,21 +7539,48 @@ left-to-right as non-overlapping leftmost-first matches. Literal patterns respec
 
 #### 2.13.2 Key atoms (general path)
 
+*Superseded in wave 3 (review decisions 2 and 5; the text below the original is binding).* The original encoding
+gave every grammar token its own atom with its element id, so a line's key depended on the tokenizer's start state
+even when nothing of it was dropped: a line inside a block comment and the same line outside it had different
+keys, D-53's equivalence failed for multi-line grammars, and byte-identical lines showed as Changed/Important.
+It also left artificial breaks (TC-003) indistinguishable from real ones unless line endings were compared.
+
 ```
-key(line) = bytes, appended to the chunk arena by the tokenize_all callback, built left to right:
-  for each maximal run of chars with the same (token index, important, case_sensitive):
-     skip if !important
-     text = case_sensitive ? run : case::fold(run)
-     grammar token (e ≠ EE) → append to that token's TOKEN atom (one atom per grammar token, never merged)
-     EE run                 → append to the current TEXT atom (TEXT atoms merge across removed chars, D-14)
-  a TOKEN atom closes the current TEXT atom
-  if rules.compare_line_endings && eol ∉ {Artificial}: append EOL atom
-encoding: TEXT = 0x01 varint(len) utf8 · TOKEN = 0x02 u16le(element id) varint(len) utf8 ·
-          EOL = 0x03 kind(1 = LF, 2 = CRLF, 3 = CR, 4 = None)
-trivial(line) ⇔ key has no TEXT or TOKEN atom
+(original, superseded)
+key(line) = for each maximal run of chars with the same (token index, important, case_sensitive): skip if
+  !important; grammar token → its TOKEN atom; EE run → the current TEXT atom (merging across removed chars);
+  EOL atom when line endings are compared and eol ≠ Artificial
+encoding: TEXT = 0x01 varint(len) utf8 · TOKEN = 0x02 u16le(element id) varint(len) utf8 · EOL = 0x03 kind
 ```
 
-The encoding is prefix-free, so two different atom sequences can never produce equal bytes (INV-KEY-1).
+```
+(wave 3, binding)
+key(line) = bytes, appended to the chunk arena by the tokenize_all callback, built left to right over the chars
+            of the line in token order, each char classified per §2.13.1:
+  a char of an unimportant class is dropped
+  a kept char is appended as UTF-8, folded with case::simple_lower when its class is case-insensitive
+  SEP(e1, e2) is appended before a kept char c2 (token t2, element e2) when the previous kept char c1
+       (token t1, element e1) is separated from it by dropped chars, t1 ≠ t2, e1 ≠ EE or e2 ≠ EE, and both
+       c1 and c2 are word chars (is_word of §2.10.1, with the format's word_chars, D-58)
+  at the end: ART if eol == Artificial (always); else EOL(kind) if rules.compare_line_endings
+encoding: text = UTF-8 bytes (never ≥ 0xF8) · SEP = 0xFF varint(e1) varint(e2) · EOL = 0xFE kind (1 = LF,
+          2 = CRLF, 3 = CR, 4 = None) · ART = 0xFD
+trivial(line) ⇔ the key has no text byte ⇔ the key is empty or starts with a marker (≥ 0xF8)
+```
+
+Consequences: D-14 holds (`int x` ≠ `intx` under ws-off: a dropped space separates two word chars of different
+tokens; `a + b` = `a+b`: no separator next to `+`; in plain text `a b` = `ab`: both chars are EE). A line from
+which nothing is dropped or folded is keyed by its raw text plus its end markers, which is its identity key
+(§2.13.4), whatever its tokenizer state. A line wrapped by the characters-per-line limit never equals a line ended
+by a real terminator. The cancellation token is checked every 64 KiB of a line and before every regex call
+(§5.3); the matches of the unimportant patterns are streamed in order (merged on the fly), never stored per match.
+
+The encoding is prefix-free, so two different atom sequences can never produce equal bytes (INV-KEY-1). *Wave 3:*
+text bytes are below 0xF8 and every marker starts with a byte ≥ 0xF8 and has a self-delimiting length, so a key
+parses uniquely into text and markers (INV-KEY-1). The word-char condition of `SEP` keeps the original D-14
+behaviour where removing whitespace cannot merge two tokens into one word (`a + b` = `a+b`, `f (x)` = `f(x)`);
+review decision 2 required boundaries *only* where an unimportant char was dropped, and this is a subset of those.
+
 Keys live in per-chunk arenas (`LineBytes`, §1.4.4) and are interned by reference
 (`hikasa_diff::intern_pair`, left then right): no per-line allocation and no key copy. The trivial key ids form
 the diff `TrivialSet`.
@@ -7151,7 +7593,7 @@ the diff `TrivialSet`.
 |---|---|---|---|---|---|---|
 | 1 | C | `int  x = 1;` | `int x = 1;` | default | ✗ (identity path: raw text differs) | Changed / Important |
 | 2 | C | `int  x = 1;` | `int x = 1;` | ws-off | ✓ | Changed / Unimportant |
-| 3 | C | `int x;` | `intx;` | ws-off | ✗ (`[Kw int][Id x]` vs `[Id intx]`) | Changed / Important |
+| 3 | C | `int x;` | `intx;` | ws-off | ✗ (`[Kw int][Id x]` vs `[Id intx]`; wave 3: `int`·SEP·`x;` vs `intx;`) | Changed / Important |
 | 4 | Everything Else | `a b` | `ab` | ws-off | ✓ (TEXT `ab`, D-14) | Changed / Unimportant |
 | 5 | C | `x = 1; // old` | `x = 1; // new` | `--unimportant Comment` | ✓ | Changed / Unimportant |
 | 6 | C | `x = 1; // old` | `x = 1; // new` | default | ✗ | Changed / Important |
@@ -7163,7 +7605,7 @@ the diff `TrivialSet`.
 | 12 | Python | `    return x` | `  return x` | ws-off | ✗ (the `Indent` element stays important) | Changed / Important |
 | 13 | Python | `x = 1   ` | `x = 1` | default | ✓ (the `Whitespace` element ships `important = false`) | Changed / Unimportant |
 | 14 | C | `   b */` (comment continuation) | `b */` | ws-off | ✓ (leading ws excluded from the token, D-13) | Changed / Unimportant |
-| 15 | Everything Else | `x  ` | `x` | default | ✗ | Changed / Important |
+| 15 | Everything Else | `x  ` | `x` | default | ✗ | Changed / Important (*wave 3:* normative for every engine with closeness; the scorer gives 999 to texts equal after removing whitespace, §2.15.3, so the pair is Changed, not two orphans) |
 | 16 | COBOL | `…` cols 1–72 equal, cols 73–80 `AB000010` vs `AB000020` | | default | ✓ (`Identification` ships unimportant) | Changed / Unimportant |
 | 17 | any | `$Id: 12 $` | `$Id: 13 $` | unimportant `\$Id:[^$]*\$` (regex) | ✓ (both trivial) | Changed / Unimportant |
 | 18 | any | `` (blank) | (no counterpart) | default | — | LeftOnly / Important (orphans always important) |
@@ -7176,7 +7618,8 @@ the diff `TrivialSet`.
 `element_important(format, e)` and `ElementInfo::case_sensitive` are true. Then:
 
 ```
-key(line)     = compare_line_endings ? [eol kind byte] ++ raw line bytes : raw line bytes
+key(line)     = compare_line_endings ? [eol kind byte] ++ raw line bytes : raw line bytes        (original)
+key(line)     = raw line bytes ++ (eol == Artificial ? ART : compare_line_endings ? EOL(kind) : ∅)  (wave 3)
 trivial(line) ⇔ the line is empty
 no tokenisation runs; start states are computed lazily by TextComparison::prepare_spans
 ```
@@ -7186,6 +7629,12 @@ the raw line, and equal raw lines tokenise identically; so two lines have equal 
 equal raw text (and equal endings when compared). Both paths induce the same equivalence relation on lines, so
 interned ids, alignments, rows, sections and verdicts are identical (property P-TC-7 compares both paths with
 `CompareInput::force_tokenize`). Closeness profiles use the important text, which here is the raw line.
+
+*Wave 3:* "equal raw lines tokenise identically" is false in different tokenizer states (a line inside and
+outside a block comment), which broke the argument above for multi-line grammars. With the key of §2.13.2 (wave
+3) nothing is dropped or folded under identity rules, so the general key **is** the identity key, byte for byte,
+in every state: the equivalence holds for every grammar (P-TC-7 runs Everything Else, a single-line grammar,
+Rust and XML, and the general path forced by a never-matching unimportant pattern).
 
 ### 2.14 Alignment engines (TC-010…TC-012; D-16, D-36, D-43, D-54)
 
@@ -7327,6 +7776,7 @@ no budget (§2.14.3).
 sim(i, j) = 1000 if key(A[i]) == key(B[j])
           = 0    if either line is trivial
           = bigram_similarity(profile(A[i]), profile(B[j]))   // profile over the line's important text (§2.13.2 payloads)
+            (wave 3: the scorer of §2.15.3, ≤ 999, under the scorer work budget below)
 allowed(i, j) ⇔ sim(i, j) ≥ threshold_permille
 M[0][*] = M[*][0] = 0
 M[i][j] = max( M[i−1][j], M[i][j−1], allowed(i−1, j−1) ? M[i−1][j−1] + sim(i−1, j−1) : −∞ )
@@ -7336,7 +7786,20 @@ output in document order: Delete(unpaired left lines before a pair), Insert(unpa
         then the pair (Equal if keys are equal, else Changed); finally Delete/Insert the remainders
 budget: if p·q > max_cells_per_gap, or the cumulative cells would exceed max_cells_total, the gap is paired
         positionally and warning closeness_budget_exhausted is added
+scorer budget (wave 3, hikasa-text): every scorer call costs 16 + chars(sample A[i]) + chars(sample B[j]) units,
+        every profile built 16 + 4·chars(sample) units, and a call whose length bound (below) cannot reach the
+        threshold 4 units (it returns 0: such a pair is never allowed, so the DP result is unchanged); the budget
+        of one alignment is 16·(n + m) + 40,000,000 units; once spent, every further call returns 0 (the rest of
+        the gap stays unpaired) and warning closeness_budget_exhausted is added (once)
 ```
+
+*Wave 3 (review decision 3):* the cell budgets bounded the number of scorer calls, not their cost, which grew with
+the line length (two unrelated 3.8 MiB files took 44 s, one 100 MiB line used 8 B per char in profiles). The
+scorer works on bounded samples and counts its work; counts, never time, decide (T6): hikasa-diff calls the scorer
+in a fixed order (one DP at a time, on the calling thread), so the result does not depend on the pool. Profiles
+are cached in one window per side (a contiguous run of ≤ 2,048 line indices; the inner side of a DP has at most
+2,000 lines). The scorer returns 0 at once after cancellation, and one call costs O(256), so the DP's checks every
+4,096 cells stay a few milliseconds apart (G4).
 
 INV-CLOSE-1: the pairs are strictly increasing in both coordinates. INV-CLOSE-2: every pair has
 `sim ≥ threshold`. INV-CLOSE-3: the total similarity is maximal, checked by brute force for `p, q ≤ 6`.
@@ -7355,6 +7818,25 @@ bigram_similarity(a, b) = (|a| + |b| == 0) ? 1000 : ⌊2000 × |a ∩ b|_multise
 ```
 
 The computation is integer-only, symmetric, and gives 1000 iff the multisets are equal.
+
+*Wave 3 (review decision 1; the hikasa-text scorer, binding):* the definition above leaves one-char texts without a
+common bigram with anything, so §2.13.3 row 15 (`x  ` vs `x`) and one-token or brace lines (`}` vs `};`) never
+paired. The scorer of a pair of lines with different keys is:
+
+```
+sample(line) = the first 256 chars of the line's important text (the key without its markers, §2.13.2)
+sim(a, b) = 999                                   if the samples are equal after removing White_Space chars
+          = ⌊2000 × |A ∩ B| / (|A| + |B|)⌋        else if either sample has fewer than 3 chars, where A and B are
+                                                   the char multisets of the samples (`}` vs `};` = 666)
+          = bigram_similarity(profile(sample a), profile(sample b))   otherwise
+          capped at 999 (1000 stays reserved for equal keys, which hikasa-diff scores itself)
+```
+
+Integer-only, symmetric and deterministic. Lines longer than 256 chars are compared by their first 256 chars of
+important text (documented approximation: the score of one call is O(256) whatever the line length). The bigram
+intersection is computed with a branch-free merge (same value). A length bound (999 when the samples' whitespace-
+free lengths are equal, else ⌊2000·min / (x + y)⌋ over the char counts, or the bigram counts) skips pairs that
+cannot reach the threshold.
 
 ### 2.16 Inline differences (TC-014)
 
@@ -7376,6 +7858,9 @@ inline_diff(a, b, opts):
 
 The classification in hikasa-text (`TextComparison::inline`) works per row:
 
+0. *Wave 3 (review decision 6):* on a `Changed`/`Unimportant` row every range is unimportant: the keys are equal,
+   so no important char differs (a case change next to an ignored space, `Hello World` vs `helloworld` under
+   `--unimportant whitespace,case`, is blue, never red). Steps 1–3 apply to Important rows.
 1. For each pair of corresponding differing ranges (left part ↔ right part of the same hunk), if
    `fold(left) == fold(right)` and every char involved has a case-insensitive class, the pair is
    **unimportant**. This is a case-only change inside a case-insensitive element.
@@ -7383,6 +7868,14 @@ The classification in hikasa-text (`TextComparison::inline`) works per row:
    importance from §2.13.1).
 3. Finally, ranges are widened to grapheme-cluster boundaries (`unicode-segmentation`), so that a combining
    mark is never split.
+
+*Wave 3 (bounded on long lines, review decision 8):* when either line is longer than 4 × `max_line_chars` bytes
+(so certainly over the char limit), the whole-line ranges are computed by a block-wise byte scan of the common
+prefix and suffix (backed off to char boundaries; the result equals `inline_diff`'s). The classification uses the
+spans of `TextComparison::spans`, which cover the first 256 KiB of a line (`SPAN_LIMIT_BYTES`; the rest is one
+span of class `Other`, important), steps 1 and 2 walk the spans (never one call per byte), step 1 tests the
+classes before folding the texts, and grapheme boundaries are found locally at each range end
+(`GraphemeCursor`). One call is O(line length) memory copies at most.
 
 INV-INLINE-1: ranges are sorted, disjoint, non-empty and on char boundaries. INV-INLINE-2: removing the ranges
 leaves an equal "common" text on both sides. INV-INLINE-3: if `a == b` there are no ranges. INV-INLINE-4: the
@@ -7398,6 +7891,11 @@ Rows are expanded from the runs, in order:
   `compare_line_endings` is set (EOL is ignored otherwise). Else the row is `Changed`/`Unimportant`: the keys
   are equal, so only unimportant characters differ.
 - **Changed pair**: `Changed`/`Important`.
+- *Wave 3:* "raw-equal" means equal text, both or neither ended by an artificial break (TC-003), and equal endings
+  when `compare_line_endings` is set. A **Changed pair whose lines are raw-equal** is `Changed`/`Unimportant`
+  (review decision 2: byte-identical lines never show as important; their keys can differ only through the
+  tokenizer state, e.g. a case-insensitive number inside and outside a block comment). The identity path needs no
+  check (its keys are the raw lines plus end markers).
 - **Delete `i`**: `LeftOnly`, Important if `orphans_always_important || !trivial(i)`, else Unimportant.
   **Insert `j`**: `RightOnly`, by the same rule.
 
@@ -7469,12 +7967,18 @@ merging. The patch renderers use exactly this view, so the "Context" display and
 
 ```
 quick_compare_bytes(L, R, format, rules, load):
+  0. (wave 3) format conversion is External and no runner is given → Error (the Convert/unsupported error of
+     load_document without a runner)
   1. L == R                                    → BinarySame
+  1b. (wave 3) External conversion of both sides with the runner, as load_document's byte stage; steps 2–6 see the
+     converted bytes (the documents are marked converted)
   2. sniff(L) or sniff(R) is binary            → BinaryDifferent (D-12)
   3. build both documents (TextDocument::from_bytes) and compute keys (§2.13) on the same code path as compare()
      (identity fast path included); a document limit hit (D-43) → Error{too_large}
   4. key sequences equal → every line pair raw-equal (EOL per rules) ? RulesSame : UnimportantOnly
   5. rules.importance.orphans_always_important → ImportantDifferences        (shortcut, no alignment: linear time)
+     (wave 3: only when the line counts differ or both sides' keys are context-free — every line's key equals the
+     key it gets from the Normal tokenizer state, checked by re-tokenising the lines that start in another state)
   6. otherwise run the identical alignment and row classification as compare() and return verdict(false)
 
 RulesComparator::compare(l, r, ctl):
@@ -7495,11 +7999,23 @@ RulesComparator::compare(l, r, ctl):
 3. Step 5: when the key sequences differ, every alignment has at least one non-Equal run (INV-ALIGN-1/2). Such a
    run yields a Changed row (always Important) or an orphan row, which is Important because
    `orphans_always_important` is on. So `compare` has an Important row and returns ImportantDifferences.
+   *Wave 3:* a Changed row is Important unless its lines are raw-equal (§2.17.1). With differing line counts some
+   row is an orphan. With equal counts and context-free keys, raw-equal lines have equal keys, so no Changed pair
+   is raw-equal. Otherwise step 5 is skipped and step 6 decides.
 4. Step 6 runs the same functions.
 
 A property test checks the theorem for every algorithm and both values of `orphans_always_important`
 (P-TC-2, §6.2.5). `RulesComparator` adds only the documented size limit and the D-11/D-15 format rules, which
 `hikasa quick --rules` applies identically.
+
+*Wave 3 (review decisions 7 and 8):* the theorem needs both paths to use the same regex limits for the unimportant
+patterns and the same External conversion runner. `quick_compare_bytes_with(.., &QuickOptions { limits, external },
+..)` and `compare_with_limits(.., limits, ..)` take them; `RulesComparator` compiles with `registry.limits()` and
+takes the runner with `with_external(temp_dir, runner)`; a session passes the same registry limits and runner to
+`load_document`/`compare_with_limits` for `text compare` (tests `regex_limits_agree_between_rules_comparator_and_compare`,
+`external_conversions_agree_on_every_path`). In `RulesComparator` step c, the right side is detected only for the
+`format_mismatch` warning: a right-side detection error (a user format that does not compile) no longer fails the
+pair; the left format is used and the warning names the error.
 
 ### 2.20 Binary compare and CRC (FC-025, VFS-020, ARCH-081)
 
@@ -8350,9 +8866,9 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 
 | Operation | Steady state | Peak (target) |
 |---|---|---|
-| Text compare (per side) | rope ≈ 1.05 × text bytes, plus 8 B/line line table, 4 B/line key ids, 1 B/line weights (Standard only), 8 B/line start states (multi-line grammars only) | raw bytes are dropped after `bytes_identical`; key arenas are transient (≤ text bytes + 8 B/line). Total peak ≤ 3 × (L + R bytes) + 64 B × (L + R lines) + 32 MiB (gate G1) |
+| Text compare (per side) | rope ≈ 1.05 × text bytes, plus 8 B/line line table, 4 B/line key ids, 1 B/line weights (Standard only), 8 B/line start states (multi-line grammars only) | raw bytes are dropped after `bytes_identical`; key arenas are transient (≤ text bytes + 8 B/line; *wave 3:* ≈ text bytes on both paths, worst case ≈ 2 × text + 2 B/line, §0.8). Total peak ≤ 3 × (L + R bytes) + 64 B × (L + R lines) + 32 MiB (gate G1; measured on the G1 input: 294 MiB of 427 MiB; inputs whose keys reach the worst case can exceed the formula). Unimportant-pattern matches are streamed (O(patterns) per line, never per match) |
 | Rows | 12 B/row, plus sections | — |
-| Closeness | — | ≤ `max_cells_per_gap` × 2 B (8 MB) per gap; one gap at a time; total cells ≤ `max_cells_total` |
+| Closeness | — | ≤ `max_cells_per_gap` × 2 B (8 MB) per gap; one gap at a time; total cells ≤ `max_cells_total`; *wave 3:* the scorer's profile windows hold ≤ 2 × 2,048 samples of ≤ 256 chars (≤ 3 KiB each, ≈ 12 MiB worst case) |
 | Folder compare | ≤ 256 B per node with both sides' metadata, excluding names (§1.6.6) → ≈ 26 MB + names for 100k pairs | plus in-flight directory batches |
 | Content tests in folder compare | — | ≤ `content_memory_budget_mib` (default 1 GiB) of file content in flight across all tasks (D-25), plus the comparators' stream buffers |
 
@@ -8573,6 +9089,18 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   - `thumbnail` (buckets fewer and more than rows; iu on and off);
   - inline classification: a case-only SQL keyword change is unimportant, and a comment change inside an
     important line is blue when comments are unimportant.
+  - *Wave 3 (review regressions, `tests/regressions.rs` and unit tests):* the key encoding (identity key = general
+    key in every tokenizer state; `int x` ≠ `intx`, `a + b` = `a+b` under ws-off; end markers); the streamed pattern
+    union equals the sorted union and stops on cancellation; the scorer values (`x  `/`x` 999, `}`/`};` 666,
+    `x`/`y` 0) and its branch-free Dice equals `bigram_similarity`; short lines and braces pair as Changed rows
+    with every closeness engine; byte-identical lines are never Important; the quick step-5 guard; an inserted line
+    break never equals an artificial wrap; Changed/Unimportant rows are all blue; `Auto` resolution (D-36); the
+    scorer budget (`closeness_budget_exhausted`, pool-independent); External conversions and regex limits agree on
+    every path (fake runner); `lossy_decode` once per side; a right-side format compile error; stream options;
+    `inline()`/`spans()` bounds on long lines and equality with `inline_diff`; chunked decoding equals the one-shot
+    decode for nine encodings and piece sizes 1–64; the cancellable Sorted conversion equals `sort_lines`; the
+    D-43 guard counts wrapped pieces; a cancel during decoding is `Err(Cancelled)`; `Everything Else` handling; a
+    truncated document warns.
 - **Golden fixtures:** `tests/fixtures/compare/<case>/{left.<ext>, right.<ext>, rules.toml?, expected.json}`.
   `expected.json` is the canonical serialisation of runs, rows (run-length compressed), sections, statistics,
   verdict and warnings. There are at least 25 cases, covering every row of §2.13.3 and every algorithm.
@@ -8581,16 +9109,24 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   - P-TC-2: the consistency theorem, `quick_compare_bytes == compare().verdict(false)`, for every algorithm and
     both values of `orphans_always_important` (covers the step-5 shortcut).
   - P-TC-3: pool `None` gives the same result as pool 8.
-  - P-TC-4: view invariants, and Context visibility equals the brute-force definition.
+  - P-TC-4: view invariants, and Context visibility equals the brute-force definition. *Wave 3:* the thumbnail
+    cells equal a per-row recount (contents, not only the length).
   - P-TC-5: statistics identities (`rows = same + changed + left_only + right_only`, and so on).
   - P-TC-6: ignore-unimportant only ever makes the verdict "more same".
   - P-TC-7: the identity fast path equals the general path (`force_tokenize`) for random texts under rules for
-    which `is_identity` holds (D-53).
+    which `is_identity` holds (D-53). *Wave 3:* also for grammars with multi-line items (Rust, XML block comments)
+    and for the general path forced by a never-matching unimportant pattern.
   - P-TC-8: the runs passed to `CompareObserver::partial`, concatenated, form a prefix of the final runs, and the
     observer never changes the result.
 - **Benches:** `text_compare_1m_auto`, `text_compare_1m_standard`, `text_compare_1m_identity` (1M lines, about
   1 % changes, C-like); `gui_enablers` (G5). `perf_rss` is an `#[ignore]` test that reads `VmHWM` from
-  `/proc/self/status` (Linux) and asserts G1's memory bound.
+  `/proc/self/status` (Linux) and asserts G1's memory bound. *Wave 3:* the `#[ignore]` gate
+  `g4_cancel_latency_adversarial` (tests/gates.rs) measures G4 through `load_document` and `compare` on the review's
+  adversarial inputs (64 × 200,000-char and 2,000 × 2,000-char unrelated lines, one 100 MiB line per side on the
+  identity and C paths with `inline`/`spans` timings, a dense unimportant pattern on 50 MiB lines in compare and
+  quick, 256 MiB documents in UTF-8, UTF-16LE and windows-1252 being decoded, 2 × 7 MiB repetitive C with `Auto`
+  under 3 s), with total times and peak memory. The global-pool trap keeps every global-pool thread busy, so an
+  implicit global-pool use in any pass (line weights and the pattern runtime-limit pass included) blocks and fails.
 
 #### 6.2.6 hikasa-folder
 
@@ -8604,16 +9140,21 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   orphans, nested orphans, case-only names in both modes, NFC/NFD, extension alignment, kind mismatch,
   symlinks (follow on/off, and a loop), every row of §2.3, other filters, flatten, CRC/binary content, rules
   content with a scripted fake comparator (incl. `rules_size_limit`), the D-48 rows, a one-sided listing
-  failure, fault injection (an unreadable subfolder, a stat error), and cancellation part-way through.
+  failure, fault injection (an unreadable subfolder, a stat error), and cancellation part-way through. Wave 3 adds
+  (§1.6.8): a folder protected on one side only, on every side and as an orphan, in both scan modes; a listing
+  failure in flatten mode; an unlistable orphan folder (Error, not an orphan); excluded broken entries (Filtered
+  with their errors); a link cycle reported as `ELOOP`, in both scan modes (45 cases in all).
 - **Properties:**
   - P-FOLDER-1: `check_invariants` on random tree pairs.
   - P-FOLDER-2: the canonical tree is identical across pools (None/1/8) × listing orders
     (Sorted/Reversed/Shuffled).
   - P-FOLDER-3: swapping the sides mirrors the result (orphans and newer swap) for content methods
     None/CRC/Binary.
-  - P-FOLDER-4: replaying the events against the live model (re-reading the named nodes and the children of
-    listed folders at each event) ends with exactly `to_canonical()` (INV-EVT-3).
-  - P-FOLDER-5: more exclusions never add visible nodes.
+  - P-FOLDER-4: replaying the events against the live model (re-reading the named nodes, the children of
+    listed folders and the ancestors of both at each event) ends with exactly `to_canonical()` (INV-EVT-3, as
+    amended in §1.6.8 item 21).
+  - P-FOLDER-5: more exclusions never add visible nodes (display All; Differences only when no FC-054 pair can
+    arise, §1.6.8 item 13).
   - P-FOLDER-6: the counters and totals equal a recount after every applied batch (a test observer takes a
     `TreeRead` at each event and checks INV-FOLDER-5 on it), and the statistics equal a recount at the end.
   - P-FOLDER-7: `visible_rows` equals a recursive reference implementation of §2.7 for every filter, mode,
@@ -8623,10 +9164,20 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
     `timestamps.enabled = false`, `offset`, size and date filters, DOS letters) (INV-RULES-2).
 - **Prefilter:** a counting `Vfs` wrapper proves that excluded names are not stat'ed, and that the filtered side
   of an FC-054 pair is stat'ed exactly once.
-- **Integration (LocalVfs + tempdir):** real mtimes through `filetime`, Unix permissions, a symlink loop, and
-  non-UTF-8 names.
+- **Integration (LocalVfs + tempdir):** real mtimes through `filetime`, Unix permissions, a symlink loop (a link
+  back to an ancestor and a self link reported as `ELOOP`, both with `SYMLINK_LOOP`), and non-UTF-8 names
+  (including two different ones that must not pair under case-insensitive alignment).
+- **Regressions (wave 3, `tests/regressions.rs`):** a panic in the scan leaves the model finished and incomplete;
+  a cancellation right after a 200,000-entry folder was listed, or while its batch is planned, drops the batch
+  (no partial insertion, `complete == false`); a cancellation at any moment keeps batches whole; an FC-054
+  re-stat storm stops at the cancellation (no stat after it); 20,000 entries whose stat failed pair in linear
+  time; quick tests on filtered stat'ed pairs; a one-sided protected folder gives NoDifferences in both modes.
 - **Benches:** `folder_scan_100k` (generated in a tempdir; identical trees, and trees with 1 % differences);
-  `folder_model_1m` (a 1M-entry pair generated in `MemoryVfs`; memory per node).
+  `folder_model_1m` (a 1M-entry pair generated in `MemoryVfs`; memory per node); `cancel_latency` (G4: the 100k
+  scan cancelled half-way; one folder of 1,000,000 entries per side cancelled right after its listing and at
+  delays that land in every step of its batch; 200,000 FC-054 re-stats cancelled half-way). The benches assert
+  their gates (G2 warm on the fastest of five runs, G4 on the worst latency, `folder_model_1m`);
+  `HIKASA_GATES=report` only prints them (noisy developer machines).
 
 #### 6.2.7 hikasa-report
 
@@ -9134,13 +9685,13 @@ Implementation notes for preset authors (normative):
 | INV-RULES-1 | `TextRules::from_toml(to_toml(r)) == r` for every value | rules round-trip test |
 | INV-RULES-2 | `FolderRules::from_toml(to_toml(r)) == r` for every value, including `timestamps.enabled = false`, offsets and filters | P-RULES-2 |
 | INV-ENC-1 | decoding is total; UTF round trips | P-ENC-1/2 |
-| INV-KEY-1 | key encoding is prefix-free, hence injective over atom sequences | unit test with crafted collisions |
-| INV-KEY-2 | trivial ⇔ the key has no TEXT or TOKEN atom (identity path: ⇔ the line is empty) | key table |
-| INV-KEY-3 | the identity fast path and the general path induce the same equivalence on lines, hence identical results (D-53) | P-TC-7 |
+| INV-KEY-1 | key encoding is prefix-free, hence injective over atom sequences (*wave 3:* text bytes < 0xF8, self-delimiting markers ≥ 0xF8) | unit test with crafted collisions |
+| INV-KEY-2 | trivial ⇔ the key has no TEXT or TOKEN atom (identity path: ⇔ the line is empty) (*wave 3:* ⇔ the key has no text byte) | key table |
+| INV-KEY-3 | the identity fast path and the general path induce the same equivalence on lines, hence identical results (D-53) (*wave 3:* for every grammar: under identity rules the general key equals the identity key byte for byte) | P-TC-7 (multi-line grammars, never-matching pattern), unit test `all_important_keys_are_the_raw_line_in_every_state` |
 | INV-DOC-1 | lines end only at CR, LF or CRLF; lines + non-artificial endings reproduce the decoded text | P-TC-1 helper |
 | INV-DOC-2 | at most one `None` ending, on the last line | unit tests |
 | INV-ROW-1 | `Same` ⇔ importance `None` | `check_invariants` |
-| INV-TC-1..8 | rows correspond 1:1 to alignment rows; line coverage and order on both sides; sections are maximal, disjoint and cover exactly the non-Same rows; statistics identities; the verdict rules; quick consistency; parallel = sequential; importance follows the rules | `TextComparison::check_invariants`, P-TC-* |
+| INV-TC-1..8 | rows correspond 1:1 to alignment rows; line coverage and order on both sides; sections are maximal, disjoint and cover exactly the non-Same rows; statistics identities; the verdict rules; quick consistency; parallel = sequential; importance follows the rules (*wave 3:* INV-TC-8 — Equal pairs are Same iff raw-equal, Changed pairs are Important iff not raw-equal, raw equality including the artificial-break flag, §2.17.1) | `TextComparison::check_invariants`, P-TC-* |
 | INV-VIEW-1..3 | items cover all rows in order; no adjacent gaps; Context merges like unified hunks | P-TC-4 |
 | INV-FOLDER-1 | a well-formed tree: parent and child links agree; the root has no parent | `FolderComparison::check_invariants` |
 | INV-FOLDER-2 | kinds never mix inside a node (D-20) | P-FOLDER-1 |
@@ -9148,11 +9699,11 @@ Implementation notes for preset authors (normative):
 | INV-FOLDER-4 | an orphan node has exactly one present side | P-FOLDER-1 |
 | INV-FOLDER-5 | every stored counter (`Aggregates`, both iu values) and every `SideTotals` equals a recount, after every applied batch and at the end; statistics equal a recount | P-FOLDER-1, P-FOLDER-6 |
 | INV-FOLDER-6 | a folder's state is `own_category(F, false)` of its counters (§2.6.4) | P-FOLDER-1 |
-| INV-FOLDER-7 | `filtered` flags agree with re-evaluating the filters; name-only entries only occur on filtered sides | P-FOLDER-5 |
+| INV-FOLDER-7 | `filtered` flags agree with re-evaluating the filters; name-only entries only occur on filtered sides; an entry without metadata is filtered iff the name masks exclude its name (file masks) and is never name-only (§1.6.8 item 3) | P-FOLDER-5 |
 | INV-FOLDER-8 | `content.is_some()` ⇒ kind File, both sides present and stat'ed, not filtered | P-FOLDER-1 |
 | INV-FOLDER-9 | `visible_rows` equals the recursive "visible and every ancestor listed" definition of §2.7 | P-FOLDER-7 |
 | INV-FOLDER-10 | ignore-unimportant monotonicity: a difference category under `iu = true` is a difference under `iu = false`; Unknown/Error do not depend on `iu` | P-FOLDER-8 |
-| INV-EVT-1..3 | `Started` first and `Finished` last; `FolderListed{F}` precedes every event naming a child of F; every event is sent after its mutation is visible, so re-reading the named nodes (and the children of listed folders) at each event ends with exactly the final tree | P-FOLDER-4 |
+| INV-EVT-1..3 | `Started` first and `Finished` last; `FolderListed{F}` precedes every event naming a child of F; every event is sent after its mutation is visible, so re-reading the named nodes, the children of listed folders and the ancestors of both (`TreeRead::ancestors`; amended in §1.6.8 item 21: ancestors' counters change without being named) at each event ends with exactly the final tree | P-FOLDER-4 |
 | INV-RPT-1 | reports are byte-identical for identical inputs | P-RPT-2 |
 | INV-CLI-1..6 | the CLI invariants of §1.9.2 | §6.3 |
 | INV-IPC-1..4 | one immediate response per request; at most one `ViewClosed` per wait; frames ≤ `MAX_FRAME_LEN`; an unknown `type` or a body that does not decode is answered with the request's own id (D-46) | IPC tests |

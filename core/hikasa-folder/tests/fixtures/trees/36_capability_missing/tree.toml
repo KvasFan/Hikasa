@@ -1,0 +1,10 @@
+description = "A back-end without modification times: timestamps are not compared and capability_missing is reported once per side"
+[options]
+capabilities = ["read", "list", "seek", "case_sensitive", "symlinks"]
+[[left]]
+path = "a.txt"
+content = "a"
+mtime = "2026-05-01T00:00:00Z"
+[[right]]
+path = "a.txt"
+content = "a"

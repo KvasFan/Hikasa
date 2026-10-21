@@ -1,0 +1,128 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        2
+      ],
+      "right": [
+        0,
+        2
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        2,
+        3
+      ],
+      "right": [
+        2,
+        3
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        2
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        2,
+        3
+      ],
+      "state": "changed",
+      "importance": "important"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        2,
+        3
+      ],
+      "left_lines": [
+        2,
+        3
+      ],
+      "right_lines": [
+        2,
+        3
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 3,
+    "same_rows": 2,
+    "changed_rows": 1,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 1,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 1,
+      "original": 1
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 3,
+    "right_lines": 3
+  },
+  "verdict": {
+    "result": "binary_different"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "binary_different"
+  },
+  "warnings": [
+    {
+      "code": "binary_content",
+      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison (D-12)",
+      "spec": null
+    },
+    {
+      "code": "binary_content",
+      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison (D-12)",
+      "spec": null
+    }
+  ],
+  "inline": [
+    {
+      "row": 2,
+      "left": [
+        [
+          6,
+          7,
+          true
+        ]
+      ],
+      "right": [
+        [
+          6,
+          7,
+          true
+        ]
+      ],
+      "whole_line": false
+    }
+  ]
+}

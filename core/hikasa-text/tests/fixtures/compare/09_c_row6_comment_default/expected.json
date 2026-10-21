@@ -1,0 +1,98 @@
+{
+  "format": "C, C++, C#, ObjC Source",
+  "algorithm": "histogram",
+  "runs": [
+    {
+      "kind": "changed",
+      "left": [
+        0,
+        1
+      ],
+      "right": [
+        0,
+        1
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        1
+      ],
+      "state": "changed",
+      "importance": "important"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        0,
+        1
+      ],
+      "left_lines": [
+        0,
+        1
+      ],
+      "right_lines": [
+        0,
+        1
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 1,
+    "same_rows": 0,
+    "changed_rows": 1,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 1,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 1,
+      "original": 1
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 1,
+    "right_lines": 1
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": [
+    {
+      "row": 0,
+      "left": [
+        [
+          10,
+          13,
+          true
+        ]
+      ],
+      "right": [
+        [
+          10,
+          13,
+          true
+        ]
+      ],
+      "whole_line": false
+    }
+  ]
+}

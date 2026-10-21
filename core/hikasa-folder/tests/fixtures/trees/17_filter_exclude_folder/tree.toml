@@ -1,0 +1,16 @@
+description = "§2.3 row 3: -obj\\ excludes obj and x/obj with their subtrees (not listed, name-only)"
+[[left]]
+path = "obj/a.o"
+content = "1"
+[[right]]
+path = "obj/a.o"
+content = "2"
+[[left]]
+path = "x/obj/b.o"
+content = "1"
+[[left]]
+path = "x/keep.txt"
+content = "k"
+[[right]]
+path = "x/keep.txt"
+content = "k"

@@ -1,0 +1,4 @@
+[criteria]
+filename_case = true
+[alignment]
+case = "insensitive"

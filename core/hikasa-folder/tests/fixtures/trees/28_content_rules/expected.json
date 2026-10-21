@@ -1,0 +1,310 @@
+{
+  "description": "Rules content with the scripted fake comparator: RulesSame (CRLF), UnimportantOnly (Different, Same under ignore-unimportant), ImportantDifferences, Error, and the size-limit fallback (RULES_SKIPPED_SIZE)",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 3,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 6,
+      "folders": 1,
+      "bytes": 46
+    },
+    "right": {
+      "files": 6,
+      "folders": 1,
+      "bytes": 36
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 1,
+      "unimportant_only": 2,
+      "important_differences": 1,
+      "binary_different": 0,
+      "error": 1,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 4,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 6,
+      "folders": 1,
+      "bytes": 46
+    },
+    "right": {
+      "files": 6,
+      "folders": 1,
+      "bytes": 36
+    },
+    "content": {
+      "binary_same": 1,
+      "rules_same": 1,
+      "unimportant_only": 2,
+      "important_differences": 1,
+      "binary_different": 0,
+      "error": 1,
+      "not_compared": 0
+    }
+  },
+  "warnings": [
+    "rules_size_limit"
+  ],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "sub",
+          "kind": "folder",
+          "state": "different",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "sub",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "sub",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "only_unimportant.txt",
+              "kind": "file",
+              "state": "different",
+              "scan": "not_applicable",
+              "diffs": [
+                "size",
+                "content"
+              ],
+              "time": "same",
+              "content": "unimportant_only",
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "only_unimportant.txt",
+                "kind": "file",
+                "size": 4,
+                "dir": null
+              },
+              "right": {
+                "name": "only_unimportant.txt",
+                "kind": "file",
+                "size": 3,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "big.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": "binary_same",
+          "flags": [
+            "rules_skipped_size"
+          ],
+          "errors": [],
+          "left": {
+            "name": "big.txt",
+            "kind": "file",
+            "size": 19,
+            "dir": null
+          },
+          "right": {
+            "name": "big.txt",
+            "kind": "file",
+            "size": 19,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "broken.txt",
+          "kind": "file",
+          "state": "error",
+          "scan": "not_applicable",
+          "diffs": [
+            "size"
+          ],
+          "time": "same",
+          "content": "error",
+          "flags": [],
+          "errors": [
+            {
+              "side": null,
+              "kind": "invalid_data"
+            }
+          ],
+          "left": {
+            "name": "broken.txt",
+            "kind": "file",
+            "size": 11,
+            "dir": null
+          },
+          "right": {
+            "name": "broken.txt",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "crlf.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [
+            "size"
+          ],
+          "time": "same",
+          "content": "rules_same",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "crlf.txt",
+            "kind": "file",
+            "size": 6,
+            "dir": null
+          },
+          "right": {
+            "name": "crlf.txt",
+            "kind": "file",
+            "size": 5,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "important.txt",
+          "kind": "file",
+          "state": "different",
+          "scan": "not_applicable",
+          "diffs": [
+            "content"
+          ],
+          "time": "same",
+          "content": "important_differences",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "important.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "important.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "spaces.txt",
+          "kind": "file",
+          "state": "different",
+          "scan": "not_applicable",
+          "diffs": [
+            "size",
+            "content"
+          ],
+          "time": "same",
+          "content": "unimportant_only",
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "spaces.txt",
+            "kind": "file",
+            "size": 3,
+            "dir": null
+          },
+          "right": {
+            "name": "spaces.txt",
+            "kind": "file",
+            "size": 2,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,292 @@
+{
+  "description": "Exclude protected (FC-053, FC-054, §2.3): a folder that is SYSTEM+HIDDEN on one side only is listed on both sides and its identical contents compare as same (the protected side is filtered, teal); a folder protected on every side is Filtered and not listed; a protected orphan folder is Filtered. Verdict: no differences",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "left": {
+      "files": 3,
+      "folders": 1,
+      "bytes": 3
+    },
+    "right": {
+      "files": 3,
+      "folders": 2,
+      "bytes": 3
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "left": {
+      "files": 3,
+      "folders": 1,
+      "bytes": 3
+    },
+    "right": {
+      "files": 3,
+      "folders": 2,
+      "bytes": 3
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "both",
+          "kind": "folder",
+          "state": "filtered",
+          "scan": "not_scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "both",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "both",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "lonely",
+          "kind": "folder",
+          "state": "filtered",
+          "scan": "not_scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "lonely",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        },
+        {
+          "name": "sys",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "sys",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "sys",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "inner",
+              "kind": "folder",
+              "state": "same",
+              "scan": "scanned",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "inner",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "inner",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "children": [
+                {
+                  "name": "b.txt",
+                  "kind": "file",
+                  "state": "same",
+                  "scan": "not_applicable",
+                  "diffs": [],
+                  "time": "same",
+                  "content": null,
+                  "flags": [],
+                  "errors": [],
+                  "left": {
+                    "name": "b.txt",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "right": {
+                    "name": "b.txt",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "a.txt",
+              "kind": "file",
+              "state": "same",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": "same",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "a.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "right": {
+                "name": "a.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "top.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

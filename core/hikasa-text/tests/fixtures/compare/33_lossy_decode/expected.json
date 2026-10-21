@@ -1,0 +1,117 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        1
+      ],
+      "right": [
+        0,
+        1
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        1,
+        2
+      ],
+      "right": [
+        1,
+        2
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        1
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        1,
+        2
+      ],
+      "state": "changed",
+      "importance": "important"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        1,
+        2
+      ],
+      "left_lines": [
+        1,
+        2
+      ],
+      "right_lines": [
+        1,
+        2
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 2,
+    "same_rows": 1,
+    "changed_rows": 1,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 1,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 1,
+      "original": 1
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 2,
+    "right_lines": 2
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [
+    {
+      "code": "lossy_decode",
+      "message": "<memory>: 1 malformed byte sequence(s) replaced with U+FFFD while decoding as UTF-8",
+      "spec": null
+    }
+  ],
+  "inline": [
+    {
+      "row": 1,
+      "left": [
+        [
+          4,
+          7,
+          true
+        ]
+      ],
+      "right": [],
+      "whole_line": false
+    }
+  ]
+}

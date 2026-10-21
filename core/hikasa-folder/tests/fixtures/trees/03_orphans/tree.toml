@@ -1,0 +1,19 @@
+description = "Orphan files and folders on both sides"
+[[left]]
+path = "both.txt"
+content = "1"
+[[right]]
+path = "both.txt"
+content = "1"
+[[left]]
+path = "left_only.txt"
+content = "l"
+[[right]]
+path = "right_only.txt"
+content = "r"
+[[left]]
+path = "left_dir"
+kind = "dir"
+[[right]]
+path = "right_dir"
+kind = "dir"

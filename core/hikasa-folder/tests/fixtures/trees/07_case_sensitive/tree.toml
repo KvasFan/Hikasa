@@ -1,0 +1,13 @@
+description = "Case-sensitive alignment (§2.5.2 row 3): README and readme are two orphans"
+[[left]]
+path = "README"
+content = "r"
+[[right]]
+path = "readme"
+content = "r"
+[[left]]
+path = "Docs/x.txt"
+content = "x"
+[[right]]
+path = "docs/x.txt"
+content = "x"

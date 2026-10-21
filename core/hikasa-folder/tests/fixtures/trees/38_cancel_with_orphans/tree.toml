@@ -1,0 +1,12 @@
+description = "Cancellation after differences were found: verdict differences even though incomplete (D-02)"
+[options]
+cancel_after_listed = 1
+[[left]]
+path = "only_left.txt"
+content = "l"
+[[left]]
+path = "dir/a.txt"
+content = "a"
+[[right]]
+path = "dir/a.txt"
+content = "a"

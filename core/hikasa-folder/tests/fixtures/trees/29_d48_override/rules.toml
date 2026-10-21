@@ -1,0 +1,9 @@
+[criteria]
+filename_case = true
+dos_attributes = "R"
+[criteria.unix]
+permissions = true
+[criteria.content]
+method = "rules"
+[alignment]
+case = "insensitive"

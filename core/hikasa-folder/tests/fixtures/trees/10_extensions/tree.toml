@@ -1,0 +1,16 @@
+description = "align_extensions (§2.5.2 row 7): x.txt aligns with x.csv; x.md is a right orphan; folders never align by stem"
+[[left]]
+path = "x.txt"
+content = "same"
+[[right]]
+path = "x.csv"
+content = "same"
+[[right]]
+path = "x.md"
+content = "m"
+[[left]]
+path = "d.a"
+kind = "dir"
+[[right]]
+path = "d.b"
+kind = "dir"

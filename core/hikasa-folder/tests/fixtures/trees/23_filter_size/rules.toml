@@ -1,0 +1,3 @@
+[filters.other.size]
+cmp = "greater"
+bytes = 1048576

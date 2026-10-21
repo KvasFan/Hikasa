@@ -1,0 +1,317 @@
+{
+  "format": "C, C++, C#, ObjC Source",
+  "algorithm": "histogram",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        2
+      ],
+      "right": [
+        0,
+        2
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        2,
+        3
+      ],
+      "right": [
+        2,
+        3
+      ]
+    },
+    {
+      "kind": "insert",
+      "left": [
+        3,
+        3
+      ],
+      "right": [
+        3,
+        4
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        3,
+        5
+      ],
+      "right": [
+        4,
+        6
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        5,
+        6
+      ],
+      "right": [
+        6,
+        7
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        6,
+        10
+      ],
+      "right": [
+        7,
+        11
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        10,
+        12
+      ],
+      "right": [
+        11,
+        13
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        12,
+        14
+      ],
+      "right": [
+        13,
+        15
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        2
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        2,
+        3
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        3,
+        4
+      ],
+      "state": "right_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        4,
+        6
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        6,
+        7
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        7,
+        11
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        11,
+        13
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        13,
+        15
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        2,
+        4
+      ],
+      "left_lines": [
+        2,
+        3
+      ],
+      "right_lines": [
+        2,
+        4
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        6,
+        7
+      ],
+      "left_lines": [
+        5,
+        6
+      ],
+      "right_lines": [
+        6,
+        7
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        11,
+        13
+      ],
+      "left_lines": [
+        10,
+        12
+      ],
+      "right_lines": [
+        11,
+        13
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 15,
+    "same_rows": 10,
+    "changed_rows": 4,
+    "left_only_rows": 0,
+    "right_only_rows": 1,
+    "important_rows": 5,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 5,
+      "original": 4
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 3,
+    "important_sections": 3,
+    "left_lines": 14,
+    "right_lines": 15
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": [
+    {
+      "row": 2,
+      "left": [
+        [
+          20,
+          23,
+          true
+        ]
+      ],
+      "right": [],
+      "whole_line": false
+    },
+    {
+      "row": 6,
+      "left": [],
+      "right": [
+        [
+          17,
+          24,
+          true
+        ]
+      ],
+      "whole_line": false
+    },
+    {
+      "row": 11,
+      "left": [
+        [
+          8,
+          9,
+          true
+        ],
+        [
+          19,
+          20,
+          true
+        ]
+      ],
+      "right": [
+        [
+          8,
+          9,
+          true
+        ],
+        [
+          19,
+          20,
+          true
+        ]
+      ],
+      "whole_line": false
+    },
+    {
+      "row": 12,
+      "left": [
+        [
+          19,
+          20,
+          true
+        ]
+      ],
+      "right": [
+        [
+          19,
+          20,
+          true
+        ]
+      ],
+      "whole_line": false
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "description": "A followed link back to an ancestor closes a loop (D-33): Error node with SYMLINK_LOOP, not listed",
+  "verdict": "incomplete",
+  "verdict_ignoring_unimportant": "incomplete",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 2,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 2,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 2,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 2,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 2,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 2,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [
+    "symlink_loop"
+  ],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "error",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "dir",
+          "kind": "folder",
+          "state": "error",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "dir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "dir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "up",
+              "kind": "folder",
+              "state": "error",
+              "scan": "failed",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [
+                "left_error",
+                "symlink_loop"
+              ],
+              "errors": [
+                {
+                  "side": "left",
+                  "kind": "io"
+                }
+              ],
+              "left": {
+                "name": "up",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "up",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "children": []
+            },
+            {
+              "name": "x.txt",
+              "kind": "file",
+              "state": "same",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": "same",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "x.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "right": {
+                "name": "x.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

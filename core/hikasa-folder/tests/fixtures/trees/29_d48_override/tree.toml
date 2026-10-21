@@ -1,0 +1,33 @@
+description = "D-48: a content match cancels only TIME and SIZE; ATTRIBUTES, NAME_CASE and PERMISSIONS still make the pair Different (§2.6.2 rows 11–13)"
+[options]
+rules_limit = 1000
+[[left]]
+path = "time_size.txt"
+content = "a\r\n"
+mtime = "2026-05-01T00:00:00Z"
+[[right]]
+path = "time_size.txt"
+content = "a\n"
+[[left]]
+path = "attrs.txt"
+content = "same"
+mtime = "2026-05-01T00:00:00Z"
+dos = "R"
+[[right]]
+path = "attrs.txt"
+content = "same"
+dos = "A"
+[[left]]
+path = "Case.txt"
+content = "x\r\n"
+[[right]]
+path = "case.txt"
+content = "x\n"
+[[left]]
+path = "perm.txt"
+content = "p\r\n"
+mode = 420
+[[right]]
+path = "perm.txt"
+content = "p\n"
+mode = 384

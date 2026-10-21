@@ -34,3 +34,15 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "text_compare"
+harness = false
+
+[[bench]]
+name = "gui_enablers"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

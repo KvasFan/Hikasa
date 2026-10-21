@@ -1,0 +1,14 @@
+description = "Different kinds never align (D-20, §2.5.2 rows 8 and 9): two orphan rows, folder first"
+[[left]]
+path = "x"
+content = "file"
+[[right]]
+path = "x/inner.txt"
+content = "i"
+[[left]]
+path = "l"
+kind = "symlink"
+target = "x"
+[[right]]
+path = "l"
+content = "plain file"

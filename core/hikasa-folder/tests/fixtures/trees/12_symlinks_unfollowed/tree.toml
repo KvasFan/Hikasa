@@ -1,0 +1,23 @@
+description = "Unfollowed symlinks compare their exact targets (LINK_TARGET); a link and its twin are Same"
+[[left]]
+path = "target.txt"
+content = "t"
+[[right]]
+path = "target.txt"
+content = "t"
+[[left]]
+path = "same_link"
+kind = "symlink"
+target = "target.txt"
+[[right]]
+path = "same_link"
+kind = "symlink"
+target = "target.txt"
+[[left]]
+path = "moved_link"
+kind = "symlink"
+target = "target.txt"
+[[right]]
+path = "moved_link"
+kind = "symlink"
+target = "other.txt"

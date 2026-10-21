@@ -1,0 +1,19 @@
+description = "Orphan folders are scanned (scan_orphan_folders = true): their children are orphans of the same side"
+[[left]]
+path = "shared/x.txt"
+content = "x"
+[[right]]
+path = "shared/x.txt"
+content = "x"
+[[left]]
+path = "old/deep/a.txt"
+content = "a"
+[[left]]
+path = "old/b.txt"
+content = "b"
+[[right]]
+path = "new/c.txt"
+content = "c"
+[[right]]
+path = "shared/sub/d.txt"
+content = "d"

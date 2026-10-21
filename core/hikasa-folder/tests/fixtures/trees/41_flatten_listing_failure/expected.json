@@ -1,0 +1,253 @@
+{
+  "description": "Flatten (FC-014) with a folder that cannot be listed on the left: the failed folder is an Error row (one-sided, not an orphan), the right side's files at or below it are Unknown rows (not orphans, not aligned), the error is counted and the verdict is Incomplete, as in the folder tree (30_listing_failure_one_side)",
+  "verdict": "incomplete",
+  "verdict_ignoring_unimportant": "incomplete",
+  "stats": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 3,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "right": {
+      "files": 5,
+      "folders": 0,
+      "bytes": 5
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 3,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "right": {
+      "files": 5,
+      "folders": 0,
+      "bytes": 5
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [
+    "entry_error"
+  ],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "error",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "sub",
+          "kind": "folder",
+          "state": "error",
+          "scan": "failed",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_error"
+          ],
+          "errors": [
+            {
+              "side": "left",
+              "kind": "permission_denied"
+            }
+          ],
+          "left": {
+            "name": "sub",
+            "kind": "dir",
+            "size": 0,
+            "dir": ""
+          },
+          "right": null,
+          "children": []
+        },
+        {
+          "name": "top.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": ""
+          },
+          "right": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": ""
+          },
+          "children": []
+        },
+        {
+          "name": "w.txt",
+          "kind": "file",
+          "state": "unknown",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "w.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": "sub"
+          },
+          "children": []
+        },
+        {
+          "name": "x.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "x.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": "other"
+          },
+          "right": {
+            "name": "x.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": "other"
+          },
+          "children": []
+        },
+        {
+          "name": "x.txt",
+          "kind": "file",
+          "state": "unknown",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "x.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": "sub"
+          },
+          "children": []
+        },
+        {
+          "name": "y.txt",
+          "kind": "file",
+          "state": "unknown",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "y.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": "sub/deep"
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

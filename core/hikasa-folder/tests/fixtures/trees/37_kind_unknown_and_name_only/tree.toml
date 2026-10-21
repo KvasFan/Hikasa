@@ -1,0 +1,20 @@
+description = "Name-only entries (D-45): an excluded file with a known kind is never stat'ed; an entry whose record states no kind is stat'ed and then filtered"
+[[left]]
+path = "keep.txt"
+content = "k"
+[[right]]
+path = "keep.txt"
+content = "k"
+[[left]]
+path = "skip.log"
+content = "s"
+[[right]]
+path = "skip.log"
+content = "s2"
+[[left]]
+path = "unknown.log"
+content = "u"
+kind_unknown = true
+[[right]]
+path = "unknown.log"
+content = "u"

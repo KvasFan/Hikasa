@@ -1,0 +1,173 @@
+{
+  "description": "§2.3 row 11: size:>1MB keeps big.bin (2 MiB) and filters small files after stat'ing them",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 2097152
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 2097152
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 2097152
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 2097152
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "big.bin",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "big.bin",
+            "kind": "file",
+            "size": 2097152,
+            "dir": null
+          },
+          "right": {
+            "name": "big.bin",
+            "kind": "file",
+            "size": 2097152,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "small.txt",
+          "kind": "file",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [
+            "size"
+          ],
+          "time": "same",
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "small.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "small.txt",
+            "kind": "file",
+            "size": 9,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

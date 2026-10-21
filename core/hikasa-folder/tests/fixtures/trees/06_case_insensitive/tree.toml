@@ -1,0 +1,22 @@
+description = "Case-insensitive alignment (§2.5.2 rows 2 and 4): README aligns with readme; with A and a on the left, a aligns at L1 and A is an orphan; filename_case flags NAME_CASE"
+[[left]]
+path = "README"
+content = "r"
+[[right]]
+path = "readme"
+content = "r"
+[[left]]
+path = "A"
+content = "1"
+[[left]]
+path = "a"
+content = "1"
+[[right]]
+path = "a"
+content = "1"
+[[left]]
+path = "Docs/Guide.md"
+content = "g"
+[[right]]
+path = "docs/guide.MD"
+content = "g"

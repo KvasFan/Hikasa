@@ -1,0 +1,13 @@
+description = "§2.3 row 11: size:>1MB keeps big.bin (2 MiB) and filters small files after stat'ing them"
+[[left]]
+path = "big.bin"
+size = 2097152
+[[right]]
+path = "big.bin"
+size = 2097152
+[[left]]
+path = "small.txt"
+content = "s"
+[[right]]
+path = "small.txt"
+content = "different"
