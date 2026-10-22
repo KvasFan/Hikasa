@@ -81,6 +81,8 @@ interprocess = "2"
 jiff = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# GUI toolkit (D-56, approved for wave 6; ARCH-GUI-001)
+dioxus = { version = "0.7", features = ["desktop"] }
 
 # --- dev / test ---
 tempfile = "3"

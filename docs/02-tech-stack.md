@@ -5,7 +5,10 @@ releases). Only open-source dependencies with licenses compatible with the proje
 license (MIT OR Apache-2.0) are allowed. GPL/LGPL crates are *not* allowed because
 they would force relicensing of the binary; MPL-2.0 is acceptable (file-level
 copyleft, no relicensing). Verify the license field on crates.io before adding any
-dependency (`cargo deny check licenses` runs in CI).
+dependency (`cargo deny check licenses` runs in CI). The allowed set lives in `deny.toml`: MIT,
+Apache-2.0 (also with the LLVM exception), BSD-2/3-Clause, ISC, Zlib, CC0-1.0, Unlicense, MPL-2.0,
+Unicode-3.0/DFS-2016, OpenSSL, BSL-1.0, 0BSD and NCSA (BSD-style; it arrives through the GUI toolkit's
+image stack).
 
 Project license: **MIT OR Apache-2.0** (dual), the Rust ecosystem convention. This
 keeps every crate below compatible and lets the project itself be reused freely.
