@@ -12,7 +12,7 @@ use hikasa_session::api::ApiOp;
 use hikasa_session::{ApiError, run_guarded};
 
 #[test]
-fn spawn_returns_the_result_on_a_named_thread_inside_the_pool() {
+fn spawn_returns_the_result_on_its_own_named_thread() {
     let tmp = tempfile::tempdir().unwrap();
     let service = common::service(tmp.path());
     let handle = service.spawn(JobKind::TextCompare, "names".into(), |_service, job| {
@@ -25,10 +25,9 @@ fn spawn_returns_the_result_on_a_named_thread_inside_the_pool() {
     let (job_id, kind, thread) = handle.wait().unwrap();
     assert_eq!(job_id, id);
     assert_eq!(kind, JobKind::TextCompare);
-    assert!(
-        thread.starts_with("hikasa-worker-"),
-        "the body runs on the service pool: {thread}"
-    );
+    // Wave-4 review (consumer finding "a job pins a worker"): the body runs on its own `hikasa-job-<id>`
+    // thread and enters the pool only through the engines, so long jobs never starve a small one.
+    assert_eq!(thread, format!("hikasa-job-{id}"));
     // Job ids increase.
     let next = service.spawn(JobKind::Report, "n".into(), |_, job| Ok(job.id));
     assert!(next.wait().unwrap() > id);
@@ -57,7 +56,11 @@ fn try_result_yields_at_most_once() {
     }
     assert_eq!(result.unwrap().unwrap(), 42);
     assert!(handle.try_result().is_none(), "Some at most once");
-    assert!(matches!(handle.wait(), Err(ApiError::Internal(_))));
+    assert!(handle.is_finished());
+    // Waiting after the result was taken is a caller error, not a fake internal error (wave-4 review).
+    let err = handle.wait().unwrap_err();
+    assert!(matches!(err, ApiError::InvalidArgument(_)), "{err:?}");
+    assert!(err.to_string().contains("already taken"), "{err}");
 }
 
 #[test]

@@ -35,8 +35,8 @@ pub mod jobs;
 pub mod options;
 pub mod paths;
 
-pub use api::{ApiError, ApiOp, HIKASA_VERSION, Service, ServiceInit};
-pub use atomic::write_atomic;
+pub use api::{ApiError, ApiOp, HIKASA_VERSION, Service, ServiceInit, StdinSource};
+pub use atomic::{TEMP_NAME_PREFIX_MAX, write_atomic};
 pub use error::SessionError;
 pub use formats::FormatStore;
 pub use host::{Clock, EnvFacts, FixedClock, Platform};

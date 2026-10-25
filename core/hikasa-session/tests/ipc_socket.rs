@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use common::{CloseMode, FakeGui, FakeLauncher, short_tempdir, test_endpoint};
 use hikasa_core::ExitCode;
 use hikasa_session::ApiError;
+use hikasa_session::api::GuiLaunch;
 use hikasa_session::ipc::{
     Endpoint, EndpointAddress, Envelope, InstanceLock, IpcClient, IpcError, IpcServer,
     MAX_FRAME_LEN, Request, Response, RetryPolicy, ViewId, ViewKind, connect_or_launch, read_frame,
@@ -451,6 +452,7 @@ fn own_folder_is_created_0700_and_verified() {
         address: EndpointAddress::UnixSocket(own.join("hikasa.sock")),
         lock_path: own.join("hikasa.sock.lock"),
         own_dir: Some(own.clone()),
+        uid: common::my_uid(),
     };
     let server = start(
         &endpoint,
@@ -500,7 +502,7 @@ fn peers_of_another_uid_are_rejected() {
     let mut server = IpcServer::bind(&endpoint).unwrap();
     let me = std::fs::metadata(dir.path()).unwrap().uid();
     // Pretend the socket belongs to another user: our own connection is then a foreign peer.
-    server.set_peer_uid(Some(me.wrapping_add(1)));
+    server.set_peer_uid(me.wrapping_add(1));
     let handle = server
         .spawn(FakeGui::new(CloseMode::Immediately, ExitCode::Similar))
         .unwrap();
@@ -512,7 +514,7 @@ fn peers_of_another_uid_are_rejected() {
     handle.shutdown().unwrap();
     // With the real owner uid the same client is accepted.
     let mut server = IpcServer::bind(&endpoint).unwrap();
-    server.set_peer_uid(Some(me));
+    server.set_peer_uid(me);
     let handle = server
         .spawn(FakeGui::new(CloseMode::Immediately, ExitCode::Similar))
         .unwrap();
@@ -530,19 +532,43 @@ fn connect_or_launch_with_a_fake_launcher() {
         total: Duration::from_millis(1700),
     };
     // No GUI, no launcher (`--no-launch`).
-    let err = connect_or_launch(&endpoint, "t", None, &policy, TIMEOUT).unwrap_err();
+    let err = connect_or_launch(
+        &endpoint,
+        "t",
+        None,
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap_err();
     assert!(matches!(err, ApiError::Ipc(IpcError::NotRunning)));
     // No executable.
     let missing = FakeLauncher {
         not_found: true,
         ..FakeLauncher::default()
     };
-    let err = connect_or_launch(&endpoint, "t", Some(&missing), &policy, TIMEOUT).unwrap_err();
+    let err = connect_or_launch(
+        &endpoint,
+        "t",
+        Some(&missing),
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap_err();
     assert!(matches!(err, ApiError::GuiNotFound));
     assert!(missing.sleeps.lock().is_empty());
     // A GUI that never comes up: the budget is exhausted, the sleeps sum to exactly the total.
     let never = FakeLauncher::default();
-    let err = connect_or_launch(&endpoint, "t", Some(&never), &policy, TIMEOUT).unwrap_err();
+    let err = connect_or_launch(
+        &endpoint,
+        "t",
+        Some(&never),
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap_err();
     assert!(
         matches!(err, ApiError::Ipc(IpcError::LaunchTimeout)),
         "{err:?}"
@@ -574,7 +600,15 @@ fn connect_or_launch_with_a_fake_launcher() {
         }))),
         ..FakeLauncher::default()
     };
-    let client = connect_or_launch(&endpoint, "t", Some(&starts), &policy, TIMEOUT).unwrap();
+    let client = connect_or_launch(
+        &endpoint,
+        "t",
+        Some(&starts),
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap();
     assert_eq!(client.server().server, "fake-gui 0.0.0");
     assert_eq!(starts.sleeps.lock().len(), 1);
     drop(client);
@@ -587,7 +621,15 @@ fn connect_or_launch_with_a_fake_launcher() {
         FakeGui::new(CloseMode::Immediately, ExitCode::Similar),
     );
     let unused = FakeLauncher::default();
-    connect_or_launch(&endpoint, "t", Some(&unused), &policy, TIMEOUT).unwrap();
+    connect_or_launch(
+        &endpoint,
+        "t",
+        Some(&unused),
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap();
     assert_eq!(unused.launches.load(Ordering::SeqCst), 0);
     server.shutdown().unwrap();
 }

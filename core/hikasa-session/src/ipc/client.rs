@@ -1,13 +1,17 @@
 //! The blocking IPC client (§1.8.6, §3.6, §4.4.3): [`IpcClient`], [`RetryPolicy`], [`connect_or_launch`].
 //!
-//! Timeouts are client-side and use the socket's receive timeout (`set_recv_timeout`), never a clock: an
-//! immediate response must arrive within the connect timeout (10 s in the service); waiting for `ViewClosed`
-//! has no timeout. The launch retry budget is the sum of the durations slept through
-//! `GuiLauncher::sleep` (T1).
+//! Before connecting, the client verifies the socket folder ([`Endpoint::verify_folder`]): a socket planted by
+//! another user is never contacted. A reader thread (`hikasa-ipc-read`) decodes the server's frames into a
+//! bounded channel; the caller waits on that channel with a deadline from `crossbeam_channel::after`, so the
+//! timeout of an immediate response is one total budget per call, never per read, and no clock is read in this
+//! crate (T1). Waiting for `ViewClosed` has no timeout. Messages for other requests are parked in a bounded
+//! queue. The launch retry budget is the sum of the durations slept through `GuiLauncher::sleep`.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crossbeam_channel::{Receiver, Sender};
 use interprocess::local_socket::Stream;
 use interprocess::local_socket::prelude::*;
 
@@ -18,10 +22,16 @@ use super::framing::{recv_response, send};
 use super::protocol::{Envelope, IpcErrorCode, Request, Response, ServerInfo, ViewId, ViewResult};
 use super::transport::connect_stream;
 use crate::api::ApiError;
-use crate::api::gui::{GuiLauncher, LaunchError};
+use crate::api::gui::{GuiLaunch, GuiLauncher, LaunchError};
 
 /// Oldest protocol version this client accepts.
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
+
+/// Messages for other requests a client keeps while it waits for a response; more is a protocol error.
+pub const MAX_PARKED: usize = 16;
+
+/// Decoded frames buffered between the reader thread and the caller.
+const READ_QUEUE: usize = 16;
 
 /// Retry policy for connecting after launching the GUI. The budget is the sum of the slept durations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,10 +55,14 @@ impl Default for RetryPolicy {
     }
 }
 
+/// One item from the reader thread.
+type Frame = Result<Envelope<Response>, IpcError>;
+
 /// IPC client.
 #[derive(Debug)]
 pub struct IpcClient {
-    stream: Stream,
+    stream: Arc<Stream>,
+    frames: Receiver<Frame>,
     next_id: u64,
     server: ServerInfo,
     timeout: Duration,
@@ -57,8 +71,10 @@ pub struct IpcClient {
 }
 
 impl IpcClient {
-    /// Connects and performs the `Hello` handshake. Every read of an immediate response is bounded by
-    /// `timeout` through `interprocess`'s `Stream::set_recv_timeout` (expiry → `IpcError::Timeout`).
+    /// Verifies the socket folder ([`Endpoint::verify_folder`]: `InsecureEndpoint` for a folder another user
+    /// controls; `NotRunning` when it does not exist), connects and performs the `Hello` handshake. Every
+    /// immediate response must arrive within `timeout` after its request was sent (one budget per call,
+    /// expiry → `IpcError::Timeout`); writes use `timeout` as the send timeout.
     pub fn connect(
         endpoint: &Endpoint,
         client: &str,
@@ -82,16 +98,24 @@ impl IpcClient {
         version: u32,
         min_version: u32,
     ) -> Result<IpcClient, IpcError> {
+        endpoint.verify_folder()?;
         let stream = connect_stream(endpoint)?;
         let timeout = if timeout.is_zero() {
             Duration::from_millis(1)
         } else {
             timeout
         };
-        stream.set_recv_timeout(Some(timeout))?;
-        stream.set_send_timeout(Some(timeout))?;
+        // A platform without send timeouts still works; writes then block like the stream does.
+        let _ = stream.set_send_timeout(Some(timeout));
+        let stream = Arc::new(stream);
+        let (tx, frames) = crossbeam_channel::bounded::<Frame>(READ_QUEUE);
+        let reader_stream = Arc::clone(&stream);
+        std::thread::Builder::new()
+            .name("hikasa-ipc-read".into())
+            .spawn(move || read_loop(&reader_stream, &tx))?;
         let mut this = IpcClient {
             stream,
+            frames,
             next_id: 1,
             server: ServerInfo {
                 server: String::new(),
@@ -143,28 +167,28 @@ impl IpcClient {
 
     /// Sends a request and returns its immediate response and the request id used.
     ///
-    /// A response of a type this build does not know is a protocol error (D-46). An `Error` response is returned
-    /// as it is (see [`IpcClient::request`] for the variant that turns it into [`IpcError::Remote`]).
+    /// The whole call has one deadline (the connect timeout). A response of a type this build does not know is a
+    /// protocol error (D-46). An `Error` response is returned as it is (see [`IpcClient::request`] for the
+    /// variant that turns it into [`IpcError::Remote`]); a protocol error the server sends with id 0 (§4.4.1) is
+    /// the failure of this call ([`IpcError::Remote`]). More than [`MAX_PARKED`] messages for other requests is a
+    /// protocol error.
     pub fn call(&mut self, request: Request) -> Result<(u64, Response), IpcError> {
         let id = self.next_id;
         self.next_id += 1;
         let mut writer: &Stream = &self.stream;
         send(&mut writer, &Envelope { id, body: request })?;
+        let deadline = crossbeam_channel::after(self.timeout);
         loop {
-            let mut reader: &Stream = &self.stream;
-            let Some(envelope) = recv_response(&mut reader)? else {
-                return Err(IpcError::ConnectionLost);
-            };
-            if envelope.id != id {
-                self.parked.push_back(envelope);
-                continue;
+            let envelope = self.next_frame(Some(&deadline))?;
+            if envelope.id == id {
+                return match envelope.body {
+                    Response::Unknown => Err(IpcError::Protocol(format!(
+                        "the GUI answered request {id} with a message type this version does not know"
+                    ))),
+                    body => Ok((id, body)),
+                };
             }
-            return match envelope.body {
-                Response::Unknown => Err(IpcError::Protocol(format!(
-                    "the GUI answered request {id} with a message type this version does not know"
-                ))),
-                body => Ok((id, body)),
-            };
+            self.park(envelope)?;
         }
     }
 
@@ -176,8 +200,9 @@ impl IpcClient {
         }
     }
 
-    /// Blocks (receive timeout disabled) until `ViewClosed` for the `OpenView` request `request_id` arrives;
-    /// EOF → `ConnectionLost`. Returns the raw exit code byte.
+    /// Blocks (no timeout) until `ViewClosed` for the `OpenView` request `request_id` arrives; EOF →
+    /// `ConnectionLost`. Returns the raw exit code byte. An `Error` for the request (or with id 0) is
+    /// [`IpcError::Remote`]; any other message for the request is a protocol error.
     pub fn wait_view_closed(
         &mut self,
         request_id: u64,
@@ -198,32 +223,107 @@ impl IpcClient {
         {
             return Ok((view, result, exit_code));
         }
-        self.stream.set_recv_timeout(None)?;
-        let outcome = loop {
-            let mut reader: &Stream = &self.stream;
-            let envelope = match recv_response(&mut reader) {
-                Ok(Some(envelope)) => envelope,
-                Ok(None) => break Err(IpcError::ConnectionLost),
-                Err(e) => break Err(e),
-            };
+        loop {
+            let envelope = self.next_frame(None)?;
             if envelope.id != request_id {
-                self.parked.push_back(envelope);
+                self.park(envelope)?;
                 continue;
             }
-            match envelope.body {
+            return match envelope.body {
                 Response::ViewClosed {
                     view,
                     result,
                     exit_code,
-                } => break Ok((view, result, exit_code)),
-                Response::Error { code, message } => break Err(IpcError::Remote { code, message }),
-                _ => continue,
-            }
+                } => Ok((view, result, exit_code)),
+                Response::Error { code, message } => Err(IpcError::Remote { code, message }),
+                other @ (Response::Hello { .. }
+                | Response::ViewOpened { .. }
+                | Response::Views { .. }
+                | Response::Ok
+                | Response::Pong
+                | Response::Unknown) => Err(unexpected(&other)),
+            };
+        }
+    }
+
+    /// The next frame from the reader thread; `deadline` bounds the wait (`Timeout`). A server message with id 0
+    /// is the failure of the pending request (§4.4.1: protocol errors carry id 0, then the server closes).
+    fn next_frame(
+        &mut self,
+        deadline: Option<&Receiver<Instant>>,
+    ) -> Result<Envelope<Response>, IpcError> {
+        let received = match deadline {
+            Some(deadline) => crossbeam_channel::select! {
+                recv(self.frames) -> frame => frame,
+                recv(deadline) -> _ => return Err(IpcError::Timeout),
+            },
+            None => self.frames.recv(),
         };
-        let _ = self.stream.set_recv_timeout(Some(self.timeout));
-        outcome
+        let envelope = match received {
+            Ok(Ok(envelope)) => envelope,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(IpcError::ConnectionLost),
+        };
+        if envelope.id == 0 {
+            return Err(match envelope.body {
+                Response::Error { code, message } => IpcError::Remote { code, message },
+                other => IpcError::Protocol(format!(
+                    "the GUI sent `{}` without a request id",
+                    response_name(&other)
+                )),
+            });
+        }
+        Ok(envelope)
+    }
+
+    /// Keeps a message for another request (bounded).
+    fn park(&mut self, envelope: Envelope<Response>) -> Result<(), IpcError> {
+        if self.parked.len() >= MAX_PARKED {
+            return Err(IpcError::Protocol(format!(
+                "the GUI sent more than {MAX_PARKED} messages for other requests"
+            )));
+        }
+        self.parked.push_back(envelope);
+        Ok(())
     }
 }
+
+impl Drop for IpcClient {
+    /// Closes the connection, which also ends the reader thread.
+    fn drop(&mut self) {
+        shutdown_stream(&self.stream);
+    }
+}
+
+/// The reader thread: decodes frames until EOF, an error or a dropped client.
+fn read_loop(stream: &Stream, frames: &Sender<Frame>) {
+    loop {
+        let mut reader: &Stream = stream;
+        match recv_response(&mut reader) {
+            Ok(Some(envelope)) => {
+                if frames.send(Ok(envelope)).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                let _ = frames.send(Err(e));
+                break;
+            }
+        }
+    }
+}
+
+/// Shuts a client connection down (Unix; on Windows the pipe closes when the last handle drops).
+#[cfg(unix)]
+fn shutdown_stream(stream: &Stream) {
+    let Stream::UdSocket(socket) = stream;
+    let _ = socket.inner().shutdown(std::net::Shutdown::Both);
+}
+
+/// See the Unix variant.
+#[cfg(not(unix))]
+fn shutdown_stream(_stream: &Stream) {}
 
 /// The server version named in an `incompatible_version` message (`"… server speaks 1, …"`), else 0.
 fn server_version_in(message: &str) -> u32 {
@@ -239,7 +339,12 @@ fn server_version_in(message: &str) -> u32 {
 
 /// The protocol error of a response that does not fit the request.
 pub(crate) fn unexpected(response: &Response) -> IpcError {
-    let name = match response {
+    IpcError::Protocol(format!("unexpected response `{}`", response_name(response)))
+}
+
+/// The wire name of a response's `type`.
+fn response_name(response: &Response) -> &'static str {
+    match response {
         Response::Hello { .. } => "hello",
         Response::ViewOpened { .. } => "view_opened",
         Response::ViewClosed { .. } => "view_closed",
@@ -248,13 +353,14 @@ pub(crate) fn unexpected(response: &Response) -> IpcError {
         Response::Pong => "pong",
         Response::Error { .. } => "error",
         Response::Unknown => "unknown",
-    };
-    IpcError::Protocol(format!("unexpected response `{name}`"))
+    }
 }
 
-/// Connects; if there is no GUI and `launcher` is given, launches it once and retries per `policy`, sleeping
+/// Connects; if there is no GUI and `launcher` is given, launches it once with `launch` (the arguments and
+/// environment that make the GUI serve this endpoint, `Service::gui_launch`) and retries per `policy`, sleeping
 /// through `GuiLauncher::sleep`. Errors: no GUI and no launcher → `Ipc(NotRunning)`; launcher reports
-/// `NotFound` → `GuiNotFound`; budget exhausted → `Ipc(LaunchTimeout)`.
+/// `NotFound` → `GuiNotFound`; budget exhausted → `Ipc(LaunchTimeout)`; an insecure socket folder →
+/// `Ipc(InsecureEndpoint)` without launching (exit 100).
 ///
 /// The delays are `initial_delay`, doubled after each attempt up to `max_delay`; the last delay is shortened
 /// so that the sum of the slept durations never exceeds `policy.total`. A spawn failure of the launcher is
@@ -263,6 +369,7 @@ pub fn connect_or_launch(
     endpoint: &Endpoint,
     client: &str,
     launcher: Option<&dyn GuiLauncher>,
+    launch: &GuiLaunch,
     policy: &RetryPolicy,
     timeout: Duration,
 ) -> Result<IpcClient, ApiError> {
@@ -273,7 +380,7 @@ pub fn connect_or_launch(
     let Some(launcher) = launcher else {
         return Err(ApiError::Ipc(IpcError::NotRunning));
     };
-    match launcher.launch() {
+    match launcher.launch(launch) {
         Ok(()) => {}
         Err(LaunchError::NotFound) => return Err(ApiError::GuiNotFound),
         Err(LaunchError::Spawn(e)) => return Err(ApiError::Ipc(IpcError::Io(e))),

@@ -92,6 +92,12 @@ pub struct EnvFacts {
     pub ipc_endpoint_override: Option<OsString>,
     /// `$PATH` (GUI executable lookup).
     pub path_var: Option<OsString>,
+    /// `$HIKASA_GUI_EXE`: the GUI executable to launch instead of the [`crate::api::gui::gui_exe_candidates`]
+    /// (tests, unusual installs; [`crate::api::gui::find_gui_exe`]). Added in the wave-4 review (§1.8.7).
+    pub gui_exe_override: Option<PathBuf>,
+    /// `$NO_COLOR` is set to a non-empty value (no-color.org): adapters disable ANSI colours. Added in the
+    /// wave-4 review (§1.8.7).
+    pub no_color: bool,
 }
 
 impl EnvFacts {
@@ -114,6 +120,8 @@ impl EnvFacts {
             locale_encoding: None,
             ipc_endpoint_override: None,
             path_var: None,
+            gui_exe_override: None,
+            no_color: false,
         }
     }
 }
@@ -152,6 +160,8 @@ pub fn capture_env() -> EnvFacts {
         locale_encoding: locale_codeset(&locale),
         ipc_endpoint_override: var("HIKASA_IPC_ENDPOINT"),
         path_var: var("PATH"),
+        gui_exe_override: path("HIKASA_GUI_EXE"),
+        no_color: var("NO_COLOR").is_some(),
         temp_dir,
     }
 }

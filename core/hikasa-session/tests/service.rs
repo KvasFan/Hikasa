@@ -538,17 +538,18 @@ fn folder_prepare_and_run_with_a_channel_observer() {
     let full = String::from_utf8(full).unwrap();
     let last = full.lines().last().unwrap();
     assert!(last.starts_with("# "), "{full}");
-    let mut quiet = Vec::new();
+    // `list_summary = false` is API-only (embedders); `--quiet` keeps the summary line (§4.3.3).
+    let mut rows_only = Vec::new();
     let settings = ReportSettings {
         list_summary: false,
         ..ReportSettings::default()
     };
     service
-        .render_folder_with(&resp, &opts, &settings, &mut quiet)
+        .render_folder_with(&resp, &opts, &settings, &mut rows_only)
         .unwrap();
-    let quiet = String::from_utf8(quiet).unwrap();
+    let rows_only = String::from_utf8(rows_only).unwrap();
     assert_eq!(
-        quiet,
+        rows_only,
         full.lines()
             .filter(|l| !l.starts_with("# "))
             .map(|l| format!("{l}\n"))

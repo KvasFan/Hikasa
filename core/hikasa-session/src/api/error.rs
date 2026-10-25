@@ -62,6 +62,17 @@ pub enum ApiError {
     /// A panic or invariant violation (bug).
     #[error("internal error: {0}")]
     Internal(String),
+    /// A rules file (`--rules-file`, `--text-rules-file`) that does not parse or validate: the error of the file,
+    /// named by its canonical spec (JSON `error.spec`). Its kind and exit code are those of `source`. Added in
+    /// the wave-4 review (§1.8.7).
+    #[error("{spec}: {source}")]
+    RulesFile {
+        /// Canonical spec of the file.
+        spec: String,
+        /// What is wrong with it.
+        #[source]
+        source: Box<ApiError>,
+    },
 }
 
 impl Classify for ApiError {
@@ -86,6 +97,7 @@ impl ApiError {
             ApiError::GuiNotFound => ErrorKind::NotFound,
             ApiError::Cancelled => ErrorKind::Cancelled,
             ApiError::Internal(_) => ErrorKind::Internal,
+            ApiError::RulesFile { source, .. } => source.kind(),
         }
     }
 
@@ -111,13 +123,23 @@ impl ApiError {
                 | ApiOp::GuiControl
                 | ApiOp::Other => ExitCode::UnknownError,
             },
-            ApiError::Folder(e) => match (op, e) {
-                (
-                    ApiOp::FolderCompare,
-                    FolderError::BaseNotLoadable { .. } | FolderError::BaseNotFolder { .. },
-                ) => ExitCode::LoadFailed,
-                _ => ExitCode::UnknownError,
+            ApiError::Folder(e) => match op {
+                ApiOp::FolderCompare => match e {
+                    FolderError::BaseNotLoadable { .. } | FolderError::BaseNotFolder { .. } => {
+                        ExitCode::LoadFailed
+                    }
+                    // Another crate's #[non_exhaustive] enum: every other variant is 100 (§0.4 rule 9).
+                    _ => ExitCode::UnknownError,
+                },
+                ApiOp::Quick
+                | ApiOp::TextCompare
+                | ApiOp::Format
+                | ApiOp::Vfs
+                | ApiOp::GuiOpen { .. }
+                | ApiOp::GuiControl
+                | ApiOp::Other => ExitCode::UnknownError,
             },
+            ApiError::RulesFile { source, .. } => source.exit_code(op),
             ApiError::Ipc(e) => match op {
                 ApiOp::GuiOpen { wait } => match e {
                     IpcError::NotRunning => {
@@ -165,13 +187,39 @@ impl ApiError {
     pub fn report(&self) -> ErrorReport {
         let mut report = ErrorReport::capture(self, None);
         report.spec = match self {
-            ApiError::LoadFailed { spec, .. } => Some(spec.clone()),
+            ApiError::LoadFailed { spec, .. } | ApiError::RulesFile { spec, .. } => {
+                Some(spec.clone())
+            }
             ApiError::Vfs(e) => e.spec().map(str::to_owned),
-            ApiError::Folder(FolderError::BaseNotLoadable { spec, .. })
-            | ApiError::Folder(FolderError::BaseNotFolder { spec, .. }) => Some(spec.clone()),
-            _ => None,
+            ApiError::Folder(e) => match e {
+                FolderError::BaseNotLoadable { spec, .. }
+                | FolderError::BaseNotFolder { spec, .. } => Some(spec.clone()),
+                // Another crate's #[non_exhaustive] enum: no spec for the other variants.
+                _ => None,
+            },
+            ApiError::InvalidArgument(_)
+            | ApiError::Spec(_)
+            | ApiError::Format(_)
+            | ApiError::Text(_)
+            | ApiError::Report(_)
+            | ApiError::Session(_)
+            | ApiError::Ipc(_)
+            | ApiError::GuiNotFound
+            | ApiError::Cancelled
+            | ApiError::Internal(_) => None,
         };
         report
+    }
+
+    /// Wraps the error of a rules file with the file's spec (`Cancelled` stays `Cancelled`).
+    pub(crate) fn in_rules_file(spec: &hikasa_core::Spec, error: ApiError) -> ApiError {
+        match error {
+            ApiError::Cancelled => ApiError::Cancelled,
+            source => ApiError::RulesFile {
+                spec: spec.canonical(),
+                source: Box::new(source),
+            },
+        }
     }
 
     /// True when the error is a broken pipe on the output (D-35: the CLI stops writing and keeps the computed

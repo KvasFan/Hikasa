@@ -81,7 +81,7 @@ fn quick_envelopes() {
     let envelope = JsonEnvelope::success(
         QUICK_SCHEMA,
         resp.exit_code,
-        QuickDto::new(&resp, req.ignore_unimportant),
+        QuickDto::new(&resp),
         resp.outcome.warnings.clone(),
     );
     golden("quick_ok.json", &normalized(&envelope, tmp.path()));
@@ -94,7 +94,7 @@ fn quick_envelopes() {
             &job(&service, JobKind::QuickCompare),
         )
         .unwrap();
-    let dto = serde_json::to_value(QuickDto::new(&crc, false)).unwrap();
+    let dto = serde_json::to_value(QuickDto::new(&crc)).unwrap();
     assert_eq!(dto["format"], Value::Null, "null for size, crc and binary");
     assert_eq!(dto["method"], "crc");
     let err = service

@@ -131,5 +131,8 @@ content_memory_budget_mib = 512
 **Loading rules (D-31).** A missing file means the defaults. A `schema_version` newer
 than this build supports stops the program with an error (SES-052). Unknown keys inside
 the sections above are ignored silently (`--verbose` logs each one); an unknown
-top-level section produces the warning `unknown_config_key`. A syntax error, or a value
-of the wrong type or range in a key of the table, is an error.
+top-level section produces the warning `unknown_config_key`. A syntax error, a value of
+the wrong type or range in a key of the table, a section written as a plain value
+(`text_editing = 5`) and a negative `schema_version` are errors. Keys match the table
+structure: a quoted key with dots (`"text_editing.number_of_context_lines" = 9`) is one
+unknown key of an unknown section, not the option.

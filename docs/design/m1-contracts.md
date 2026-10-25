@@ -5338,6 +5338,12 @@ pub const MAX_FOLLOW_DEPTH: u32 = 256;
 23. **`unicode-normalization`** is declared in the manifest (the §0.5 row) but not used by hikasa-folder: NFC comes
     from `hikasa_core::case::nfc`. The §0.5 row should say "declared but unused in M1" (or the dependency be
     dropped); §0.5 is outside this crate's sections and is left to the maintainer.
+24. **Per-field unix criteria** (added by the wave-4 session review, decision 7, §1.8.7 item 19): `FolderRulesPatch`
+    has `unix_permissions`, `unix_owner` and `unix_group: Option<bool>` (skip-serialised when `None`), applied
+    after `unix`, so `--permissions`, `--owner` and `--group` change one test each and the rules file's or the
+    criteria list's other unix tests stay (§3.5: individual flags are the highest layer, per flag). `unix`
+    (`Criteria::parse_list` sets it: unlisted → off) is unchanged. Additive; tested in `rules.rs`
+    (`unix_patch_fields_are_independent`) and in hikasa-session.
 
 ### 1.7 hikasa-report
 
@@ -5743,6 +5749,17 @@ pub mod json {
   of item 1, ranges, line writing and the patch warnings, shared by the three patch writers).
 - *Not in M1:* the XML dump, interleaved layouts, printing and links to file reports (13-reports).
 
+**Session-review additions (wave 4).** The review of hikasa-session (§1.8.7) added two things here:
+
+- *Public escapers* (decision 7): `escape_controls`, `escape_terminal` and `escape_name` (item 5's rules) are
+  public at the crate root, unchanged, so adapters escape terminal and list output exactly as the reports do
+  (hikasa-session's `api::human` uses them). Additive.
+- *Goldens* (the "grammar-dependent paths" bullet above): the session's own warnings — `format_mismatch` and the
+  unknown keys of rules files — reach the JSON envelope and stderr through `TextCompareResponse::warnings`; they are
+  not written into the RPT-004 header, which keeps the comparison's and the rendering's warnings. The
+  grammar-dependent paths (another tab size, a `lines_independent` normal diff, the `format: <name>` wording, the
+  title in text and folder reports) are covered by hikasa-session Service tests.
+
 ### 1.8 hikasa-session
 
 **Purpose.** The service API used identically by the CLI and the GUI (ARCH-013). Also: configuration location
@@ -5770,8 +5787,12 @@ core/hikasa-session/src/
 │   ├── responses.rs QuickResponse, TextCompareResponse, FormatChoice, PreparedFolderCompare,
 │   │                FolderCompareResponse
 │   ├── dto.rs       JsonEnvelope + DTOs for quick, format, vfs, gui and version (§4)
-│   ├── gui.rs       GuiOpenRequest, GuiOpenOutcome, GuiLauncher, LaunchError, OpenArgs, normalize_legacy_args,
-│   │                parse_open_args, infer_view_kind, gui_exe_candidates
+│   ├── gui.rs       GuiOpenRequest, GuiOpenOutcome, GuiLauncher, GuiLaunch, LaunchError, OpenArgs,
+│   │                normalize_legacy_args, parse_open_args, infer_view_kind, gui_exe_candidates, find_gui_exe,
+│   │                ViewWords, ResolvedOpen, ViewRequest, ViewOutcome, open_usage (§1.8.7)
+│   ├── vocab.rs     parse_folder_mode, parse_content_method, parse_algorithm, parse_line_range,
+│   │                resolve_text_display, resolve_folder_display (§1.8.7)
+│   ├── human.rs     human lines of the list commands (§1.8.7)
 │   └── error.rs     ApiError
 └── ipc/
     ├── mod.rs       PROTOCOL_VERSION, MAX_FRAME_LEN
@@ -5826,6 +5847,10 @@ pub struct EnvFacts {
     pub ipc_endpoint_override: Option<OsString>,
     /// `$PATH` (GUI executable lookup).
     pub path_var: Option<OsString>,
+    /// `$HIKASA_GUI_EXE`: the GUI executable to launch instead of the candidates (tests; §1.8.7).
+    pub gui_exe_override: Option<PathBuf>,
+    /// `$NO_COLOR` is set to a non-empty value (§1.8.7).
+    pub no_color: bool,
 }
 
 /// Reads the real process environment (`std::env`, `std::env::current_exe`, `directories::BaseDirs` for the home
@@ -5942,6 +5967,12 @@ pub enum SessionError {
     /// I/O.
     #[error("{path}: {source}")]
     Io { path: String, #[source] source: std::io::Error },
+    /// A configuration file of a newer version (§1.8.7 item 4).
+    #[error("{path}: {source}")]
+    Schema { path: String, #[source] source: SchemaError },
+    /// `--config-dir ""` (§1.8.7 item 30).
+    #[error("--config-dir must not be empty")]
+    EmptyConfigDir,
 }
 ```
 
@@ -5983,7 +6014,9 @@ impl<T> JobHandle<T> {
     pub fn progress(&self) -> &crossbeam_channel::Receiver<Progress>;
     /// The result, if the job has finished (non-blocking; `Some` at most once).
     pub fn try_result(&self) -> Option<Result<T, ApiError>>;
-    /// Blocks until the job finishes.
+    /// True once the job has finished (additive, §1.8.7).
+    pub fn is_finished(&self) -> bool;
+    /// Blocks until the job finishes; after `try_result` returned the result: `InvalidArgument` (§1.8.7).
     pub fn wait(self) -> Result<T, ApiError>;
 }
 
@@ -6002,8 +6035,9 @@ pub struct ServiceInit {
     pub config_dir: Option<PathBuf>,
     /// Worker threads (None = available parallelism, min 1).
     pub threads: Option<NonZeroUsize>,
-    /// Stdin content (with the `--stdin-name` hint), read by the adapter only when a spec is "-".
-    pub stdin: Option<Blob>,
+    /// Standard input with the `--stdin-name` hint, read by the service at most once, on the first `-` spec it
+    /// parses (§1.8.7 item 7; was an eagerly read `Option<Blob>`).
+    pub stdin: Option<StdinSource>,
     /// Clock.
     pub clock: Arc<dyn Clock>,
     /// External conversion runner (`StdProcessRunner` in adapters, fakes in tests).
@@ -6044,7 +6078,8 @@ impl Service {
     /// Creates a job control for a direct (blocking) call.
     pub fn job(&self, kind: JobKind, progress: Arc<dyn ProgressSink>) -> JobControl;
     /// Runs `f` on a new thread named `hikasa-job-<id>` with a fresh `CancelToken`, a lossy progress channel
-    /// and the panic boundary (`run_guarded`). The GUI's way to start every long operation.
+    /// and the panic boundary (`run_guarded`). The GUI's way to start every long operation. The body runs on that
+    /// thread, not inside the pool (§1.8.7 item 10).
     pub fn spawn<T: Send + 'static>(
         &self,
         kind: JobKind,
@@ -6086,8 +6121,8 @@ impl Service {
 
     /// `vfs ls`.
     pub fn vfs_ls(&self, spec: &OsStr, follow: FollowLinks, job: &JobControl) -> Result<dto::VfsListDto, ApiError>;
-    /// `vfs stat`.
-    pub fn vfs_stat(&self, spec: &OsStr, follow: FollowLinks) -> Result<dto::VfsEntryDto, ApiError>;
+    /// `vfs stat` (returns the §4.3.4 shape, §1.8.7 item 1).
+    pub fn vfs_stat(&self, spec: &OsStr, follow: FollowLinks) -> Result<dto::VfsStatDto, ApiError>;
     /// `vfs cat`: copies content into `out`; returns bytes copied.
     pub fn vfs_cat(&self, spec: &OsStr, out: &mut dyn Write, job: &JobControl) -> Result<u64, ApiError>;
 
@@ -6142,6 +6177,7 @@ pub struct QuickResponse {
     /// Effective format (`None` for the size, CRC and binary methods).
     pub format: Option<FormatChoice>,
     pub outcome: ContentOutcome,
+    pub ignore_unimportant: bool,   // §1.8.7 item 17
     pub exit_code: ExitCode,
 }
 
@@ -6167,6 +6203,7 @@ pub struct TextCompareResponse {
     /// Detection per side by name (`None` for an unnamed side); informational (`format_mismatch`).
     pub detection: Pair<Option<DetectReason>>,
     pub verdict: ContentResult,
+    pub ignore_unimportant: bool,   // §1.8.7 item 17
     pub exit_code: ExitCode,
     pub warnings: Vec<Warning>,
 }
@@ -6203,6 +6240,8 @@ impl PreparedFolderCompare {
 pub struct FolderCompareResponse {
     pub comparison: FolderComparison,
     pub verdict: CompareVerdict,
+    /// The effective ignore-unimportant (request flag or criteria word; JSON and reports use it, §1.8.7 item 17).
+    pub ignore_unimportant: bool,
     pub exit_code: ExitCode,
     pub warnings: Vec<Warning>,
 }
@@ -6278,8 +6317,10 @@ impl ApiError {
 /// Starts the GUI process and sleeps between connection attempts (implemented by hikasa-cli with
 /// `std::process::Command`, detached, stdio null, and `std::thread::sleep`; tests record the calls).
 pub trait GuiLauncher {
-    /// Starts `hikasa-gui` without arguments (requests then arrive over IPC).
-    fn launch(&self) -> Result<(), LaunchError>;
+    /// Starts the GUI executable (`find_gui_exe`) with `launch.args` and `launch.env`, which
+    /// `Service::gui_launch` chooses so that the GUI serves the CLI's endpoint (`--config-dir` of an explicit or
+    /// portable configuration, `HIKASA_IPC_ENDPOINT`; §1.8.7 item 18). Requests then arrive over IPC.
+    fn launch(&self, launch: &GuiLaunch) -> Result<(), LaunchError>;
     /// Sleeps `d` (the retry budget is the sum of these durations; core never reads a clock, T1).
     fn sleep(&self, d: Duration);
 }
@@ -6298,6 +6339,8 @@ pub enum LaunchError {
 
 /// Candidate GUI executables, in order: sibling of the CLI executable, then each `PATH` entry (pure).
 pub fn gui_exe_candidates(exe_dir: Option<&Path>, path_var: Option<&OsStr>, platform: Platform) -> Vec<PathBuf>;
+/// `$HIKASA_GUI_EXE` alone when set, else the first existing candidate (§1.8.7 item 18).
+pub fn find_gui_exe(facts: &EnvFacts) -> Option<PathBuf>;
 
 /// `gui open` request (also built by `--gui`, D-50).
 #[derive(Debug, Clone, Default)]
@@ -6311,6 +6354,9 @@ pub struct GuiOpenRequest {
     pub options: OpenOptions,
     /// Wait for the view to close (CLI-G01).
     pub wait: bool,
+    /// Rules files as typed (`--gui`), made absolute by `resolve_open` (§1.8.7 item 20).
+    pub text_rules_file: Option<OsString>,
+    pub folder_rules_file: Option<OsString>,
 }
 
 /// `gui open` outcome.
@@ -6335,14 +6381,17 @@ pub struct OpenArgs {
     pub json: bool,
     pub quiet: bool,
     pub no_color: bool,
-    /// `--config-dir`, `--log`, `--verbose` (meaningful for `hikasa-gui`; the CLI rejects them after `open`
-    /// because its service already exists).
+    /// `--config-dir`, `--log`, `--verbose` (the GUI's configuration; the CLI merges them with its global flags
+    /// before it builds the service, §1.8.7 item 34).
     pub config_dir: Option<PathBuf>,
     pub log: Option<PathBuf>,
     pub verbose: bool,
     /// `switch_ignored` warnings for recognised CLI-003 switches that M1 does not implement (they are
     /// forwarded in `OpenOptions::extra`).
     pub warnings: Vec<Warning>,
+    /// `--stdin-name`, `--help` (§1.8.7 item 5).
+    pub stdin_name: Option<String>,
+    pub help: bool,
 }
 
 /// Rewrites CLI-001 spellings to `--name[=value]`: `-name[=v]` for every known switch, `/name[=v]` on Windows
@@ -6396,6 +6445,10 @@ pub struct Endpoint {
     pub address: EndpointAddress,
     /// Single-instance lock file (Unix: `<socket>.lock`; Windows: `<temp>\<pipe name>.lock`).
     pub lock_path: PathBuf,
+    /// Hikasa's own socket folder, when the endpoint uses it (§1.8.7 item 2).
+    pub own_dir: Option<PathBuf>,
+    /// The user that must own the socket folder (Unix; `EnvFacts::uid`; §1.8.7 item 11).
+    pub uid: Option<u32>,
 }
 
 impl Endpoint {
@@ -6404,6 +6457,8 @@ impl Endpoint {
     pub fn for_config(facts: &EnvFacts, config: &ConfigLocation) -> Result<Endpoint, IpcError>;
     /// Display text for messages.
     pub fn display(&self) -> String;
+    /// Verifies the socket folder before anything talks through it (§2.23, §1.8.7 item 11).
+    pub fn verify_folder(&self) -> Result<(), IpcError>;
 }
 
 /// FNV-1a 64-bit over bytes (stable everywhere; endpoint suffixes).
@@ -6430,12 +6485,13 @@ pub trait IpcHandler: Send + Sync + 'static {
     fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response;
 }
 
-/// Sends the deferred `ViewClosed` on the originating connection (no-op when the client is gone).
+/// Sends the deferred `ViewClosed` on the originating connection (no-op when the client is gone). Dropped without
+/// `view_closed`, it sends `ViewClosed` with reason `abandoned` and exit code 100 (§1.8.7 item 12).
 #[derive(Debug)]
-pub struct ViewWaiter { /* connection writer handle, request id */ }
+pub struct ViewWaiter { /* connection writer queue, gate, request id */ }
 
 impl ViewWaiter {
-    /// Sends `ViewClosed` (exactly once: consumes self).
+    /// Queues `ViewClosed` (exactly once: consumes self; never blocks, §1.8.7 item 13).
     pub fn view_closed(self, view: ViewId, result: ViewResult, exit_code: ExitCode);
 }
 
@@ -6459,8 +6515,9 @@ pub struct ServerHandle { /* stop flag, endpoint, accept thread */ }
 
 impl ServerHandle {
     /// Stops accepting: sets the stop flag, wakes the blocked `accept` by connecting to its own endpoint once
-    /// (self-connect; no sleeping or polling), and joins the accept thread. Connection threads end when their
-    /// clients disconnect or the process exits; waiters are notified by the GUI before it calls this.
+    /// (self-connect; no sleeping or polling), and joins the accept thread; then sends every outstanding waiter
+    /// `ViewClosed` (reason `shutdown`, exit 100) and closes every connection after its last frame (§1.8.7 item 12).
+    /// The GUI notifies its waiters with the views' real codes before it calls this.
     pub fn shutdown(self) -> Result<(), IpcError>;
 }
 
@@ -6481,8 +6538,8 @@ impl Default for RetryPolicy { /* 50 ms, 500 ms, 10 s */ }
 pub struct IpcClient { /* stream, next request id, ServerInfo */ }
 
 impl IpcClient {
-    /// Connects and performs the `Hello` handshake. Every read of an immediate response is bounded by
-    /// `timeout` through `interprocess`'s `Stream::set_recv_timeout` (expiry → `IpcError::Timeout`).
+    /// Verifies the socket folder, connects and performs the `Hello` handshake. Every call has one deadline of
+    /// `timeout` for its immediate response (expiry → `IpcError::Timeout`; §1.8.7 item 14).
     pub fn connect(endpoint: &Endpoint, client: &str, timeout: Duration) -> Result<IpcClient, IpcError>;
     /// Negotiated server identity.
     pub fn server(&self) -> &ServerInfo;
@@ -6500,6 +6557,7 @@ pub fn connect_or_launch(
     endpoint: &Endpoint,
     client: &str,
     launcher: Option<&dyn GuiLauncher>,
+    launch: &GuiLaunch,            // §1.8.7 item 18
     policy: &RetryPolicy,
     timeout: Duration,
 ) -> Result<IpcClient, ApiError>;
@@ -6550,6 +6608,393 @@ pub enum IpcError {
 The protocol types (`Envelope`, `Request`, `Response`, `ViewKind`, `ViewId`, `OpenOptions`, `ReadOnly`,
 `ViewResult`, `CloseReason`, `ServerInfo`, `ViewInfo`, `IpcErrorCode`) are specified in §4.4.
 
+#### 1.8.7 Accepted additions and deviations (wave 4)
+
+The wave-4 review of hikasa-session (conformance, consumer and adversarial findings; maintainer decisions 1–10)
+accepted the following public items, deviations and amendments. They are part of the contract: hikasa-cli
+(wave 5) and the GUI (wave 6) build on them, and where an item here refines the text of §1.8.1–§1.8.6 the item
+wins. API changes were allowed because no adapter existed yet; the breaking ones are listed first. Amended
+normative text: §1.8.2–§1.8.6, §1.9.2, §1.10, §2.21, §2.22, §2.23, §3.5, §3.6, §3.7, §4.2, §4.3.4, §4.4.2,
+§4.4.3, §5.1, §5.2, §5.6, §6.1, §6.2.8, §6.3 and Appendix B (INV-IPC-2); upstream, §1.6.8 item 24
+(`FolderRulesPatch` unix fields) and §1.7.3, session-review additions (public escapers, `format_mismatch` and the header).
+
+**Breaking changes** (all made before any adapter existed):
+
+| Item | Before | Now |
+|---|---|---|
+| `ServiceInit::stdin` | `Option<Blob>`, read by the adapter when a spec is `-` | `Option<StdinSource>`: a name hint and a read function, called at most once, by the first `-` spec the service parses |
+| `GuiLauncher::launch` | `fn launch(&self)` ("without arguments") | `fn launch(&self, launch: &GuiLaunch)`: arguments and environment chosen by the session |
+| `connect_or_launch` | `(endpoint, client, launcher, policy, timeout)` | `(endpoint, client, launcher, launch: &GuiLaunch, policy, timeout)` |
+| `Endpoint` | `address`, `lock_path`, `own_dir` | plus `uid: Option<u32>`, the user that must own the socket folder |
+| `EnvFacts` | … `path_var` | plus `gui_exe_override: Option<PathBuf>` (`$HIKASA_GUI_EXE`) and `no_color: bool` (`$NO_COLOR` non-empty); `EnvFacts::new` fills both |
+| `GuiOpenRequest` | `specs`, `kind`, `options`, `wait` | plus `text_rules_file`, `folder_rules_file: Option<OsString>` (as typed) |
+| `OpenOptions` (wire) | §4.4.2 | plus `encodings`, `display`, `context_lines`, `folders`, `suppress_filters` (absent → defaults, ignored by older peers) |
+| `QuickResponse`, `TextCompareResponse`, `FolderCompareResponse` | — | plus `ignore_unimportant: bool` (the effective flag) |
+| `QuickDto::new` | `(resp, ignore_unimportant)` | `(resp)` |
+| `SCHEMAS` | `[&str; 16]` | `[&str; 18]` (`hikasa.completions.v1`, `hikasa.usage_error.v1`) |
+| `CloseReason` | `User`, `Shutdown`, `LoadFailed` | plus `Abandoned` (`ALL: [CloseReason; 4]`); travels as a string, so older peers accept it |
+| `IpcServer::set_peer_uid` (doc-hidden test hook) | `Option<u32>` (`None` disabled the check) | `u32`: replaces the expected uid, never disables the check |
+| `JobHandle::wait` after `try_result` returned the result | `Internal` | `InvalidArgument("… already taken …")` |
+| `Service::spawn` | body inside `pool.install` | body on its own `hikasa-job-<id>` thread (item 11) |
+| cache fallback (§2.22) | `<temp>/hikasa-cache` | `<temp>/hikasa-cache-<id>` (id as for the socket folder) |
+
+**Additive API** (complete list beyond §1.8.1–§1.8.6 and the table above):
+
+```rust
+// lib.rs
+pub use api::StdinSource;
+
+// host.rs (see the table for the two new EnvFacts fields)
+
+// error.rs
+pub enum SessionError { /* … */
+    /// A configuration file of a newer version (D-31, SES-052); kind `unsupported`.
+    Schema { path: String, source: SchemaError },
+    /// `--config-dir ""` (an unset shell variable) is refused, never the current directory; kind `invalid_input`.
+    EmptyConfigDir,
+}
+
+// atomic.rs
+pub const TEMP_NAME_PREFIX_MAX: usize = 200;   // the target name kept in `.<name>.hikasa-tmp-<n>`
+
+// jobs.rs
+impl<T> JobHandle<T> { pub fn is_finished(&self) -> bool; }
+
+// api/mod.rs
+pub struct StdinSource { pub name: Option<String>, /* read: Box<dyn FnOnce() -> io::Result<Vec<u8>> + Send> */ }
+impl StdinSource {
+    pub fn new(name: Option<String>, read: impl FnOnce() -> io::Result<Vec<u8>> + Send + 'static) -> StdinSource;
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>, name: Option<String>) -> StdinSource;
+}
+impl ServiceInit { pub fn new(env: EnvFacts, clock: Arc<dyn Clock>, runner: Arc<dyn ProcessRunner>) -> ServiceInit; }
+pub const HIKASA_VERSION: &str;              // CARGO_PKG_VERSION
+pub const MAX_STREAM_THREADS: usize = 4;     // min(4, pool size), §5.1
+impl Service {
+    pub fn env(&self) -> &EnvFacts;
+    pub fn vfs(&self) -> &VfsRouter;          // with standard input once a `-` spec was parsed
+    pub fn pool(&self) -> &rayon::ThreadPool; // has a panic handler (item 19)
+    pub fn clock(&self) -> &Arc<dyn Clock>;
+    pub fn stream_options(&self) -> StreamOptions;
+    pub fn generator(&self) -> String;        // "hikasa <version>"
+    pub fn stdin_name(&self) -> Option<&str>; // the --stdin-name hint, without reading stdin
+    pub fn gui_launch(&self) -> GuiLaunch;
+    pub fn resolve_open(&self, req: &GuiOpenRequest) -> Result<ResolvedOpen, ApiError>;
+    pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError>;
+    pub fn open_view_request(&self, kind: ViewKind, specs: &[String], options: &OpenOptions)
+        -> Result<ViewRequest, ApiError>;
+    pub fn forward_open(&self, req: &GuiOpenRequest) -> Result<GuiOpenReport, ApiError>;
+    pub fn gui_open_with(&self, req: &GuiOpenRequest, launcher: Option<&dyn GuiLauncher>, policy: &RetryPolicy)
+        -> Result<GuiOpenReport, ApiError>;
+    pub fn gui_ping_dto(&self) -> Result<dto::GuiPingDto, ApiError>;
+    pub fn vfs_cat_dto(&self, spec: &OsStr, job: &JobControl) -> Result<dto::VfsCatDto, ApiError>;
+    pub fn format_toml(&self, id_or_name: &str) -> Result<String, ApiError>;   // human `format show`
+    pub fn render_text_with(&self, resp: &TextCompareResponse, opts: &TextReportOptions, settings: &ReportSettings,
+                            out: &mut dyn Write) -> Result<Vec<Warning>, ApiError>;
+    pub fn render_folder_with(&self, resp: &FolderCompareResponse, opts: &FolderReportOptions,
+                              settings: &ReportSettings, out: &mut dyn Write) -> Result<(), ApiError>;
+}
+pub struct ReportSettings { pub title: Option<String>, pub style: HtmlStyle, pub list_summary: bool }  // Default: list_summary = true
+
+// api/requests.rs
+impl QuickMethod { pub const fn as_str(self) -> &'static str; pub fn parse(word: &str) -> Option<QuickMethod>; }
+impl TextCompareRequest { pub fn for_specs(left: &Spec, right: &Spec) -> TextCompareRequest; }   // FC-062
+pub fn spec_os_string(spec: &Spec) -> OsString;   // exact OS path for local specs, canonical otherwise
+
+// api/responses.rs
+impl FormatChoice { pub fn json(&self) -> FormatJson; }
+impl TextCompareResponse { pub fn json(&self, view: &ViewOptions) -> TextCompareJson; }       // uses the response's iu
+impl FolderCompareResponse { pub fn json(&self, display: &DisplayOptions) -> FolderCompareJson; } // uses the effective iu
+impl PreparedFolderCompare { pub fn specs(&self) -> Pair<&Spec>; pub fn text_rules(&self) -> Option<&TextRules>;
+                             pub fn ignore_unimportant(&self) -> bool; pub fn warnings(&self) -> &[Warning]; }
+
+// api/error.rs
+pub enum ApiError { /* … */
+    /// A rules file that does not parse or validate, named by its canonical spec (JSON `error.spec`); kind and
+    /// exit code are those of `source`.
+    RulesFile { spec: String, source: Box<ApiError> },
+}
+impl ApiError { pub fn is_broken_pipe(&self) -> bool; }
+
+// api/vocab.rs (also re-exported from api)
+pub fn parse_folder_mode(word: &str) -> Result<FolderMode, ApiError>;     // --folders
+pub fn parse_content_method(word: &str) -> Result<ContentMethod, ApiError>; // --content none|crc|binary|rules
+pub fn parse_algorithm(word: &str) -> Result<AlgorithmChoice, ApiError>;  // --algorithm, with the valid words
+pub fn parse_line_range(text: &str) -> Result<RangeInclusive<u32>, ApiError>; // --lines a-b | n
+pub fn resolve_text_display(display: Option<&str>, context: Option<u32>, default_context: u32, json: bool)
+    -> Result<DisplayMode, ApiError>;
+pub fn resolve_folder_display(display: Option<&str>, folders: Option<&str>, suppress_filters: bool,
+    ignore_unimportant: bool) -> Result<DisplayOptions, ApiError>;
+pub const DEFAULT_FOLDER_FILTER: FolderDisplayFilter = FolderDisplayFilter::Differences;
+pub const DEFAULT_FOLDER_MODE: FolderMode = FolderMode::CompareStructure;
+pub use hikasa_report::folder_mode_word;
+
+// api/human.rs: the human lines of the list commands (§1.9.2 amendment)
+pub fn token_lines(dto: &FormatTokensDto) -> Vec<String>;   // L<line>:<start>-<end>\t<element>\t<escaped text>
+pub fn vfs_ls_line(entry: &VfsEntryDto) -> String;          // <kind><attrs> <size> <mtime> <escaped name>[ -> target]
+pub fn vfs_stat_lines(dto: &VfsStatDto) -> Vec<String>;     // the ls line, then `capabilities: …`
+pub fn gui_list_line(view: &ViewInfo) -> String;            // <view>\t<kind>\t<title>\t<spec>…
+pub fn format_list_line(item: &FormatListItemDto) -> String;// <position>\t<id>\t<status>\t<name>\t<mask>
+pub fn format_detect_line(dto: &FormatDetectDto) -> String; // <id or ->\t<name>
+
+// api/dto.rs
+pub const COMPLETIONS_SCHEMA: &str = "hikasa.completions.v1";   // { "shell", "script" }
+pub const USAGE_ERROR_SCHEMA: &str = "hikasa.usage_error.v1";   // result null, error.kind invalid_input, exit 100
+pub struct CompletionsDto { pub shell: String, pub script: String }
+impl<T: Serialize> JsonEnvelope<T> {
+    pub fn success_raw(schema: &'static str, exit_code: u8, result: T, warnings: Vec<Warning>) -> JsonEnvelope<T>;
+}
+impl JsonEnvelope<()> { pub fn usage_error(message: &str) -> JsonEnvelope<()>; }
+pub fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Result<()>;
+pub fn base64_encode(bytes: &[u8]) -> String;
+// plus the DTO types of §4.3.4 (FormatListDto … VersionDto) with `new`/`current` constructors
+
+// api/gui.rs (also re-exported from api)
+pub struct GuiLaunch { pub args: Vec<OsString>, pub env: Vec<(OsString, OsString)> }
+pub fn find_gui_exe(facts: &EnvFacts) -> Option<PathBuf>;   // $HIKASA_GUI_EXE alone, else the first existing candidate
+pub struct ViewWords { pub display: Option<String>, pub context_lines: Option<u32>, pub folders: Option<String>,
+                       pub suppress_filters: bool, pub expand_all: bool }
+impl GuiOpenRequest {
+    pub fn for_text(req: &TextCompareRequest, view: &ViewWords, wait: bool) -> GuiOpenRequest;
+    pub fn for_folder(req: &FolderCompareRequest, view: &ViewWords, wait: bool) -> GuiOpenRequest;
+}
+impl GuiOpenOutcome { pub fn exit_code(&self) -> u8; }   // Opened → 0, Closed → the raw code
+pub struct GuiOpenReport { pub outcome: GuiOpenOutcome, pub kind: ViewKind, pub specs: Vec<String>,
+                           pub spooled_stdin: Option<PathBuf> }
+impl GuiOpenReport { pub fn dto(&self) -> dto::GuiOpenDto; pub fn exit_code(&self) -> u8; }
+pub struct ResolvedOpen { pub kind: ViewKind, pub specs: Vec<String>, pub options: OpenOptions,
+                          pub spooled_stdin: Option<PathBuf> }
+pub enum ViewRequest {
+    Text { request: TextCompareRequest, view: ViewOptions },
+    Folder { request: FolderCompareRequest, display: DisplayOptions, expand_all: bool },
+}
+pub enum ViewOutcome { NoVerdict, LoadFailed, Text { result: ContentResult, ignore_unimportant: bool },
+                       Folder { verdict: CompareVerdict } }
+impl ViewOutcome { pub fn close(&self, reason: CloseReason, saved: bool) -> (ViewResult, ExitCode); }
+pub fn open_usage() -> String;   // usage of `hikasa gui open` / `hikasa-gui`, from the switch table
+// OpenArgs also has `stdin_name: Option<String>` and `help: bool`.
+
+// ipc
+pub const MAX_FRAME_VALUES: usize = 1 << 18;          // JSON values per frame (counted before decoding)
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const MIN_PROTOCOL_VERSION: u32 = 1;
+pub const MAX_PARKED: usize = 16;                     // client: messages for other requests kept while waiting
+pub const MAX_SOCKET_PATH: usize = 100;
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);   // server: send timeout per connection
+pub const WRITE_QUEUE: usize = 64;                    // server: frames queued per connection
+pub const ABANDONED_EXIT_CODE: ExitCode = ExitCode::UnknownError;   // 100
+impl Endpoint { pub fn verify_folder(&self) -> Result<(), IpcError>; }
+impl Request { pub const fn type_name(&self) -> &'static str; }
+impl Response { pub fn error(code: IpcErrorCode, message: impl Into<String>) -> Response; }
+impl ViewKind { pub const ALL: [ViewKind; 13]; pub const fn as_str(self) -> &'static str;
+                pub const fn is_served_in_m1(self) -> bool; }
+impl CloseReason { pub const fn as_str(self) -> &'static str; pub fn parse(s: &str) -> Option<CloseReason>; }
+impl ViewResult { pub fn folder_verdict_kind(&self) -> Option<CompareVerdict>;
+                  pub fn close_reason(&self) -> Option<CloseReason>; }
+impl IpcErrorCode { pub const ALL: [IpcErrorCode; 7]; pub fn parse(s: &str) -> Option<IpcErrorCode>; }
+impl IpcClient { pub fn request(&mut self, request: Request) -> Result<(u64, Response), IpcError>;  // Error → Remote
+                 #[doc(hidden)] pub fn connect_with_versions(/* … */); }
+impl IpcServer { pub fn endpoint(&self) -> &Endpoint; }
+impl ServerHandle { pub fn endpoint(&self) -> &Endpoint; }
+impl ViewWaiter { pub fn request_id(&self) -> u64; }
+pub fn peer_uid_matches(peer: Option<u32>, owner: u32) -> bool;
+impl InstanceLock { pub fn file(&self) -> &File; }
+// options.rs
+pub const OPTIONS_FILE: &str = "options.toml"; pub const OPTIONS_SCHEMA_VERSION: u32 = 1;
+pub fn parse_options(text: &str, origin: &str) -> Result<OptionsLoad, SessionError>;
+impl ProgramOptions { pub fn stream_options(&self, threads: usize) -> StreamOptions;
+                      pub fn content_budget_bytes(&self) -> u64; }
+// formats.rs
+pub const ORDER_FILE: &str = "order.toml"; impl FormatStore { pub fn dir(&self) -> &Path; }
+// host.rs
+impl Platform { pub const HOST: Platform; pub const fn path_style(self) -> PathStyle; pub const fn is_unix(self) -> bool; }
+impl EnvFacts { pub fn new(platform: Platform, temp_dir: PathBuf) -> EnvFacts; }
+```
+
+**Deviations, interpretations and amendments:**
+
+1. **`vfs_stat`** returns `dto::VfsStatDto` (`{spec, entry, capabilities}`, the §4.3.4 shape), not `VfsEntryDto`:
+   the contract's signature could not produce `hikasa.vfs_stat.v1` without a second VFS call.
+2. **`Endpoint::own_dir`** (Hikasa's own fallback socket folder, created and verified by the server) and
+   **`Endpoint::uid`** (decision 1) are fields of `Endpoint`; `for_config` fills both (`uid` from `EnvFacts::uid`
+   on Unix, also for `HIKASA_IPC_ENDPOINT`).
+3. **§2.23 row 6** could never occur as written (`hk-<h16>.sock` is longer than `hikasa[-<h8>].sock`, so the first
+   fallback is always longer than 100 bytes too). The row is corrected: a Unix path longer than 100 bytes becomes
+   `/tmp/hikasa-<id>/hk-<h16>.sock` (Hikasa's own folder). The algorithm of §2.23 is unchanged.
+4. **`SessionError::Schema`** (a newer `options.toml` or `order.toml`) and **`SessionError::EmptyConfigDir`** are
+   additive variants. A **user format file** of a newer schema version is skipped with `user_format_skipped`
+   (§2.12.4 step 2: "a file that fails to parse is skipped"; the built-ins stay usable), whereas a newer
+   `options.toml` or `order.toml` stops the program (D-31). Both are tested.
+5. **`OpenArgs::stdin_name`** (the `--stdin-name` of `gui open`, for `StdinSource`) and **`OpenArgs::help`**
+   (`--help`, `-h`, `/?`; [`open_usage`] prints the usage) are additive fields.
+6. **`ReportSettings`** carries the report title (routed through `ReportMeta::with_title`), the HTML style and
+   `list_summary`. `list_summary` defaults to `true` and **no CLI flag changes it**: `--quiet` keeps the
+   folder list's `#` summary line (§4.3.3, CLI invariant 3); `false` is an API-only option for embedders.
+   `render_text_with` and `render_folder_with` replace the options' ignore-unimportant with the response's
+   effective flag (item 20).
+7. **Standard input** (decision 5 and consumer findings). `ServiceInit::stdin` is a lazy `StdinSource`: the
+   service reads it at most once, the first time `parse_spec` sees `-` (also a `-` rules file), stamps it with the
+   injected clock and serves it from then on (`Service::vfs()` includes it). Adapters pass a source
+   unconditionally and never decide which arguments are specs; `format detect -` uses the name hint only and never
+   reads standard input; `write_output("-")` never reads it either (the VFS refuses the target). No source, or a
+   failing read, is an error of the command (exit 100). The **spool** of `gui open -` is
+   `<cache>/stdin/<n>/<name>`: on Unix the cache folder must belong to the user and not be writable by others
+   (the temp fallback `<temp>/hikasa-cache-<id>` must also be a real folder, not a symbolic link), `stdin/` is a
+   real 0700 folder of the user, `<n>` is created fresh with mode 0700 (create-new: `mkdir` never follows a link;
+   the first free number wins), and the file is created with `create_new` and mode 0600 (never through a link);
+   any failure removes the file and the numbered folder. Planted links and foreign folders are refused, never
+   used.
+8. **Startup warnings** have one channel: `Service::startup_warnings()` is data, which adapters put at the start
+   of every JSON envelope's `warnings` and print once to stderr in human mode; `Service::new` logs them at debug
+   level only (no WARN line), and ignored option keys at debug level (`--verbose` shows them; adapters log nothing
+   themselves).
+9. **`format_mismatch` and the report header.** The session's own warnings (`format_mismatch`, rules-file keys)
+   reach the JSON envelope and stderr through `TextCompareResponse::warnings`; they are not added to the RPT-004
+   header, which lists the comparison's and the rendering's warnings (§1.7.3, session-review additions). The grammar-dependent report
+   paths of §1.7.3 "Goldens" are covered by Service tests (tab size 2, a `lines_independent` normal diff, the
+   `Rules: format: C, C++, C#, ObjC Source; …` line, the title in text and folder reports).
+10. **Jobs.** `Service::spawn` runs the body on its own `hikasa-job-<id>` thread, outside the pool; the engines it
+    calls enter the pool for their parallel sections (they take the pool explicitly, T7). A long job therefore no
+    longer pins a worker for its whole duration (§5.1 amended). Residual limit: hikasa-text's parallel sections
+    still occupy the workers while they run, so with a pool smaller than the number of concurrent long comparisons
+    a small new view waits for the next section boundary (measured: 1.1 s instead of 2.0 s with 2 workers and two
+    400k-line views; immediate with the default pool size). A separate `JobKind` for view support work is not
+    added: `JobKind` is hikasa-core's enum (wave 1); such jobs use the kind of the view they serve.
+    `JobHandle::wait` after `try_result` returned the result is `InvalidArgument`; `is_finished` is additive.
+11. **IPC security on Unix** (decision 1). Before connecting, the client verifies the socket folder
+    (`Endpoint::verify_folder`, `std` metadata only): it must be a folder owned by `Endpoint::uid` that is not
+    group- or world-writable (`mode & 0o022 == 0`); Hikasa's own folder must also be a real folder with
+    `mode & 0o077 == 0`; a symbolic link to the folder is accepted only when the link belongs to the same user;
+    an unknown uid fails closed; a missing folder is `NotRunning`. Anything else is
+    `IpcError::InsecureEndpoint` (exit 100 for every `gui` command) and nothing is sent, launched or awaited. The
+    server creates its own folder with mode 0700 and create-new semantics, refuses a folder it does not own (or a
+    symbolic link, or one others can enter), applies the same folder check before binding, removes only a socket
+    at the socket path (any other file is an error and is never deleted), sets the socket to 0600 and checks that
+    it belongs to `Endpoint::uid`. Per connection, credentials that cannot be read close the connection (fail
+    closed); a platform whose credentials carry no uid is accepted and logged (documented limitation; the private
+    folder still protects the endpoint). `XDG_RUNTIME_DIR` stays the preferred location; `HIKASA_IPC_ENDPOINT`
+    endpoints are verified too (tests put them in private temporary folders).
+12. **Protocol rule 2 is enforced by the library** (decision 2). A `ViewWaiter` dropped without `view_closed`
+    sends `ViewClosed` with reason `abandoned`, no verdict and exit code 100 (`ABANDONED_EXIT_CODE`), also when a
+    handler panic dropped it; when it is dropped before the immediate response was written it is held back and
+    sent right after `ViewOpened`; when the `OpenView` failed nothing is sent. `ServerHandle::shutdown` (and
+    dropping the handle) stops accepting, sends every waiter still outstanding `ViewClosed` (reason `shutdown`,
+    exit 100: a GUI notifies its waiters with the views' real codes first, through `ViewOutcome::close`), closes
+    every connection after its last frame and waits up to 2 s in total for the writers. Exactly one `ViewClosed`
+    per wait: the first close wins, later `view_closed` calls are no-ops. So `gui open --wait` can never hang on a
+    live GUI.
+13. **Writes never block the GUI** (decision 2). Every frame of a connection goes through a bounded queue
+    (`WRITE_QUEUE` = 64) to the connection's writer thread (`hikasa-ipc-write-<n>`), which writes with a send
+    timeout (`WRITE_TIMEOUT` = 5 s); `view_closed` only queues. A full queue or a failed write drops the client
+    (the connection is shut down). A protocol error closes the connection after `Error{protocol}` (id 0), also when
+    a waiter still holds it. On Windows a named pipe cannot be shut down from another thread without `unsafe`:
+    there a closed connection ends when the client disconnects (waiters are still notified).
+14. **Client timeouts and queues** (decision 2). The client verifies the folder, connects, and decodes frames on a
+    reader thread (`hikasa-ipc-read`) into a bounded channel; each call waits with one deadline
+    (`crossbeam_channel::after(timeout)`), so the 10 s request timeout is the total of the call, whatever frames
+    for other requests arrive; no clock is read in the crate (T1). At most `MAX_PARKED` (16) messages for other
+    requests are kept, more is a protocol error. A server message with id 0 (§4.4.1: protocol errors) fails the
+    pending call or wait as `IpcError::Remote` (exit 100, not 102). Any message other than `ViewClosed` or `Error`
+    for an awaited request is a protocol error. Dropping the client shuts the connection down.
+15. **Peak memory per frame** (decision 2). Before the two-phase decode, a frame's JSON values are counted (an
+    O(n), allocation-free upper bound over the structural characters outside strings); more than
+    `MAX_FRAME_VALUES` (262,144) is `Error{protocol}` and a close. One 16 MiB frame of tiny values therefore costs
+    the 16 MiB read buffer, not a 0.5 GiB value tree; real messages hold a few hundred values.
+16. **Pool panics** (decision 3). The service pool has a rayon `panic_handler`: a panic in a task given to
+    `pool().spawn` is logged (`hikasa`, error level) and ends that task only; the worker and every other task keep
+    running (rayon's default would abort the process). Panics inside `install`/`join`/`scope` still propagate to
+    their caller, where every service method's and every `Service::spawn` job's `run_guarded` turns them into
+    `ApiError::Internal` (§5.6 amended).
+17. **Effective ignore-unimportant in folder results** (decision 4). `FolderCompareResponse::ignore_unimportant` is
+    the request's flag or the `--criteria` word `ignore-unimportant`; `FolderCompareResponse::json` and
+    `render_folder_with` use it in place of the caller's `DisplayOptions::ignore_unimportant`, so `result.verdict`,
+    the statistics, the categories, the markers and the exit code always agree, also with the one-call
+    `folder_compare`. Quick and text responses carry their flag the same way (`QuickDto::new(&resp)`).
+18. **Launching** (decision 6). `Service::gui_launch()` gives the launcher `--config-dir <absolute dir>` for an
+    explicit or portable configuration (the launched GUI then computes the same endpoint, D-47; a portable GUI
+    found elsewhere on `PATH` would not see the marker) and `HIKASA_IPC_ENDPOINT` in the child's environment when
+    the endpoint is overridden; the per-user default needs neither (the child inherits the environment).
+    `find_gui_exe(facts)` returns `$HIKASA_GUI_EXE` alone when it is set (missing file → `None` → 103), else the
+    first existing `gui_exe_candidates` entry; this makes the §6.3 launch and 103 tests independent of a real GUI
+    built next to the CLI.
+19. **Unix criteria flags** (decision 7). `FolderRulesPatch` has `unix_permissions`, `unix_owner` and
+    `unix_group` (§1.6.8 item 24), applied after `unix`: `--permissions`, `--owner` and `--group` set one field
+    each, so a rules file's or `--criteria`'s other unix tests stay; `--criteria` keeps setting `unix` (unlisted →
+    off).
+20. **`--gui` ↔ `OpenView`** (decision 7, D-50). `GuiOpenRequest::for_text` and `for_folder` turn a compare
+    request plus its view words (`ViewWords`) into the open request: specs, kind, forced format, per-side
+    encodings, rules files (raw, made absolute by `resolve_open`), rules patches, `--criteria`, ignore-unimportant,
+    `--display`, `--context`, `--folders`, `--suppress-filters`, `--expand-all`. `--filters` of `folder compare`
+    travels as `folder_rules.name_filter`; `OpenOptions::filters` is the legacy `gui open --filters` switch and
+    wins when both are given. `Service::open_view_request(kind, specs, options)` is the inverse the GUI uses: it
+    requires exactly two canonical absolute specs (relative specs, `-` and `clipboard://` are `InvalidArgument`,
+    never resolved against the GUI's cwd, §4.4.3 rule 4) and returns the `TextCompareRequest` (with
+    `ViewOptions` from `display`/`context_lines`, default all) or the `FolderCompareRequest` (with `DisplayOptions`
+    from `display`/`folders`/`suppress_filters`, default differences with the folder structure, and
+    `expand_all`). Words travel unparsed and are parsed by the same core parsers on both sides (T11).
+21. **Local validation of `--gui`** (consumer finding). `gui_open` resolves the request (`resolve_open`) and then
+    validates it (`check_open`: the `OpenView` mapping and its display words, the forced format, the encoding
+    labels, the text rules, and for folders the rules file, `--criteria`, the patch and the text rules of
+    `--content rules`) before it contacts or launches the GUI, so a typo exits 100 locally, with or without
+    `--wait`. Rules files given as `-`, `clipboard://` or a path that is not valid UTF-8 are `InvalidArgument`.
+22. **D-23 close rules** (decision 7). `ViewOutcome::close(reason, saved)` is the one implementation the GUI
+    calls: `NoVerdict` (a file view not finished or cancelled) → 0; `LoadFailed` → 100 with reason
+    `load_failed`; `Text{result, iu}` → `ExitCode::for_content`; `Folder{verdict}` → `ExitCode::for_verdict`. A
+    folder view closed while it is still scanning reports `Folder { verdict: Incomplete }` → **100** (decision:
+    an incomplete comparison cannot claim sameness, D-02).
+23. **FC-062 with non-UTF-8 names.** `TextCompareRequest::for_specs(left, right)` (and `spec_os_string`) carry
+    the exact OS path of local specs from `TreeRead::spec(id, side)`; `canonical()` is lossy for such names and
+    would name another file. §1.10 is amended accordingly. No hikasa-folder change was needed.
+24. **Second-instance forwarding.** `Service::forward_open(&open.request)` is what a second `hikasa-gui <args>`
+    calls on `AlreadyRunning` (without `--solo`): the specs are resolved against its own cwd (absolute, §4.4.3
+    rule 4), `-` is spooled, rules files are made absolute, nothing is launched or awaited; exit 0 on success,
+    else `err.exit_code(ApiOp::GuiOpen { wait: false })`. The first instance resolves its own command line with
+    `resolve_open` and maps it with `open_view_request`. §1.10 and §3.6 are amended.
+25. **Vocabulary and defaults** (decision 7, T11). `parse_content_method` (`--content`), `parse_algorithm`
+    (`--algorithm`, with the valid words), `parse_line_range` (`--lines a-b` with `1 ≤ a ≤ b`, or one line `n`;
+    `5-`, `-3`, `0-1`, `9-2` are errors), `resolve_text_display` (a `--display` word, else `--context n` alone means
+    `context` with n lines, else `mismatches` for JSON and `all` otherwise, §4.3.2) and `resolve_folder_display`
+    (defaults `differences` and `compare_structure`, the §4.3.3 examples) are the core functions the CLI and the
+    GUI use; `format_tokens` with an empty range (`1..=0`, `0..=0`, a range past the end) selects no line.
+26. **Human output and escaping** (decision 7). hikasa-report exports `escape_controls`, `escape_terminal` and
+    `escape_name` (§1.7.3, session-review additions); `api::human` formats the list commands with them (`format tokens`, `vfs ls`,
+    `vfs stat`, `gui list`, `format list`, `format detect`), so file text and names never reach a terminal with raw
+    control or bidirectional characters (§1.7.3 item 5).
+27. **JSON helpers.** `JsonEnvelope::success_raw` (the raw view code of `gui open --wait`, which a newer GUI may
+    send outside `ExitCode`), `JsonEnvelope::usage_error` (`hikasa.usage_error.v1`: a command line that does not
+    parse, with `--json` anywhere in it; exit 100, D-35), `hikasa.completions.v1` (`{shell, script}`: CLI-000,
+    every subcommand supports `--json`), `GuiOpenOutcome::exit_code`/`GuiOpenReport::exit_code`,
+    `Service::gui_ping_dto` (with the endpoint text) and `Service::vfs_cat_dto`.
+28. **Rules-file errors name the file.** A `--rules-file`/`--text-rules-file` that does not parse or validate is
+    `ApiError::RulesFile { spec, source }`: the message starts with the canonical spec, JSON `error.spec` is set,
+    kind and exit code are the source's.
+29. **`options.toml` edge cases** (D-31, §5.5 rule 3). A known section with a non-table value
+    (`text_editing = 5`) is an error; option keys match the table structure, so a quoted dotted key
+    (`"text_editing.number_of_context_lines" = 9`) is one unknown key of an unknown section (warning, not applied);
+    a negative `schema_version` is an error ("must be a non-negative integer"), not "newer".
+30. **`gui open` parsing.** Inline values are split on the OS string, so `--config-dir=<non-UTF-8 path>` and
+    `--log=<…>` work like their separate spellings (a non-UTF-8 value of a text switch stays `InvalidArgument`).
+    On Windows an unknown `/name[=v]` whose name looks like a switch (ASCII letters, digits, `-`, `?`) is
+    `InvalidArgument`; `/dir/file` and `/a.txt` stay root-relative paths. `--config-dir ""` is
+    `SessionError::EmptyConfigDir`, never the current directory.
+31. **Text rules of a folder comparison without `--content rules`** are reported with `switch_ignored` (they used
+    to be ignored silently; a missing `--text-rules-file` is then not read at all).
+32. **`write_atomic`** keeps at most `TEMP_NAME_PREFIX_MAX` (200) bytes of the target name in its temporary name,
+    so every name the file system accepts can be written atomically.
+33. **`NO_COLOR`** is an `EnvFacts` fact (`no_color`), so the CLI's colour decision is testable like every other
+    ambient fact; the TTY test stays in the CLI (`std::io::IsTerminal`).
+34. **`gui open` and the global flags** (§1.9.2 amendment). clap consumes the global flags that come directly
+    after `open`, before the first positional argument; `parse_open_args` sees everything else. The CLI merges
+    `OpenArgs::{json, quiet, no_color}` with the globals, and honours `OpenArgs::{config_dir, log, verbose}` too,
+    because `parse_open_args` runs before `Service::new` (§1.9.1): the same flag given both ways with different
+    values is a usage error (100). So the position of a flag never changes what it means.
+35. **Rejected:** a `HIKASA_FIXED_NOW` clock override for reproducible CLI goldens (§6.1: CLI goldens drop the
+    `Generated:` line; Appendix C item 8 keeps reproducible reports out of M1); splitting `folder_prepare` into a
+    pure step and a loading step (it reads the rules files through the VFS and compiles the text rules; it is fast,
+    and a GUI that may read a slow share calls it inside `Service::spawn` and sends the model to the UI thread —
+    documented in §1.10 instead).
+36. **Architecture test** (decision 8). The hardening of §6.1 (amended there) closes the bypasses the reviewers
+    demonstrated; the checks remain a heuristic, with the limits listed in §6.1.
+
 ### 1.9 hikasa-cli (binary `hikasa`)
 
 **Purpose.** A thin adapter (ARCH-L2, ARCH-012). Each subcommand parses arguments, builds one request, calls
@@ -6567,14 +7012,14 @@ serde, serde_json, tracing, tracing-subscriber, jiff.
 cli/hikasa-cli/src/
 ├── main.rs        capture_env → Cli::try_parse (usage error → exit 100, D-35) → tracing (--log, --verbose) →
 │                  for `gui open`: normalize_legacy_args + parse_open_args (core) →
-│                  read stdin only if a spec is "-" (Blob with the --stdin-name hint) → Service::new →
+│                  StdinSource (lazy, --stdin-name hint; the service reads it on the first "-") → Service::new →
 │                  dispatch inside run_guarded (panic → 100) → exit(code)
 ├── args.rs        clap derive: Cli, GlobalArgs, Command and every *Args struct
 ├── output.rs      Output: stdout/stderr writers, colour decision (TTY && !--no-color && NO_COLOR unset),
 │                  JSON envelope, BrokenPipe policy (stop writing, keep exit code)
 ├── progress.rs    StderrProgress (ProgressSink): one updating line when stderr is a TTY; nothing otherwise
-├── launcher.rs    ProcessGuiLauncher (GuiLauncher: std::process::Command detached with null stdio;
-│                  sleep = std::thread::sleep)
+├── launcher.rs    ProcessGuiLauncher (GuiLauncher: find_gui_exe + std::process::Command detached with null
+│                  stdio, with the GuiLaunch arguments and environment; sleep = std::thread::sleep)
 └── cmd/
     ├── quick.rs   text.rs   folder.rs   format.rs   vfs.rs   gui.rs   completions.rs   version.rs
 ```
@@ -6670,6 +7115,22 @@ match_case: true }`; `--unimportant-regex r` → `TextPattern { pattern: r, rege
 `FolderDisplayFilter::parse` or the text mode table of §2.18; `--cutoff` → `DateFilter::parse` with the clock's
 zone; `--size-filter` → `SizeFilter::parse`; individual criteria flags → `FolderRulesPatch` fields.
 
+*Amended in the wave-4 session review (§1.8.7):* `--permissions`, `--owner`, `--group` → `unix_permissions`,
+`unix_owner`, `unix_group` (one field each); `--content` → `api::parse_content_method`; `--algorithm` →
+`api::parse_algorithm`; `--lines` → `api::parse_line_range`; `--folders` → `api::parse_folder_mode`; the text
+display (`--display`, `--context`, JSON or human) → `api::resolve_text_display`; the folder display (`--display`,
+`--folders`, `--suppress-filters`; default `differences` with the folder structure) →
+`api::resolve_folder_display`, whose ignore-unimportant the response replaces with the effective flag; `--gui` →
+`GuiOpenRequest::for_text`/`for_folder` with the view words, then `gui_open_with` (local validation first);
+standard input → one `StdinSource` passed unconditionally; the launcher → `find_gui_exe` and `Service::gui_launch`.
+The human lines of `format tokens`, `vfs ls`, `vfs stat`, `gui list`, `format list` and `format detect` are
+`api::human`; `format show` prints `format_toml`. With `--json`, a usage error prints
+`JsonEnvelope::usage_error` (`hikasa.usage_error.v1`, exit 100) and `completions` prints `hikasa.completions.v1`
+(`{shell, script}`). Every envelope's `warnings` start with `Service::startup_warnings()`, which human mode prints
+once to stderr. For `gui open`, the global flags clap sees directly after `open` and the `OpenArgs` flags after the
+first positional are merged (the same flag given both ways with different values is a usage error, 100), so a
+flag means the same wherever it stands.
+
 **CLI invariants** (checked by tests in §6.3):
 1. The exit code always comes from `ExitCode` (§2.21). clap usage errors give 100, and `--help`/`--version` give 0.
 2. With `--json`, stdout holds exactly one JSON document followed by a newline, even on error. Logs and
@@ -6691,9 +7152,10 @@ zone; `--size-filter` → `SizeFilter::parse`; individual criteria flags → `Fo
 | Filtered gap bars (TC-035) | `ViewOptions::expanded` row ranges; `FilteredView::position_of` returns the gap that hides a row. |
 | Folder tree with incremental updates | `Service::folder_prepare` → `PreparedFolderCompare::model()` (an `Arc<FolderModel>` to render at once); `Service::spawn` runs `folder_run` with `ChannelObserver::bounded(n)`. Per frame: if `model.generation()` changed, `model.read()` → `visible_rows(opts, expanded, &mut rows)` (O(visible)), `node(id)`, `colour(id, side, iu)`, `stats(iu)`; all O(1) per row on partial trees. Events are id-only hints. |
 | Cancellation (Stop button) | `JobHandle::cancel`; the folder model stays consistent (`is_complete() == false`, unscanned folders `Unknown`). |
-| Opening a file pair (FC-062) | `TreeRead::spec(id, side)` for both sides → `TextCompareRequest`. |
-| IPC server, single instance (ARCH-090) | `Service::endpoint()` → `IpcServer::bind` (instance lock per configuration, D-47) → `spawn(handler)` → `ServerHandle`; `ServerHandle::shutdown` on exit. The GUI implements `IpcHandler` and keeps `ViewWaiter`s per view; on close it calls `view_closed(view, ViewResult::new(…), ExitCode::for_kind(..)` or `for_verdict(..))`. |
-| Second-launch forwarding and the legacy command line | `hikasa-gui <args>` → `normalize_legacy_args` + `parse_open_args` (the CLI's own parser, D-51) → on `AlreadyRunning`, `IpcClient::connect` and `OpenView` (no wait), exit 0; otherwise become the server. |
+| Opening a file pair (FC-062) | `TreeRead::spec(id, side)` for both sides → `TextCompareRequest::for_specs(&left, &right)` (exact for non-UTF-8 local names, §1.8.7 item 23). |
+| IPC server, single instance (ARCH-090) | `Service::endpoint()` → `IpcServer::bind` (instance lock per configuration, D-47) → `spawn(handler)` → `ServerHandle`; `ServerHandle::shutdown` on exit. The GUI implements `IpcHandler`, turns each `OpenView` into its view's request with `Service::open_view_request(kind, &specs, &options)` and keeps `ViewWaiter`s per view; on close it calls `let (result, code) = outcome.close(reason, saved)` (`ViewOutcome`, the D-23 rules) and `waiter.view_closed(view, result, code)`. A dropped waiter reports `abandoned` (100) and `shutdown` notifies the rest (§1.8.7 items 12, 22). |
+| Second-launch forwarding and the legacy command line | `hikasa-gui <args>` → `normalize_legacy_args` + `parse_open_args` (the CLI's own parser, D-51) → `ServiceInit` with `OpenArgs::config_dir` and a lazy `StdinSource` → on `AlreadyRunning` (without `--solo`), `Service::forward_open(&open.request)` (absolute specs, spooled `-`, no wait), exit 0 or `err.exit_code(ApiOp::GuiOpen { wait: false })`; otherwise become the server and open the command line's view with `resolve_open` + `open_view_request`. A GUI launched by the CLI receives `--config-dir` for explicit and portable configurations (§1.8.7 items 18, 24). |
+| Folder rules files on slow shares | `folder_prepare` reads the rules files through the VFS and compiles the text rules; it is fast, and a GUI that may read a slow share calls it inside `Service::spawn` and sends the model to the UI thread (§1.8.7 item 35). |
 
 ### 1.11 Stub crates
 
@@ -8258,6 +8720,12 @@ implements the folder row. `ApiError::exit_code(op)` implements the error rows: 
 maps to 100. Each function is a total `match` (no `_` arm over its own crate's enums, §0.4 rule 9), and the whole
 table is a unit test.
 
+*Amended in the wave-4 session review (§1.8.7):* `IpcError::InsecureEndpoint` (a socket folder another user
+controls) is 100 for every `gui` command, and nothing is launched; a view whose waiter the GUI dropped closes with
+reason `abandoned` and code 100, a view still open when the GUI's server shuts down with reason `shutdown` and
+code 100 (the view's real code is unknown); a protocol error the GUI sends with id 0 is 100 (not 102); a folder
+view closed while still scanning reports `Incomplete` → 100 (`ViewOutcome::close`).
+
 ### 2.22 Configuration and cache directories (SES-050)
 
 ```
@@ -8272,9 +8740,14 @@ resolve_config_dir(facts, explicit, exists):
   cache_dir:  Explicit/Portable → dir / "cache"
               User → Linux/OtherUnix: (facts.xdg_cache_home if absolute, else facts.home/.cache) / "hikasa";
                      MacOs: facts.home / "Library/Caches/Hikasa"; Windows: facts.local_appdata / "Hikasa" / "cache"
-              (a missing ingredient → facts.temp_dir / "hikasa-cache")
+              (a missing ingredient → facts.temp_dir / ("hikasa-cache-" + id), id as in §2.23)
   is_default: dir == default_config_dir(facts)
 ```
+
+*Amended in the wave-4 session review (§1.8.7 items 7, 30):* `--config-dir ""` is `EmptyConfigDir`; the temp
+fallback of the cache folder is per user (`hikasa-cache-<id>`); the stdin spool verifies the cache folder (owned by
+the user, not writable by others; the temp fallback must be a real folder) and creates `stdin/` and `<n>/` with
+mode 0700 and the file with mode 0600, all with create-new semantics.
 
 Read-only commands never create either folder. Files that are missing mean defaults.
 
@@ -8304,6 +8777,17 @@ IpcServer::bind(endpoint) on Unix:
   - remove a stale socket file (the lock proves no live server owns it), bind, chmod 0600
   - verify the folder owner equals the socket file's owner (our euid) → else InsecureEndpoint
   - per connection: peer_creds().euid() must equal the socket file's owner uid, else the connection is closed
+
+Folder verification (Endpoint::verify_folder; amended in the wave-4 session review, §1.8.7 item 11), Unix only:
+  dir = the folder of the socket path; uid = endpoint.uid (EnvFacts::uid; unknown → refuse)
+  - dir missing → NotRunning
+  - dir is a symbolic link: Hikasa's own folder → refuse; else the link must belong to uid (then follow it)
+  - dir must be a folder owned by uid with mode & 0o022 == 0 (Hikasa's own folder: mode & 0o077 == 0)
+  - else InsecureEndpoint (exit 100)
+  The client verifies before every connect (also before and between launch retries) and never contacts, launches
+  into or waits on a refused folder. The server creates Hikasa's own folder with mode 0700 (create-new), refuses one
+  it does not own, verifies the folder before binding, removes a stale *socket* only (any other file at the socket
+  path is refused, never deleted), and closes connections whose peer credentials cannot be read.
 ```
 
 | # | Situation | Endpoint |
@@ -8313,7 +8797,7 @@ IpcServer::bind(endpoint) on Unix:
 | 3 | Linux, portable install, no `XDG_RUNTIME_DIR`, uid 1000 | `<temp>/hikasa-1000/hikasa-<h8>.sock` (folder 0700, owner verified) |
 | 4 | macOS default | `$TMPDIR/hikasa.sock` |
 | 5 | Windows, user `Anna Lee`, default | `\\.\pipe\hikasa-Anna_Lee`, lock `%TEMP%\hikasa-Anna_Lee.lock` |
-| 6 | Unix path longer than 100 bytes | `<dir>/hk-<h16>.sock` |
+| 6 | Unix path longer than 100 bytes | `/tmp/hikasa-<id>/hk-<h16>.sock` (Hikasa's own folder; corrected in the wave-4 review: the `<dir>/hk-<h16>.sock` step is always longer than 100 bytes as well, §1.8.7 item 3) |
 | 7 | `HIKASA_IPC_ENDPOINT=/tmp/t/x.sock` | `/tmp/t/x.sock` (tests) |
 
 Two GUIs with different configuration folders therefore never share a socket or a lock, while every launch with
@@ -8492,7 +8976,8 @@ because the GUI's "Report…" command calls the same functions through `Service:
 
 Rules precedence, from lowest to highest: built-in defaults (`Default`), then (M2: the session type's
 Defaults), then the `--rules-file` TOML, then `--criteria` (folder compare), then individual flags
-(`*RulesPatch`). The text compare and folder compare tables in §1.9.2 also accept `--rules <file>` as a spelling
+(`*RulesPatch`; *wave-4 review:* the unix flags are separate patch fields, so each flag overrides one test, §1.8.7
+item 19). The text compare and folder compare tables in §1.9.2 also accept `--rules <file>` as a spelling
 of `--rules-file` (docs/12). `quick` uses `--rules` as the method flag (CLI-003), so there the file option is only
 `--rules-file`.
 
@@ -8508,7 +8993,7 @@ Service::gui_open(req, Some(&launcher))
   kind  ← --fv or infer_view_kind (2 files → text_compare)
   endpoint ← Endpoint::for_config(facts, config)                                  (§2.23)
   connect_or_launch(endpoint, …) ──── connect: NotRunning
-  launcher.launch()  ── spawn hikasa-gui (detached, no args) ────────────────────► starts; Endpoint::for_config
+  launcher.launch(&service.gui_launch()) ── spawn hikasa-gui [--config-dir D] ──► starts; Endpoint::for_config
                                                                                    IpcServer::bind (lock, 0700/0600)
                                                                                    + spawn(handler)
   retry connect: launcher.sleep(50 ms … 500 ms), budget 10 s of sleeps ─────────► accept (peer euid == owner)
@@ -8533,8 +9018,15 @@ Failure paths (D-23):
 - EOF before `view_closed` → `ConnectionLost` → 102.
 - An immediate response missing for longer than the request timeout (10 s) → `IpcError::Timeout` → 100.
 - Version mismatch → `Error{incompatible_version}` → 100.
-- A second GUI launch (`hikasa-gui x y`) cannot acquire the instance lock. It connects as a client, forwards
-  `OpenView` (no wait), and exits with 0 (ARCH-090).
+- A second GUI launch (`hikasa-gui x y`) cannot acquire the instance lock. It forwards its request with
+  `Service::forward_open` (absolute specs, no wait) and exits with 0 (ARCH-090).
+- *Amended in the wave-4 session review (§1.8.7):* the launch carries `--config-dir` for explicit and portable
+  configurations and `HIKASA_IPC_ENDPOINT` when overridden (the launched GUI listens where the CLI waits); before
+  connecting the client verifies the socket folder (insecure → 100, no launch); the request is validated locally
+  (`check_open`) before the GUI is contacted; the whole immediate-response wait is one 10 s deadline; a GUI that
+  drops its waiter answers `ViewClosed{reason: abandoned, exit_code: 100}` and a GUI shutting down closes its
+  views with `shutdown` (100), so `--wait` never hangs on a live GUI; a GUI process that exits still gives
+  `ConnectionLost` → 102.
 
 ### 3.7 GUI flows enabled by the contract (wave 6)
 
@@ -8547,6 +9039,9 @@ Failure paths (D-23):
   when it changed, takes `model.read()` and rebuilds the visible rows (O(visible)).
 - **Stop.** `JobHandle::cancel()`; text compare returns `Err(Cancelled)` (the GUI keeps what it showed); folder
   compare returns an incomplete comparison whose counters are consistent.
+- **Views from IPC** (*wave-4 review*). `Service::open_view_request` turns an `OpenView` into the view's request
+  and initial display options; closing a waited view goes through `ViewOutcome::close` (D-23); the GUI's own
+  command line goes through `resolve_open`, a second instance through `forward_open`.
 
 ---
 
@@ -8586,6 +9081,11 @@ pub struct JsonEnvelope<T: Serialize> {
     pub error: Option<ErrorReport>,
 }
 ```
+
+*Amended in the wave-4 session review (§1.8.7 items 8, 27):* `warnings` start with the startup warnings of the
+service (unknown `options.toml` sections, skipped user formats), followed by the command's own; `exit_code` of
+`gui open --wait` is the raw view code (`JsonEnvelope::success_raw`); a usage error with `--json` is
+`hikasa.usage_error.v1` (`result: null`, `error.kind: "invalid_input"`, exit 100).
 
 ```json
 {
@@ -8751,6 +9251,8 @@ unknown, <n> errors`; it is left out when the comparison holds no item. *Amended
 | `hikasa.gui_list.v1` | `{ "views": [ { "view", "kind", "title", "specs": [str] } ] }` |
 | `hikasa.gui_close.v1` / `hikasa.gui_quit.v1` | `{ "view": u64 }` / `{}` |
 | `hikasa.version.v1` | `{ "version": "0.1.0", "ipc_protocol": 1, "schemas": [str] }` |
+| `hikasa.completions.v1` | `{ "shell": str, "script": str }` (wave-4 review) |
+| `hikasa.usage_error.v1` | `null` (the envelope's `error` describes the usage error; wave-4 review) |
 
 `VfsEntry` = `{ "name", "name_lossy", "kind", "size", "mtime", "ctime", "attrs": "AHR"|null, "mode": u32|null,
 "permissions": str|null, "uid": u32|null, "gid": u32|null, "link_target": str|null, "followed": bool,
@@ -8865,6 +9367,17 @@ pub struct OpenOptions {
     pub folder_rules: Option<FolderRulesPatch>,
     /// Recognised CLI-003 switches that M1 does not implement, forwarded verbatim (name → value, "" for flags).
     pub extra: BTreeMap<String, String>,
+    // Added in the wave-4 session review (D-50, §1.8.7 item 20); absent → defaults, ignored by older peers:
+    /// Per-side encoding overrides of a text view (`--encoding`, `--left-encoding`, `--right-encoding`).
+    pub encodings: [Option<String>; 2],
+    /// `--display` word (text or folder vocabulary; parsed by the GUI with the core parsers).
+    pub display: Option<String>,
+    /// `--context <n>` (text views).
+    pub context_lines: Option<u32>,
+    /// `--folders` word (folder views).
+    pub folders: Option<String>,
+    /// `--suppress-filters` (folder views).
+    pub suppress_filters: bool,
 }
 
 /// Read-only switches.
@@ -8875,7 +9388,7 @@ pub struct ReadOnly { pub all: bool, pub left: bool, pub right: bool }
 /// Why a view closed (sent as its snake_case name inside `ViewResult::reason`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CloseReason { User, Shutdown, LoadFailed }
+pub enum CloseReason { User, Shutdown, LoadFailed, Abandoned }   // Abandoned: wave-4 review, §1.8.7 item 12
 
 /// Result reported with `ViewClosed`. Plain strings, so that values added later never break an older peer
 /// (D-46); `ViewClosed::exit_code` is authoritative for the CLI.
@@ -8888,7 +9401,7 @@ pub struct ViewResult {
     pub folder_verdict: Option<String>,
     /// Whether edits were saved.
     pub saved: bool,
-    /// `CloseReason` name ("user", "shutdown", "load_failed"; unknown values allowed).
+    /// `CloseReason` name ("user", "shutdown", "load_failed", "abandoned"; unknown values allowed).
     pub reason: String,
 }
 
@@ -8939,13 +9452,21 @@ impl IpcErrorCode {
    P1 item (Appendix C).
 7. Timeouts are client-side: 10 s for an immediate response (`IpcClient::connect` timeout), none while waiting
    for `ViewClosed`.
+8. *Wave-4 session review (§1.8.7 items 11–15):* rule 2 is enforced by the server library (a dropped waiter sends
+   `ViewClosed{reason: "abandoned", exit_code: 100}`; `ServerHandle::shutdown` sends `reason: "shutdown"`,
+   exit 100, to every outstanding waiter and closes every connection); the 10 s of rule 7 are one deadline per
+   call, and a client keeps at most 16 messages for other requests (more is a protocol error); a server message
+   with id 0 fails the pending request; a protocol error closes the connection also when a waiter holds it; a
+   frame with more than 262,144 JSON values is a protocol error (bounded decoder memory); server writes go through
+   a bounded per-connection queue with a 5 s send timeout, and a client that does not read is dropped; rule 6 adds
+   the client-side folder verification of §2.23.
 
 Wire examples (one frame per line):
 
 ```json
 {"id":1,"type":"hello","client":"hikasa 0.1.0","version":1,"min_version":1}
 {"id":1,"type":"hello","server":"hikasa-gui 0.1.0","version":1}
-{"id":2,"type":"open_view","kind":"text_compare","specs":["/w/a.c","/w/b.c"],"options":{"titles":[null,null,null,null],"read_only":{"all":false,"left":false,"right":false},"filters":null,"expand_all":false,"format":null,"ignore_unimportant":false,"text_rules_file":null,"text_rules":null,"folder_rules_file":null,"criteria":null,"folder_rules":null,"extra":{}},"wait":true}
+{"id":2,"type":"open_view","kind":"text_compare","specs":["/w/a.c","/w/b.c"],"options":{"titles":[null,null,null,null],"read_only":{"all":false,"left":false,"right":false},"filters":null,"expand_all":false,"format":null,"ignore_unimportant":false,"text_rules_file":null,"text_rules":null,"folder_rules_file":null,"criteria":null,"folder_rules":null,"extra":{},"encodings":[null,null],"display":null,"context_lines":null,"folders":null,"suppress_filters":false},"wait":true}
 {"id":2,"type":"view_opened","view":7}
 {"id":2,"type":"view_closed","view":7,"result":{"verdict":"unimportant_only","folder_verdict":null,"saved":false,"reason":"user"},"exit_code":12}
 {"id":3,"type":"ping"}
@@ -8966,10 +9487,11 @@ Wire examples (one frame per line):
 | imara helper (`hikasa-diff`) | 1 short-lived `std::thread` per imara call on > 4,096 tokens per side; at most 2 abandoned helpers per process (D-54, §1.3.3) | Owns copies of the remapped tokens; the caller polls `cancel` every 10 ms (`recv_timeout`) and abandons the helper on cancellation (D-54). The helper of a cancelled call runs until its call ends; while 2 such helpers run, a new helper call waits for one of them, polling `cancel` every 10 ms (`Condvar::wait_timeout`). |
 | VFS mapped helpers (`hikasa-vfs`) | up to `StreamOptions::threads - 1` short-lived `std::thread::scope` threads per mapped CRC or comparison (`crc32_source`, `compare_sources`, the comparators); none by default (`threads = 1`) | Bounded (≤ 15) and scoped: started and joined inside one call, no pool, no global state (T7). They claim 8 MiB chunks from a shared counter and check `cancel` before every claim, so a cancel waits for at most one chunk per thread, as on one thread (≤ 100 ms on a warm cache; on a cold slow device the chunk's read time sets the latency, as before); results never depend on the count (T2, §2.20). A thread the OS refuses is skipped. `hikasa-session` passes `min(4, its pool size)`; a content task on the service pool may therefore run up to 3 helpers (G3: one thread cannot reach the page-cache read rate, §6.4). |
 | `hikasa-session::Service` | one `rayon::ThreadPool` (`available_parallelism`, thread names `hikasa-worker-N`) | Owned by the service and shared by every job. |
-| Jobs (`Service::spawn`, GUI) | one `std::thread` per job (`hikasa-job-<id>`) | The job body enters the service pool with `install`; panics are caught (§5.6). |
+| Jobs (`Service::spawn`, GUI) | one `std::thread` per job (`hikasa-job-<id>`) | The job body runs on its job thread and uses the pool through the engines it calls (*amended in the wave-4 session review*: it no longer enters the pool with `install`, so a long job does not pin a worker; §1.8.7 item 10); panics are caught (§5.6). |
 | Folder scanner | tasks on the service pool | Both sides are listed with `join`. Each child folder pair is a task, and each content test is a task that first acquires bytes from the `ByteBudget` (D-25). |
 | Text compare | tasks on the service pool | The two sides are loaded with `join`, keys are built in chunks (§2.10.6), interning is sequential (deterministic ids), alignment is sequential. |
-| IPC server (GUI) | one accept thread, plus one thread per connection | Handlers must not block: they post to the GUI event loop and return. `ServerHandle::shutdown` wakes the accept thread by self-connecting. |
+| IPC server (GUI) | one accept thread, plus one reader and one writer thread per connection | Handlers must not block: they post to the GUI event loop and return. Writes go through the connection's bounded queue (64 frames, 5 s send timeout; a stuck client is dropped), so `view_closed` never blocks. `ServerHandle::shutdown` wakes the accept thread by self-connecting, notifies the outstanding waiters and closes the connections (§1.8.7 items 12, 13). |
+| IPC client (CLI, second GUI instance) | one reader thread per client (`hikasa-ipc-read`) | Decodes frames into a bounded channel; calls wait with a `crossbeam_channel::after` deadline (no clock read, T1); dropping the client closes the connection (§1.8.7 item 14). |
 | CLI | the main thread waits for the service call | Progress is rendered from pool threads through `StderrProgress` (an internal mutex). |
 
 Enforcement: each parallel crate has a "global-pool trap" integration test. The test binary builds the rayon
@@ -8984,7 +9506,7 @@ of the global pool makes the test fail.
 | `ByteBudget` | `parking_lot::Mutex` + `Condvar` | the arithmetic inside `acquire`/drop of the guard | anything else; a content task drops its `BudgetGuard` before taking the model write lock |
 | `FormatRegistry` compiled formats | immutable `Arc` + `OnceLock` per entry | the first compilation of one format | — |
 | `MemoryVfs` | `std::sync::RwLock` | lookups and inserts | reads of the shared `Arc<[u8]>` bytes |
-| IPC connection writers / waiters | `parking_lot::Mutex` per connection | writing one frame | waiting for the GUI |
+| IPC connection writers / waiters | a bounded queue per connection, drained by its writer thread; a `parking_lot::Mutex` per waiter gate | the writer: writing one frame (5 s send timeout); a gate: a state change | waiting for the GUI; no caller of `view_closed` ever waits for a write (wave-4 review) |
 | Job progress | bounded `crossbeam_channel` (64) | `try_send` (drops when full) | — |
 
 Lock order: the model lock and the budget mutex are never held together. Immutable results (`TextComparison`,
@@ -9065,7 +9587,10 @@ Engines are total (T9). As defence in depth, every `Service` method body runs in
 `run_guarded(|| …)` = `std::panic::catch_unwind(AssertUnwindSafe(…))`, and so does every `Service::spawn` job. A
 panic becomes `ApiError::Internal("panic: <message>")` and exit code 100. A panic on a rayon worker propagates to
 the `install`/`scope` caller and is caught there. A panic on the imara helper thread is reported through the
-closed channel and becomes `ApiError::Internal`. The CLI panic hook prints one line to stderr and the full
+closed channel and becomes `ApiError::Internal`. *Amended in the wave-4 session review (§1.8.7 item 16):* the
+service pool has a `panic_handler`, so a panic in a task given to `Service::pool().spawn` (which has no caller to
+propagate to) is logged and ends that task only, instead of aborting the process; the IPC server answers a handler
+panic with `Error{internal}`, and a waiter the panic dropped reports its view as `abandoned`. The CLI panic hook prints one line to stderr and the full
 backtrace to the `--log` file. The release profile must keep `panic = "unwind"`; the architecture test asserts
 it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35).
 
@@ -9136,6 +9661,28 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
      `protocol.rs`, `rules.rs` and `model.rs`);
   7. `cli/` and `gui/` contain no `impl FromStr` and no `match` over string literals of the core vocabularies
      (`--display`, `--criteria`, `--unimportant`, legacy switches): those parsers live in core (T11).
+
+  *Amended in the wave-4 session review (decision 8).* The checks are a heuristic over the source text, hardened
+  against the bypasses the reviewers demonstrated: `target/` and hidden folders are skipped only at a crate or
+  workspace root (every folder below `src/` is scanned); `#[path = …]` and `include!` are not allowed in any
+  member's `src/` (`include_str!`/`include_bytes!` stay allowed: data); check 1 counts every bare `unsafe` token
+  (also `#[unsafe(no_mangle)]` and an `unsafe` handed to a macro); check 2 matches the banned tokens after removing
+  whitespace and comments around `::`, unwrapping qualified self (`<Instant>::now`), resolving `use` aliases,
+  crate aliases (`use std as s`, `extern crate std as s`), type aliases (`type I = Instant`) and the identifiers a
+  same-file `macro_rules!` splices into a path; it adds `thread::park_timeout`, `io::stdout` and `io::stderr` to
+  the banned list; a renaming re-export of `capture_env`/`SystemClock` is a violation; check 3 refuses member-level
+  `features`/`default-features` (the feature sets of §0.5/§0.7 are fixed in `[workspace.dependencies]`); check 4
+  also refuses `#[macro_export]`, `#[no_mangle]` and `#[export_name]` in stub crates; check 5 parses the workspace
+  manifest and `.cargo/config.toml`/`.cargo/config` as TOML (every spelling, every profile); check 6 follows
+  `HashMap`/`HashSet` type aliases across the core crates and looks into every `Serialize`/`Deserialize` item of
+  every core source file, besides the DTO files; check 7 also flags vocabulary words in `matches!` patterns, as
+  arguments of string comparisons (`eq`, `eq_ignore_ascii_case`, `starts_with`, `strip_prefix`, `contains`, …), in
+  raw and escaped literals, in array tables and `const`/`static` items, in clap value declarations
+  (`#[value(name = …)]`, `PossibleValue`, `value_parser = […]`), `FromStr` implemented under an imported alias, and
+  clap `ValueEnum` enums whose variants spell vocabulary words (the CLI parses such words with the core parsers,
+  §1.9.2). Each hardening has a self-test. Limits (not seen): code generated by procedural macros or build
+  scripts, macros defined in another file, `CARGO_PROFILE_*` and other environment overrides, files outside the
+  module tree reached at build time, and vocabulary assembled at run time (`format!`, concatenation).
 
 ### 6.2 Per-crate tests
 
@@ -9441,6 +9988,19 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   `ApiError::Internal`, and cancels through `JobHandle::cancel`.
 - **Panic boundary:** a comparator that panics yields `ApiError::Internal` and exit code 100.
 - **The architecture test** (§6.1).
+- *Wave-4 review regressions* (`tests/ipc_review.rs`, `tests/ipc_memory.rs`, `tests/review.rs`): the client
+  refuses foreign-looking socket folders (wrong mode, another owner, a symbolic link, an unknown uid) and never
+  launches into them; the server creates its folder 0700, refuses foreign ones and never deletes a regular file at
+  the socket path; a dropped waiter → `abandoned`/100; shutdown notifies waiters and closes connections;
+  `view_closed` does not block on a stalled client; a protocol error closes a connection with a live waiter; a
+  chatty server cannot defeat the call deadline; the parked queue is bounded; an id-0 error fails the pending call;
+  a 16 MiB frame of tiny values is refused without memory amplification; `pool().spawn` panics are not fatal; the
+  effective folder ignore-unimportant in JSON and reports; the private stdin spool and its cleanup; the launch
+  arguments and a launched GUI serving an explicit configuration; `HIKASA_GUI_EXE`; per-field unix criteria; the
+  `--gui` ↔ `OpenView` mappings; local validation of `--gui`; lazy standard input; the D-23 close rules; FC-062
+  with non-UTF-8 names; second-instance forwarding; the usage text; rules-file errors with the file's spec;
+  `options.toml` edge cases; non-UTF-8 inline switch values and unknown Windows `/switch`es; empty line ranges;
+  the envelope helpers; the grammar-dependent report paths; a newer-schema user format skipped.
 
 ### 6.3 CLI integration tests (`cli/hikasa-cli/tests/`, assert_cmd + predicates)
 
@@ -9451,7 +10011,7 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 | `cli_folder.rs` | list golden; `--json` golden; exit codes 2/12/13/107/100; `--filters`; `--criteria` (§2.6.6 rows); each `--display` preset; `--suppress-filters`; `--flatten`; `--content crc\|binary\|rules`; `--report side-by-side --html --output`; `--gui` |
 | `cli_format.rs` | list/show/detect/tokens goldens, with `--config-dir` holding a user format that overrides a built-in; `format detect - --stdin-name a.py` |
 | `cli_vfs.rs` | ls/stat/cat goldens; `cat --json` base64 |
-| `cli_gui.rs` | `gui ping` with no GUI gives 100 (endpoint override → a tempdir socket); a scripted fake GUI server (test support binary built on `hikasa_session::ipc::server`) makes `gui open a b --wait` return the scripted code; `--no-launch` gives 100, `--no-launch --wait` gives 102; a server that drops the connection while waiting gives 102; launch with a fake `hikasa-gui` first on `PATH` (Unix); 103 when absent; legacy spellings (`-ro`, `--lefttitle=x`); `gui open clipboard://` gives 100 |
+| `cli_gui.rs` | `gui ping` with no GUI gives 100 (endpoint override → a tempdir socket); a scripted fake GUI server (test support binary built on `hikasa_session::ipc::server`) makes `gui open a b --wait` return the scripted code; `--no-launch` gives 100, `--no-launch --wait` gives 102; a server that drops the connection while waiting gives 102 (a fake-GUI process that exits: an in-process server answers a dropped waiter with `abandoned`/100); launch with a fake GUI through `HIKASA_GUI_EXE` (Unix; the override is checked before the sibling of the CLI, §1.8.7 item 18); 103 when `HIKASA_GUI_EXE` names a missing file; one launch without `HIKASA_IPC_ENDPOINT` (`XDG_RUNTIME_DIR` in a private temporary folder) with `--config-dir`, which must reach the launched GUI; legacy spellings (`-ro`, `--lefttitle=x`); `gui open clipboard://` gives 100; `--gui` with a bad `--criteria` gives 100 without contacting the GUI |
 | `cli_global.rs` | a usage error gives 100 (not 2); `--help` and `--version` give 0; `--quiet` leaves stdout unchanged; a broken pipe keeps the exit code; `--no-color` gives no ANSI; `--log` creates the file; `--verbose` logs ignored option keys; JSON on error is still one document |
 
 ### 6.4 Benchmarks and performance gates
@@ -9922,7 +10482,9 @@ Implementation notes for preset authors (normative):
 | INV-RPT-1 | reports are byte-identical for identical inputs | P-RPT-2 |
 | INV-RPT-2 | a patch applied to the left file reproduces the right file byte for byte (lone CR and artificial breaks as LF with `patch_lossy_eol`; other encodings warned `patch_encoding`; with Ignore Unimportant, the hunks without an important row are left out) | P-RPT-1, `tests/apply.rs` (wave 4) |
 | INV-CLI-1..6 | the CLI invariants of §1.9.2 | §6.3 |
-| INV-IPC-1..4 | one immediate response per request; at most one `ViewClosed` per wait; frames ≤ `MAX_FRAME_LEN`; an unknown `type` or a body that does not decode is answered with the request's own id (D-46) | IPC tests |
+| INV-IPC-1..4 | one immediate response per request; at most one `ViewClosed` per wait (*wave-4 review:* exactly one while the connection lives — a dropped waiter sends `abandoned`, a shutdown sends `shutdown`); frames ≤ `MAX_FRAME_LEN` and ≤ `MAX_FRAME_VALUES` JSON values; an unknown `type` or a body that does not decode is answered with the request's own id (D-46) | IPC tests, `ipc_review.rs`, `ipc_memory.rs` |
+| INV-IPC-5 | a client never sends anything to an endpoint whose socket folder fails the §2.23 verification (*wave-4 review*) | `ipc_review.rs` |
+| INV-SES-1 | `FolderCompareResponse` JSON, reports and exit code use the same effective ignore-unimportant (*wave-4 review*) | `review.rs` |
 | INV-BUDGET-1 | the bytes held by content tests never exceed the `ByteBudget` capacity | `ByteBudget` tests |
 
 ---

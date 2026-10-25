@@ -15,7 +15,7 @@ use hikasa_vfs::{FollowLinks, ListOptions, Vfs, VfsError, VfsOp};
 use super::dto::{
     EncodingDto, FileFormatDto, FormatDetectDto, FormatListDto, FormatListItemDto, FormatRefDto,
     FormatShowDto, FormatTokensDto, LineStateDto, ShadowStatusDto, TokenDto, TokenLineDto,
-    VfsEntryDto, VfsListDto, VfsListErrorDto, VfsStatDto,
+    VfsCatDto, VfsEntryDto, VfsListDto, VfsListErrorDto, VfsStatDto,
 };
 use super::requests::FormatTokensRequest;
 use super::{ApiError, Service};
@@ -101,11 +101,11 @@ impl Service {
 
     /// `format detect` (a "-" file uses the stdin name hint, D-15).
     ///
-    /// Detection uses the name only (the file is not read). A spec without a name (stdin without a hint) is
-    /// "Everything Else" (`fallback`).
+    /// Detection uses the name only (the file is not read; `-` does not read standard input, its name is the
+    /// `--stdin-name` hint). A spec without a name (stdin without a hint) is "Everything Else" (`fallback`).
     pub fn format_detect(&self, file: &OsStr) -> Result<FormatDetectDto, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(file)?;
+            let spec = hikasa_core::Spec::parse_os(file, &self.spec_context())?;
             let detection = self.detect_name(self.detection_name(&spec).as_deref())?;
             let format = &detection.format;
             Ok(FormatDetectDto {
@@ -154,14 +154,19 @@ impl Service {
         .map_err(|e| ApiError::from_text(e, Side::Left, &spec.canonical()))?;
         drop(raw);
         let count = doc.line_count();
-        let (first, last) = match &req.lines {
-            Some(range) => (
-                range.start().saturating_sub(1),
-                range.end().saturating_sub(1).min(count.saturating_sub(1)),
-            ),
-            None => (0, count.saturating_sub(1)),
+        // 0-based [first, last]; an empty selection (an empty range, line 0, a range past the end, an empty
+        // document) selects nothing, never line 1.
+        let selection = match &req.lines {
+            Some(range) if range.is_empty() || *range.end() == 0 => None,
+            Some(range) => {
+                let first = range.start().saturating_sub(1);
+                let last = (range.end() - 1).min(count.saturating_sub(1));
+                (count > 0 && first <= last).then_some((first, last))
+            }
+            None => (count > 0).then(|| (0, count - 1)),
         };
-        let selected = |line: u32| count > 0 && line >= first && line <= last;
+        let selected =
+            |line: u32| selection.is_some_and(|(first, last)| line >= first && line <= last);
         let grammar = detection.format.grammar();
         ctl.progress_now(Progress {
             phase: Phase::Tokenizing,
@@ -196,7 +201,7 @@ impl Service {
         });
         let elements = grammar.elements();
         let mut lines = Vec::new();
-        if count > 0 && first <= last {
+        if let Some((first, last)) = selection {
             for line in first..=last {
                 job.cancel.check().map_err(|_| ApiError::Cancelled)?;
                 let text = doc.line(LineIdx(line));
@@ -339,6 +344,14 @@ impl Service {
             });
             Ok(copied)
         })
+    }
+
+    /// `vfs cat --json` (D-32): the content as `hikasa.vfs_cat.v1` (base64; the content is buffered). Additive.
+    pub fn vfs_cat_dto(&self, spec: &OsStr, job: &JobControl) -> Result<VfsCatDto, ApiError> {
+        let mut bytes = Vec::new();
+        self.vfs_cat(spec, &mut bytes, job)?;
+        let canonical = self.parse_spec(spec)?.canonical();
+        Ok(VfsCatDto::new(canonical, &bytes))
     }
 
     /// Detection by name (D-15): `None` (no name) is "Everything Else".

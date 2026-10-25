@@ -134,6 +134,11 @@ pub fn parse_options(text: &str, origin: &str) -> Result<OptionsLoad, SessionErr
     })?;
     if let Some(version) = table.get("schema_version") {
         let found = match version {
+            Value::Integer(n) if *n < 0 => {
+                return Err(config_error(
+                    "`schema_version` must be a non-negative integer".into(),
+                ));
+            }
             Value::Integer(n) => u32::try_from(*n).unwrap_or(u32::MAX),
             _ => return Err(config_error("`schema_version` must be an integer".into())),
         };
@@ -162,35 +167,53 @@ pub fn parse_options(text: &str, origin: &str) -> Result<OptionsLoad, SessionErr
                 message: format!("{origin}: unknown section `{key}`"),
                 spec: None,
             });
+            ignore_all(&mut vec![key.as_str()], value, &mut load.ignored_keys);
+            continue;
         }
-        walk(key, value, &mut load, origin)?;
+        if !value.is_table() {
+            return Err(config_error(format!(
+                "`{key}` must be a table (a [{key}] section)"
+            )));
+        }
+        walk(&mut vec![key.as_str()], value, &mut load, origin)?;
     }
     Ok(load)
 }
 
-/// Visits the leaves below `path`: the known M1 keys set their option, every other leaf is ignored.
-fn walk(
-    path: &str,
-    value: &Value,
+/// The M1 option at a key path (matched on the table structure, never on a joined dotted string: a quoted key
+/// `"text_editing.number_of_context_lines"` is one unknown key, not the option).
+fn option_slot<'a>(path: &[&str], options: &'a mut ProgramOptions) -> Option<&'a mut u32> {
+    let dotted = |key: &str| key.split('.').eq(path.iter().copied());
+    if dotted(KEY_CONTEXT_LINES) {
+        Some(&mut options.context_lines)
+    } else if dotted(KEY_BUFFER_SIZE) {
+        Some(&mut options.binary_buffer_size)
+    } else if dotted(KEY_CONTENT_BUDGET) {
+        Some(&mut options.content_memory_budget_mib)
+    } else {
+        None
+    }
+}
+
+/// Visits the leaves below `path` of a known section: the M1 keys set their option, every other leaf is
+/// ignored (D-31) and listed.
+fn walk<'k>(
+    path: &mut Vec<&'k str>,
+    value: &'k Value,
     load: &mut OptionsLoad,
     origin: &str,
 ) -> Result<(), SessionError> {
-    let target = match path {
-        KEY_CONTEXT_LINES => Some(&mut load.options.context_lines),
-        KEY_BUFFER_SIZE => Some(&mut load.options.binary_buffer_size),
-        KEY_CONTENT_BUDGET => Some(&mut load.options.content_memory_budget_mib),
-        _ => None,
-    };
-    if let Some(slot) = target {
+    if let Some(slot) = option_slot(path, &mut load.options) {
+        let name = path.join(".");
         *slot = match value {
             Value::Integer(n) => u32::try_from(*n).map_err(|_| SessionError::Config {
                 path: origin.to_owned(),
-                message: format!("`{path}` must be an integer from 0 to {}", u32::MAX),
+                message: format!("`{name}` must be an integer from 0 to {}", u32::MAX),
             })?,
             _ => {
                 return Err(SessionError::Config {
                     path: origin.to_owned(),
-                    message: format!("`{path}` must be an integer"),
+                    message: format!("`{name}` must be an integer"),
                 });
             }
         };
@@ -199,12 +222,42 @@ fn walk(
     match value {
         Value::Table(table) => {
             for (key, child) in table {
-                walk(&format!("{path}.{key}"), child, load, origin)?;
+                path.push(key.as_str());
+                walk(path, child, load, origin)?;
+                path.pop();
             }
         }
-        _ => load.ignored_keys.push(path.to_owned()),
+        _ => load.ignored_keys.push(display_path(path)),
     }
     Ok(())
+}
+
+/// Lists every leaf below `path` as ignored (an unknown section).
+fn ignore_all<'k>(path: &mut Vec<&'k str>, value: &'k Value, ignored: &mut Vec<String>) {
+    match value {
+        Value::Table(table) => {
+            for (key, child) in table {
+                path.push(key.as_str());
+                ignore_all(path, child, ignored);
+                path.pop();
+            }
+        }
+        _ => ignored.push(display_path(path)),
+    }
+}
+
+/// A key path for messages: segments joined with `.`, a segment holding a `.` quoted.
+fn display_path(path: &[&str]) -> String {
+    path.iter()
+        .map(|segment| {
+            if segment.contains('.') {
+                format!("{segment:?}")
+            } else {
+                (*segment).to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 #[cfg(test)]

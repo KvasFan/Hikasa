@@ -58,8 +58,9 @@
 //! [`json`] ([`json::FormatJson`], [`json::DetectReasonJson`], the schema ids,
 //! [`json::TextCompareJson::with_detection`] for the detection reasons only the caller knows, and
 //! [`json::FolderReportJson`], the JSON folder report with its `schema` key); wave 4: [`ReportMeta::with_title`]
-//! (`--title`), [`parse_folder_mode`] and [`folder_mode_word`] (`--folders always|structure|files-only`). The
-//! complete list, with the accepted interpretations, is §1.7.3 of the contract.
+//! (`--title`), [`parse_folder_mode`] and [`folder_mode_word`] (`--folders always|structure|files-only`); after the
+//! wave-4 session review, the escapers [`escape_controls`], [`escape_terminal`] and [`escape_name`] for terminal and
+//! list output of the adapters. The complete list, with the accepted interpretations, is §1.7.3 of the contract.
 //!
 //! Specification: `docs/design/m1-contracts.md` §1.7, §3.4 and §4.3; user documentation: `docs/13-reports.md`.
 #![forbid(unsafe_code)]
@@ -80,6 +81,7 @@ mod style;
 pub mod text;
 
 pub use error::ReportError;
+pub use escape::{escape_controls, escape_name, escape_terminal};
 pub use folder::{
     FolderColumns, FolderLayout, FolderReportOptions, render_folder_report,
     render_folder_report_with,

@@ -17,7 +17,8 @@
 //!   cache_dir:  Explicit/Portable → dir / "cache"
 //!               User → Linux/OtherUnix: (facts.xdg_cache_home if absolute, else facts.home/.cache) / "hikasa";
 //!                      MacOs: facts.home / "Library/Caches/Hikasa"; Windows: facts.local_appdata / "Hikasa" / "cache"
-//!               (a missing ingredient → facts.temp_dir / "hikasa-cache")
+//!               (a missing ingredient → facts.temp_dir / ("hikasa-cache-" + id), id as in §2.23: the uid, else the
+//!                sanitised user name, else "user"; wave-4 review)
 //!   is_default: dir == default_config_dir(facts)
 //! ```
 
@@ -64,6 +65,9 @@ pub fn resolve_config_dir(
 ) -> Result<ConfigLocation, SessionError> {
     let default = default_config_dir(facts);
     let (dir, mode) = if let Some(dir) = explicit {
+        if dir.as_os_str().is_empty() {
+            return Err(SessionError::EmptyConfigDir);
+        }
         (absolute(facts, dir)?, ConfigMode::Explicit)
     } else if let Some(exe_dir) = facts
         .exe_dir
@@ -77,9 +81,11 @@ pub fn resolve_config_dir(
     };
     let cache_dir = match mode {
         ConfigMode::Explicit | ConfigMode::Portable => dir.join("cache"),
-        ConfigMode::User => {
-            default_cache_dir(facts).unwrap_or_else(|| facts.temp_dir.join("hikasa-cache"))
-        }
+        ConfigMode::User => default_cache_dir(facts).unwrap_or_else(|| {
+            facts
+                .temp_dir
+                .join(format!("hikasa-cache-{}", user_id(facts)))
+        }),
     };
     let is_default = default.as_deref() == Some(dir.as_path());
     Ok(ConfigLocation {
@@ -105,6 +111,29 @@ pub fn default_config_dir(facts: &EnvFacts) -> Option<PathBuf> {
         }),
         Platform::Windows => facts.appdata.as_ref().map(|appdata| appdata.join("Hikasa")),
     }
+}
+
+/// The per-user id of the shared fallback folders (§2.22, §2.23): the uid, else the sanitised user name (every
+/// char outside `[A-Za-z0-9_.-]` becomes `_`), else `user`.
+pub(crate) fn user_id(facts: &EnvFacts) -> String {
+    match (facts.uid, facts.user.as_deref()) {
+        (Some(uid), _) => uid.to_string(),
+        (None, Some(user)) if !user.is_empty() => sanitize(user),
+        _ => "user".to_owned(),
+    }
+}
+
+/// Every char outside `[A-Za-z0-9_.-]` becomes `_`.
+pub(crate) fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// The platform default cache folder (§2.22 `cache_dir` for `User`), or `None` when an ingredient is missing.

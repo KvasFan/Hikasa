@@ -35,8 +35,9 @@ pub(crate) fn control_escape(c: char) -> Option<Cow<'static, str>> {
 }
 
 /// Escapes every control and bidirectional formatting character of `s` (`\n`, `\t`, `\r`, `\u{…}`): header values
-/// and other text in text output.
-pub(crate) fn escape_controls(s: &str) -> Cow<'_, str> {
+/// and other text in text output. Public (additive, wave-4 session review): adapters escape terminal and list
+/// output with it (`hikasa_report::escape_controls`).
+pub fn escape_controls(s: &str) -> Cow<'_, str> {
     if !s.chars().any(is_escaped) {
         return Cow::Borrowed(s);
     }
@@ -52,8 +53,8 @@ pub(crate) fn escape_controls(s: &str) -> Cow<'_, str> {
 
 /// File content written to a terminal (ANSI patches): every control and bidirectional formatting character except
 /// TAB becomes its escape, as in the side-by-side report, so file content cannot move the cursor, erase lines or
-/// reorder the text around it.
-pub(crate) fn escape_terminal(s: &str) -> Cow<'_, str> {
+/// reorder the text around it. Public (additive, wave-4 session review).
+pub fn escape_terminal(s: &str) -> Cow<'_, str> {
     if !s.chars().any(|c| c != '\t' && is_escaped(c)) {
         return Cow::Borrowed(s);
     }
@@ -69,8 +70,9 @@ pub(crate) fn escape_terminal(s: &str) -> Cow<'_, str> {
 
 /// Escapes a file name (or path) for text and HTML output (§4.3.3): like [`escape_controls`], and a backslash
 /// becomes `\\`, so the escaping is unambiguous: every printed name maps back to exactly one name (a name holding
-/// a line feed prints as `a\nb`, a name holding a backslash and an `n` as `a\\nb`).
-pub(crate) fn escape_name(s: &str) -> Cow<'_, str> {
+/// a line feed prints as `a\nb`, a name holding a backslash and an `n` as `a\\nb`). Public (additive, wave-4 session
+/// review): `vfs ls`, `gui list` and other name lists use it.
+pub fn escape_name(s: &str) -> Cow<'_, str> {
     if !s.chars().any(|c| c == '\\' || is_escaped(c)) {
         return Cow::Borrowed(s);
     }

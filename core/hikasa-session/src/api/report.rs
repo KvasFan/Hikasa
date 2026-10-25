@@ -22,7 +22,9 @@ pub struct ReportSettings {
     pub title: Option<String>,
     /// HTML styling (`html-custom` stylesheet).
     pub style: HtmlStyle,
-    /// Folder `List` layout: write the closing `# <n> same, …` summary line (§4.3.3). `false` for `--quiet`.
+    /// Folder `List` layout: write the closing `# <n> same, …` summary line (§4.3.3). Default `true`, and no
+    /// CLI flag changes it: `--quiet` keeps the line (§4.3.3 amendment, CLI invariant 3: `--quiet` never changes
+    /// stdout). `false` is an API-only option for embedders that show the counts elsewhere.
     pub list_summary: bool,
 }
 
@@ -51,6 +53,9 @@ impl Service {
 
     /// [`Service::render_text`] with a title and HTML style; returns the warnings of the rendering itself
     /// (`patch_lossy_eol`), which the CLI adds to its JSON/stderr warnings. Additive.
+    ///
+    /// `opts.ignore_unimportant` is replaced by the response's flag, so the report agrees with the exit code
+    /// (wave-4 review). The title goes through `ReportMeta::with_title`.
     pub fn render_text_with(
         &self,
         resp: &TextCompareResponse,
@@ -59,16 +64,22 @@ impl Service {
         out: &mut dyn Write,
     ) -> Result<Vec<Warning>, ApiError> {
         run_guarded(|| {
+            let opts = TextReportOptions {
+                ignore_unimportant: resp.ignore_unimportant,
+                ..*opts
+            };
             let mut meta = ReportMeta::for_text(
                 &resp.comparison,
-                opts,
+                &opts,
                 Some(self.clock().now()),
                 &self.generator(),
             );
-            meta.title.clone_from(&settings.title);
+            if let Some(title) = &settings.title {
+                meta = meta.with_title(title.clone());
+            }
             Ok(render_text_report_with(
                 &resp.comparison,
-                opts,
+                &opts,
                 &meta,
                 &settings.style,
                 out,
@@ -88,8 +99,11 @@ impl Service {
 
     /// [`Service::render_folder`] with a title, an HTML style and the list summary switch. Additive.
     ///
-    /// hikasa-report has no switch for the list's summary line; with `list_summary == false` the service drops
-    /// the `# …` line from the `List` output (list rows start with a marker, never with `# `).
+    /// `opts.display.ignore_unimportant` is replaced by the response's effective flag (the request's flag or the
+    /// criteria word), so categories, markers and the header agree with the verdict and the exit code
+    /// (decision 4 of the wave-4 review). The title goes through `ReportMeta::with_title`. hikasa-report has no
+    /// switch for the list's summary line; with `list_summary == false` (API only) the service drops the `# …`
+    /// line from the `List` output (list rows start with a marker, never with `# `).
     pub fn render_folder_with(
         &self,
         resp: &FolderCompareResponse,
@@ -98,13 +112,18 @@ impl Service {
         out: &mut dyn Write,
     ) -> Result<(), ApiError> {
         run_guarded(|| {
+            let mut opts = *opts;
+            opts.display.ignore_unimportant = resp.ignore_unimportant;
+            let opts = &opts;
             let mut meta = ReportMeta::for_folder(
                 &resp.comparison,
                 opts,
                 Some(self.clock().now()),
                 &self.generator(),
             );
-            meta.title.clone_from(&settings.title);
+            if let Some(title) = &settings.title {
+                meta = meta.with_title(title.clone());
+            }
             if opts.layout == FolderLayout::List && !settings.list_summary {
                 let mut filter = DropSummaryLines::new(out);
                 render_folder_report_with(
@@ -134,7 +153,8 @@ impl Service {
     /// target is untouched. Its folder must exist.
     pub fn write_output(&self, target: &OsStr, bytes: &[u8]) -> Result<Spec, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(target)?;
+            // `-` as an output target is refused by the VFS; it never reads standard input.
+            let spec = Spec::parse_os(target, &self.spec_context())?;
             let options = WriteOptions {
                 create_parents: false,
                 overwrite: true,

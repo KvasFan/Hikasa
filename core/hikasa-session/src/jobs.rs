@@ -2,11 +2,13 @@
 //!
 //! The CLI calls service methods directly with a [`JobControl`] from [`crate::api::Service::job`]; the GUI starts
 //! every long operation with [`crate::api::Service::spawn`], which runs it on a thread named
-//! `hikasa-job-<id>`, inside the service pool, behind the panic boundary, with a lossy progress channel.
+//! `hikasa-job-<id>` (the engines it calls use the service pool), behind the panic boundary, with a lossy
+//! progress channel.
 
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -61,6 +63,8 @@ pub struct JobHandle<T> {
     cancel: CancelToken,
     progress: Receiver<Progress>,
     result: Receiver<Result<T, ApiError>>,
+    /// The result was taken by `try_result`.
+    taken: AtomicBool,
 }
 
 impl<T> JobHandle<T> {
@@ -80,6 +84,7 @@ impl<T> JobHandle<T> {
             cancel,
             progress,
             result,
+            taken: AtomicBool::new(false),
         }
     }
 
@@ -111,14 +116,31 @@ impl<T> JobHandle<T> {
 
     /// The result, if the job has finished (non-blocking; `Some` at most once).
     pub fn try_result(&self) -> Option<Result<T, ApiError>> {
-        self.result.try_recv().ok()
+        let result = self.result.try_recv().ok();
+        if result.is_some() {
+            self.taken.store(true, Ordering::Release);
+        }
+        result
     }
 
-    /// Blocks until the job finishes.
+    /// True once the job has finished (its result is waiting, or was taken by `try_result`). Additive.
+    pub fn is_finished(&self) -> bool {
+        self.taken.load(Ordering::Acquire) || !self.result.is_empty()
+    }
+
+    /// Blocks until the job finishes. After `try_result` returned the result, `wait` returns
+    /// `ApiError::InvalidArgument` ("already taken": a caller error, never a fake internal error); a job that
+    /// ended without sending a result (impossible unless its thread was killed) is `ApiError::Internal`.
     pub fn wait(self) -> Result<T, ApiError> {
+        if self.taken.load(Ordering::Acquire) {
+            return Err(ApiError::InvalidArgument(format!(
+                "the result of job {} was already taken by try_result",
+                self.id
+            )));
+        }
         self.result.recv().unwrap_or_else(|_| {
             Err(ApiError::Internal(format!(
-                "job {} ended without a result (or its result was already taken)",
+                "job {} ended without a result",
                 self.id
             )))
         })

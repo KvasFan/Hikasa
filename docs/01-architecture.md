@@ -252,10 +252,15 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   tokio is approved): the server has one accept thread plus one thread per connection;
   handlers never block (the GUI posts to its event loop). Frames are a `u32`
   little-endian length (1 byte … 16 MiB) followed by UTF-8 JSON; EOF inside a frame is a
-  lost connection. Timeouts are client-side socket receive timeouts (10 s for an
-  immediate response, none while waiting for `ViewClosed`); the launch retry budget is
-  the sum of the launcher's sleeps (50 ms doubling to 500 ms, 10 s in total). No core
-  code reads a clock or sleeps.
+  lost connection. Timeouts are client-side: each request has one 10 s deadline for its
+  immediate response, whatever else arrives (the client decodes frames on a reader thread
+  and waits on a channel with a deadline), and there is none while waiting for
+  `ViewClosed`; the launch retry budget is the sum of the launcher's sleeps (50 ms
+  doubling to 500 ms, 10 s in total). No core code reads a clock or sleeps. The server
+  writes every frame through a bounded per-connection queue (64 frames) drained by a
+  writer thread with a 5 s send timeout, so a GUI never blocks on a client that stopped
+  reading (that client is dropped). A frame with more than 262,144 JSON values is a
+  protocol error, which bounds the decoder's memory per frame.
 - **Forward compatibility (D-46).** `Request`, `Response` and `ViewKind` decode unknown
   `type`/kind values to an `Unknown` variant, and every frame is decoded in two phases:
   first as a JSON value, then its `id`, then the body. So a frame without a usable `id`
@@ -270,7 +275,12 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   `min(its version, the client's)` and refuses (`incompatible_version`) when that is
   below the client's minimum. Every request gets exactly one immediate response; an
   `OpenView{wait: true}` gets one later `ViewClosed` with the same id, always written
-  after the immediate `ViewOpened`.
+  after the immediate `ViewOpened`. The server library enforces this: a view whose waiter
+  the GUI drops without reporting is closed with reason `abandoned` and exit code 100, and
+  stopping the server closes every view still awaited with reason `shutdown` (exit 100)
+  and every connection, so `hikasa gui open --wait` never hangs on a running GUI. A
+  protocol error closes the connection; an error the server sends with id 0 fails the
+  client's pending request (exit 100).
 - **Endpoint per user and configuration (D-47).** The endpoint is `hikasa.sock` in
   `$XDG_RUNTIME_DIR` (Linux; else Hikasa's own folder `<temp>/hikasa-<uid>`), in the
   per-user `$TMPDIR` (macOS), or the pipe `\\.\pipe\hikasa-<user>` (Windows). When the
@@ -280,22 +290,35 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   GUIs of different configurations neither collide nor share the single-instance lock,
   while every launch with the same configuration reaches the same instance. Unix socket
   paths longer than 100 bytes use a hashed name in `/tmp/hikasa-<uid>/`.
-  `HIKASA_IPC_ENDPOINT` overrides the endpoint (tests, unusual setups).
+  `HIKASA_IPC_ENDPOINT` overrides the endpoint (tests, unusual setups). When the CLI
+  launches the GUI it passes `--config-dir <dir>` for an explicit or portable
+  configuration and the endpoint override in the child's environment, so the launched GUI
+  listens where the CLI waits; `HIKASA_GUI_EXE` names the GUI executable to launch
+  instead of the one next to the CLI or on `PATH` (tests).
 - **Single instance and security.** The single-instance lock is an exclusive file lock
   on `<socket>.lock` (Windows: `%TEMP%\<pipe name>.lock`), held for the server's
   lifetime; it is race-free, unlike probing the socket, and lets a new server remove a
-  stale socket file safely. On Unix Hikasa's own socket folder is created with mode 0700
-  and refused when other users can enter it or when it is not a real folder; the socket
-  file gets mode 0600; the socket folder must belong to the socket's owner; and every
-  connecting peer's effective uid must equal the socket owner's (connections of other
-  users are closed). Windows relies on the per-user pipe name in M1; an owner-only DACL
-  is a P1 item. `ServerHandle::shutdown` wakes the blocked accept by connecting to its own
-  endpoint once and returns at once.
+  stale socket safely (only a socket: any other file at the socket path is reported and
+  never deleted). On Unix the **client verifies the socket folder before it connects**:
+  the folder must belong to the current user and must not be writable by the group or by
+  others (Hikasa's own fallback folder must also be a real folder, not a symbolic link,
+  with mode 0700); otherwise the command fails with exit code 100 and never talks to,
+  launches into or waits on that endpoint, so a socket another local user planted in a
+  shared temporary folder is never contacted (no libc: `std` file metadata only). The
+  server creates its own fallback folder with mode 0700 (create-new), refuses one it does
+  not own, applies the same folder check before binding, gives the socket file mode 0600
+  and checks that it belongs to the user; every connecting peer's effective uid must equal
+  the socket owner's (connections of other users, and peers whose credentials cannot be
+  read, are closed). `$XDG_RUNTIME_DIR` stays the preferred location. Windows relies on
+  the per-user pipe name in M1; an owner-only DACL is a P1 item. `ServerHandle::shutdown`
+  wakes the blocked accept by connecting to its own endpoint once, notifies the
+  outstanding waiters, closes the connections and returns within about 2 s.
 - **M1 requests.** The server itself answers `LoadSession`, `LoadWorkspace` and
   `RunScript` with `unsupported_request` and `OpenView` of kinds other than
   `folder_compare` and `text_compare` with `unsupported_view`; everything else goes to
-  the GUI's handler. A second `hikasa-gui` launch that cannot take the lock connects as a
-  client, forwards `OpenView` without waiting, and exits with 0.
+  the GUI's handler. A second `hikasa-gui` launch that cannot take the lock forwards its
+  command line as `OpenView` without waiting (`Service::forward_open`: specs made absolute
+  against its own current directory, standard input spooled) and exits with 0.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

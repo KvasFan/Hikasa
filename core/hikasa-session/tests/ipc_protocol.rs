@@ -145,9 +145,15 @@ fn sample_options() -> OpenOptions {
         folder_rules: Some(FolderRulesPatch {
             size: Some(true),
             name_filter: Some("*.rs".into()),
+            unix_owner: Some(true),
             ..FolderRulesPatch::default()
         }),
         extra,
+        encodings: [Some("windows-1252".into()), None],
+        display: Some("context".into()),
+        context_lines: Some(2),
+        folders: Some("structure".into()),
+        suppress_filters: true,
     }
 }
 

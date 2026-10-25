@@ -294,6 +294,18 @@ pub struct OpenOptions {
     pub folder_rules: Option<FolderRulesPatch>,
     /// Recognised CLI-003 switches that M1 does not implement, forwarded verbatim (name → value, "" for flags).
     pub extra: BTreeMap<String, String>,
+    /// Per-side encoding overrides of a text view (`--encoding`, `--left-encoding`, `--right-encoding`; TC-001).
+    /// Added in the wave-4 review (D-50; absent → `[null, null]`).
+    pub encodings: [Option<String>; 2],
+    /// `--display` word (text: `all|mismatches|context|matches`; folders: the FC-055 filter words), parsed by
+    /// the GUI with the core parsers (`Service::open_view_request`). Added in the wave-4 review.
+    pub display: Option<String>,
+    /// `--context <n>` (text views). Added in the wave-4 review.
+    pub context_lines: Option<u32>,
+    /// `--folders` word (`always|structure|files-only`, folder views). Added in the wave-4 review.
+    pub folders: Option<String>,
+    /// `--suppress-filters` (folder views, FC-057). Added in the wave-4 review.
+    pub suppress_filters: bool,
 }
 
 /// Read-only switches.
@@ -318,22 +330,27 @@ pub enum CloseReason {
     Shutdown,
     /// The view could not load its inputs.
     LoadFailed,
+    /// The GUI dropped the view's waiter without reporting a result (sent by the server itself with exit code
+    /// 100; added in the wave-4 review, §1.8.7). Older peers accept it as an unknown reason string.
+    Abandoned,
 }
 
 impl CloseReason {
     /// Every reason, in declaration order.
-    pub const ALL: [CloseReason; 3] = [
+    pub const ALL: [CloseReason; 4] = [
         CloseReason::User,
         CloseReason::Shutdown,
         CloseReason::LoadFailed,
+        CloseReason::Abandoned,
     ];
 
-    /// Stable snake_case name (`"user"`, `"shutdown"`, `"load_failed"`).
+    /// Stable snake_case name (`"user"`, `"shutdown"`, `"load_failed"`, `"abandoned"`).
     pub const fn as_str(self) -> &'static str {
         match self {
             CloseReason::User => "user",
             CloseReason::Shutdown => "shutdown",
             CloseReason::LoadFailed => "load_failed",
+            CloseReason::Abandoned => "abandoned",
         }
     }
 
@@ -354,7 +371,7 @@ pub struct ViewResult {
     pub folder_verdict: Option<String>,
     /// Whether edits were saved.
     pub saved: bool,
-    /// `CloseReason` name ("user", "shutdown", "load_failed"; unknown values allowed).
+    /// `CloseReason` name ("user", "shutdown", "load_failed", "abandoned"; unknown values allowed).
     pub reason: String,
 }
 

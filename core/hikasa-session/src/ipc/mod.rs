@@ -28,13 +28,20 @@ pub use protocol::{
     CloseReason, Envelope, IpcErrorCode, OpenOptions, ReadOnly, Request, Response, ServerInfo,
     ViewId, ViewInfo, ViewKind, ViewResult,
 };
-pub use server::{IpcHandler, IpcServer, ServerHandle, ViewWaiter, peer_uid_matches};
+pub use server::{
+    ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ServerHandle, ViewWaiter, WRITE_QUEUE,
+    WRITE_TIMEOUT, peer_uid_matches,
+};
 
 /// Protocol version spoken by this build.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Maximum frame payload (bytes). Larger frames are a protocol error.
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+
+/// Maximum number of JSON values in one frame (an upper bound counted before decoding, §1.8.7): more is a
+/// protocol error, which bounds the decoder's peak memory per frame. Real messages hold a few hundred values.
+pub const MAX_FRAME_VALUES: usize = 1 << 18;
 
 /// Timeout of an immediate response (§4.4.3 rule 7: 10 s); waiting for `ViewClosed` has none. Additive.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);

@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use hikasa_core::{CancelToken, FileTime, JobKind, NullProgress};
+use hikasa_core::{CancelToken, JobKind, NullProgress};
 use hikasa_formats::{ConvertError, ProcessRunner};
-use hikasa_session::api::gui::{GuiLauncher, LaunchError};
+use hikasa_session::api::StdinSource;
+use hikasa_session::api::gui::{GuiLaunch, GuiLauncher, LaunchError};
 use hikasa_session::{EnvFacts, FixedClock, JobControl, Platform, Service, ServiceInit};
-use hikasa_vfs::Blob;
 use parking_lot::Mutex;
 
 /// Compares `actual` with the golden file; `HIKASA_BLESS=1` rewrites it instead (§6.1).
@@ -61,8 +61,14 @@ pub fn short_tempdir() -> tempfile::TempDir {
     }
 }
 
+/// The effective uid of the test process (the socket and spool folders are verified against it; tests may read
+/// the environment, §6.1).
+pub fn my_uid() -> Option<u32> {
+    hikasa_session::capture_env().uid
+}
+
 /// Host facts for a test rooted at `root`: cwd `root/work`, home `root/home`, temp `root/tmp`, no XDG runtime
-/// dir, an explicit IPC endpoint override at `root/s.sock` (never the real runtime dir).
+/// dir, an explicit IPC endpoint override at `root/s.sock` (never the real runtime dir), the real uid.
 pub fn facts(root: &Path) -> EnvFacts {
     for sub in ["work", "home", "tmp"] {
         std::fs::create_dir_all(root.join(sub)).unwrap();
@@ -70,7 +76,7 @@ pub fn facts(root: &Path) -> EnvFacts {
     EnvFacts {
         cwd: Some(root.join("work")),
         home: Some(root.join("home")),
-        uid: Some(1000),
+        uid: my_uid(),
         user: Some("tester".into()),
         ipc_endpoint_override: Some(endpoint_override(root)),
         ..EnvFacts::new(Platform::HOST, root.join("tmp"))
@@ -106,8 +112,12 @@ pub fn service(root: &Path) -> Service {
     service_with(root, None, Arc::new(UpperRunner::default()))
 }
 
-/// A service with an optional stdin blob and a given runner.
-pub fn service_with(root: &Path, stdin: Option<Blob>, runner: Arc<dyn ProcessRunner>) -> Service {
+/// A service with an optional stdin source and a given runner.
+pub fn service_with(
+    root: &Path,
+    stdin: Option<StdinSource>,
+    runner: Arc<dyn ProcessRunner>,
+) -> Service {
     let init = ServiceInit {
         config_dir: Some(root.join("config")),
         threads: std::num::NonZeroUsize::new(4),
@@ -117,13 +127,9 @@ pub fn service_with(root: &Path, stdin: Option<Blob>, runner: Arc<dyn ProcessRun
     Service::new(init).unwrap()
 }
 
-/// A stdin blob.
-pub fn blob(bytes: &[u8], name: Option<&str>) -> Blob {
-    Blob {
-        bytes: Arc::from(bytes),
-        mtime: FileTime::from_unix(1_792_584_000, 0).unwrap(),
-        name: name.map(str::to_owned),
-    }
+/// A stdin source with known content.
+pub fn blob(bytes: &[u8], name: Option<&str>) -> StdinSource {
+    StdinSource::from_bytes(bytes.to_vec(), name.map(str::to_owned))
 }
 
 /// A job control for direct calls.
@@ -191,6 +197,8 @@ impl ProcessRunner for PanicRunner {
 #[derive(Default)]
 pub struct FakeLauncher {
     pub launches: AtomicUsize,
+    /// The launch requests received.
+    pub requests: Mutex<Vec<GuiLaunch>>,
     pub sleeps: Mutex<Vec<Duration>>,
     pub not_found: bool,
     /// Called on the first sleep (e.g. to start a server, simulating the GUI coming up).
@@ -198,8 +206,9 @@ pub struct FakeLauncher {
 }
 
 impl GuiLauncher for FakeLauncher {
-    fn launch(&self) -> Result<(), LaunchError> {
+    fn launch(&self, launch: &GuiLaunch) -> Result<(), LaunchError> {
         self.launches.fetch_add(1, Ordering::SeqCst);
+        self.requests.lock().push(launch.clone());
         if self.not_found {
             Err(LaunchError::NotFound)
         } else {
@@ -243,6 +252,7 @@ pub fn test_endpoint(dir: &Path) -> Endpoint {
             address: EndpointAddress::UnixSocket(dir.join("t.sock")),
             lock_path: dir.join("t.sock.lock"),
             own_dir: None,
+            uid: my_uid(),
         }
     }
     #[cfg(not(unix))]
@@ -257,6 +267,7 @@ pub fn test_endpoint(dir: &Path) -> Endpoint {
             lock_path: dir.join(format!("{name}.lock")),
             address: EndpointAddress::NamedPipe(name),
             own_dir: None,
+            uid: None,
         }
     }
 }

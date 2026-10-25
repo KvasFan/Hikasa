@@ -14,9 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::MAX_FRAME_LEN;
 use super::error::IpcError;
 use super::protocol::{Envelope, Request, Response};
+use super::{MAX_FRAME_LEN, MAX_FRAME_VALUES};
 
 /// Writes one frame: u32 little-endian payload length, then the UTF-8 JSON payload.
 pub fn write_frame(w: &mut dyn Write, payload: &[u8]) -> Result<(), IpcError> {
@@ -110,11 +110,21 @@ pub(crate) fn recv_typed<T: DeserializeOwned>(
 }
 
 /// The two-phase decode of one payload (§4.4.3 rule 3).
+///
+/// Peak memory is bounded before anything is decoded: a frame that holds more than [`MAX_FRAME_VALUES`] JSON
+/// values is a protocol error, so the `serde_json::Value` tree of the first phase never exceeds a few dozen MiB,
+/// whatever the frame holds (§1.8.7).
 pub(crate) fn decode<T: DeserializeOwned>(
     payload: &[u8],
 ) -> Result<(Envelope<T>, String), IpcError> {
     let text = std::str::from_utf8(payload)
         .map_err(|_| IpcError::Protocol("the frame is not valid UTF-8".into()))?;
+    let values = json_value_bound(payload);
+    if values > MAX_FRAME_VALUES {
+        return Err(IpcError::Protocol(format!(
+            "the frame holds about {values} JSON values (limit {MAX_FRAME_VALUES})"
+        )));
+    }
     let value: Value = serde_json::from_str(text)
         .map_err(|e| IpcError::Protocol(format!("the frame is not valid JSON: {e}")))?;
     let Value::Object(object) = value else {
@@ -137,4 +147,42 @@ pub(crate) fn decode<T: DeserializeOwned>(
             message: e.to_string(),
         })?;
     Ok((Envelope { id, body }, type_name))
+}
+
+/// An upper bound of the number of JSON values in `payload`: one plus the structural characters (`{`, `[`, `,`,
+/// `:`) outside strings. O(n), no allocation; exact enough to bound the decoder's memory.
+pub(crate) fn json_value_bound(payload: &[u8]) -> usize {
+    let mut count = 1usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for &b in payload {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'{' | b'[' | b',' | b':' => count += 1,
+                _ => {}
+            }
+        }
+    }
+    count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_bound() {
+        assert_eq!(json_value_bound(br#"{"id":1}"#), 3);
+        assert_eq!(json_value_bound(br#"{"a":"x,y:[{\"","b":[1,2]}"#), 7);
+        assert!(json_value_bound(b"[0,0,0,0]") >= 4);
+    }
 }

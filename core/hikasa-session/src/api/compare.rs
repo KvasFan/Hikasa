@@ -38,6 +38,13 @@ const DROP_OFF_THREAD_BYTES: usize = 32 << 20;
 /// `bytes_identical` compares in steps of this size, checking cancellation between them.
 const COMPARE_STEP: usize = 1 << 20;
 
+/// The effective rules of a folder comparison ([`Service::folder_rules`]).
+pub(crate) struct EffectiveFolderRules {
+    pub(crate) rules: FolderRules,
+    pub(crate) text_rules: Option<TextRules>,
+    pub(crate) ignore_unimportant: bool,
+}
+
 /// The effective format of a file comparison with its per-side detections and warnings (D-15).
 pub(crate) struct ChosenFormat {
     pub(crate) format: Arc<CompiledFormat>,
@@ -113,6 +120,7 @@ impl Service {
             method: req.method,
             format,
             outcome,
+            ignore_unimportant: req.ignore_unimportant,
             exit_code,
         })
     }
@@ -254,6 +262,7 @@ impl Service {
             format: chosen.choice,
             detection: chosen.detection,
             verdict,
+            ignore_unimportant: req.ignore_unimportant,
             exit_code,
             warnings,
         })
@@ -278,11 +287,34 @@ impl Service {
         let left = self.parse_spec(&req.left)?;
         let right = self.parse_spec(&req.right)?;
         let mut warnings = Vec::new();
+        let effective = self.folder_rules(req, &mut warnings)?;
+        let model = FolderModel::new(left.clone(), right.clone(), effective.rules.clone())
+            .map_err(ApiError::from_folder)?;
+        Ok(PreparedFolderCompare {
+            left,
+            right,
+            rules: effective.rules,
+            text_rules: effective.text_rules,
+            ignore_unimportant: effective.ignore_unimportant,
+            model,
+            warnings,
+        })
+    }
+
+    /// The effective rules of a folder comparison (§3.5): defaults ← `rules_file` ←
+    /// `Criteria::parse_list(criteria)` ← `patch`; the text rules of the injected comparator only for content
+    /// method Rules (otherwise a given `--text-rules-file` or text patch is reported with `switch_ignored`); the
+    /// effective ignore-unimportant (the request's flag or the criteria word).
+    pub(crate) fn folder_rules(
+        &self,
+        req: &FolderCompareRequest,
+        warnings: &mut Vec<Warning>,
+    ) -> Result<EffectiveFolderRules, ApiError> {
         let mut rules = match req.rules_file.as_deref() {
             Some(file) => {
                 let (spec, text) = self.read_text_file(file)?;
-                let (rules, mut file_warnings) =
-                    FolderRules::from_toml(&text).map_err(ApiError::from_folder)?;
+                let (rules, mut file_warnings) = FolderRules::from_toml(&text)
+                    .map_err(|e| ApiError::in_rules_file(&spec, ApiError::from_folder(e)))?;
                 for warning in &mut file_warnings {
                     warning.spec.get_or_insert_with(|| spec.canonical());
                 }
@@ -299,24 +331,25 @@ impl Service {
         }
         rules.apply(&req.patch).map_err(ApiError::from_folder)?;
         let text_rules = if rules.criteria.content.method == ContentMethod::Rules {
-            Some(self.text_rules(
-                req.text_rules_file.as_deref(),
-                &req.text_patch,
-                &mut warnings,
-            )?)
+            Some(self.text_rules(req.text_rules_file.as_deref(), &req.text_patch, warnings)?)
         } else {
+            if req.text_rules_file.is_some() || req.text_patch != TextRulesPatch::default() {
+                warnings.push(Warning {
+                    code: WarningCode::SwitchIgnored,
+                    message: format!(
+                        "the text rules (--text-rules-file, --unimportant…) apply only to content method \
+                         rules; the content method is {}, so they are ignored",
+                        rules.criteria.content.method.as_str()
+                    ),
+                    spec: None,
+                });
+            }
             None
         };
-        let model = FolderModel::new(left.clone(), right.clone(), rules.clone())
-            .map_err(ApiError::from_folder)?;
-        Ok(PreparedFolderCompare {
-            left,
-            right,
+        Ok(EffectiveFolderRules {
             rules,
             text_rules,
             ignore_unimportant,
-            model,
-            warnings,
         })
     }
 
@@ -377,6 +410,7 @@ impl Service {
         Ok(FolderCompareResponse {
             comparison,
             verdict,
+            ignore_unimportant: prepared.ignore_unimportant,
             exit_code: ExitCode::for_verdict(verdict),
             warnings,
         })
@@ -414,9 +448,11 @@ impl Service {
 
     /// The name used for format detection (D-15): the spec's file name, or the stdin/clipboard name hint.
     pub(crate) fn detection_name(&self, spec: &Spec) -> Option<String> {
-        spec.file_name()
-            .or_else(|| self.router().name_hint(spec).map(str::to_owned))
-            .filter(|name| !name.is_empty())
+        let hint = match spec {
+            Spec::Stdin => self.stdin_name().map(str::to_owned),
+            _ => self.router().name_hint(spec).map(str::to_owned),
+        };
+        spec.file_name().or(hint).filter(|name| !name.is_empty())
     }
 
     /// The effective format (D-15): `forced` (§2.12.2), else the detection of the first named side (left, then
@@ -517,8 +553,9 @@ impl Service {
         let mut rules = match file {
             Some(file) => {
                 let (spec, text) = self.read_text_file(file)?;
-                let (rules, mut file_warnings) = TextRules::from_toml(&text)
-                    .map_err(|e| ApiError::from_text(e, Side::Left, ""))?;
+                let (rules, mut file_warnings) = TextRules::from_toml(&text).map_err(|e| {
+                    ApiError::in_rules_file(&spec, ApiError::from_text(e, Side::Left, ""))
+                })?;
                 for warning in &mut file_warnings {
                     warning.spec.get_or_insert_with(|| spec.canonical());
                 }

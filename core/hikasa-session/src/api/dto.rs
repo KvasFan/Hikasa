@@ -54,9 +54,14 @@ pub const GUI_CLOSE_SCHEMA: &str = "hikasa.gui_close.v1";
 pub const GUI_QUIT_SCHEMA: &str = "hikasa.gui_quit.v1";
 /// `hikasa version --json`.
 pub const VERSION_SCHEMA: &str = "hikasa.version.v1";
+/// `hikasa completions <shell> --json` (`{ "shell", "script" }`). Added in the wave-4 review.
+pub const COMPLETIONS_SCHEMA: &str = "hikasa.completions.v1";
+/// A command line that does not parse, with `--json` anywhere in it (`result` is `null`, `error.kind` is
+/// `invalid_input`, exit 100, D-35). Added in the wave-4 review.
+pub const USAGE_ERROR_SCHEMA: &str = "hikasa.usage_error.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`).
-pub const SCHEMAS: [&str; 16] = [
+pub const SCHEMAS: [&str; 18] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -73,6 +78,8 @@ pub const SCHEMAS: [&str; 16] = [
     GUI_CLOSE_SCHEMA,
     GUI_QUIT_SCHEMA,
     VERSION_SCHEMA,
+    COMPLETIONS_SCHEMA,
+    USAGE_ERROR_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -113,6 +120,25 @@ impl<T: Serialize> JsonEnvelope<T> {
         }
     }
 
+    /// A successful document whose exit code is a raw byte (`gui open --wait`: a newer GUI may send a code this
+    /// build does not know, D-23). Additive (wave-4 review).
+    pub fn success_raw(
+        schema: &'static str,
+        exit_code: u8,
+        result: T,
+        warnings: Vec<Warning>,
+    ) -> JsonEnvelope<T> {
+        JsonEnvelope {
+            schema,
+            hikasa_version: HIKASA_VERSION,
+            ok: true,
+            exit_code,
+            result: Some(result),
+            warnings,
+            error: None,
+        }
+    }
+
     /// A failed document: `exit_code = error.exit_code(op)`, `result = null`, `error = error.report()`.
     pub fn failure(
         schema: &'static str,
@@ -135,6 +161,38 @@ impl<T: Serialize> JsonEnvelope<T> {
     pub fn write_to(&self, out: &mut dyn Write) -> std::io::Result<()> {
         write_json(out, self)
     }
+}
+
+impl JsonEnvelope<()> {
+    /// The document of a usage error (`hikasa.usage_error.v1`, CLI invariant 2): `ok: false`, exit code 100
+    /// (D-35), `result: null`, `error: { "kind": "invalid_input", "message", "spec": null, "causes": [] }`.
+    /// Additive (wave-4 review).
+    pub fn usage_error(message: &str) -> JsonEnvelope<()> {
+        JsonEnvelope {
+            schema: USAGE_ERROR_SCHEMA,
+            hikasa_version: HIKASA_VERSION,
+            ok: false,
+            exit_code: ExitCode::UnknownError.code(),
+            result: None,
+            warnings: Vec::new(),
+            error: Some(ErrorReport {
+                kind: hikasa_core::ErrorKind::InvalidInput,
+                message: message.to_owned(),
+                spec: None,
+                causes: Vec::new(),
+            }),
+        }
+    }
+}
+
+/// `hikasa.completions.v1`: the completion script inside the envelope (CLI-000: every subcommand supports
+/// `--json`). Additive (wave-4 review).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompletionsDto {
+    /// The shell (`bash`, `elvish`, `fish`, `powershell`, `zsh`).
+    pub shell: String,
+    /// The script.
+    pub script: String,
 }
 
 /// Writes `value` as pretty JSON (2-space indentation) followed by `\n` (§4.1 rule 1).
@@ -162,14 +220,15 @@ pub struct QuickDto {
 }
 
 impl QuickDto {
-    /// The DTO of a quick response (`ignore_unimportant` is the request's flag).
-    pub fn new(resp: &QuickResponse, ignore_unimportant: bool) -> QuickDto {
+    /// The DTO of a quick response (`ignore_unimportant` is the response's, i.e. the request's, flag).
+    /// Changed in the wave-4 review (the flag was a second argument).
+    pub fn new(resp: &QuickResponse) -> QuickDto {
         QuickDto {
             left: resp.left.canonical(),
             right: resp.right.canonical(),
             method: resp.method.as_str(),
             result: resp.outcome.result.clone(),
-            ignore_unimportant,
+            ignore_unimportant: resp.ignore_unimportant,
             format: resp.format.as_ref().map(|f| f.json()),
         }
     }

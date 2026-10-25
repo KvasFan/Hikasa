@@ -20,6 +20,7 @@ mod compare;
 pub mod dto;
 mod error;
 pub mod gui;
+pub mod human;
 mod info;
 mod report;
 pub mod requests;
@@ -29,27 +30,34 @@ pub mod vocab;
 use std::ffi::OsStr;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use hikasa_core::{
-    CancelToken, JobIdAllocator, JobKind, ProgressSink, Spec, SpecContext, ThrottledSink, Warning,
+    CancelToken, FileTime, JobIdAllocator, JobKind, ProgressSink, Spec, SpecContext, ThrottledSink,
+    Warning,
 };
 use hikasa_formats::{FormatRegistry, ProcessRunner, RegexLimits, TextEncoding};
-use hikasa_vfs::{Blob, LocalOptions, LocalVfs, StreamOptions, VfsRouter};
+use hikasa_vfs::{Blob, LocalOptions, LocalVfs, StreamOptions, VfsError, VfsOp, VfsRouter};
+use parking_lot::Mutex;
 
 pub use error::ApiError;
 pub use gui::{
-    GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
-    gui_exe_candidates, infer_view_kind, normalize_legacy_args, parse_open_args,
+    GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
+    ResolvedOpen, ViewOutcome, ViewRequest, ViewWords, find_gui_exe, gui_exe_candidates,
+    infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
 };
 pub use report::ReportSettings;
 pub use requests::{
     FolderCompareRequest, FormatTokensRequest, QuickMethod, QuickRequest, TextCompareRequest,
+    spec_os_string,
 };
 pub use responses::{
     FolderCompareResponse, FormatChoice, PreparedFolderCompare, QuickResponse, TextCompareResponse,
 };
-pub use vocab::parse_folder_mode;
+pub use vocab::{
+    parse_algorithm, parse_content_method, parse_folder_mode, parse_line_range,
+    resolve_folder_display, resolve_text_display,
+};
 
 use crate::formats::FormatStore;
 use crate::host::{Clock, EnvFacts};
@@ -66,6 +74,47 @@ pub const HIKASA_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Largest number of threads one mapped CRC or binary comparison uses (`min(4, pool size)`, §5.1).
 pub const MAX_STREAM_THREADS: usize = 4;
 
+/// The function that reads all of standard input.
+type StdinRead = Box<dyn FnOnce() -> std::io::Result<Vec<u8>> + Send>;
+
+/// Standard input as the adapter provides it (D-15, D-49; wave-4 review §1.8.7): its `--stdin-name` hint and
+/// a function that reads it. The service calls the function at most once, the first time a `-` spec is
+/// parsed ([`Service::parse_spec`]), and stamps the content with the injected clock; commands without `-` and
+/// `format detect -` (which needs the name only) never read standard input. So adapters pass a source
+/// unconditionally and never decide themselves which arguments are specs.
+pub struct StdinSource {
+    /// The `--stdin-name` hint (format detection, the spool file name).
+    pub name: Option<String>,
+    read: StdinRead,
+}
+
+impl StdinSource {
+    /// A source that calls `read` on first use (the CLI: `std::io::stdin().read_to_end`).
+    pub fn new(
+        name: Option<String>,
+        read: impl FnOnce() -> std::io::Result<Vec<u8>> + Send + 'static,
+    ) -> StdinSource {
+        StdinSource {
+            name,
+            read: Box::new(read),
+        }
+    }
+
+    /// A source with known content (tests, embedders).
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>, name: Option<String>) -> StdinSource {
+        let bytes = bytes.into();
+        StdinSource::new(name, move || Ok(bytes))
+    }
+}
+
+impl std::fmt::Debug for StdinSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StdinSource")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Service construction parameters (captured by the adapter).
 pub struct ServiceInit {
     /// Ambient facts.
@@ -74,8 +123,9 @@ pub struct ServiceInit {
     pub config_dir: Option<PathBuf>,
     /// Worker threads (None = available parallelism, min 1).
     pub threads: Option<NonZeroUsize>,
-    /// Stdin content (with the `--stdin-name` hint), read by the adapter only when a spec is "-".
-    pub stdin: Option<Blob>,
+    /// Standard input with the `--stdin-name` hint, read lazily on the first `-` spec ([`StdinSource`]).
+    /// Changed in the wave-4 review (was an eagerly read `Blob`).
+    pub stdin: Option<StdinSource>,
     /// Clock.
     pub clock: Arc<dyn Clock>,
     /// External conversion runner (`StdProcessRunner` in adapters, fakes in tests).
@@ -148,13 +198,33 @@ struct Inner {
     options: ProgramOptions,
     ignored_keys: Vec<String>,
     registry: Arc<FormatRegistry>,
+    /// The router without standard input.
     router: Arc<VfsRouter>,
     pool: Arc<rayon::ThreadPool>,
     clock: Arc<dyn Clock>,
     runner: Arc<dyn ProcessRunner>,
     jobs: JobIdAllocator,
     startup_warnings: Vec<Warning>,
-    stdin: Option<Blob>,
+    stdin_name: Option<String>,
+    /// The unread source (taken by the first `-`).
+    stdin_read: Mutex<Option<StdinRead>>,
+    /// Standard input once read: the blob and the router that serves it (or why it is unavailable).
+    stdin: OnceLock<Result<StdinState, StdinUnavailable>>,
+}
+
+/// Why standard input is unavailable.
+#[derive(Debug, Clone)]
+enum StdinUnavailable {
+    /// The adapter passed no source.
+    Missing,
+    /// Reading failed.
+    Failed(String),
+}
+
+/// Standard input after it was read.
+struct StdinState {
+    blob: Blob,
+    router: Arc<VfsRouter>,
 }
 
 impl std::fmt::Debug for Service {
@@ -196,8 +266,10 @@ impl Service {
         for key in &options_load.ignored_keys {
             tracing::debug!(target: "hikasa::options", "options.toml: ignored key `{key}`");
         }
+        // One channel for startup warnings (wave-4 review): they are data in `startup_warnings()`, which the
+        // adapters put into every JSON envelope and print once; the log only records them at debug level.
         for warning in &startup_warnings {
-            tracing::warn!(target: "hikasa::config", "{}: {}", warning.code, warning.message);
+            tracing::debug!(target: "hikasa::config", "{}: {}", warning.code, warning.message);
         }
         let threads = threads
             .map(NonZeroUsize::get)
@@ -210,15 +282,27 @@ impl Service {
             .max(1);
         // ARCH-061 (comparison priority) would be applied here, the single place where worker threads start;
         // M1 has no approved OS API for it (gap, Appendix C item 13).
+        // A panic in work spawned on the pool (`pool().spawn`) would abort the process without a handler
+        // (rayon's default): the handler logs it instead, the panicking task ends, and the worker and every other
+        // task keep running (§5.6 amendment). Panics inside `install`/`join`/`scope` still propagate to the
+        // caller, where `run_guarded` turns them into `ApiError::Internal`.
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .thread_name(|i| format!("hikasa-worker-{i}"))
+            .panic_handler(|payload| {
+                tracing::error!(
+                    target: "hikasa",
+                    "a task on the worker pool panicked and was dropped: {}",
+                    crate::jobs::panic_message(payload.as_ref())
+                );
+            })
             .build()
             .map_err(|e| ApiError::Internal(format!("cannot start the worker threads: {e}")))?;
-        let mut router = VfsRouter::new(LocalVfs::new(LocalOptions::default()));
-        if let Some(blob) = stdin.clone() {
-            router = router.with_stdin(blob);
-        }
+        let router = VfsRouter::new(LocalVfs::new(LocalOptions::default()));
+        let (stdin_name, stdin_read) = match stdin {
+            Some(source) => (source.name, Some(source.read)),
+            None => (None, None),
+        };
         tracing::debug!(
             target: "hikasa::service",
             "configuration {} ({:?}), {threads} worker threads",
@@ -238,7 +322,9 @@ impl Service {
                 runner,
                 jobs: JobIdAllocator::new(),
                 startup_warnings,
-                stdin,
+                stdin_name,
+                stdin_read: Mutex::new(stdin_read),
+                stdin: OnceLock::new(),
             }),
         })
     }
@@ -273,13 +359,16 @@ impl Service {
         &self.inner.env
     }
 
-    /// The VFS router (local files, the stdin blob; additive). GUIs read through it.
+    /// The VFS router (local files, and standard input once a `-` spec was parsed; additive). GUIs read
+    /// through it.
     pub fn vfs(&self) -> &VfsRouter {
-        &self.inner.router
+        self.router()
     }
 
     /// The service's worker pool (additive): GUI work that needs parallelism runs on it, never on the rayon
-    /// global pool (T7).
+    /// global pool (T7). A panic in a task given to `pool().spawn` is logged and drops that task only (the pool
+    /// has a panic handler, §5.6 amendment); work whose panic must become an error goes through
+    /// [`Service::spawn`] or `pool().install`/`scope` inside a service call.
     pub fn pool(&self) -> &rayon::ThreadPool {
         &self.inner.pool
     }
@@ -314,9 +403,62 @@ impl Service {
         }
     }
 
-    /// Parses a user spec.
+    /// Parses a user spec. A `-` spec reads standard input now, once per service ([`StdinSource`]): an
+    /// error reading it, or no source, is an error here.
     pub fn parse_spec(&self, input: &OsStr) -> Result<Spec, ApiError> {
-        Ok(Spec::parse_os(input, &self.spec_context())?)
+        let spec = Spec::parse_os(input, &self.spec_context())?;
+        if spec == Spec::Stdin {
+            self.stdin_state()?;
+        }
+        Ok(spec)
+    }
+
+    /// The `--stdin-name` hint (additive): format detection of `-` uses it without reading standard input.
+    pub fn stdin_name(&self) -> Option<&str> {
+        self.inner.stdin_name.as_deref()
+    }
+
+    /// Standard input, read on first use.
+    fn stdin_state(&self) -> Result<&StdinState, ApiError> {
+        let state = self.inner.stdin.get_or_init(|| {
+            let read = self
+                .inner
+                .stdin_read
+                .lock()
+                .take()
+                .ok_or(StdinUnavailable::Missing)?;
+            let bytes = read().map_err(|e| {
+                StdinUnavailable::Failed(format!("cannot read standard input: {e}"))
+            })?;
+            let now = self.inner.clock.now().timestamp();
+            let nanos = u32::try_from(now.subsec_nanosecond())
+                .unwrap_or(0)
+                .min(999_999_999);
+            let mtime = FileTime::from_unix(now.as_second(), nanos).ok_or_else(|| {
+                StdinUnavailable::Failed("the clock's time is out of range".to_owned())
+            })?;
+            let blob = Blob {
+                bytes: Arc::from(bytes),
+                mtime,
+                name: self.inner.stdin_name.clone(),
+            };
+            let router =
+                VfsRouter::new(LocalVfs::new(LocalOptions::default())).with_stdin(blob.clone());
+            Ok(StdinState {
+                blob,
+                router: Arc::new(router),
+            })
+        });
+        state.as_ref().map_err(|unavailable| match unavailable {
+            StdinUnavailable::Missing => {
+                ApiError::InvalidArgument("`-` needs standard input, which was not provided".into())
+            }
+            StdinUnavailable::Failed(message) => ApiError::Vfs(VfsError::from_io(
+                "-",
+                VfsOp::Read,
+                std::io::Error::other(message.clone()),
+            )),
+        })
     }
 
     /// The IPC endpoint of this user and configuration (§2.23).
@@ -337,8 +479,10 @@ impl Service {
     /// Runs `f` on a new thread named `hikasa-job-<id>` with a fresh `CancelToken`, a lossy progress channel
     /// and the panic boundary (`run_guarded`). The GUI's way to start every long operation.
     ///
-    /// The body enters the service pool with `install` (§5.1). If the thread cannot be started, the handle's
-    /// result is an `ApiError::Internal` at once.
+    /// The body runs on the job thread itself and uses the pool only through the service calls it makes (their
+    /// engines take the pool explicitly), so a long job never pins a worker for its whole duration and a small
+    /// view started next to long ones gets its first screen at once (§5.1 amendment, wave-4 review). If the
+    /// thread cannot be started, the handle's result is an `ApiError::Internal` at once.
     pub fn spawn<T: Send + 'static>(
         &self,
         kind: JobKind,
@@ -363,7 +507,7 @@ impl Service {
         let spawned = std::thread::Builder::new()
             .name(format!("hikasa-job-{id}"))
             .spawn(move || {
-                let result = run_guarded(|| service.inner.pool.install(|| f(&service, &job)));
+                let result = run_guarded(|| f(&service, &job));
                 let _ = result_tx.send(result);
             });
         if let Err(e) = spawned {
@@ -395,13 +539,19 @@ impl Service {
         &self.inner.runner
     }
 
-    /// The stdin blob, when the adapter read one.
+    /// The stdin blob, once a `-` spec was parsed.
     pub(crate) fn stdin(&self) -> Option<&Blob> {
-        self.inner.stdin.as_ref()
+        match self.inner.stdin.get() {
+            Some(Ok(state)) => Some(&state.blob),
+            Some(Err(_)) | None => None,
+        }
     }
 
-    /// The router as a shared value.
+    /// The router as a shared value: with standard input once it was read.
     pub(crate) fn router(&self) -> &Arc<VfsRouter> {
-        &self.inner.router
+        match self.inner.stdin.get() {
+            Some(Ok(state)) => &state.router,
+            Some(Err(_)) | None => &self.inner.router,
+        }
     }
 }

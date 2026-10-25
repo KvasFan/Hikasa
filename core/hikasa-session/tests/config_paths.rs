@@ -197,14 +197,29 @@ fn missing_pieces() {
         Err(SessionError::NoConfigDir)
     ));
     assert_eq!(default_config_dir(&no_home), None);
-    // XDG alone is enough for the config folder; the cache falls back to the temp dir without a home.
+    // XDG alone is enough for the config folder; the cache falls back to a per-user folder of the temp dir
+    // without a home (wave-4 review: `hikasa-cache-<id>`, id as for the socket folder).
     let xdg_only = EnvFacts {
         xdg_config_home: Some("/xdg".into()),
         ..no_home.clone()
     };
     let loc = resolve(&xdg_only, None, &never);
     assert_eq!(loc.dir, PathBuf::from("/xdg/hikasa"));
-    assert_eq!(loc.cache_dir, PathBuf::from("/tmp/hikasa-cache"));
+    assert_eq!(loc.cache_dir, PathBuf::from("/tmp/hikasa-cache-1000"));
+    let named = EnvFacts {
+        uid: None,
+        user: Some("an na".into()),
+        ..xdg_only.clone()
+    };
+    assert_eq!(
+        resolve(&named, None, &never).cache_dir,
+        PathBuf::from("/tmp/hikasa-cache-an_na")
+    );
+    // `--config-dir ""` (an unset shell variable) is an error, never the current directory.
+    assert!(matches!(
+        resolve_config_dir(&linux(), Some(Path::new("")), &never),
+        Err(SessionError::EmptyConfigDir)
+    ));
     let mac_no_home = EnvFacts {
         home: None,
         ..macos()
@@ -233,7 +248,7 @@ fn missing_pieces() {
     let loc = resolve(&win_no_local, None, &never);
     assert_eq!(
         loc.cache_dir,
-        PathBuf::from(r"C:\Users\Anna Lee\AppData\Local\Temp").join("hikasa-cache")
+        PathBuf::from(r"C:\Users\Anna Lee\AppData\Local\Temp").join("hikasa-cache-Anna_Lee")
     );
 }
 

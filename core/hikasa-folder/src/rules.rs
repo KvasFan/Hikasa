@@ -489,9 +489,19 @@ pub struct FolderRulesPatch {
     /// `criteria.dos_attributes`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dos_attributes: Option<DosAttrs>,
-    /// `criteria.unix`.
+    /// `criteria.unix` (all three tests at once; `--criteria` sets it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unix: Option<UnixCriteria>,
+    /// `criteria.unix.permissions` alone (`--permissions`), applied after `unix`, so the rules file's or the
+    /// criteria list's owner and group tests stay as they are. Additive (wave-4 session review, §1.6.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unix_permissions: Option<bool>,
+    /// `criteria.unix.owner` alone (`--owner`), applied after `unix`. Additive (wave-4 session review).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unix_owner: Option<bool>,
+    /// `criteria.unix.group` alone (`--group`), applied after `unix`. Additive (wave-4 session review).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unix_group: Option<bool>,
     /// `criteria.content.method`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_method: Option<ContentMethod>,
@@ -589,6 +599,9 @@ impl FolderRules {
         set(&mut c.filename_case, patch.filename_case);
         set(&mut c.dos_attributes, patch.dos_attributes);
         set(&mut c.unix, patch.unix);
+        set(&mut c.unix.permissions, patch.unix_permissions);
+        set(&mut c.unix.owner, patch.unix_owner);
+        set(&mut c.unix.group, patch.unix_group);
         set(&mut c.content.method, patch.content_method);
         set(&mut c.content.skip_if_quick_same, patch.skip_if_quick_same);
         set(&mut c.content.override_quick, patch.override_quick);
@@ -1308,6 +1321,48 @@ mod tests {
             FolderRules::from_toml("[criteria]\ndos_attributes = \"Q\""),
             Err(FolderError::InvalidRules(_))
         ));
+    }
+
+    #[test]
+    fn unix_patch_fields_are_independent() {
+        let mut rules = FolderRules::default();
+        rules.criteria.unix.permissions = true;
+        rules
+            .apply(&FolderRulesPatch {
+                unix_owner: Some(true),
+                ..FolderRulesPatch::default()
+            })
+            .unwrap();
+        assert_eq!(
+            rules.criteria.unix,
+            UnixCriteria {
+                permissions: true,
+                owner: true,
+                group: false
+            }
+        );
+        rules
+            .apply(&FolderRulesPatch {
+                unix: Some(UnixCriteria::default()),
+                unix_group: Some(true),
+                ..FolderRulesPatch::default()
+            })
+            .unwrap();
+        assert_eq!(
+            rules.criteria.unix,
+            UnixCriteria {
+                permissions: false,
+                owner: false,
+                group: true
+            },
+            "the single fields apply after the whole-struct field"
+        );
+        let json = serde_json::to_string(&FolderRulesPatch {
+            unix_permissions: Some(false),
+            ..FolderRulesPatch::default()
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"unix_permissions":false}"#);
     }
 
     #[test]

@@ -17,6 +17,8 @@
     "hikasa.gui_list.v1",
     "hikasa.gui_close.v1",
     "hikasa.gui_quit.v1",
-    "hikasa.version.v1"
+    "hikasa.version.v1",
+    "hikasa.completions.v1",
+    "hikasa.usage_error.v1"
   ]
 }

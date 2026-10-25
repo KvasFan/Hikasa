@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 
-use hikasa_core::Pair;
+use hikasa_core::{Pair, Spec};
 use hikasa_folder::FolderRulesPatch;
 use hikasa_text::TextRulesPatch;
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,29 @@ pub struct TextCompareRequest {
     pub rules_patch: TextRulesPatch,
     /// `--ignore-unimportant` (verdict and exit code).
     pub ignore_unimportant: bool,
+}
+
+impl TextCompareRequest {
+    /// A text comparison of two specs that were already parsed, e.g. a file pair of a folder view
+    /// (`TreeRead::spec(id, side)`, FC-062). Exact for local paths that are not valid UTF-8
+    /// ([`spec_os_string`]). Additive (wave-4 review).
+    pub fn for_specs(left: &Spec, right: &Spec) -> TextCompareRequest {
+        TextCompareRequest {
+            left: spec_os_string(left),
+            right: spec_os_string(right),
+            ..TextCompareRequest::default()
+        }
+    }
+}
+
+/// A spec as a request argument that the service parses back to the same spec (additive, FC-062): the exact OS
+/// path of a local spec (also when it is not valid UTF-8, where `canonical()` is lossy), the canonical string
+/// otherwise.
+pub fn spec_os_string(spec: &Spec) -> OsString {
+    match spec {
+        Spec::Local(path) => path.as_path().as_os_str().to_os_string(),
+        other => OsString::from(other.canonical()),
+    }
 }
 
 /// `hikasa folder compare`.

@@ -52,6 +52,8 @@ pub struct QuickResponse {
     pub format: Option<FormatChoice>,
     /// Content outcome (its `warnings` are the comparison's warnings, e.g. `format_mismatch`).
     pub outcome: ContentOutcome,
+    /// The request's ignore-unimportant (exit code and `hikasa.quick.v1`). Added in the wave-4 review.
+    pub ignore_unimportant: bool,
     /// Exit code (§2.21).
     pub exit_code: ExitCode,
 }
@@ -67,6 +69,9 @@ pub struct TextCompareResponse {
     pub detection: Pair<Option<DetectReason>>,
     /// Verdict under the request's `ignore_unimportant`.
     pub verdict: ContentResult,
+    /// The request's ignore-unimportant, which the verdict, the exit code, the JSON and the reports use.
+    /// Added in the wave-4 review.
+    pub ignore_unimportant: bool,
     /// Exit code (§2.21).
     pub exit_code: ExitCode,
     /// Session warnings (rules-file keys, `format_mismatch`) followed by the comparison's warnings.
@@ -76,8 +81,15 @@ pub struct TextCompareResponse {
 impl TextCompareResponse {
     /// The `hikasa.text_compare.v1` result for `view` (§4.3.2), with the format detection reasons that only the
     /// session knows (`format.reason`, `detection`). Additive: the CLI and the GUI's "Report…" use it.
+    ///
+    /// `view.ignore_unimportant` is replaced by the response's own flag, so the JSON verdict, statistics and
+    /// items always agree with `exit_code` (wave-4 review).
     pub fn json(&self, view: &ViewOptions) -> TextCompareJson {
-        text_compare_json(&self.comparison, view).with_detection(
+        let view = ViewOptions {
+            ignore_unimportant: self.ignore_unimportant,
+            ..view.clone()
+        };
+        text_compare_json(&self.comparison, &view).with_detection(
             Some(&self.format.reason),
             self.detection.left.as_ref(),
             self.detection.right.as_ref(),
@@ -147,6 +159,9 @@ pub struct FolderCompareResponse {
     pub comparison: FolderComparison,
     /// Verdict under the effective ignore-unimportant flag (D-02).
     pub verdict: CompareVerdict,
+    /// The effective ignore-unimportant: the request's flag or the criteria word `ignore-unimportant`
+    /// (§2.6.6 row 4). The verdict, the exit code, the JSON and the reports use it. Added in the wave-4 review.
+    pub ignore_unimportant: bool,
     /// Exit code (§2.21).
     pub exit_code: ExitCode,
     /// Preparation warnings followed by the comparison's warnings.
@@ -155,7 +170,15 @@ pub struct FolderCompareResponse {
 
 impl FolderCompareResponse {
     /// The `hikasa.folder_compare.v1` result for `display` (§4.3.3). Additive.
+    ///
+    /// `display.ignore_unimportant` is replaced by the effective flag ([`FolderCompareResponse::ignore_unimportant`]),
+    /// so `result.verdict`, the statistics and the categories always agree with `exit_code` (decision 4 of the
+    /// wave-4 review).
     pub fn json(&self, display: &DisplayOptions) -> FolderCompareJson {
-        folder_compare_json(&self.comparison, display)
+        let display = DisplayOptions {
+            ignore_unimportant: self.ignore_unimportant,
+            ..*display
+        };
+        folder_compare_json(&self.comparison, &display)
     }
 }

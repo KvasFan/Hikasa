@@ -28,6 +28,7 @@ fn open(specs: &[OsString], wait: bool) -> GuiOpenRequest {
         kind: None,
         options: OpenOptions::default(),
         wait,
+        ..GuiOpenRequest::default()
     }
 }
 
@@ -115,6 +116,11 @@ fn open_wait_returns_the_view_exit_code() {
     let w = tmp.path().join("work");
     write(&w, "a.c", b"int a;\n");
     write(&w, "b.c", b"int b;\n");
+    write(
+        &w,
+        "rules.toml",
+        b"[importance]\nembedded_whitespace = false\n",
+    );
     // Relative specs are resolved with the captured cwd before sending (the GUI has another cwd).
     let mut req = open(&[OsString::from("a.c"), OsString::from("b.c")], true);
     req.options.text_rules_file = Some("rules.toml".into());

@@ -54,6 +54,10 @@ pub struct Endpoint {
     /// with mode 0700 and verifies; `None` for `$XDG_RUNTIME_DIR`, macOS `$TMPDIR`, an override and Windows.
     /// Additive field (wave 4).
     pub own_dir: Option<PathBuf>,
+    /// The user id that must own the socket folder (Unix: `EnvFacts::uid`; `None` on Windows). Before a
+    /// client connects and before a server binds, the folder is verified ([`Endpoint::verify_folder`]); on Unix
+    /// an unknown uid fails closed. Field added in the wave-4 review (§1.8.7).
+    pub uid: Option<u32>,
 }
 
 impl Endpoint {
@@ -73,6 +77,7 @@ impl Endpoint {
                     lock_path: facts.temp_dir.join(format!("{name}.lock")),
                     address: EndpointAddress::NamedPipe(name),
                     own_dir: None,
+                    uid: None,
                 }
             } else {
                 let path = PathBuf::from(o);
@@ -80,6 +85,7 @@ impl Endpoint {
                     lock_path: with_suffix(&path, ".lock"),
                     address: EndpointAddress::UnixSocket(path),
                     own_dir: None,
+                    uid: facts.uid,
                 }
             });
         }
@@ -96,13 +102,10 @@ impl Endpoint {
                 lock_path: facts.temp_dir.join(format!("{name}.lock")),
                 address: EndpointAddress::NamedPipe(name),
                 own_dir: None,
+                uid: None,
             });
         }
-        let id = match (facts.uid, facts.user.as_deref()) {
-            (Some(uid), _) => uid.to_string(),
-            (None, Some(user)) if !user.is_empty() => sanitize(user),
-            _ => "user".to_owned(),
-        };
+        let id = crate::paths::user_id(facts);
         let (dir, mut own_dir) = match facts.platform {
             Platform::MacOs => (facts.temp_dir.clone(), None),
             Platform::Linux | Platform::OtherUnix | Platform::Windows => {
@@ -136,7 +139,22 @@ impl Endpoint {
             lock_path: with_suffix(&path, ".lock"),
             address: EndpointAddress::UnixSocket(path),
             own_dir,
+            uid: facts.uid,
         })
+    }
+
+    /// Verifies the socket folder before anything talks through it (§2.23 "folder verification"; decision of the
+    /// wave-4 review). Unix: the folder that holds the socket must be a folder owned by [`Endpoint::uid`] that no
+    /// other user can write to (`mode & 0o022 == 0`); Hikasa's own folder ([`Endpoint::own_dir`]) must also be
+    /// a real folder (not a symbolic link) with `mode & 0o077 == 0`. A symbolic link to the folder is accepted
+    /// only when the link itself belongs to the same user. An unknown uid fails closed. A missing folder is
+    /// [`IpcError::NotRunning`] (nobody can listen there); every other failure is
+    /// [`IpcError::InsecureEndpoint`]. Windows (named pipes): nothing to verify.
+    ///
+    /// Only `std` metadata is used (no libc). The client calls it before connecting, so a socket planted by
+    /// another user in a shared temp folder is never contacted; the server calls it before binding.
+    pub fn verify_folder(&self) -> Result<(), IpcError> {
+        check_folder(self)
     }
 
     /// Display text for messages (the socket path, or `\\.\pipe\<name>`).
@@ -160,18 +178,7 @@ pub const fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// Every char outside `[A-Za-z0-9_.-]` becomes `_`.
-fn sanitize(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+use crate::paths::sanitize;
 
 /// `path` with `suffix` appended to its last component (`x.sock` → `x.sock.lock`).
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -206,11 +213,83 @@ fn utf16le(s: &OsStr) -> Vec<u8> {
         .collect()
 }
 
-/// Creates Hikasa's own socket folder with mode 0700 when it is missing, and verifies it: a real folder (not a
-/// symbolic link) that no other user can access (`mode & 0o077 == 0`). No-op without an own folder.
+/// The folder that holds a socket path (`.` for a bare name).
+#[cfg(unix)]
+fn socket_dir(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
+
+/// [`Endpoint::verify_folder`] on Unix.
+#[cfg(unix)]
+fn check_folder(endpoint: &Endpoint) -> Result<(), IpcError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let EndpointAddress::UnixSocket(path) = &endpoint.address else {
+        return Ok(());
+    };
+    let dir = socket_dir(path);
+    let insecure = |reason| IpcError::InsecureEndpoint {
+        path: dir.display().to_string(),
+        reason,
+    };
+    let Some(uid) = endpoint.uid else {
+        return Err(insecure(
+            "the current user id is unknown, so the socket folder cannot be verified",
+        ));
+    };
+    let not_found = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            IpcError::NotRunning
+        } else {
+            IpcError::Io(e)
+        }
+    };
+    let own = endpoint.own_dir.as_deref() == Some(dir.as_path());
+    let link = std::fs::symlink_metadata(&dir).map_err(not_found)?;
+    let meta = if link.file_type().is_symlink() {
+        if own {
+            return Err(insecure("the socket folder is a symbolic link"));
+        }
+        if link.uid() != uid {
+            return Err(insecure(
+                "the socket folder is a symbolic link owned by another user",
+            ));
+        }
+        std::fs::metadata(&dir).map_err(not_found)?
+    } else {
+        link
+    };
+    if !meta.is_dir() {
+        return Err(insecure("the socket folder is not a folder"));
+    }
+    if meta.uid() != uid {
+        return Err(insecure("the socket folder belongs to another user"));
+    }
+    let mode = meta.permissions().mode();
+    if own && mode & 0o077 != 0 {
+        return Err(insecure("the socket folder is accessible by other users"));
+    }
+    if mode & 0o022 != 0 {
+        return Err(insecure("the socket folder is writable by other users"));
+    }
+    Ok(())
+}
+
+/// Named pipes have no socket folder.
+#[cfg(not(unix))]
+fn check_folder(_endpoint: &Endpoint) -> Result<(), IpcError> {
+    Ok(())
+}
+
+/// Creates Hikasa's own socket folder with mode 0700 (create-new: `mkdir` never follows or reuses a symbolic
+/// link) and verifies it: a real folder (not a symbolic link) owned by [`Endpoint::uid`] that no other user can
+/// access (`mode & 0o077 == 0`). A folder another user created first is refused, never used. No-op without an
+/// own folder.
 #[cfg(unix)]
 pub(crate) fn prepare_own_dir(endpoint: &Endpoint) -> Result<(), IpcError> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::DirBuilderExt;
     let Some(dir) = &endpoint.own_dir else {
         return Ok(());
     };
@@ -219,18 +298,20 @@ pub(crate) fn prepare_own_dir(endpoint: &Endpoint) -> Result<(), IpcError> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(IpcError::Io(e)),
     }
-    let meta = std::fs::symlink_metadata(dir)?;
     let insecure = |reason| IpcError::InsecureEndpoint {
         path: dir.display().to_string(),
         reason,
     };
-    if !meta.is_dir() {
-        return Err(insecure("the socket folder is not a folder"));
+    let meta = std::fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() {
+        return Err(insecure("the socket folder is a symbolic link"));
     }
-    if meta.permissions().mode() & 0o077 != 0 {
-        return Err(insecure("the socket folder is accessible by other users"));
-    }
-    Ok(())
+    check_folder(&Endpoint {
+        address: EndpointAddress::UnixSocket(dir.join("hikasa.sock")),
+        lock_path: endpoint.lock_path.clone(),
+        own_dir: Some(dir.clone()),
+        uid: endpoint.uid,
+    })
 }
 
 /// Windows uses named pipes: there is no socket folder.

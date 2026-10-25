@@ -118,12 +118,21 @@ any other folder gets its own endpoint and single-instance lock (D-47,
 For the per-user configuration it is `$XDG_CACHE_HOME/hikasa` (absolute values only),
 else `~/.cache/hikasa` (Linux and other Unix systems), `~/Library/Caches/Hikasa`
 (macOS), `%LOCALAPPDATA%\Hikasa\cache` (Windows); when the needed folder is unknown,
-`<temp>/hikasa-cache`. M1 uses it for one thing: `hikasa gui open -` spools standard
-input to `<cache>/stdin/<n>/<name>` (`<name>` is the file name of `--stdin-name`, else
-`stdin.txt`; `<n>` is the first free number, so concurrent invocations never share a
-file) and sends that absolute path to the GUI, which has another current directory and
-no access to the CLI's standard input; with `--wait` the file and its folder are deleted
-after the view closes (D-49).
+`<temp>/hikasa-cache-<uid>` (a per-user name). M1 uses it for one thing: `hikasa gui open -`
+spools standard input to `<cache>/stdin/<n>/<name>` (`<name>` is the file name of
+`--stdin-name`, else `stdin.txt`; `<n>` is the first free number, so concurrent
+invocations never share a file) and sends that absolute path to the GUI, which has
+another current directory and no access to the CLI's standard input; with `--wait` the
+file and its folder are deleted after the view closes (D-49). Piped content is often
+private, so on Unix the cache folder must belong to the user and must not be writable by
+others (the temporary-folder fallback must also be a real folder, not a symbolic link),
+`stdin/` and `<n>/` are private folders (mode 0700, `<n>` always created fresh), and the
+file is created new with mode 0600, never through a symbolic link; a spool that fails
+leaves nothing behind. Standard input is read only when a `-` argument is actually used
+(`format detect -` needs only the `--stdin-name` hint and never reads it).
+
+`--config-dir ""` is an error (an unset shell variable must not turn the current
+directory into the configuration folder).
 
 **Read-only commands never create either folder.** Missing files mean defaults.
 
@@ -134,8 +143,10 @@ inside the top-level sections of `15-options-reference.md` (`startup`, `tabs`,
 `archive_types`, `commands`, `open_with`, `tweaks`) are ignored silently, because M2 writes
 the whole file and M1 reads only a few keys; with `--verbose` every ignored key is logged
 (a log line, not a warning). An unknown top-level section (usually a typo) produces the
-warning `unknown_config_key`. A TOML syntax error or a value of the wrong type or range in
-a key that M1 reads is an error. M1 never writes `options.toml`, so every key it does not
+warning `unknown_config_key`. A TOML syntax error, a value of the wrong type or range in
+a key that M1 reads, a known section written as a plain value (`text_editing = 5`) and a
+negative `schema_version` are errors. Keys match the table structure: a quoted key with
+dots (`"text_editing.number_of_context_lines" = 9`) is one unknown key, not the option. M1 never writes `options.toml`, so every key it does not
 use is preserved. The keys read in M1 are listed in `15-options-reference.md` ("Keys read
 in M1"); among them `[tweaks.file_operations] content_memory_budget_mib`, the memory budget
 of content tests in folder comparisons (D-25).

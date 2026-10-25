@@ -7,10 +7,15 @@ use std::path::{Path, PathBuf};
 /// Attempts at finding a free temporary name before giving up.
 const MAX_TEMP_ATTEMPTS: u32 = 10_000;
 
+/// Longest part of the target name kept in the temporary name (bytes): `.` + 200 + `.hikasa-tmp-` + 4 digits
+/// stays below the common 255-byte name limit.
+pub const TEMP_NAME_PREFIX_MAX: usize = 200;
+
 /// Writes `bytes` to `path` atomically (temp in the same folder, fsync, rename) (SES-053).
 ///
 /// The temporary file is `.<name>.hikasa-tmp-<n>` next to the target, created exclusively (`create_new`), so
-/// concurrent writers never share one. Readers see either the old content or the new content, never a part of
+/// concurrent writers never share one; `<name>` is cut to at most [`TEMP_NAME_PREFIX_MAX`] bytes (at a char
+/// boundary), so every target name the file system accepts (up to 255 bytes) also has a valid temporary name. Readers see either the old content or the new content, never a part of
 /// it; after a failure the target is untouched and the temporary file is removed. The parent folder must exist.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let name = path.file_name().ok_or_else(|| {
@@ -23,7 +28,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
     };
-    let (temp, mut file) = create_temp(&parent, &name.to_string_lossy())?;
+    let lossy = name.to_string_lossy();
+    let mut cut = lossy.len().min(TEMP_NAME_PREFIX_MAX);
+    while !lossy.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let (temp, mut file) = create_temp(&parent, &lossy[..cut])?;
     let written = file
         .write_all(bytes)
         .and_then(|()| file.flush())

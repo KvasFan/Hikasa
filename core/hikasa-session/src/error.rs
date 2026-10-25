@@ -15,6 +15,10 @@ pub enum SessionError {
     /// `--config-dir` is relative and the current directory is unknown.
     #[error("--config-dir {0:?} must be absolute")]
     RelativeConfigDir(PathBuf),
+    /// `--config-dir ""` (an unset shell variable): never the current directory. Added in the wave-4 review
+    /// (kind `invalid_input`).
+    #[error("--config-dir must not be empty")]
+    EmptyConfigDir,
     /// Config file problem.
     #[error("{path}: {message}")]
     Config {
@@ -48,12 +52,14 @@ pub enum SessionError {
 }
 
 impl Classify for SessionError {
-    /// `NoConfigDir` → `not_found`; `RelativeConfigDir` → `invalid_input`; `Config` → `invalid_data`; `Format` →
+    /// `NoConfigDir` → `not_found`; `RelativeConfigDir`, `EmptyConfigDir` → `invalid_input`; `Config` → `invalid_data`; `Format` →
     /// its kind; `Io` → [`io_error_kind`]; `Schema` → `unsupported`.
     fn kind(&self) -> ErrorKind {
         match self {
             SessionError::NoConfigDir => ErrorKind::NotFound,
-            SessionError::RelativeConfigDir(_) => ErrorKind::InvalidInput,
+            SessionError::RelativeConfigDir(_) | SessionError::EmptyConfigDir => {
+                ErrorKind::InvalidInput
+            }
             SessionError::Config { .. } => ErrorKind::InvalidData,
             SessionError::Format(e) => e.kind(),
             SessionError::Io { source, .. } => io_error_kind(source),
