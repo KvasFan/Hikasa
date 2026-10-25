@@ -46,6 +46,7 @@ use hikasa_vfs::{EntryKind, FollowLinks, Vfs};
 
 use super::dto::GuiPingDto;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
+use super::responses::PreparedFolderCompare;
 use super::vocab::{resolve_folder_display, resolve_text_display};
 use super::{ApiError, Service};
 use crate::host::{EnvFacts, Platform};
@@ -493,6 +494,31 @@ pub enum ViewOutcome {
 }
 
 impl ViewOutcome {
+    /// The outcome of a folder view (§1.8.7 item 37; additive): `prepared` is `None` while `folder_prepare` has
+    /// not returned or after it was stopped, `scanning` is true while `folder_run` runs. The verdict is
+    /// [`PreparedFolderCompare::view_verdict`]: a view still preparing, scanning or stopped is `Incomplete` (100).
+    pub fn for_folder(
+        prepared: Option<&PreparedFolderCompare>,
+        ignore_unimportant: bool,
+        scanning: bool,
+    ) -> ViewOutcome {
+        ViewOutcome::Folder {
+            verdict: prepared.map_or(CompareVerdict::Incomplete, |p| {
+                p.view_verdict(ignore_unimportant, scanning)
+            }),
+        }
+    }
+
+    /// The `ViewClosed` result and exit code of a view the GUI accepted but never opened (it was shutting down,
+    /// or the view was closed before it opened; §1.8.7 item 37, additive): no verdict, the given `reason`, exit
+    /// 100, as the server reports the waiters it notifies at shutdown.
+    pub fn close_unopened(reason: CloseReason) -> (ViewResult, ExitCode) {
+        (
+            ViewResult::new(None, None, false, reason),
+            ExitCode::UnknownError,
+        )
+    }
+
     /// The `ViewClosed` result and exit code (D-23): `NoVerdict` → 0; `LoadFailed` → 100 with reason
     /// `load_failed` (whatever `reason` says); `Text` → `ExitCode::for_content`; `Folder` →
     /// `ExitCode::for_verdict` (Incomplete → 100).

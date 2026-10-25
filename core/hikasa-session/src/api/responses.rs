@@ -140,6 +140,18 @@ impl PreparedFolderCompare {
     pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
+
+    /// The verdict a folder view shows and reports when it closes (§1.8.7 items 22 and 37; additive):
+    /// `Incomplete` while `scanning` (`folder_run` has not returned) and after a scan that did not finish
+    /// (stopped: unscanned folders are unknown, D-02); otherwise the model's verdict under `ignore_unimportant`.
+    pub fn view_verdict(&self, ignore_unimportant: bool, scanning: bool) -> CompareVerdict {
+        let read = self.model.read();
+        if scanning || !read.is_complete() {
+            CompareVerdict::Incomplete
+        } else {
+            read.verdict(ignore_unimportant)
+        }
+    }
 }
 
 impl std::fmt::Debug for PreparedFolderCompare {

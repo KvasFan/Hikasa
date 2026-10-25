@@ -6778,7 +6778,13 @@ pub enum ViewRequest {
 }
 pub enum ViewOutcome { NoVerdict, LoadFailed, Text { result: ContentResult, ignore_unimportant: bool },
                        Folder { verdict: CompareVerdict } }
-impl ViewOutcome { pub fn close(&self, reason: CloseReason, saved: bool) -> (ViewResult, ExitCode); }
+impl ViewOutcome { pub fn close(&self, reason: CloseReason, saved: bool) -> (ViewResult, ExitCode);
+                   // wave-6 review (item 37):
+                   pub fn for_folder(prepared: Option<&PreparedFolderCompare>, ignore_unimportant: bool,
+                                     scanning: bool) -> ViewOutcome;
+                   pub fn close_unopened(reason: CloseReason) -> (ViewResult, ExitCode); }
+impl PreparedFolderCompare { pub fn view_verdict(&self, ignore_unimportant: bool, scanning: bool)
+                                 -> CompareVerdict; }   // item 37
 pub fn open_usage() -> String;   // usage of `hikasa gui open` / `hikasa-gui`, from the switch table
 // OpenArgs also has `stdin_name: Option<String>` and `help: bool`.
 
@@ -7003,6 +7009,18 @@ impl EnvFacts { pub fn new(platform: Platform, temp_dir: PathBuf) -> EnvFacts; }
     documented in §1.10 instead).
 36. **Architecture test** (decision 8). The hardening of §6.1 (amended there) closes the bypasses the reviewers
     demonstrated; the checks remain a heuristic, with the limits listed in §6.1.
+37. **Folder-view outcome and unopened views** (wave-6 GUI review, maintainer decisions 3 and 6; additive).
+    The rule "a folder view that is still preparing, still scanning or was stopped reports `Incomplete` (100)"
+    is core code, used by the GUI for both the status bar and the close code:
+    `PreparedFolderCompare::view_verdict(ignore_unimportant, scanning) -> CompareVerdict` (`Incomplete` while
+    `scanning` or when the model is not complete, else the model's verdict) and
+    `ViewOutcome::for_folder(prepared: Option<&PreparedFolderCompare>, ignore_unimportant, scanning)` (`None`:
+    still preparing or stopped while preparing → `Incomplete`). A view the GUI accepted over IPC but never
+    opened (the `OpenView` reached the UI after quitting started, or the view was closed before it opened)
+    closes with `ViewOutcome::close_unopened(reason) -> (ViewResult, ExitCode)`: no verdict, the given reason,
+    exit 100, as the server reports the waiters it notifies at shutdown (§3.6). Architecture check 7 no longer
+    takes the `'static` lifetime of a `&'static str` return type for a `static` item (self-test
+    `check_7_does_not_take_the_static_lifetime_for_an_item`).
 
 ### 1.9 hikasa-cli (binary `hikasa`)
 

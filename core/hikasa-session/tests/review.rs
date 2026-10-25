@@ -851,6 +851,74 @@ fn the_d23_close_rules_are_one_function() {
     }
 }
 
+/// §1.8.7 item 37: the folder-view verdict (status bar and close code) and the code of a view that never
+/// opened are core rules, not GUI code.
+#[test]
+fn folder_view_outcomes_and_unopened_views_are_core_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    write(&w, "l/same.txt", b"one\n");
+    write(&w, "r/same.txt", b"one\n");
+    write(&w, "l/diff.txt", b"one\n");
+    write(&w, "r/diff.txt", b"two, longer\n");
+    let req = FolderCompareRequest {
+        left: os(&w.join("l")),
+        right: os(&w.join("r")),
+        ..FolderCompareRequest::default()
+    };
+    let incomplete = ViewOutcome::Folder {
+        verdict: CompareVerdict::Incomplete,
+    };
+    // Still preparing (or stopped while preparing): nothing to claim.
+    assert_eq!(ViewOutcome::for_folder(None, false, false), incomplete);
+    let prepared = service.folder_prepare(&req).unwrap();
+    // Prepared, scan not run: incomplete whether or not the caller still counts it as scanning.
+    assert_eq!(
+        prepared.view_verdict(false, false),
+        CompareVerdict::Incomplete
+    );
+    assert_eq!(
+        ViewOutcome::for_folder(Some(&prepared), false, true),
+        incomplete
+    );
+    // A stopped scan stays incomplete even when it already found differences.
+    let stopped = job(&service, JobKind::FolderCompare);
+    stopped.cancel.cancel();
+    let _ = service.folder_run(&prepared, &stopped, &NullObserver);
+    assert_eq!(
+        ViewOutcome::for_folder(Some(&prepared), false, false),
+        incomplete
+    );
+    // A finished scan reports the model's verdict; while the caller still polls it, it is incomplete.
+    let prepared = service.folder_prepare(&req).unwrap();
+    service
+        .folder_run(
+            &prepared,
+            &job(&service, JobKind::FolderCompare),
+            &NullObserver,
+        )
+        .unwrap();
+    assert_eq!(
+        prepared.view_verdict(false, true),
+        CompareVerdict::Incomplete
+    );
+    let outcome = ViewOutcome::for_folder(Some(&prepared), false, false);
+    assert_eq!(
+        outcome,
+        ViewOutcome::Folder {
+            verdict: CompareVerdict::Differences
+        }
+    );
+    assert_eq!(outcome.close(CloseReason::User, false).1.code(), 13);
+    // A view accepted but never opened (the GUI was shutting down) reports `shutdown` with 100.
+    let (result, code) = ViewOutcome::close_unopened(CloseReason::Shutdown);
+    assert_eq!(code.code(), 100);
+    assert_eq!(result.reason, "shutdown");
+    assert_eq!(result.verdict_kind(), None);
+    assert_eq!(result.folder_verdict_kind(), None);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn a_non_utf8_file_pair_opens_from_its_specs() {

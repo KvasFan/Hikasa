@@ -153,13 +153,13 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `BrowseRight` | Session | Right Side |  | Browses for an existing folder on right side. |
 | `BrowseOutput` | Session | Output Side |  | Browses for an existing folder on output side. |
 | `Stop` | Session |  |  | Terminates comparison. |
-| `Expand` | Actions | Open Folder |  | Opens selected folder. |
-| `Collapse` | Actions | Close Folder |  | Closes selected folder. |
+| `Expand` | Actions | Open Folder | Right | Opens selected folder. |
+| `Collapse` | Actions | Close Folder | Left | Closes selected folder. |
 | `ExpandSubfolders` | Actions | Open Subfolders |  | Opens selected folders and all their subfolders. |
 | `CollapseSubfolders` | Actions | Close Subfolders |  | Closes selected folders and their subfolders. |
 | `SetAsBaseFolders` | Actions |  |  | Sets selected folders as base folders. |
 | `SetAsOtherBaseFolder` | Actions | Set as Base on Other Side |  | Sets selected folder as base folder on other side. |
-| `Open` | Actions |  |  | Opens selected items in new view. |
+| `Open` | Actions |  | Enter | Opens selected items in new view. |
 | `OpenWithList` | Actions | Open With |  | Opens selected items in new view of picked type. |
 | `AssocApp` | Actions | Associated Application |  | Opens selected items with associated application. |
 | `Exclude` | Actions | Exclude |  | Filters selected items to remove them from comparison. |
@@ -180,6 +180,10 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `ColList` | View | Columns |  | Shows or hides picked column. |
 | `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. |
 | `ShowLog` | View | Log |  | Shows or hides log panel. |
+
+Enter, Right and Left (keys without Ctrl or Alt that focused controls use themselves) act on the folder tree
+only while the tree has the keyboard focus; on a focused button, list or check box they keep their usual
+meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compare view (FC-062).
 
 ## Folder Sync
 
@@ -281,6 +285,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 
 | Command | Menu | Caption | Shortcut | Description |
 |---|---|---|---|---|
+| `HomeCompare` | Session | Compare | Enter (in a path field) | Compares the two typed paths; the comparison replaces the Home view (M1 addition, UI-001). |
 | `Find` | Search |  | Ctrl+F | Finds search string. |
 | `ShowManage` | View | Show Session Management |  | Shows or hides management panel. |
 | `MaximizeManage` | View | Maximize Session Management |  | Maximizes or restores management panel. |

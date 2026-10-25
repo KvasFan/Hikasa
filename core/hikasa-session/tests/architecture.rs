@@ -2185,12 +2185,18 @@ fn in_matches_patterns(text: &str, start: usize) -> bool {
 }
 
 /// True when the literal at `start` lies in the initializer of a `const` or `static` item (a named word or a
-/// lookup table: `const ALL: &str = "all";`, `static MODES: &[(&str, u8)] = …`).
+/// lookup table: `const ALL: &str = "all";`, `static MODES: &[(&str, u8)] = …`). The `'static` lifetime is not
+/// an item (`fn f() -> &'static str { match x { A => "same" } }` returns a display label).
 fn in_const_item(text: &str, start: usize) -> bool {
     let before = &text[..start];
     let item = ["const", "static"]
         .iter()
-        .filter_map(|kw| find_token(before, kw).last().copied())
+        .filter_map(|kw| {
+            find_token(before, kw)
+                .into_iter()
+                .rev()
+                .find(|&at| !before[..at].ends_with('\''))
+        })
         .max();
     item.is_some_and(|at| {
         let between = &text[at..start];
@@ -2792,6 +2798,22 @@ fn adapter_vocabulary_checks() {
     );
     assert!(text.contains("\"http://x\""));
     assert!(!text.contains("gone") && !text.contains("none"));
+}
+
+/// Wave-6 review: a `&'static str` return type is not a `static` item, so display labels in the match arms of
+/// such a function are not "named" vocabulary words; real `const`/`static` items still are.
+#[test]
+fn check_7_does_not_take_the_static_lifetime_for_an_item() {
+    let label = "fn label(x: u8) -> &'static str {\n    match x {\n        0 => \"same\",\n        _ => \"differences\",\n    }\n}\n";
+    let v = adapter_violations("gui/hikasa-gui/src/x.rs", label);
+    assert!(v.is_empty(), "{v:?}");
+    let items = "fn label() -> &'static str { \"x\" }\nstatic WORD: &str = \"differences\";\nconst ALL: &'static str = \"all\";\n";
+    let v = adapter_violations("gui/hikasa-gui/src/x.rs", items);
+    assert_eq!(v.len(), 2, "{v:?}");
+    assert!(
+        v.iter().all(|m| m.contains("names (const/static)")),
+        "{v:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------------------

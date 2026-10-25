@@ -83,7 +83,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
 | a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
-| `dioxus` | The GUI (M1 wave 6) needs approval first. |
+| `dioxus` | *Approved for M1 wave 6 (D-56):* `dioxus` 0.7 with the `desktop` feature only, used by `hikasa-gui` alone (§2, "M1 wave 6"). Its WebView stack (wry; WebKitGTK on Linux) brings the NCSA licence of the allow list. |
 | `tempfile` (dev-only) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). |
 
 Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
@@ -167,6 +167,82 @@ Requirements that drive the choice:
 - **ARCH-GUI-004** (P1): Native menus and global shortcuts via `muda`
   (MIT/Apache) and `global-hotkey`; tray icon via `tray-icon` for the optional
   clipboard-history helper.
+
+### M1 wave 6: approval (D-56) and the ARCH-GUI-003 measurements
+
+**Approval.** The maintainer approved `dioxus` 0.7 with the `desktop` feature for wave 6 (D-56); it is in
+`[workspace.dependencies]` and used by `hikasa-gui` only (contract §0.5). On Linux it runs on wry and
+WebKitGTK 4.1 (with GTK 3 and libsoup 3); the M1 window has HTML menus generated from the command catalogue
+(ARCH-GUI-004's native menus stay P1).
+
+**How the heavy view is built (ARCH-GUI-002).** The text panes are one `<canvas>` per view. The page asks the
+Rust side for the rows it is about to draw (`/hk/slice` on the webview's own protocol); Rust lays out only those
+rows from the `TextComparison` (line numbers, row states, syntax spans, inline differences) and answers with a
+compact JSON slice (0.2–0.5 ms per request). The page keeps a bounded row cache, requests the rows that are
+missing in one request, prefetches the next pages while scrolling and the next frame's rows while the scroll bar
+is dragged, draws text runs batched per pane and colour, and moves the drawn image when only the scroll position
+changed (only the uncovered rows are drawn). No DOM node exists per line. The folder tree is a DOM list that
+only holds the rows around the scroll position.
+
+**Measurement** (`cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1`, which runs the binary in its scripted mode `HIKASA_GUI_BENCH=scroll|folder` and prints a JSON
+summary; re-measured 2026-10-26 after the wave-6 review fixes). **Machine:** a desktop, not the "2020-class
+laptop" that ARCH-GUI-003 names — AMD Ryzen 7 7800X3D (8 cores, 16 threads), 64 GB RAM, Radeon RX 7900, one
+3840 × 2160 display at 120 Hz, KDE Plasma on Wayland with the window on Xwayland (`GDK_BACKEND=x11`),
+WebKitGTK 2.54, device pixel ratio 1.5, text area 1254 × 650 CSS px = 35 rows at the 13 px default font. The
+figures are therefore **not verified on the reference hardware**. Input: two generated 1,000,000-line C files
+(≈ 48 bytes per line, about 1 % of the lines changed in clusters; 1,003,667 rows; format "C, C++, C#, ObjC
+Source", syntax colouring on).
+
+Memory is reported in MiB (1 MiB = 1,048,576 bytes) against the gate of 400 MB = **381.5 MiB**. The figure for
+the whole window is the sum of the *proportional* set sizes (PSS, `/proc/<pid>/smaps_rollup`) of the GUI process
+and its WebKit processes: pages the processes share (the WebKit and GTK libraries, shared buffers) count once.
+Summed RSS (which counts them once per process) and the GUI process's own RSS are given alongside.
+
+| ARCH-GUI-003 item | Measured | Gate |
+|---|---|---|
+| First screen (the loaded text, before the alignment) | 0.43 s after the process start (0.26 s after the view opened) | < 1 s: **met** |
+| Aligned comparison with colours on screen | 0.60 s after the process start (comparison done 0.41 s after the view opened) | — |
+| Wheel-like scrolling, 3 lines per frame, 600 frames | 60.2 fps; frame work p50 4 / p95 4 / max 7 ms; no frame interval above 25 ms | ≥ 60 fps: met at the page's 60 Hz frame-clock ceiling, not verified on 2020-class hardware |
+| A page per frame, 300 frames | 60.2 fps; frame work p95 3 ms; no interval above 25 ms | as above |
+| Sweep through the whole comparison in 1,200 frames (836 rows per frame) | 60.2 fps; frame work p50 4 / p95 5 / max 43 ms; 3 intervals above 25 ms | as above |
+| Memory after scrolling | **PSS of the GUI and its web processes 598 MiB** (GUI 356, web content 214, network 28); GUI process RSS alone **456 MiB** (peak 465); summed RSS 821 MiB | < 381.5 MiB: **not met** (both the total and the GUI process alone) |
+
+The page's frame clock runs at 60 Hz here (WebKitGTK drives `requestAnimationFrame` at 60 Hz on X11 although the
+display refreshes at 120 Hz), so about 60 fps is the most this setup can show; the values above are as measured,
+not rounded up. The wave-6 review run of the previous build gave 59.5 fps with 5 intervals above 25 ms in the
+wheel phase: its canvas buffer was not a whole number of device pixels, so the compositor rescaled it on every
+frame. The canvases are now sized in whole device pixels; without that, a correctly laid-out text view (status
+bar visible) scrolled at 25–29 fps on this machine.
+
+The memory figure does not meet the gate. With an empty Home view the window already takes 168 MiB PSS (GUI
+process 72, web content 67, network 29; summed RSS 366 MiB, GUI process RSS 160 MiB); the 1,000,000-line
+comparison adds about 285 MiB PSS (295 MiB RSS) to the GUI process (both documents, the rows, the tokenizer start states and the
+allocator's retained peak; the CLI's G1 peak for the same work is 298 MiB) and about 150 MiB PSS to the web content
+process (canvas buffers, the bounded row cache, script heap). Even the GUI process alone (456 MiB RSS) is above
+the limit.
+
+Acceptance (b), the folder scan (same machine, same mode; CRC content tests, display filter *Show All*, every
+folder opened as it arrives while the page scrolls the tree; warm page cache, since dropping it needs root):
+
+| Tree (files per side) | Scan | Rebuilds while scanning | Rows at the end | Tree rebuild | UI-thread work per message batch | Page frame intervals while scanning | Memory (PSS total / GUI RSS) |
+|---|---|---|---|---|---|---|---|
+| 100,020 in 11,110 folders | 0.26 s | 2 | 111,150 | max 2.5 ms | max 2.5 ms | 7 frames, p95 28 ms, 1 above 25 ms | 237 / 217 MiB |
+| 400,080 in 44,440 folders (`HIKASA_PERF_TREE_TOP=40`) | 0.68 s | 7 | 444,600 | p50 5.9 / max 8.9 ms | p95 6.4 / max 8.9 ms | 32 frames, p95 17 ms, 1 above 25 ms | 311 / 287 MiB |
+| 1,000,200 in 111,100 folders (`HIKASA_PERF_TREE_TOP=100`) | 1.64 s | 18 | 1,111,500 | p50 11.3 / max 21.3 ms (7 of 19 above 16.7 ms) | p95 19.5 / max 21.3 ms (7 of 83 above 16.7 ms) | 90 frames, p95 23 ms, 1 above 25 ms | 442 / 417 MiB |
+
+Each root render took at most 0.9 ms. The tree rendering is incremental (the visible rows are rebuilt from the
+live model at most every 66 ms while the scan runs), and the UI-thread work stays below 16 ms per frame for the
+100k-file tree that acceptance (b) names and for 400k files. The rebuild walks every visible row, so with about a
+million rows open (everything expanded under *Show All*) it takes up to 21 ms and frames are then missed; the page
+frame intervals measure the WebView's frames, not only the UI-thread work. A cold scan was not measured.
+
+**Decision status (17-agent-workflow §7.1).** The first screen and the scrolling items pass on this desktop (at
+the frame-clock ceiling, not on the reference laptop); the memory limit is **not met**: 598 MiB PSS for the window,
+456 MiB RSS for the GUI process alone, against 381.5 MiB, because of the WebView's own memory plus the
+comparison's data. The toolkit is *not* switched: the measurements are reported to the maintainer, who decides
+between accepting a higher memory budget for the WebView path, a hybrid with an embedded native text view, or the
+egui fallback of ARCH-GUI-003.
 
 ## 3. Crates explicitly rejected
 
