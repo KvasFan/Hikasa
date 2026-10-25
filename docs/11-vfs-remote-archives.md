@@ -37,6 +37,14 @@ scripts, command line, Copy to Folder targets, reports).
 - **VFS-004** (P1): Remote files opened in file views are downloaded to a temp cache
   and uploaded on save; the cache is cleared on exit.
 
+**Local writes (M1).** Files are written atomically: the content goes to a temporary file
+in the target's folder, which is synced and renamed onto the target, so a failure leaves
+the target untouched (SES-053; `--output` of the CLI). A target that is a symbolic link is
+resolved first: the file the link points to is replaced (the temporary file is created
+next to that file) and the link itself stays. A target that is not a regular file — a
+FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
+to directly, which cannot be atomic.
+
 ## 2. Spec syntax (canonical string forms)
 
 ```

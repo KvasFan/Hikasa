@@ -1,0 +1,21 @@
+{
+  "schema": "hikasa.format_detect.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "file": "<TMP>/q.mysql",
+    "format": {
+      "id": "sql",
+      "name": "My SQL",
+      "kind": "text"
+    },
+    "reason": {
+      "reason": "mask",
+      "id": "sql",
+      "mask": "*.mysql"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

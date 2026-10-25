@@ -16,7 +16,10 @@
 //! - **Atomic writes** (SES-053, INV-VFS-3) go to a temporary file in the target's folder, created with
 //!   `create_new` (`.<name>.hikasa-tmp[-N]`); `commit` flushes, syncs and renames it onto the target (with
 //!   `overwrite = false` through a hard link, which fails atomically when the target exists); dropping the
-//!   writer removes the temporary file.
+//!   writer removes the temporary file. A target that is a symbolic link is resolved first: the file the link
+//!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
+//!   a regular file (a FIFO, a character or block device such as `/dev/null`) is never replaced: it is written
+//!   to directly, which is not atomic (contract §1.2.7 item 12).
 
 #[cfg(unix)]
 mod unix;
@@ -297,27 +300,53 @@ impl Vfs for LocalVfs {
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         let path = local(spec)?;
         let spec_text = spec.canonical();
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        if path.parent().is_none() || path.file_name().is_none() {
             return Err(VfsError::IsADirectory { spec: spec_text });
-        };
-        match fs::symlink_metadata(path.as_path()) {
+        }
+        let io_error = |e: io::Error| VfsError::from_io(spec_text.as_str(), VfsOp::Write, e);
+        // The file to replace: a symbolic link is resolved, so the file it points to is replaced and the link
+        // stays (contract §1.2.7 item 12).
+        let target = match fs::symlink_metadata(path.as_path()) {
             Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
             Ok(_) if !opts.overwrite => return Err(VfsError::AlreadyExists { spec: spec_text }),
+            Ok(meta) if meta.file_type().is_symlink() => {
+                resolve_links(path.as_path()).map_err(io_error)?
+            }
+            Ok(_) => path.as_path().to_path_buf(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => path.as_path().to_path_buf(),
+            Err(e) => return Err(io_error(e)),
+        };
+        match fs::symlink_metadata(&target) {
+            Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
+            // A FIFO, a character or block device, a socket: written to directly, never replaced.
+            Ok(meta) if !meta.is_file() => {
+                let file = OpenOptions::new()
+                    .write(true)
+                    .open(&target)
+                    .map_err(io_error)?;
+                return Ok(Box::new(DirectWriter {
+                    file: Some(BufWriter::new(file)),
+                    spec: spec_text,
+                }));
+            }
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(VfsError::from_io(spec_text, VfsOp::Write, e)),
+            Err(e) => return Err(io_error(e)),
         }
+        let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+            return Err(VfsError::IsADirectory { spec: spec_text });
+        };
         if opts.create_parents {
-            fs::create_dir_all(parent.as_path())
-                .map_err(|e| VfsError::from_io(text(parent.as_path()), VfsOp::Write, e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
         }
-        let (file, tmp) = create_temp(parent.as_path(), name)
-            .map_err(|e| VfsError::from_io(spec_text.as_str(), VfsOp::Write, e))?;
+        let (file, tmp) = create_temp(parent, name).map_err(io_error)?;
+        let dir = parent.to_path_buf();
         Ok(Box::new(LocalWriter {
             file: Some(BufWriter::new(file)),
             tmp,
-            target: path.as_path().to_path_buf(),
-            dir: parent.into_path_buf(),
+            target,
+            dir,
             spec: spec_text,
             overwrite: opts.overwrite,
             pending: true,
@@ -347,6 +376,34 @@ impl Vfs for LocalVfs {
 
 /// Longest target name that is embedded in the temporary file name.
 const MAX_EMBEDDED_NAME: usize = 200;
+
+/// Most symbolic links followed when resolving a write target (the Linux limit).
+const MAX_LINK_HOPS: usize = 40;
+
+/// The path a chain of symbolic links ends at: the first path of the chain that is not a symbolic link (it need
+/// not exist; a dangling link names the file to create). A relative link target is taken relative to the
+/// link's folder; no component is normalised, so the OS resolves `..` as it would through the link.
+fn resolve_links(path: &Path) -> io::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_LINK_HOPS {
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = fs::read_link(&current)?;
+                current = match current.parent() {
+                    Some(dir) if target.is_relative() => dir.join(target),
+                    _ => target,
+                };
+            }
+            Ok(_) => return Ok(current),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(current),
+            Err(e) => return Err(e),
+        }
+    }
+    // A loop (or a longer chain than the OS follows): the OS's own error for the path.
+    Err(fs::metadata(path)
+        .err()
+        .unwrap_or_else(|| io::Error::other("too many levels of symbolic links")))
+}
 
 /// Creates a new temporary file next to the target: `.<name>.hikasa-tmp`, then `-1`, `-2`, … when taken.
 fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
@@ -469,5 +526,47 @@ impl Drop for LocalWriter {
         if self.pending {
             let _ = fs::remove_file(&self.tmp);
         }
+    }
+}
+
+/// The writer of a target that is not a regular file (a FIFO, a character or block device): it writes straight
+/// into the target, which is never replaced. Not atomic: what was written before a failure or a drop has reached
+/// the target (contract §1.2.7 item 12).
+#[derive(Debug)]
+struct DirectWriter {
+    /// `None` once committed.
+    file: Option<BufWriter<File>>,
+    spec: String,
+}
+
+impl DirectWriter {
+    fn writer(&mut self) -> io::Result<&mut BufWriter<File>> {
+        self.file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("the writer was already committed"))
+    }
+}
+
+impl Write for DirectWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writer()?.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer()?.flush()
+    }
+}
+
+impl AtomicWrite for DirectWriter {
+    /// Flushes the buffered bytes into the target (no sync: pipes and devices do not support it).
+    fn commit(mut self: Box<Self>) -> Result<(), VfsError> {
+        let spec = self.spec.clone();
+        let fail = |e: io::Error| VfsError::from_io(spec.as_str(), VfsOp::Commit, e);
+        let writer = self
+            .file
+            .take()
+            .ok_or_else(|| fail(io::Error::other("the writer was already committed")))?;
+        writer.into_inner().map_err(|e| fail(e.into_error()))?;
+        Ok(())
     }
 }

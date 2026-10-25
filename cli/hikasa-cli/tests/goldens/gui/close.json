@@ -1,0 +1,11 @@
+{
+  "schema": "hikasa.gui_close.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "view": 7
+  },
+  "warnings": [],
+  "error": null
+}

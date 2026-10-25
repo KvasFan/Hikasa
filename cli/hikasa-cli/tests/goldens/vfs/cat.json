@@ -1,0 +1,13 @@
+{
+  "schema": "hikasa.vfs_cat.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "spec": "<TMP>/d/b.bin",
+    "size": 4,
+    "data_base64": "AAEC/w=="
+  },
+  "warnings": [],
+  "error": null
+}

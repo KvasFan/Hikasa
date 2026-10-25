@@ -1,0 +1,8 @@
+!  src/lib.h
+=  img/logo.bin
+=  src/main.c
++  docs/new.md
+-  docs/old.md
+=  same.txt
+<  src/util.c
+# 3 same, 0 left newer, 1 right newer, 1 different, 1 left only, 1 right only, 0 unknown, 0 errors

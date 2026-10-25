@@ -1,0 +1,21 @@
+1	bash	visible	Bash Scripts	*.sh;*.bash;*.zsh
+2	c-cpp	visible	C, C++, C#, ObjC Source	*.c;*.cc;*.cpp;*.cxx;*.cs;*.h;*.hpp;*.hh;*.m;*.mm
+3	cobol	visible	COBOL Source	*.cbl;*.cob;*.cpy
+4	pascal-forms	visible	Object Pascal Forms	*.dfm;*.fmx
+5	pascal	visible	Object Pascal Source	*.pas;*.dpr;*.dpk;*.inc
+6	html	visible	HTML	*.htm;*.html;*.xhtml;*.asp;*.aspx;*.ascx
+7	java	visible	Java Source	*.java;*.jav;*.kt
+8	javascript	visible	JavaScript Source	*.js;*.mjs;*.ts;*.jsx;*.tsx
+9	perl	visible	Perl Scripts	*.pl;*.pm
+10	python	visible	Python Scripts	*.py;*.pyw
+11	ini-reg	visible	Registry Dumps / INI	*.reg;*.ini
+12	sql	visible	My SQL	*.sql;*.mysql
+13	visual-basic	visible	Visual Basic Source	*.bas;*.cls;*.frm;*.vb;*.vbs;*.ctl;*.vbp
+14	xml	visible	XML	*.xml;*.xsd;*.xsl;*.xslt;*.svg;*.plist
+15	rust	visible	Rust Source	*.rs
+16	sorted	manual_only	Sorted	
+17	csv	visible	Comma Separated Values	*.csv;*.tsv
+18	pictures	visible	Picture Files	*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds
+19	media	visible	Media Files	*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus
+20	executables	visible	Executables	*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib
+21	registry-files	disabled	Registry Files	*.reg

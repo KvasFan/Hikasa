@@ -142,6 +142,11 @@ fn gui_open_rows() {
             ExitCode::CannotWaitForGui
         );
         assert_eq!(ApiError::GuiNotFound.exit_code(op), ExitCode::GuiNotFound);
+        assert_eq!(
+            ApiError::GuiNotStartable(std::io::ErrorKind::PermissionDenied.into()).exit_code(op),
+            ExitCode::GuiNotFound,
+            "an executable that cannot be started is no usable GUI executable (wave-5 review)"
+        );
         for other in [
             ApiError::Ipc(IpcError::Timeout),
             ApiError::Ipc(IpcError::IncompatibleVersion {
@@ -206,6 +211,10 @@ fn error_reports_follow_4_2() {
     assert_eq!(ApiError::Cancelled.kind(), ErrorKind::Cancelled);
     assert_eq!(ApiError::Internal("x".into()).kind(), ErrorKind::Internal);
     assert_eq!(ApiError::GuiNotFound.kind(), ErrorKind::NotFound);
+    assert_eq!(
+        ApiError::GuiNotStartable(std::io::ErrorKind::PermissionDenied.into()).kind(),
+        ErrorKind::PermissionDenied
+    );
     assert_eq!(
         ApiError::Ipc(IpcError::Protocol("x".into())).kind(),
         ErrorKind::Protocol

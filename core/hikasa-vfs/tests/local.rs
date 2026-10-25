@@ -526,6 +526,134 @@ mod unix {
         assert_eq!(fs::read(&target).unwrap(), b"new");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o7777, 0o750);
     }
+
+    const REPLACE: WriteOptions = WriteOptions {
+        create_parents: false,
+        overwrite: true,
+    };
+
+    /// Writes `bytes` to `spec` with overwrite and commits.
+    fn write_through(spec: &Spec, bytes: &[u8]) -> Result<(), VfsError> {
+        let vfs = LocalVfs::default();
+        let mut w = vfs.open_write(spec, &REPLACE)?;
+        w.write_all(bytes).unwrap();
+        w.commit()
+    }
+
+    /// Regression (wave-5 review, contract §1.2.7 item 12): a symbolic link target is resolved; the file it
+    /// points to is replaced atomically (temporary file next to it) and the link stays, also through a chain of
+    /// relative links and for a dangling link (the file it names is created).
+    #[test]
+    fn a_symlink_target_replaces_the_linked_file_and_keeps_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("r.html"), b"KEEP").unwrap();
+        fs::set_permissions(real.join("r.html"), fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("rlink.html");
+        symlink("real/r.html", &link).unwrap();
+        write_through(&lspec_new(&link), b"report").unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_link(&link).unwrap(), Path::new("real/r.html"));
+        assert_eq!(fs::read(real.join("r.html")).unwrap(), b"report");
+        assert_eq!(
+            fs::metadata(real.join("r.html")).unwrap().mode() & 0o7777,
+            0o640,
+            "the linked file's permissions are kept"
+        );
+        assert!(temp_files(&real).is_empty() && temp_files(dir.path()).is_empty());
+        // A chain: link2 → rlink.html → real/r.html.
+        let link2 = dir.path().join("link2");
+        symlink("rlink.html", &link2).unwrap();
+        write_through(&lspec_new(&link2), b"second").unwrap();
+        assert_eq!(fs::read(real.join("r.html")).unwrap(), b"second");
+        assert!(
+            fs::symlink_metadata(&link2)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        // A dangling link creates the file it names.
+        let dangling = dir.path().join("dangling");
+        symlink("real/new.txt", &dangling).unwrap();
+        write_through(&lspec_new(&dangling), b"new").unwrap();
+        assert_eq!(fs::read(real.join("new.txt")).unwrap(), b"new");
+        assert!(
+            fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        // A link to a folder is refused, the folder untouched.
+        let to_dir = dir.path().join("to-dir");
+        symlink("real", &to_dir).unwrap();
+        assert!(matches!(
+            write_through(&lspec_new(&to_dir), b"x"),
+            Err(VfsError::IsADirectory { .. })
+        ));
+        // A loop is an error and replaces nothing.
+        let (a, b) = (dir.path().join("loop-a"), dir.path().join("loop-b"));
+        symlink("loop-b", &a).unwrap();
+        symlink("loop-a", &b).unwrap();
+        assert!(write_through(&lspec_new(&a), b"x").is_err());
+        assert!(fs::symlink_metadata(&a).unwrap().file_type().is_symlink());
+        // overwrite = false still refuses an existing link.
+        let vfs = LocalVfs::default();
+        assert!(matches!(
+            vfs.open_write(&lspec_new(&link), &WriteOptions::default()),
+            Err(VfsError::AlreadyExists { .. })
+        ));
+    }
+
+    /// Regression (wave-5 review, contract §1.2.7 item 12): a FIFO target is written to directly and stays a
+    /// FIFO (it used to be replaced by a regular file).
+    #[test]
+    fn a_fifo_target_is_written_to_and_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("myfifo");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|s| s.success()) {
+            eprintln!("skipped: mkfifo is not available");
+            return;
+        }
+        let reader = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || fs::read(fifo).unwrap())
+        };
+        write_through(&lspec_new(&fifo), b"through the pipe").unwrap();
+        assert_eq!(reader.join().unwrap(), b"through the pipe");
+        let meta = fs::symlink_metadata(&fifo).unwrap();
+        assert!(
+            !meta.is_file() && !meta.is_dir(),
+            "still a FIFO: {:?}",
+            meta.file_type()
+        );
+        assert!(temp_files(dir.path()).is_empty());
+    }
+
+    /// Regression (wave-5 review, contract §1.2.7 item 12): a character device such as `/dev/null` is written
+    /// to directly (no temporary file in `/dev`, never renamed over, also as root).
+    #[test]
+    fn a_character_device_target_is_written_to_and_not_replaced() {
+        let null = Path::new("/dev/null");
+        let Ok(before) = fs::symlink_metadata(null) else {
+            return;
+        };
+        write_through(
+            &Spec::Local(hikasa_core::LocalPath::new(null.to_path_buf()).unwrap()),
+            b"gone",
+        )
+        .unwrap();
+        let after = fs::symlink_metadata(null).unwrap();
+        assert!(!after.is_file(), "still a device");
+        assert_eq!(before.rdev(), after.rdev());
+        assert_eq!(before.ino(), after.ino(), "not replaced");
+    }
 }
 
 /// Regression: symlink targets that are not UTF-8 keep their exact bytes (`link_target_raw`, like a lossy

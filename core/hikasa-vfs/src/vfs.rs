@@ -143,7 +143,9 @@ pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
 
 /// An atomic writer: nothing is visible at the target until `commit`; dropping without `commit` discards the
-/// temporary file (SES-053, INV-VFS-3).
+/// temporary file (SES-053, INV-VFS-3). Exception (contract §1.2.7 item 12): a local target that is not a regular
+/// file (a FIFO, a character or block device) is written to directly and is never replaced, so such a write is
+/// not atomic.
 pub trait AtomicWrite: Write + Send {
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;

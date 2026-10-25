@@ -558,6 +558,36 @@ fn connect_or_launch_with_a_fake_launcher() {
     .unwrap_err();
     assert!(matches!(err, ApiError::GuiNotFound));
     assert!(missing.sleeps.lock().is_empty());
+    // Regression (wave-5 review): an executable that cannot be started is no usable GUI executable (103), not
+    // an IPC I/O failure (100).
+    struct Unstartable;
+    impl hikasa_session::api::GuiLauncher for Unstartable {
+        fn launch(&self, _: &GuiLaunch) -> Result<(), hikasa_session::api::LaunchError> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "/x/hikasa-gui: Permission denied",
+            )
+            .into())
+        }
+        fn sleep(&self, _: Duration) {
+            unreachable!("nothing to wait for");
+        }
+    }
+    let err = connect_or_launch(
+        &endpoint,
+        "t",
+        Some(&Unstartable),
+        &GuiLaunch::default(),
+        &policy,
+        TIMEOUT,
+    )
+    .unwrap_err();
+    assert!(matches!(err, ApiError::GuiNotStartable(_)), "{err:?}");
+    assert_eq!(
+        err.exit_code(hikasa_session::ApiOp::GuiOpen { wait: true }),
+        ExitCode::GuiNotFound
+    );
+    assert!(err.to_string().contains("/x/hikasa-gui"), "{err}");
     // A GUI that never comes up: the budget is exhausted, the sleeps sum to exactly the total.
     let never = FakeLauncher::default();
     let err = connect_or_launch(

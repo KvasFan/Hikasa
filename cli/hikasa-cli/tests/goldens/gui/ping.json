@@ -1,0 +1,13 @@
+{
+  "schema": "hikasa.gui_ping.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "endpoint": "<TMP>/s.sock",
+    "server": "fake-gui test",
+    "protocol_version": 1
+  },
+  "warnings": [],
+  "error": null
+}

@@ -1317,7 +1317,6 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-session",
             "clap",
             "clap_complete",
-            "anyhow",
             "serde",
             "serde_json",
             "tracing",

@@ -441,10 +441,22 @@ fn a_launched_gui_serves_an_explicit_configuration() {
     }
 }
 
+/// Sets the execute bits (Unix; no-op elsewhere).
+fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 #[test]
 fn the_gui_executable_override_comes_first_and_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let sibling = write(tmp.path(), "bin/hikasa-gui", b"#!/bin/sh\n");
+    make_executable(&sibling);
     let fake = write(tmp.path(), "fake/my-gui", b"#!/bin/sh\n");
     let facts = EnvFacts {
         exe_dir: Some(tmp.path().join("bin")),
@@ -455,13 +467,45 @@ fn the_gui_executable_override_comes_first_and_alone() {
         gui_exe_override: Some(fake.clone()),
         ..facts.clone()
     };
-    assert_eq!(find_gui_exe(&overridden), Some(fake));
+    assert_eq!(find_gui_exe(&overridden), Some(fake.clone()));
     // An override that does not exist means "not found" (exit 103), never the sibling.
     let missing = EnvFacts {
         gui_exe_override: Some(tmp.path().join("missing")),
-        ..facts
+        ..facts.clone()
     };
     assert_eq!(find_gui_exe(&missing), None);
+    // Regression (wave-5 review): a relative override is resolved against the current folder, the way it is
+    // checked, so the launcher never searches PATH for a bare name.
+    let relative = EnvFacts {
+        gui_exe_override: Some("fake/my-gui".into()),
+        cwd: Some(tmp.path().to_path_buf()),
+        ..facts.clone()
+    };
+    assert_eq!(find_gui_exe(&relative), Some(fake));
+    let relative_elsewhere = EnvFacts {
+        cwd: Some(tmp.path().join("bin")),
+        ..relative
+    };
+    assert_eq!(find_gui_exe(&relative_elsewhere), None);
+}
+
+/// Regression (wave-5 review): a candidate that is not executable is skipped (like `which`), so it never shadows
+/// a working one later on `PATH`.
+#[cfg(unix)]
+#[test]
+fn a_non_executable_gui_candidate_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), "bin/hikasa-gui", b"not executable");
+    let on_path = write(tmp.path(), "path/hikasa-gui", b"#!/bin/sh\n");
+    make_executable(&on_path);
+    let facts = EnvFacts {
+        exe_dir: Some(tmp.path().join("bin")),
+        path_var: Some(tmp.path().join("path").into_os_string()),
+        ..EnvFacts::new(Platform::Linux, tmp.path().to_path_buf())
+    };
+    assert_eq!(find_gui_exe(&facts), Some(on_path.clone()));
+    std::fs::remove_file(&on_path).unwrap();
+    assert_eq!(find_gui_exe(&facts), None, "no usable candidate");
 }
 
 #[test]

@@ -56,6 +56,11 @@ pub enum ApiError {
     /// The GUI executable was not found (exit 103).
     #[error("cannot find the hikasa-gui executable")]
     GuiNotFound,
+    /// A GUI executable was found but cannot be started (it is not executable, its interpreter is missing, or
+    /// spawning failed otherwise): there is no usable GUI executable, exit 103 like `GuiNotFound`. The launcher
+    /// names the executable in the error's message. Added in the wave-5 review (§1.9.3).
+    #[error("cannot start the GUI executable: {0}")]
+    GuiNotStartable(#[source] std::io::Error),
     /// Cancelled.
     #[error("operation cancelled")]
     Cancelled,
@@ -95,6 +100,7 @@ impl ApiError {
             ApiError::Session(e) => e.kind(),
             ApiError::Ipc(e) => e.kind(),
             ApiError::GuiNotFound => ErrorKind::NotFound,
+            ApiError::GuiNotStartable(e) => io_error_kind(e),
             ApiError::Cancelled => ErrorKind::Cancelled,
             ApiError::Internal(_) => ErrorKind::Internal,
             ApiError::RulesFile { source, .. } => source.kind(),
@@ -108,11 +114,11 @@ impl ApiError {
     /// | `FolderCompare` | `FolderError::BaseNotLoadable`/`BaseNotFolder`, `LoadFailed` (a base) | 107 |
     /// | `GuiOpen { wait }` | `Ipc(NotRunning)` | 102 when `wait`, else 100 |
     /// | `GuiOpen { .. }` | `Ipc(LaunchTimeout)`, `Ipc(ConnectionLost)` | 102 |
-    /// | any | `GuiNotFound` | 103 |
+    /// | any | `GuiNotFound`, `GuiNotStartable` | 103 |
     /// | any | everything else (incl. cancellation, panics and invariant violations) | 100 |
     pub fn exit_code(&self, op: ApiOp) -> ExitCode {
         match self {
-            ApiError::GuiNotFound => ExitCode::GuiNotFound,
+            ApiError::GuiNotFound | ApiError::GuiNotStartable(_) => ExitCode::GuiNotFound,
             ApiError::LoadFailed { .. } => match op {
                 ApiOp::FolderCompare => ExitCode::LoadFailed,
                 ApiOp::Quick
@@ -205,6 +211,7 @@ impl ApiError {
             | ApiError::Session(_)
             | ApiError::Ipc(_)
             | ApiError::GuiNotFound
+            | ApiError::GuiNotStartable(_)
             | ApiError::Cancelled
             | ApiError::Internal(_) => None,
         };

@@ -1,0 +1,15 @@
+Text Compare
+Left: <TMP>/a/x.c (UTF-8, lf)
+Right: <TMP>/b/x.c (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: C, C++, C#, ObjC Source; algorithm: histogram (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+#include <stdio.h>   #include <stdio.h>
+
+/* The program pri   /* The program pri
+int main(void) {     int main(void) {
+    int x = 1;     |     int x = 2;
+                   >     int y = x * 2;
+    printf("%d\n", |     printf("%d\n",
+    return 0;            return 0;
+}                    }

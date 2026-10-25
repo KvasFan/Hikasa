@@ -135,7 +135,7 @@ table (architecture test check 3).
 | hikasa-folder | hikasa-core, hikasa-vfs, rayon, serde, thiserror, unicode-normalization (declared but unused in M1: NFC folding comes from `hikasa_core::case`), crossbeam-channel, parking_lot, **jiff**, **bitflags**, **toml** | tempfile, filetime, proptest, pretty_assertions, **criterion**, **serde_json** | + jiff (date filters relative to local midnight); + bitflags (`DiffFlags`, `NodeFlags`, `FolderToggles`); + toml (`FolderRules` files); +dev criterion, serde_json |
 | hikasa-report | hikasa-core, hikasa-diff, hikasa-text, hikasa-folder, serde, serde_json, jiff, thiserror, unicode-width, **bitflags** | pretty_assertions, tempfile, **diffy** (patch-apply oracle), **proptest**, **hikasa-vfs** (`MemoryVfs` fixtures) | + bitflags (`FolderColumns`); +dev diffy, proptest, hikasa-vfs. No normal edge to hikasa-formats or hikasa-vfs: rule 8 of §0.4 supplies the types |
 | hikasa-session | hikasa-core, -vfs, -diff, -formats, -text, -folder, -report, serde, serde_json, toml, directories, interprocess, thiserror, tracing, **rayon**, **jiff**, **parking_lot**, **crossbeam-channel** | tempfile, pretty_assertions, **proptest** | + rayon (owns the explicit `ThreadPool`); + jiff (clock and zone values); + parking_lot (job registry, IPC waiters); + crossbeam-channel (`JobHandle` channels); +dev proptest |
-| hikasa-cli | unchanged list | unchanged list | none. `clap_complete`, `tracing-subscriber` and `jiff` are used as listed |
+| hikasa-cli | the M1 list without `anyhow` | unchanged list | − anyhow (wave 5: every error is an `ApiError` routed through the session envelope helpers, so the binary needs no generic error type). `clap_complete`, `tracing-subscriber` and `jiff` are used as listed |
 | hikasa-gui | hikasa-core, hikasa-vfs, hikasa-formats, hikasa-text, hikasa-folder, hikasa-report, hikasa-session, **dioxus** (features `desktop`), anyhow, serde, serde_json, tracing, tracing-subscriber, parking_lot, crossbeam-channel | tempfile, pretty_assertions | wave 6: + dioxus 0.7 (D-56, approved) and the crates the views render; anyhow only in `main.rs` |
 
 Rejected inside M1, although they are in the workspace list: `blake3` (content caches are P1, VFS-020; endpoint
@@ -1995,6 +1995,15 @@ impl BinaryOutcome { pub fn is_same(self) -> bool; }
     completion report (`Ctl::progress_now`, `done == total` = the bytes processed: the length, or the offset that
     decided), so a throttled progress bar reaches its end. Mapped helper threads never report; the calling
     thread reports the shared byte count, so `done` never decreases.
+12. **Write targets that are links or not regular files** (wave-5 review, maintainer decision 4; `LocalVfs`
+    only). `open_write` on a symbolic link resolves the chain (relative targets against the link's folder, at
+    most 40 links; a loop is the OS's error): the file the link points to is replaced atomically, with the
+    temporary file created next to it, and the link stays; a dangling link creates the file it names; a link to
+    a folder is `IsADirectory`. A target that exists and is not a regular file (a FIFO, a character or block
+    device such as `/dev/null`, a socket) is **never replaced**: it is opened for writing and written to
+    directly, which is not atomic (what was written before a failure or a drop has reached it), and `commit`
+    flushes without syncing. `overwrite = false` still refuses every existing target, links included. The
+    `AtomicWrite` contract of §1.2.3 holds for every regular-file target. `MemoryVfs` is unchanged.
 
 ### 1.3 hikasa-diff
 
@@ -7082,6 +7091,9 @@ pub enum Command {
 
 /// `gui open`: every argument after `open` is passed raw to `hikasa_session::api::gui::normalize_legacy_args`
 /// and `parse_open_args` (D-51), so that `hikasa gui open` and `hikasa-gui` accept the same forms.
+/// (Amended, §1.9.3 item 9a: a `--` that clap consumes before the first value is restored, and `open` has no
+/// clap `--help`/`--version` flags: `GuiCmd::Open` is `#[command(disable_help_flag = true,
+/// disable_version_flag = true)]`, the shared parser's `--help` prints the usage.)
 #[derive(Debug, clap::Args)]
 pub struct GuiOpenArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
@@ -7124,21 +7136,107 @@ display (`--display`, `--context`, JSON or human) → `api::resolve_text_display
 `GuiOpenRequest::for_text`/`for_folder` with the view words, then `gui_open_with` (local validation first);
 standard input → one `StdinSource` passed unconditionally; the launcher → `find_gui_exe` and `Service::gui_launch`.
 The human lines of `format tokens`, `vfs ls`, `vfs stat`, `gui list`, `format list` and `format detect` are
-`api::human`; `format show` prints `format_toml`. With `--json`, a usage error prints
-`JsonEnvelope::usage_error` (`hikasa.usage_error.v1`, exit 100) and `completions` prints `hikasa.completions.v1`
-(`{shell, script}`). Every envelope's `warnings` start with `Service::startup_warnings()`, which human mode prints
-once to stderr. For `gui open`, the global flags clap sees directly after `open` and the `OpenArgs` flags after the
-first positional are merged (the same flag given both ways with different values is a usage error, 100), so a
-flag means the same wherever it stands.
+`api::human`; `format show` prints `format_toml`. With `--json` (before any `--`: after it `--json` is an
+operand), a usage error prints `JsonEnvelope::usage_error` (`hikasa.usage_error.v1`, exit 100; the message is
+clap's first paragraph in one line) and `completions` prints `hikasa.completions.v1` (`{shell, script}`). Every
+envelope's `warnings` start with `Service::startup_warnings()`, which human mode prints once to stderr — except
+`version` and `completions`, which run without the service (§1.9.3 item 1). For `gui open`, the arguments after
+`open` reach `parse_open_args` exactly as written, a leading `--` included, except the global flags clap sees
+directly after `open`; those and the `OpenArgs` flags after the first positional are merged (the same flag given
+both ways with values that name different paths is a usage error, 100). A global value flag (`--config-dir`,
+`--log`) repeated at different clap levels with different values is a usage error as well (clap alone would keep
+the innermost one), so a flag means the same wherever it stands (§1.9.3 item 9d).
 
 **CLI invariants** (checked by tests in §6.3):
-1. The exit code always comes from `ExitCode` (§2.21). clap usage errors give 100, and `--help`/`--version` give 0.
+1. The exit code always comes from `ExitCode` (§2.21). clap usage errors give 100, and `--help`/`--version` give 0
+   (`--version` prints `hikasa <version>` before or after a subcommand; amended §1.9.3 item 9c).
 2. With `--json`, stdout holds exactly one JSON document followed by a newline, even on error. Logs and
-   progress go to stderr.
+   progress go to stderr. *Amended (§1.9.3 item 9c):* `--help` (and `gui open --help`) prints its text also with
+   `--json` — help is never JSON; `--version` with `--json` prints the `hikasa.version.v1` document.
 3. `--quiet` never changes stdout or the exit code.
-4. `--output FILE` writes atomically. On error, FILE is untouched.
+4. `--output FILE` writes atomically. On error, FILE is untouched. *Amended (§1.2.7 item 12):* through a symbolic
+   link the file it points to is replaced and the link stays; a FIFO or a device is written to directly and never
+   replaced (not atomic).
 5. A broken pipe on stdout stops writing and does not change the exit code.
 6. `--gui` never compares locally: it sends the request to the GUI (D-50) and behaves like `gui open`.
+
+#### 1.9.3 Accepted additions and deviations (wave 5)
+
+The review of wave 5 (hikasa-cli) accepted the following behaviour, additions and deviations. They are part of
+the contract and win over the text of §1.9.1–§1.9.2 where they refine it.
+
+1. **`version` and `completions` skip the service.** They read no configuration, so they work with a broken or
+   newer `options.toml`; consequently their envelopes carry no startup warnings (an exemption from §1.9.2 and
+   §1.8.7 item 8) and their errors use `ApiOp::Other`.
+2. **`--output` with `--json`.** The report goes to the file and the envelope (the comparison's JSON result) to
+   stdout; without `--json`, `--output` prints nothing.
+3. **`--gui` conflicts.** The report flags (`text compare`: `--output`, `--report`, `--patch-style`, `--html`,
+   `--html-mono`, `--line-numbers`, `--no-line-numbers`, `--width`, `--wrap`, `--title`; `folder compare`:
+   `--output`, `--report`, `--columns`, `--html`, `--html-mono`, `--title`) conflict with `--gui`, and `--wait`
+   and `--no-launch` require it: a clap usage error, exit 100.
+4. **Golden normalisation beyond §6.1** (amended there): CLI goldens also drop HTML's `Generated` header row,
+   mask the machine's uid, gid and status-change times in `vfs` documents (`<UID>`, `<GID>`, `<CTIME>`), collapse
+   the column padding that follows a replaced `<TMP>` (its width depends on the folder's length), and drop the
+   header line of a narrow side-by-side report, which cuts the folder at a length-dependent place.
+5. **Panic → 100 is unit-tested** (`a_panic_in_a_command_exits_100`: `run_guarded` turns a panic into
+   `ApiError::Internal`, whose code is 100 for every `ApiOp`), not end to end: the binary has no test-only switch
+   that panics inside a command, and adding one would ship a fault switch.
+6. **Human-output choices.** `quick`, `gui open`, `--gui`, `gui close` and `gui quit` print nothing on stdout;
+   `gui ping` prints `<server>\t<protocol version>`; the other list commands print the `api::human` lines. Every
+   failed command prints one `hikasa: error: …` line on stderr (also with `--quiet` and `--json`); warnings are
+   `hikasa: warning: …` lines (not with `--quiet`; with `--json` they are in the envelope); progress is one
+   updating stderr line on a terminal. The folder list keeps its `# …` summary line with `--quiet` (stdout never
+   depends on `--quiet`).
+7. **Performance gates through the binary.** `cli/hikasa-cli/tests/perf_gates.rs` (ignored; `cargo test
+   --release -p hikasa-cli --test perf_gates -- --ignored`) generates the G1 input (hikasa-text's own generator)
+   and the G2 trees (the shape of `folder_scan_100k`) under the temporary folder and checks the §6.4 thresholds
+   through the `hikasa` binary: G1 < 3 s end to end for auto, standard and identity, with the peak-RSS bound on
+   Linux; G2 < 1.5 s warm (the cold figure needs dropped caches, i.e. root). No CI job runs them; the measured
+   figures are recorded in docs/12 §4 and the CHANGELOG.
+8. **Test GUI.** The launch tests are the `harness = false` test target `cli_gui_launch`, whose binary is also
+   the scripted GUI (`HIKASA_TEST_FAKE_GUI=1`, launched through `HIKASA_GUI_EXE=<its own path>`); no fake GUI is
+   a product binary (§6.3 `cli_gui.rs`: "test support binary").
+9. **Review fixes** (maintainer decisions of the wave-5 review):
+   a. `gui open -- -x a.c` behaves like `hikasa-gui -- -x a.c` (D-51): the arguments after `open` reach the shared
+      parser unchanged, a leading `--` included; inside them only the shared parser's switches exist, so
+      `--version` is an unknown switch (100) wherever it stands after `open`.
+   b. `--json` and `--no-color` are recognised only before the first `--`; when the `gui open` arguments do not
+      parse, a legacy `-json` (`/json` on Windows) among them also selects `hikasa.usage_error.v1`; the usage
+      error's message is clap's whole first paragraph in one line (e.g. `the following required arguments were
+      not provided: <RIGHT>`).
+   c. `--version` (`-V`) prints `hikasa <version>` at every level (clap printed `hikasa-quick 0.0.0`); with
+      `--json` it prints the `hikasa version --json` document. `--help` is text also with `--json` (invariant 2
+      amended).
+   d. A global value flag given at several levels with values naming different paths is a usage error (100);
+      values are compared as paths made absolute against the current folder (`cfg`, `./cfg/` and `<cwd>/cfg`
+      agree), and existing paths also after resolving symbolic links. Inside the `gui open` arguments a repeated
+      switch keeps the shared parser's rule (the last value wins, as for `hikasa-gui`).
+   e. `quick --crc|--binary` on a file that cannot be read (result `error`, exit 100) prints the error on stderr
+      (also with `--quiet`); the JSON document has `ok: false` and `error` (the result's `ErrorReport`), and keeps
+      the result, whose `result.result` is `error` (§4.2, §4.3.1).
+   f. A GUI executable that exists but cannot be started (no execute permission, a missing interpreter, any
+      other spawn failure) is "no usable GUI executable": exit 103 with `ApiError::GuiNotStartable` (additive in
+      hikasa-session; kind of the OS error; message `cannot start the GUI executable: <path>: <reason>`;
+      `connect_or_launch` maps `LaunchError::Spawn` to it instead of `Ipc(Io)`/100). `find_gui_exe` makes a
+      relative path absolute against `EnvFacts::cwd` (checked and started the same way, never searched on `PATH`)
+      and skips sibling and `PATH` candidates without an execute bit (like `which`); an override that is a file
+      is returned as is, so its spawn error names it.
+   g. `--output` through a symbolic link or onto a FIFO or device: §1.2.7 item 12.
+   h. One failed write to stdout gives one error line: the first failure is final for the stdout writer and the
+      final flush reports only a failure no command has seen.
+   i. A failure before the command runs (the `--log` file) is an `ApiError` (`Vfs` with the file's path, or
+      `Internal` when the logger cannot be installed) reported through `cmd::fail` and the session's envelope
+      helpers. Progress units are hikasa-core's own names (the serde names of `Unit`), not a table in the
+      adapter.
+10. **Deferred and rejected review items.**
+    a. *Deferred:* checking a layout/format combination (`--report patch --html`, `folder compare --report list
+       --html`) before the comparison runs needs an additive `TextLayout::supports(OutputFormat)` /
+       `FolderLayout::supports` in hikasa-report; a table in the adapter would be a spec rule of its own (T11).
+       Until then the renderer refuses the combination after the comparison: exit 100, `--output` untouched.
+    b. *Rejected (documented instead):* removing the spooled standard input of an interrupted `gui open -
+       --wait` (Ctrl-C, SIGTERM) needs a signal handler, which std does not offer, `unsafe` is not allowed
+       outside `mmap.rs`, and no signal crate is approved; docs/12 §1.1 documents the leftover
+       `<cache>/stdin/<n>/` folder. A later session change may sweep stale spool folders when spooling.
 
 ### 1.10 hikasa-gui: contracts it needs (implemented from wave 6)
 
@@ -9618,7 +9716,11 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   `pretty_assertions` diff for text. With `HIKASA_BLESS=1` it rewrites the expected file instead (tests may read
   the environment; core `src/` may not). Engine outputs are deterministic by design, so engine goldens need
   **no normalisation**. CLI goldens replace the temporary directory with `<TMP>`, the version with `<VERSION>`,
-  and drop the report `Generated:` line.
+  and drop the report `Generated:` line. *Amended in the wave-5 review (§1.9.3 item 4):* they also drop HTML's
+  `Generated` header row, mask the machine's uid, gid and status-change times (`<UID>`, `<GID>`, `<CTIME>`),
+  collapse the column padding after a replaced `<TMP>`, and drop the header line of a narrow side-by-side report
+  that cuts the temporary folder at a length-dependent place; the completions golden replaces the script text
+  with `<SCRIPT>` in the raw document (field order is checked).
 - **Proptest.** 256 cases per property in normal CI (`PROPTEST_CASES` overrides) and 100,000 in a nightly job.
   Failing seeds are persisted under `tests/proptest-regressions/` and committed, so every regression becomes
   permanent (17-agent-workflow §3.2).

@@ -1,0 +1,2 @@
+SourceFile,CompareFile,Total,IAdded,IDeleted,IChanged,IOriginal,UAdded,UDeleted,UChanged,UOriginal,Errors
+<TMP>/a/x.c,<TMP>/b/x.c,9,0,0,3,2,0,0,0,0,

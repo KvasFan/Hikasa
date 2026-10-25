@@ -19,7 +19,6 @@ hikasa-report.workspace = true
 hikasa-session.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
-anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -36,6 +35,20 @@ filetime.workspace = true
 [[bin]]
 name = "hikasa"
 path = "src/main.rs"
+
+# The launch tests (contract §6.3, `cli_gui.rs`): a test binary without libtest whose `main` runs its cases, or
+# acts as the scripted stand-in for `hikasa-gui` when `HIKASA_TEST_FAKE_GUI=1` (the tests launch the binary itself
+# through `HIKASA_GUI_EXE`), so no fake GUI is a product binary.
+[[test]]
+name = "cli_gui_launch"
+path = "tests/cli_gui_launch.rs"
+harness = false
+
+# The G1 and G2 gates through the binary (contract §6.4, §6.5 wave 5): ignored by default, run in release mode
+# with `cargo test --release -p hikasa-cli --test perf_gates -- --ignored`.
+[[test]]
+name = "perf_gates"
+path = "tests/perf_gates.rs"
 
 [lints]
 workspace = true

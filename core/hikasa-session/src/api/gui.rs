@@ -84,7 +84,8 @@ pub enum LaunchError {
     /// No candidate executable exists (exit 103).
     #[error("hikasa-gui executable not found")]
     NotFound,
-    /// Spawning failed.
+    /// Spawning failed: the executable exists but cannot be started (`ApiError::GuiNotStartable`, exit 103).
+    /// The launcher names the executable in the error's message.
     #[error("cannot start hikasa-gui: {0}")]
     Spawn(#[from] std::io::Error),
 }
@@ -149,12 +150,30 @@ pub fn gui_exe_candidates(
 }
 
 /// The GUI executable to launch (additive, §1.8.7): `EnvFacts::gui_exe_override` (`$HIKASA_GUI_EXE`) alone when
-/// it is set, else the first of [`gui_exe_candidates`] that is a file. `None` → the launcher reports
-/// `LaunchError::NotFound` (exit 103). The override lets tests launch a fake GUI whatever is installed next to
-/// the CLI (§6.3 `cli_gui.rs`).
+/// it is set and names a file, else the first of [`gui_exe_candidates`] that is an executable file (on Unix a
+/// candidate without an execute bit is skipped, like `which` does, so it never shadows a later one). `None` → the
+/// launcher reports `LaunchError::NotFound` (exit 103). The override lets tests launch a fake GUI whatever is
+/// installed next to the CLI (§6.3 `cli_gui.rs`).
+///
+/// A relative path is resolved against `EnvFacts::cwd` (`./<path>` when it is unknown), the way it was checked,
+/// so the launcher never searches `PATH` for a bare name (wave-5 review, §1.9.3). An override that exists but
+/// cannot be started is returned as is: the launch fails with `GuiNotStartable` (exit 103), whose message names
+/// it.
 pub fn find_gui_exe(facts: &EnvFacts) -> Option<PathBuf> {
+    let absolute = |path: &Path| -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            facts
+                .cwd
+                .as_deref()
+                .unwrap_or_else(|| Path::new("."))
+                .join(path)
+        }
+    };
     if let Some(exe) = &facts.gui_exe_override {
-        return exe.is_file().then(|| exe.clone());
+        let exe = absolute(exe);
+        return exe.is_file().then_some(exe);
     }
     gui_exe_candidates(
         facts.exe_dir.as_deref(),
@@ -162,7 +181,26 @@ pub fn find_gui_exe(facts: &EnvFacts) -> Option<PathBuf> {
         facts.platform,
     )
     .into_iter()
-    .find(|candidate| candidate.is_file())
+    .map(|candidate| absolute(&candidate))
+    .find(|candidate| is_executable_file(candidate))
+}
+
+/// A regular file (links followed) that may be executed: on Unix one of the execute bits is set.
+fn is_executable_file(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                meta.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        }
+        Ok(_) | Err(_) => false,
+    }
 }
 
 /// Splits an OS string at an ASCII separator, keeping non-UTF-8 parts exact.

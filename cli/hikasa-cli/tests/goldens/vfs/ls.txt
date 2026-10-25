@@ -1,0 +1,4 @@
+-rw-r--r-- 6 2026-10-19T13:12:00Z a.txt
+-rw-r--r-- 4 2026-10-19T13:12:00Z b.bin
+lrwxrwxrwx 5 2026-10-19T13:12:00Z link -> a.txt
+-rw-r--r-- 2 2026-10-19T13:12:00Z tab\there.txt

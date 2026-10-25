@@ -1,0 +1,280 @@
+{
+  "schema": "hikasa.text_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a/x.c",
+      "size": 177,
+      "mtime": "2026-10-19T13:12:00Z",
+      "lines": 8,
+      "encoding": "UTF-8",
+      "encoding_source": "locale_fallback",
+      "bom": false,
+      "eol": "lf",
+      "binary": false,
+      "malformed": 0,
+      "converted": false
+    },
+    "right": {
+      "spec": "<TMP>/b/x.c",
+      "size": 196,
+      "mtime": "2026-10-19T13:12:00Z",
+      "lines": 9,
+      "encoding": "UTF-8",
+      "encoding_source": "locale_fallback",
+      "bom": false,
+      "eol": "lf",
+      "binary": false,
+      "malformed": 0,
+      "converted": false
+    },
+    "format": {
+      "id": "c-cpp",
+      "name": "C, C++, C#, ObjC Source",
+      "kind": "text",
+      "reason": {
+        "reason": "mask",
+        "id": "c-cpp",
+        "mask": "*.c"
+      }
+    },
+    "detection": {
+      "left": {
+        "reason": "mask",
+        "id": "c-cpp",
+        "mask": "*.c"
+      },
+      "right": {
+        "reason": "mask",
+        "id": "c-cpp",
+        "mask": "*.c"
+      }
+    },
+    "algorithm": "histogram",
+    "rules": {
+      "schema_version": 1,
+      "importance": {
+        "elements": {},
+        "leading_whitespace": true,
+        "embedded_whitespace": true,
+        "trailing_whitespace": true,
+        "everything_else": true,
+        "everything_else_case_sensitive": true,
+        "unimportant": [],
+        "orphans_always_important": true,
+        "compare_line_endings": false
+      },
+      "alignment": {
+        "algorithm": "auto",
+        "skew_tolerance": 300,
+        "closeness": true,
+        "closeness_threshold_permille": 500,
+        "never_align_differences": false
+      }
+    },
+    "ignore_unimportant": false,
+    "verdict": {
+      "result": "important_differences"
+    },
+    "stats": {
+      "rows": 9,
+      "same_rows": 6,
+      "changed_rows": 2,
+      "left_only_rows": 0,
+      "right_only_rows": 1,
+      "important_rows": 3,
+      "unimportant_rows": 0,
+      "important": {
+        "added": 0,
+        "deleted": 0,
+        "changed": 3,
+        "original": 2
+      },
+      "unimportant": {
+        "added": 0,
+        "deleted": 0,
+        "changed": 0,
+        "original": 0
+      },
+      "sections": 1,
+      "important_sections": 1,
+      "left_lines": 8,
+      "right_lines": 9
+    },
+    "sections": [
+      {
+        "id": 0,
+        "kind": "change",
+        "importance": "important",
+        "rows": [
+          4,
+          7
+        ],
+        "left_lines": [
+          5,
+          7
+        ],
+        "right_lines": [
+          5,
+          8
+        ]
+      }
+    ],
+    "display": {
+      "mode": "context",
+      "lines": 2,
+      "toggles": [
+        "left_orphans",
+        "right_orphans",
+        "differences"
+      ]
+    },
+    "items": [
+      {
+        "type": "gap",
+        "rows": [
+          0,
+          2
+        ]
+      },
+      {
+        "type": "row",
+        "row": 2,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 3,
+          "text": "/* The program prints one number; this comment is long enough to wrap in a column. */"
+        },
+        "right": {
+          "line": 3,
+          "text": "/* The program prints one number; this comment is long enough to wrap in a column. */"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 3,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 4,
+          "text": "int main(void) {"
+        },
+        "right": {
+          "line": 4,
+          "text": "int main(void) {"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 4,
+        "state": "changed",
+        "importance": "important",
+        "left": {
+          "line": 5,
+          "text": "    int x = 1;"
+        },
+        "right": {
+          "line": 5,
+          "text": "    int x = 2;"
+        },
+        "inline": {
+          "left": [
+            {
+              "start": 12,
+              "end": 13,
+              "important": true
+            }
+          ],
+          "right": [
+            {
+              "start": 12,
+              "end": 13,
+              "important": true
+            }
+          ],
+          "whole_line": false
+        }
+      },
+      {
+        "type": "row",
+        "row": 5,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 6,
+          "text": "    int y = x * 2;"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 6,
+        "state": "changed",
+        "importance": "important",
+        "left": {
+          "line": 6,
+          "text": "    printf(\"%d\\n\", x);"
+        },
+        "right": {
+          "line": 7,
+          "text": "    printf(\"%d\\n\", y);"
+        },
+        "inline": {
+          "left": [
+            {
+              "start": 19,
+              "end": 20,
+              "important": true
+            }
+          ],
+          "right": [
+            {
+              "start": 19,
+              "end": 20,
+              "important": true
+            }
+          ],
+          "whole_line": false
+        }
+      },
+      {
+        "type": "row",
+        "row": 7,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 7,
+          "text": "    return 0;"
+        },
+        "right": {
+          "line": 8,
+          "text": "    return 0;"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 8,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 8,
+          "text": "}"
+        },
+        "right": {
+          "line": 9,
+          "text": "}"
+        },
+        "inline": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

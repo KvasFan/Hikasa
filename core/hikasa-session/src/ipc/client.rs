@@ -363,8 +363,9 @@ fn response_name(response: &Response) -> &'static str {
 /// `Ipc(InsecureEndpoint)` without launching (exit 100).
 ///
 /// The delays are `initial_delay`, doubled after each attempt up to `max_delay`; the last delay is shortened
-/// so that the sum of the slept durations never exceeds `policy.total`. A spawn failure of the launcher is
-/// `Ipc(Io)` (exit 100).
+/// so that the sum of the slept durations never exceeds `policy.total`. A spawn failure of the launcher (an
+/// executable that exists but cannot be started) is `GuiNotStartable` (exit 103, like `GuiNotFound`: there is
+/// no usable GUI executable; wave-5 review, §1.9.3).
 pub fn connect_or_launch(
     endpoint: &Endpoint,
     client: &str,
@@ -383,7 +384,7 @@ pub fn connect_or_launch(
     match launcher.launch(launch) {
         Ok(()) => {}
         Err(LaunchError::NotFound) => return Err(ApiError::GuiNotFound),
-        Err(LaunchError::Spawn(e)) => return Err(ApiError::Ipc(IpcError::Io(e))),
+        Err(LaunchError::Spawn(e)) => return Err(ApiError::GuiNotStartable(e)),
     }
     let mut slept = Duration::ZERO;
     let mut delay = policy.initial_delay.max(Duration::from_millis(1));

@@ -1,0 +1,16 @@
+Text Compare
+Left: <TMP>/a/x.c (UTF-8, lf)
+Right: <TMP>/b/x.c (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: C, C++, C#, ObjC Source; algorithm: histogram (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+1 #include <stdio.h>                                         1 #include <stdio.h>
+2                                                            2
+3 /* The program prints one number; this comment is long     3 /* The program prints one number; this comment is long
+  enough to wrap in a column. */                               enough to wrap in a column. */
+4 int main(void) {                                           4 int main(void) {
+5     int x = 1;                                           | 5     int x = 2;
+                                                           > 6     int y = x * 2;
+6     printf("%d\n", x);                                   | 7     printf("%d\n", y);
+7     return 0;                                              8     return 0;
+8 }                                                          9 }

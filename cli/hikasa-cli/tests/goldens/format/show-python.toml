@@ -1,0 +1,145 @@
+schema_version = 1
+id = "python"
+name = "Python Scripts"
+description = "Python scripts and modules."
+kind = "text"
+mask = "*.py;*.pyw"
+
+[conversion]
+method = "none"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+tab_as_spaces = false
+lines_independent = false
+column_based = false
+ctrl_z_eof = false
+save_trim_trailing_ws = false
+save_leading_spaces_to_tabs = false
+word_chars = ""
+
+[elements.Number]
+case_sensitive = false
+important = true
+
+[elements.Whitespace]
+case_sensitive = true
+important = false
+
+[[grammar]]
+element = "Indent"
+kind = "basic"
+text = '^[ \t]+(?=\S)'
+regex = true
+
+[[grammar]]
+element = "Comment"
+kind = "basic"
+text = '#(?:.*\S)?'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "[rRbBuUfF]{0,2}'''"
+to = "'''"
+escape = '\'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[rRbBuUfF]{0,2}"""'
+to = '"""'
+escape = '\'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "[rRbBuUfF]{0,2}'"
+to = "'"
+escape = '\'
+stop_at_eol = true
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[rRbBuUfF]{0,2}"'
+to = '"'
+escape = '\'
+stop_at_eol = true
+regex = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+    "False",
+    "None",
+    "True",
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield",
+    "match",
+    "case",
+    "type",
+    "_",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[^\W\d]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d[\d_]*)?[jJ]?|\.\d[\d_]*(?:[eE][+-]?\d[\d_]*)?[jJ]?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>:.@]+|[;,()\[\]{}\\]'
+regex = true
+
+[[grammar]]
+element = "Whitespace"
+kind = "basic"
+text = '[ \t]+$'
+regex = true
