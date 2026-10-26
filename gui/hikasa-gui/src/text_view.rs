@@ -1,6 +1,6 @@
 //! The Text Compare view model (docs/05 §4–§6; contract §1.10, §3.7): it runs the comparison as a job, keeps
-//! the display filter, the cursor and the scroll position, and computes the *visible slice* the canvas draws
-//! (ARCH-GUI-002: the Rust side lays out only the rows on screen; the canvas owns no per-line DOM node).
+//! the display filter, the cursor and the scroll position, and computes the *visible slice* the panes draw
+//! (ARCH-GUI-002: only the rows on screen are laid out; nothing exists per line of the documents).
 //!
 //! First screen (ARCH-GUI-003): `CompareObserver::loaded` hands over both documents before the alignment
 //! starts, so the panes show the text unaligned at once; the final `Arc<TextComparison>` then replaces them
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use hikasa_core::{CancelToken, JobKind, Phase, Side};
 use hikasa_session::api::{TextCompareRequest, TextCompareResponse, ViewOutcome};
-use hikasa_session::{ApiError, JobHandle, Service};
+use hikasa_session::{ApiError, Service};
 use hikasa_text::{
     CharClass, CompareObserver, Direction, ElementId, FilteredView, Importance, PartialRows,
     RowIdx, RowState, TextDisplayFilter, TextDocument, TextToggles, ViewItem, ViewOptions,
@@ -22,6 +22,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::commands::{CommandId, Ctx};
+use crate::job::Job;
 
 /// Default font size of the panes (px).
 pub const DEFAULT_FONT_PX: u32 = 13;
@@ -31,7 +32,7 @@ const FONT_RANGE: (u32, u32) = (8, 32);
 pub const MAX_DISPLAY_COLUMNS: usize = 4096;
 /// Largest slice one request may ask for.
 pub const MAX_SLICE: u32 = 512;
-/// Syntax colour slots (the canvas palette has this many element colours after the default colour 0).
+/// Syntax colour slots (the palette has this many element colours after the default colour 0).
 pub const PALETTE_SLOTS: u32 = 8;
 
 /// What the observer of the running comparison hands to the UI thread.
@@ -67,7 +68,7 @@ impl CompareObserver for Observer {
     }
 }
 
-/// Phase of the view, as the canvas sees it.
+/// Phase of the view, as the panes see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(into = "u8")]
 pub enum TextPhase {
@@ -92,7 +93,7 @@ impl From<TextPhase> for u8 {
     }
 }
 
-/// Everything the canvas needs besides the rows (fetched by the page on mount and after every change).
+/// Everything the panes need besides the rows (fetched when the view is first drawn and after every change).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextMeta {
     /// Data generation: cached slices of another generation are stale.
@@ -197,7 +198,7 @@ pub struct TextViewModel {
     names: [String; 2],
     probe: Arc<TextProbe>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    job: Option<JobHandle<TextCompareResponse>>,
+    job: Option<Job<TextCompareResponse>>,
     docs: Option<(Arc<TextDocument>, Arc<TextDocument>)>,
     response: Option<TextCompareResponse>,
     error: Option<String>,
@@ -225,7 +226,7 @@ enum SpanState {
     /// No comparison yet.
     Idle,
     /// The worker runs.
-    Preparing(JobHandle<()>),
+    Preparing(Job<()>),
     /// `spans` is O(line) from now on.
     Ready,
 }
@@ -295,13 +296,14 @@ impl TextViewModel {
             probe: Arc::clone(&self.probe),
             wake: Arc::clone(&self.wake),
         };
-        let wake = Arc::clone(&self.wake);
         let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
-        self.job = Some(service.spawn(JobKind::TextCompare, title, move |svc, job| {
-            let result = svc.text_compare(&request, job, Some(&mut observer));
-            wake();
-            result
-        }));
+        self.job = Some(Job::spawn(
+            service,
+            JobKind::TextCompare,
+            title,
+            &self.wake,
+            move |svc, job| svc.text_compare(&request, job, Some(&mut observer)),
+        ));
     }
 
     /// The comparison request.
@@ -316,6 +318,12 @@ impl TextViewModel {
             [self.titles[0].as_deref(), self.titles[1].as_deref()],
             [&self.names[0], &self.names[1]],
         )
+    }
+
+    /// The probe of the running comparison (tests: it lives as long as the job's observer).
+    #[cfg(test)]
+    pub fn probe(&self) -> Arc<TextProbe> {
+        Arc::clone(&self.probe)
     }
 
     /// The current view options (filter, ignore-unimportant, expanded gaps).
@@ -339,6 +347,13 @@ impl TextViewModel {
         self.job.is_some() || matches!(self.spans, SpanState::Preparing(_))
     }
 
+    /// True while a job of the view has ended but its result is not published yet (the window looks again at
+    /// once).
+    pub fn settling(&self) -> bool {
+        self.job.as_ref().is_some_and(Job::settling)
+            || matches!(&self.spans, SpanState::Preparing(job) if job.settling())
+    }
+
     /// True when the syntax spans can be drawn.
     pub fn spans_ready(&self) -> bool {
         matches!(self.spans, SpanState::Ready)
@@ -354,7 +369,7 @@ impl TextViewModel {
         }
     }
 
-    /// True once since the last call when the canvas must refetch its meta.
+    /// True once since the last call when the panes must refetch their meta.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
     }
@@ -418,18 +433,17 @@ impl TextViewModel {
         if !comparison.format().grammar().has_multiline() {
             self.spans = SpanState::Ready;
         } else {
-            let wake = Arc::clone(&self.wake);
-            self.spans = SpanState::Preparing(service.spawn(
+            self.spans = SpanState::Preparing(Job::spawn(
+                service,
                 JobKind::TextCompare,
                 "syntax spans".into(),
+                &self.wake,
                 move |_svc, job| {
                     let cancel: &CancelToken = &job.cancel;
-                    let result = comparison
+                    comparison
                         .prepare_spans(Side::Left, cancel)
                         .and_then(|()| comparison.prepare_spans(Side::Right, cancel))
-                        .map_err(|_| ApiError::Cancelled);
-                    wake();
-                    result
+                        .map_err(|_| ApiError::Cancelled)
                 },
             ));
         }
@@ -476,7 +490,7 @@ impl TextViewModel {
         }
     }
 
-    /// The canvas meta (consumes the one-shot scroll request).
+    /// The panes' meta (consumes the one-shot scroll request).
     pub fn meta(&mut self) -> TextMeta {
         let rows = self
             .response
@@ -521,7 +535,7 @@ impl TextViewModel {
         }
     }
 
-    /// The canvas reports its viewport (first visible position, visible positions).
+    /// The panes report their viewport (first visible position, visible positions).
     pub fn set_viewport(&mut self, top: u32, page: u32) {
         self.top = top.min(self.len());
         self.page = page.max(1);
@@ -742,25 +756,15 @@ impl TextViewModel {
         }
     }
 
-    /// The section a "next/previous difference section" command goes to (TC-050), as its first row.
+    /// The section a "next/previous difference section" command goes to (TC-050), as its first row. From the
+    /// cursor the core's `next_section`; without a cursor `next_section_from` the top row (a section starting
+    /// on the top row counts as "next").
     fn section_target(&self, dir: Direction) -> Option<u32> {
         let cmp = &self.response.as_ref()?.comparison;
         let iu = self.opts.ignore_unimportant;
         let id = match self.cursor {
             Some(cursor) => cmp.next_section(cursor, dir, iu)?,
-            None => {
-                let top = self.top_row()?;
-                // Without a cursor, a section starting on the top row counts as "next".
-                let here = cmp.section_at(RowIdx(top)).filter(|id| {
-                    cmp.sections().get(id.0 as usize).is_some_and(|s| {
-                        s.rows.start == top && (!iu || s.importance == Importance::Important)
-                    })
-                });
-                match (dir, here) {
-                    (Direction::Forward, Some(id)) => id,
-                    _ => cmp.next_section(RowIdx(top), dir, iu)?,
-                }
-            }
+            None => cmp.next_section_from(RowIdx(self.top_row()?), dir, iu)?,
         };
         cmp.sections().get(id.0 as usize).map(|s| s.rows.start)
     }
@@ -783,17 +787,9 @@ impl TextViewModel {
         ctx.prev_difference = self.section_target(Direction::Backward).is_some();
     }
 
-    /// The atomic toggles the current filter shows (TC-040 toggle mode starts from them).
+    /// The atomic toggles the current filter shows (TC-040; the core's table).
     fn toggles(&self) -> TextToggles {
-        let diffs =
-            TextToggles::LEFT_ORPHANS | TextToggles::RIGHT_ORPHANS | TextToggles::DIFFERENCES;
-        match self.opts.filter {
-            TextDisplayFilter::All => TextToggles::all(),
-            TextDisplayFilter::Differences | TextDisplayFilter::Context { .. } => diffs,
-            TextDisplayFilter::Same => TextToggles::SAME,
-            TextDisplayFilter::None => TextToggles::empty(),
-            TextDisplayFilter::Toggles { bits } => TextToggles::from_bits_truncate(bits),
-        }
+        self.opts.filter.toggles()
     }
 
     fn set_filter(&mut self, filter: TextDisplayFilter) {
@@ -803,8 +799,7 @@ impl TextViewModel {
     }
 
     fn toggle(&mut self, bit: TextToggles) {
-        let bits = self.toggles() ^ bit;
-        self.set_filter(TextDisplayFilter::Toggles { bits: bits.bits() });
+        self.set_filter(self.opts.filter.toggled(bit));
     }
 
     /// The check state of a toggle or radio command (`None`: not a checkable command of this view).
@@ -891,21 +886,13 @@ impl TextViewModel {
     /// Pane headers and status bar texts.
     pub fn status(&self) -> TextStatus {
         let mut status = TextStatus {
-            panes: [
-                PaneInfo {
-                    title: self.titles[0]
-                        .clone()
-                        .unwrap_or_else(|| lossy(&self.request.left)),
-                    detail: String::new(),
-                },
-                PaneInfo {
-                    title: self.titles[1]
-                        .clone()
-                        .unwrap_or_else(|| lossy(&self.request.right)),
-                    detail: String::new(),
-                },
-            ],
-            error: self.error.clone(),
+            panes: [(0, &self.request.left), (1, &self.request.right)].map(|(k, spec)| PaneInfo {
+                title: crate::shared::shown_path(
+                    &self.titles[k].clone().unwrap_or_else(|| lossy(spec)),
+                ),
+                detail: String::new(),
+            }),
+            error: self.error.as_deref().map(crate::shared::shown_path),
             ..TextStatus::default()
         };
         let docs = match (&self.response, &self.docs) {
@@ -1011,7 +998,8 @@ fn lossy(spec: &std::ffi::OsStr) -> String {
     spec.to_string_lossy().into_owned()
 }
 
-/// A line laid out for the canvas: tabs expanded, control characters shown as their visible symbols, cut at
+/// A line laid out for the panes: tabs expanded, C0 controls and DEL shown as control pictures, other invisible
+/// characters ([`is_invisible`]) as `\u{…}` escapes, cut at
 /// [`MAX_DISPLAY_COLUMNS`]; `map` gives the displayed UTF-16 column of every char boundary of the source.
 pub struct Layout {
     /// Displayed text.
@@ -1034,6 +1022,25 @@ impl Layout {
             None => 0,
         }
     }
+}
+
+/// True for the characters the panes show as `\u{…}` escapes because they draw nothing, or reorder or break the
+/// text around them: the C1 controls and the bidirectional formatting characters that the reports escape
+/// (`hikasa_report::escape_controls`), and besides the zero-width characters (U+200B–U+200D, U+2060), the line
+/// and paragraph separators (U+2028, U+2029) and the byte order mark (U+FEFF). C0 controls and DEL are drawn as
+/// control pictures (`␛`) by [`layout_line`].
+pub fn is_invisible(c: char) -> bool {
+    if c.is_ascii() {
+        return false;
+    }
+    let mut buf = [0u8; 4];
+    matches!(
+        hikasa_report::escape_controls(c.encode_utf8(&mut buf)),
+        std::borrow::Cow::Owned(_)
+    ) || matches!(
+        c,
+        '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{2028}' | '\u{2029}' | '\u{feff}'
+    )
 }
 
 /// Lays out `text` for display with tab stops every `tab` columns.
@@ -1063,6 +1070,12 @@ pub fn layout_line(text: &str, tab: usize) -> Layout {
             '\u{7f}' => {
                 out.push('\u{2421}');
                 units += 1;
+            }
+            c if is_invisible(c) => {
+                // `\u{…}` like the reports' escapes; every char of the escape is ASCII (one unit).
+                let escape = format!("\\u{{{:x}}}", u32::from(c));
+                units += escape.len();
+                out.push_str(&escape);
             }
             _ => {
                 out.push(c);
@@ -1130,6 +1143,29 @@ mod tests {
         assert_eq!(l.col(4), 6);
         assert_eq!(l.col(6), 7);
         assert_eq!(l.col(99), 7);
+    }
+
+    #[test]
+    fn invisible_characters_become_escapes() {
+        // C1 (NEL, CSI), bidi (RLO, PDF, LRI, PDI, ALM), zero-width (ZWSP, ZWJ, WJ), LS, PS and BOM.
+        for c in [
+            '\u{85}', '\u{9b}', '\u{202e}', '\u{202c}', '\u{2066}', '\u{2069}', '\u{61c}',
+            '\u{200b}', '\u{200d}', '\u{2060}', '\u{2028}', '\u{2029}', '\u{feff}',
+        ] {
+            assert!(is_invisible(c), "{c:?}");
+        }
+        for c in ['a', '\t', '\u{1b}', 'é', '\u{a0}', '中', '😀', '\u{2400}'] {
+            assert!(!is_invisible(c), "{c:?}");
+        }
+        // "ZW:\u{200b}x\u{202e}y" with the escapes in step with the column map.
+        let l = layout_line("ZW:\u{200b}x\u{202e}y\u{1b}", 4);
+        assert_eq!(l.text, "ZW:\\u{200b}x\\u{202e}y\u{241b}");
+        assert_eq!(l.units(), 3 + 8 + 1 + 8 + 1 + 1);
+        assert_eq!(l.col(3), 3, "the escape starts where the character was");
+        assert_eq!(l.col(6), 11, "the next character follows the escape");
+        assert_eq!(l.col(7), 12);
+        assert_eq!(l.col(10), 20);
+        assert_eq!(l.col(12), 22);
     }
 
     #[test]

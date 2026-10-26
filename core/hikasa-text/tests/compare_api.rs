@@ -68,6 +68,34 @@ fn navigation_and_go_to_line() {
         cmp.next_section(RowIdx(1), Direction::Backward, false),
         None
     );
+    // From a row that is not a cursor, a section starting there is the next one going forward; backward and
+    // rows inside or between sections behave like next_section.
+    assert_eq!(
+        cmp.next_section_from(RowIdx(1), Direction::Forward, false),
+        Some(SectionId(0))
+    );
+    assert_eq!(
+        cmp.next_section_from(RowIdx(4), Direction::Forward, false),
+        Some(SectionId(1))
+    );
+    assert_eq!(
+        cmp.next_section_from(RowIdx(5), Direction::Forward, false),
+        Some(SectionId(2))
+    );
+    assert_eq!(
+        cmp.next_section_from(RowIdx(9), Direction::Forward, false),
+        None
+    );
+    for (row, dir) in [
+        (1, Direction::Backward),
+        (5, Direction::Backward),
+        (9, Direction::Backward),
+    ] {
+        assert_eq!(
+            cmp.next_section_from(RowIdx(row), dir, false),
+            cmp.next_section(RowIdx(row), dir, false)
+        );
+    }
     assert_eq!(cmp.row_for_line(Side::Left, LineIdx(6)), Some(RowIdx(8)));
     assert_eq!(cmp.row_for_line(Side::Right, LineIdx(5)), Some(RowIdx(5)));
     assert_eq!(cmp.row_for_line(Side::Right, LineIdx(8)), Some(RowIdx(9)));
@@ -100,6 +128,19 @@ fn ignore_unimportant_navigation_thumbnail_and_view() {
     assert_eq!(
         cmp.next_section(RowIdx(0), Direction::Forward, true),
         Some(SectionId(1))
+    );
+    // An unimportant section starting at the row is skipped under ignore-unimportant, counted without it.
+    assert_eq!(
+        cmp.next_section_from(RowIdx(1), Direction::Forward, true),
+        Some(SectionId(1))
+    );
+    assert_eq!(
+        cmp.next_section_from(RowIdx(1), Direction::Forward, false),
+        Some(SectionId(0))
+    );
+    assert_eq!(
+        cmp.next_section_from(RowIdx(4), Direction::Backward, true),
+        None
     );
     assert_eq!(cmp.verdict(false), ContentResult::ImportantDifferences);
     let cells = cmp.thumbnail(10, false);

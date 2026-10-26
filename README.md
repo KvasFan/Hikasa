@@ -25,7 +25,7 @@ This repository currently contains:
 
 - Rust only, open-source dependencies only (MIT / Apache-2.0 / BSD / MPL-2.0 / CC0 …).
 - Pure, testable comparison engines; UI-agnostic core; **CLI-first**: every tool is a
-  `hikasa` subcommand before it is a GUI view; a GUI built with Dioxus
+  `hikasa` subcommand before it is a GUI view; a GUI built with egui/eframe
   (see [`docs/02-tech-stack.md`](docs/02-tech-stack.md) for the evaluation and the
   performance gate).
 - Linux first, then Windows and macOS.

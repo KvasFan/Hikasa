@@ -1,6 +1,7 @@
 //! The application core: tabs, the active view, command dispatch through the catalogue, the messages of the
 //! IPC handler and the jobs, and the D-23 close rules for waited views (contract §1.10, §3.7). It holds no
-//! toolkit type, so the whole behaviour of the window runs headless in tests (docs/17 §3.4).
+//! toolkit type, so the whole behaviour of the window runs headless in tests (docs/17 §3.4); the egui layer
+//! (`ui`) only draws it and feeds it commands.
 
 use std::sync::Arc;
 
@@ -34,7 +35,7 @@ pub enum UiMsg {
     },
     /// Quit (IPC `Shutdown`, the window's close button).
     Quit,
-    /// A frame tick while jobs run.
+    /// A frame: poll the jobs and the live models.
     Tick,
     /// A job or the scan has news.
     Wake,
@@ -43,7 +44,7 @@ pub enum UiMsg {
 /// What the toolkit layer must do after the core handled something.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// The canvas of a text view must refetch its meta (data or scroll position changed).
+    /// A text view must refetch its meta (data or scroll position changed).
     TextDirty(ViewId),
     /// The folder tree must scroll a row into view.
     FolderScroll(ViewId, u32),
@@ -101,7 +102,6 @@ pub struct AppCore {
     active: usize,
     message: Option<String>,
     quitting: bool,
-    revision: u64,
 }
 
 impl AppCore {
@@ -121,7 +121,6 @@ impl AppCore {
             active: 0,
             message: None,
             quitting: false,
-            revision: 0,
         };
         app.new_home_tab();
         app
@@ -154,6 +153,7 @@ impl AppCore {
     }
 
     /// The tab of a view.
+    #[cfg(test)]
     pub fn tab_mut(&mut self, view: ViewId) -> Option<&mut Tab> {
         self.tabs.iter_mut().find(|t| t.id == view)
     }
@@ -180,23 +180,28 @@ impl AppCore {
         self.message = None;
     }
 
-    /// Bumped by every change of what the window shows.
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// True once quitting started.
     #[cfg(test)]
     pub fn quitting(&self) -> bool {
         self.quitting
     }
 
-    /// True while a job of any view runs (the frame ticker runs then).
+    /// True while a job of any view runs (the window then polls at a low rate besides the jobs' wake-ups).
     pub fn busy(&self) -> bool {
         self.tabs.iter().any(|t| match &t.model {
             ViewModel::Home(m) => m.resolving(),
             ViewModel::Folder(m) => m.busy(),
             ViewModel::Text(m) => m.busy(),
+        })
+    }
+
+    /// True while a job has ended but its result is not published yet: the window looks again at once
+    /// ([`crate::job::Job::settling`]).
+    pub fn settling(&self) -> bool {
+        self.tabs.iter().any(|t| match &t.model {
+            ViewModel::Home(m) => m.settling(),
+            ViewModel::Folder(m) => m.settling(),
+            ViewModel::Text(m) => m.settling(),
         })
     }
 
@@ -294,9 +299,6 @@ impl AppCore {
 
     /// Handles one message; returns the effects for the toolkit layer.
     pub fn handle(&mut self, msg: UiMsg) -> Vec<Effect> {
-        if !matches!(msg, UiMsg::Tick | UiMsg::Wake) {
-            self.revision += 1;
-        }
         match msg {
             UiMsg::Open {
                 view,
@@ -323,9 +325,7 @@ impl AppCore {
             }
             UiMsg::Quit => return self.shutdown(),
             UiMsg::Tick | UiMsg::Wake => {
-                if self.poll() {
-                    self.revision += 1;
-                }
+                self.poll();
             }
         }
         self.dirty_effects()
@@ -365,7 +365,7 @@ impl AppCore {
         changed
     }
 
-    /// `TextDirty` for every text view whose canvas must refetch, `FolderScroll` for every tree that must
+    /// `TextDirty` for every text view whose panes must refetch, `FolderScroll` for every tree that must
     /// bring a row into view.
     pub fn dirty_effects(&mut self) -> Vec<Effect> {
         self.tabs
@@ -420,7 +420,6 @@ impl AppCore {
         if !self.enabled(id) {
             return Vec::new();
         }
-        self.revision += 1;
         let service = self.service.clone();
         match id {
             CommandId::TabNew => self.new_home_tab(),

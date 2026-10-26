@@ -13,9 +13,10 @@ use std::sync::Arc;
 use hikasa_core::{JobKind, Spec};
 use hikasa_session::api::{GuiOpenRequest, ViewRequest};
 use hikasa_session::ipc::{OpenOptions, ViewKind};
-use hikasa_session::{ApiError, JobHandle, Service};
+use hikasa_session::{ApiError, Service};
 
 use crate::commands::Ctx;
+use crate::job::Job;
 
 /// Shown when a field is empty.
 pub const NEED_TWO: &str = "Enter two files or two folders.";
@@ -27,7 +28,7 @@ pub const NO_CLIPBOARD: &str = "clipboard:// cannot be opened in the GUI in this
 
 /// The running resolution of a Compare (compared by identity, so the model stays a plain value for the UI).
 #[derive(Clone)]
-pub struct Pending(Arc<JobHandle<HomeOpen>>);
+pub struct Pending(Arc<Job<HomeOpen>>);
 
 impl PartialEq for Pending {
     fn eq(&self, other: &Pending) -> bool {
@@ -80,6 +81,11 @@ impl HomeModel {
         self.pending.is_some()
     }
 
+    /// True while the resolution has ended but its result is not published yet.
+    pub fn settling(&self) -> bool {
+        self.pending.as_ref().is_some_and(|p| p.0.settling())
+    }
+
     /// Fills the command context.
     pub fn ctx_into(&self, ctx: &mut Ctx) {
         ctx.home_ready = self.ready() && !self.resolving();
@@ -119,14 +125,12 @@ impl HomeModel {
             specs,
             ..GuiOpenRequest::default()
         };
-        let job = service.spawn(
+        let job = Job::spawn(
+            service,
             JobKind::VfsRead,
             "resolve the Home paths".into(),
-            move |svc, _job| {
-                let resolved = resolve(svc, &request);
-                wake();
-                resolved
-            },
+            &wake,
+            move |svc, _job| resolve(svc, &request),
         );
         self.pending = Some(Pending(Arc::new(job)));
     }

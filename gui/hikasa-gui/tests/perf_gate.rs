@@ -8,17 +8,17 @@
 //! ```
 //!
 //! * `text_scroll`: two 1,000,000-line C files (≈ 48 bytes per line, about 1 % of the lines changed in
-//!   clusters; seeded xorshift64*, §6.1). The page script scrolls the canvas like a mouse wheel (3 lines per
+//!   clusters; seeded xorshift64*, §6.1). The window scrolls the text panes like a mouse wheel (3 lines per
 //!   frame), a page per frame, and through the whole comparison; the summary has the first screen (unaligned
-//!   text, then the aligned and syntax-coloured comparison), the frame work and frame intervals per phase, and
-//!   the memory: PSS summed over the GUI and its web processes (shared pages count once) and the GUI process's
-//!   own RSS, both in MiB against 400 MB = 381.47 MiB.
+//!   text, then the aligned and syntax-coloured comparison), per phase the frame rate, the UI thread's work per
+//!   frame, the frame intervals and eframe's CPU time per frame, and the memory: PSS (`smaps_rollup`) and RSS of
+//!   the GUI process, in MiB against 400 MB = 381.47 MiB.
 //! * `folder_scan`: 10,000 × `HIKASA_PERF_TREE_TOP` files per side (default 10: 100,000 files in 11,110
 //!   folders, depth 4), compared with CRC content tests and shown with the display filter *Show All*; every
-//!   folder opens as it arrives while the page scrolls the tree (the heaviest incremental case: about 111,000
-//!   rows at the default size); the summary has the UI thread's work per message batch and per render while
-//!   scanning, the tree rebuild times and the page's frame intervals. A larger tree (`HIKASA_PERF_TREE_TOP=40`)
-//!   keeps the scan running long enough for many rebuilds.
+//!   folder opens as it arrives while the window scrolls the tree two rows per frame (the heaviest incremental
+//!   case: about 111,000 rows at the default size); the summary has the UI thread's work per frame and the frame
+//!   intervals while scanning and the tree rebuild times. A larger tree (`HIKASA_PERF_TREE_TOP=40`) keeps the
+//!   scan running long enough for many rebuilds.
 //!
 //! The thresholds are checked and printed as measured (an fps value below 60 is reported as such); the numbers
 //! are recorded in docs/02 §2.
@@ -225,25 +225,25 @@ fn text_scroll() {
     let total_rss = f(&doc["memory"]["total_rss_mib"]);
     let gui_rss = f(&doc["memory"]["gui_rss_mib"]);
     let limit = f(&doc["memory"]["limit_mib"]);
-    let phases = doc["page"]["phases"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let phases = doc["phases"].as_array().cloned().unwrap_or_default();
     assert_eq!(phases.len(), 3, "three scroll phases: {doc}");
     eprintln!(
-        "ARCH-GUI-003 text: first screen {first} ms, coloured {coloured} ms; memory: PSS of the GUI and its web \
-         processes {total_pss} MiB (summed RSS {total_rss} MiB), RSS of the GUI process {gui_rss} MiB; limit \
-         400 MB = {limit} MiB"
+        "ARCH-GUI-003 text: first screen {first} ms, coloured {coloured} ms; memory: PSS {total_pss} MiB (RSS \
+         {total_rss} MiB), RSS of the GUI process {gui_rss} MiB; limit 400 MB = {limit} MiB"
     );
     for p in &phases {
         eprintln!(
-            "  {}: {} fps, frame work p50 {} / p95 {} / max {} ms, interval p95 {} ms",
+            "  {}: {} fps, frame work p50 {} / p95 {} / max {} ms, eframe CPU p95 {} ms, interval p50 {} / p95 {} \
+             / max {} ms",
             p["name"],
             p["fps"],
             p["frame_work_ms"]["p50"],
             p["frame_work_ms"]["p95"],
             p["frame_work_ms"]["max"],
-            p["frame_interval_ms"]["p95"]
+            p["eframe_cpu_ms"]["p95"],
+            p["frame_interval_ms"]["p50"],
+            p["frame_interval_ms"]["p95"],
+            p["frame_interval_ms"]["max"]
         );
     }
     let fps: Vec<String> = phases.iter().map(|p| p["fps"].to_string()).collect();
@@ -268,24 +268,26 @@ fn folder_scan() {
     let (l, r) = generate_tree(dir.path(), top);
     eprintln!("tree generated in {:.1} s", began.elapsed().as_secs_f64());
     let doc = bench("folder", dir.path(), &l, &r);
-    let ticks = &doc["ui_thread_ms_while_scanning"]["message_batches"];
-    let renders = &doc["ui_thread_ms_while_scanning"]["root_renders"];
-    let page = &doc["page"]["frame_interval_ms_while_scanning"];
+    let work = &doc["while_scanning"]["frame_work_ms"];
+    let cpu = &doc["while_scanning"]["eframe_cpu_ms"];
+    let interval = &doc["while_scanning"]["frame_interval_ms"];
     eprintln!(
-        "acceptance (b): scan {} ms; UI thread per batch p95 {} max {} ms; render p95 {} max {} ms; tree \
-         rebuilds while scanning {} (max {} ms, {} rows at the end); page frame intervals while scanning p95 {} \
-         ms, {} of {} above 25 ms; memory PSS {} MiB, GUI RSS {} MiB",
+        "acceptance (b): scan {} ms; {} frames while scanning: UI work p50 {} / p95 {} / max {} ms ({} above \
+         16.7 ms), eframe CPU p95 {} / max {} ms, intervals p95 {} / max {} ms; tree rebuilds while scanning {} \
+         (max {} ms, {} rows at the end); memory PSS {} MiB, GUI RSS {} MiB",
         doc["view"]["scan_ms"],
-        ticks["p95"],
-        ticks["max"],
-        renders["p95"],
-        renders["max"],
+        doc["while_scanning"]["frames"],
+        work["p50"],
+        work["p95"],
+        work["max"],
+        work["over_16_7ms"],
+        cpu["p95"],
+        cpu["max"],
+        interval["p95"],
+        interval["max"],
         doc["view"]["rebuilds_while_scanning"],
         doc["view"]["rebuild_ms"]["max"],
         doc["view"]["visible_rows"],
-        page["p95"],
-        page["over_25ms"],
-        page["count"],
         doc["memory"]["total_pss_mib"],
         doc["memory"]["gui_rss_mib"],
     );

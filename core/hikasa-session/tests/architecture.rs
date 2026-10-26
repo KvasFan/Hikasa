@@ -1331,7 +1331,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "filetime",
         ],
     ),
-    // Wave 6: the approved GUI toolkit (D-56) plus the core crates it renders (§1.10).
+    // Wave 6: the approved GUI toolkit (D-56: egui/eframe) plus the core crates it renders (§1.10).
     (
         "hikasa-gui",
         &[
@@ -1342,7 +1342,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-folder",
             "hikasa-report",
             "hikasa-session",
-            "dioxus",
+            "eframe",
+            "egui",
             "anyhow",
             "serde",
             "serde_json",

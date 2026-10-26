@@ -1,32 +1,31 @@
-//! The UI thread's mailbox: a FIFO that any thread posts to and the UI awaits (contract §5.1: IPC handlers and
-//! job threads never block, they post to the event loop and return), and the [`Ticker`] that wakes the UI at
-//! frame rate while jobs run (`JobHandle::try_result` is polled per frame, §1.10).
+//! The UI thread's mailbox: a FIFO that any thread posts to and the UI drains once per frame (contract §5.1: IPC
+//! handlers and job threads never block, they post to the event loop and return). Every post calls the
+//! mailbox's *notifier*, which the window sets to `egui::Context::request_repaint`, so the UI wakes up on demand
+//! instead of polling.
 
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::task::{Context, Poll, Waker};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use parking_lot::Mutex;
 
-/// A cross-thread FIFO whose receiving end is a future (the Dioxus event loop awaits it).
+/// Called after every post (from the posting thread; it must not block).
+pub type Notifier = Arc<dyn Fn() + Send + Sync>;
+
+/// A cross-thread FIFO with a wake-up callback.
 pub struct Mailbox<T> {
     inner: Arc<Inner<T>>,
 }
 
 struct Inner<T> {
-    queue: Mutex<VecDeque<T>>,
-    waker: Mutex<Option<Waker>>,
+    tx: Sender<T>,
+    rx: Receiver<T>,
+    notify: Mutex<Option<Notifier>>,
 }
 
 impl<T> std::fmt::Debug for Mailbox<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Mailbox")
-            .field("queued", &self.inner.queue.lock().len())
+            .field("queued", &self.inner.rx.len())
             .finish()
     }
 }
@@ -46,39 +45,46 @@ impl<T> Default for Mailbox<T> {
 }
 
 impl<T> Mailbox<T> {
-    /// An empty mailbox.
+    /// An empty mailbox without a notifier.
     pub fn new() -> Mailbox<T> {
+        let (tx, rx) = unbounded();
         Mailbox {
             inner: Arc::new(Inner {
-                queue: Mutex::new(VecDeque::new()),
-                waker: Mutex::new(None),
+                tx,
+                rx,
+                notify: Mutex::new(None),
             }),
         }
     }
 
-    /// Appends a message and wakes the receiver (never blocks for longer than the queue lock).
-    pub fn post(&self, msg: T) {
-        self.inner.queue.lock().push_back(msg);
-        let waker = self.inner.waker.lock().take();
-        if let Some(waker) = waker {
-            waker.wake();
+    /// Installs the wake-up callback. Messages posted before it was installed are not lost: the callback is
+    /// called once at once when any is queued.
+    pub fn set_notifier(&self, notify: Notifier) {
+        *self.inner.notify.lock() = Some(Arc::clone(&notify));
+        if !self.inner.rx.is_empty() {
+            notify();
         }
     }
 
-    /// The next message (waits until one is posted).
-    pub fn next(&self) -> Next<'_, T> {
-        Next { mailbox: self }
+    /// Appends a message and wakes the receiver (never blocks: the channel is unbounded).
+    pub fn post(&self, msg: T) {
+        // The receiver lives as long as the mailbox, so sending cannot fail.
+        let _ = self.inner.tx.send(msg);
+        let notify = self.inner.notify.lock().clone();
+        if let Some(notify) = notify {
+            notify();
+        }
     }
 
-    /// Every message posted so far (headless use and tests).
+    /// Every message posted so far, in order.
     pub fn drain(&self) -> Vec<T> {
-        self.inner.queue.lock().drain(..).collect()
+        self.inner.rx.try_iter().collect()
     }
 
     /// Number of queued messages.
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.inner.queue.lock().len()
+        self.inner.rx.len()
     }
 
     /// True when no message is queued.
@@ -88,125 +94,21 @@ impl<T> Mailbox<T> {
     }
 }
 
-/// The future of [`Mailbox::next`].
-pub struct Next<'a, T> {
-    mailbox: &'a Mailbox<T>,
-}
-
-impl<T> Future for Next<'_, T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
-        let inner = &self.mailbox.inner;
-        if let Some(msg) = inner.queue.lock().pop_front() {
-            return Poll::Ready(msg);
-        }
-        *inner.waker.lock() = Some(cx.waker().clone());
-        // A message posted between the first check and storing the waker found no waker: look again.
-        match inner.queue.lock().pop_front() {
-            Some(msg) => Poll::Ready(msg),
-            None => Poll::Pending,
-        }
-    }
-}
-
-/// Posts one "tick" message per frame interval while [`Ticker::set_busy`] is true, never more than one
-/// unhandled tick at a time (ticks coalesce when the UI is slow). Idle, the thread parks.
-pub struct Ticker {
-    shared: Arc<TickerShared>,
-    thread: Option<JoinHandle<()>>,
-}
-
-struct TickerShared {
-    busy: AtomicBool,
-    pending: AtomicBool,
-    stop: AtomicBool,
-    interval_ms: AtomicUsize,
-}
-
-impl Ticker {
-    /// Starts the ticker thread; `post` delivers one tick.
-    pub fn start(interval: Duration, post: impl Fn() + Send + 'static) -> Ticker {
-        let shared = Arc::new(TickerShared {
-            busy: AtomicBool::new(false),
-            pending: AtomicBool::new(false),
-            stop: AtomicBool::new(false),
-            interval_ms: AtomicUsize::new(interval.as_millis().max(1) as usize),
-        });
-        let worker = Arc::clone(&shared);
-        let thread = thread::Builder::new()
-            .name("hikasa-gui-ticker".into())
-            .spawn(move || {
-                while !worker.stop.load(Ordering::Acquire) {
-                    if !worker.busy.load(Ordering::Acquire) {
-                        thread::park();
-                        continue;
-                    }
-                    if !worker.pending.swap(true, Ordering::AcqRel) {
-                        post();
-                    }
-                    let ms = worker.interval_ms.load(Ordering::Relaxed) as u64;
-                    thread::sleep(Duration::from_millis(ms));
-                }
-            })
-            .ok();
-        Ticker { shared, thread }
-    }
-
-    /// Turns frame ticks on or off.
-    pub fn set_busy(&self, busy: bool) {
-        let was = self.shared.busy.swap(busy, Ordering::AcqRel);
-        if busy
-            && !was
-            && let Some(thread) = &self.thread
-        {
-            thread.thread().unpark();
-        }
-    }
-
-    /// Called by the UI when it handles a tick (allows the next one).
-    pub fn ticked(&self) {
-        self.shared.pending.store(false, Ordering::Release);
-    }
-
-    /// True while ticks are on.
-    #[cfg(test)]
-    pub fn is_busy(&self) -> bool {
-        self.shared.busy.load(Ordering::Acquire)
-    }
-}
-
-impl Drop for Ticker {
-    fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
-            let _ = thread.join();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
-    use std::task::Wake;
-
-    struct Flag(AtomicBool);
-    impl Wake for Flag {
-        fn wake(self: Arc<Self>) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::thread;
 
     #[test]
-    fn mailbox_is_fifo_and_wakes_the_receiver() {
+    fn mailbox_is_fifo_and_notifies_on_every_post() {
         let mailbox = Mailbox::new();
-        let flag = Arc::new(Flag(AtomicBool::new(false)));
-        let waker = Waker::from(Arc::clone(&flag));
-        let mut cx = Context::from_waker(&waker);
-        let mut next = mailbox.next();
-        assert!(Pin::new(&mut next).poll(&mut cx).is_pending());
+        let woken = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&woken);
+        mailbox.set_notifier(Arc::new(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(woken.load(Ordering::SeqCst), 0, "nothing queued yet");
         let other = mailbox.clone();
         thread::spawn(move || {
             other.post(1);
@@ -214,32 +116,30 @@ mod tests {
         })
         .join()
         .unwrap();
-        assert!(flag.0.load(Ordering::SeqCst), "post wakes the receiver");
-        assert_eq!(Pin::new(&mut next).poll(&mut cx), Poll::Ready(1));
-        assert_eq!(mailbox.drain(), vec![2]);
+        assert_eq!(woken.load(Ordering::SeqCst), 2, "one wake-up per post");
+        assert_eq!(mailbox.len(), 2);
+        assert_eq!(mailbox.drain(), vec![1, 2]);
         assert!(mailbox.is_empty());
     }
 
     #[test]
-    fn ticker_ticks_only_while_busy_and_coalesces() {
-        let count = Arc::new(AtomicU32::new(0));
-        let seen = Arc::clone(&count);
-        let ticker = Ticker::start(Duration::from_millis(1), move || {
+    fn a_late_notifier_still_sees_earlier_posts() {
+        let mailbox = Mailbox::new();
+        mailbox.post("early");
+        let woken = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&woken);
+        mailbox.set_notifier(Arc::new(move || {
             seen.fetch_add(1, Ordering::SeqCst);
-        });
-        thread::sleep(Duration::from_millis(20));
-        assert_eq!(count.load(Ordering::SeqCst), 0, "idle: no tick");
-        ticker.set_busy(true);
-        assert!(ticker.is_busy());
-        thread::sleep(Duration::from_millis(30));
-        // Never acknowledged: exactly one tick is outstanding.
-        assert_eq!(count.load(Ordering::SeqCst), 1);
-        ticker.ticked();
-        thread::sleep(Duration::from_millis(30));
-        assert_eq!(count.load(Ordering::SeqCst), 2);
-        ticker.set_busy(false);
-        ticker.ticked();
-        thread::sleep(Duration::from_millis(20));
-        assert_eq!(count.load(Ordering::SeqCst), 2);
+        }));
+        assert_eq!(
+            woken.load(Ordering::SeqCst),
+            1,
+            "woken for the queued message"
+        );
+        assert_eq!(mailbox.drain(), vec!["early"]);
+        // Without a notifier nothing happens beyond queueing.
+        let quiet: Mailbox<u8> = Mailbox::new();
+        quiet.post(7);
+        assert_eq!(quiet.drain(), vec![7]);
     }
 }

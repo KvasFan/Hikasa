@@ -62,6 +62,44 @@ pub enum TextDisplayFilter {
     },
 }
 
+impl TextDisplayFilter {
+    /// The atomic categories the filter can show, in full or in part (TC-040: the check state of the toggle
+    /// commands, and the set toggle mode starts from). Additive API (wave 6b, §1.5.7).
+    ///
+    /// | Filter | Toggles |
+    /// |---|---|
+    /// | All | every category |
+    /// | Differences, `Context { lines: 0 }` | left orphans, right orphans, differences |
+    /// | `Context { lines: 1.. }` | every category (the context rows are Same rows) |
+    /// | Same | Same |
+    /// | None | none |
+    /// | `Toggles { bits }` | `bits` (unknown bits dropped) |
+    pub fn toggles(self) -> TextToggles {
+        let diffs =
+            TextToggles::LEFT_ORPHANS | TextToggles::RIGHT_ORPHANS | TextToggles::DIFFERENCES;
+        match self {
+            TextDisplayFilter::All => TextToggles::all(),
+            TextDisplayFilter::Differences | TextDisplayFilter::Context { lines: 0 } => diffs,
+            TextDisplayFilter::Context { .. } => TextToggles::all(),
+            TextDisplayFilter::Same => TextToggles::SAME,
+            TextDisplayFilter::None => TextToggles::empty(),
+            TextDisplayFilter::Toggles { bits } => TextToggles::from_bits_truncate(bits),
+        }
+    }
+
+    /// The filter after the user flips the categories `bits` in toggle mode (TC-040): `Toggles` with
+    /// [`toggles`](Self::toggles) `^ bits`. Additive API (wave 6b, §1.5.7).
+    ///
+    /// Flipping a category never hides a row of another category that the filter showed: from Show Context,
+    /// whose context rows are Same rows, switching a difference category off keeps every Same row, and only
+    /// switching Same off removes the context rows.
+    pub fn toggled(self, bits: TextToggles) -> TextDisplayFilter {
+        TextDisplayFilter::Toggles {
+            bits: (self.toggles() ^ bits).bits(),
+        }
+    }
+}
+
 /// View options.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ViewOptions {
@@ -435,6 +473,79 @@ mod tests {
             visible(F::Differences, false, vec![10..20, 0..2, 1..2, 5..5]),
             [0, 1, 3, 6, 7, 10, 11]
         );
+    }
+
+    #[test]
+    fn toggles_of_every_filter() {
+        use TextDisplayFilter as F;
+        use TextToggles as T;
+        let diffs = T::LEFT_ORPHANS | T::RIGHT_ORPHANS | T::DIFFERENCES;
+        assert_eq!(F::All.toggles(), T::all());
+        assert_eq!(F::Differences.toggles(), diffs);
+        assert_eq!(F::Context { lines: 0 }.toggles(), diffs);
+        assert_eq!(F::Context { lines: 3 }.toggles(), T::all());
+        assert_eq!(F::Same.toggles(), T::SAME);
+        assert_eq!(F::None.toggles(), T::empty());
+        assert_eq!(
+            F::Toggles { bits: 0xF5 }.toggles(),
+            T::SAME | T::RIGHT_ORPHANS
+        );
+        assert_eq!(
+            F::Differences.toggled(T::SAME),
+            F::Toggles {
+                bits: T::all().bits()
+            }
+        );
+        assert_eq!(
+            F::Context { lines: 2 }.toggled(T::SAME),
+            F::Toggles { bits: diffs.bits() }
+        );
+    }
+
+    /// Flipping one category in toggle mode never hides a visible row of another category (the context rows
+    /// of Show Context survive every flip but Same), and a flipped category is wholly shown or wholly hidden.
+    #[test]
+    fn toggling_keeps_the_rows_of_other_categories() {
+        use TextDisplayFilter as F;
+        let cat = |row: u32, iu: bool| -> TextToggles {
+            runs()
+                .iter()
+                .find(|r| r.start <= row && row < r.end)
+                .and_then(|r| run_category(r, iu))
+                .unwrap_or(TextToggles::SAME)
+        };
+        let filters = [
+            F::All,
+            F::Differences,
+            F::Same,
+            F::None,
+            F::Context { lines: 0 },
+            F::Context { lines: 1 },
+            F::Context { lines: 5 },
+            F::Toggles { bits: 0b1010 },
+        ];
+        for filter in filters {
+            for iu in [false, true] {
+                let before = visible(filter, iu, vec![]);
+                for bit in TextToggles::all().iter() {
+                    let after = visible(filter.toggled(bit), iu, vec![]);
+                    for &row in &before {
+                        if cat(row, iu) != bit {
+                            assert!(
+                                after.contains(&row),
+                                "{filter:?} flip {bit:?} iu={iu}: row {row} lost"
+                            );
+                        }
+                    }
+                    let on = filter.toggled(bit).toggles().contains(bit);
+                    for row in 0..12 {
+                        if cat(row, iu) == bit {
+                            assert_eq!(after.contains(&row), on, "{filter:?} flip {bit:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

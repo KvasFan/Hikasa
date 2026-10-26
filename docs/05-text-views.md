@@ -254,7 +254,7 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   display filters hide lines; it can be expanded/collapsed; "Show filtered line counts"
   option.
 - **TC-036** (P1): **Webpages** panels: render the current files (HTML) as web pages
-  beneath the editors (P2 on Dioxus via iframe; optional).
+  beneath the editors (P2; optional).
 - **TC-037** (P0): Status bar: cursor line/column, Insert/Overwrite (Ins), comparison
   state of the current line (Same, Important Difference, Unimportant Difference, Ignored,
   Left/Right Orphan, …), grammar element under the cursor, encoding, line ending, and
@@ -273,7 +273,11 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   exactly like the hunks of a unified diff (the patch reports use the same view). Every
   run of hidden rows becomes one gap item ("N filtered lines"); expanded gap bars stay
   visible whatever the filter. Display filters never change the verdict or the exit
-  code.
+  code. The toggles show the categories a filter shows in full or in part
+  (`TextDisplayFilter::toggles`; *Show Context* with N > 0 shows all four, its context
+  rows being same rows), and flipping one switches to toggle mode without hiding a row
+  of any other category: from *Show Context* only switching *Same* off removes the
+  context rows.
 
 ## 6. Navigation
 

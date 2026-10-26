@@ -52,7 +52,7 @@
 | `hikasa-report`: text reports (side-by-side text/HTML, summary, patch normal/context/unified, statistics CSV), folder reports (side-by-side text/HTML, summary, JSON) | XML dump, interleaved, printing, links to file reports |
 | `hikasa-session`: config paths, format registry loading, service API (incl. job spawning), legacy `gui open` argument parsing, IPC protocol, framing, endpoint naming, client and server | Sessions, workspaces, profiles, settings import/export, keychain |
 | `hikasa-cli`: global flags; `quick`, `text compare`, `folder compare` (both with `--gui`, CLI-G03), `format`, `vfs`, `gui`, `completions`, `version` | Every other subcommand in `docs/12` (they are registered in M2+) |
-| `hikasa-gui`: the contracts it needs (§1.10) and the wave-6 prototype outline (§6.5) | Implementation starts in wave 6 (Dioxus approved, D-56) |
+| `hikasa-gui`: the contracts it needs (§1.10) and the wave-6 prototype outline (§6.5) | Implemented in wave 6 on egui/eframe (D-56 as amended) |
 
 ### 0.2 Design tenets (normative)
 
@@ -136,7 +136,7 @@ table (architecture test check 3).
 | hikasa-report | hikasa-core, hikasa-diff, hikasa-text, hikasa-folder, serde, serde_json, jiff, thiserror, unicode-width, **bitflags** | pretty_assertions, tempfile, **diffy** (patch-apply oracle), **proptest**, **hikasa-vfs** (`MemoryVfs` fixtures) | + bitflags (`FolderColumns`); +dev diffy, proptest, hikasa-vfs. No normal edge to hikasa-formats or hikasa-vfs: rule 8 of §0.4 supplies the types |
 | hikasa-session | hikasa-core, -vfs, -diff, -formats, -text, -folder, -report, serde, serde_json, toml, directories, interprocess, thiserror, tracing, **rayon**, **jiff**, **parking_lot**, **crossbeam-channel** | tempfile, pretty_assertions, **proptest** | + rayon (owns the explicit `ThreadPool`); + jiff (clock and zone values); + parking_lot (job registry, IPC waiters); + crossbeam-channel (`JobHandle` channels); +dev proptest |
 | hikasa-cli | the M1 list without `anyhow` | unchanged list | − anyhow (wave 5: every error is an `ApiError` routed through the session envelope helpers, so the binary needs no generic error type). `clap_complete`, `tracing-subscriber` and `jiff` are used as listed |
-| hikasa-gui | hikasa-core, hikasa-vfs, hikasa-formats, hikasa-text, hikasa-folder, hikasa-report, hikasa-session, **dioxus** (features `desktop`), anyhow, serde, serde_json, tracing, tracing-subscriber, parking_lot, crossbeam-channel | tempfile, pretty_assertions | wave 6: + dioxus 0.7 (D-56, approved) and the crates the views render; anyhow only in `main.rs` |
+| hikasa-gui | hikasa-core, hikasa-vfs, hikasa-formats, hikasa-text, hikasa-folder, hikasa-report, hikasa-session, **eframe**, **egui**, anyhow, serde, serde_json, tracing, tracing-subscriber, parking_lot, crossbeam-channel | tempfile, pretty_assertions | wave 6: + eframe/egui 0.37 (D-56 as amended) and the crates the views render; anyhow only in `main.rs` |
 
 Rejected inside M1, although they are in the workspace list: `blake3` (content caches are P1, VFS-020; endpoint
 hashing uses an in-house FNV-1a, §2.23), `similar` in non-test code (one LCS implementation, imara-diff, keeps
@@ -203,7 +203,7 @@ Each decision is binding for M1. The "Docs" column names the file that must rece
 | D-53 | Identity fast path: when the rules make every char of every line important and case-sensitive (D-04 defaults, and no unimportant element in the format), a line's key is its raw text (prefixed by its line-ending code when line endings are compared) and no tokenisation runs. Results are identical to the general path. *Amended in wave 3 (review decision 2):* the identity key is the raw text followed by the end markers of §2.13.2 (`ART`, or `EOL kind` when endings are compared), and the general key emits token boundaries and element ids only where an unimportant char was actually dropped (§2.13.2), so the general key of a line from which nothing is dropped or folded is byte-identical to its identity key, whatever the tokenizer state. The equivalence (INV-KEY-3) therefore holds for every grammar, multi-line items included, and an unimportant-text pattern that never matches does not change a result (P-TC-7). D-14 is kept: `int x` ≠ `intx` under ws-off. | The default rules must be cheap; results must not depend on an internal switch. | 05 §3 |
 | D-54 | Long imara-diff calls (more than 4,096 tokens on either side; 200,000 before wave 2, §1.3.3 item 1) run on a helper thread; the caller polls its `CancelToken` every 10 ms and returns `Err(Cancelled)` without waiting for the call (the result is discarded). imara-diff cannot be interrupted, so the helper of a cancelled call runs until its call ends; at most 2 such abandoned helpers run per process, and a new helper call waits (polling its `CancelToken`) while 2 are running (§1.3.3 item 2). | ≤ 100 ms cancellation latency without changing results (T6); bounded CPU after repeated cancellations. | 05 §2 |
 | D-55 | Folder aggregates are **counters**: every folder holds per-category counts of its descendants (files and folders separately), for both values of ignore-unimportant, maintained incrementally (`dec(old)/inc(new)` on every ancestor). Folder state, colour, visibility, statistics and verdict are O(1) per folder, on partial trees too. | Live model for the GUI (ARCH-004, FC-016), O(1) Ignore-Unimportant toggling (FC-057). | 04 §4 |
-| D-56 | The GUI toolkit is Dioxus 0.7 with the `desktop` feature (ARCH-GUI-001). **Approved by the maintainer for wave 6** and added to `[workspace.dependencies]`; the ARCH-GUI-003 performance gate still decides whether the heavy views stay on it. | The maintainer proposed Dioxus; no new dependency without approval (17-agent-workflow §2.6). | 02 |
+| D-56 | The GUI toolkit is **egui 0.37 with eframe** (native, immediate mode, GPU-drawn). Dioxus 0.7 desktop was approved first and built as the wave-6 prototype; it met first screen and frame rate but not the ARCH-GUI-003 memory limit (598 MiB PSS, 456 MiB GUI RSS vs 400 MB, the WebView alone ≈ 168 MiB PSS), so the maintainer moved the whole GUI to egui (ARCH-GUI-003 fallback). | Performance and memory: no WebView; virtualised custom painting is native in egui. | 02 |
 | D-57 | `--criteria <list>` (folder compare) follows the script `criteria` syntax (SCR): items separated by `,` or spaces; listed criteria are on, unlisted quick tests and the content method are off. Hikasa adds `filename-case` (FC-022). `version` (FC-028, P1) is rejected in M1. | One vocabulary for CLI and scripts (T11). | 12 §3.1 |
 | D-58 | A format may declare `word_chars` (extra characters that count as word characters for List word boundaries and keyword lookup). COBOL uses `"-"`. | `END-IF` is one keyword; `END-OF-FILE` is one identifier. | 10 §3 |
 
@@ -221,7 +221,6 @@ consequences, not decisions to revisit inside M1; adding any of them needs the 1
 | `infer` | Magic-number detection is an in-house table (§2.9). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (gap, Appendix C); owner and group are shown as numeric ids; the effective uid is obtained with std only (`capture_env`, §1.8). |
 | a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
-| `dioxus` | The GUI (wave 6) needs approval first (D-56). |
 | `tempfile` (dev-only) | Atomic writes are hand-rolled (`AtomicWrite`, `write_atomic`). |
 
 Feature facts of approved crates that shape the design: `toml` has no `preserve_order` (D-41); `serde_json` has
@@ -4296,6 +4295,29 @@ impl From<DiffError> for TextError;   // DiffError::Cancelled → TextError::Can
   code in the message, never dropped. `RulesComparator::with_stream_options` lets the session pass its binary
   comparator's options (§3.3).
 
+**Additive API (wave 6b, GUI review, maintainer decision 3).** The GUI had re-derived two core rules; both are now
+hikasa-text API, unit-tested there, and the GUI calls them (no importance test and no filter table in the adapter):
+
+```rust
+// compare (nav.rs)
+impl TextComparison {
+    /// Like next_section, but going forward a section *starting at* `from` counts as the next one: navigation
+    /// from a position that is not a cursor (the first row on screen). Backward equals next_section.
+    pub fn next_section_from(&self, from: RowIdx, dir: Direction, ignore_unimportant: bool) -> Option<SectionId>;
+}
+// view
+impl TextDisplayFilter {
+    /// The atomic categories the filter can show, in full or in part (TC-040 toggle check state and the set
+    /// toggle mode starts from): All → all; Differences and Context { lines: 0 } → LEFT_ORPHANS | RIGHT_ORPHANS
+    /// | DIFFERENCES; Context { lines: 1.. } → all (its context rows are Same rows); Same → SAME; None → empty;
+    /// Toggles { bits } → bits (unknown bits dropped). Mirrors FolderDisplayFilter::toggles.
+    pub fn toggles(self) -> TextToggles;
+    /// Toggles { bits: (self.toggles() ^ bits).bits() }: flipping a category never hides a row of another
+    /// category that the filter showed, so Show Context keeps its context rows unless Same is switched off.
+    pub fn toggled(self, bits: TextToggles) -> TextDisplayFilter;
+}
+```
+
 ### 1.6 hikasa-folder
 
 **Purpose.** Folder Compare: rules (FC-020…FC-027) with the script `criteria` vocabulary (D-57), filters
@@ -7261,9 +7283,9 @@ the contract and win over the text of §1.9.1–§1.9.2 where they refine it.
 | GUI need | Contract |
 |---|---|
 | One service shared with the CLI | `hikasa_session::api::Service` (created with `capture_env`, `SystemClock`, `StdProcessRunner`); every view action is a `Service` call, as ARCH-013 requires. |
-| UI thread never blocks (00 §4) | `Service::spawn(kind, title, f)` → `JobHandle<T>`: `cancel()`, lossy `progress()` channel, `try_result()` polled per frame, panics → `ApiError::Internal`. |
+| UI thread never blocks (00 §4) | `Service::spawn(kind, title, f)` → `JobHandle<T>`: `cancel()`, lossy `progress()` channel, `try_result()` polled per frame, panics → `ApiError::Internal`. The result is published only after the job's body returns, so a body must not wake the UI as its last step and expect the result: the GUI wakes after the body returned and repaints at once while a woken job's result is still unpublished (wave 6b). |
 | First screen of a 1M-line comparison < 1 s (ARCH-GUI-003) | `Service::text_compare(req, job, Some(observer))`: `CompareObserver::loaded` (documents for unaligned panes at once), `phase`, `partial` (confirmed run prefixes); then the final `Arc<TextComparison>`. |
-| Virtualised text panes (ARCH-GUI-002/003) | `TextComparison::row_count`/`row` (O(1), < 200 ns), `document(side).line(i)` (rope), `spans(side, line)` after `prepare_spans` on a worker, `inline(row)` (lazy, p99 < 50 µs), `view(&ViewOptions)` → `FilteredView::get(pos)` (O(log k)), `next_section`, `row_for_line`, `stats`. `TextComparison` is `Send + Sync` and lives in an `Arc` shared by the UI and workers. |
+| Virtualised text panes (ARCH-GUI-002/003) | `TextComparison::row_count`/`row` (O(1), < 200 ns), `document(side).line(i)` (rope), `spans(side, line)` after `prepare_spans` on a worker, `inline(row)` (lazy, p99 < 50 µs), `view(&ViewOptions)` → `FilteredView::get(pos)` (O(log k)), `next_section` (from the cursor) and `next_section_from` (from the first row on screen, §1.5.7 wave 6b), `row_for_line`, `stats`; the toggle commands use `TextDisplayFilter::toggles`/`toggled` (§1.5.7 wave 6b). `TextComparison` is `Send + Sync` and lives in an `Arc` shared by the UI and workers. |
 | Thumbnail (TC-032) | `TextComparison::thumbnail(height_px, ignore_unimportant)` in O(sections + buckets). |
 | Filtered gap bars (TC-035) | `ViewOptions::expanded` row ranges; `FilteredView::position_of` returns the gap that hides a row. |
 | Folder tree with incremental updates | `Service::folder_prepare` → `PreparedFolderCompare::model()` (an `Arc<FolderModel>` to render at once); `Service::spawn` runs `folder_run` with `ChannelObserver::bounded(n)`. Per frame: if `model.generation()` changed, `model.read()` → `visible_rows(opts, expanded, &mut rows)` (O(visible)), `node(id)`, `colour(id, side, iu)`, `stats(iu)`; all O(1) per row on partial trees. Events are id-only hints. |
@@ -10647,7 +10669,8 @@ Each item carries a default decision, which is binding for M1 unless the maintai
     (libc) or parsing `/etc/passwd` and `/etc/group`. Which approach?
 15. **Graceful Ctrl-C.** Without a signal-handling crate the CLI terminates on SIGINT; outputs are atomic.
     Default: accept in M1.
-16. **GUI toolkit dependency (D-56).** Dioxus is not in `[workspace.dependencies]`; wave 6 waits for approval.
+16. **GUI toolkit dependency (D-56).** *Resolved:* the GUI is built on egui/eframe 0.37 (D-56 as amended; both are
+    in `[workspace.dependencies]`).
 17. **`gui open --no-launch` without `--wait` when no GUI runs (D-23).** CLI-004 can be read either way (100 or
     102). Default: 100 ("not running"), because CLI-004 defines 102 as "CLI helper unable to wait for the GUI";
     with `--wait` the code is 102. Confirm.

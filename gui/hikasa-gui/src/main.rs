@@ -1,6 +1,7 @@
-//! `hikasa-gui`: the desktop GUI of Hikasa (ARCH-GUI-001, Dioxus desktop). It is a thin adapter over the core
-//! crates (ARCH-L3): every comparison runs through `hikasa_session::Service`, and the window only presents
-//! the results. It also hosts the IPC endpoint that `hikasa gui …` talks to (ARCH-090…092).
+//! `hikasa-gui`: the desktop GUI of Hikasa (ARCH-GUI-001: egui with eframe, one native window). It is a thin
+//! adapter over the core crates (ARCH-L3): every comparison runs through `hikasa_session::Service`, and the
+//! window only presents the results. It also hosts the IPC endpoint that `hikasa gui …` talks to
+//! (ARCH-090…092).
 //!
 //! Startup (contract §1.10): the command line is the legacy `gui open` syntax (`normalize_legacy_args` +
 //! `parse_open_args`, D-51) → logging → `Service::new` with a lazy standard-input source → the first-run
@@ -18,8 +19,8 @@ mod commands;
 mod folder_view;
 mod home;
 mod ipc;
+mod job;
 mod mailbox;
-mod rpc;
 mod shared;
 mod text_view;
 mod ui;
@@ -33,8 +34,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context as _;
-use dioxus::desktop::tao::event::{Event, WindowEvent};
-use dioxus::desktop::{Config, LogicalSize, WindowBuilder, WindowCloseBehaviour};
 use hikasa_core::ContentMethod;
 use hikasa_folder::FolderDisplayFilter;
 use hikasa_formats::StdProcessRunner;
@@ -45,19 +44,13 @@ use hikasa_session::ipc::{IpcError, IpcServer};
 use hikasa_session::{
     ApiOp, FormatStore, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
 };
-use parking_lot::Mutex;
 
 use crate::app::{AppCore, UiMsg};
 use crate::bench::{BenchKind, BenchState};
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
-use crate::ui::{Startup, StartupData};
-
-/// Styles of the window (light and dark).
-const CSS: &str = include_str!("../assets/hikasa.css");
-/// The page script: canvas text views, the folder tree scroll helper, the benchmark drivers.
-const SCRIPT: &str = include_str!("../assets/hikasa.js");
+use crate::ui::HikasaApp;
 
 /// Exit code of every failure before the window runs (D-35).
 const FAILURE: u8 = 100;
@@ -179,7 +172,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         None => None,
     };
     let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
-    let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start, mailbox.clone()));
+    let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));
     if bench.is_some() && initial.is_none() {
         anyhow::bail!("the benchmark mode needs two specs");
     }
@@ -285,41 +278,27 @@ fn init_logging(open: &OpenArgs) -> anyhow::Result<()> {
         .context("cannot install the logger")
 }
 
-/// Runs the window (never returns).
-fn launch(app: AppCore, mailbox: Mailbox<UiMsg>, bench: Option<BenchState>) -> ! {
-    let close = mailbox.clone();
+/// Runs the window until it closes; the process then exits 0 (the views reported their outcomes on the way).
+fn launch(app: AppCore, mailbox: Mailbox<UiMsg>, bench: Option<BenchState>) -> anyhow::Result<u8> {
     // The benchmark measures a large window (about a maximised full-HD laptop window).
     let size = if bench.is_some() {
-        LogicalSize::new(1920.0, 1200.0)
+        [1920.0, 1200.0]
     } else {
-        LogicalSize::new(1280.0, 820.0)
+        [1280.0, 820.0]
     };
-    let head = format!(
-        "<meta name=\"color-scheme\" content=\"light dark\"><style>{CSS}</style><script>{SCRIPT}</script>"
-    );
-    let window = WindowBuilder::new()
-        .with_title("Hikasa")
-        .with_inner_size(size);
-    let config = Config::new()
-        .with_window(window)
-        .with_custom_head(head)
-        .with_menu(None)
-        .with_disable_context_menu(true)
-        .with_close_behaviour(WindowCloseBehaviour::WindowHides)
-        .with_custom_event_handler(move |event, _target| {
-            if let Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } = event
-            {
-                close.post(UiMsg::Quit);
-            }
-        });
-    let startup = Startup(Arc::new(Mutex::new(Some(StartupData {
-        app,
-        mailbox,
-        bench,
-    }))));
-    let dom = dioxus::core::VirtualDom::new(ui::root).with_root_context(startup);
-    dioxus::desktop::launch::launch_virtual_dom(dom, config)
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Hikasa")
+            .with_app_id("hikasa")
+            .with_inner_size(size)
+            .with_min_inner_size([640.0, 400.0]),
+        ..eframe::NativeOptions::default()
+    };
+    eframe::run_native(
+        "Hikasa",
+        options,
+        Box::new(move |cc| Ok(Box::new(HikasaApp::new(cc, app, mailbox, bench)))),
+    )
+    .map_err(|e| anyhow::anyhow!("cannot open the window: {e}"))?;
+    Ok(0)
 }

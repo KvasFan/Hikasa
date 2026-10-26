@@ -197,6 +197,7 @@ macro_rules! command_ids {
             pub const ALL: &'static [CommandId] = &[$(CommandId::$id,)*];
 
             /// The id as written in the reference (`DiffNext`, `FavCompareAll`, …).
+            #[cfg(test)]
             pub fn name(self) -> &'static str {
                 match self {
                     $(CommandId::$id => stringify!($id),)*

@@ -19,12 +19,13 @@ use hikasa_session::api::{
     FolderCompareRequest, FolderCompareResponse, PreparedFolderCompare, TextCompareRequest,
     ViewOutcome,
 };
-use hikasa_session::{ApiError, JobHandle, Service};
+use hikasa_session::{ApiError, Service};
 use hikasa_text::{TextDisplayFilter, ViewOptions};
 
 use crate::commands::{CommandId, Ctx};
+use crate::job::Job;
 
-/// Height of one tree row (px); the page lays rows out with the same value.
+/// Height of one tree row (logical px).
 pub const ROW_HEIGHT: u32 = 22;
 /// Rows rendered above and below the visible ones.
 const OVERSCAN: u32 = 12;
@@ -42,8 +43,8 @@ pub struct Cell {
     pub size: String,
     /// Modification time (UTC).
     pub modified: String,
-    /// Colour class (CSS class of the colour spot and the name).
-    pub colour: &'static str,
+    /// Colour class of the colour spot and the name (FC-031; the palette maps it to a colour).
+    pub colour: ColourClass,
 }
 
 /// One rendered tree row.
@@ -75,7 +76,7 @@ pub struct RowView {
     pub errors: String,
 }
 
-/// What the tree component renders.
+/// What the tree renders.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FolderWindow {
     /// Visible rows in total (scroll height).
@@ -99,11 +100,11 @@ pub struct FolderStatus {
 
 enum FolderState {
     /// `folder_prepare` runs (it may read rules files on a slow share, §1.10).
-    Preparing(JobHandle<PreparedFolderCompare>),
+    Preparing(Job<PreparedFolderCompare>),
     /// `folder_run` fills the live model.
     Running {
         prepared: PreparedFolderCompare,
-        job: JobHandle<FolderCompareResponse>,
+        job: Job<FolderCompareResponse>,
     },
     /// The scan returned (complete, or incomplete after Stop).
     Done {
@@ -221,13 +222,13 @@ impl FolderViewModel {
         wake: &Arc<dyn Fn() + Send + Sync>,
     ) -> FolderState {
         let request = request.clone();
-        let wake = Arc::clone(wake);
-        FolderState::Preparing(service.spawn(
+        FolderState::Preparing(Job::spawn(
+            service,
             JobKind::FolderCompare,
             "prepare folder comparison".into(),
+            wake,
             move |svc, job| {
                 let prepared = svc.folder_prepare(&request);
-                wake();
                 // Stop while preparing: no scan may start (the UI also drops this job's result).
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
@@ -257,14 +258,18 @@ impl FolderViewModel {
                 wake();
             });
         let job_prepared = prepared.clone();
-        let wake = Arc::clone(&self.wake);
         let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
-        let job = service.spawn(JobKind::FolderCompare, title, move |svc, job| {
-            let result = svc.folder_run(&job_prepared, job, &observer);
-            drop(observer);
-            wake();
-            result
-        });
+        let job = Job::spawn(
+            service,
+            JobKind::FolderCompare,
+            title,
+            &self.wake,
+            move |svc, job| {
+                let result = svc.folder_run(&job_prepared, job, &observer);
+                drop(observer);
+                result
+            },
+        );
         self.display.ignore_unimportant |= prepared.ignore_unimportant();
         self.state = FolderState::Running { prepared, job };
     }
@@ -296,6 +301,16 @@ impl FolderViewModel {
         match &self.state {
             FolderState::Done { response, .. } => Some(response),
             _ => None,
+        }
+    }
+
+    /// True while a job of the view has ended but its result is not published yet (the window looks again at
+    /// once).
+    pub fn settling(&self) -> bool {
+        match &self.state {
+            FolderState::Preparing(job) => job.settling(),
+            FolderState::Running { job, .. } => job.settling(),
+            _ => false,
         }
     }
 
@@ -336,6 +351,11 @@ impl FolderViewModel {
     #[cfg(test)]
     pub fn rows(&self) -> &[VisibleRow] {
         &self.rows
+    }
+
+    /// Number of visible rows (the tree's scroll height in rows).
+    pub fn visible_count(&self) -> u32 {
+        self.rows.len() as u32
     }
 
     /// Scan events received.
@@ -786,27 +806,24 @@ impl FolderViewModel {
     /// Header and status bar texts.
     pub fn status(&self) -> FolderStatus {
         let mut status = FolderStatus {
-            bases: [
-                self.titles[0]
-                    .clone()
-                    .unwrap_or_else(|| self.names[0].clone()),
-                self.titles[1]
-                    .clone()
-                    .unwrap_or_else(|| self.names[1].clone()),
-            ],
+            bases: [0, 1].map(|k| {
+                crate::shared::shown_path(self.titles[k].as_deref().unwrap_or(&self.names[k]))
+            }),
             ..FolderStatus::default()
         };
         match &self.state {
-            FolderState::Failed { error, .. } => status.error = Some(error.clone()),
+            FolderState::Failed { error, .. } => {
+                status.error = Some(crate::shared::shown_path(error))
+            }
             FolderState::Done { response, .. } if !response.warnings.is_empty() => {
-                status.error = Some(
-                    response
+                status.error = Some(crate::shared::shown_path(
+                    &response
                         .warnings
                         .iter()
                         .map(|w| w.message.as_str())
                         .collect::<Vec<_>>()
                         .join(" · "),
-                );
+                ));
             }
             _ => {}
         }
@@ -906,19 +923,6 @@ fn verdict_text(verdict: CompareVerdict) -> &'static str {
     }
 }
 
-/// CSS class of a colour (FC-031, D-55).
-pub fn colour_class(colour: ColourClass) -> &'static str {
-    match colour {
-        ColourClass::Same => "hk-c-eq",
-        ColourClass::NewerOrDifferent => "hk-c-diff",
-        ColourClass::Orphan => "hk-c-orph",
-        ColourClass::OlderOrUnknown => "hk-c-old",
-        ColourClass::Filtered => "hk-c-filt",
-        ColourClass::Error => "hk-c-err",
-        ColourClass::Absent => "hk-c-abs",
-    }
-}
-
 /// Centre symbol and tooltip of a category.
 fn mark(category: Category) -> (&'static str, &'static str) {
     match category {
@@ -965,7 +969,7 @@ fn row_view(
                 modified: e
                     .mtime
                     .map_or(String::new(), |t| time_text(&t.to_rfc3339())),
-                colour: colour_class(read.colour(row.node, side, iu)),
+                colour: read.colour(row.node, side, iu),
             }
         })
     };

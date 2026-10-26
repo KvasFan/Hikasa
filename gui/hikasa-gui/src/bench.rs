@@ -1,18 +1,18 @@
 //! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder`, see `main`): the window
-//! opens the command line's view, the page script drives it (scrolling the text canvas through the whole
-//! comparison, or scrolling the folder tree while the scan runs) and records its frame times; this module adds
-//! the first-screen marks, the UI thread's per-frame work and the memory of the GUI process and its web
-//! content processes (PSS summed, RSS of the GUI process), prints one JSON summary on stdout and quits.
+//! opens the command line's view and drives it frame by frame — scrolling the text panes through the whole
+//! comparison, or scrolling the folder tree while the scan runs — records the first-screen marks, the frame
+//! times (the UI thread's work per frame, the frame intervals and eframe's CPU time per frame) and the memory
+//! of the process (PSS and RSS), prints one JSON summary on stdout and quits.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use dioxus::prelude::{ReadableExt, WritableExt};
 use hikasa_session::ipc::ViewId;
 use serde_json::{Value, json};
 
-use crate::app::{UiMsg, ViewModel};
-use crate::mailbox::Mailbox;
-use crate::ui::Ui;
+use crate::app::{AppCore, ViewModel};
+use crate::ui::folder::FolderUi;
+use crate::ui::text::TextUi;
 
 /// Which benchmark runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,53 +23,140 @@ pub enum BenchKind {
     Folder,
 }
 
+/// One scroll phase of the text benchmark.
+#[derive(Debug, Clone, Copy)]
+struct PhaseSpec {
+    name: &'static str,
+    frames: u32,
+    step: Step,
+    wrap: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Step {
+    /// A fixed number of rows per frame (a mouse wheel).
+    Rows(f64),
+    /// A page per frame.
+    Page,
+    /// The whole comparison in the phase's frames.
+    Sweep,
+}
+
+const PHASES: &[PhaseSpec] = &[
+    PhaseSpec {
+        name: "wheel_3_lines_per_frame",
+        frames: 600,
+        step: Step::Rows(3.0),
+        wrap: true,
+    },
+    PhaseSpec {
+        name: "page_per_frame",
+        frames: 300,
+        step: Step::Page,
+        wrap: true,
+    },
+    PhaseSpec {
+        name: "sweep_whole_comparison",
+        frames: 1200,
+        step: Step::Sweep,
+        wrap: false,
+    },
+];
+
+/// Frames to let pass after the coloured screen before the first phase.
+const WARM_UP_FRAMES: u32 = 30;
+/// Folder benchmark: rows the tree scrolls per frame.
+const FOLDER_ROWS_PER_FRAME: f64 = 2.0;
+/// Folder benchmark: how long frames keep being drawn after the scan.
+const FOLDER_TAIL: Duration = Duration::from_millis(500);
+
+/// Samples of one series.
+#[derive(Debug, Default)]
+struct Samples {
+    work: Vec<f64>,
+    interval: Vec<f64>,
+    cpu: Vec<f64>,
+    slices: Vec<f64>,
+}
+
+impl Samples {
+    fn json(&self) -> Value {
+        json!({
+            "frame_work_ms": stats(&self.work),
+            "frame_interval_ms": stats(&self.interval),
+            "eframe_cpu_ms": stats(&self.cpu),
+            "slice_build_ms": stats(&self.slices),
+        })
+    }
+}
+
+#[derive(Debug)]
+enum Script {
+    /// Waiting for the view (text: its coloured screen) plus the warm-up frames.
+    Waiting(u32),
+    /// A text scroll phase runs.
+    Phase {
+        index: usize,
+        frame: u32,
+        started: Instant,
+        step: f64,
+        samples: Samples,
+    },
+    /// The folder tree scrolls while the scan runs.
+    Folder,
+    /// Finished: report and quit.
+    Done,
+}
+
 /// Benchmark state (UI thread).
 #[derive(Debug)]
 pub struct BenchState {
     kind: BenchKind,
-    mailbox: Mailbox<UiMsg>,
     process_start: Instant,
     view: Option<ViewId>,
     view_opened: Option<Instant>,
-    page_ready: Option<Instant>,
+    first_frame: Option<Instant>,
+    frame_start: Option<Instant>,
+    last_frame_start: Option<Instant>,
+    drawn_pending: [Option<()>; 2],
     first_screen: Option<Instant>,
     ready_screen: Option<Instant>,
-    started_script: bool,
-    stop_sent: Option<Instant>,
+    script: Script,
+    phases: Vec<Value>,
+    all: Samples,
+    scanning: Samples,
     scan_done: Option<Instant>,
-    ticks: Vec<f64>,
-    ticks_busy: Vec<f64>,
-    renders: Vec<f64>,
-    renders_busy: Vec<f64>,
-    slices: Vec<f64>,
-    script: Option<Value>,
-    memory: Option<Value>,
-    extra: Option<Value>,
+    renderer: Value,
+    window: Value,
+    reported: bool,
+    frames: u64,
+    first_frame_work: Option<f64>,
 }
 
 impl BenchState {
     /// A benchmark started at `process_start`.
-    pub fn new(kind: BenchKind, process_start: Instant, mailbox: Mailbox<UiMsg>) -> BenchState {
+    pub fn new(kind: BenchKind, process_start: Instant) -> BenchState {
         BenchState {
             kind,
-            mailbox,
             process_start,
             view: None,
             view_opened: None,
-            page_ready: None,
+            first_frame: None,
+            frame_start: None,
+            last_frame_start: None,
+            drawn_pending: [None, None],
             first_screen: None,
             ready_screen: None,
-            started_script: false,
-            stop_sent: None,
+            script: Script::Waiting(0),
+            phases: Vec::new(),
+            all: Samples::default(),
+            scanning: Samples::default(),
             scan_done: None,
-            ticks: Vec::new(),
-            ticks_busy: Vec::new(),
-            renders: Vec::new(),
-            renders_busy: Vec::new(),
-            slices: Vec::new(),
-            script: None,
-            memory: None,
-            extra: None,
+            renderer: Value::Null,
+            window: Value::Null,
+            reported: false,
+            frames: 0,
+            first_frame_work: None,
         }
     }
 
@@ -79,32 +166,214 @@ impl BenchState {
         self.view_opened = Some(Instant::now());
     }
 
-    /// One UI-thread message batch took `d`.
-    pub fn record_tick(&mut self, d: Duration, _changed: bool) {
-        let ms = d.as_secs_f64() * 1000.0;
-        if self.ticks.len() < 1_000_000 {
-            self.ticks.push(ms);
-            if self.scan_done.is_none() && self.kind == BenchKind::Folder {
-                self.ticks_busy.push(ms);
+    /// Records the renderer (adapter) the window runs on.
+    pub fn set_renderer(&mut self, renderer: Value) {
+        self.renderer = renderer;
+    }
+
+    /// A frame starts. A screen drawn in the previous frame has been presented now.
+    pub fn begin_frame(&mut self, cpu_of_last_frame: Option<f32>) {
+        let now = Instant::now();
+        self.first_frame.get_or_insert(now);
+        if self.drawn_pending[0].take().is_some() && self.first_screen.is_none() {
+            self.first_screen = Some(now);
+        }
+        if self.drawn_pending[1].take().is_some() && self.ready_screen.is_none() {
+            self.ready_screen = Some(now);
+        }
+        self.last_frame_start = self.frame_start.replace(now);
+        if let (Some(cpu), true) = (cpu_of_last_frame, self.frames >= 2) {
+            let ms = f64::from(cpu) * 1000.0;
+            if let Script::Phase { samples, .. } = &mut self.script {
+                samples.cpu.push(ms);
+            }
+            push(&mut self.all.cpu, ms);
+            if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+                push(&mut self.scanning.cpu, ms);
             }
         }
     }
 
-    /// One render of the root component took `d`.
-    pub fn record_render(&mut self, d: Duration) {
-        let ms = d.as_secs_f64() * 1000.0;
-        if self.renders.len() < 1_000_000 {
-            self.renders.push(ms);
-            if self.scan_done.is_none() && self.kind == BenchKind::Folder {
-                self.renders_busy.push(ms);
+    /// Moves the view under test before it is drawn (the script's step for this frame).
+    pub fn drive(
+        &mut self,
+        core: &AppCore,
+        texts: &mut HashMap<ViewId, TextUi>,
+        folders: &mut HashMap<ViewId, FolderUi>,
+    ) {
+        let Some(view) = self.view else {
+            return;
+        };
+        match self.kind {
+            BenchKind::Scroll => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Folder => {
+                let busy = core
+                    .tab(view)
+                    .is_some_and(|t| matches!(&t.model, ViewModel::Folder(m) if m.busy()));
+                if matches!(self.script, Script::Waiting(_)) {
+                    self.script = Script::Folder;
+                }
+                if !busy && self.scan_done.is_none() {
+                    self.scan_done = Some(Instant::now());
+                }
+                if let Some(st) = folders.get_mut(&view) {
+                    st.top = (st.top + FOLDER_ROWS_PER_FRAME).min(st.max_top());
+                }
+                if self.scan_done.is_some_and(|t| t.elapsed() >= FOLDER_TAIL) {
+                    self.script = Script::Done;
+                }
             }
         }
     }
 
-    /// Building one slice of rows (Rust side of a page request) took `d`.
-    pub fn record_slice(&mut self, d: Duration) {
-        if self.slices.len() < 1_000_000 {
-            self.slices.push(d.as_secs_f64() * 1000.0);
+    fn drive_text(&mut self, st: Option<&mut TextUi>) {
+        let Some(st) = st else {
+            return;
+        };
+        match &mut self.script {
+            Script::Waiting(n) => {
+                if self.ready_screen.is_some() {
+                    *n += 1;
+                    if *n >= WARM_UP_FRAMES {
+                        self.start_phase(0, st);
+                    }
+                }
+            }
+            Script::Phase {
+                index, frame, step, ..
+            } => {
+                let spec = PHASES[*index];
+                if *frame >= spec.frames {
+                    let next = *index + 1;
+                    self.finish_phase(st);
+                    if next < PHASES.len() {
+                        self.start_phase(next, st);
+                    } else {
+                        self.script = Script::Done;
+                    }
+                    return;
+                }
+                *frame += 1;
+                let max = st.max_top();
+                let mut top = st.top + *step;
+                if top > max + 0.5 {
+                    top = if spec.wrap { 0.0 } else { max };
+                }
+                st.top = top.clamp(0.0, max);
+            }
+            Script::Folder | Script::Done => {}
+        }
+    }
+
+    fn start_phase(&mut self, index: usize, st: &mut TextUi) {
+        let spec = PHASES[index];
+        let page = st.page_rows.max(1.0);
+        let step = match spec.step {
+            Step::Rows(n) => n,
+            Step::Page => (page - 1.0).max(1.0),
+            Step::Sweep => {
+                st.top = 0.0;
+                (st.max_top() / f64::from(spec.frames)).max(1.0)
+            }
+        };
+        self.script = Script::Phase {
+            index,
+            frame: 0,
+            started: Instant::now(),
+            step,
+            samples: Samples::default(),
+        };
+    }
+
+    fn finish_phase(&mut self, st: &TextUi) {
+        if let Script::Phase {
+            index,
+            frame,
+            started,
+            step,
+            samples,
+        } = &self.script
+        {
+            let spec = PHASES[*index];
+            let seconds = started.elapsed().as_secs_f64();
+            let mut phase = json!({
+                "name": spec.name,
+                "frames": frame,
+                "step_rows": round(*step),
+                "seconds": round(seconds),
+                "fps": (f64::from(*frame) / seconds.max(1e-9) * 10.0).round() / 10.0,
+                "visible_rows": st.page_rows,
+            });
+            if let (Some(obj), Value::Object(extra)) = (phase.as_object_mut(), samples.json()) {
+                obj.extend(extra);
+            }
+            self.phases.push(phase);
+        }
+    }
+
+    /// A frame's UI work is done: `work` is the UI thread's time from the start of the frame (messages, jobs,
+    /// tree rebuilds, layout, painting commands); the text view tells what it drew.
+    pub fn end_frame(&mut self, texts: &HashMap<ViewId, TextUi>) {
+        let Some(start) = self.frame_start else {
+            return;
+        };
+        let work = start.elapsed().as_secs_f64() * 1000.0;
+        let interval = self
+            .last_frame_start
+            .map(|last| start.duration_since(last).as_secs_f64() * 1000.0);
+        let text = self.view.and_then(|v| texts.get(&v));
+        if let Some(st) = text {
+            if st.drawn >= 1 && self.first_screen.is_none() {
+                self.drawn_pending[0] = Some(());
+            }
+            if st.drawn >= 2 && self.ready_screen.is_none() {
+                self.drawn_pending[1] = Some(());
+            }
+        }
+        let slice = text.and_then(|st| st.slice_ms);
+        self.frames += 1;
+        if self.frames == 1 {
+            // The window's first frame builds egui's font atlas and pipelines: reported on its own (also the
+            // interval that ends with it, in the next frame).
+            self.first_frame_work = Some(work);
+            return;
+        }
+        let interval = interval.filter(|_| self.frames > 2);
+        push(&mut self.all.work, work);
+        if let Some(i) = interval {
+            push(&mut self.all.interval, i);
+        }
+        if let Some(s) = slice {
+            push(&mut self.all.slices, s);
+        }
+        if let Script::Phase { samples, frame, .. } = &mut self.script
+            && *frame > 0
+        {
+            samples.work.push(work);
+            if let Some(i) = interval {
+                samples.interval.push(i);
+            }
+            if let Some(s) = slice {
+                samples.slices.push(s);
+            }
+        }
+        if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+            push(&mut self.scanning.work, work);
+            if let Some(i) = interval {
+                push(&mut self.scanning.interval, i);
+            }
+        }
+    }
+
+    /// True once the script finished (the window then reports and quits).
+    pub fn finished(&self) -> bool {
+        matches!(self.script, Script::Done)
+    }
+
+    /// The window's size and scale, for the report.
+    pub fn set_window(&mut self, window: Value) {
+        if self.window.is_null() {
+            self.window = window;
         }
     }
 
@@ -123,28 +392,25 @@ impl BenchState {
         }
     }
 
-    /// The JSON summary (printed when the process quits).
-    pub fn final_report(&self) -> Option<String> {
+    /// The JSON summary (once; `None` afterwards).
+    pub fn final_report(&mut self, core: &AppCore) -> Option<String> {
+        if self.reported {
+            return None;
+        }
+        self.reported = true;
         let mut report = json!({
             "bench": match self.kind { BenchKind::Scroll => "text_scroll", BenchKind::Folder => "folder_scan" },
-            "memory": self.memory.clone().unwrap_or(Value::Null),
-            "ui_thread_ms": {
-                "message_batches": stats(&self.ticks),
-                "root_renders": stats(&self.renders),
-            },
-            "page": self.script.clone().unwrap_or(Value::Null),
+            "memory": memory(),
+            "renderer": self.renderer.clone(),
+            "window": self.window.clone(),
+            "first_frame_ms_from_process_start": self.since_start(self.first_frame),
+            "first_frame_work_ms": self.first_frame_work.map(round),
+            "frames": self.all.json(),
+            "view": self.view.and_then(|v| view_summary(core, v)).unwrap_or(Value::Null),
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
                 BenchKind::Scroll => {
-                    obj.insert(
-                        "page_ready_ms".into(),
-                        json!({
-                            "from_process_start": self.since_start(self.page_ready),
-                            "from_view_open": self.since_view(self.page_ready),
-                        }),
-                    );
-                    obj.insert("slice_build_ms".into(), stats(&self.slices));
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({
@@ -159,26 +425,28 @@ impl BenchState {
                             "from_view_open": self.since_view(self.ready_screen),
                         }),
                     );
+                    obj.insert("phases".into(), Value::Array(self.phases.clone()));
                 }
                 BenchKind::Folder => {
                     obj.insert(
                         "scan_ms_from_view_open".into(),
                         self.since_view(self.scan_done),
                     );
-                    obj.insert(
-                        "ui_thread_ms_while_scanning".into(),
-                        json!({
-                            "message_batches": stats(&self.ticks_busy),
-                            "root_renders": stats(&self.renders_busy),
-                        }),
-                    );
+                    let mut scanning = self.scanning.json();
+                    if let Some(s) = scanning.as_object_mut() {
+                        s.insert("frames".into(), json!(self.scanning.work.len()));
+                    }
+                    obj.insert("while_scanning".into(), scanning);
                 }
-            }
-            if let Some(extra) = &self.extra {
-                obj.insert("view".into(), extra.clone());
             }
         }
         serde_json::to_string(&report).ok()
+    }
+}
+
+fn push(v: &mut Vec<f64>, x: f64) {
+    if v.len() < 1_000_000 {
+        v.push(x);
     }
 }
 
@@ -206,55 +474,9 @@ pub fn stats(samples: &[f64]) -> Value {
     })
 }
 
-/// The page drew a screen of `view` in `phase` (1: the loaded text, unaligned; 2: the aligned comparison with
-/// syntax colours).
-pub fn drawn(ui: Ui, view: u64, phase: u32) {
-    {
-        let mut bench = ui.bench;
-        let mut guard = bench.write();
-        let Some(b) = guard.as_mut() else {
-            return;
-        };
-        if b.view != Some(ViewId(view)) {
-            return;
-        }
-        let now = Instant::now();
-        if b.page_ready.is_none() {
-            b.page_ready = Some(now);
-        }
-        if phase >= 1 && b.first_screen.is_none() {
-            b.first_screen = Some(now);
-        }
-        if phase >= 2 && b.ready_screen.is_none() {
-            b.ready_screen = Some(now);
-        }
-    }
-    // The UI may be idle now (no job, no tick): start the script from here.
-    after_frame(ui);
-}
-
-/// The page script finished: keep its results, measure memory and quit.
-pub fn results(ui: Ui, body: &[u8]) {
-    let script: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
-    let extra = view_summary(ui);
-    {
-        let mut bench = ui.bench;
-        let mut guard = bench.write();
-        let Some(b) = guard.as_mut() else {
-            return;
-        };
-        b.script = Some(script);
-        b.memory = Some(memory());
-        b.extra = extra;
-    }
-    ui.act(|app| app.shutdown());
-}
-
 /// Facts about the view under test (rows, timings, rebuilds).
-fn view_summary(ui: Ui) -> Option<Value> {
-    let view = ui.bench.read().as_ref()?.view?;
-    let app = ui.app.read();
-    let tab = app.tab(view)?;
+fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
+    let tab = core.tab(view)?;
     Some(match &tab.model {
         ViewModel::Text(m) => {
             let (loaded, ready) = m.timings();
@@ -275,16 +497,16 @@ fn view_summary(ui: Ui) -> Option<Value> {
             })
         }
         ViewModel::Folder(m) => {
-            let stats = m.rebuild_stats();
+            let rebuild = m.rebuild_stats();
             let files = m.prepared().map(|p| {
                 let read = p.model().read();
                 let s = read.stats(false);
                 (s.left.files, s.right.files)
             });
             json!({
-                "visible_rows": stats.rows,
-                "rebuilds_while_scanning": stats.during_scan,
-                "rebuild_ms": self::stats(&stats.samples),
+                "visible_rows": rebuild.rows,
+                "rebuilds_while_scanning": rebuild.during_scan,
+                "rebuild_ms": stats(&rebuild.samples),
                 "scan_events": m.events(),
                 "files": files.map(|f| [f.0, f.1]),
                 "scan_ms": m.finished_after().map(|d| d.as_millis() as u64),
@@ -294,96 +516,18 @@ fn view_summary(ui: Ui) -> Option<Value> {
     })
 }
 
-/// Called after every UI message batch: starts the page script when the view is ready, stops the folder
-/// script after the scan.
-pub fn after_frame(ui: Ui) {
-    let (kind, view, started, ready, stop_sent, scan_done) = {
-        let bench = ui.bench.read();
-        let Some(b) = bench.as_ref() else {
-            return;
-        };
-        (
-            b.kind,
-            b.view,
-            b.started_script,
-            b.ready_screen.is_some(),
-            b.stop_sent,
-            b.scan_done,
-        )
-    };
-    let Some(view) = view else {
-        return;
-    };
-    match kind {
-        BenchKind::Scroll => {
-            if ready && !started {
-                let _ = dioxus::document::eval(&format!(
-                    "window.hikasa && window.hikasa.benchScroll({})",
-                    view.0
-                ));
-                mark_started(ui);
-            }
-        }
-        BenchKind::Folder => {
-            if !started {
-                let _ = dioxus::document::eval(&format!(
-                    "window.hikasa && window.hikasa.benchFolder({})",
-                    view.0
-                ));
-                mark_started(ui);
-                return;
-            }
-            let busy = ui
-                .app
-                .read()
-                .tab(view)
-                .is_some_and(|t| matches!(&t.model, ViewModel::Folder(m) if m.busy()));
-            let mut bench = ui.bench;
-            if !busy
-                && scan_done.is_none()
-                && let Some(b) = bench.write().as_mut()
-            {
-                b.scan_done = Some(Instant::now());
-                let _ =
-                    dioxus::document::eval("window.hikasa && window.hikasa.benchFolderScanDone()");
-                // The ticker stops with the scan: wake the UI once more to stop the page script.
-                let mailbox = b.mailbox.clone();
-                let _ = std::thread::Builder::new()
-                    .name("hikasa-gui-bench".into())
-                    .spawn(move || {
-                        std::thread::sleep(Duration::from_millis(600));
-                        mailbox.post(UiMsg::Wake);
-                    });
-            }
-            // Let the last rebuilds reach the page, then stop the script.
-            if let Some(done) = scan_done
-                && stop_sent.is_none()
-                && done.elapsed() >= Duration::from_millis(500)
-            {
-                let _ = dioxus::document::eval("window.hikasa && window.hikasa.benchFolderStop()");
-                if let Some(b) = bench.write().as_mut() {
-                    b.stop_sent = Some(Instant::now());
-                }
-            }
-        }
-    }
-}
-
-fn mark_started(ui: Ui) {
-    let mut bench = ui.bench;
-    if let Some(b) = bench.write().as_mut() {
-        b.started_script = true;
-    }
-}
-
 /// The ARCH-GUI-003 memory limit: 400 MB (decimal) in MiB.
 pub const LIMIT_MIB: f64 = 400.0 * 1_000_000.0 / 1_048_576.0;
 
-/// Memory of this process and of its descendants (the web content and network processes), in MiB
-/// (1 MiB = 1,048,576 bytes). The multi-process figure is the sum of the *proportional* set sizes (PSS,
-/// `/proc/<pid>/smaps_rollup`): pages shared between the processes (the WebKit and GTK libraries, shared
-/// buffers) count once in total, split between their users; summed RSS would count them once per process.
-/// RSS is kept alongside, and the GUI process's own RSS is reported separately.
+/// Memory of this process and of any descendants, in MiB (1 MiB = 1,048,576 bytes). The total is the sum of
+/// the *proportional* set sizes (PSS): pages shared with other processes (the graphics driver, system
+/// libraries) count with their share; RSS (which counts them in full) is kept alongside, and the GUI
+/// process's own RSS is reported separately.
+///
+/// Sources: PSS and RSS come from one `/proc/<pid>/smaps_rollup` snapshot (exact page walk, so the two are
+/// comparable); the peak comes from `VmHWM` in `/proc/<pid>/status`, the only peak the kernel keeps. `VmHWM`
+/// (like `VmRSS`) is maintained from per-CPU batched counters, so it is labelled approximate and never
+/// compared with the smaps figures.
 pub fn memory() -> Value {
     let me = std::process::id();
     let own = status_of(me);
@@ -408,6 +552,7 @@ pub fn memory() -> Value {
         "gui_rss_mib": mib(own.rss_kib),
         "gui_peak_rss_mib": mib(own.hwm_kib),
         "gui_pss_mib": mib(own.pss_kib),
+        "gui_pss_anon_mib": mib(own.pss_anon_kib),
         "total_pss_mib": mib(pss),
         "total_rss_mib": mib(rss),
         "total_peak_rss_mib": mib(hwm),
@@ -425,16 +570,18 @@ struct ProcStatus {
     rss_kib: u64,
     hwm_kib: u64,
     pss_kib: u64,
+    pss_anon_kib: u64,
 }
 
-/// `Name`, `VmRSS` and `VmHWM` from `/proc/<pid>/status`, `Pss` from `/proc/<pid>/smaps_rollup`.
+/// `Name` and `VmHWM` (approximate peak) from `/proc/<pid>/status`; `Rss`, `Pss` and `Pss_Anon` from one
+/// `/proc/<pid>/smaps_rollup` snapshot.
 fn status_of(pid: u32) -> ProcStatus {
     let mut out = ProcStatus::default();
     if let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
         parse_status(&text, &mut out);
     }
     if let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")) {
-        out.pss_kib = kib_field(&text, "Pss:").unwrap_or(0);
+        parse_rollup(&text, &mut out);
     }
     out
 }
@@ -443,8 +590,13 @@ fn parse_status(text: &str, out: &mut ProcStatus) {
     if let Some(name) = text.lines().find_map(|l| l.strip_prefix("Name:")) {
         out.name = name.trim().to_owned();
     }
-    out.rss_kib = kib_field(text, "VmRSS:").unwrap_or(0);
     out.hwm_kib = kib_field(text, "VmHWM:").unwrap_or(0);
+}
+
+fn parse_rollup(text: &str, out: &mut ProcStatus) {
+    out.rss_kib = kib_field(text, "Rss:").unwrap_or(0);
+    out.pss_kib = kib_field(text, "Pss:").unwrap_or(0);
+    out.pss_anon_kib = kib_field(text, "Pss_Anon:").unwrap_or(0);
 }
 
 /// The kB value of the line starting with `key` (`Pss:   1234 kB`).
@@ -512,29 +664,40 @@ mod tests {
     fn memory_of_this_process() {
         let m = memory();
         if cfg!(target_os = "linux") {
-            assert!(m["gui_rss_mib"].as_f64().unwrap_or(0.0) > 0.0, "{m}");
-            let pss = m["gui_pss_mib"].as_f64().unwrap_or(0.0);
-            assert!(
-                pss > 0.0 && pss <= m["gui_rss_mib"].as_f64().unwrap_or(0.0),
-                "{m}"
-            );
+            // Every figure is present; no ordering is asserted between them: PSS and RSS are one smaps
+            // snapshot but rounded separately, and the peak comes from a different (batched) kernel counter.
+            for key in [
+                "gui_rss_mib",
+                "gui_pss_mib",
+                "gui_peak_rss_mib",
+                "total_pss_mib",
+            ] {
+                assert!(m[key].as_f64().unwrap_or(0.0) > 0.0, "{key}: {m}");
+            }
         }
         assert!((LIMIT_MIB - 381.47).abs() < 0.01);
     }
 
     #[test]
     fn proc_fields_parse() {
-        let rollup = "55d0-7ffc ---p 00000000 00:00 0  [rollup]\nRss:              164000 kB\nPss:              117760 kB\n";
+        let rollup = "55d0-7ffc ---p 00000000 00:00 0  [rollup]\nRss:              164000 kB\nPss:              117760 kB\nPss_Anon:          90000 kB\n";
         assert_eq!(kib_field(rollup, "Pss:"), Some(117_760));
-        assert_eq!(kib_field(rollup, "Pss_Anon:"), None);
+        assert_eq!(kib_field(rollup, "Pss_Anon:"), Some(90_000));
+        assert_eq!(kib_field(rollup, "Pss_File:"), None);
         let mut s = ProcStatus::default();
         parse_status(
-            "Name:\tWebKitWebProcess\nVmHWM:\t  2048 kB\nVmRSS:\t  1024 kB\n",
+            "Name:\thikasa-gui\nVmHWM:\t  2048 kB\nVmRSS:\t  1024 kB\n",
             &mut s,
         );
+        // RSS is not taken from the batched `VmRSS` counter.
         assert_eq!(
             (s.name.as_str(), s.rss_kib, s.hwm_kib),
-            ("WebKitWebProcess", 1024, 2048)
+            ("hikasa-gui", 0, 2048)
+        );
+        parse_rollup(rollup, &mut s);
+        assert_eq!(
+            (s.rss_kib, s.pss_kib, s.pss_anon_kib),
+            (164_000, 117_760, 90_000)
         );
         assert_eq!(mib(117_760), 115.0);
     }

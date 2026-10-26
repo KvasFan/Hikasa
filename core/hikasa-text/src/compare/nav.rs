@@ -41,12 +41,36 @@ impl TextComparison {
         dir: Direction,
         ignore_unimportant: bool,
     ) -> Option<SectionId> {
+        self.find_section(from, dir, ignore_unimportant, false)
+    }
+
+    /// Like [`next_section`](Self::next_section), but going forward a section that *starts at* `from` counts
+    /// as the next one: navigation from a position that is not a cursor, such as the first row on screen
+    /// (TC-050). Backward is the same as `next_section`. Additive API (wave 6b, §1.5.7).
+    pub fn next_section_from(
+        &self,
+        from: RowIdx,
+        dir: Direction,
+        ignore_unimportant: bool,
+    ) -> Option<SectionId> {
+        self.find_section(from, dir, ignore_unimportant, true)
+    }
+
+    fn find_section(
+        &self,
+        from: RowIdx,
+        dir: Direction,
+        ignore_unimportant: bool,
+        inclusive: bool,
+    ) -> Option<SectionId> {
         let wanted = |k: &usize| {
             !ignore_unimportant || self.sections[*k].importance == Importance::Important
         };
         let k = match dir {
             Direction::Forward => {
-                let first = self.sections.partition_point(|s| s.rows.start <= from.0);
+                let first = self.sections.partition_point(|s| {
+                    s.rows.start < from.0 || (!inclusive && s.rows.start == from.0)
+                });
                 (first..self.sections.len()).find(wanted)
             }
             Direction::Backward => {

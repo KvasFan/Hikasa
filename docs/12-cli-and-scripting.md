@@ -418,7 +418,9 @@ summary` with a warm cache; threshold < 1.5 s. Measured on 2026-10-25 (AMD Ryzen
 | G1 | `text compare` of an identical pair | 0.355 s (0.342–0.370) | 276 MiB |
 | G2 | `folder compare … --report summary` (warm) | 0.047 s (0.046–0.047) | 31 MiB |
 | G2 | `folder compare … --json` (warm, for the record) | 0.057 s | — |
+| G2 | `folder compare … --content none --report summary` (**cold**, page cache dropped) | 0.694 s (warm in the same run 0.275 s) | — |
 
 The machine was not idle (unrelated builds, load average 5–9): the figures are the run
-with a small spread; a disturbed run stayed below 1.3 s for G1. The cold G2 figure (< 5 s after dropping the caches) needs root and was not measured;
-no CI job runs these tests.
+with a small spread; a disturbed run stayed below 1.3 s for G1. The cold G2 figure (gate < 5 s) was measured on 2026-10-26 by the maintainer with
+`sync; echo 3 > /proc/sys/vm/drop_caches` (root) right before the run, on btrfs over NVMe: 0.694 s, exit 13 as
+expected (one file in 997 differs). No CI job runs these tests.

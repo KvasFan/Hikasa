@@ -1,425 +1,360 @@
-//! The Dioxus layer (ARCH-GUI-001): the window chrome (menu bar, tabs, toolbar, status bar) generated from the
-//! command catalogue, the Home form, the folder tree and the text canvas host. It renders snapshots of the
-//! [`AppCore`] and turns events into catalogue commands; it decides nothing itself.
+//! The egui layer (ARCH-GUI-001): one native window with the menu bar, tabs, toolbar and status bar generated
+//! from the command catalogue, the Home form, and the custom-painted folder tree and text panes. It renders the
+//! [`AppCore`] every frame and turns input into catalogue commands; it decides nothing itself (ARCH-L3).
+//!
+//! The window repaints on demand: the mailbox's notifier is `Context::request_repaint`, so an IPC request or a
+//! job's news wakes it; while a job runs it also polls at a low rate (the status line shows progress).
 
-mod folder;
-mod home;
-mod text;
+pub mod folder;
+pub mod home;
+pub mod keys;
+pub mod scroll;
+pub mod text;
+pub mod theme;
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use dioxus::desktop::{AssetRequest, RequestAsyncResponder, use_asset_handler};
-use dioxus::prelude::*;
-use parking_lot::Mutex;
+use egui::{
+    Align, AtomExt as _, Button, ComboBox, Frame, Layout, Margin, RichText, Ui, ViewportCommand,
+    vec2,
+};
+use hikasa_session::HIKASA_VERSION;
+use hikasa_session::ipc::{CloseReason, ViewId};
 
 use crate::app::{AppCore, Effect, UiMsg, ViewModel};
 use crate::bench::BenchState;
 use crate::commands::{
-    self, Command, CommandId, GROUP_FILTER, GROUP_FOLDER_MODE, GROUP_TOGGLES, KeyOrigin, Menu,
-    Scope, Shortcut,
+    self, Command, CommandId, Ctx, GROUP_FILTER, GROUP_FOLDER_MODE, GROUP_TOGGLES, KeyOrigin, Menu,
+    Scope,
 };
-use crate::mailbox::{Mailbox, Ticker};
+use crate::mailbox::Mailbox;
+use crate::ui::folder::FolderUi;
+use crate::ui::text::TextUi;
+use crate::ui::theme::Palette;
 
-/// Frame interval of the job ticker.
-const FRAME: Duration = Duration::from_millis(16);
+/// How often the window looks at running jobs when nothing else wakes it.
+const BUSY_POLL: Duration = Duration::from_millis(100);
+/// How soon the window looks again when a job has ended but its result is not published yet.
+const SETTLE_POLL: Duration = Duration::from_millis(1);
+/// Longest tab caption (chars).
+const TAB_CAPTION: usize = 40;
 
-/// What `main` hands to the root component (taken once).
-pub struct StartupData {
-    /// The application core.
-    pub app: AppCore,
-    /// The UI mailbox (IPC handler, jobs, the window's close button post to it).
-    pub mailbox: Mailbox<UiMsg>,
-    /// Benchmark mode.
-    pub bench: Option<BenchState>,
+/// Something the chrome asked for while it was drawn (done after drawing).
+enum Action {
+    Run(CommandId),
+    Activate(usize),
+    CloseTab(usize),
+    Dismiss,
 }
 
-/// The startup data as a context value (`Clone + Send + Sync` for the launcher).
-#[derive(Clone)]
-pub struct Startup(pub Arc<Mutex<Option<StartupData>>>);
-
-/// Handles shared by every component (all `Copy`).
-#[derive(Clone, Copy)]
-pub struct Ui {
-    /// The core (not reactive: `rev` re-renders).
-    pub app: CopyValue<AppCore>,
-    /// Bumped after every change; the root reads it.
-    pub rev: Signal<u64>,
-    /// The open menu.
-    pub menu: Signal<Option<Menu>>,
-    /// Benchmark state.
-    pub bench: CopyValue<Option<BenchState>>,
+/// The eframe application.
+pub struct HikasaApp {
+    core: AppCore,
+    mailbox: Mailbox<UiMsg>,
+    texts: HashMap<ViewId, TextUi>,
+    folders: HashMap<ViewId, FolderUi>,
+    bench: Option<BenchState>,
+    hint: Option<&'static str>,
+    closing: bool,
 }
 
-impl Ui {
-    /// Runs `f` on the core, applies its effects and re-renders.
-    pub fn act(mut self, f: impl FnOnce(&mut AppCore) -> Vec<Effect>) {
-        let effects = {
-            let mut app = self.app.write();
-            f(&mut app)
-        };
-        self.apply(effects);
-        self.rev += 1;
+impl HikasaApp {
+    /// The application for the window `cc`; the mailbox wakes the window from now on.
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        core: AppCore,
+        mailbox: Mailbox<UiMsg>,
+        mut bench: Option<BenchState>,
+    ) -> HikasaApp {
+        let ctx = cc.egui_ctx.clone();
+        mailbox.set_notifier(Arc::new(move || ctx.request_repaint()));
+        // Ctrl+plus/minus/0 are the text views' font commands, not egui's zoom.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        if let Some(b) = bench.as_mut() {
+            let renderer = cc.wgpu_render_state.as_ref().map(|rs| {
+                let info = rs.adapter.get_info();
+                serde_json::json!({
+                    "backend": format!("{:?}", info.backend),
+                    "adapter": info.name,
+                    "driver": info.driver,
+                    "device_type": format!("{:?}", info.device_type),
+                })
+            });
+            b.set_renderer(renderer.unwrap_or(serde_json::Value::Null));
+        }
+        HikasaApp {
+            core,
+            mailbox,
+            texts: HashMap::new(),
+            folders: HashMap::new(),
+            bench,
+            hint: None,
+            closing: false,
+        }
     }
 
-    /// Executes a catalogue command.
-    pub fn command(self, id: CommandId) {
-        self.act(|app| app.execute(id));
-    }
-
-    /// Applies effects.
-    pub fn apply(self, effects: Vec<Effect>) {
+    /// Applies the core's effects.
+    fn apply(&mut self, ctx: &egui::Context, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::TextDirty(view) => {
-                    let _ = document::eval(&format!(
-                        "window.hikasa && window.hikasa.textDirty({})",
-                        view.0
-                    ));
-                }
-                Effect::FolderScroll(view, index) => {
-                    let _ = document::eval(&format!(
-                        "window.hikasa && window.hikasa.folderScrollTo({}, {index}, {})",
-                        view.0,
-                        crate::folder_view::ROW_HEIGHT
-                    ));
+                Effect::TextDirty(view) => self.texts.entry(view).or_default().mark_dirty(),
+                Effect::FolderScroll(view, row) => {
+                    self.folders.entry(view).or_default().scroll_to(row);
                 }
                 Effect::Exit => {
-                    let mut bench = self.bench;
-                    let report = bench.write().take().and_then(|b| b.final_report());
-                    if let Some(report) = report {
-                        println!("{report}");
+                    if !self.closing {
+                        self.closing = true;
+                        if let Some(report) =
+                            self.bench.as_mut().and_then(|b| b.final_report(&self.core))
+                        {
+                            println!("{report}");
+                        }
                     }
-                    std::process::exit(0);
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
             }
         }
+        ctx.request_repaint();
     }
-}
 
-/// The root component.
-pub fn root() -> Element {
-    let startup = use_context::<Startup>();
-    let ui = use_hook(|| {
-        let data = startup.0.lock().take();
-        let (app, mailbox, bench) = match data {
-            Some(d) => (d.app, d.mailbox, d.bench),
-            None => {
-                // A second root (never happens): nothing to run.
-                return None;
+    fn act(&mut self, ctx: &egui::Context, action: Action) {
+        let effects = match action {
+            Action::Run(id) => self.core.execute(id),
+            Action::Activate(index) => {
+                self.core.activate(index);
+                Vec::new()
+            }
+            Action::CloseTab(index) => {
+                self.core.close_tab(index, CloseReason::User);
+                self.core.dirty_effects()
+            }
+            Action::Dismiss => {
+                self.core.dismiss_message();
+                Vec::new()
             }
         };
-        let ui = Ui {
-            app: CopyValue::new(app),
-            rev: Signal::new(0),
-            menu: Signal::new(None),
-            bench: CopyValue::new(bench),
-        };
-        spawn(event_loop(ui, mailbox));
-        Some(ui)
-    });
-    let Some(ui) = ui else {
-        return rsx! {};
-    };
-    use_context_provider(|| ui);
-    use_asset_handler(
-        "hk",
-        move |request: AssetRequest, responder: RequestAsyncResponder| {
-            crate::rpc::handle(ui, &request, responder);
-        },
-    );
-    let render_began = Instant::now();
-    let _rev = (ui.rev)();
-    let element = render_app(ui);
-    let mut bench = ui.bench;
-    if let Some(bench) = bench.write().as_mut() {
-        bench.record_render(render_began.elapsed());
+        self.apply(ctx, effects);
     }
-    element
-}
 
-/// The UI thread's loop: messages from the IPC handler, the jobs and the ticker.
-async fn event_loop(ui: Ui, mailbox: Mailbox<UiMsg>) {
-    let ticks = mailbox.clone();
-    let ticker = Ticker::start(FRAME, move || ticks.post(UiMsg::Tick));
-    loop {
-        let msg = mailbox.next().await;
-        let began = Instant::now();
-        let tick = matches!(msg, UiMsg::Tick);
-        let mut app = ui.app;
-        let before = app.read().revision();
-        let mut effects = app.write().handle(msg);
-        // Handle whatever else is queued in the same frame.
-        for msg in mailbox.drain() {
-            let tick_again = matches!(msg, UiMsg::Tick);
-            effects.extend(app.write().handle(msg));
-            if tick_again {
-                ticker.ticked();
-            }
-        }
-        if tick {
-            ticker.ticked();
-        }
-        let (after, busy) = {
-            let app = app.read();
-            (app.revision(), app.busy())
-        };
-        ticker.set_busy(busy);
-        let changed = after != before;
-        let mut bench_ui = ui.bench;
-        if let Some(bench) = bench_ui.write().as_mut() {
-            bench.record_tick(began.elapsed(), changed);
-        }
-        ui.apply(effects);
-        if changed {
-            let mut rev = ui.rev;
-            rev += 1;
-        }
-        crate::bench::after_frame(ui);
+    /// Catalogue shortcuts handled at the window root (everything but the focus-bound keys, which the folder
+    /// tree takes while it has the focus, UI-003). The keys are removed from the input, so no widget sees them.
+    fn shortcuts(&self, ctx: &egui::Context) -> Vec<Action> {
+        let scope = self.core.scope();
+        let state = self.core.ctx();
+        let mut run = Vec::new();
+        ctx.input_mut(|i| {
+            i.events.retain(|event| {
+                let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    return true;
+                };
+                let Some(shortcut) = keys::shortcut_of(*key, *modifiers) else {
+                    return true;
+                };
+                match commands::shortcut_command(scope, shortcut, KeyOrigin::Window) {
+                    Some(c) if c.enabled_when.holds(&state) => {
+                        run.push(Action::Run(c.id));
+                        false
+                    }
+                    _ => true,
+                }
+            });
+        });
+        run
     }
-}
 
-fn render_app(ui: Ui) -> Element {
-    let app = ui.app.read();
-    let scope = app.scope();
-    let ctx = app.ctx();
-    // Reading the signal subscribes the root: opening a menu re-renders.
-    let open_menu = (ui.menu)();
-    let tabs: Vec<(usize, String, bool)> = app
-        .tabs()
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (i, t.caption(), i == app.active()))
-        .collect();
-    let message = app.message().map(str::to_owned);
-    let content = match app.active_tab().map(|t| (&t.model, t.id)) {
-        Some((ViewModel::Home(home), _)) => {
-            let home = home.clone();
-            rsx! { home::HomePane { home } }
-        }
-        Some((ViewModel::Folder(m), id)) => {
-            let window = m.window();
-            let status = m.status();
-            rsx! { folder::FolderPane { key: "{id.0}", view: id.0, window, status } }
-        }
-        Some((ViewModel::Text(m), id)) => {
-            let status = m.status();
-            rsx! { text::TextPane { key: "{id.0}", view: id.0, status } }
-        }
-        None => rsx! {},
-    };
-    drop(app);
-    frame(ui, scope, ctx, open_menu, tabs, message, content)
-}
-
-/// The window frame around the active view.
-fn frame(
-    ui: Ui,
-    scope: Scope,
-    ctx: commands::Ctx,
-    open_menu: Option<Menu>,
-    tabs: Vec<(usize, String, bool)>,
-    message: Option<String>,
-    content: Element,
-) -> Element {
-    let checked = |id: CommandId| ui.app.read().checked(id);
-    let toolbar: Vec<&'static Command> = commands::toolbar(scope);
-    let plain: Vec<&'static Command> = toolbar.iter().copied().filter(|c| c.group == 0).collect();
-    let toggles: Vec<&'static Command> = toolbar
-        .iter()
-        .copied()
-        .filter(|c| c.group == GROUP_TOGGLES)
-        .collect();
-    let presets: Vec<&'static Command> = commands::commands_for(scope)
-        .filter(|c| c.group == GROUP_FILTER)
-        .collect();
-    let modes: Vec<&'static Command> = commands::commands_for(scope)
-        .filter(|c| c.group == GROUP_FOLDER_MODE)
-        .collect();
-    let current_preset = presets.iter().position(|c| checked(c.id) == Some(true));
-    let current_mode = modes.iter().position(|c| checked(c.id) == Some(true));
-    let iu = checked(CommandId::InsigIgnored);
-    rsx! {
-        div {
-            class: "hk-app",
-            tabindex: "0",
-            // Keyboard shortcuts work before the first click.
-            onmounted: move |evt: MountedEvent| async move {
-                let _ = evt.set_focus(true).await;
-            },
-            // Shortcuts that focused controls do not use themselves (plain Enter and arrows stay with the
-            // focused button, list or field; the tree takes them itself).
-            onkeydown: move |evt: KeyboardEvent| {
-                key_command(ui, &evt, KeyOrigin::Window);
-            },
-            onclick: move |_| {
-                let mut menu = ui.menu;
-                if menu.peek().is_some() {
-                    menu.set(None);
+    fn menu_bar(&mut self, ui: &mut Ui, state: &Ctx, actions: &mut Vec<Action>) {
+        let scope = self.core.scope();
+        egui::MenuBar::new().ui(ui, |ui| {
+            for menu in Menu::ORDER {
+                let items = commands::menu_items(scope, menu);
+                if items.is_empty() {
+                    continue;
                 }
-            },
-            // Menu bar
-            div { class: "hk-menubar",
-                for m in Menu::ORDER {
-                    if !commands::menu_items(scope, m).is_empty() {
-                        div { class: "hk-menu",
-                            button {
-                                class: if open_menu == Some(m) { "hk-menu-title hk-open" } else { "hk-menu-title" },
-                                onclick: move |evt: MouseEvent| {
-                                    evt.stop_propagation();
-                                    let mut menu = ui.menu;
-                                    let next = if *menu.peek() == Some(m) { None } else { Some(m) };
-                                    menu.set(next);
-                                },
-                                "{m.caption()}"
-                            }
-                            if open_menu == Some(m) {
-                                div { class: "hk-dropdown",
-                                    for c in commands::menu_items(scope, m) {
-                                        {menu_item(ui, c, c.enabled_when.holds(&ctx), checked(c.id))}
-                                    }
-                                }
-                            }
+                ui.menu_button(menu.caption(), |ui| {
+                    ui.set_min_width(300.0);
+                    let mut group = None;
+                    for c in items {
+                        if group.is_some_and(|g| g != (c.scope, c.group)) {
+                            ui.separator();
+                        }
+                        group = Some((c.scope, c.group));
+                        // Checkable commands get a fixed-width mark column, so their captions line up.
+                        let mut button = match self.core.checked(c.id) {
+                            Some(on) => Button::new((
+                                (if on { "✔" } else { "" }).atom_size(vec2(16.0, 0.0)),
+                                c.caption,
+                            )),
+                            None => Button::new(c.caption),
+                        };
+                        if let Some(s) = c.shortcut {
+                            button = button.shortcut_text(s.to_string());
+                        }
+                        let response = ui
+                            .add_enabled(c.enabled_when.holds(state), button)
+                            .on_hover_text(c.hint);
+                        if response.hovered() {
+                            self.hint = Some(c.hint);
+                        }
+                        if response.clicked() {
+                            actions.push(Action::Run(c.id));
                         }
                     }
-                }
+                });
             }
-            // Tabs
-            div { class: "hk-tabs",
-                for (i, caption, active) in tabs {
-                    div {
-                        class: if active { "hk-tab hk-active" } else { "hk-tab" },
-                        title: "{caption}",
-                        onclick: move |_| ui.act(|app| { app.activate(i); Vec::new() }),
-                        span { class: "hk-tab-caption", "{caption}" }
-                        button {
-                            class: "hk-tab-close",
-                            title: "Close Tab",
-                            onclick: move |evt: MouseEvent| {
-                                evt.stop_propagation();
-                                ui.act(|app| {
-                                    app.close_tab(i, hikasa_session::ipc::CloseReason::User);
-                                    app.dirty_effects()
-                                });
-                            },
-                            "×"
-                        }
-                    }
-                }
-                button {
-                    class: "hk-tab-new",
-                    title: "New Tab (Ctrl+T)",
-                    onclick: move |_| ui.command(CommandId::TabNew),
-                    "+"
-                }
-            }
-            // Toolbar
-            if scope != Scope::Home {
-                div { class: "hk-toolbar",
-                    for c in plain {
-                        button {
-                            class: "hk-tool",
-                            disabled: !c.enabled_when.holds(&ctx),
-                            title: "{tooltip(c)}",
-                            "data-command": c.id.name(),
-                            onclick: move |_| ui.command(c.id),
-                            "{c.toolbar.unwrap_or(c.caption)}"
-                        }
-                    }
-                    if !presets.is_empty() {
-                        select {
-                            class: "hk-select",
-                            title: "Display filter",
-                            onchange: move |evt: FormEvent| {
-                                let presets: Vec<&'static Command> = commands::commands_for(scope)
-                                    .filter(|c| c.group == GROUP_FILTER)
-                                    .collect();
-                                if let Some(c) = evt.value().parse::<usize>().ok().and_then(|i| presets.get(i)) {
-                                    ui.command(c.id);
-                                }
-                            },
-                            if current_preset.is_none() {
-                                option { value: "", selected: true, "Custom filter" }
-                            }
-                            for (i, c) in presets.iter().enumerate() {
-                                option { value: "{i}", selected: current_preset == Some(i), "{c.caption}" }
-                            }
-                        }
-                    }
-                    div { class: "hk-toggles",
-                        for c in toggles {
-                            button {
-                                class: if checked(c.id) == Some(true) { "hk-toggle hk-on" } else { "hk-toggle" },
-                                title: "{c.caption}",
-                                onclick: move |_| ui.command(c.id),
-                                "{c.toolbar.unwrap_or(c.caption)}"
-                            }
-                        }
-                    }
-                    if !modes.is_empty() {
-                        select {
-                            class: "hk-select",
-                            title: "Folders",
-                            onchange: move |evt: FormEvent| {
-                                let modes: Vec<&'static Command> = commands::commands_for(scope)
-                                    .filter(|c| c.group == GROUP_FOLDER_MODE)
-                                    .collect();
-                                if let Some(c) = evt.value().parse::<usize>().ok().and_then(|i| modes.get(i)) {
-                                    ui.command(c.id);
-                                }
-                            },
-                            for (i, c) in modes.iter().enumerate() {
-                                option { value: "{i}", selected: current_mode == Some(i), "{c.caption}" }
-                            }
-                        }
-                    }
-                    if let Some(on) = iu {
-                        label { class: "hk-check",
-                            input {
-                                r#type: "checkbox",
-                                checked: on,
-                                onchange: move |_| ui.command(CommandId::InsigIgnored),
-                            }
-                            "Ignore unimportant"
-                        }
-                    }
-                }
-            }
-            div { class: "hk-content", {content} }
-            if let Some(text) = message {
-                div { class: "hk-message",
-                    span { "{text}" }
-                    button {
-                        class: "hk-tool",
-                        onclick: move |_| ui.act(|app| { app.dismiss_message(); Vec::new() }),
-                        "OK"
-                    }
-                }
-            }
-        }
+        });
     }
-}
 
-/// Runs the catalogue command of a key event handled at `origin` when it is enabled in the active view;
-/// only then the key's default action is prevented (and it does not bubble further). True when a command ran.
-pub fn key_command(ui: Ui, evt: &KeyboardEvent, origin: KeyOrigin) -> bool {
-    let Some(shortcut) = shortcut_of(&evt.data()) else {
-        return false;
-    };
-    let id = {
-        let app = ui.app.read();
-        commands::shortcut_command(app.scope(), shortcut, origin)
-            .map(|c| c.id)
-            .filter(|&id| app.enabled(id))
-    };
-    match id {
-        Some(id) => {
-            evt.prevent_default();
-            evt.stop_propagation();
-            ui.command(id);
-            true
-        }
-        None => false,
+    fn tabs(&self, ui: &mut Ui, actions: &mut Vec<Action>) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (i, tab) in self.core.tabs().iter().enumerate() {
+                let caption = crate::shared::shown_name(&tab.caption());
+                let short: String = if caption.chars().count() > TAB_CAPTION {
+                    let mut s: String = caption.chars().take(TAB_CAPTION - 1).collect();
+                    s.push('…');
+                    s
+                } else {
+                    caption.clone()
+                };
+                let active = i == self.core.active();
+                let r = ui
+                    .add(Button::selectable(active, short))
+                    .on_hover_text(caption);
+                if r.clicked() {
+                    actions.push(Action::Activate(i));
+                }
+                if r.middle_clicked() {
+                    actions.push(Action::CloseTab(i));
+                }
+                if ui
+                    .add(Button::new(RichText::new("×").small()).frame(false))
+                    .on_hover_text("Close Tab (Ctrl+W)")
+                    .clicked()
+                {
+                    actions.push(Action::CloseTab(i));
+                }
+                ui.add_space(6.0);
+            }
+            if ui
+                .add(Button::new("+").frame(false))
+                .on_hover_text("New Tab (Ctrl+T)")
+                .clicked()
+            {
+                actions.push(Action::Run(CommandId::TabNew));
+            }
+        });
+    }
+
+    fn toolbar(&mut self, ui: &mut Ui, state: &Ctx, actions: &mut Vec<Action>) {
+        let scope = self.core.scope();
+        let tools = commands::toolbar(scope);
+        ui.horizontal_wrapped(|ui| {
+            for c in tools.iter().filter(|c| c.group == 0) {
+                let label = c.toolbar.unwrap_or(c.caption);
+                let r = ui
+                    .add_enabled(c.enabled_when.holds(state), Button::new(label))
+                    .on_hover_text(tooltip(c))
+                    .on_disabled_hover_text(tooltip(c));
+                if r.hovered() {
+                    self.hint = Some(c.hint);
+                }
+                if r.clicked() {
+                    actions.push(Action::Run(c.id));
+                }
+            }
+            ui.separator();
+            let presets: Vec<&'static Command> = commands::commands_for(scope)
+                .filter(|c| c.group == GROUP_FILTER)
+                .collect();
+            if !presets.is_empty() {
+                let current = presets
+                    .iter()
+                    .find(|c| self.core.checked(c.id) == Some(true))
+                    .map_or("Custom filter", |c| c.caption);
+                ComboBox::from_id_salt("hk-filter")
+                    .selected_text(current)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        for c in &presets {
+                            let on = self.core.checked(c.id) == Some(true);
+                            if ui
+                                .selectable_label(on, c.caption)
+                                .on_hover_text(c.hint)
+                                .clicked()
+                            {
+                                actions.push(Action::Run(c.id));
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Display filter");
+            }
+            for c in tools.iter().filter(|c| c.group == GROUP_TOGGLES) {
+                let on = self.core.checked(c.id) == Some(true);
+                let label = c.toolbar.unwrap_or(c.caption);
+                let r = ui
+                    .add(Button::selectable(on, label).min_size(vec2(26.0, 0.0)))
+                    .on_hover_text(c.caption);
+                if r.hovered() {
+                    self.hint = Some(c.hint);
+                }
+                if r.clicked() {
+                    actions.push(Action::Run(c.id));
+                }
+            }
+            let modes: Vec<&'static Command> = commands::commands_for(scope)
+                .filter(|c| c.group == GROUP_FOLDER_MODE)
+                .collect();
+            if !modes.is_empty() {
+                ui.separator();
+                let current = modes
+                    .iter()
+                    .find(|c| self.core.checked(c.id) == Some(true))
+                    .map_or("", |c| c.caption);
+                ComboBox::from_id_salt("hk-folder-mode")
+                    .selected_text(current)
+                    .width(250.0)
+                    .show_ui(ui, |ui| {
+                        for c in &modes {
+                            let on = self.core.checked(c.id) == Some(true);
+                            if ui
+                                .selectable_label(on, c.caption)
+                                .on_hover_text(c.hint)
+                                .clicked()
+                            {
+                                actions.push(Action::Run(c.id));
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Folders");
+            }
+            if let Some(mut on) = self.core.checked(CommandId::InsigIgnored) {
+                ui.separator();
+                if ui
+                    .checkbox(&mut on, "Ignore unimportant")
+                    .on_hover_text("Treats unimportant differences as same.")
+                    .changed()
+                {
+                    actions.push(Action::Run(CommandId::InsigIgnored));
+                }
+            }
+        });
+    }
+
+    /// Forgets the UI state of views that are gone.
+    fn prune(&mut self) {
+        let open: Vec<ViewId> = self.core.tabs().iter().map(|t| t.id).collect();
+        self.texts.retain(|v, _| open.contains(v));
+        self.folders.retain(|v, _| open.contains(v));
     }
 }
 
@@ -430,83 +365,195 @@ fn tooltip(c: &Command) -> String {
     }
 }
 
-fn menu_item(ui: Ui, c: &'static Command, enabled: bool, checked: Option<bool>) -> Element {
-    let mark = match checked {
-        Some(true) => "✓",
-        _ => "",
-    };
-    let shortcut = c.shortcut.map(|s| s.to_string()).unwrap_or_default();
-    rsx! {
-        button {
-            class: "hk-item",
-            disabled: !enabled,
-            title: "{c.hint}",
-            "data-command": c.id.name(),
-            onclick: move |evt: MouseEvent| {
-                evt.stop_propagation();
-                let mut menu = ui.menu;
-                menu.set(None);
-                ui.command(c.id);
-            },
-            span { class: "hk-item-mark", "{mark}" }
-            span { class: "hk-item-caption", "{c.caption}" }
-            span { class: "hk-item-key", "{shortcut}" }
-        }
-    }
+/// The left and right parts of the status bar for the active view.
+enum ViewStatus {
+    Home,
+    Folder(crate::folder_view::FolderStatus),
+    Text(crate::text_view::TextStatus),
 }
 
-/// The catalogue shortcut of a key event (letters and digits upper-cased; `+`, `=` and `-` with Ctrl also
-/// stand for the keypad keys).
-pub fn shortcut_of(evt: &KeyboardData) -> Option<Shortcut> {
-    use commands::Key as K;
-    let mods = evt.modifiers();
-    let ctrl = mods.contains(Modifiers::CONTROL) || mods.contains(Modifiers::META);
-    let shift = mods.contains(Modifiers::SHIFT);
-    let alt = mods.contains(Modifiers::ALT);
-    let key = match evt.code() {
-        Code::NumpadAdd => K::NumPlus,
-        Code::NumpadSubtract => K::NumMinus,
-        Code::Numpad0 => K::NumZero,
-        _ => match evt.key() {
-            Key::Enter => K::Enter,
-            Key::Tab => K::Tab,
-            Key::ArrowUp => K::Up,
-            Key::ArrowDown => K::Down,
-            Key::ArrowLeft => K::Left,
-            Key::ArrowRight => K::Right,
-            Key::F1 => K::F(1),
-            Key::F2 => K::F(2),
-            Key::F3 => K::F(3),
-            Key::F4 => K::F(4),
-            Key::F5 => K::F(5),
-            Key::F6 => K::F(6),
-            Key::F7 => K::F(7),
-            Key::F8 => K::F(8),
-            Key::F9 => K::F(9),
-            Key::F10 => K::F(10),
-            Key::F11 => K::F(11),
-            Key::F12 => K::F(12),
-            Key::Character(s) => {
-                let mut chars = s.chars();
-                let c = chars.next()?;
-                if chars.next().is_some() {
-                    return None;
+impl eframe::App for HikasaApp {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some(b) = self.bench.as_mut() {
+            b.begin_frame(frame.info().cpu_usage);
+        }
+        let mut effects = Vec::new();
+        for msg in self.mailbox.drain() {
+            effects.extend(self.core.handle(msg));
+        }
+        // Jobs and the live folder models are polled once per frame (`JobHandle::try_result`, §1.10).
+        effects.extend(self.core.handle(UiMsg::Tick));
+        if !effects.is_empty() {
+            self.apply(ctx, effects);
+        }
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
+            // The window's close button: every view reports its outcome (D-23), then the window closes.
+            let effects = self.core.shutdown();
+            self.apply(ctx, effects);
+        }
+        if self.core.settling() {
+            // A job woke the window before its result was published (microseconds): look again at once.
+            ctx.request_repaint_after(SETTLE_POLL);
+        } else if self.core.busy() {
+            ctx.request_repaint_after(BUSY_POLL);
+        }
+        if let Some(b) = self.bench.as_mut() {
+            b.drive(&self.core, &mut self.texts, &mut self.folders);
+            ctx.request_repaint();
+        }
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let pal = *Palette::of(&ctx.global_style().visuals);
+        let mut actions = self.shortcuts(&ctx);
+        self.hint = None;
+        let state = self.core.ctx();
+        let scope = self.core.scope();
+
+        egui::Panel::top("hk-menu")
+            .frame(
+                Frame::NONE
+                    .fill(pal.chrome)
+                    .inner_margin(Margin::symmetric(6, 2)),
+            )
+            .show(ui, |ui| self.menu_bar(ui, &state, &mut actions));
+        egui::Panel::top("hk-tabs")
+            .frame(
+                Frame::NONE
+                    .fill(pal.chrome)
+                    .inner_margin(Margin::symmetric(6, 3)),
+            )
+            .show(ui, |ui| self.tabs(ui, &mut actions));
+        if scope != Scope::Home {
+            egui::Panel::top("hk-toolbar")
+                .frame(
+                    Frame::NONE
+                        .fill(pal.bg)
+                        .inner_margin(Margin::symmetric(8, 5)),
+                )
+                .show(ui, |ui| self.toolbar(ui, &state, &mut actions));
+        }
+
+        let status = match self.core.active_tab().map(|t| &t.model) {
+            Some(ViewModel::Folder(m)) => ViewStatus::Folder(m.status()),
+            Some(ViewModel::Text(m)) => ViewStatus::Text(m.status()),
+            _ => ViewStatus::Home,
+        };
+        let (left, right) = match &status {
+            ViewStatus::Home => (
+                "Compare two folders or two files.".to_owned(),
+                format!("Hikasa {HIKASA_VERSION}"),
+            ),
+            ViewStatus::Folder(s) => (s.state.clone(), s.detail.clone()),
+            ViewStatus::Text(s) => (s.state.clone(), s.detail.clone()),
+        };
+        let left = self.hint.map_or(left, str::to_owned);
+        egui::Panel::bottom("hk-status")
+            .frame(
+                Frame::NONE
+                    .fill(pal.chrome)
+                    .inner_margin(Margin::symmetric(10, 3)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let small = |t: &str| RichText::new(t).size(12.0).color(pal.muted);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add(egui::Label::new(small(&right)).truncate());
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.add(egui::Label::new(small(&left)).truncate());
+                        });
+                    });
+                });
+            });
+        if let Some(message) = self.core.message() {
+            let message = message.to_owned();
+            egui::Panel::bottom("hk-message")
+                .frame(
+                    Frame::NONE
+                        .fill(pal.select)
+                        .inner_margin(Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(message).color(pal.fg));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button("OK").clicked() {
+                                actions.push(Action::Dismiss);
+                            }
+                        });
+                    });
+                });
+        }
+
+        let background = if scope == Scope::Home {
+            pal.chrome
+        } else {
+            pal.bg
+        };
+        egui::CentralPanel::default()
+            .frame(Frame::NONE.fill(background))
+            .show(ui, |ui| {
+                let Some(tab) = self.core.active_tab_mut() else {
+                    return;
+                };
+                let view = tab.id;
+                match (&mut tab.model, &status) {
+                    (ViewModel::Home(home), _) => {
+                        if let Some(id) = home::show(ui, home, &pal) {
+                            actions.push(Action::Run(id));
+                        }
+                    }
+                    (ViewModel::Folder(m), ViewStatus::Folder(s)) => {
+                        let st = self.folders.entry(view).or_default();
+                        let enabled = |id: CommandId| {
+                            commands::lookup(Scope::Folder, id)
+                                .is_some_and(|c| c.enabled_when.holds(&state))
+                        };
+                        for id in folder::show(ui, view, m, st, s, &enabled, &pal) {
+                            actions.push(Action::Run(id));
+                        }
+                    }
+                    (ViewModel::Text(m), ViewStatus::Text(s)) => {
+                        let st = self.texts.entry(view).or_default();
+                        text::show(ui, view, m, st, s, &pal);
+                    }
+                    _ => {}
                 }
-                match c {
-                    '+' | '=' if ctrl => K::NumPlus,
-                    '-' if ctrl => K::NumMinus,
-                    '0' if ctrl => K::NumZero,
-                    c if c.is_ascii_alphanumeric() => K::Char(c.to_ascii_uppercase()),
-                    _ => return None,
+            });
+
+        let acted = !actions.is_empty();
+        for action in actions {
+            self.act(&ctx, action);
+        }
+        // Effects the views raised while drawing (a selection that moved, a gap bar that opened).
+        let effects = self.core.dirty_effects();
+        if !effects.is_empty() || acted {
+            self.apply(&ctx, effects);
+        }
+        self.prune();
+        if let Some(b) = self.bench.as_mut() {
+            b.set_window(serde_json::json!({
+                "size_points": [ctx.content_rect().width(), ctx.content_rect().height()],
+                "pixels_per_point": ctx.pixels_per_point(),
+            }));
+            b.end_frame(&self.texts);
+            if b.finished() && !self.closing {
+                // Measure while the view is still open (memory with its comparison, the view's facts).
+                if let Some(report) = b.final_report(&self.core) {
+                    println!("{report}");
                 }
+                let effects = self.core.shutdown();
+                self.apply(&ctx, effects);
             }
-            _ => return None,
-        },
-    };
-    Some(Shortcut {
-        ctrl,
-        shift: shift && !matches!(key, K::NumPlus),
-        alt,
-        key,
-    })
+        }
+    }
+
+    fn on_exit(&mut self) {
+        // The window went away without a close request we saw (e.g. the session ended): views still report.
+        if !self.closing {
+            self.closing = true;
+            let _ = self.core.shutdown();
+        }
+    }
 }

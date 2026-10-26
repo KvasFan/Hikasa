@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — M1 wave 6b: the GUI on egui
+- `hikasa-gui` moved from Dioxus 0.7 to **egui 0.37 with eframe** (D-56 as amended, ARCH-GUI-001): the Dioxus
+  prototype met the first screen and the frame rate but not the ARCH-GUI-003 memory limit (598 MiB PSS, 456 MiB
+  GUI RSS), so the maintainer moved the whole GUI. The view models, the command catalogue, the IPC handler and
+  single instance, the D-23 close codes, Home's rules and FC-062 are unchanged; the page, its script and styles
+  (`assets/`) and the page ↔ Rust request channel are gone.
+- One native window, repainted on demand (the mailbox wakes it with `request_repaint`; no polling thread): menu
+  bar, tabs, toolbar (with the display-filter and folder-mode lists, the toggles and Ignore unimportant) and
+  status bar generated from the catalogue; light and dark colours follow the system. Keyboard shortcuts are
+  taken at the window root, the focus-bound keys (Enter, Left, Right, arrows, pages) by the folder tree while it
+  has the focus; Ctrl with `+`/`=`, `-` and `0` stand for the keypad keys of the font-size commands.
+- *Text Compare*: the panes are custom-painted for the visible rows only (line numbers, important, unimportant
+  and orphan backgrounds, hatched absent sides, inline highlights, syntax colours, gap bars that expand on a
+  click, the cursor row), with a thumbnail (click or drag to jump), a scroll bar, wheel and keyboard scrolling;
+  the scroll position is a row index, so million-row views scroll exactly. *Folder Compare*: the tree is painted
+  the same way (colour spots, names, sizes, times, centre marks with tooltips, disclosure triangles, selection,
+  hover), updates while scanning, and opens a pair with Enter or a double-click.
+- ARCH-GUI-003 re-measured 2026-10-26 (desktop, Radeon RX 7900 XTX on Vulkan, 120 Hz display; `docs/02` §2): first
+  screen 0.51 s after the process start (coloured 0.70 s); 119.6–119.9 fps in all three scroll phases (UI work
+  per frame ≤ 5 ms, p95 ≤ 3.4 ms); memory 275 MiB PSS / 281 MiB RSS after scrolling (peak ≈ 365 MiB) against
+  381.5 MiB — **all three items met** on this machine (not yet on a 2020-class laptop). An empty window takes
+  76 MiB PSS (Dioxus: 168). Folder scan with every folder open: 100,020 files per side in 0.21 s with UI work
+  ≤ 3.3 ms per frame; 400,080 files with a warm cache ≤ 11.8 ms per frame.
+- Tests: 39 unit tests (the mailbox's notifier, egui key → catalogue shortcut, UTF-16 columns → layout
+  sections replace the Dioxus request-query and ticker tests); the window test runs under Xvfb; the benchmark
+  summary now reports per phase the frame work, the frame intervals and eframe's CPU time per frame.
+- Review fixes (wave 6b verification):
+  - The benchmark reads PSS and RSS from one `smaps_rollup` snapshot and only the peak from `VmHWM` (the RSS came
+    from the approximate `VmRSS`, and the unit test that compared it with the PSS failed now and then); memory
+    re-measured on the same desktop: 275 MiB PSS / 281 MiB RSS, peak ≈ 365 MiB (`docs/02` §2).
+  - Text panes: the UTF-16 column table of a row is built in one pass, so long non-ASCII lines no longer cost
+    quadratic time per frame (a 4,096-column regression test).
+  - `hikasa-text` gains `TextComparison::next_section_from` and `TextDisplayFilter::toggles`/`toggled` (additive,
+    contract §1.5.7); the GUI no longer re-derives the importance rule of section navigation or the filter →
+    toggles table. Toggling a category in *Show Context* now keeps the context rows (only switching *Same* off
+    removes them); *Same* shows as checked there.
+  - Names with control or bidirectional characters are escaped in tab captions (`escape_name`, as `gui list`
+    prints them), pane headers, the folder base strip and error strips (`escape_controls`). The text panes show
+    C1 controls, bidirectional formatting characters, zero-width characters, LS, PS and BOM as `\u{…}` escapes.
+  - A job wakes the window after its body returned and the window repaints at once until the result is
+    published, so a finished comparison no longer waits for the 100 ms poll.
+  - Closed views release their data (a unit test); the memory a long-running window keeps after many
+    open/close cycles is glibc's retention of freed heap, bounded and documented in `docs/02` §2.
+  - README, `docs/02`, `docs/05` and the contract no longer name Dioxus as the toolkit or an approved crate.
+
 ## Unreleased — M1 wave 6: the GUI prototype
 - `hikasa-gui`: the desktop window on Dioxus 0.7 (D-56, ARCH-GUI-001) over the session service (contract §1.10,
   §3.7); it contains no comparison logic (ARCH-L3, architecture check 7). One window with tabs:

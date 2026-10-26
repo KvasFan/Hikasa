@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-gui"
-description = "Desktop GUI (Dioxus) built on the core crates; hosts the IPC endpoint used by the CLI"
+description = "Desktop GUI (egui/eframe) built on the core crates; hosts the IPC endpoint used by the CLI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,7 +16,8 @@ hikasa-text.workspace = true
 hikasa-folder.workspace = true
 hikasa-report.workspace = true
 hikasa-session.workspace = true
-dioxus.workspace = true
+eframe.workspace = true
+egui.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

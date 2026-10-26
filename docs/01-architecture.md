@@ -6,7 +6,7 @@ The product is organised in three strictly layered groups of crates:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ gui/      hikasa-gui      desktop application (Dioxus)           │  presents
+│ gui/      hikasa-gui      desktop application (egui/eframe)      │  presents
 │                           hosts the IPC endpoint "open a view"   │
 ├──────────────────────────────────────────────────────────────────┤
 │ cli/      hikasa-cli      `hikasa` binary: every function of the │  exposes
@@ -91,7 +91,7 @@ Hikasa/
 ├── cli/                       # layer 2
 │   └── hikasa-cli/            # `hikasa` binary: every function as a subcommand; `hikasa gui …` talks to the GUI
 ├── gui/                       # layer 3
-│   └── hikasa-gui/            # desktop application (Dioxus): windows, tabs, views, dialogs, IPC server
+│   └── hikasa-gui/            # desktop application (egui/eframe): windows, tabs, views, dialogs, IPC server
 └── docs/
 ```
 

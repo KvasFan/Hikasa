@@ -29,6 +29,20 @@ pub fn view_title(titles: [Option<&str>; 2], specs: [&str; 2]) -> String {
     format!("{} ⇄ {}", side(0), side(1))
 }
 
+/// A view title or file name as the window draws it (tab captions): control and
+/// bidirectional formatting characters become visible escapes and a backslash doubles
+/// (`hikasa_report::escape_name`, as `gui list` prints the same title), so a name cannot break a caption over
+/// lines or reorder it.
+pub fn shown_name(name: &str) -> String {
+    hikasa_report::escape_name(name).into_owned()
+}
+
+/// A path or title in a pane header or the folder base strip: like [`shown_name`] but path separators stay as
+/// they are (`hikasa_report::escape_controls`).
+pub fn shown_path(path: &str) -> String {
+    hikasa_report::escape_controls(path).into_owned()
+}
+
 /// One registered view.
 #[derive(Debug)]
 struct Slot {

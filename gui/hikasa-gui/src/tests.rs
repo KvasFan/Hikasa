@@ -222,7 +222,7 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
     );
     assert_eq!(slice.rows[0].st, 0);
 
-    // Next difference section: the cursor moves to the first section and the canvas is told to scroll.
+    // Next difference section: the cursor moves to the first section and the panes are told to scroll.
     app.execute(CommandId::DiffSectionNext);
     let m = text_model(&mut app, view);
     let first = m.cursor().expect("cursor");
@@ -269,6 +269,20 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
         text_model(&mut app, view).view_options().filter,
         TextDisplayFilter::Context { lines: 3 }
     ));
+    // The context rows are Same rows (the core's toggle table): Same shows checked, and switching a
+    // difference category off keeps every Same row instead of dropping the context.
+    assert_eq!(app.checked(CommandId::TogSame), Some(true));
+    let context_len = text_model(&mut app, view).meta().len;
+    app.execute(CommandId::TogLeftOrphan);
+    assert_eq!(
+        text_model(&mut app, view).view_options().filter,
+        TextDisplayFilter::Toggles {
+            bits: (hikasa_text::TextToggles::all() ^ hikasa_text::TextToggles::LEFT_ORPHANS).bits()
+        }
+    );
+    assert!(text_model(&mut app, view).meta().len >= context_len);
+    assert_eq!(app.checked(CommandId::TogLeftOrphan), Some(false));
+    assert_eq!(app.checked(CommandId::TogSame), Some(true));
     app.execute(CommandId::FavCompareAll);
     app.execute(CommandId::TogSame);
     assert_eq!(app.checked(CommandId::TogSame), Some(false));
@@ -529,9 +543,9 @@ fn folder_view_commands_expand_filter_navigate_and_open_pairs() {
     app.execute(CommandId::FavCompareAll);
     let window = folder_model(&mut app, view).window();
     assert!(window.rows.iter().any(|r| {
-        r.left
-            .as_ref()
-            .is_some_and(|c| c.name == "only-left.txt" && c.colour == "hk-c-orph")
+        r.left.as_ref().is_some_and(|c| {
+            c.name == "only-left.txt" && c.colour == hikasa_folder::ColourClass::Orphan
+        })
     }));
     assert!(
         window.rows.iter().any(|r| r.right.is_none()),
@@ -1174,4 +1188,142 @@ fn a_view_opened_while_quitting_reports_shutdown() {
     }
     assert!(world.shared.is_empty());
     handle.shutdown().expect("shutdown");
+}
+
+/// Whenever a job's wake-up arrives, its result is either there or the job says it is settling, so the window
+/// never falls back to its 100 ms poll for a finished job (wave-6b review). Repeated to exercise the race.
+#[test]
+fn a_woken_ui_finds_the_result_or_a_settling_job() {
+    use crate::job::{Job, Wake};
+    let world = World::new();
+    for round in 0..300u32 {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let wake: Wake = Arc::new(move || {
+            let _ = tx.send(());
+        });
+        let job = Job::spawn(
+            &world.service,
+            hikasa_core::JobKind::VfsRead,
+            "test".into(),
+            &wake,
+            move |_svc, _job| Ok(round),
+        );
+        rx.recv().expect("woken");
+        // Settling first: once it reads false after the wake-up, the result is published.
+        let settling = job.settling();
+        let mut result = job.try_result();
+        assert!(
+            result.is_some() || settling,
+            "round {round}: woken, no result and not settling"
+        );
+        while result.is_none() {
+            std::hint::spin_loop();
+            result = job.try_result();
+        }
+        assert_eq!(result.expect("result").expect("ok"), round);
+        assert!(!job.settling());
+    }
+    // A panicking body still wakes the window.
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let wake: Wake = Arc::new(move || {
+        let _ = tx.send(());
+    });
+    let job: Job<()> = Job::spawn(
+        &world.service,
+        hikasa_core::JobKind::VfsRead,
+        "panics".into(),
+        &wake,
+        |_svc, _job| panic!("a failing job body"),
+    );
+    rx.recv().expect("woken after the panic");
+    let result = loop {
+        if let Some(r) = job.try_result() {
+            break r;
+        }
+        std::hint::spin_loop();
+    };
+    assert!(result.is_err());
+}
+
+/// Names with a line feed or a bidirectional override are drawn escaped in the tab caption, the pane headers
+/// and the folder base strip; the `ListViews` title stays raw (the command line escapes it on output).
+#[test]
+fn names_are_escaped_where_the_window_draws_them() {
+    let world = World::new();
+    let left = world.write("work/new\nline.c", "a\n");
+    let right = world.write("work/rlo\u{202e}c.exe", "b\n");
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &left, &right);
+    world.settle(&mut app);
+    let caption = app.tab_mut(view).expect("tab").caption();
+    assert_eq!(caption, "new\nline.c ⇄ rlo\u{202e}c.exe", "the raw title");
+    assert_eq!(
+        crate::shared::shown_name(&caption),
+        "new\\nline.c ⇄ rlo\\u{202e}c.exe"
+    );
+    let status = text_model(&mut app, view).status();
+    for pane in &status.panes {
+        assert!(!pane.title.contains(['\n', '\u{202e}']), "{:?}", pane.title);
+    }
+    assert!(status.panes[0].title.ends_with("new\\nline.c"));
+    assert!(status.panes[1].title.ends_with("rlo\\u{202e}c.exe"));
+
+    let l = world.path("work/L\u{1b}[31m");
+    let r = world.path("work/R\u{2066}x");
+    std::fs::create_dir_all(&l).expect("mkdir");
+    std::fs::create_dir_all(&r).expect("mkdir");
+    let folders = world.open(&mut app, &l, &r);
+    world.settle(&mut app);
+    let bases = folder_model(&mut app, folders).status().bases;
+    assert!(bases[0].ends_with("/L\\u{1b}[31m"), "{bases:?}");
+    assert!(bases[1].ends_with("/R\\u{2066}x"), "{bases:?}");
+}
+
+/// Closing a view releases its data (wave-6b review: memory stayed high after many open/close cycles). The
+/// comparison, the documents and the folder model are dropped once the view's jobs have ended, also when the
+/// view closes while its job still runs; what the process keeps afterwards is the allocator's, not Hikasa's.
+#[test]
+fn closing_views_releases_their_data() {
+    let world = World::new();
+    let (left, right) = text_pair(&world);
+    let (fl, fr) = folder_pair(&world);
+    let mut app = world.app(None);
+    let text = world.open(&mut app, &left, &right);
+    let folder = world.open(&mut app, &fl, &fr);
+    world.settle(&mut app);
+    let comparison = Arc::downgrade(
+        &text_model(&mut app, text)
+            .response()
+            .expect("compared")
+            .comparison,
+    );
+    let model = Arc::downgrade(
+        folder_model(&mut app, folder)
+            .prepared()
+            .expect("prepared")
+            .model(),
+    );
+    // A third view closes while its comparison is still running.
+    let mut big = String::new();
+    for i in 0..300_000 {
+        big.push_str(&format!("line {i} of a larger file\n"));
+    }
+    let bl = world.write("work/big-left.txt", &big);
+    let br = world.write("work/big-right.txt", &big.replace("line 7", "LINE 7"));
+    let running = world.open(&mut app, &bl, &br);
+    let probe = Arc::downgrade(&text_model(&mut app, running).probe());
+    while app.tabs().len() > 1 || !matches!(app.tabs()[0].model, ViewModel::Home(_)) {
+        app.close_tab(0, CloseReason::User);
+    }
+    let began = Instant::now();
+    while (comparison.strong_count() + model.strong_count() + probe.strong_count()) > 0 {
+        assert!(
+            began.elapsed() < Duration::from_secs(30),
+            "still referenced after closing: comparison {}, folder model {}, running view {}",
+            comparison.strong_count(),
+            model.strong_count(),
+            probe.strong_count()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
