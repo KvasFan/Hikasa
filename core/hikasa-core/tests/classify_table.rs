@@ -9,7 +9,7 @@ use hikasa_core::exit::{ExitCode, UnknownExitCode};
 use hikasa_core::mask::{CaseSensitivity, Mask, MaskError, MaskOptions};
 use hikasa_core::path::{RelPath, RelPathError};
 use hikasa_core::schema::{SchemaError, check_schema_version};
-use hikasa_core::spec::{LocalPath, PathStyle, Spec, SpecContext, SpecError};
+use hikasa_core::spec::{PathStyle, Spec, SpecContext, SpecError};
 use hikasa_core::time::{FileTime, TimeParseError};
 use hikasa_core::{Cancelled, ReadError};
 use pretty_assertions::assert_eq;
@@ -116,11 +116,11 @@ fn spec_error_kinds() {
     }
     #[cfg(unix)]
     {
-        let base = LocalPath::new(PathBuf::from("/a")).unwrap();
+        let base = hikasa_core::spec::LocalPath::new(PathBuf::from("/a")).unwrap();
         let err = base.join_name(std::ffi::OsStr::new("x/y")).unwrap_err();
         assert_eq!(err, SpecError::InvalidComponent { name: "x/y".into() });
         assert_eq!(err.kind(), ErrorKind::InvalidInput);
-        let err = LocalPath::new(PathBuf::from("/a//b")).unwrap_err();
+        let err = hikasa_core::spec::LocalPath::new(PathBuf::from("/a//b")).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidInput);
     }
     assert_eq!(

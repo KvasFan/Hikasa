@@ -786,6 +786,7 @@ fn faults_match_lexically_and_can_be_cleared() {
 }
 
 /// The `std::io::Error` inside a `VfsError::Io`.
+#[cfg(unix)]
 fn io_source(error: &VfsError) -> Option<&std::io::Error> {
     std::error::Error::source(error).and_then(|s| s.downcast_ref::<std::io::Error>())
 }

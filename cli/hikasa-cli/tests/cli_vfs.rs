@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{MTIME, Sandbox, assert_golden, code, json, stderr, stdout};
+use common::{Sandbox, assert_golden, code, json, stderr, stdout};
 
 /// `d/` with a text file, a binary file, a name holding a tab and (on Unix) a symbolic link to the text file.
 fn sandbox() -> Sandbox {
@@ -13,7 +13,7 @@ fn sandbox() -> Sandbox {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink("a.txt", s.join("d/link")).unwrap();
-        let time = filetime::FileTime::from_unix_time(MTIME, 0);
+        let time = filetime::FileTime::from_unix_time(common::MTIME, 0);
         filetime::set_symlink_file_times(s.join("d/link"), time, time).unwrap();
     }
     s.settle("d");

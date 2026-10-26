@@ -1672,13 +1672,13 @@ mod private {
 
     /// Creates a fresh folder (create-new; mode 0700 on Unix).
     pub(super) fn create_dir(dir: &Path) -> io::Result<()> {
-        let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            std::fs::DirBuilder::new().mode(0o700).create(dir)
         }
-        builder.create(dir)
+        #[cfg(not(unix))]
+        std::fs::DirBuilder::new().create(dir)
     }
 
     /// Unix: `dir` must belong to `uid` and not be writable by others; with `no_link` it must be a real folder

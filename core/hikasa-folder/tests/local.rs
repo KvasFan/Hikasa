@@ -8,8 +8,8 @@ use std::path::Path;
 use common::engines;
 use hikasa_core::{CancelToken, CompareVerdict, Ctl, LocalPath, NullProgress, Spec};
 use hikasa_folder::{
-    CompareState, FolderComparison, FolderEnv, FolderRules, FolderRulesPatch, NodeFlags, NodeId,
-    NullObserver, ScanStatus, compare_folders,
+    CompareState, FolderComparison, FolderEnv, FolderRules, FolderRulesPatch, NodeId, NullObserver,
+    compare_folders,
 };
 use hikasa_vfs::{LocalOptions, LocalVfs};
 
@@ -144,18 +144,19 @@ fn unix_permissions_and_symlink_loop() {
     assert!(!p.diffs.contains(hikasa_folder::DiffFlags::OWNER));
     let dir = child(&cmp, NodeId::ROOT, "dir");
     let up = read.node(child(&cmp, dir, "up")).unwrap();
-    assert_eq!(up.scan, ScanStatus::Failed);
+    assert_eq!(up.scan, hikasa_folder::ScanStatus::Failed);
     assert!(
-        up.flags
-            .contains(NodeFlags::SYMLINK_LOOP | NodeFlags::LEFT_ERROR)
+        up.flags.contains(
+            hikasa_folder::NodeFlags::SYMLINK_LOOP | hikasa_folder::NodeFlags::LEFT_ERROR
+        )
     );
     assert_eq!(up.state, CompareState::Error);
     let selfloop = read.node(child(&cmp, NodeId::ROOT, "self")).unwrap();
     // The OS reports the cycle as ELOOP: an Error node with SYMLINK_LOOP (D-33), like a link to an ancestor.
     assert!(
-        selfloop
-            .flags
-            .contains(NodeFlags::LEFT_ERROR | NodeFlags::SYMLINK_LOOP)
+        selfloop.flags.contains(
+            hikasa_folder::NodeFlags::LEFT_ERROR | hikasa_folder::NodeFlags::SYMLINK_LOOP
+        )
     );
     assert_eq!(selfloop.state, CompareState::Error);
     assert_eq!(cmp.verdict(false), CompareVerdict::Differences);

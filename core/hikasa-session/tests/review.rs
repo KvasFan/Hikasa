@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use common::{CloseMode, FakeGui, FakeLauncher, job, os, service, service_with, write};
 use hikasa_core::{
-    CompareVerdict, ContentKind, ContentMethod, ContentResult, ExitCode, JobKind, Spec, WarningCode,
+    CompareVerdict, ContentKind, ContentMethod, ContentResult, ExitCode, JobKind, WarningCode,
 };
 use hikasa_folder::{
     DisplayOptions, FolderDisplayFilter, FolderMode, FolderRulesPatch, NullObserver,
@@ -173,6 +173,7 @@ fn mode_of(path: &Path) -> u32 {
 }
 
 /// A service whose cache folder is the per-user temp fallback (no home, no XDG cache), with stdin.
+#[cfg(unix)]
 fn fallback_cache_service(root: &Path, stdin: &[u8], name: &str) -> Service {
     let facts = EnvFacts {
         home: None,
@@ -353,12 +354,14 @@ fn the_launch_forwards_the_configuration_and_the_endpoint_override() {
 
 /// A launcher that behaves like `hikasa-gui`: it resolves its configuration from the launch arguments (the
 /// shared parser), computes its endpoint and starts serving there.
+#[cfg(unix)]
 struct LikeTheGui {
     facts: EnvFacts,
     launched: AtomicUsize,
     server: parking_lot::Mutex<Option<hikasa_session::ipc::ServerHandle>>,
 }
 
+#[cfg(unix)]
 impl hikasa_session::api::GuiLauncher for LikeTheGui {
     fn launch(
         &self,
@@ -946,7 +949,7 @@ fn a_non_utf8_file_pair_opens_from_its_specs() {
         )
         .unwrap();
     assert_eq!(resp.exit_code, ExitCode::RulesDifferent);
-    assert!(matches!(left, Spec::Local(_)));
+    assert!(matches!(left, hikasa_core::Spec::Local(_)));
 }
 
 #[test]
