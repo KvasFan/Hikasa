@@ -1,10 +1,9 @@
 # Changelog
 
-## Unreleased (M1)
+## 0.1.0 — 2026-10-26 (M1)
 
-M1 (core engines, the `hikasa` command line and the GUI prototype) is implemented on the branch
-`feat/m1-core-cli`; the version stays 0.0.0 until the maintainer's release step (version 0.1.0, tag, CI on three
-platforms; see `docs/16-roadmap.md`). Entries per wave, newest first.
+M1: the core engines, the `hikasa` command line and the GUI prototype (`docs/16-roadmap.md`). Entries per wave,
+newest first.
 
 ### M1 final review fixes
 - `hikasa-gui` binds its IPC endpoint and opens the window before it writes the first-run format files

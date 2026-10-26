@@ -6,10 +6,9 @@ acceptance criteria below verified by automated tests where possible.
 ## M0 — Skeleton (version 0.0.0, done)
 - Workspace, crate stubs, specifications, CI config. No functionality.
 
-## M1 — Core engines and performance gate (0.1)
+## M1 — Core engines and performance gate (0.1, released as 0.1.0)
 
-Status: implemented on the branch `feat/m1-core-cli` (waves 1–6b, see `CHANGELOG.md`);
-the release steps are open. `[x]` done, `[ ]` open.
+Status: released as 0.1.0 (waves 1–6b, see `CHANGELOG.md`). `[x]` done, `[ ]` open.
 
 - [x] `hikasa-core`, `hikasa-vfs` (local), `hikasa-diff` (standard, Myers/histogram,
   patience, closeness), `hikasa-formats` (model, tokenizer, 10 presets — 21 shipped),
@@ -26,12 +25,13 @@ the release steps are open. `[x]` done, `[ ]` open.
 - [x] Acceptance: golden diffs; 1M-line scroll test (`gui/hikasa-gui/tests/perf_gate.rs`,
   run by hand); 100k-file folder scan < 5 s on SSD (0.694 s cold, `docs/12` §4).
 
-Open before M1 is closed (the maintainer's release step):
-- [ ] Version bumped to 0.1.0 (the workspace is still 0.0.0) and the CHANGELOG's
-  "Unreleased (M1)" section turned into the 0.1.0 entry.
-- [ ] Tagged release.
-- [ ] CI green on three platforms: the workflow has not run for this branch yet;
-  Windows and macOS have never been built (all checks so far are local, on Linux).
+Release:
+- [x] Version 0.1.0, CHANGELOG entry.
+- [x] Tagged release `v0.1.0`.
+- [x] CI green on Linux, Windows and macOS (the performance gates were measured on
+  Linux only).
+
+Still open from M1:
 - [ ] Help topics (P1): the definition of done asks for one per new command; there is
   no `help/` folder yet (the commands are documented in `docs/12` and `--help`).
 

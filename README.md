@@ -8,11 +8,10 @@ files, plus a command-line interface, a script language and reports.
 
 ## Status
 
-**Milestone M1 (core engines, command line, GUI prototype) is implemented on the
-branch `feat/m1-core-cli`.** The workspace version is still 0.0.0; the 0.1 release
-(version bump, tag, CI on Linux, Windows and macOS) is the next step. So far M1 has
-been built and tested on Linux only. See [`docs/16-roadmap.md`](docs/16-roadmap.md)
-for what is done and what is still open.
+**Version 0.1.0: milestone M1 (core engines, command line, GUI prototype).** CI
+builds and tests it on Linux, Windows and macOS; the performance gates were measured
+on Linux. See [`docs/16-roadmap.md`](docs/16-roadmap.md) for what is done and what is
+still open.
 
 What M1 contains:
 
