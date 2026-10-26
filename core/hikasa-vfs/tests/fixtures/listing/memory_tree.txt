@@ -1,0 +1,40 @@
+# follow=no
+abs kind=symlink size=14 attrs=- mtime=- ctime=- link=/p/src/main.rs followed=false crc=- id=11
+archive.zip kind=file size=4 attrs=dos:AH mtime=2023-11-14T22:13:20Z ctime=- link=- followed=false crc=0badf00d id=7
+build.sh kind=file size=10 attrs=-rwsr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=6
+current kind=symlink size=3 attrs=lrwxrwxrwx 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=src followed=false crc=- id=10
+dangling kind=symlink size=4 attrs=- mtime=- ctime=- link=gone followed=false crc=- id=12
+obj/ kind=dir size=0 attrs=- mtime=- ctime=- link=- followed=false crc=- id=8
+  x.o kind=file size=64 attrs=- mtime=- ctime=- link=- followed=false crc=- id=9
+self kind=symlink size=4 attrs=- mtime=- ctime=- link=self followed=false crc=- id=13
+src/ kind=dir size=0 attrs=drwxr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=3
+  back kind=symlink size=2 attrs=- mtime=- ctime=- link=.. followed=false crc=- id=14
+  lib.rs kind=file size=0 attrs=-rw------- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=5
+  main.rs kind=file size=13 attrs=-rw-r--r-- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=4
+# follow=yes
+abs kind=file size=13 attrs=-rw-r--r-- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=/p/src/main.rs followed=true crc=- id=4
+archive.zip kind=file size=4 attrs=dos:AH mtime=2023-11-14T22:13:20Z ctime=- link=- followed=false crc=0badf00d id=7
+build.sh kind=file size=10 attrs=-rwsr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=6
+current/ kind=dir size=0 attrs=drwxr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=src followed=true crc=- id=3
+dangling kind=symlink size=4 attrs=- mtime=- ctime=- link=gone followed=false crc=- id=12
+obj/ kind=dir size=0 attrs=- mtime=- ctime=- link=- followed=false crc=- id=8
+  x.o kind=file size=64 attrs=- mtime=- ctime=- link=- followed=false crc=- id=9
+self kind=symlink size=4 attrs=- mtime=- ctime=- link=self followed=false crc=- id=13
+src/ kind=dir size=0 attrs=drwxr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=3
+  back/ kind=dir size=0 attrs=drwxr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=.. followed=true crc=- id=2
+  lib.rs kind=file size=0 attrs=-rw------- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=5
+  main.rs kind=file size=13 attrs=-rw-r--r-- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=4
+dangling ERROR not_found: /p/dangling: not found
+self ERROR io: /p/self: Stat failed: Too many levels of symbolic links
+# follow=no prefilter=-obj
+abs kind=symlink size=14 attrs=- mtime=- ctime=- link=/p/src/main.rs followed=false crc=- id=11
+archive.zip kind=file size=4 attrs=dos:AH mtime=2023-11-14T22:13:20Z ctime=- link=- followed=false crc=0badf00d id=7
+build.sh kind=file size=10 attrs=-rwsr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=6
+current kind=symlink size=3 attrs=lrwxrwxrwx 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=src followed=false crc=- id=10
+dangling kind=symlink size=4 attrs=- mtime=- ctime=- link=gone followed=false crc=- id=12
+self kind=symlink size=4 attrs=- mtime=- ctime=- link=self followed=false crc=- id=13
+src/ kind=dir size=0 attrs=drwxr-xr-x 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=3
+  back kind=symlink size=2 attrs=- mtime=- ctime=- link=.. followed=false crc=- id=14
+  lib.rs kind=file size=0 attrs=-rw------- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=5
+  main.rs kind=file size=13 attrs=-rw-r--r-- 1000:100 mtime=2025-10-09T08:53:20Z ctime=2025-06-15T15:06:40Z link=- followed=false crc=- id=4
+obj (name only, dir)

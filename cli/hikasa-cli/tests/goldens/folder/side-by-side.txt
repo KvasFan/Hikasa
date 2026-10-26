@@ -1,0 +1,13 @@
+Folder Compare
+Left: <TMP>/a
+Right: <TMP>/b
+Mode: display: differences; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name      Size  Modified                Status       Name      Size  Modified
+docs/        6  2026-10-19T13:12:00Z  ! different    docs/        6  2026-10-19T13:12:00Z
+                                      + right only     new.md     6  2026-10-19T13:12:00Z
+  old.md     6  2026-10-19T13:12:00Z  - left only
+src/        49  2026-10-19T13:12:00Z  ! different    src/        54  2026-10-19T13:12:00Z
+  lib.h     10  2026-10-19T13:12:00Z  ! different      lib.h     11  2026-10-19T13:12:00Z
+  util.c    10  2026-10-19T13:12:00Z  < right newer    util.c    14  2026-10-19T14:12:00Z

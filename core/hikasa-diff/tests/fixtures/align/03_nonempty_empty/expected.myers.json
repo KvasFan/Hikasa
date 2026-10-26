@@ -1,0 +1,8 @@
+{
+  "algorithm": "myers",
+  "rows": 3,
+  "warnings": ["closeness_ignored"],
+  "runs": [
+    {"kind": "delete", "left": [0, 3], "right": [0, 0]}
+  ]
+}

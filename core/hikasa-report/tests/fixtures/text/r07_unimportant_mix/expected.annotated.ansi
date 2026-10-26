@@ -1,0 +1,21 @@
+# [1mText Compare[0m
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: whitespace, case; line endings: ignored; orphan lines: always important
+#
+[1m--- /l/left.txt	2026-10-19T13:12:00Z[0m
+[1m+++ /r/right.txt	2026-10-19T14:00:00Z[0m
+[36m@@ -1,7 +1,8 @@ important[0m
+ int main() {
+[34m-    return 0;[0m
+[34m+        return 0;[0m
+ }
+[34m-// Comment Text[0m
+[31m-value = 1[0m
+[34m+// comment text[0m
+[31m+value = 2[0m
+ same line
+[34m-other  spaced[0m
+[34m+other spaced[0m
+[31m+new line[0m

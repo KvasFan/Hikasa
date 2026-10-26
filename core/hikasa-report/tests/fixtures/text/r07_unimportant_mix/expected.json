@@ -1,0 +1,308 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 79,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 7,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 91,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 8,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": false,
+      "embedded_whitespace": false,
+      "trailing_whitespace": false,
+      "everything_else": true,
+      "everything_else_case_sensitive": false,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 8,
+    "same_rows": 3,
+    "changed_rows": 4,
+    "left_only_rows": 0,
+    "right_only_rows": 1,
+    "important_rows": 2,
+    "unimportant_rows": 3,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 4,
+      "original": 3
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 1,
+      "original": 1
+    },
+    "sections": 3,
+    "important_sections": 2,
+    "left_lines": 7,
+    "right_lines": 8
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "unimportant",
+      "rows": [
+        1,
+        2
+      ],
+      "left_lines": [
+        2,
+        3
+      ],
+      "right_lines": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        3,
+        5
+      ],
+      "left_lines": [
+        4,
+        6
+      ],
+      "right_lines": [
+        4,
+        6
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        6,
+        8
+      ],
+      "left_lines": [
+        7,
+        8
+      ],
+      "right_lines": [
+        7,
+        9
+      ]
+    }
+  ],
+  "display": {
+    "mode": "mismatches",
+    "lines": null,
+    "toggles": [
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "gap",
+      "rows": [
+        0,
+        1
+      ]
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "changed",
+      "importance": "unimportant",
+      "left": {
+        "line": 2,
+        "text": "    return 0;"
+      },
+      "right": {
+        "line": 2,
+        "text": "        return 0;"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 4,
+            "end": 8,
+            "important": false
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "gap",
+      "rows": [
+        2,
+        3
+      ]
+    },
+    {
+      "type": "row",
+      "row": 3,
+      "state": "changed",
+      "importance": "unimportant",
+      "left": {
+        "line": 4,
+        "text": "// Comment Text"
+      },
+      "right": {
+        "line": 4,
+        "text": "// comment text"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 3,
+            "end": 4,
+            "important": false
+          },
+          {
+            "start": 11,
+            "end": 12,
+            "important": false
+          }
+        ],
+        "right": [
+          {
+            "start": 3,
+            "end": 4,
+            "important": false
+          },
+          {
+            "start": 11,
+            "end": 12,
+            "important": false
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 4,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 5,
+        "text": "value = 1"
+      },
+      "right": {
+        "line": 5,
+        "text": "value = 2"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 8,
+            "end": 9,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 8,
+            "end": 9,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "gap",
+      "rows": [
+        5,
+        6
+      ]
+    },
+    {
+      "type": "row",
+      "row": 6,
+      "state": "changed",
+      "importance": "unimportant",
+      "left": {
+        "line": 7,
+        "text": "other  spaced"
+      },
+      "right": {
+        "line": 7,
+        "text": "other spaced"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": false
+          }
+        ],
+        "right": [],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 7,
+      "state": "right_only",
+      "importance": "important",
+      "left": null,
+      "right": {
+        "line": 8,
+        "text": "new line"
+      },
+      "inline": null
+    }
+  ]
+}

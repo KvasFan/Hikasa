@@ -1,0 +1,40 @@
+{
+  "schema": "hikasa.vfs_stat.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "spec": "<TMP>/d/a.txt",
+    "entry": {
+      "name": "a.txt",
+      "name_lossy": false,
+      "kind": "file",
+      "size": 6,
+      "mtime": "2026-10-19T13:12:00Z",
+      "ctime": "<CTIME>",
+      "attrs": null,
+      "mode": 420,
+      "permissions": "-rw-r--r--",
+      "uid": <UID>,
+      "gid": <GID>,
+      "link_target": null,
+      "followed": false,
+      "crc32": null
+    },
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "local_path",
+      "case_sensitive"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

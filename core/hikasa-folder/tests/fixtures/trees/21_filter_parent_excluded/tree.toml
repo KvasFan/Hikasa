@@ -1,0 +1,13 @@
+description = "§2.3 row 9: *.c;-test\\: test/a.c is excluded because its parent is excluded"
+[[left]]
+path = "test/a.c"
+content = "a"
+[[right]]
+path = "test/a.c"
+content = "b"
+[[left]]
+path = "main.c"
+content = "m"
+[[right]]
+path = "main.c"
+content = "m"

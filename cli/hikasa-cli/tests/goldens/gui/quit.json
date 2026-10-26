@@ -1,0 +1,9 @@
+{
+  "schema": "hikasa.gui_quit.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {},
+  "warnings": [],
+  "error": null
+}

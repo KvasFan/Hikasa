@@ -1,0 +1,2 @@
+description = "never-align: every gap becomes Delete then Insert"
+never_align = true

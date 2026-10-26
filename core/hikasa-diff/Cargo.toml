@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-diff"
-description = "Alignment engines (standard, Myers/histogram, patience, closeness) and importance classification"
+description = "Pure token-sequence alignment (unaligned, standard, Myers, histogram, patience), closeness matching and inline differences"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,26 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+imara-diff.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+criterion.workspace = true
+similar.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "align"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

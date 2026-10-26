@@ -1,0 +1,6 @@
+# A windows-1252 text that happens to contain one valid UTF-8 sequence: 1 valid against 6 malformed, so
+# the mostly-UTF-8 rule does not apply and the detector decides (§2.8 step 4e).
+[expected]
+encoding = "windows-1252"
+bom_len = 0
+source = "detector"

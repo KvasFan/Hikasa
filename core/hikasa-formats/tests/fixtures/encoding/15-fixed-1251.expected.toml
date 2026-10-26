@@ -1,0 +1,9 @@
+[setting]
+mode = "fixed"
+label = "windows-1251"
+
+[expected]
+encoding = "windows-1251"
+bom_len = 0
+source = "fixed"
+text = "\u041f\u0440\u0438\u0432\u0435\u0442"

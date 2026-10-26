@@ -1,0 +1,220 @@
+{
+  "description": "§2.3 row 3: -obj\\ excludes obj and x/obj with their subtrees (not listed, name-only)",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "left": {
+      "files": 1,
+      "folders": 1,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 1,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 2
+    },
+    "left": {
+      "files": 1,
+      "folders": 1,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 1,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "obj",
+          "kind": "folder",
+          "state": "filtered",
+          "scan": "not_scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered",
+            "left_stat_skipped",
+            "right_stat_skipped"
+          ],
+          "errors": [],
+          "left": {
+            "name": "obj",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "obj",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "x",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "x",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "x",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "obj",
+              "kind": "folder",
+              "state": "filtered",
+              "scan": "not_scanned",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [
+                "left_filtered",
+                "left_stat_skipped"
+              ],
+              "errors": [],
+              "left": {
+                "name": "obj",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": null,
+              "children": []
+            },
+            {
+              "name": "keep.txt",
+              "kind": "file",
+              "state": "same",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": "same",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "keep.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "right": {
+                "name": "keep.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

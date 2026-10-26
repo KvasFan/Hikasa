@@ -1,0 +1,15 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: differences; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: whitespace, case; line endings: ignored; orphan lines: always important
+
+  /l/left.txt                              /r/right.txt
+[90m      … 1 line hidden …[0m
+2     return 0;                        [34m~[0m 2     [34m    [0mreturn 0;
+[90m      … 1 line hidden …[0m
+4 // [34mC[0momment [34mT[0mext                      [34m~[0m 4 // [34mc[0momment [34mt[0mext
+5 value = [31m1[0m                            [31m|[0m 5 value = [31m2[0m
+[90m      … 1 line hidden …[0m
+7 other [34m [0mspaced                        [34m~[0m 7 other spaced
+                                       [31m>[0m 8 [31mnew line[0m

@@ -1,0 +1,2 @@
+# Golden files are compared byte for byte (m1-contracts §6.1): never convert their line endings.
+* -text

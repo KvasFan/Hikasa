@@ -1,0 +1,14 @@
+description = "skip_if_quick_same (FC-026): quick-same pairs skip the content test (CONTENT_SKIPPED, not_compared); others run it"
+[[left]]
+path = "quick_same.txt"
+content = "abc"
+[[right]]
+path = "quick_same.txt"
+content = "xyz"
+[[left]]
+path = "newer.txt"
+content = "abc"
+mtime = "2026-06-01T00:00:00Z"
+[[right]]
+path = "newer.txt"
+content = "abc"

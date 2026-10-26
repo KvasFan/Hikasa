@@ -1,0 +1,22 @@
+description = "Flatten (FC-014): files of every folder in one list; L0 pairs the same folder first, then names only; dir keeps each side's folder"
+[[left]]
+path = "a/x.txt"
+content = "1"
+[[left]]
+path = "b/x.txt"
+content = "2"
+[[right]]
+path = "b/x.txt"
+content = "2"
+[[right]]
+path = "c/x.txt"
+content = "1"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "deep/er/top.txt"
+content = "t"
+[[left]]
+path = "only/left.txt"
+content = "l"

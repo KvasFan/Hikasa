@@ -1,0 +1,3 @@
+[handling]
+follow_symlinks = true
+flatten = true

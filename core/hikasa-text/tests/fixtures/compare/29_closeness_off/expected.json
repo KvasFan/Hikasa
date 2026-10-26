@@ -1,0 +1,288 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        5
+      ],
+      "right": [
+        0,
+        5
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        5,
+        6
+      ],
+      "right": [
+        5,
+        6
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        6,
+        12
+      ],
+      "right": [
+        6,
+        12
+      ]
+    },
+    {
+      "kind": "changed",
+      "left": [
+        12,
+        13
+      ],
+      "right": [
+        12,
+        13
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        13,
+        15
+      ],
+      "right": [
+        13,
+        15
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        15,
+        16
+      ],
+      "right": [
+        15,
+        15
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        16,
+        20
+      ],
+      "right": [
+        15,
+        19
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        5
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        5,
+        6
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        6,
+        12
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        12,
+        13
+      ],
+      "state": "changed",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        13,
+        15
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        15,
+        16
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        16,
+        20
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        5,
+        6
+      ],
+      "left_lines": [
+        5,
+        6
+      ],
+      "right_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        12,
+        13
+      ],
+      "left_lines": [
+        12,
+        13
+      ],
+      "right_lines": [
+        12,
+        13
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "delete",
+      "importance": "important",
+      "rows": [
+        15,
+        16
+      ],
+      "left_lines": [
+        15,
+        16
+      ],
+      "right_lines": [
+        15,
+        15
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 20,
+    "same_rows": 17,
+    "changed_rows": 2,
+    "left_only_rows": 1,
+    "right_only_rows": 0,
+    "important_rows": 3,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 1,
+      "changed": 2,
+      "original": 2
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 3,
+    "important_sections": 3,
+    "left_lines": 20,
+    "right_lines": 19
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": [
+    {
+      "row": 5,
+      "left": [],
+      "right": [
+        [
+          21,
+          29,
+          true
+        ]
+      ],
+      "whole_line": false
+    },
+    {
+      "row": 12,
+      "left": [
+        [
+          0,
+          4,
+          true
+        ],
+        [
+          5,
+          7,
+          true
+        ],
+        [
+          8,
+          10,
+          true
+        ],
+        [
+          11,
+          19,
+          true
+        ]
+      ],
+      "right": [
+        [
+          0,
+          1,
+          true
+        ],
+        [
+          2,
+          7,
+          true
+        ],
+        [
+          8,
+          11,
+          true
+        ],
+        [
+          13,
+          15,
+          true
+        ]
+      ],
+      "whole_line": false
+    }
+  ]
+}

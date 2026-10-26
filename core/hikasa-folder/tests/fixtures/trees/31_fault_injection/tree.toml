@@ -1,0 +1,39 @@
+description = "Fault injection: an unreadable subfolder on both sides (no children), a stat error on one entry (Error with the side flag, aligned with its counterpart), and a read error in a content test (Error)"
+[[left]]
+path = "locked/x.txt"
+content = "x"
+[[right]]
+path = "locked/x.txt"
+content = "x"
+[[left]]
+path = "stat_fails.txt"
+content = "s"
+[[right]]
+path = "stat_fails.txt"
+content = "s"
+[[left]]
+path = "read_fails.txt"
+content = "r"
+[[right]]
+path = "read_fails.txt"
+content = "r"
+[[faults]]
+side = "left"
+path = "locked"
+op = "list"
+kind = "permission_denied"
+[[faults]]
+side = "right"
+path = "locked"
+op = "list"
+kind = "permission_denied"
+[[faults]]
+side = "left"
+path = "stat_fails.txt"
+op = "stat"
+kind = "permission_denied"
+[[faults]]
+side = "right"
+path = "read_fails.txt"
+op = "open"
+kind = "io"

@@ -1,0 +1,27 @@
+description = "Cancellation part-way (after the second FolderListed event, sequential scan): the result is incomplete, unscanned folders Unknown, verdict incomplete unless differences were found"
+[options]
+cancel_after_listed = 2
+[[left]]
+path = "a/1.txt"
+content = "1"
+[[right]]
+path = "a/1.txt"
+content = "1"
+[[left]]
+path = "b/2.txt"
+content = "2"
+[[right]]
+path = "b/2.txt"
+content = "2"
+[[left]]
+path = "c/3.txt"
+content = "3"
+[[right]]
+path = "c/3.txt"
+content = "3"
+[[left]]
+path = "c/deeper/4.txt"
+content = "4"
+[[right]]
+path = "c/deeper/4.txt"
+content = "4"

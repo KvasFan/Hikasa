@@ -1,0 +1,101 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 0,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 0,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "none",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 0,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 0,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "none",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "binary_same"
+  },
+  "stats": {
+    "rows": 0,
+    "same_rows": 0,
+    "changed_rows": 0,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 0,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 0,
+    "important_sections": 0,
+    "left_lines": 0,
+    "right_lines": 0
+  },
+  "sections": [],
+  "display": {
+    "mode": "all",
+    "lines": null,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": []
+}

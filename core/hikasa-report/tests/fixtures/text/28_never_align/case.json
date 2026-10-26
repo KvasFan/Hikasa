@@ -1,0 +1,4 @@
+{
+  "description": "Never align differences: deletions then insertions, no changed rows",
+  "source": "hikasa-text/28_never_align"
+}

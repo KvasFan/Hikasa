@@ -1,0 +1,6 @@
+{
+  "description": "Flatten with a failed folder listing: error row and unknown files",
+  "source": "hikasa-folder/41_flatten_listing_failure",
+  "filter": "differences-no-orphans",
+  "folders": "always_show_folders"
+}

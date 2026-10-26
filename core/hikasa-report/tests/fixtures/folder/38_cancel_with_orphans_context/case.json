@@ -1,0 +1,6 @@
+{
+  "description": "display-context mapping (differences with the folder structure) on a cancelled scan with orphans",
+  "source": "hikasa-folder/38_cancel_with_orphans",
+  "filter": "differences",
+  "folders": "compare_structure"
+}

@@ -1,0 +1,6 @@
+{
+  "description": "The moved block with zero context lines: insertion points in hunk headers (`l,0`)",
+  "source": "hikasa-text/24_patience_moved_block",
+  "context": 0,
+  "display": "mismatches"
+}

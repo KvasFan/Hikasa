@@ -1,0 +1,61 @@
+{
+  "kinds": [
+    "dir",
+    "file",
+    "symlink",
+    "other"
+  ],
+  "follow": [
+    "no",
+    "yes"
+  ],
+  "ops": [
+    "stat",
+    "list",
+    "open",
+    "read",
+    "write",
+    "commit",
+    "map"
+  ],
+  "outcomes": [
+    {
+      "outcome": "same"
+    },
+    {
+      "outcome": "different",
+      "first_difference": 4096
+    },
+    {
+      "outcome": "different",
+      "first_difference": null
+    }
+  ],
+  "attrs": [
+    {
+      "type": "none"
+    },
+    {
+      "type": "dos",
+      "attrs": "HRS"
+    },
+    {
+      "type": "dos",
+      "attrs": ""
+    },
+    {
+      "type": "unix",
+      "meta": {
+        "mode": 493,
+        "uid": 1000,
+        "gid": 100
+      }
+    }
+  ],
+  "all_letters": "ACDEHILMNOPRSTUZ",
+  "unix": {
+    "mode": 493,
+    "uid": 1000,
+    "gid": 100
+  }
+}

@@ -1,0 +1,13 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name                       Size  Modified                 Name                       Size  Modified
+dir/                          3                        !  dir/                          6
+  size_and_time.txt           3  2026-03-01T00:00:00Z  >    size_and_time.txt           6  2026-01-01T00:00:00Z
+left_newer.txt                1  2026-01-02T00:00:00Z  >  left_newer.txt                1  2026-01-01T00:00:00Z
+right_newer.txt               1  2026-01-01T00:00:00Z  <  right_newer.txt               1  2026-01-01T00:00:02.000000001Z
+same_within_tolerance.txt     1  2026-01-01T00:00:02Z  =  same_within_tolerance.txt     1  2026-01-01T00:00:00Z
+size_only.txt                 3  2026-01-01T00:00:00Z  !  size_only.txt                 4  2026-01-01T00:00:00Z

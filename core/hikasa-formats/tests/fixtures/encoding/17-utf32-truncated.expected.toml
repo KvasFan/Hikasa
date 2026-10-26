@@ -1,0 +1,7 @@
+# UTF-32 with 2 trailing bytes: one replacement.
+[expected]
+encoding = "UTF-32LE"
+bom_len = 4
+source = "bom"
+text = "a\ufffd"
+malformed = 1

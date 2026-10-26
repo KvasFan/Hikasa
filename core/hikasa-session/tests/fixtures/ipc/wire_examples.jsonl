@@ -1,0 +1,9 @@
+{"id":1,"type":"hello","client":"hikasa 0.1.0","version":1,"min_version":1}
+{"id":1,"type":"hello","server":"hikasa-gui 0.1.0","version":1}
+{"id":2,"type":"open_view","kind":"text_compare","specs":["/w/a.c","/w/b.c"],"options":{"titles":[null,null,null,null],"read_only":{"all":false,"left":false,"right":false},"filters":null,"expand_all":false,"format":null,"ignore_unimportant":false,"text_rules_file":null,"text_rules":null,"folder_rules_file":null,"criteria":null,"folder_rules":null,"extra":{},"encodings":[null,null],"display":null,"context_lines":null,"folders":null,"suppress_filters":false},"wait":true}
+{"id":2,"type":"view_opened","view":7}
+{"id":2,"type":"view_closed","view":7,"result":{"verdict":"unimportant_only","folder_verdict":null,"saved":false,"reason":"user"},"exit_code":12}
+{"id":3,"type":"ping"}
+{"id":3,"type":"pong"}
+{"id":4,"type":"open_session_v9","name":"x"}
+{"id":4,"type":"error","code":"unsupported_request","message":"unknown request type `open_session_v9`"}

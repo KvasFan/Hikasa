@@ -1,0 +1,4 @@
+L1:0-4	Everything Else	pear
+L2:0-5	Everything Else	Apple
+L3:0-5	Everything Else	apple
+L5:0-8	Everything Else	  banana

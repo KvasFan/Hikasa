@@ -1,0 +1,14 @@
+description = "Binary content test with override off: TIME + BinarySame stays LeftNewer (§2.6.2 row 5); different sizes are Different with SIZE and CONTENT"
+[[left]]
+path = "newer_same.txt"
+content = "abc"
+mtime = "2026-05-01T00:00:00Z"
+[[right]]
+path = "newer_same.txt"
+content = "abc"
+[[left]]
+path = "size.txt"
+content = "abc"
+[[right]]
+path = "size.txt"
+content = "abcd"

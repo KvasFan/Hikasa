@@ -1,0 +1,6 @@
+{
+  "description": "Rules content (scripted comparator): rules same, `~` for unimportant-only, important, error, size-limit fallback",
+  "source": "hikasa-folder/28_content_rules",
+  "columns": "status,size",
+  "ansi": true
+}

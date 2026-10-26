@@ -1,0 +1,5 @@
+{
+  "description": "Changes spread over 30 lines: hunks merge when at most 2N apart, separate otherwise; gap rows in the side-by-side views",
+  "display": "context",
+  "ansi": true
+}

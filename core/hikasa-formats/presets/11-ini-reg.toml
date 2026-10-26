@@ -1,0 +1,66 @@
+# Sources: common INI file conventions (sections, key = value pairs, ; and # comments) and the registry export
+# text format (key paths in brackets, quoted value names, @ for the default value, dword/qword/hex value types).
+# Written for Hikasa.
+schema_version = 1
+id = "ini-reg"
+name = "Registry Dumps / INI"
+description = "INI configuration files and registry export files."
+kind = "text"
+mask = "*.reg;*.ini"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[elements]
+# Section names, value names and value types are case-insensitive.
+Keyword = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = ";"
+stop_at_eol = true
+
+[[grammar]]
+element = "Comment"
+kind = "basic"
+text = '^\s*#(?:.*\S)?'
+regex = true
+
+# Section headers.
+[[grammar]]
+element = "Keyword"
+kind = "basic"
+text = '^\s*\[[^\]]*\]'
+regex = true
+
+# Value names: the text before the first '=' (the look-ahead needs fancy-regex; anchored, so it runs once per
+# line).
+[[grammar]]
+element = "Keyword"
+kind = "basic"
+text = '^\s*(?:"[^"]*"|[^=;\[\s][^=]*?)(?=\s*=)'
+regex = true
+
+# Value types.
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = ["dword", "qword", "hex"]
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '\'
+stop_at_eol = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = "="

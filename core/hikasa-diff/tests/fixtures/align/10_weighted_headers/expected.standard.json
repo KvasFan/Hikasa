@@ -1,0 +1,10 @@
+{
+  "algorithm": "standard",
+  "rows": 9,
+  "warnings": [],
+  "runs": [
+    {"kind": "insert", "left": [0, 0], "right": [0, 4]},
+    {"kind": "equal", "left": [0, 1], "right": [4, 5]},
+    {"kind": "delete", "left": [1, 5], "right": [5, 5]}
+  ]
+}

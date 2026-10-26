@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Folder Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.fsbs { font-family: monospace; }
+table.fsbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.5em; }
+table.fsbs td { padding: 0 0.5em; white-space: pre; vertical-align: top; }
+table.fsbs td.num { text-align: right; }
+table.fsbs td.m { text-align: center; }
+.c-newer { font-weight: bold; }
+.c-unimp { font-style: italic; }
+.c-orphan { font-style: italic; text-decoration: underline; }
+.c-older { color: #808080; }
+.c-filtered { text-decoration: line-through; }
+.c-error { font-weight: bold; text-decoration: underline wavy; }
+</style>
+</head>
+<body>
+<h1>Folder Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l</td></tr>
+<tr><th>Right</th><td>/r</td></tr>
+<tr><th>Mode</th><td>display: all; folders: compare structure; ignore unimportant: yes; suppress filters: no</td></tr>
+<tr><th>Rules</th><td>size, timestamps (2 s), content: rules; filters: none</td></tr>
+<tr class="warning"><th>Warning</th><td>rules_size_limit: compared by bytes</td></tr>
+</table>
+<table class="summary">
+<tr><th>Verdict</th><td>differences</td></tr>
+<tr><th>Ignore unimportant</th><td>yes (unimportant differences count as same)</td></tr>
+<tr><th>Complete</th><td>yes</td></tr>
+</table>
+<h2>Items</h2>
+<table class="summary">
+<tr><th>Category</th><th>Files</th><th>Folders</th></tr>
+<tr><th>Same</th><td class="num">4</td><td class="num">1</td></tr>
+<tr><th>Left newer</th><td class="num">0</td><td class="num">0</td></tr>
+<tr><th>Right newer</th><td class="num">0</td><td class="num">0</td></tr>
+<tr><th>Different</th><td class="num">1</td><td class="num">0</td></tr>
+<tr><th>Left only</th><td class="num">0</td><td class="num">0</td></tr>
+<tr><th>Right only</th><td class="num">0</td><td class="num">0</td></tr>
+<tr><th>Unknown</th><td class="num">0</td><td class="num">0</td></tr>
+<tr><th>Errors</th><td class="num">1</td><td class="num">0</td></tr>
+<tr><th>Filtered</th><td class="num">0</td><td class="num">0</td></tr>
+</table>
+<h2>Totals</h2>
+<table class="summary">
+<tr><th></th><th>Left</th><th>Right</th></tr>
+<tr><th>Files</th><td class="num">6</td><td class="num">6</td></tr>
+<tr><th>Folders</th><td class="num">1</td><td class="num">1</td></tr>
+<tr><th>Bytes</th><td class="num">46</td><td class="num">36</td></tr>
+</table>
+<h2>Content comparisons</h2>
+<table class="summary">
+<tr><th>Result</th><th>Pairs</th></tr>
+<tr><th>Binary same</th><td class="num">1</td></tr>
+<tr><th>Rules same</th><td class="num">1</td></tr>
+<tr><th>Unimportant differences only</th><td class="num">2</td></tr>
+<tr><th>Important differences</th><td class="num">1</td></tr>
+<tr><th>Binary different</th><td class="num">0</td></tr>
+<tr><th>Errors</th><td class="num">1</td></tr>
+<tr><th>Not compared</th><td class="num">0</td></tr>
+</table>
+</body>
+</html>

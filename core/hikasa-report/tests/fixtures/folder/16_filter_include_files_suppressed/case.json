@@ -1,0 +1,5 @@
+{
+  "description": "Suppress Filters reveals file-filtered items as `.` (teal)",
+  "source": "hikasa-folder/16_filter_include_files",
+  "suppress_filters": true
+}

@@ -1,0 +1,13 @@
+{
+  "views": [
+    {
+      "view": 3,
+      "kind": "folder_compare",
+      "title": "a | b",
+      "specs": [
+        "/a",
+        "/b"
+      ]
+    }
+  ]
+}

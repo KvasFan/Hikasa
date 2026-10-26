@@ -1,0 +1,21 @@
+{
+  "schema": "hikasa.gui_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "views": [
+      {
+        "view": 7,
+        "kind": "text_compare",
+        "title": "<TMP>/a.c | <TMP>/b.c",
+        "specs": [
+          "<TMP>/a.c",
+          "<TMP>/b.c"
+        ]
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

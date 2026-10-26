@@ -1,0 +1,6 @@
+-  left_dir/
++  right_dir/
+=  both.txt
+-  left_only.txt
++  right_only.txt
+# 1 same, 0 left newer, 0 right newer, 0 different, 1 left only, 1 right only, 0 unknown, 0 errors

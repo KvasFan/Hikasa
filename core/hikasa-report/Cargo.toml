@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-report"
-description = "Report generation: text, HTML, XML, patch, statistics, print model"
+description = "Report rendering for text and folder comparisons: plain text, HTML, patches, summaries, statistics CSV and JSON"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,23 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-diff.workspace = true
+hikasa-text.workspace = true
+hikasa-folder.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff.workspace = true
+thiserror.workspace = true
+unicode-width.workspace = true
+bitflags.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true
+diffy.workspace = true
+proptest.workspace = true
+hikasa-vfs.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,5 @@
+{
+  "description": "Whitespace and case unimportant: important and unimportant changes side by side; annotated hunks say which",
+  "display": "mismatches",
+  "ansi": true
+}

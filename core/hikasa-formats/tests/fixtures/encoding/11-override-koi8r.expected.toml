@@ -1,0 +1,8 @@
+# §2.8 row 11: an override wins; a BOM of another encoding is not stripped.
+[options]
+override = "KOI8-R"
+
+[expected]
+encoding = "KOI8-R"
+bom_len = 0
+source = "override"

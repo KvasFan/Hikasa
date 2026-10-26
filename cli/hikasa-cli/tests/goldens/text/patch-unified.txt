@@ -1,0 +1,19 @@
+# Text Compare
+# Left: <TMP>/a/x.c (UTF-8, lf)
+# Right: <TMP>/b/x.c (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: C, C++, C#, ObjC Source; algorithm: histogram (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+--- <TMP>/a/x.c	2026-10-19T13:12:00Z
++++ <TMP>/b/x.c	2026-10-19T13:12:00Z
+@@ -2,7 +2,8 @@
+ 
+ /* The program prints one number; this comment is long enough to wrap in a column. */
+ int main(void) {
+-    int x = 1;
+-    printf("%d\n", x);
++    int x = 2;
++    int y = x * 2;
++    printf("%d\n", y);
+     return 0;
+ }

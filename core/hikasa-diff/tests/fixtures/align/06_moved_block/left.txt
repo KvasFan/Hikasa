@@ -1,0 +1,9 @@
+alpha one
+alpha two
+alpha three
+middle 1
+middle 2
+middle 3
+middle 4
+middle 5
+omega

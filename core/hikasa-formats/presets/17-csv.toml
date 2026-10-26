@@ -1,0 +1,15 @@
+# Sources: docs/10-file-formats.md §5 (D-26: the mask is *.csv;*.tsv); RFC 4180 (comma-separated values,
+# double-quote text qualifier). Written for Hikasa.
+schema_version = 1
+id = "csv"
+name = "Comma Separated Values"
+description = "Delimited tables. Compared as plain text until the table view exists (D-11); *.tsv is detected as tab-delimited by the table engine."
+kind = "table"
+mask = "*.csv;*.tsv"
+
+[encoding]
+mode = "auto"
+
+[table]
+delimiter = ","
+qualifier = '"'

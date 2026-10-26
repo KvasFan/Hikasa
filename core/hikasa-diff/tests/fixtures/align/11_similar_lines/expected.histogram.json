@@ -1,0 +1,9 @@
+{
+  "algorithm": "histogram",
+  "rows": 4,
+  "warnings": [],
+  "runs": [
+    {"kind": "insert", "left": [0, 0], "right": [0, 1]},
+    {"kind": "changed", "left": [0, 3], "right": [1, 4]}
+  ]
+}

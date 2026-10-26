@@ -1,0 +1,8 @@
+# A French UTF-8 text with one windows-1252 byte (0xEF, "ï"): 10 valid multi-byte sequences against 1
+# malformed one, so UTF-8 with a replacement (§2.8 step 4d), not "cafÃ©" on every line.
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "utf8_lossy"
+text = "Le café est très bon à Paris, déjà vu.\nLe café est très bon à Paris, déjà vu.\nna\ufffdve\n"
+malformed = 1

@@ -1,0 +1,4 @@
+E  locked/
+E  read_fails.txt
+E  stat_fails.txt
+# 0 same, 0 left newer, 0 right newer, 0 different, 0 left only, 0 right only, 0 unknown, 2 errors

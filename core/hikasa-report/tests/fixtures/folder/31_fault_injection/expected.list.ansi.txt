@@ -1,0 +1,4 @@
+[1;31mE  locked/[0m
+[1;31mE  read_fails.txt[0m
+[1;31mE  stat_fails.txt[0m
+# 0 same, 0 left newer, 0 right newer, 0 different, 0 left only, 0 right only, 0 unknown, 2 errors

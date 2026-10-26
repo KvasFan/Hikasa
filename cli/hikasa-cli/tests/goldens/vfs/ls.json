@@ -1,0 +1,78 @@
+{
+  "schema": "hikasa.vfs_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "spec": "<TMP>/d",
+    "entries": [
+      {
+        "name": "a.txt",
+        "name_lossy": false,
+        "kind": "file",
+        "size": 6,
+        "mtime": "2026-10-19T13:12:00Z",
+        "ctime": "<CTIME>",
+        "attrs": null,
+        "mode": 420,
+        "permissions": "-rw-r--r--",
+        "uid": <UID>,
+        "gid": <GID>,
+        "link_target": null,
+        "followed": false,
+        "crc32": null
+      },
+      {
+        "name": "b.bin",
+        "name_lossy": false,
+        "kind": "file",
+        "size": 4,
+        "mtime": "2026-10-19T13:12:00Z",
+        "ctime": "<CTIME>",
+        "attrs": null,
+        "mode": 420,
+        "permissions": "-rw-r--r--",
+        "uid": <UID>,
+        "gid": <GID>,
+        "link_target": null,
+        "followed": false,
+        "crc32": null
+      },
+      {
+        "name": "link",
+        "name_lossy": false,
+        "kind": "symlink",
+        "size": 5,
+        "mtime": "2026-10-19T13:12:00Z",
+        "ctime": "<CTIME>",
+        "attrs": null,
+        "mode": 511,
+        "permissions": "lrwxrwxrwx",
+        "uid": <UID>,
+        "gid": <GID>,
+        "link_target": "a.txt",
+        "followed": false,
+        "crc32": null
+      },
+      {
+        "name": "tab\there.txt",
+        "name_lossy": false,
+        "kind": "file",
+        "size": 2,
+        "mtime": "2026-10-19T13:12:00Z",
+        "ctime": "<CTIME>",
+        "attrs": null,
+        "mode": 420,
+        "permissions": "-rw-r--r--",
+        "uid": <UID>,
+        "gid": <GID>,
+        "link_target": null,
+        "followed": false,
+        "crc32": null
+      }
+    ],
+    "errors": []
+  },
+  "warnings": [],
+  "error": null
+}

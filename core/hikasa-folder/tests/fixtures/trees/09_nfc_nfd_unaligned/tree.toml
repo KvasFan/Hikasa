@@ -1,0 +1,7 @@
+description = "Without align_normalization NFC and NFD names are two orphans (§2.5.2 row 6)"
+[[left]]
+path = "caf\u00e9.txt"
+content = "c"
+[[right]]
+path = "cafe\u0301.txt"
+content = "c"

@@ -1,0 +1,6 @@
+# §2.8 row 10: a 1 KiB Japanese sample in Shift_JIS.
+[expected]
+encoding = "Shift_JIS"
+bom_len = 0
+source = "detector"
+malformed = 0

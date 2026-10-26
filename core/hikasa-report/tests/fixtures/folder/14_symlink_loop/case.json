@@ -1,0 +1,5 @@
+{
+  "description": "A followed symlink loop: error node with flag symlink_loop",
+  "source": "hikasa-folder/14_symlink_loop",
+  "columns": "status"
+}

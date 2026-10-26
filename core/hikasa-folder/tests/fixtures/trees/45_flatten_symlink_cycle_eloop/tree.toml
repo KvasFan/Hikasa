@@ -1,0 +1,23 @@
+description = "Flatten (FC-014) with a symbolic-link cycle reported as ELOOP: the links are Error rows with SYMLINK_LOOP and the warning symlink_loop (D-33), as in the folder tree"
+[[left]]
+path = "a"
+kind = "symlink"
+target = "b"
+[[left]]
+path = "b"
+kind = "symlink"
+target = "a"
+[[right]]
+path = "a"
+kind = "symlink"
+target = "b"
+[[right]]
+path = "b"
+kind = "symlink"
+target = "a"
+[[left]]
+path = "ok.txt"
+content = "o"
+[[right]]
+path = "ok.txt"
+content = "o"

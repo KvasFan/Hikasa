@@ -1,0 +1,3 @@
+L1:0-14	Everything Else	id,name,amount
+L2:0-10	Everything Else	1,Tea,3.50
+L3:0-22	Everything Else	2,"Coffee, black",2.80

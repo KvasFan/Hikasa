@@ -1,7 +1,9 @@
 # Hikasa — Product Overview
 
 > Audience: AI coding agents and human contributors implementing Hikasa.
-> Status: specification only. Version 0.0.0 contains no implementation.
+> Status: version 0.1.0 = milestone M1 (core engines, the `hikasa` command line, the
+> egui GUI prototype `hikasa-gui`). This document describes the whole product; what each milestone
+> delivers, and what M1 still lacks, is in `16-roadmap.md`.
 
 ## 1. What Hikasa is
 
@@ -106,6 +108,7 @@ needs to understand *what changed* between two sets of data and to reconcile it.
 | `16-roadmap.md` | Milestones and acceptance criteria |
 | `17-agent-workflow.md` | Rules for AI agents working on this repository |
 | `reference/commands.md` | Complete command catalogue with default shortcuts |
+| `design/m1-contracts.md` | Binding API contracts for milestone M1 |
 
 ## 6. Requirement notation
 

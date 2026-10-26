@@ -1,0 +1,6 @@
+{
+  "description": "Name-only entries under Suppress Filters: name and kind without size or time",
+  "source": "hikasa-folder/37_kind_unknown_and_name_only",
+  "suppress_filters": true,
+  "columns": "size,modified,attributes,crc,owner,group"
+}

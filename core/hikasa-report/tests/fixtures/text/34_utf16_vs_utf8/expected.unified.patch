@@ -1,0 +1,7 @@
+# Text Compare
+# Left: /l/left.txt (UTF-16LE BOM, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+# Warning: patch_encoding: the left file is stored in UTF-16LE; the patch is written in UTF-8 and may not apply to its bytes (/l/left.txt)
+#

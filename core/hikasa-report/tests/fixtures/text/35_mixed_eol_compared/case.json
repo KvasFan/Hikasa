@@ -1,0 +1,4 @@
+{
+  "description": "Mixed line endings compared: lone CRs written as LF (patch_lossy_eol), last line without newline",
+  "source": "hikasa-text/35_mixed_eol_compared"
+}

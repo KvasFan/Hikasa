@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: crc; filters: none
+
+Name      Size  Modified              CRC    Status     Name      Size  Modified              CRC
+sub/         1                             = same       sub/         1
+  s.txt      1  2026-01-01T00:00:00Z       = same         s.txt      1  2026-01-01T00:00:00Z
+diff.txt     3  2026-01-01T00:00:00Z       ! different  diff.txt     3  2026-01-01T00:00:00Z
+same.txt     3  2026-05-01T00:00:00Z       = same       same.txt     3  2026-01-01T00:00:00Z

@@ -1,0 +1,3 @@
+[filters.names]
+include_files = ["*.c"]
+exclude_folders = ["test\\"]

@@ -1,0 +1,5 @@
+[expected]
+encoding = "UTF-32BE"
+bom_len = 4
+source = "bom"
+text = "a"

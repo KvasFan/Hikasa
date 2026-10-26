@@ -1,0 +1,5 @@
+[filters.other.date]
+cmp = "greater"
+[filters.other.date.cutoff]
+type = "days_ago"
+days = 30

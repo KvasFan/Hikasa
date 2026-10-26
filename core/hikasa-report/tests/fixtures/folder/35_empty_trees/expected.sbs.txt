@@ -1,0 +1,7 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name  Size  Modified     Name  Size  Modified

@@ -1,0 +1,6 @@
+E  bad/
+?  bad/inner/
+?  bad/a.txt
+?  bad/b.txt
+=  good.txt
+# 1 same, 0 left newer, 0 right newer, 0 different, 0 left only, 0 right only, 2 unknown, 0 errors

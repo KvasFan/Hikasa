@@ -1,0 +1,55 @@
+description = "Other filters (FC-053): date cutoff (files older than 30 days before midnight are filtered, a missing mtime fails), exclude protected (SYSTEM+HIDDEN), folders unaffected by size/date"
+[options]
+now = "2026-10-20T12:00:00Z"
+[[left]]
+path = "recent.txt"
+content = "r"
+mtime = "2026-10-15T00:00:00Z"
+[[right]]
+path = "recent.txt"
+content = "r"
+mtime = "2026-10-15T00:00:00Z"
+[[left]]
+path = "old.txt"
+content = "o"
+mtime = "2025-01-01T00:00:00Z"
+[[right]]
+path = "old.txt"
+content = "o2"
+mtime = "2025-01-01T00:00:00Z"
+[[left]]
+path = "no_time.txt"
+content = "n"
+mtime = "none"
+[[right]]
+path = "no_time.txt"
+content = "n"
+mtime = "none"
+[[left]]
+path = "protected.sys"
+content = "p"
+dos = "HS"
+mtime = "2026-10-15T00:00:00Z"
+[[right]]
+path = "protected.sys"
+content = "p"
+dos = "HS"
+mtime = "2026-10-15T00:00:00Z"
+[[left]]
+path = "hidden_only.txt"
+content = "h"
+dos = "H"
+mtime = "2026-10-15T00:00:00Z"
+[[right]]
+path = "hidden_only.txt"
+content = "h"
+dos = "H"
+mtime = "2026-10-15T00:00:00Z"
+[[left]]
+path = "olddir"
+kind = "dir"
+mtime = "2020-01-01T00:00:00Z"
+[[right]]
+path = "olddir"
+kind = "dir"
+mtime = "2020-01-01T00:00:00Z"

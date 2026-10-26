@@ -1,0 +1,3 @@
+[criteria.content]
+method = "binary"
+skip_if_quick_same = true

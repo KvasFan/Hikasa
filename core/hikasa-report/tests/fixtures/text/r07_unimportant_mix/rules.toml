@@ -1,0 +1,5 @@
+[importance]
+leading_whitespace = false
+embedded_whitespace = false
+trailing_whitespace = false
+everything_else_case_sensitive = false

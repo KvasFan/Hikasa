@@ -1,0 +1,13 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+Warning: entry_error: /l/bad: permission denied
+
+Name      Size    Status   Name      Size
+bad/            E error    bad/         2
+                ? unknown    inner/     0
+                ? unknown    a.txt      1
+                ? unknown    b.txt      1
+good.txt     1  = same     good.txt     1

@@ -1,0 +1,15 @@
+description = "A folder that exists on the left only and cannot be listed is an Error (scan Failed), not a left orphan: a failure is never claimed as a difference (§2.6.4 as amended, D-02). Verdict: incomplete"
+[[left]]
+path = "lonely/a.txt"
+content = "a"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "top.txt"
+content = "t"
+[[faults]]
+side = "left"
+path = "lonely"
+op = "list"
+kind = "permission_denied"

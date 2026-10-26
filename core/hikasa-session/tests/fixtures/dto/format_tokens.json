@@ -1,0 +1,154 @@
+{
+  "file": "<TMP>/work/t.c",
+  "format": {
+    "id": "c-cpp",
+    "name": "C, C++, C#, ObjC Source",
+    "kind": "text",
+    "reason": {
+      "reason": "mask",
+      "id": "c-cpp",
+      "mask": "*.c"
+    }
+  },
+  "encoding": {
+    "name": "UTF-8",
+    "source": "locale_fallback",
+    "bom": false,
+    "malformed": 0
+  },
+  "regex_errors": 0,
+  "lines": [
+    {
+      "line": 2,
+      "state_in": {
+        "state": "in_delimited",
+        "item": 1,
+        "remaining": null
+      },
+      "tokens": [
+        {
+          "start": 0,
+          "end": 1,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 1,
+          "end": 7,
+          "element": "Comment",
+          "item": 1,
+          "text": "two */"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 8,
+          "end": 11,
+          "element": "Keyword",
+          "item": 6,
+          "text": "int"
+        },
+        {
+          "start": 11,
+          "end": 12,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 12,
+          "end": 13,
+          "element": "Identifier",
+          "item": 7,
+          "text": "b"
+        },
+        {
+          "start": 13,
+          "end": 14,
+          "element": "Operator",
+          "item": 9,
+          "text": ";"
+        }
+      ]
+    },
+    {
+      "line": 3,
+      "state_in": {
+        "state": "normal",
+        "item": null,
+        "remaining": null
+      },
+      "tokens": [
+        {
+          "start": 0,
+          "end": 4,
+          "element": "Keyword",
+          "item": 6,
+          "text": "char"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 5,
+          "end": 6,
+          "element": "Operator",
+          "item": 9,
+          "text": "*"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "element": "Identifier",
+          "item": 7,
+          "text": "s"
+        },
+        {
+          "start": 7,
+          "end": 8,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 8,
+          "end": 9,
+          "element": "Operator",
+          "item": 9,
+          "text": "="
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "element": "Everything Else",
+          "item": null,
+          "text": " "
+        },
+        {
+          "start": 10,
+          "end": 13,
+          "element": "String",
+          "item": 3,
+          "text": "\"x\""
+        },
+        {
+          "start": 13,
+          "end": 14,
+          "element": "Operator",
+          "item": 9,
+          "text": ";"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "description": "D-48: content match cancels time and size, not attributes or name case",
+  "source": "hikasa-folder/29_d48_override",
+  "columns": "status,attributes"
+}

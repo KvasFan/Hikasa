@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Folder Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.fsbs { font-family: monospace; }
+table.fsbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.5em; }
+table.fsbs td { padding: 0 0.5em; white-space: pre; vertical-align: top; }
+table.fsbs td.num { text-align: right; }
+table.fsbs td.m { text-align: center; }
+.c-same { color: #000000; }
+.c-newer { color: #c00000; }
+.c-unimp { color: #0030c0; }
+.c-orphan { color: #800080; }
+.c-older { color: #808080; }
+.c-filtered { color: #008080; }
+.c-error { color: #a04000; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Folder Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l</td></tr>
+<tr><th>Right</th><td>/r</td></tr>
+<tr><th>Mode</th><td>display: all; folders: compare structure; ignore unimportant: no; suppress filters: no</td></tr>
+<tr><th>Rules</th><td>size, timestamps (2 s); filters: none</td></tr>
+</table>
+<table class="legend">
+<tr><td class="c-same">Same</td><td class="c-newer">Newer or different</td><td class="c-unimp">Unimportant differences only</td><td class="c-orphan">Orphan</td><td class="c-older">Older or unknown</td><td class="c-filtered">Filtered</td><td class="c-error">Error</td></tr>
+</table>
+<table class="fsbs">
+<thead><tr><th>Name</th><th>Size</th><th>Modified</th><th class="m"></th><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+<tbody>
+<tr><td class="name c-newer" style="padding-left:1ch">dir/</td><td class="c-newer num">3</td><td class="c-newer"></td><td class="m c-newer">!</td><td class="name c-older" style="padding-left:1ch">dir/</td><td class="c-older num">6</td><td class="c-older"></td></tr>
+<tr><td class="name c-newer" style="padding-left:3ch">size_and_time.txt</td><td class="c-newer num">3</td><td class="c-newer">2026-03-01T00:00:00Z</td><td class="m c-newer">&gt;</td><td class="name c-older" style="padding-left:3ch">size_and_time.txt</td><td class="c-older num">6</td><td class="c-older">2026-01-01T00:00:00Z</td></tr>
+<tr><td class="name c-newer" style="padding-left:1ch">left_newer.txt</td><td class="c-newer num">1</td><td class="c-newer">2026-01-02T00:00:00Z</td><td class="m c-newer">&gt;</td><td class="name c-older" style="padding-left:1ch">left_newer.txt</td><td class="c-older num">1</td><td class="c-older">2026-01-01T00:00:00Z</td></tr>
+<tr><td class="name c-older" style="padding-left:1ch">right_newer.txt</td><td class="c-older num">1</td><td class="c-older">2026-01-01T00:00:00Z</td><td class="m c-newer">&lt;</td><td class="name c-newer" style="padding-left:1ch">right_newer.txt</td><td class="c-newer num">1</td><td class="c-newer">2026-01-01T00:00:02.000000001Z</td></tr>
+<tr><td class="name c-same" style="padding-left:1ch">same_within_tolerance.txt</td><td class="c-same num">1</td><td class="c-same">2026-01-01T00:00:02Z</td><td class="m c-same">=</td><td class="name c-same" style="padding-left:1ch">same_within_tolerance.txt</td><td class="c-same num">1</td><td class="c-same">2026-01-01T00:00:00Z</td></tr>
+<tr><td class="name c-newer" style="padding-left:1ch">size_only.txt</td><td class="c-newer num">3</td><td class="c-newer">2026-01-01T00:00:00Z</td><td class="m c-newer">!</td><td class="name c-newer" style="padding-left:1ch">size_only.txt</td><td class="c-newer num">4</td><td class="c-newer">2026-01-01T00:00:00Z</td></tr>
+</tbody>
+</table>
+</body>
+</html>

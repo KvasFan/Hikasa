@@ -1,0 +1,12 @@
+{
+  "schema": "hikasa.completions.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "shell": "zsh",
+    "script": "<SCRIPT>"
+  },
+  "warnings": [],
+  "error": null
+}

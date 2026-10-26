@@ -1,0 +1,9 @@
+# Sources: docs/10-file-formats.md §5. Written for Hikasa.
+# Ships disabled (Preset::enabled = false, D-27): "Registry Dumps / INI" comes first with the same mask, and the
+# registry view is a later feature. The enabled flag is not part of this file.
+schema_version = 1
+id = "registry-files"
+name = "Registry Files"
+description = "Registry export files for the registry view (compared as binary content in M1)."
+kind = "registry"
+mask = "*.reg"

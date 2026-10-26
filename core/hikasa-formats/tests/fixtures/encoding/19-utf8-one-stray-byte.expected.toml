@@ -1,0 +1,8 @@
+# Valid UTF-8 with one stray byte (D-42, §2.8 step 4d): decoded as UTF-8 with one replacement, not
+# re-decoded wholesale in a legacy encoding (28 valid multi-byte sequences, 1 malformed).
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "utf8_lossy"
+text = "Привет, мир!\nПривет, мир!\nПривет, мир!\n\ufffdcafé\n"
+malformed = 1

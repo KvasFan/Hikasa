@@ -1,0 +1,5 @@
+-  only/left.txt
+=  top.txt
+=  a/x.txt
+=  b/x.txt
+# 3 same, 0 left newer, 0 right newer, 0 different, 1 left only, 0 right only, 0 unknown, 0 errors

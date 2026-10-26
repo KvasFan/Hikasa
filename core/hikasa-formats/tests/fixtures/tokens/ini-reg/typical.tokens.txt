@@ -1,0 +1,19 @@
+L1:0-22	Comment	; Application settings
+L2:0-9	Keyword	[General]
+L3:0-4	Keyword	Name
+L3:4-5	Operator	=
+L3:5-21	Everything Else	Demo Application
+L4:0-7	Keyword	Version
+L4:7-8	Everything Else	 
+L4:8-9	Operator	=
+L4:9-13	Everything Else	 2.1
+L5:0-32	Comment	# hash comments are accepted too
+L7:0-7	Keyword	[Paths]
+L8:0-4	Keyword	Data
+L8:4-5	Everything Else	 
+L8:5-6	Operator	=
+L8:6-19	Everything Else	 C:\\Data\\demo
+L9:0-3	Keyword	Log
+L9:3-4	Operator	=
+L9:4-24	Everything Else	/var/log/demo.log   
+L9:24-42	Comment	; trailing comment

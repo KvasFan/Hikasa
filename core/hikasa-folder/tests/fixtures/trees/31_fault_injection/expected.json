@@ -1,0 +1,220 @@
+{
+  "description": "Fault injection: an unreadable subfolder on both sides (no children), a stat error on one entry (Error with the side flag, aligned with its counterpart), and a read error in a content test (Error)",
+  "verdict": "incomplete",
+  "verdict_ignoring_unimportant": "incomplete",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 2,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 1
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 1,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 2,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 1,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 1
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 1,
+      "not_compared": 0
+    }
+  },
+  "warnings": [
+    "entry_error",
+    "entry_error",
+    "entry_error"
+  ],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "error",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "locked",
+          "kind": "folder",
+          "state": "error",
+          "scan": "failed",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_error",
+            "right_error"
+          ],
+          "errors": [
+            {
+              "side": "left",
+              "kind": "permission_denied"
+            },
+            {
+              "side": "right",
+              "kind": "permission_denied"
+            }
+          ],
+          "left": {
+            "name": "locked",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "locked",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "read_fails.txt",
+          "kind": "file",
+          "state": "error",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": "error",
+          "flags": [],
+          "errors": [
+            {
+              "side": null,
+              "kind": "io"
+            }
+          ],
+          "left": {
+            "name": "read_fails.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "read_fails.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "stat_fails.txt",
+          "kind": "file",
+          "state": "error",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_error"
+          ],
+          "errors": [
+            {
+              "side": "left",
+              "kind": "permission_denied"
+            }
+          ],
+          "left": {
+            "name": "stat_fails.txt",
+            "kind": "file",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "stat_fails.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

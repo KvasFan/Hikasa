@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-gui"
-description = "Desktop GUI (Dioxus) built on the core crates; hosts the IPC endpoint used by the CLI"
+description = "Desktop GUI (egui/eframe) built on the core crates; hosts the IPC endpoint used by the CLI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,26 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-vfs.workspace = true
+hikasa-formats.workspace = true
+hikasa-text.workspace = true
+hikasa-folder.workspace = true
+hikasa-report.workspace = true
+hikasa-session.workspace = true
+eframe.workspace = true
+egui.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

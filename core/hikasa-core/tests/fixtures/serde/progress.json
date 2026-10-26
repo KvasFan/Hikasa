@@ -1,0 +1,55 @@
+{
+  "phases": [
+    "reading",
+    "decoding",
+    "tokenizing",
+    "aligning",
+    "classifying",
+    "scanning",
+    "comparing_content",
+    "hashing",
+    "reporting"
+  ],
+  "units": [
+    "items",
+    "bytes",
+    "lines",
+    "folders"
+  ],
+  "reports": [
+    {
+      "phase": "scanning",
+      "done": 12,
+      "total": null,
+      "unit": "folders",
+      "current": "src/a"
+    },
+    {
+      "phase": "reading",
+      "done": 4096,
+      "total": 8192,
+      "unit": "bytes",
+      "current": null
+    }
+  ],
+  "job": 42,
+  "job_kinds": [
+    "quick_compare",
+    "text_compare",
+    "folder_compare",
+    "report",
+    "format_tokens",
+    "vfs_list",
+    "vfs_read"
+  ],
+  "sides": [
+    "left",
+    "right",
+    "center",
+    "output"
+  ],
+  "pair": {
+    "left": 1,
+    "right": 2
+  }
+}

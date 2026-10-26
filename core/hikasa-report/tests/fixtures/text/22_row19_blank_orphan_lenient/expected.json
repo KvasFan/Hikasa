@@ -1,0 +1,145 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 5,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 3,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 4,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 2,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": false,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "unimportant_only"
+  },
+  "stats": {
+    "rows": 3,
+    "same_rows": 2,
+    "changed_rows": 0,
+    "left_only_rows": 1,
+    "right_only_rows": 0,
+    "important_rows": 0,
+    "unimportant_rows": 1,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 1,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 0,
+    "left_lines": 3,
+    "right_lines": 2
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "delete",
+      "importance": "unimportant",
+      "rows": [
+        1,
+        2
+      ],
+      "left_lines": [
+        2,
+        3
+      ],
+      "right_lines": [
+        2,
+        2
+      ]
+    }
+  ],
+  "display": {
+    "mode": "mismatches",
+    "lines": null,
+    "toggles": [
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "gap",
+      "rows": [
+        0,
+        1
+      ]
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "left_only",
+      "importance": "unimportant",
+      "left": {
+        "line": 2,
+        "text": ""
+      },
+      "right": null,
+      "inline": null
+    },
+    {
+      "type": "gap",
+      "rows": [
+        2,
+        3
+      ]
+    }
+  ]
+}

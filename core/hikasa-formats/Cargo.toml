@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-formats"
-description = "File format model, grammar tokenizer, conversions and built-in presets"
+description = "File format model, grammar tokenizer, encoding and binary detection, conversions and built-in presets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,27 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+serde.workspace = true
+toml.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+encoding_rs.workspace = true
+chardetng.workspace = true
+thiserror.workspace = true
+memchr.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "tokenize_c_1m"
+harness = false

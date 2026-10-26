@@ -1,0 +1,7 @@
+L1:0-7	Everything Else	SELECT 
+L1:7-10	String	'a'
+L1:10-11	Everything Else	 
+L1:11-17	Comment	-- one
+L2:0-7	Everything Else	FROM t;
+L3:0-6	Comment	-- two
+L4:0-9	Everything Else	SELECT 2;

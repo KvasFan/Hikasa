@@ -1,0 +1,29 @@
+description = "DOS attribute subset (FC-023, D-30) and Unix owner/group criteria (FC-024)"
+[[left]]
+path = "dos_differs.txt"
+content = "d"
+dos = "AH"
+[[right]]
+path = "dos_differs.txt"
+content = "d"
+dos = "A"
+[[left]]
+path = "dos_ignored.txt"
+content = "d"
+dos = "AS"
+[[right]]
+path = "dos_ignored.txt"
+content = "d"
+dos = "A"
+[[left]]
+path = "owner.txt"
+content = "o"
+mode = 420
+uid = 1000
+gid = 100
+[[right]]
+path = "owner.txt"
+content = "o"
+mode = 420
+uid = 1001
+gid = 101

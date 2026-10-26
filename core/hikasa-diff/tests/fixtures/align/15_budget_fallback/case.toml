@@ -1,0 +1,2 @@
+description = "a small work budget: Standard aligns the first ranges itself, then falls back to Histogram for the pending ones (work_budget_exhausted)"
+work_budget = 200

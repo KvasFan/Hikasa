@@ -1,0 +1,39 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+--- /l/left.txt	2026-10-19T13:12:00Z
++++ /r/right.txt	2026-10-19T14:00:00Z
+@@ -1,13 +1,12 @@ important
+ line 01 of the report sample
+ line 02 of the report sample
+-line 03 of the report sample
++line 03 of the report sample, changed
+ line 04 of the report sample
+ line 05 of the report sample
+ line 06 of the report sample
+ line 07 of the report sample
+ line 08 of the report sample
+-line 09 of the report sample
+-line 10 of the report sample
++line ten of the report sample
+ line 11 of the report sample
+ line 12 of the report sample
+ line 13 of the report sample
+@@ -18,6 +17,8 @@ important
+ line 18 of the report sample
+ line 19 of the report sample
+ line 20 of the report sample
++inserted line A
++inserted line B
+ line 21 of the report sample
+ line 22 of the report sample
+ line 23 of the report sample
+@@ -27,4 +28,4 @@ important
+ line 27 of the report sample
+ line 28 of the report sample
+ line 29 of the report sample
+-line 30 of the report sample
++line 30 of the report sample, changed

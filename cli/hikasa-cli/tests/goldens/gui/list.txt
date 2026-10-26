@@ -1,0 +1,1 @@
+7	text_compare	<TMP>/a.c | <TMP>/b.c	<TMP>/a.c	<TMP>/b.c

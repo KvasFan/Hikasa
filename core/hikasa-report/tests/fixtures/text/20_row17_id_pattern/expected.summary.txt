@@ -1,0 +1,22 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: regex "\\$Id:[^$]*\\$"; line endings: ignored; orphan lines: always important
+
+Verdict:               unimportant differences only
+Ignore unimportant:    no
+Rows:                  2
+Same rows:             1
+Changed rows:          1
+Left-only rows:        0
+Right-only rows:       0
+Important rows:        0
+Unimportant rows:      1
+Sections:              1
+Important sections:    0
+Unimportant sections:  1
+Important lines:       added 0, deleted 0, changed 0, original 0
+Unimportant lines:     added 0, deleted 0, changed 1, original 1
+Left lines:            2
+Right lines:           2

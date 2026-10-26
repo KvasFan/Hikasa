@@ -1,0 +1,170 @@
+{
+  "description": "§2.3 row 10: -*.bak with align_extensions: x.bak (left, filtered, stat'ed after alignment) pairs with x.txt; the pair is compared normally",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 1,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 0,
+      "folders": 0,
+      "bytes": 0
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 4
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 0,
+      "left_newer": 1,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 0,
+      "folders": 0,
+      "bytes": 0
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 4
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "x.bak",
+          "kind": "file",
+          "state": "left_newer",
+          "scan": "not_applicable",
+          "diffs": [
+            "time"
+          ],
+          "time": "left_newer",
+          "content": null,
+          "flags": [
+            "left_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "x.bak",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "right": {
+            "name": "x.txt",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "y.bak",
+          "kind": "file",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "left_stat_skipped"
+          ],
+          "errors": [],
+          "left": {
+            "name": "y.bak",
+            "kind": "file",
+            "size": 0,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        }
+      ]
+    }
+  }
+}

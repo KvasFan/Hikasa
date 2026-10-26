@@ -1,0 +1,13 @@
+[1mFolder Compare[0m
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: binary; filters: none
+Warning: entry_error: /l/locked: permission denied
+Warning: entry_error: /l/stat_fails.txt: permission denied
+Warning: entry_error: /r/locked: permission denied
+
+Name            Size  Modified                 Name            Size  Modified
+[1;31mlocked/                                   [0m  [1;31mE[0m  [1;31mlocked/                                   [0m
+[1;31mread_fails.txt     1  2026-01-01T00:00:00Z[0m  [1;31mE[0m  [1;31mread_fails.txt     1  2026-01-01T00:00:00Z[0m
+[1;31mstat_fails.txt                            [0m  [1;31mE[0m  [1;31mstat_fails.txt     1  2026-01-01T00:00:00Z[0m

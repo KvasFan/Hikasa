@@ -1,0 +1,8 @@
+~  sub/
+~  sub/only_unimportant.txt
+=  big.txt
+E  broken.txt
+=  crlf.txt
+!  important.txt
+~  spaces.txt
+# 2 same, 0 left newer, 0 right newer, 3 different, 0 left only, 0 right only, 0 unknown, 1 errors

@@ -1,0 +1,2 @@
+[filters.names]
+include_folders = ["src\\core\\"]

@@ -1,0 +1,6 @@
+# §2.8 row 1.
+[expected]
+encoding = "UTF-8"
+bom_len = 3
+source = "bom"
+text = "a"

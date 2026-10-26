@@ -1,0 +1,6 @@
+# §2.8 row 9: a 1 KiB French sample in windows-1252.
+[expected]
+encoding = "windows-1252"
+bom_len = 0
+source = "detector"
+malformed = 0

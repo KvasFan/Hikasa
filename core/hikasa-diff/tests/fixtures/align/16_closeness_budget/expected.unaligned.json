@@ -1,0 +1,10 @@
+{
+  "algorithm": "unaligned",
+  "rows": 5,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "changed", "left": [1, 4], "right": [1, 4]},
+    {"kind": "equal", "left": [4, 5], "right": [4, 5]}
+  ]
+}

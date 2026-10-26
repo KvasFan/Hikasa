@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-text"
-description = "Text document model and Text Compare/Merge/Edit/Patch session logic"
+description = "Text document model and Text Compare: decoding, rules, importance classification, alignment, display filters, thumbnail"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,40 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-diff.workspace = true
+hikasa-formats.workspace = true
+hikasa-vfs.workspace = true
+ropey.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-segmentation.workspace = true
+memchr.workspace = true
+rayon.workspace = true
+toml.workspace = true
+bitflags.workspace = true
+encoding_rs.workspace = true
+unicode-width.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "text_compare"
+harness = false
+
+[[bench]]
+name = "gui_enablers"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

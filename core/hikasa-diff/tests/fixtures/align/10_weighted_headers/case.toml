@@ -1,0 +1,3 @@
+description = "a weighted header (## lines, weight 4) outweighs four crossing unweighted lines in Standard"
+weight_prefix = "## "
+weight = 4

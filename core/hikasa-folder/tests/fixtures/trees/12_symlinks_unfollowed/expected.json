@@ -1,0 +1,194 @@
+{
+  "description": "Unfollowed symlinks compare their exact targets (LINK_TARGET); a link and its twin are Same",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 3,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 3,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "target.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "target.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "target.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "moved_link",
+          "kind": "symlink",
+          "state": "different",
+          "scan": "not_applicable",
+          "diffs": [
+            "link_target"
+          ],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "moved_link",
+            "kind": "symlink",
+            "size": 10,
+            "dir": null
+          },
+          "right": {
+            "name": "moved_link",
+            "kind": "symlink",
+            "size": 9,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "same_link",
+          "kind": "symlink",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "same_link",
+            "kind": "symlink",
+            "size": 10,
+            "dir": null
+          },
+          "right": {
+            "name": "same_link",
+            "kind": "symlink",
+            "size": 10,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "schema": "hikasa.format_show.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "id": "sql",
+    "origin": "user",
+    "path": "<TMP>/cfg/formats/sql.toml",
+    "enabled": true,
+    "format": {
+      "schema_version": 1,
+      "id": "sql",
+      "name": "My SQL",
+      "description": "",
+      "kind": "text",
+      "mask": "*.sql;*.mysql",
+      "conversion": {
+        "method": "none",
+        "load": null,
+        "save": null,
+        "filename_encoding": null,
+        "timeout_secs": null
+      },
+      "encoding": {
+        "mode": "auto",
+        "fallback": null,
+        "label": null
+      },
+      "text": {
+        "tab_size": 4,
+        "tab_as_spaces": false,
+        "chars_per_line_limit": null,
+        "lines_independent": false,
+        "column_based": false,
+        "ctrl_z_eof": false,
+        "save_trim_trailing_ws": false,
+        "save_leading_spaces_to_tabs": false,
+        "word_chars": ""
+      },
+      "elements": {},
+      "grammar": [
+        {
+          "element": "Comment",
+          "kind": "delimited",
+          "from": "--",
+          "to": null,
+          "escape": null,
+          "stop_at_eol": true,
+          "regex": false,
+          "match_case": true
+        },
+        {
+          "element": "String",
+          "kind": "delimited",
+          "from": "'",
+          "to": "'",
+          "escape": null,
+          "stop_at_eol": true,
+          "regex": false,
+          "match_case": true
+        }
+      ],
+      "line_weight": [],
+      "table": null
+    },
+    "compile_error": null
+  },
+  "warnings": [],
+  "error": null
+}

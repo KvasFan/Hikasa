@@ -1,0 +1,217 @@
+{
+  "description": "Cancellation part-way (after the second FolderListed event, sequential scan): the result is incomplete, unscanned folders Unknown, verdict incomplete unless differences were found",
+  "verdict": "incomplete",
+  "verdict_ignoring_unimportant": "incomplete",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 2,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 3,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 3,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 2,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 3,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 3,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": false,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "unknown",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "a",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "a",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "a",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "1.txt",
+              "kind": "file",
+              "state": "same",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": "same",
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "1.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "right": {
+                "name": "1.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "b",
+          "kind": "folder",
+          "state": "unknown",
+          "scan": "not_scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "b",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "b",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "c",
+          "kind": "folder",
+          "state": "unknown",
+          "scan": "not_scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "c",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "c",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

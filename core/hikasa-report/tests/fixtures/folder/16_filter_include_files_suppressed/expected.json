@@ -1,0 +1,358 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "left": {
+    "spec": "/l",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "right": {
+    "spec": "/r",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "rules": {
+    "schema_version": 1,
+    "criteria": {
+      "size": true,
+      "timestamps": {
+        "enabled": true,
+        "tolerance_secs": 2,
+        "ignore_dst": false,
+        "ignore_timezone": false,
+        "offset": null
+      },
+      "filename_case": false,
+      "dos_attributes": "",
+      "unix": {
+        "permissions": false,
+        "owner": false,
+        "group": false
+      },
+      "content": {
+        "method": "none",
+        "skip_if_quick_same": false,
+        "override_quick": true
+      }
+    },
+    "alignment": {
+      "case": "auto",
+      "align_extensions": false,
+      "align_normalization": false
+    },
+    "filters": {
+      "names": {
+        "include_files": [
+          "*.c"
+        ],
+        "exclude_files": [],
+        "include_folders": [],
+        "exclude_folders": []
+      },
+      "other": {
+        "exclude_protected": true,
+        "size": null,
+        "date": null
+      }
+    },
+    "handling": {
+      "follow_symlinks": false,
+      "flatten": false,
+      "scan_orphan_folders": true
+    }
+  },
+  "case": "sensitive",
+  "complete": true,
+  "display": {
+    "filter": "all",
+    "folders": "compare_structure",
+    "ignore_unimportant": false,
+    "suppress_filters": true,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "left_newer",
+      "right_newer",
+      "differences"
+    ]
+  },
+  "verdict": "differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 3
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "items": [
+    {
+      "path": "x",
+      "depth": 0,
+      "kind": "folder",
+      "state": "different",
+      "category": "different",
+      "scan": "scanned",
+      "aggregate": [
+        "different"
+      ],
+      "diffs": [],
+      "flags": [],
+      "time": null,
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "x",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "x",
+        "name_lossy": false,
+        "size": 2,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "x/y.c",
+      "depth": 1,
+      "kind": "file",
+      "state": "different",
+      "category": "different",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size"
+      ],
+      "flags": [],
+      "time": "same",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "y.c",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "y.c",
+        "name_lossy": false,
+        "size": 2,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "a.c",
+      "depth": 0,
+      "kind": "file",
+      "state": "same",
+      "category": "same",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [],
+      "flags": [],
+      "time": "same",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "a.c",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "a.c",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "a.h",
+      "depth": 0,
+      "kind": "file",
+      "state": "filtered",
+      "category": "filtered",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [],
+      "flags": [
+        "left_filtered",
+        "right_filtered",
+        "left_stat_skipped",
+        "right_stat_skipped"
+      ],
+      "time": null,
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "a.h",
+        "name_lossy": false,
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": true,
+        "stat_skipped": true,
+        "dir": null
+      },
+      "right": {
+        "name": "a.h",
+        "name_lossy": false,
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": true,
+        "stat_skipped": true,
+        "dir": null
+      }
+    }
+  ]
+}

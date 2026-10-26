@@ -1,0 +1,33 @@
+description = "Flatten (FC-014) with a folder that cannot be listed on the left: the failed folder is an Error row (one-sided, not an orphan), the right side's files at or below it are Unknown rows (not orphans, not aligned), the error is counted and the verdict is Incomplete, as in the folder tree (30_listing_failure_one_side)"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "top.txt"
+content = "t"
+[[left]]
+path = "sub/x.txt"
+content = "x"
+[[right]]
+path = "sub/x.txt"
+content = "x"
+[[left]]
+path = "sub/deep/y.txt"
+content = "y"
+[[right]]
+path = "sub/deep/y.txt"
+content = "y"
+[[right]]
+path = "sub/w.txt"
+content = "w"
+[[left]]
+path = "other/x.txt"
+content = "x"
+[[right]]
+path = "other/x.txt"
+content = "x"
+[[faults]]
+side = "left"
+path = "sub"
+op = "list"
+kind = "permission_denied"

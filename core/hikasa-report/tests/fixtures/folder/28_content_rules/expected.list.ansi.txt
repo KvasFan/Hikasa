@@ -1,0 +1,8 @@
+[34m~  sub/[0m
+[34m~  sub/only_unimportant.txt[0m
+=  big.txt
+[1;31mE  broken.txt[0m
+=  crlf.txt
+[31m!  important.txt[0m
+[34m~  spaces.txt[0m
+# 2 same, 0 left newer, 0 right newer, 3 different, 0 left only, 0 right only, 0 unknown, 1 errors

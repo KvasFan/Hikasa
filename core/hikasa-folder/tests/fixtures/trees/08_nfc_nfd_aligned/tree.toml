@@ -1,0 +1,7 @@
+description = "align_normalization: an NFC name aligns with its NFD form (§2.5.2 row 5)"
+[[left]]
+path = "caf\u00e9.txt"
+content = "c"
+[[right]]
+path = "cafe\u0301.txt"
+content = "c"

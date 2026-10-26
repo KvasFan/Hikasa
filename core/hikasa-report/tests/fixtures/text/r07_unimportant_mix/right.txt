@@ -1,0 +1,8 @@
+int main() {
+        return 0;
+}
+// comment text
+value = 2
+same line
+other spaced
+new line

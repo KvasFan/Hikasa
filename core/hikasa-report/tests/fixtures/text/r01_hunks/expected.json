@@ -1,0 +1,586 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 870,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 30,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 892,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 31,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 32,
+    "same_rows": 26,
+    "changed_rows": 3,
+    "left_only_rows": 1,
+    "right_only_rows": 2,
+    "important_rows": 6,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 2,
+      "deleted": 0,
+      "changed": 3,
+      "original": 4
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 4,
+    "important_sections": 4,
+    "left_lines": 30,
+    "right_lines": 31
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        2,
+        3
+      ],
+      "left_lines": [
+        3,
+        4
+      ],
+      "right_lines": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        8,
+        10
+      ],
+      "left_lines": [
+        9,
+        11
+      ],
+      "right_lines": [
+        9,
+        10
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "add",
+      "importance": "important",
+      "rows": [
+        20,
+        22
+      ],
+      "left_lines": [
+        21,
+        21
+      ],
+      "right_lines": [
+        20,
+        22
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        31,
+        32
+      ],
+      "left_lines": [
+        30,
+        31
+      ],
+      "right_lines": [
+        31,
+        32
+      ]
+    }
+  ],
+  "display": {
+    "mode": "context",
+    "lines": 3,
+    "toggles": [
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "row",
+      "row": 0,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 1,
+        "text": "line 01 of the report sample"
+      },
+      "right": {
+        "line": 1,
+        "text": "line 01 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 2,
+        "text": "line 02 of the report sample"
+      },
+      "right": {
+        "line": 2,
+        "text": "line 02 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 2,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 3,
+        "text": "line 03 of the report sample"
+      },
+      "right": {
+        "line": 3,
+        "text": "line 03 of the report sample, changed"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 28,
+            "end": 37,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 3,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 4,
+        "text": "line 04 of the report sample"
+      },
+      "right": {
+        "line": 4,
+        "text": "line 04 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 4,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 5,
+        "text": "line 05 of the report sample"
+      },
+      "right": {
+        "line": 5,
+        "text": "line 05 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 5,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 6,
+        "text": "line 06 of the report sample"
+      },
+      "right": {
+        "line": 6,
+        "text": "line 06 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 6,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 7,
+        "text": "line 07 of the report sample"
+      },
+      "right": {
+        "line": 7,
+        "text": "line 07 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 7,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 8,
+        "text": "line 08 of the report sample"
+      },
+      "right": {
+        "line": 8,
+        "text": "line 08 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 8,
+      "state": "left_only",
+      "importance": "important",
+      "left": {
+        "line": 9,
+        "text": "line 09 of the report sample"
+      },
+      "right": null,
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 9,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 10,
+        "text": "line 10 of the report sample"
+      },
+      "right": {
+        "line": 9,
+        "text": "line ten of the report sample"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 5,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 5,
+            "end": 8,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 10,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 11,
+        "text": "line 11 of the report sample"
+      },
+      "right": {
+        "line": 10,
+        "text": "line 11 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 11,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 12,
+        "text": "line 12 of the report sample"
+      },
+      "right": {
+        "line": 11,
+        "text": "line 12 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 12,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 13,
+        "text": "line 13 of the report sample"
+      },
+      "right": {
+        "line": 12,
+        "text": "line 13 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "gap",
+      "rows": [
+        13,
+        17
+      ]
+    },
+    {
+      "type": "row",
+      "row": 17,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 18,
+        "text": "line 18 of the report sample"
+      },
+      "right": {
+        "line": 17,
+        "text": "line 18 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 18,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 19,
+        "text": "line 19 of the report sample"
+      },
+      "right": {
+        "line": 18,
+        "text": "line 19 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 19,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 20,
+        "text": "line 20 of the report sample"
+      },
+      "right": {
+        "line": 19,
+        "text": "line 20 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 20,
+      "state": "right_only",
+      "importance": "important",
+      "left": null,
+      "right": {
+        "line": 20,
+        "text": "inserted line A"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 21,
+      "state": "right_only",
+      "importance": "important",
+      "left": null,
+      "right": {
+        "line": 21,
+        "text": "inserted line B"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 22,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 21,
+        "text": "line 21 of the report sample"
+      },
+      "right": {
+        "line": 22,
+        "text": "line 21 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 23,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 22,
+        "text": "line 22 of the report sample"
+      },
+      "right": {
+        "line": 23,
+        "text": "line 22 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 24,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 23,
+        "text": "line 23 of the report sample"
+      },
+      "right": {
+        "line": 24,
+        "text": "line 23 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "gap",
+      "rows": [
+        25,
+        28
+      ]
+    },
+    {
+      "type": "row",
+      "row": 28,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 27,
+        "text": "line 27 of the report sample"
+      },
+      "right": {
+        "line": 28,
+        "text": "line 27 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 29,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 28,
+        "text": "line 28 of the report sample"
+      },
+      "right": {
+        "line": 29,
+        "text": "line 28 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 30,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 29,
+        "text": "line 29 of the report sample"
+      },
+      "right": {
+        "line": 30,
+        "text": "line 29 of the report sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 31,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 30,
+        "text": "line 30 of the report sample"
+      },
+      "right": {
+        "line": 31,
+        "text": "line 30 of the report sample, changed"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 28,
+            "end": 37,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    }
+  ]
+}

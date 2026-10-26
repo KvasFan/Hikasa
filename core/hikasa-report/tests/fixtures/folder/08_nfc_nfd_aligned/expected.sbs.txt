@@ -1,0 +1,8 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; align NFC/NFD names
+
+Name      Size  Modified                 Name      Size  Modified
+café.txt     1  2026-01-01T00:00:00Z  =  café.txt     1  2026-01-01T00:00:00Z

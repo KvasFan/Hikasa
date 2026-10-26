@@ -1,0 +1,20 @@
+description = "CRC content test: equal files BinarySame (TIME overridden), different content of the same size BinaryDifferent"
+[[left]]
+path = "same.txt"
+content = "abc"
+mtime = "2026-05-01T00:00:00Z"
+[[right]]
+path = "same.txt"
+content = "abc"
+[[left]]
+path = "diff.txt"
+content = "abc"
+[[right]]
+path = "diff.txt"
+content = "abd"
+[[left]]
+path = "sub/s.txt"
+content = "s"
+[[right]]
+path = "sub/s.txt"
+content = "s"

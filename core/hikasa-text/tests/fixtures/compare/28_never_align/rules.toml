@@ -1,0 +1,3 @@
+[alignment]
+algorithm = "histogram"
+never_align_differences = true

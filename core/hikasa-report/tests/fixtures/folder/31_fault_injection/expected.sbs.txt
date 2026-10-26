@@ -1,0 +1,13 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: binary; filters: none
+Warning: entry_error: /l/locked: permission denied
+Warning: entry_error: /l/stat_fails.txt: permission denied
+Warning: entry_error: /r/locked: permission denied
+
+Name            Size  Modified                 Name            Size  Modified
+locked/                                     E  locked/
+read_fails.txt     1  2026-01-01T00:00:00Z  E  read_fails.txt     1  2026-01-01T00:00:00Z
+stat_fails.txt                              E  stat_fails.txt     1  2026-01-01T00:00:00Z

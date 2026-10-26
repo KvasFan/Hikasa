@@ -1,0 +1,10 @@
+# A BOM wins over a fixed encoding (§2.8 step 2).
+[setting]
+mode = "fixed"
+label = "windows-1252"
+
+[expected]
+encoding = "UTF-16LE"
+bom_len = 2
+source = "bom"
+text = "hi"

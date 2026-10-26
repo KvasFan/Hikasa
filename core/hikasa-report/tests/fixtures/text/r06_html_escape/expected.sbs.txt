@@ -1,0 +1,12 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+  /l/left.txt                              /r/right.txt
+1 <script>alert("x")</script>          | 1 <script>alert("y")</script>
+2 a & b < c > d                        | 2 a && b < c > d
+3 quote ' and " marks                    3 quote ' and " marks
+4 ctrl \u{1} and \u{1b}[31m escape     | 4 ctrl \u{2} and \u{1b}[32m escape
+5 plain line                             5 plain line

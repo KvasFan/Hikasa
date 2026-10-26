@@ -1,0 +1,15 @@
+[1mFolder Compare[0m
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s), content: rules; filters: none
+Warning: rules_size_limit: compared by bytes
+
+Name                    Size    Status                   Name                    Size
+[31msub/                       4[0m  [34m~ unimportant differences[0m  [31msub/                       3[0m
+[31m  only_unimportant.txt     4[0m  [34m~ unimportant differences[0m  [31m  only_unimportant.txt     3[0m
+big.txt                   19  = same                     big.txt                   19
+[1;31mbroken.txt                11[0m  [1;31mE error                  [0m  [1;31mbroken.txt                 4[0m
+crlf.txt                   6  = same                     crlf.txt                   5
+[31mimportant.txt              3[0m  [31m! different              [0m  [31mimportant.txt              3[0m
+[31mspaces.txt                 3[0m  [34m~ unimportant differences[0m  [31mspaces.txt                 2[0m

@@ -37,6 +37,14 @@ scripts, command line, Copy to Folder targets, reports).
 - **VFS-004** (P1): Remote files opened in file views are downloaded to a temp cache
   and uploaded on save; the cache is cleared on exit.
 
+**Local writes (M1).** Files are written atomically: the content goes to a temporary file
+in the target's folder, which is synced and renamed onto the target, so a failure leaves
+the target untouched (SES-053; `--output` of the CLI). A target that is a symbolic link is
+resolved first: the file the link points to is replaced (the temporary file is created
+next to that file) and the link itself stays. A target that is not a regular file — a
+FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
+to directly, which cannot be atomic.
+
 ## 2. Spec syntax (canonical string forms)
 
 ```
@@ -58,12 +66,75 @@ clipboard://        -            mtp://MyPhone/DCIM
   canonicalizes for display and persistence. Passwords in URLs are stripped from
   persisted forms and moved to the keychain.
 
+**Parsing and canonical form (binding interpretation of ARCH-020/VFS-010; decisions D-05, D-06).** The parser
+is `hikasa_core::spec`; the normative algorithm and its 30-row test table are in `design/m1-contracts.md` §2.1.
+Parsing is style-explicit (Unix or Windows rules, so the Windows rules are tested on every platform) and takes
+the current and home directories from values captured once by the adapter.
+
+- **Order.** A NUL character is an error and blank input is empty; otherwise the input is **not** trimmed
+  (leading and trailing spaces are legal in file names). `-` is standard input; `clipboard://` (any case) is
+  the clipboard; a `profile:` prefix (any case) is a profile spec `profile:Name[?path]`; text matching
+  `scheme://` is a URL; anything else is a local path.
+- **Schemes (D-05).** The recognised but unsupported schemes — `ftp`, `ftps`, `sftp`, `dav`, `davs`, `s3`,
+  `svn`, `svn+http`, `svn+https`, `svn+ssh`, `mtp`, `profile:` and `http(s)` — **parse successfully**, so specs
+  written by later versions stay readable and round-trip; resolving them in M1 fails with "unsupported". An
+  unknown `scheme://` fails to parse; it is never silently reinterpreted as a local path. On Windows a
+  one-letter scheme is a drive letter (`C://x` is `C:\x`).
+- **URLs.** `scheme://[user[:password]@]host[:port][/path]`: the user information is split at the last `@`,
+  user and password at the first `:`; an IPv6 host keeps its brackets (`[::1]:22`); the port must be 1–65535;
+  the host must not be empty. Scheme and host are lower-cased; the user and the path are kept verbatim (no
+  percent-decoding in M1). The canonical form never contains the password, and error messages replace it with
+  `***` (conservatively: when a `/` inside a password ends the authority early, everything from the first `:`
+  after `://` to the last `@` is masked). An `http(s)` authority ends at the first `/`, `?` or `#` and is
+  parsed the same way. Its user information is **kept** like that of the other schemes: the user name
+  verbatim, the password as a secret that never appears in the canonical form, in debug output or in an
+  error message. The canonical form is `http[s]://[user@]host[:port]rest`.
+- **Local paths on Unix (D-06).** `~` and `~/…` expand to the home directory (`~user` is not supported); a
+  relative path is resolved against the current directory; empty and `.` components are dropped; `..` is
+  **kept**, because removing it lexically is unsound across symbolic links, except that `/..` collapses to
+  `/`; there is no trailing `/` except for the root. A backslash is an ordinary character.
+- **Local paths on Windows (D-06).** `/` becomes `\`; `\\?\…` (verbatim) is kept unchanged; `\\.\…`
+  (device namespace) is rejected; UNC roots are `\\server\share` (a missing share is an error); drive letters
+  are upper-cased; `C:foo` resolves against a current directory on drive `C:` (otherwise it is an error) and
+  `\foo` against the root of the current directory; `..` is resolved lexically, as Windows itself does;
+  there is no trailing `\` except at `C:\`. A relative, rooted or drive-relative input (and `~\…`) is
+  normalised component by component also when the current or home directory is itself a verbatim path (as
+  `std::fs::canonicalize` returns them): with the current directory `\\?\C:\w`, `..\x` is `\\?\C:\x`.
+  Only an input that is verbatim itself stays unchanged.
+- **Round trip.** For every input that parses, parsing the canonical form again gives the same spec without
+  its password (ARCH-020; removing the secrets clears the password of both remote and `http(s)` URLs). A
+  non-UTF-8 local path is accepted from the command line; its canonical form is lossy and such a spec is never
+  persisted: serialising it is an error.
+
 ## 3. Content fingerprints and CRC
 
 - **VFS-020** (P0): `crc32` is the "CRC comparison" primitive (compatibility with
   archives and snapshots). BLAKE3 is used internally for caches (per-file content
   identity across sessions, P1) and for "binary same" shortcuts when both sides already
   have a known hash.
+
+**Memory-mapped comparison and CRC (M1).** Large local regular files are compared and hashed through
+read-only memory maps (ARCH-081), one 8 MiB chunk at a time with a cancellation check per chunk. A call may
+use several threads (the caller plus scoped helper threads, at most `StreamOptions::threads`; the session uses
+up to 4): the threads claim chunks in increasing order, and each maps, pre-faults, compares or hashes, and
+unmaps its own chunks. The results never depend on the number of threads: chunk CRCs are combined exactly in
+offset order, and a comparison reports the lowest differing offset. Because another process can change a file
+while it is mapped, both files are **re-stat'ed after** a mapped comparison or CRC: when the length and the
+modification time are unchanged the mapped result is kept; when either changed, the mapped result is discarded
+and the content is compared or hashed again by streaming. The mapped, streaming and naive whole-buffer
+comparisons give the same result, including the offset of the first difference. On Linux each chunk is also
+pre-faulted (`MADV_POPULATE_READ`, kernel 5.14 or later) before it is read: when a concurrent truncation has
+cut the chunk off, pre-faulting reports an error instead of raising SIGBUS, and the comparison or CRC falls
+back to streaming without touching the chunk. **Residual risk (accepted):** a truncation of an input file
+between pre-faulting a chunk and reading it — on other systems, and on Linux kernels older than 5.14 (which do
+not know the advice), at any time while a chunk is mapped — can terminate the process (SIGBUS on Unix); the
+mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's libraries and
+programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
+
+**Pseudo-files.** A reported size of at most 4096 bytes never decides "different" by itself: procfs reports 0
+and sysfs 4096 for files of other lengths, so such files are read (cheap for small files). Unfollowed symlinks
+report the byte length of their exact target, and a target that is not valid UTF-8 keeps its exact bytes next
+to the displayed text.
 
 ## 4. Snapshot format
 

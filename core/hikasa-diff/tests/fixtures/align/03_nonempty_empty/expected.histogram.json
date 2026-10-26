@@ -1,0 +1,8 @@
+{
+  "algorithm": "histogram",
+  "rows": 3,
+  "warnings": [],
+  "runs": [
+    {"kind": "delete", "left": [0, 3], "right": [0, 0]}
+  ]
+}

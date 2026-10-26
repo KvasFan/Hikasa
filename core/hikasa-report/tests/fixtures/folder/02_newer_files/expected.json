@@ -1,0 +1,458 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "left": {
+    "spec": "/l",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "right": {
+    "spec": "/r",
+    "capabilities": [
+      "read",
+      "write",
+      "list",
+      "seek",
+      "mtime",
+      "ctime",
+      "dos_attrs",
+      "unix_mode",
+      "unix_owner",
+      "symlinks",
+      "crc_provided",
+      "case_sensitive"
+    ]
+  },
+  "rules": {
+    "schema_version": 1,
+    "criteria": {
+      "size": true,
+      "timestamps": {
+        "enabled": true,
+        "tolerance_secs": 2,
+        "ignore_dst": false,
+        "ignore_timezone": false,
+        "offset": null
+      },
+      "filename_case": false,
+      "dos_attributes": "",
+      "unix": {
+        "permissions": false,
+        "owner": false,
+        "group": false
+      },
+      "content": {
+        "method": "none",
+        "skip_if_quick_same": false,
+        "override_quick": true
+      }
+    },
+    "alignment": {
+      "case": "auto",
+      "align_extensions": false,
+      "align_normalization": false
+    },
+    "filters": {
+      "names": {
+        "include_files": [],
+        "exclude_files": [],
+        "include_folders": [],
+        "exclude_folders": []
+      },
+      "other": {
+        "exclude_protected": true,
+        "size": null,
+        "date": null
+      }
+    },
+    "handling": {
+      "follow_symlinks": false,
+      "flatten": false,
+      "scan_orphan_folders": true
+    }
+  },
+  "case": "sensitive",
+  "complete": true,
+  "display": {
+    "filter": "all",
+    "folders": "compare_structure",
+    "ignore_unimportant": false,
+    "suppress_filters": false,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "left_newer",
+      "right_newer",
+      "differences"
+    ]
+  },
+  "verdict": "differences",
+  "stats": {
+    "files": {
+      "same": 1,
+      "left_newer": 2,
+      "right_newer": 1,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 1,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 9
+    },
+    "right": {
+      "files": 5,
+      "folders": 1,
+      "bytes": 13
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "items": [
+    {
+      "path": "dir",
+      "depth": 0,
+      "kind": "folder",
+      "state": "different",
+      "category": "different",
+      "scan": "scanned",
+      "aggregate": [
+        "left_newer"
+      ],
+      "diffs": [],
+      "flags": [],
+      "time": null,
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "dir",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "dir",
+        "name_lossy": false,
+        "size": 6,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "dir/size_and_time.txt",
+      "depth": 1,
+      "kind": "file",
+      "state": "left_newer",
+      "category": "left_newer",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size",
+        "time"
+      ],
+      "flags": [],
+      "time": "left_newer",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "size_and_time.txt",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": "2026-03-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "size_and_time.txt",
+        "name_lossy": false,
+        "size": 6,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "left_newer.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "left_newer",
+      "category": "left_newer",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "time"
+      ],
+      "flags": [],
+      "time": "left_newer",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "left_newer.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-02T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "left_newer.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "right_newer.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "right_newer",
+      "category": "right_newer",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "time"
+      ],
+      "flags": [],
+      "time": "right_newer",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "right_newer.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "right_newer.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:02.000000001Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "same_within_tolerance.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "same",
+      "category": "same",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [],
+      "flags": [],
+      "time": "same",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "same_within_tolerance.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:02Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "same_within_tolerance.txt",
+        "name_lossy": false,
+        "size": 1,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    },
+    {
+      "path": "size_only.txt",
+      "depth": 0,
+      "kind": "file",
+      "state": "different",
+      "category": "different",
+      "scan": "not_applicable",
+      "aggregate": null,
+      "diffs": [
+        "size"
+      ],
+      "flags": [],
+      "time": "same",
+      "content": null,
+      "errors": [],
+      "left": {
+        "name": "size_only.txt",
+        "name_lossy": false,
+        "size": 3,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      },
+      "right": {
+        "name": "size_only.txt",
+        "name_lossy": false,
+        "size": 4,
+        "mtime": "2026-01-01T00:00:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null,
+        "filtered": false,
+        "stat_skipped": false,
+        "dir": null
+      }
+    }
+  ]
+}

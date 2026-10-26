@@ -1,0 +1,63 @@
+L1:0-6	Keyword	select
+L1:6-7	Everything Else	 
+L1:7-15	String	N'it''s'
+L1:15-16	Everything Else	 
+L1:16-18	Keyword	as
+L1:18-19	Everything Else	 
+L1:19-32	Identifier	[Column Name]
+L1:32-33	Operator	,
+L1:33-34	Everything Else	 
+L1:34-49	Identifier	"quoted ""id"""
+L1:49-50	Everything Else	 
+L1:50-54	Keyword	from
+L1:54-55	Everything Else	 
+L1:55-58	Identifier	dbo
+L1:58-59	Operator	.
+L1:59-66	Identifier	[Table]
+L1:66-67	Everything Else	 
+L1:67-72	Keyword	where
+L1:72-73	Everything Else	 
+L1:73-75	Identifier	@p
+L1:75-76	Everything Else	 
+L1:76-77	Operator	=
+L1:77-78	Everything Else	 
+L1:78-82	Identifier	#tmp
+L1:82-83	Operator	.
+L1:83-84	Identifier	x
+L1:84-85	Operator	;
+L2:0-8	Comment	/* block
+L3:0-3	Everything Else	   
+L3:3-13	Comment	comment */
+L3:13-14	Everything Else	 
+L3:14-20	Keyword	insert
+L3:20-21	Everything Else	 
+L3:21-25	Keyword	into
+L3:25-26	Everything Else	 
+L3:26-27	Identifier	t
+L3:27-28	Everything Else	 
+L3:28-34	Keyword	values
+L3:34-35	Everything Else	 
+L3:35-36	Operator	(
+L3:36-42	String	'multi
+L4:0-5	String	line'
+L4:5-6	Operator	,
+L4:6-7	Everything Else	 
+L4:7-11	Number	0x1F
+L4:11-12	Operator	,
+L4:12-13	Everything Else	 
+L4:13-17	Number	.5e3
+L4:17-18	Operator	)
+L4:18-19	Operator	;
+L5:0-7	Keyword	DECLARE
+L5:7-8	Everything Else	 
+L5:8-14	Identifier	@count
+L5:14-15	Everything Else	 
+L5:15-18	Keyword	INT
+L5:18-19	Everything Else	 
+L5:19-20	Operator	=
+L5:20-21	Everything Else	 
+L5:21-22	Number	2
+L5:22-23	Operator	;
+L5:23-24	Everything Else	 
+L5:24-35	Comment	-- trailing
+L5:35-38	Everything Else	   

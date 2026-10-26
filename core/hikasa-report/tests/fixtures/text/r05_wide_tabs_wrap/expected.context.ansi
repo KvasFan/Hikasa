@@ -1,0 +1,21 @@
+# [1mText Compare[0m
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+[1m*** /l/left.txt	2026-10-19T13:12:00Z[0m
+[1m--- /r/right.txt	2026-10-19T14:00:00Z[0m
+[36m***************[0m
+[36m*** 1,5 ****[0m
+  	indented with a tab
+[31m! 日本語のテキストと漢字[0m
+[31m! café au lait[0m
+[31m! The quick brown fox jumps over the lazy dog and keeps running far beyond the edge of the column width.[0m
+[31m! emoji 😀 here[0m
+[36m--- 1,5 ----[0m
+  	indented with a tab
+[31m! 日本語のテキストと漢宇[0m
+[31m! café au lait[0m
+[31m! The quick brown fox leaps over the lazy dog and keeps running far beyond the edge of the column width![0m
+[31m! emoji 😃 here[0m

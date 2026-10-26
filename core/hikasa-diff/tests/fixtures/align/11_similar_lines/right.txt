@@ -1,0 +1,4 @@
+// compute the order total
+let total = price * qty;
+let taxes = total * tax_rate;
+print(total + taxes);

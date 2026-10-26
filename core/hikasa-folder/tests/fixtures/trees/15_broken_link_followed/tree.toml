@@ -1,0 +1,15 @@
+description = "A broken followed link is in entries and errors (§1.2.7 item 2): one node, with the side error, state Error"
+[[left]]
+path = "dangling"
+kind = "symlink"
+target = "missing"
+[[right]]
+path = "dangling"
+kind = "symlink"
+target = "missing"
+[[left]]
+path = "ok.txt"
+content = "o"
+[[right]]
+path = "ok.txt"
+content = "o"

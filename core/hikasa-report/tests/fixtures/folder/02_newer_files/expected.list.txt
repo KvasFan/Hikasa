@@ -1,0 +1,7 @@
+!  dir/
+>  dir/size_and_time.txt
+>  left_newer.txt
+<  right_newer.txt
+=  same_within_tolerance.txt
+!  size_only.txt
+# 1 same, 2 left newer, 1 right newer, 1 different, 0 left only, 0 right only, 0 unknown, 0 errors

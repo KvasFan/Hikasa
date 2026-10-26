@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Folder Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.fsbs { font-family: monospace; }
+table.fsbs th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.5em; }
+table.fsbs td { padding: 0 0.5em; white-space: pre; vertical-align: top; }
+table.fsbs td.num { text-align: right; }
+table.fsbs td.m { text-align: center; }
+.c-newer { font-weight: bold; }
+.c-unimp { font-style: italic; }
+.c-orphan { font-style: italic; text-decoration: underline; }
+.c-older { color: #808080; }
+.c-filtered { text-decoration: line-through; }
+.c-error { font-weight: bold; text-decoration: underline wavy; }
+</style>
+</head>
+<body>
+<h1>Folder Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l</td></tr>
+<tr><th>Right</th><td>/r</td></tr>
+<tr><th>Mode</th><td>display: all; folders: compare structure; ignore unimportant: yes; suppress filters: no</td></tr>
+<tr><th>Rules</th><td>size, timestamps (2 s), content: rules; filters: none</td></tr>
+<tr class="warning"><th>Warning</th><td>rules_size_limit: compared by bytes</td></tr>
+</table>
+<table class="legend">
+<tr><td class="c-same">Same</td><td class="c-newer">Newer or different</td><td class="c-unimp">Unimportant differences only</td><td class="c-orphan">Orphan</td><td class="c-older">Older or unknown</td><td class="c-filtered">Filtered</td><td class="c-error">Error</td></tr>
+</table>
+<table class="fsbs">
+<thead><tr><th>Name</th><th class="m"></th><th>Status</th><th>Name</th></tr></thead>
+<tbody>
+<tr><td class="name c-same" style="padding-left:1ch">sub/</td><td class="m c-same">=</td><td class="c-same">same</td><td class="name c-same" style="padding-left:1ch">sub/</td></tr>
+<tr><td class="name c-same" style="padding-left:3ch">only_unimportant.txt</td><td class="m c-same">=</td><td class="c-same">same</td><td class="name c-same" style="padding-left:3ch">only_unimportant.txt</td></tr>
+<tr><td class="name c-same" style="padding-left:1ch">big.txt</td><td class="m c-same">=</td><td class="c-same">same</td><td class="name c-same" style="padding-left:1ch">big.txt</td></tr>
+<tr><td class="name c-error" style="padding-left:1ch">broken.txt</td><td class="m c-error">E</td><td class="c-error">error</td><td class="name c-error" style="padding-left:1ch">broken.txt</td></tr>
+<tr><td class="name c-same" style="padding-left:1ch">crlf.txt</td><td class="m c-same">=</td><td class="c-same">same</td><td class="name c-same" style="padding-left:1ch">crlf.txt</td></tr>
+<tr><td class="name c-newer" style="padding-left:1ch">important.txt</td><td class="m c-newer">!</td><td class="c-newer">different</td><td class="name c-newer" style="padding-left:1ch">important.txt</td></tr>
+<tr><td class="name c-same" style="padding-left:1ch">spaces.txt</td><td class="m c-same">=</td><td class="c-same">same</td><td class="name c-same" style="padding-left:1ch">spaces.txt</td></tr>
+</tbody>
+</table>
+</body>
+</html>

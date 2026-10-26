@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; flatten
+
+Name           Size  Modified                 Name             Size  Modified
+only/left.txt     1  2026-01-01T00:00:00Z  -
+top.txt           1  2026-01-01T00:00:00Z  =  deep/er/top.txt     1  2026-01-01T00:00:00Z
+a/x.txt           1  2026-01-01T00:00:00Z  =  c/x.txt             1  2026-01-01T00:00:00Z
+b/x.txt           1  2026-01-01T00:00:00Z  =  b/x.txt             1  2026-01-01T00:00:00Z

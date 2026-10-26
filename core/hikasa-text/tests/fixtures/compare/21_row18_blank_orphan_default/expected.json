@@ -1,0 +1,117 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        1
+      ],
+      "right": [
+        0,
+        1
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        1,
+        2
+      ],
+      "right": [
+        1,
+        1
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        2,
+        3
+      ],
+      "right": [
+        1,
+        2
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        1
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        1,
+        2
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        2,
+        3
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "delete",
+      "importance": "important",
+      "rows": [
+        1,
+        2
+      ],
+      "left_lines": [
+        1,
+        2
+      ],
+      "right_lines": [
+        1,
+        1
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 3,
+    "same_rows": 2,
+    "changed_rows": 0,
+    "left_only_rows": 1,
+    "right_only_rows": 0,
+    "important_rows": 1,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 1,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 1,
+    "important_sections": 1,
+    "left_lines": 3,
+    "right_lines": 2
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": []
+}

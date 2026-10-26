@@ -1,0 +1,158 @@
+{
+  "description": "Without align_normalization NFC and NFD names are two orphans (§2.5.2 row 6)",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 1,
+      "right_orphan": 1,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 1,
+      "right_orphan": 1,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "right": {
+      "files": 1,
+      "folders": 0,
+      "bytes": 1
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "café.txt",
+          "kind": "file",
+          "state": "right_orphan",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "café.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "café.txt",
+          "kind": "file",
+          "state": "left_orphan",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "café.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        }
+      ]
+    }
+  }
+}

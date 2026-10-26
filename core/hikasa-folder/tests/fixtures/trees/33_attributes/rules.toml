@@ -1,0 +1,5 @@
+[criteria]
+dos_attributes = "HR"
+[criteria.unix]
+owner = true
+group = true

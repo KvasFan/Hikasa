@@ -1,0 +1,106 @@
+# Sources: the Python language reference (keywords, soft keywords, string and bytes literal prefixes,
+# triple-quoted strings, numeric literals with underscores and imaginary suffix, indentation, comments).
+# Written for Hikasa.
+schema_version = 1
+id = "python"
+name = "Python Scripts"
+description = "Python scripts and modules."
+kind = "text"
+mask = "*.py;*.pyw"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+[elements]
+# Trailing whitespace is unimportant by default; indentation (Indent) stays important.
+Whitespace = { important = false }
+Number = { case_sensitive = false }
+
+# Indentation before code (the look-ahead keeps whitespace-only lines out; anchored, so it runs once per line).
+[[grammar]]
+element = "Indent"
+kind = "basic"
+text = '^[ \t]+(?=\S)'
+regex = true
+
+# A comment ends at its last non-blank char, so trailing blanks after it reach the Whitespace item below.
+[[grammar]]
+element = "Comment"
+kind = "basic"
+text = '#(?:.*\S)?'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "[rRbBuUfF]{0,2}'''"
+to = "'''"
+escape = '\'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[rRbBuUfF]{0,2}"""'
+to = '"""'
+escape = '\'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "[rRbBuUfF]{0,2}'"
+to = "'"
+escape = '\'
+regex = true
+stop_at_eol = true
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '[rRbBuUfF]{0,2}"'
+to = '"'
+escape = '\'
+regex = true
+stop_at_eol = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  # keywords
+  "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+  "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
+  "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+  # soft keywords
+  "match", "case", "type", "_",
+]
+
+# Python identifiers are Unicode (a word char that is not a digit, then word chars).
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[^\W\d]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d[\d_]*)?[jJ]?|\.\d[\d_]*(?:[eE][+-]?\d[\d_]*)?[jJ]?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-+*/%=&|^!~<>:.@]+|[;,()\[\]{}\\]'
+regex = true
+
+# The trailing whitespace item.
+[[grammar]]
+element = "Whitespace"
+kind = "basic"
+text = '[ \t]+$'
+regex = true

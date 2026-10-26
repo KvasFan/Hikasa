@@ -53,6 +53,52 @@ replaces free-form actions with a planned operation per item.
   **Refresh Selection** (Shift+F5) rescans selected items. Local back-ends also use
   file-system watching to mark stale folders.
 
+**Alignment and scanning (binding interpretation; decisions D-20, D-33, D-55).** The engine is `hikasa-folder`;
+its normative algorithms are `design/m1-contracts.md` §2.3–§2.7.
+
+- **Alignment levels.** The entries of a folder pair are paired level by level, each level considering only
+  the entries still unpaired: (1) the exact OS name; (2) the case-folded name (simple 1:1 lower case), only
+  when names are case-insensitive; (3) the NFC form, only with *Align filenames with different Unicode
+  normalization forms*; (4) the name without its extension, only with *Align filenames with different
+  extensions*, and for files only. Inside one group the entries of each side are taken in byte order of their
+  names and paired by position, so `A` and `a` on a case-sensitive left side against `a` on the right pair
+  `a ↔ a` and leave `A` an orphan. Case sensitivity *Auto* means sensitive only when both base folders'
+  back-ends are case-sensitive. A name that is not valid Unicode (shown with replacement characters) is
+  case-folded on its exact bytes, never through its display form, so two different such names never pair and
+  never count as differing "only in case"; it takes no part in the normalization and extension levels.
+- **Different kinds never align (D-20).** A file, a folder, an unfollowed symbolic link and any other entry
+  with the same name are separate rows (orphans), the folder first. Children are listed folders first, then
+  files, links and other entries, each by case-folded NFC name; the order does not depend on the listing order
+  or the number of threads.
+- **Flatten (FC-014).** Every file of every subfolder is aligned in one list: first files with the same folder
+  and name, then by name only (with the options above). The Path column shows each side's folder. Folders do
+  not appear, except a folder that could not be listed, which is shown as an error row; the other side's files
+  in that folder (and below it) are shown as *unknown* rows, never as orphans, as in the folder tree. A
+  flattened comparison shows its rows when every folder has been read (a cancelled one shows none).
+- **Symbolic links (D-33).** With *Follow symbolic links* a link is compared as its target. A followed link
+  that leads back to one of its ancestor folders closes a loop: it becomes an error row with a "symlink loop"
+  mark (warning `symlink_loop`) and is not listed; a scan that follows links stops at 256 folder levels. A cycle
+  of links that the system reports as such (`a → b → a`) is marked the same way. A broken link (or one the
+  system cannot resolve) is one row with an error on that side, never two rows.
+- **Failures.** A folder that cannot be listed on one side is an error row; the other side's entries are shown
+  below it as *unknown* (not orphans, since the failing side is unknown) and are not scanned further. A folder
+  that exists on one side only and cannot be listed is an error row too, not an orphan: a failure is never
+  reported as a difference. An entry whose metadata cannot be read is an error row aligned with its counterpart.
+  Such failures never stop the comparison; they make its result incomplete (exit code 100 unless differences
+  were found, `12-cli-and-scripting.md` §2). An item that the filters hide on every side where it exists stays
+  *filtered* even when it could not be read (the error stays visible on the row), so an excluded broken link
+  does not make the result incomplete.
+- **Orphan folders** are scanned by default, so statistics are complete; when disabled, an orphan folder is
+  shown as an orphan without its contents.
+- **Live results (D-55).** The comparison is readable while it runs: every folder keeps counts of the
+  categories of all items below it (files and folders separately, for both values of *Ignore Unimportant
+  Differences*), updated as items arrive. Folder state, colour, visibility, statistics and the overall verdict
+  are read from these counts in constant time, on a partial tree too, and *Ignore Unimportant Differences*
+  toggles without recomputation. Cancelling keeps what was found; folders not scanned yet stay *unknown*. The
+  items of one folder appear together: a folder whose items were read but not yet added when the comparison was
+  cancelled stays *unknown*, also for very large folders, and cancellation takes effect within a fraction of a
+  second however large the folder is.
+
 ## 3. Comparison criteria (Rules → Comparison tab)
 
 Quick tests (no file content needed):
@@ -82,6 +128,36 @@ Tests that require reading files:
   (b) on explicit **Compare Contents** (dialog: CRC / Binary / Rules-based, "Show
   results dialog" summary), (c) when a child file session loads a pair.
 
+**Criteria (binding interpretation; decisions D-25, D-28, D-34, D-48, D-52).**
+
+- **Timestamps (D-28, D-52).** Modification times are compared at nanosecond resolution and the tolerance is
+  inclusive (2 s apart is the same with the default 2 s). *Ignore daylight saving difference* accepts exactly
+  one hour ± the tolerance; *Ignore timezone differences* accepts any whole number of hours k with |k| ≤ 26 ±
+  the tolerance, which covers every pair of real UTC offsets; half-hour offsets are not covered. The rule has
+  an explicit *enabled* switch and an optional offset that shifts one side's times by whole hours (−12…+12,
+  the script `timezone:left+2`). A pair without a modification time on either side is not compared by time.
+- **Other quick tests.** Size applies to files; the attribute test compares only the selected DOS attributes
+  (letters `A C D E H I L M N O P R S T U Z`); permissions, owner and group compare Unix mode, uid and gid
+  (owners are numeric in M1). Unfollowed symbolic links always compare their exact targets. A criterion whose
+  data a back-end cannot provide is switched off for the comparison, with one `capability_missing` warning per
+  side. A pair whose two sides are both hidden by the size, date or attribute filters (both read) still gets its
+  quick tests, so the columns show its differences under *Suppress Filters*; it stays filtered.
+- **Folders are compared by their contents (Hikasa decision).** The quick tests apply to files, symbolic links
+  and other items, never to folder pairs: a folder's own size, time, name case, attributes, permissions, owner
+  and group are not compared, and its state comes only from the items below it (§4). A folder whose
+  permissions differ is therefore *same* when everything below it is the same; the criteria above never make a
+  folder pair different on their own.
+- **Content tests (D-25).** A content test runs for file pairs where neither side is filtered. Content tests
+  share a memory budget (default 1 GiB, `content_memory_budget_mib`): each takes the size of both files (at
+  most the whole budget) before it reads, so memory stays bounded whatever the number of threads. The
+  rules-based method reads files up to 128 MiB; a larger pair is compared byte by byte, marked "rules skipped
+  (size)" and reported with warning `rules_size_limit`.
+- **Skip if quick tests indicate files are the same (D-34)** is **off** by default: when a content method is
+  chosen, every file pair is content-tested. When on, a skipped pair is marked "content not compared".
+- **Override quick test results (D-48)** lets a content match (*binary same*, *rules-based same*) cancel only
+  the time and size differences. A difference in name case, attributes, permissions, owner, group or link
+  target still makes the pair different. The cancelled differences stay visible in the columns.
+
 ## 4. Comparison states and colours
 
 - **FC-030** (P0): File states: Unknown, Same, Newer (left/right), Older, Different
@@ -100,6 +176,24 @@ Tests that require reading files:
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
   (persisted in the session).
 
+**States, folder states and colours (binding interpretation; decision D-55).**
+
+- A pair is *newer* when its timestamps differ, *different* when only other tests differ, *same* otherwise; a
+  content difference keeps a timestamp difference as *newer*. A pair whose content test reports only
+  unimportant differences is *different*, and *same* (or *newer*) under *Ignore Unimportant Differences*. A
+  pair waiting for its content test is *unknown*; a failed stat, listing or content test is an *error*. An item
+  whose present sides are all hidden by file filters is *filtered* (also when it exists on one side only, and
+  also when it could not be read).
+- A folder's state is computed from the counts of everything below it (§2): *different* if any item below is
+  newer, different or an orphan; else *error* if any item below failed; else *unknown* if any item is unknown
+  (or the folder is not scanned yet); else *same*. An orphan folder is an orphan; a folder that could not be
+  listed is an error, also when it exists on one side only.
+- Colours: a file is black (same), red (newer or different on the newer side), grey (the older side, or
+  unknown), purple (orphan), or the error colour; a side hidden by a filter is teal. A folder is red when it
+  contains different items or items newer on its side, else purple when it contains orphans, else grey when it
+  contains items newer on the other side or unknown items (or is not scanned yet), else the error colour when
+  it contains errors, else teal when it contains only filtered items, else black.
+
 ## 5. Columns
 
 - **FC-040** (P0): Columns per side: Name, Ext, Size (folder size = sum once scanned),
@@ -111,6 +205,10 @@ Tests that require reading files:
   session type.
 - **FC-041** (P0): When Ext is hidden, read-only/system/hidden flags are shown as
   `(r)`, `(s)`, `(h)` after the name.
+
+A folder's size is the total size of the files below it on that side, excluding hidden (filtered) items; it is
+maintained while the scan runs. Statistics (FC-064) count file and folder pairs per category, the files,
+folders and bytes of each side, and the content-test results.
 
 ## 6. Filters
 
@@ -128,6 +226,54 @@ Tests that require reading files:
 - **FC-052** (P0): **Exclude** action: offers to exclude the selected item(s), or all
   files of that type (`-*.ext`), adding to the session's exclude lists.
 
+**Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
+is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
+tables are in `design/m1-contracts.md` §2.2 and §2.3.
+
+- **Syntax (D-07).** A mask list is `;`-separated; items are trimmed of ASCII spaces and tabs, and empty
+  items are ignored. A leading `-` excludes. `\` and `/` are both separators; a **trailing** separator marks a
+  folder mask (folder masks never match files, file masks never match folders). `?` matches one character,
+  `*` any run (including the empty run), `[az]` / `[a-z]` a set or range, `[!az]` a negated set; `]` right
+  after `[` or `[!` is literal, `-` first or last in a set is literal (`[-]` matches a literal `-`), `\` and
+  `/` inside a set are literal, and only `!` negates (`[^a]` is the set of `^` and `a`). Errors (rejected
+  when the filter is parsed, never during a scan): an unclosed `[`, an inverted range such as `[z-a]`, an empty
+  component (`a\\b`, a lone `-`), and `.` anywhere but first or `..` anywhere. The four lists of the Name
+  Filters tab hold the same items without the `-` prefix (the list says whether they exclude); an item of a
+  folder list without a trailing separator is taken as a folder mask. List items are trimmed like toolbar
+  items, so the lists write a mask that starts with a blank as a one-character set: the toolbar item `- x`
+  excludes the name ` x` (blanks after the `-` belong to the mask) and appears in the Exclude Files list as
+  `[ ]x`; toolbar text and lists always describe the same filter. The canonical toolbar text lists include
+  files, include folders, exclude files, exclude folders: `*.c;*.h;-*.bak;-obj\;src\` is shown as
+  `*.c;*.h;src\;-*.bak;-obj\`.
+- **Case and Unicode (D-07).** Case-insensitive matching uses the simple 1:1 lower-case mapping only (no
+  locale tailoring, no expansion: `STRASSE` does not match `straße`; `İ`, whose full lower case has two
+  characters, maps to itself); a character is in a range `[lo-hi]` when the character itself, its simple lower
+  case or its simple upper case is in the range (so `[A-Z]*` matches `zeta` case-insensitively). Names and
+  masks are compared in Unicode NFC: a name is normalised before it is matched and a mask before it is parsed,
+  so `café.txt` typed in NFC matches a file stored in NFD, and a mask pasted from an NFD name means the same,
+  including set members and range bounds (a set holding `e` followed by a combining acute accent is the set
+  `[é]`, and a KELVIN SIGN inside a set is the letter `K`). Case folding is applied to the NFC characters, so
+  a name and its lower-case spelling match the same masks, except for the rare names where folding changes the
+  NFC composition (`I` + combining dot above is `İ`, which keeps its case) or where a character is neither
+  lower case nor the upper case of its lower case (title-case letters such as `ǅ` inside a range).
+- **Extensions (D-07).** A name has an extension when it contains a `.` that is neither its first nor its
+  last character (`.bashrc` and `a.` have none). A mask ending in a literal `.` means "no extension"
+  (`*.` matches `Makefile` and `.bashrc`, not `a.out`). A mask ending in `.*` also matches names without an
+  extension (`*.*` matches every name; `abc.*` matches `abc` but not `abcd`). The same rules apply to every
+  component of a relative mask.
+- **Paths (D-08).** A mask without separators matches the item **name** at any depth (`*.c` matches
+  `src/util/x.c`). A relative mask (`p\f`) is anchored at the base folder (`src\*.c` matches `src/a.c`, not
+  `lib/src/a.c`); `.\f` matches in the base folder only; a leading separator anchors as well (`\docs\`).
+  `...` is a path component that matches zero or more folders anywhere in the mask (`...\test\*.py`,
+  `src\...\*.rs`); a mask that starts with `...` is not anchored.
+- **Folder inclusion (D-09).** Filters are evaluated top-down, per side. Exclusion always wins: an excluded
+  folder excludes its whole subtree. An include-folder mask includes the whole subtree of a matching folder
+  (`src\` includes `src/a/b.c`). Folders that are only *prefixes* of an anchored include-folder mask are
+  traversed but not themselves "included": with `src\core\`, the folder `src` is scanned but its files are
+  excluded, while `src/core` and everything below it are included. A simple include-folder mask such as
+  `src\` makes every other folder traversable in the same way (a `lib/src` could exist below it). The base
+  folder is always included; its files are subject to the file masks only.
+
 ### 6.2 Other filters
 
 - **FC-053** (P1): Rules ▸ Other Filters: list of items — *date modified* (older/newer
@@ -139,6 +285,29 @@ Tests that require reading files:
   at the bottom of the view says so and opens the editor.
 - **FC-054** (P0): If a filter hides an item on one side but its counterpart is visible,
   both are shown and the hidden one is coloured teal.
+
+**Other filters and filtered items (binding interpretation; decisions D-37, D-45).**
+
+- **Size (D-37).** `size:[<|>]<n>[KB|MB|GB|TB]` uses binary units: KB = 1024, MB = 1024², GB = 1024³,
+  TB = 1024⁴ (`B`, `KiB`… are accepted too, case-insensitively). `<` keeps files smaller than the bound, `>`
+  larger ones; without an operator the filter keeps smaller files.
+- **Date.** `cutoff:[<|>](<YYYY-MM-DD>|<RFC 3339 time>|<n>days)`: `<` keeps files modified before the cutoff,
+  `>` after it; without an operator the filter keeps files modified after it ("newer than"). A bare date is
+  local midnight; `<n>days` is midnight of today minus n days in the local time zone, resolved from the
+  current date and zone that the application passes in (the engine never reads the clock, D-24). A file
+  without a modification time fails a date filter.
+- Size and date filters apply to files only; *Exclude protected operating system files* hides any item whose
+  attributes contain both SYSTEM and HIDDEN and has no effect on back-ends without DOS attributes (dotfiles on
+  Linux are never hidden by it). A folder hidden that way on every side where it exists is not scanned. A folder
+  that is protected on one side only is scanned on both sides and its contents are compared normally (FC-054:
+  the protected side is drawn teal), so identical contents stay *same* instead of becoming orphans; in flatten
+  mode its files are read once the same folder was found on the other side.
+- **Name-only items (D-45).** Items excluded by name masks are not read from the disk: they are listed with
+  name and kind only (no size, date or attributes) and are not scanned further when they are folders. When the
+  counterpart of such an item is visible (FC-054, e.g. `x.bak` aligned with `x.txt` while `*.bak` is excluded),
+  the hidden side is read after alignment so that the pair is compared normally; no content test runs for a
+  pair with a hidden side. Items hidden by size, date or attribute filters are read normally, and so are
+  symbolic links and items whose directory record states no kind.
 
 ### 6.3 Display filters
 
@@ -157,6 +326,24 @@ Tests that require reading files:
 - **FC-058** (P1): Toolbar display-filter mode: DropDown (3 buttons + menu), Favorites
   (a row of combination buttons), Toggles (one button per atomic state); configurable
   in options and by right-clicking the toolbar.
+
+**Display filters (binding interpretation; decisions D-19, D-44).** Each preset is a set of the six atomic
+toggles; the normative table is `design/m1-contracts.md` §2.7 (Show Differences = every atom except Same; Show No
+Orphans = every atom except the two orphan atoms; …).
+
+- **Unknown and error items (D-19)** belong to the atom *Differences*: they appear whenever differences are
+  shown, so problems are never hidden by "show differences".
+- An item is shown when the atom of its category is selected. A folder is shown under *Always Show Folders*
+  always; under *Compare Files and Folder Structure* when its own state is selected or anything below it is
+  shown; under *Only Compare Files* only when a file below it is shown. An item is listed when its folder is
+  listed and expanded.
+- **Suppress Filters (D-44)** reveals the items hidden by file filters (name filters and other filters) in
+  teal; the display filter keeps applying to every other item. *Ignore Unimportant Differences* changes the
+  categories (and so the statistics and the exit code), never the display filter itself; display filters
+  never change the statistics or the exit code.
+- CLI and script spellings: `all`, `differences` (`display-mismatches`), `same` (`display-matches`),
+  `no-orphans`, `differences-no-orphans`, `orphans`, `left-newer`, `right-newer`, `left-newer-orphans`,
+  `right-newer-orphans`, `left-orphans`, `right-orphans`, `none`, each also with a `display-` prefix.
 
 ## 7. Selection and navigation
 

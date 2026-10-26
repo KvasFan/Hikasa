@@ -1,0 +1,10 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: differences; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+Status: incomplete (the comparison was cancelled)
+
+Name           Size  Modified                 Name  Size  Modified
+dir/              0                        ?  dir/     0
+only_left.txt     1  2026-01-01T00:00:00Z  -

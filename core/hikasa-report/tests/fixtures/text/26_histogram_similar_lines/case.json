@@ -1,0 +1,5 @@
+{
+  "description": "Similar lines paired as changes with inline ranges",
+  "source": "hikasa-text/26_histogram_similar_lines",
+  "display": "mismatches"
+}

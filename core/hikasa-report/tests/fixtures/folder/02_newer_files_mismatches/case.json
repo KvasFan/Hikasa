@@ -1,0 +1,6 @@
+{
+  "description": "display-mismatches: differences, only files (folders shown only above visible files)",
+  "source": "hikasa-folder/02_newer_files",
+  "filter": "differences",
+  "folders": "only_files"
+}

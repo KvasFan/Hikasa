@@ -1,0 +1,87 @@
+# Sources: the GNU Bash reference manual (reserved words, shell builtin commands, special parameters,
+# parameter expansion, quoting and comments). Written for Hikasa.
+schema_version = 1
+id = "bash"
+name = "Bash Scripts"
+description = "Bash, sh and zsh scripts."
+kind = "text"
+mask = "*.sh;*.bash;*.zsh"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 4
+
+# $name, ${…} and the special parameters $0…$9 $# $? $$ $! $@ $* $-.
+[[grammar]]
+element = "EnvironmentVar"
+kind = "basic"
+text = '\$\{[^}]*\}|\$[A-Za-z_]\w*|\$[0-9#?$!@*-]'
+regex = true
+
+# A word starting with # at the start of a line or after whitespace begins a comment that runs to the end of
+# the line (the look-behind needs fancy-regex). Delimited to the end of the line, so trailing whitespace stays
+# outside the comment (D-13).
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = '(?:^|(?<=\s))#'
+regex = true
+stop_at_eol = true
+
+# ANSI-C quoting.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "$'"
+to = "'"
+escape = '\'
+
+# Single quotes: no escapes at all; may span lines.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+
+# Double quotes: backslash escapes; may span lines.
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = '"'
+to = '"'
+escape = '\'
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+tokens = [
+  # reserved words
+  "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do", "done", "in",
+  "function", "time", "coproc",
+  # builtins
+  "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt",
+  "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc",
+  "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd",
+  "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source",
+  "suspend", "test", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait",
+]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '\d+(?:\.\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[-|&;<>!=+*/%^~:,.?@]+|[()\[\]{}`\\]'
+regex = true

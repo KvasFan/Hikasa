@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-vfs"
-description = "Virtual file system: local, archives, snapshots, remote back-ends, clipboard, HTTP"
+description = "Virtual file system: local files, in-memory trees, standard-input and clipboard blobs, streamed and mapped content comparison"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,28 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+crc32fast.workspace = true
+memmap2.workspace = true
+filetime.workspace = true
+bitflags.workspace = true
+same-file.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+criterion.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "binary_compare_2gb"
+harness = false
+
+[[bench]]
+name = "crc32_1gb"
+harness = false

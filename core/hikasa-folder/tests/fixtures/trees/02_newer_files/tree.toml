@@ -1,0 +1,35 @@
+description = "Timestamps: inclusive 2 s tolerance, left/right newer, a size difference (Different) and time+size (newer wins)"
+[[left]]
+path = "same_within_tolerance.txt"
+content = "x"
+mtime = "2026-01-01T00:00:02Z"
+[[right]]
+path = "same_within_tolerance.txt"
+content = "x"
+[[left]]
+path = "left_newer.txt"
+content = "x"
+mtime = "2026-01-02T00:00:00Z"
+[[right]]
+path = "left_newer.txt"
+content = "x"
+[[left]]
+path = "right_newer.txt"
+content = "x"
+[[right]]
+path = "right_newer.txt"
+content = "x"
+mtime = "2026-01-01T00:00:02.000000001Z"
+[[left]]
+path = "size_only.txt"
+content = "abc"
+[[right]]
+path = "size_only.txt"
+content = "abcd"
+[[left]]
+path = "dir/size_and_time.txt"
+content = "abc"
+mtime = "2026-03-01T00:00:00Z"
+[[right]]
+path = "dir/size_and_time.txt"
+content = "abcdef"

@@ -1,0 +1,16 @@
+description = "§2.3 row 8: src\\core\\: src is PassThrough (its files excluded), src/core is Included"
+[[left]]
+path = "src/a.c"
+content = "a"
+[[right]]
+path = "src/a.c"
+content = "a2"
+[[left]]
+path = "src/core/k.c"
+content = "k"
+[[right]]
+path = "src/core/k.c"
+content = "k"
+[[left]]
+path = "src/other/o.c"
+content = "o"

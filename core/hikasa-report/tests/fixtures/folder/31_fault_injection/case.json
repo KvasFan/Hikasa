@@ -1,0 +1,5 @@
+{
+  "description": "Injected faults: stat and read errors shown as `E` with their errors in JSON",
+  "source": "hikasa-folder/31_fault_injection",
+  "ansi": true
+}

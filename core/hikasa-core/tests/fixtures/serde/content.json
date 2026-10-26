@@ -1,0 +1,57 @@
+{
+  "methods": [
+    "none",
+    "crc",
+    "binary",
+    "rules"
+  ],
+  "kinds": [
+    "binary_same",
+    "rules_same",
+    "unimportant_only",
+    "important_differences",
+    "binary_different",
+    "error"
+  ],
+  "results": [
+    {
+      "result": "binary_same"
+    },
+    {
+      "result": "rules_same"
+    },
+    {
+      "result": "unimportant_only"
+    },
+    {
+      "result": "important_differences"
+    },
+    {
+      "result": "binary_different"
+    },
+    {
+      "result": "error",
+      "error": {
+        "kind": "not_found",
+        "message": "left input /w/missing.c: /w/missing.c: not found",
+        "spec": "/w/missing.c",
+        "causes": [
+          "/w/missing.c: not found"
+        ]
+      }
+    }
+  ],
+  "outcome": {
+    "method": "rules",
+    "result": {
+      "result": "binary_different"
+    },
+    "warnings": [
+      {
+        "code": "rules_size_limit",
+        "message": "larger than 128 MiB: compared by bytes",
+        "spec": "/w/big.log"
+      }
+    ]
+  }
+}

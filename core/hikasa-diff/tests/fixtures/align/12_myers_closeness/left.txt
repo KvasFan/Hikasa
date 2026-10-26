@@ -1,0 +1,4 @@
+header
+value = compute(alpha, beta);
+result = value * 2;
+footer

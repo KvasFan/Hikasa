@@ -1,0 +1,23 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: myers (myers); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+Warning: closeness_ignored: closeness matching does not apply to the Myers algorithm; differing lines are paired by position
+
+Verdict:               important differences
+Ignore unimportant:    no
+Rows:                  20
+Same rows:             17
+Changed rows:          2
+Left-only rows:        1
+Right-only rows:       0
+Important rows:        3
+Unimportant rows:      0
+Sections:              3
+Important sections:    3
+Unimportant sections:  0
+Important lines:       added 0, deleted 1, changed 2, original 2
+Unimportant lines:     added 0, deleted 0, changed 0, original 0
+Left lines:            20
+Right lines:           19

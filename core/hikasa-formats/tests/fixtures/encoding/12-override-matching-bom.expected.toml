@@ -1,0 +1,9 @@
+# An override that matches the BOM still strips it.
+[options]
+override = "utf-8"
+
+[expected]
+encoding = "UTF-8"
+bom_len = 3
+source = "override"
+text = "x"

@@ -1,0 +1,571 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 440,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 20,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 421,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 19,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "unaligned",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "unaligned",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 20,
+    "same_rows": 13,
+    "changed_rows": 6,
+    "left_only_rows": 1,
+    "right_only_rows": 0,
+    "important_rows": 7,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 6,
+      "original": 7
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 3,
+    "important_sections": 3,
+    "left_lines": 20,
+    "right_lines": 19
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        5,
+        6
+      ],
+      "left_lines": [
+        6,
+        7
+      ],
+      "right_lines": [
+        6,
+        7
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        12,
+        13
+      ],
+      "left_lines": [
+        13,
+        14
+      ],
+      "right_lines": [
+        13,
+        14
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        15,
+        20
+      ],
+      "left_lines": [
+        16,
+        21
+      ],
+      "right_lines": [
+        16,
+        20
+      ]
+    }
+  ],
+  "display": {
+    "mode": "all",
+    "lines": null,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "row",
+      "row": 0,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 1,
+        "text": "line 00 of the sample"
+      },
+      "right": {
+        "line": 1,
+        "text": "line 00 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 2,
+        "text": "line 01 of the sample"
+      },
+      "right": {
+        "line": 2,
+        "text": "line 01 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 2,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 3,
+        "text": "line 02 of the sample"
+      },
+      "right": {
+        "line": 3,
+        "text": "line 02 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 3,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 4,
+        "text": "line 03 of the sample"
+      },
+      "right": {
+        "line": 4,
+        "text": "line 03 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 4,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 5,
+        "text": "line 04 of the sample"
+      },
+      "right": {
+        "line": 5,
+        "text": "line 04 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 5,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 6,
+        "text": "line 05 of the sample"
+      },
+      "right": {
+        "line": 6,
+        "text": "line 05 of the sample, edited"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 21,
+            "end": 29,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 6,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 7,
+        "text": "line 06 of the sample"
+      },
+      "right": {
+        "line": 7,
+        "text": "line 06 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 7,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 8,
+        "text": "line 07 of the sample"
+      },
+      "right": {
+        "line": 8,
+        "text": "line 07 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 8,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 9,
+        "text": "line 08 of the sample"
+      },
+      "right": {
+        "line": 9,
+        "text": "line 08 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 9,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 10,
+        "text": "line 09 of the sample"
+      },
+      "right": {
+        "line": 10,
+        "text": "line 09 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 10,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 11,
+        "text": "line 10 of the sample"
+      },
+      "right": {
+        "line": 11,
+        "text": "line 10 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 11,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 12,
+        "text": "line 11 of the sample"
+      },
+      "right": {
+        "line": 12,
+        "text": "line 11 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 12,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 13,
+        "text": "line 12 of the sample"
+      },
+      "right": {
+        "line": 13,
+        "text": "a brand new line"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 0,
+            "end": 4,
+            "important": true
+          },
+          {
+            "start": 5,
+            "end": 7,
+            "important": true
+          },
+          {
+            "start": 8,
+            "end": 10,
+            "important": true
+          },
+          {
+            "start": 11,
+            "end": 19,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 0,
+            "end": 1,
+            "important": true
+          },
+          {
+            "start": 2,
+            "end": 7,
+            "important": true
+          },
+          {
+            "start": 8,
+            "end": 11,
+            "important": true
+          },
+          {
+            "start": 13,
+            "end": 15,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 13,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 14,
+        "text": "line 13 of the sample"
+      },
+      "right": {
+        "line": 14,
+        "text": "line 13 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 14,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 15,
+        "text": "line 14 of the sample"
+      },
+      "right": {
+        "line": 15,
+        "text": "line 14 of the sample"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 15,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 16,
+        "text": "line 15 of the sample"
+      },
+      "right": {
+        "line": 16,
+        "text": "line 16 of the sample"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 16,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 17,
+        "text": "line 16 of the sample"
+      },
+      "right": {
+        "line": 17,
+        "text": "line 17 of the sample"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 17,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 18,
+        "text": "line 17 of the sample"
+      },
+      "right": {
+        "line": 18,
+        "text": "line 18 of the sample"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 18,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 19,
+        "text": "line 18 of the sample"
+      },
+      "right": {
+        "line": 19,
+        "text": "line 19 of the sample"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 6,
+            "end": 7,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 19,
+      "state": "left_only",
+      "importance": "important",
+      "left": {
+        "line": 20,
+        "text": "line 19 of the sample"
+      },
+      "right": null,
+      "inline": null
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+# Sources: the Object Pascal language guide (reserved words) and its form-file text syntax (object, inherited
+# and inline blocks closed by end, property assignments, string literals with #nn character codes, numbers,
+# sets and item collections). Written for Hikasa.
+schema_version = 1
+id = "pascal-forms"
+name = "Object Pascal Forms"
+description = "Form files saved as text."
+kind = "text"
+mask = "*.dfm;*.fmx"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 2
+tab_as_spaces = true
+
+[elements]
+Keyword = { case_sensitive = false }
+
+[[grammar]]
+element = "String"
+kind = "delimited"
+from = "'"
+to = "'"
+escape = "'"
+stop_at_eol = true
+
+# Character codes (#13#10) are part of string expressions.
+[[grammar]]
+element = "String"
+kind = "basic"
+text = '#\d+'
+regex = true
+
+[[grammar]]
+element = "Keyword"
+kind = "list"
+match_case = false
+tokens = ["object", "inherited", "inline", "end", "item", "true", "false"]
+
+[[grammar]]
+element = "Identifier"
+kind = "basic"
+text = '[A-Za-z_]\w*'
+regex = true
+
+[[grammar]]
+element = "Number"
+kind = "basic"
+text = '\$[0-9A-Fa-f]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '[=:.,<>+-]|[()\[\]{}]'
+regex = true
+
+# Component declarations are the best anchors when forms are compared.
+[[line_weight]]
+pattern = '^\s*object'
+regex = true
+priority = 4

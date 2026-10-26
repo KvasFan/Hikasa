@@ -1,0 +1,278 @@
+//! The subcommands (contract §1.9.2, §3.5). Each module turns its arguments into one request, calls one `Service`
+//! method and prints the result as JSON (`--json`) or as human output; the exit code comes from the response or
+//! from `ApiError::exit_code` (§2.21). Vocabulary words are parsed by the core parsers only (T11).
+
+pub mod completions;
+pub mod folder;
+pub mod format;
+pub mod gui;
+pub mod quick;
+pub mod text;
+pub mod version;
+pub mod vfs;
+
+use clap::ArgMatches;
+use hikasa_core::{JobKind, Warning};
+use hikasa_session::api::dto::{
+    COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_LIST_SCHEMA,
+    FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, JsonEnvelope, QUICK_SCHEMA, TEXT_COMPARE_SCHEMA,
+    VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
+};
+use hikasa_session::api::{ApiOp, OpenArgs};
+use hikasa_session::jobs::JobControl;
+use hikasa_session::{ApiError, Service};
+use hikasa_text::{TextPattern, TextRulesPatch, UnimportantItem};
+use serde::Serialize;
+
+use crate::args::{Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, TextCmd, VfsCmd};
+use crate::output::{Output, WriteError};
+use crate::progress::ProgressLine;
+
+/// What a command needs: the service, the output, the progress line and the parsed arguments of the leaf
+/// subcommand (for the order of repeated flags).
+pub struct Ctx<'a> {
+    /// The one service of this process.
+    pub service: &'a Service,
+    /// stdout/stderr.
+    pub out: &'a mut Output,
+    /// Progress on stderr.
+    pub progress: &'a ProgressLine,
+    /// clap's matches of the leaf subcommand.
+    pub matches: &'a ArgMatches,
+}
+
+impl Ctx<'_> {
+    /// A job control for a blocking service call, reporting to the progress line.
+    pub fn job(&self, kind: JobKind) -> JobControl {
+        self.service.job(kind, self.progress.sink())
+    }
+
+    /// The warnings of an envelope: the startup warnings, then the command's own (§1.8.7 item 8).
+    pub fn warnings(&self, own: &[Warning]) -> Vec<Warning> {
+        let mut all = self.service.startup_warnings().to_vec();
+        all.extend_from_slice(own);
+        all
+    }
+
+    /// Writes a successful JSON document with exit code `code` and returns the code (a broken pipe keeps it).
+    pub fn json_success<T: Serialize>(
+        &mut self,
+        schema: &'static str,
+        code: u8,
+        result: T,
+        own: &[Warning],
+        op: ApiOp,
+    ) -> u8 {
+        let envelope = JsonEnvelope::success_raw(schema, code, result, self.warnings(own));
+        self.json_envelope(&envelope, own, op)
+    }
+
+    /// Writes a JSON document built from a response and returns its exit code (a broken pipe keeps it; another
+    /// write failure fails the command).
+    pub fn json_envelope<T: Serialize>(
+        &mut self,
+        envelope: &JsonEnvelope<T>,
+        own: &[Warning],
+        op: ApiOp,
+    ) -> u8 {
+        self.progress.clear();
+        match self.out.envelope(envelope) {
+            Ok(()) | Err(WriteError::BrokenPipe) => envelope.exit_code,
+            Err(WriteError::Other(e)) => self.fail(envelope.schema, &e, op, own),
+        }
+    }
+
+    /// The end of a human command: a broken pipe keeps `code`, another write failure fails the command; the
+    /// command's warnings go to stderr.
+    pub fn human_done(
+        &mut self,
+        written: Result<(), WriteError>,
+        code: u8,
+        schema: &'static str,
+        own: &[Warning],
+        op: ApiOp,
+    ) -> u8 {
+        self.progress.clear();
+        match written {
+            Ok(()) | Err(WriteError::BrokenPipe) => {
+                self.out.warnings(own);
+                code
+            }
+            Err(WriteError::Other(e)) => self.fail(schema, &e, op, own),
+        }
+    }
+
+    /// A failed command: one stderr line, the failure document with `--json` (unless stdout already carries
+    /// output), and `err.exit_code(op)`.
+    pub fn fail(&mut self, schema: &'static str, err: &ApiError, op: ApiOp, own: &[Warning]) -> u8 {
+        self.progress.clear();
+        let startup = self.service.startup_warnings();
+        fail(self.out, schema, err, op, startup, own)
+    }
+}
+
+/// A failed command: the stderr line, the failure document with `--json` (unless stdout already carries output;
+/// its warnings are `startup` then `own`), and `err.exit_code(op)`. In human mode only `own` is printed: the
+/// startup warnings were printed once when the service started.
+pub fn fail(
+    out: &mut Output,
+    schema: &'static str,
+    err: &ApiError,
+    op: ApiOp,
+    startup: &[Warning],
+    own: &[Warning],
+) -> u8 {
+    out.error(err);
+    if out.json() {
+        if !out.wrote_stdout() {
+            let mut warnings = startup.to_vec();
+            warnings.extend_from_slice(own);
+            let envelope = JsonEnvelope::<()>::failure(schema, err, op, warnings);
+            let _ = out.envelope(&envelope);
+        }
+    } else {
+        out.warnings(own);
+    }
+    err.exit_code(op).code()
+}
+
+/// Runs the commands that need no service and read no configuration (`completions`, `version`); `None` for
+/// every other command.
+pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
+    match command {
+        Command::Completions { shell } => Some(completions::run(out, *shell)),
+        Command::Version => Some(version::run(out)),
+        Command::Quick(_)
+        | Command::Text { .. }
+        | Command::Folder { .. }
+        | Command::Format { .. }
+        | Command::Vfs { .. }
+        | Command::Gui { .. } => None,
+    }
+}
+
+/// The schema of a command's JSON document and the operation of its exit codes.
+pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static str, ApiOp) {
+    match command {
+        Command::Quick(_) => (QUICK_SCHEMA, ApiOp::Quick),
+        Command::Text {
+            cmd: TextCmd::Compare(args),
+        } => match args.gui {
+            true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
+            false => (TEXT_COMPARE_SCHEMA, ApiOp::TextCompare),
+        },
+        Command::Folder {
+            cmd: FolderCmd::Compare(args),
+        } => match args.gui {
+            true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
+            false => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
+        },
+        Command::Format { cmd } => match cmd {
+            FormatCmd::List => (FORMAT_LIST_SCHEMA, ApiOp::Format),
+            FormatCmd::Show { .. } => (FORMAT_SHOW_SCHEMA, ApiOp::Format),
+            FormatCmd::Detect(_) => (FORMAT_DETECT_SCHEMA, ApiOp::Format),
+            FormatCmd::Tokens(_) => (FORMAT_TOKENS_SCHEMA, ApiOp::Format),
+        },
+        Command::Vfs { cmd } => match cmd {
+            VfsCmd::Ls(_) => (VFS_LIST_SCHEMA, ApiOp::Vfs),
+            VfsCmd::Stat(_) => (VFS_STAT_SCHEMA, ApiOp::Vfs),
+            VfsCmd::Cat { .. } => (VFS_CAT_SCHEMA, ApiOp::Vfs),
+        },
+        Command::Gui { cmd } => match cmd {
+            GuiCmd::Open(_) => (
+                GUI_OPEN_SCHEMA,
+                ApiOp::GuiOpen {
+                    wait: open.is_some_and(|o| o.request.wait),
+                },
+            ),
+            GuiCmd::Ping => (GUI_PING_SCHEMA, ApiOp::GuiControl),
+            GuiCmd::List => (GUI_LIST_SCHEMA, ApiOp::GuiControl),
+            GuiCmd::Close { .. } => (GUI_CLOSE_SCHEMA, ApiOp::GuiControl),
+            GuiCmd::Quit => (GUI_QUIT_SCHEMA, ApiOp::GuiControl),
+        },
+        Command::Completions { .. } => (COMPLETIONS_SCHEMA, ApiOp::Other),
+        Command::Version => (VERSION_SCHEMA, ApiOp::Other),
+    }
+}
+
+/// Runs one command and returns its exit code. `open` is the parsed `gui open` command line (main parses it
+/// before the service exists, §1.9.1).
+pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -> u8 {
+    match command {
+        Command::Quick(args) => quick::run(ctx, args),
+        Command::Text {
+            cmd: TextCmd::Compare(args),
+        } => text::run(ctx, args),
+        Command::Folder {
+            cmd: FolderCmd::Compare(args),
+        } => folder::run(ctx, args),
+        Command::Format { cmd } => format::run(ctx, cmd),
+        Command::Vfs { cmd } => vfs::run(ctx, cmd),
+        Command::Gui { cmd } => gui::run(ctx, cmd, open),
+        Command::Completions { shell } => completions::run(ctx.out, *shell),
+        Command::Version => version::run(ctx.out),
+    }
+}
+
+/// The text rules patch of the importance flags: `--unimportant` through `UnimportantItem::parse_list`,
+/// `--unimportant-text` and `--unimportant-regex` as case-sensitive patterns in command-line order (§1.9.2).
+pub fn importance_patch(
+    importance: &ImportanceArgs,
+    matches: &ArgMatches,
+) -> Result<TextRulesPatch, ApiError> {
+    let mut patch = TextRulesPatch::default();
+    if let Some(list) = &importance.unimportant {
+        patch.unimportant = UnimportantItem::parse_list(list)?;
+    }
+    patch.unimportant_text = ordered_patterns(importance, matches);
+    Ok(patch)
+}
+
+/// The patterns of `--unimportant-text` and `--unimportant-regex`, in the order they were given.
+fn ordered_patterns(importance: &ImportanceArgs, matches: &ArgMatches) -> Vec<TextPattern> {
+    let indices = |id: &str| -> Vec<usize> {
+        match matches.try_contains_id(id) {
+            Ok(true) => matches
+                .indices_of(id)
+                .map(Iterator::collect)
+                .unwrap_or_default(),
+            Ok(false) | Err(_) => Vec::new(),
+        }
+    };
+    let text_at = indices("unimportant_text");
+    let regex_at = indices("unimportant_regex");
+    let mut items: Vec<(usize, TextPattern)> = Vec::new();
+    for (k, text) in importance.unimportant_text.iter().enumerate() {
+        let at = text_at.get(k).copied().unwrap_or(usize::MAX);
+        items.push((at, TextPattern::plain(text.clone())));
+    }
+    for (k, regex) in importance.unimportant_regex.iter().enumerate() {
+        let at = regex_at.get(k).copied().unwrap_or(usize::MAX);
+        items.push((at, TextPattern::regex(regex.clone())));
+    }
+    items.sort_by_key(|(at, _)| *at);
+    items.into_iter().map(|(_, pattern)| pattern).collect()
+}
+
+/// `Some(true)` for the positive flag, `Some(false)` for the negative one, `None` for neither (clap's
+/// `overrides_with` keeps only the last one given).
+pub fn tri(on: bool, off: bool) -> Option<bool> {
+    match (on, off) {
+        (_, true) => Some(false),
+        (true, false) => Some(true),
+        (false, false) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tri_state_flags() {
+        assert_eq!(tri(false, false), None);
+        assert_eq!(tri(true, false), Some(true));
+        assert_eq!(tri(false, true), Some(false));
+    }
+}

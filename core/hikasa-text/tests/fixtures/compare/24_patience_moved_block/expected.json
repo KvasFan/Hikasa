@@ -1,0 +1,153 @@
+{
+  "format": "Everything Else",
+  "algorithm": "patience",
+  "runs": [
+    {
+      "kind": "insert",
+      "left": [
+        0,
+        0
+      ],
+      "right": [
+        0,
+        5
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        10
+      ],
+      "right": [
+        5,
+        15
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        10,
+        15
+      ],
+      "right": [
+        15,
+        15
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        15,
+        20
+      ],
+      "right": [
+        15,
+        20
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        5
+      ],
+      "state": "right_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        5,
+        15
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        15,
+        20
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        20,
+        25
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "add",
+      "importance": "important",
+      "rows": [
+        0,
+        5
+      ],
+      "left_lines": [
+        0,
+        0
+      ],
+      "right_lines": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "delete",
+      "importance": "important",
+      "rows": [
+        15,
+        20
+      ],
+      "left_lines": [
+        10,
+        15
+      ],
+      "right_lines": [
+        15,
+        15
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 25,
+    "same_rows": 15,
+    "changed_rows": 0,
+    "left_only_rows": 5,
+    "right_only_rows": 5,
+    "important_rows": 10,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 5,
+      "deleted": 5,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 2,
+    "important_sections": 2,
+    "left_lines": 20,
+    "right_lines": 20
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": []
+}

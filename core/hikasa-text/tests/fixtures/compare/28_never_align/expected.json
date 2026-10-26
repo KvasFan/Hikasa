@@ -1,0 +1,265 @@
+{
+  "format": "Everything Else",
+  "algorithm": "histogram",
+  "runs": [
+    {
+      "kind": "equal",
+      "left": [
+        0,
+        5
+      ],
+      "right": [
+        0,
+        5
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        5,
+        6
+      ],
+      "right": [
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "insert",
+      "left": [
+        6,
+        6
+      ],
+      "right": [
+        5,
+        6
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        6,
+        12
+      ],
+      "right": [
+        6,
+        12
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        12,
+        13
+      ],
+      "right": [
+        12,
+        12
+      ]
+    },
+    {
+      "kind": "insert",
+      "left": [
+        13,
+        13
+      ],
+      "right": [
+        12,
+        13
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        13,
+        15
+      ],
+      "right": [
+        13,
+        15
+      ]
+    },
+    {
+      "kind": "delete",
+      "left": [
+        15,
+        16
+      ],
+      "right": [
+        15,
+        15
+      ]
+    },
+    {
+      "kind": "equal",
+      "left": [
+        16,
+        20
+      ],
+      "right": [
+        15,
+        19
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "rows": [
+        0,
+        5
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        5,
+        6
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        6,
+        7
+      ],
+      "state": "right_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        7,
+        13
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        13,
+        14
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        14,
+        15
+      ],
+      "state": "right_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        15,
+        17
+      ],
+      "state": "same",
+      "importance": "none"
+    },
+    {
+      "rows": [
+        17,
+        18
+      ],
+      "state": "left_only",
+      "importance": "important"
+    },
+    {
+      "rows": [
+        18,
+        22
+      ],
+      "state": "same",
+      "importance": "none"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        5,
+        7
+      ],
+      "left_lines": [
+        5,
+        6
+      ],
+      "right_lines": [
+        5,
+        6
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        13,
+        15
+      ],
+      "left_lines": [
+        12,
+        13
+      ],
+      "right_lines": [
+        12,
+        13
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "delete",
+      "importance": "important",
+      "rows": [
+        17,
+        18
+      ],
+      "left_lines": [
+        15,
+        16
+      ],
+      "right_lines": [
+        15,
+        15
+      ]
+    }
+  ],
+  "stats": {
+    "rows": 22,
+    "same_rows": 17,
+    "changed_rows": 0,
+    "left_only_rows": 3,
+    "right_only_rows": 2,
+    "important_rows": 5,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 1,
+      "changed": 2,
+      "original": 2
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 3,
+    "important_sections": 3,
+    "left_lines": 20,
+    "right_lines": 19
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "important_differences"
+  },
+  "warnings": [],
+  "inline": []
+}

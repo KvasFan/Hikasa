@@ -1,0 +1,12 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: differences without orphans; folders: always show folders; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; flatten
+Warning: entry_error: /l/sub: permission denied
+
+Name  Size  Modified     Name            Size  Modified
+sub/                  E
+                      ?  sub/w.txt          1  2026-01-01T00:00:00Z
+                      ?  sub/x.txt          1  2026-01-01T00:00:00Z
+                      ?  sub/deep/y.txt     1  2026-01-01T00:00:00Z

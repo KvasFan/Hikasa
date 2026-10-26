@@ -1,0 +1,27 @@
+# Expected verdicts of `sniff` for every file in this folder (§2.9).
+"control-10-percent.txt" = { binary = false, rule = "text" }
+"control-11-percent.bin" = { binary = true, rule = "control_ratio", permille = 110 }
+"empty.txt" = { binary = false, rule = "empty" }
+"escape-sequences.log" = { binary = false, rule = "text" }
+"magic-7z.7z" = { binary = true, rule = "magic", kind = "seven_zip" }
+"magic-elf.so" = { binary = true, rule = "magic", kind = "elf" }
+"magic-gif87a.gif" = { binary = true, rule = "magic", kind = "gif" }
+"magic-gif89a.gif" = { binary = true, rule = "magic", kind = "gif" }
+"magic-gzip.gz" = { binary = true, rule = "magic", kind = "gzip" }
+"magic-jpeg.jpg" = { binary = true, rule = "magic", kind = "jpeg" }
+"magic-pdf.pdf" = { binary = true, rule = "magic", kind = "pdf" }
+"magic-png.png" = { binary = true, rule = "magic", kind = "png" }
+"magic-xz.xz" = { binary = true, rule = "magic", kind = "xz" }
+"magic-zip-empty.zip" = { binary = true, rule = "magic", kind = "zip" }
+"magic-zip-spanned.zip" = { binary = true, rule = "magic", kind = "zip" }
+"magic-zip.zip" = { binary = true, rule = "magic", kind = "zip" }
+"magic-zstd.zst" = { binary = true, rule = "magic", kind = "zstd" }
+"nul-byte.dat" = { binary = true, rule = "nul_byte", offset = 6 }
+"plain.txt" = { binary = false, rule = "text" }
+"u16-small-integers.bin" = { binary = true, rule = "nul_byte", offset = 0 }
+"u32-small-integers.bin" = { binary = true, rule = "nul_byte", offset = 0 }
+"utf16be-text.txt" = { binary = false, rule = "utf_pattern" }
+"utf16le-cyrillic.txt" = { binary = false, rule = "utf_pattern" }
+"utf16le-text.txt" = { binary = false, rule = "utf_pattern" }
+"utf32le-text.txt" = { binary = false, rule = "utf_pattern" }
+"utf8-bom-with-nul.txt" = { binary = false, rule = "bom" }

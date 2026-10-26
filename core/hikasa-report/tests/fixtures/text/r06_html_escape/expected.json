@@ -1,0 +1,264 @@
+{
+  "left": {
+    "spec": "/l/left.txt",
+    "size": 97,
+    "mtime": "2026-10-19T13:12:00Z",
+    "lines": 5,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "right": {
+    "spec": "/r/right.txt",
+    "size": 98,
+    "mtime": "2026-10-19T14:00:00Z",
+    "lines": 5,
+    "encoding": "UTF-8",
+    "encoding_source": "locale_fallback",
+    "bom": false,
+    "eol": "lf",
+    "binary": false,
+    "malformed": 0,
+    "converted": false
+  },
+  "format": {
+    "id": null,
+    "name": "Everything Else",
+    "kind": "text",
+    "reason": null
+  },
+  "detection": {
+    "left": null,
+    "right": null
+  },
+  "algorithm": "standard",
+  "rules": {
+    "schema_version": 1,
+    "importance": {
+      "elements": {},
+      "leading_whitespace": true,
+      "embedded_whitespace": true,
+      "trailing_whitespace": true,
+      "everything_else": true,
+      "everything_else_case_sensitive": true,
+      "unimportant": [],
+      "orphans_always_important": true,
+      "compare_line_endings": false
+    },
+    "alignment": {
+      "algorithm": "auto",
+      "skew_tolerance": 300,
+      "closeness": true,
+      "closeness_threshold_permille": 500,
+      "never_align_differences": false
+    }
+  },
+  "ignore_unimportant": false,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "rows": 5,
+    "same_rows": 2,
+    "changed_rows": 3,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 3,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 3,
+      "original": 3
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 2,
+    "important_sections": 2,
+    "left_lines": 5,
+    "right_lines": 5
+  },
+  "sections": [
+    {
+      "id": 0,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        0,
+        2
+      ],
+      "left_lines": [
+        1,
+        3
+      ],
+      "right_lines": [
+        1,
+        3
+      ]
+    },
+    {
+      "id": 1,
+      "kind": "change",
+      "importance": "important",
+      "rows": [
+        3,
+        4
+      ],
+      "left_lines": [
+        4,
+        5
+      ],
+      "right_lines": [
+        4,
+        5
+      ]
+    }
+  ],
+  "display": {
+    "mode": "all",
+    "lines": null,
+    "toggles": [
+      "same",
+      "left_orphans",
+      "right_orphans",
+      "differences"
+    ]
+  },
+  "items": [
+    {
+      "type": "row",
+      "row": 0,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 1,
+        "text": "<script>alert(\"x\")</script>"
+      },
+      "right": {
+        "line": 1,
+        "text": "<script>alert(\"y\")</script>"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 15,
+            "end": 16,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 15,
+            "end": 16,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 1,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 2,
+        "text": "a & b < c > d"
+      },
+      "right": {
+        "line": 2,
+        "text": "a && b < c > d"
+      },
+      "inline": {
+        "left": [],
+        "right": [
+          {
+            "start": 3,
+            "end": 4,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 2,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 3,
+        "text": "quote ' and \" marks"
+      },
+      "right": {
+        "line": 3,
+        "text": "quote ' and \" marks"
+      },
+      "inline": null
+    },
+    {
+      "type": "row",
+      "row": 3,
+      "state": "changed",
+      "importance": "important",
+      "left": {
+        "line": 4,
+        "text": "ctrl \u0001 and \u001b[31m escape"
+      },
+      "right": {
+        "line": 4,
+        "text": "ctrl \u0002 and \u001b[32m escape"
+      },
+      "inline": {
+        "left": [
+          {
+            "start": 5,
+            "end": 6,
+            "important": true
+          },
+          {
+            "start": 14,
+            "end": 15,
+            "important": true
+          }
+        ],
+        "right": [
+          {
+            "start": 5,
+            "end": 6,
+            "important": true
+          },
+          {
+            "start": 14,
+            "end": 15,
+            "important": true
+          }
+        ],
+        "whole_line": false
+      }
+    },
+    {
+      "type": "row",
+      "row": 4,
+      "state": "same",
+      "importance": "none",
+      "left": {
+        "line": 5,
+        "text": "plain line"
+      },
+      "right": {
+        "line": 5,
+        "text": "plain line"
+      },
+      "inline": null
+    }
+  ]
+}

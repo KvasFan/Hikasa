@@ -1,0 +1,22 @@
+Text Compare
+Left: /l/left.c (UTF-8, lf)
+Right: /r/right.c (UTF-8, cr_lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+Verdict:               same under the rules
+Ignore unimportant:    no
+Rows:                  2
+Same rows:             2
+Changed rows:          0
+Left-only rows:        0
+Right-only rows:       0
+Important rows:        0
+Unimportant rows:      0
+Sections:              0
+Important sections:    0
+Unimportant sections:  0
+Important lines:       added 0, deleted 0, changed 0, original 0
+Unimportant lines:     added 0, deleted 0, changed 0, original 0
+Left lines:            2
+Right lines:           2

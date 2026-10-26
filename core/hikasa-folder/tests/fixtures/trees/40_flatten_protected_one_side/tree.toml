@@ -1,0 +1,47 @@
+description = "Flatten (FC-014) with exclude protected: a folder that is SYSTEM+HIDDEN on one side only is collected once its counterpart is collected on the other side, so its identical files compare as same instead of becoming orphans; folders protected on every side (or protected orphans) stay hidden. Verdict: no differences"
+[[left]]
+path = "sys"
+kind = "dir"
+dos = "HS"
+[[right]]
+path = "sys"
+kind = "dir"
+[[left]]
+path = "sys/a.txt"
+content = "a"
+[[right]]
+path = "sys/a.txt"
+content = "a"
+[[left]]
+path = "sys/inner/b.txt"
+content = "b"
+[[right]]
+path = "sys/inner/b.txt"
+content = "b"
+[[left]]
+path = "both"
+kind = "dir"
+dos = "HS"
+[[right]]
+path = "both"
+kind = "dir"
+dos = "HS"
+[[left]]
+path = "both/x.txt"
+content = "left"
+[[right]]
+path = "both/y.txt"
+content = "right"
+[[left]]
+path = "lonely"
+kind = "dir"
+dos = "HS"
+[[left]]
+path = "lonely/z.txt"
+content = "z"
+[[left]]
+path = "top.txt"
+content = "t"
+[[right]]
+path = "top.txt"
+content = "t"

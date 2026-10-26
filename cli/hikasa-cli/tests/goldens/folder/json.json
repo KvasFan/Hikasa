@@ -1,0 +1,429 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a",
+      "capabilities": [
+        "read",
+        "write",
+        "list",
+        "seek",
+        "mtime",
+        "ctime",
+        "unix_mode",
+        "unix_owner",
+        "symlinks",
+        "local_path",
+        "case_sensitive"
+      ]
+    },
+    "right": {
+      "spec": "<TMP>/b",
+      "capabilities": [
+        "read",
+        "write",
+        "list",
+        "seek",
+        "mtime",
+        "ctime",
+        "unix_mode",
+        "unix_owner",
+        "symlinks",
+        "local_path",
+        "case_sensitive"
+      ]
+    },
+    "rules": {
+      "schema_version": 1,
+      "criteria": {
+        "size": true,
+        "timestamps": {
+          "enabled": true,
+          "tolerance_secs": 2,
+          "ignore_dst": false,
+          "ignore_timezone": false,
+          "offset": null
+        },
+        "filename_case": false,
+        "dos_attributes": "",
+        "unix": {
+          "permissions": false,
+          "owner": false,
+          "group": false
+        },
+        "content": {
+          "method": "none",
+          "skip_if_quick_same": false,
+          "override_quick": true
+        }
+      },
+      "alignment": {
+        "case": "auto",
+        "align_extensions": false,
+        "align_normalization": false
+      },
+      "filters": {
+        "names": {
+          "include_files": [],
+          "exclude_files": [],
+          "include_folders": [],
+          "exclude_folders": []
+        },
+        "other": {
+          "exclude_protected": true,
+          "size": null,
+          "date": null
+        }
+      },
+      "handling": {
+        "follow_symlinks": false,
+        "flatten": false,
+        "scan_orphan_folders": true
+      }
+    },
+    "case": "sensitive",
+    "complete": true,
+    "display": {
+      "filter": "differences",
+      "folders": "compare_structure",
+      "ignore_unimportant": false,
+      "suppress_filters": false,
+      "toggles": [
+        "left_orphans",
+        "right_orphans",
+        "left_newer",
+        "right_newer",
+        "differences"
+      ]
+    },
+    "verdict": "differences",
+    "stats": {
+      "files": {
+        "same": 3,
+        "left_newer": 0,
+        "right_newer": 1,
+        "different": 1,
+        "left_orphan": 1,
+        "right_orphan": 1,
+        "unknown": 0,
+        "error": 0,
+        "filtered": 0
+      },
+      "folders": {
+        "same": 1,
+        "left_newer": 0,
+        "right_newer": 0,
+        "different": 2,
+        "left_orphan": 0,
+        "right_orphan": 0,
+        "unknown": 0,
+        "error": 0,
+        "filtered": 0
+      },
+      "left": {
+        "files": 6,
+        "folders": 3,
+        "bytes": 67
+      },
+      "right": {
+        "files": 6,
+        "folders": 3,
+        "bytes": 72
+      },
+      "content": {
+        "binary_same": 0,
+        "rules_same": 0,
+        "unimportant_only": 0,
+        "important_differences": 0,
+        "binary_different": 0,
+        "error": 0,
+        "not_compared": 0
+      }
+    },
+    "items": [
+      {
+        "path": "docs",
+        "depth": 0,
+        "kind": "folder",
+        "state": "different",
+        "category": "different",
+        "scan": "scanned",
+        "aggregate": [
+          "left_orphan",
+          "right_orphan"
+        ],
+        "diffs": [],
+        "flags": [],
+        "time": null,
+        "content": null,
+        "errors": [],
+        "left": {
+          "name": "docs",
+          "name_lossy": false,
+          "size": 6,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 493,
+          "permissions": "drwxr-xr-x",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        },
+        "right": {
+          "name": "docs",
+          "name_lossy": false,
+          "size": 6,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 493,
+          "permissions": "drwxr-xr-x",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        }
+      },
+      {
+        "path": "docs/new.md",
+        "depth": 1,
+        "kind": "file",
+        "state": "right_orphan",
+        "category": "right_orphan",
+        "scan": "not_applicable",
+        "aggregate": null,
+        "diffs": [],
+        "flags": [],
+        "time": null,
+        "content": null,
+        "errors": [],
+        "left": null,
+        "right": {
+          "name": "new.md",
+          "name_lossy": false,
+          "size": 6,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        }
+      },
+      {
+        "path": "docs/old.md",
+        "depth": 1,
+        "kind": "file",
+        "state": "left_orphan",
+        "category": "left_orphan",
+        "scan": "not_applicable",
+        "aggregate": null,
+        "diffs": [],
+        "flags": [],
+        "time": null,
+        "content": null,
+        "errors": [],
+        "left": {
+          "name": "old.md",
+          "name_lossy": false,
+          "size": 6,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        },
+        "right": null
+      },
+      {
+        "path": "src",
+        "depth": 0,
+        "kind": "folder",
+        "state": "different",
+        "category": "different",
+        "scan": "scanned",
+        "aggregate": [
+          "same",
+          "right_newer",
+          "different"
+        ],
+        "diffs": [],
+        "flags": [],
+        "time": null,
+        "content": null,
+        "errors": [],
+        "left": {
+          "name": "src",
+          "name_lossy": false,
+          "size": 49,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 493,
+          "permissions": "drwxr-xr-x",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        },
+        "right": {
+          "name": "src",
+          "name_lossy": false,
+          "size": 54,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 493,
+          "permissions": "drwxr-xr-x",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        }
+      },
+      {
+        "path": "src/lib.h",
+        "depth": 1,
+        "kind": "file",
+        "state": "different",
+        "category": "different",
+        "scan": "not_applicable",
+        "aggregate": null,
+        "diffs": [
+          "size"
+        ],
+        "flags": [],
+        "time": "same",
+        "content": null,
+        "errors": [],
+        "left": {
+          "name": "lib.h",
+          "name_lossy": false,
+          "size": 10,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        },
+        "right": {
+          "name": "lib.h",
+          "name_lossy": false,
+          "size": 11,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        }
+      },
+      {
+        "path": "src/util.c",
+        "depth": 1,
+        "kind": "file",
+        "state": "right_newer",
+        "category": "right_newer",
+        "scan": "not_applicable",
+        "aggregate": null,
+        "diffs": [
+          "size",
+          "time"
+        ],
+        "flags": [],
+        "time": "right_newer",
+        "content": null,
+        "errors": [],
+        "left": {
+          "name": "util.c",
+          "name_lossy": false,
+          "size": 10,
+          "mtime": "2026-10-19T13:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        },
+        "right": {
+          "name": "util.c",
+          "name_lossy": false,
+          "size": 14,
+          "mtime": "2026-10-19T14:12:00Z",
+          "ctime": "<CTIME>",
+          "attrs": null,
+          "mode": 420,
+          "permissions": "-rw-r--r--",
+          "uid": <UID>,
+          "gid": <GID>,
+          "link_target": null,
+          "followed": false,
+          "crc32": null,
+          "filtered": false,
+          "stat_skipped": false,
+          "dir": null
+        }
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

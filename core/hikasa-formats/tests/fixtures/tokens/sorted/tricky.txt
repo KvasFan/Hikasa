@@ -1,0 +1,3 @@
+line with trailing spaces   
+	Tabbed line
+unicode été

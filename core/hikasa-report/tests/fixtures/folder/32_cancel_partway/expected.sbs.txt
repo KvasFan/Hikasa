@@ -1,0 +1,12 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+Status: incomplete (the comparison was cancelled)
+
+Name     Size  Modified                 Name     Size  Modified
+a/          1                        =  a/          1
+  1.txt     1  2026-01-01T00:00:00Z  =    1.txt     1  2026-01-01T00:00:00Z
+b/          0                        ?  b/          0
+c/          0                        ?  c/          0

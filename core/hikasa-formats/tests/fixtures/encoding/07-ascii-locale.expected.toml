@@ -1,0 +1,6 @@
+# §2.8 row 7: pure ASCII, no fallback: the locale (UTF-8).
+[expected]
+encoding = "UTF-8"
+bom_len = 0
+source = "locale_fallback"
+text = "hello"

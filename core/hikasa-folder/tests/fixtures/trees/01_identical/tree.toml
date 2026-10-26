@@ -1,0 +1,25 @@
+description = "Identical trees: every pair Same, folders Same, verdict no_differences"
+[[left]]
+path = "a.txt"
+content = "hello"
+[[left]]
+path = "src/main.rs"
+content = "fn main() {}"
+[[left]]
+path = "src/lib/util.rs"
+content = "pub fn f() {}"
+[[left]]
+path = "empty"
+kind = "dir"
+[[right]]
+path = "a.txt"
+content = "hello"
+[[right]]
+path = "src/main.rs"
+content = "fn main() {}"
+[[right]]
+path = "src/lib/util.rs"
+content = "pub fn f() {}"
+[[right]]
+path = "empty"
+kind = "dir"

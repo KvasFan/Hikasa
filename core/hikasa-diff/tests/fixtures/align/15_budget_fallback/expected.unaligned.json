@@ -1,0 +1,25 @@
+{
+  "algorithm": "unaligned",
+  "rows": 34,
+  "warnings": [],
+  "runs": [
+    {"kind": "equal", "left": [0, 1], "right": [0, 1]},
+    {"kind": "changed", "left": [1, 2], "right": [1, 2]},
+    {"kind": "equal", "left": [2, 5], "right": [2, 5]},
+    {"kind": "changed", "left": [5, 6], "right": [5, 6]},
+    {"kind": "equal", "left": [6, 9], "right": [6, 9]},
+    {"kind": "changed", "left": [9, 10], "right": [9, 10]},
+    {"kind": "equal", "left": [10, 13], "right": [10, 13]},
+    {"kind": "changed", "left": [13, 14], "right": [13, 14]},
+    {"kind": "equal", "left": [14, 18], "right": [14, 18]},
+    {"kind": "changed", "left": [18, 19], "right": [18, 19]},
+    {"kind": "equal", "left": [19, 22], "right": [19, 22]},
+    {"kind": "changed", "left": [22, 23], "right": [22, 23]},
+    {"kind": "equal", "left": [23, 26], "right": [23, 26]},
+    {"kind": "changed", "left": [26, 27], "right": [26, 27]},
+    {"kind": "equal", "left": [27, 30], "right": [27, 30]},
+    {"kind": "changed", "left": [30, 31], "right": [30, 31]},
+    {"kind": "equal", "left": [31, 33], "right": [31, 33]},
+    {"kind": "changed", "left": [33, 34], "right": [33, 34]}
+  ]
+}

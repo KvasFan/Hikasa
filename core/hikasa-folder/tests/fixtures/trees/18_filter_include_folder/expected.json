@@ -1,0 +1,321 @@
+{
+  "description": "§2.3 rows 4–6: with src\\ base files keep file masks, src's subtree is included, lib is PassThrough (lib/x.c excluded, lib/src included)",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 4,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 4,
+      "bytes": 3
+    },
+    "right": {
+      "files": 3,
+      "folders": 4,
+      "bytes": 3
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 3,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 1
+    },
+    "folders": {
+      "same": 4,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 3,
+      "folders": 4,
+      "bytes": 3
+    },
+    "right": {
+      "files": 3,
+      "folders": 4,
+      "bytes": 3
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "lib",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "lib",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "lib",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "src",
+              "kind": "folder",
+              "state": "same",
+              "scan": "scanned",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "src",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "src",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "children": [
+                {
+                  "name": "y.c",
+                  "kind": "file",
+                  "state": "same",
+                  "scan": "not_applicable",
+                  "diffs": [],
+                  "time": "same",
+                  "content": null,
+                  "flags": [],
+                  "errors": [],
+                  "left": {
+                    "name": "y.c",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "right": {
+                    "name": "y.c",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "x.c",
+              "kind": "file",
+              "state": "filtered",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [
+                "left_filtered",
+                "right_filtered",
+                "left_stat_skipped",
+                "right_stat_skipped"
+              ],
+              "errors": [],
+              "left": {
+                "name": "x.c",
+                "kind": "file",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "x.c",
+                "kind": "file",
+                "size": 0,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "src",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "src",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "src",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "a",
+              "kind": "folder",
+              "state": "same",
+              "scan": "scanned",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": {
+                "name": "a",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "right": {
+                "name": "a",
+                "kind": "dir",
+                "size": 0,
+                "dir": null
+              },
+              "children": [
+                {
+                  "name": "b.c",
+                  "kind": "file",
+                  "state": "same",
+                  "scan": "not_applicable",
+                  "diffs": [],
+                  "time": "same",
+                  "content": null,
+                  "flags": [],
+                  "errors": [],
+                  "left": {
+                    "name": "b.c",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "right": {
+                    "name": "b.c",
+                    "kind": "file",
+                    "size": 1,
+                    "dir": null
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "top.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "top.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: differences; ignore unimportant: no
+Rules: format: Everything Else; algorithm: histogram (histogram); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+   /l/left.txt                              /r/right.txt
+      … 5 lines hidden …
+ 6 line 05 of the sample               |  6 line 05 of the sample, edited
+      … 6 lines hidden …
+13 line 12 of the sample               <
+                                       > 13 a brand new line
+      … 2 lines hidden …
+16 line 15 of the sample               <
+      … 4 lines hidden …

@@ -1,0 +1,5 @@
+start
+inserted line
+apple pies
+banana splits
+end

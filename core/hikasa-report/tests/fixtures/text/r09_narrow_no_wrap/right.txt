@@ -1,0 +1,4 @@
+short
+a fairly long line that does not fit into a narrow column, changed
+same tail
+extra

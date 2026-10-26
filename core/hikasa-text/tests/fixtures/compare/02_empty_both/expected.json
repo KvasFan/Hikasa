@@ -1,0 +1,40 @@
+{
+  "format": "Everything Else",
+  "algorithm": "standard",
+  "runs": [],
+  "rows": [],
+  "sections": [],
+  "stats": {
+    "rows": 0,
+    "same_rows": 0,
+    "changed_rows": 0,
+    "left_only_rows": 0,
+    "right_only_rows": 0,
+    "important_rows": 0,
+    "unimportant_rows": 0,
+    "important": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "unimportant": {
+      "added": 0,
+      "deleted": 0,
+      "changed": 0,
+      "original": 0
+    },
+    "sections": 0,
+    "important_sections": 0,
+    "left_lines": 0,
+    "right_lines": 0
+  },
+  "verdict": {
+    "result": "binary_same"
+  },
+  "verdict_ignore_unimportant": {
+    "result": "binary_same"
+  },
+  "warnings": [],
+  "inline": []
+}

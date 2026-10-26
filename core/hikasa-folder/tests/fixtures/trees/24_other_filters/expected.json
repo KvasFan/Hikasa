@@ -1,0 +1,275 @@
+{
+  "description": "Other filters (FC-053): date cutoff (files older than 30 days before midnight are filtered, a missing mtime fails), exclude protected (SYSTEM+HIDDEN), folders unaffected by size/date",
+  "verdict": "no_differences",
+  "verdict_ignoring_unimportant": "no_differences",
+  "stats": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 3
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 2,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 3
+    },
+    "folders": {
+      "same": 1,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 0,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 2
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "same",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "olddir",
+          "kind": "folder",
+          "state": "same",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "olddir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "right": {
+            "name": "olddir",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "hidden_only.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "hidden_only.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "hidden_only.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "no_time.txt",
+          "kind": "file",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "no_time.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "no_time.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "old.txt",
+          "kind": "file",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [
+            "size"
+          ],
+          "time": "same",
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "old.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "old.txt",
+            "kind": "file",
+            "size": 2,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "protected.sys",
+          "kind": "file",
+          "state": "filtered",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [
+            "left_filtered",
+            "right_filtered"
+          ],
+          "errors": [],
+          "left": {
+            "name": "protected.sys",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "protected.sys",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "recent.txt",
+          "kind": "file",
+          "state": "same",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": "same",
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "recent.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "right": {
+            "name": "recent.txt",
+            "kind": "file",
+            "size": 1,
+            "dir": null
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

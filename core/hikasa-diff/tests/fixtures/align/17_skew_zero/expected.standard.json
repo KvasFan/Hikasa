@@ -1,0 +1,9 @@
+{
+  "algorithm": "standard",
+  "rows": 6,
+  "warnings": [],
+  "runs": [
+    {"kind": "changed", "left": [0, 4], "right": [0, 4]},
+    {"kind": "insert", "left": [4, 4], "right": [4, 6]}
+  ]
+}

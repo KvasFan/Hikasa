@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-folder"
-description = "Folder scan/compare/merge/sync model, filters, file operations, snapshots"
+description = "Folder Compare engine: rules, name filters, a parallel cancellable scan and the live comparison model"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,37 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-vfs.workspace = true
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+jiff.workspace = true
+bitflags.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+filetime.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+criterion.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "folder_scan_100k"
+harness = false
+
+[[bench]]
+name = "folder_model_1m"
+harness = false
+
+[[bench]]
+name = "cancel_latency"
+harness = false

@@ -1,0 +1,4 @@
+[alignment]
+align_extensions = true
+[filters.names]
+exclude_files = ["*.bak"]

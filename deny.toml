@@ -7,6 +7,11 @@ allow = [
 ]
 confidence-threshold = 0.9
 
+# Free font licences, accepted only for the fonts egui embeds by default.
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

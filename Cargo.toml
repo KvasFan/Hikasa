@@ -22,16 +22,86 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KvasFan/Hikasa"
 authors = ["Hikasa contributors"]
-rust-version = "1.85"
+rust-version = "1.97"
 
-# Dependencies are intentionally not declared yet (version 0.0.0 = specification only).
-# See docs/02-tech-stack.md for the approved crate list.
 [workspace.dependencies]
+# --- internal crates ---
+hikasa-core = { path = "core/hikasa-core", version = "0.1.0" }
+hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.0" }
+hikasa-diff = { path = "core/hikasa-diff", version = "0.1.0" }
+hikasa-formats = { path = "core/hikasa-formats", version = "0.1.0" }
+hikasa-folder = { path = "core/hikasa-folder", version = "0.1.0" }
+hikasa-text = { path = "core/hikasa-text", version = "0.1.0" }
+hikasa-table = { path = "core/hikasa-table", version = "0.1.0" }
+hikasa-hex = { path = "core/hikasa-hex", version = "0.1.0" }
+hikasa-picture = { path = "core/hikasa-picture", version = "0.1.0" }
+hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.0" }
+hikasa-report = { path = "core/hikasa-report", version = "0.1.0" }
+hikasa-script = { path = "core/hikasa-script", version = "0.1.0" }
+hikasa-session = { path = "core/hikasa-session", version = "0.1.0" }
+
+# --- third-party (approved in docs/02-tech-stack.md) ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+thiserror = "2"
+anyhow = "1"
+regex = "1"
+fancy-regex = "0.19"
+imara-diff = "0.2"
+similar = "3"
+diffy = "0.5"
+rayon = "1"
+crc32fast = "1"
+blake3 = "1"
+memmap2 = "0.9"
+filetime = "0.2"
+same-file = "1"
+encoding_rs = "0.8"
+chardetng = "1"
+ropey = "1.6"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+memchr = "2"
+bitflags = { version = "2", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
+smallvec = "1"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+clap_complete = "4"
+directories = "6"
+interprocess = "2"
+jiff = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# GUI toolkit (D-56 amended: egui/eframe, maintainer decision after the ARCH-GUI-003 measurements)
+eframe = "0.37"
+egui = "0.37"
+
+# --- dev / test ---
+tempfile = "3"
+proptest = "1"
+assert_cmd = "2"
+predicates = "3"
+criterion = "0.8"
+pretty_assertions = "1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 [profile.release]
 lto = "fat"

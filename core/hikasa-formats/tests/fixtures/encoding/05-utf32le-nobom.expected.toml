@@ -1,0 +1,6 @@
+# §2.8 row 5: BOM-less UTF-32LE.
+[expected]
+encoding = "UTF-32LE"
+bom_len = 0
+source = "utf_pattern"
+text = "ab"

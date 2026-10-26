@@ -1,0 +1,67 @@
+# Sources: the WHATWG HTML Living Standard (tag and attribute name syntax, attribute value quoting, comments,
+# character references). Written for Hikasa.
+schema_version = 1
+id = "html"
+name = "HTML"
+description = "HTML pages and server page templates."
+kind = "text"
+mask = "*.htm;*.html;*.xhtml;*.asp;*.aspx;*.ascx"
+
+[encoding]
+mode = "auto"
+
+[text]
+tab_size = 2
+
+[elements]
+# Tag and attribute names are case-insensitive (HTML ignores their case).
+Keyword = { case_sensitive = false }
+
+[[grammar]]
+element = "Comment"
+kind = "delimited"
+from = "<!--"
+to = "-->"
+
+# Attribute values: a quote right after `=` (or `= `) up to the closing quote on the same line, without '<'.
+# Quotes elsewhere (an apostrophe in running text, quoted words in content) never start a string. Values that
+# span lines are not recognised (the grammar is line-based and not context-sensitive, docs/10 §3.1).
+[[grammar]]
+element = "String"
+kind = "basic"
+text = '(?<==|=\s)"[^"<]*"'
+regex = true
+
+[[grammar]]
+element = "String"
+kind = "basic"
+text = "(?<==|=\\s)'[^'<]*'"
+regex = true
+
+# Tag names, right after `<` or `</` (any name: the standard elements of the WHATWG HTML Living Standard,
+# custom elements, namespaced SVG/MathML names). Words in running text are never keywords.
+[[grammar]]
+element = "Keyword"
+kind = "basic"
+text = '(?<=<|</)[A-Za-z][\w.:-]*'
+regex = true
+
+# Attribute names: a name followed by `=` (`id=`, `class =`, `data-x=`, `aria-label=`). Valueless attributes
+# (`disabled`) stay Everything Else.
+[[grammar]]
+element = "Keyword"
+kind = "basic"
+text = '[A-Za-z_:][\w.:-]*(?=\s*=)'
+regex = true
+
+[[grammar]]
+element = "Entity"
+kind = "basic"
+text = '&#?\w+;'
+regex = true
+
+[[grammar]]
+element = "Operator"
+kind = "basic"
+text = '</?|/?>|='
+regex = true

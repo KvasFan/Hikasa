@@ -1,0 +1,3 @@
+[[importance.unimportant]]
+pattern = '\$Id:[^$]*\$'
+regex = true

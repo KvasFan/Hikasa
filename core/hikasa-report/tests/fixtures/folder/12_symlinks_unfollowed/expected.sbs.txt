@@ -1,0 +1,10 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none
+
+Name                      Size  Modified                 Name                     Size  Modified
+target.txt                   1  2026-01-01T00:00:00Z  =  target.txt                  1  2026-01-01T00:00:00Z
+moved_link -> target.txt    10  2026-01-01T00:00:00Z  !  moved_link -> other.txt     9  2026-01-01T00:00:00Z
+same_link -> target.txt     10  2026-01-01T00:00:00Z  =  same_link -> target.txt    10  2026-01-01T00:00:00Z

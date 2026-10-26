@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-picture"
-description = "Image loading, pixel comparison and image metadata comparison"
+description = "Image loading, pixel comparison and image metadata comparison (planned; not implemented in M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,6 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true

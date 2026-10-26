@@ -1,0 +1,216 @@
+{
+  "description": "Different kinds never align (D-20, §2.5.2 rows 8 and 9): two orphan rows, folder first",
+  "verdict": "differences",
+  "verdict_ignoring_unimportant": "differences",
+  "stats": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 2,
+      "right_orphan": 2,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 1,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 4
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 11
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "stats_ignoring_unimportant": {
+    "files": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 2,
+      "right_orphan": 2,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "folders": {
+      "same": 0,
+      "left_newer": 0,
+      "right_newer": 0,
+      "different": 0,
+      "left_orphan": 0,
+      "right_orphan": 1,
+      "unknown": 0,
+      "error": 0,
+      "filtered": 0
+    },
+    "left": {
+      "files": 2,
+      "folders": 0,
+      "bytes": 4
+    },
+    "right": {
+      "files": 2,
+      "folders": 1,
+      "bytes": 11
+    },
+    "content": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0,
+      "not_compared": 0
+    }
+  },
+  "warnings": [],
+  "tree": {
+    "complete": true,
+    "root": {
+      "name": "",
+      "kind": "folder",
+      "state": "different",
+      "scan": "scanned",
+      "diffs": [],
+      "time": null,
+      "content": null,
+      "flags": [],
+      "errors": [],
+      "left": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "right": {
+        "name": "",
+        "kind": "dir",
+        "size": 0,
+        "dir": null
+      },
+      "children": [
+        {
+          "name": "x",
+          "kind": "folder",
+          "state": "right_orphan",
+          "scan": "scanned",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "x",
+            "kind": "dir",
+            "size": 0,
+            "dir": null
+          },
+          "children": [
+            {
+              "name": "inner.txt",
+              "kind": "file",
+              "state": "right_orphan",
+              "scan": "not_applicable",
+              "diffs": [],
+              "time": null,
+              "content": null,
+              "flags": [],
+              "errors": [],
+              "left": null,
+              "right": {
+                "name": "inner.txt",
+                "kind": "file",
+                "size": 1,
+                "dir": null
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "l",
+          "kind": "file",
+          "state": "right_orphan",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": null,
+          "right": {
+            "name": "l",
+            "kind": "file",
+            "size": 10,
+            "dir": null
+          },
+          "children": []
+        },
+        {
+          "name": "x",
+          "kind": "file",
+          "state": "left_orphan",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "x",
+            "kind": "file",
+            "size": 4,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        },
+        {
+          "name": "l",
+          "kind": "symlink",
+          "state": "left_orphan",
+          "scan": "not_applicable",
+          "diffs": [],
+          "time": null,
+          "content": null,
+          "flags": [],
+          "errors": [],
+          "left": {
+            "name": "l",
+            "kind": "symlink",
+            "size": 1,
+            "dir": null
+          },
+          "right": null,
+          "children": []
+        }
+      ]
+    }
+  }
+}

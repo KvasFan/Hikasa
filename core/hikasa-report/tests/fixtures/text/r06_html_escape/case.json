@@ -1,0 +1,3 @@
+{
+  "description": "Markup, ampersands, quotes and control characters are escaped in HTML and shown as escapes in text"
+}

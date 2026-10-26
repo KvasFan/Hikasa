@@ -1,0 +1,13 @@
+description = "§2.3 row 7: .\\src\\ is anchored: lib is Excluded (not listed)"
+[[left]]
+path = "src/a.c"
+content = "a"
+[[right]]
+path = "src/a.c"
+content = "a"
+[[left]]
+path = "lib/src/b.c"
+content = "b"
+[[right]]
+path = "lib/src/b.c"
+content = "b"

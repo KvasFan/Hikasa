@@ -1,0 +1,29 @@
+# Text Compare
+# Left: /l/left.txt (UTF-8, lf)
+# Right: /r/right.txt (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: patience (patience); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#
+--- /l/left.txt	2026-10-19T13:12:00Z
++++ /r/right.txt	2026-10-19T14:00:00Z
+@@ -1,3 +1,8 @@ important
++line 10 of the sample
++line 11 of the sample
++line 12 of the sample
++line 13 of the sample
++line 14 of the sample
+ line 00 of the sample
+ line 01 of the sample
+ line 02 of the sample
+@@ -8,11 +13,6 @@ important
+ line 07 of the sample
+ line 08 of the sample
+ line 09 of the sample
+-line 10 of the sample
+-line 11 of the sample
+-line 12 of the sample
+-line 13 of the sample
+-line 14 of the sample
+ line 15 of the sample
+ line 16 of the sample
+ line 17 of the sample

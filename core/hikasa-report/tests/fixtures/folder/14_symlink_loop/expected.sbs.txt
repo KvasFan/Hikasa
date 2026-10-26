@@ -1,0 +1,11 @@
+Folder Compare
+Left: /l
+Right: /r
+Mode: display: all; folders: compare structure; ignore unimportant: no; suppress filters: no
+Rules: size, timestamps (2 s); filters: none; follow symlinks
+Warning: symlink_loop: /l/dir/up: symbolic link loop (leads back to an ancestor folder)
+
+Name       Status  Name
+dir/     E error   dir/
+  up/    E error     up/
+  x.txt  = same      x.txt

@@ -1,0 +1,4 @@
+[handling]
+follow_symlinks = true
+[filters.names]
+exclude_files = ["*.lnk"]

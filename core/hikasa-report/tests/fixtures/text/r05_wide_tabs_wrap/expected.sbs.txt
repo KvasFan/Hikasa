@@ -1,0 +1,16 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+  /l/left.txt                    /r/right.txt
+1     indented with a tab      1     indented with a tab
+2 日本語のテキストと漢字     | 2 日本語のテキストと漢宇
+3 café au lait               | 3 café au lait
+4 The quick brown fox jumps  | 4 The quick brown fox leaps
+  over the lazy dog and      |   over the lazy dog and
+  keeps running far beyond   |   keeps running far beyond
+  the edge of the column     |   the edge of the column
+  width.                     |   width!
+5 emoji 😀 here              | 5 emoji 😃 here

@@ -1,0 +1,14 @@
+description = "A followed link back to an ancestor closes a loop (D-33): Error node with SYMLINK_LOOP, not listed"
+[[left]]
+path = "dir/x.txt"
+content = "x"
+[[right]]
+path = "dir/x.txt"
+content = "x"
+[[left]]
+path = "dir/up"
+kind = "symlink"
+target = ".."
+[[right]]
+path = "dir/up"
+kind = "dir"
