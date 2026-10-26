@@ -176,7 +176,7 @@ pub(crate) fn locale_codeset(value: &str) -> Option<String> {
 }
 
 /// The effective uid with std only (§1.8.2): Linux reads `/proc/self/status`; other Unix systems create a file
-/// in `temp_dir` and read its owner.
+/// with a name of their own in `temp_dir` and read its owner.
 #[cfg(unix)]
 fn effective_uid(temp_dir: &std::path::Path) -> Option<u32> {
     if cfg!(target_os = "linux")
@@ -186,17 +186,36 @@ fn effective_uid(temp_dir: &std::path::Path) -> Option<u32> {
     {
         return Some(uid);
     }
+    probe_uid(temp_dir)
+}
+
+/// The owner of a file created in `temp_dir` (the effective uid where `/proc` is missing).
+#[cfg(unix)]
+fn probe_uid(temp_dir: &std::path::Path) -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
-    let probe = temp_dir.join(format!(".hikasa-uid-{}", std::process::id()));
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .ok()?;
-    let uid = file.metadata().ok().map(|meta| meta.uid());
-    drop(file);
-    let _ = std::fs::remove_file(&probe);
-    uid
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // One probe name per call: concurrent calls in one process (threads, tests) must not collide — a shared
+    // name made every caller but one fail with "already exists" and report the uid as unknown (macOS CI).
+    static PROBE: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..8 {
+        let n = PROBE.fetch_add(1, Ordering::Relaxed);
+        let probe = temp_dir.join(format!(".hikasa-uid-{}-{n}", std::process::id()));
+        let file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => file,
+            // A file left by a crashed process with a recycled pid: try the next name.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        };
+        let uid = file.metadata().ok().map(|meta| meta.uid());
+        drop(file);
+        let _ = std::fs::remove_file(&probe);
+        return uid;
+    }
+    None
 }
 
 /// No uids on Windows.
@@ -255,6 +274,28 @@ mod tests {
         assert_eq!(locale_codeset("en_US"), None);
         assert_eq!(locale_codeset(""), None);
         assert_eq!(locale_codeset("de_DE."), None);
+    }
+
+    /// Regression (macOS CI): concurrent probes in one process all find the uid.
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_uid_probes_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        let uids: Vec<Option<u32>> = std::thread::scope(|scope| {
+            let probes: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| probe_uid(dir.path())))
+                .collect();
+            probes.into_iter().map(|p| p.join().unwrap()).collect()
+        });
+        assert!(
+            uids.iter().all(|u| u.is_some() && *u == uids[0]),
+            "{uids:?}"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "probes are removed"
+        );
     }
 
     #[cfg(unix)]

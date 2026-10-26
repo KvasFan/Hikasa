@@ -10046,7 +10046,9 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 - **Unit tests:** the tables of §2.4 (13 rows), §2.5.2 (9), §2.6.2 (15), §2.6.6 (7), the category and colour
   tables (§2.6.3/§2.6.4) and §2.7 (13 presets); `SizeFilter`/`DateFilter` parsing, including errors and zones;
   `ByteBudget` (never more than the capacity in flight; a request larger than the capacity takes the whole
-  capacity; cancellation while waiting returns within 20 ms); `Change<T>` JSON round trip (`"clear"` survives);
+  capacity; cancellation while waiting returns within 20 ms — *amended in the Windows/macOS port:* every time on
+  Linux; on the shared macOS and Windows CI runners, whose timed wake-ups are late now and then, the median of five
+  within 20 ms and the worst within the G4 gate of 100 ms); `Change<T>` JSON round trip (`"clear"` survives);
   verdict cases.
 - **Golden fixtures:** `tests/fixtures/trees/<case>/{tree.toml, rules.toml, expected.json}`. `expected.json`
   holds `CanonicalTree`, statistics and verdict. There are at least 22 cases: identical trees, newer files,

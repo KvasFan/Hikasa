@@ -696,6 +696,11 @@ fn connect_or_launch_with_a_fake_launcher() {
     if let Some(server) = holder.lock().take() {
         server.shutdown().unwrap();
     }
+    // Windows: the dropped client's connection lingers in this process (§1.8.7 item 13) and keeps a server
+    // instance of the pipe name, so a new server cannot create the name's first instance ("access denied"):
+    // the next server needs another pipe name. (A GUI process that exits frees its pipes.)
+    #[cfg(windows)]
+    let endpoint = test_endpoint(dir.path());
     // A running GUI: no launch at all.
     let server = start(
         &endpoint,

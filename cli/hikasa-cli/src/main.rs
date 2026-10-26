@@ -291,9 +291,10 @@ fn inline_value(arg: &std::ffi::OsStr, flag: &str) -> Option<OsString> {
 }
 
 /// Two values of a path flag name the same path: equal, equal once made absolute against `cwd` (`cfg` and
-/// `<cwd>/cfg`; `Path` equality ignores `.` components and a trailing separator), or, when both exist, the same
-/// file once symbolic links are resolved. An empty value is only equal to an empty value (the service refuses
-/// it).
+/// `<cwd>/cfg`; `Path` equality ignores `.` components and a trailing separator), or the same path once the
+/// symbolic links of their longest existing ancestors are resolved (also for a path that does not exist yet:
+/// on macOS `/var/…/cfg` and the current folder's `/private/var/…/cfg` are one folder). An empty value is only
+/// equal to an empty value (the service refuses it).
 fn same_path(a: &Path, b: &Path, cwd: Option<&Path>) -> bool {
     let empty = |p: &Path| p.as_os_str().is_empty();
     if empty(a) || empty(b) {
@@ -306,9 +307,27 @@ fn same_path(a: &Path, b: &Path, cwd: Option<&Path>) -> bool {
     let (a, b) = (absolute(a), absolute(b));
     a == b
         || matches!(
-            (std::fs::canonicalize(&a), std::fs::canonicalize(&b)),
-            (Ok(x), Ok(y)) if x == y
+            (resolve_existing(&a), resolve_existing(&b)),
+            (Some(x), Some(y)) if x == y
         )
+}
+
+/// `path` with its longest existing ancestor canonicalised and the rest appended (`None` when no ancestor
+/// resolves).
+fn resolve_existing(path: &Path) -> Option<PathBuf> {
+    let mut rest = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(resolved) = std::fs::canonicalize(current) {
+            return Some(
+                rest.iter()
+                    .rev()
+                    .fold(resolved, |acc: PathBuf, part| acc.join(part)),
+            );
+        }
+        rest.push(current.file_name()?.to_owned());
+        current = current.parent()?;
+    }
 }
 
 /// The usage error of a flag given twice with different values.
@@ -692,6 +711,21 @@ mod tests {
         assert!(!same_path(Path::new("c"), Path::new("/w/d"), cwd));
         assert!(!same_path(Path::new("c"), Path::new("/w/c"), None));
         assert!(same_path(Path::new(""), Path::new(""), cwd));
+    }
+
+    /// Regression (macOS CI): a path that does not exist yet behind a symbolic link (`/var` → `/private/var`)
+    /// is the same path as its resolved spelling.
+    #[cfg(unix)]
+    #[test]
+    fn missing_paths_behind_a_symbolic_link_are_the_same() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+        let via_link = dir.path().join("link/cfg");
+        assert!(same_path(&via_link, &real.join("cfg"), None));
+        assert!(same_path(Path::new("cfg"), &via_link, Some(&real)));
+        assert!(!same_path(&via_link, &real.join("other"), None));
     }
 
     #[test]

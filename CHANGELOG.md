@@ -8,6 +8,11 @@ newest first.
 ### Windows and macOS port fixes
 - Opening a folder as a file is `is_a_directory` on Windows too (`LocalVfs::open_read`, `--log`; Windows reports
   it as "access denied"), and the mapped binary compare and CRC fall back for a folder instead of failing.
+- macOS (and every Unix without `/proc`): the effective uid is found also when several threads capture the host
+  facts at once; a shared probe file name made all but one report the uid as unknown, and the IPC socket folder
+  check then refused the endpoint (`InsecureEndpoint`).
+- A path flag given twice (`--config-dir cfg` and `--config-dir <cwd>/cfg`) is the same path also when it does not
+  exist yet behind a symbolic link (macOS `/var` → `/private/var`).
 - IPC on Windows: a client's connect to a busy pipe waits at most the call's timeout (`IpcError::Timeout`, exit
   100) instead of forever, and a server shut down right after it started no longer leaves its accept thread
   blocked (the self-connect stays open until the accept thread ends; contract §1.8.7 item 13).
