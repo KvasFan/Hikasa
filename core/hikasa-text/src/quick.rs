@@ -436,7 +436,7 @@ impl RulesComparator {
                     Ok(r) if r.format.id() != l.format.id() => warnings.push(Warning {
                         code: WarningCode::FormatMismatch,
                         message: format!(
-                            "{left} is detected as {}, {right} as {}; {} is used for both (D-15)",
+                            "{left} is detected as {}, {right} as {}; {} is used for both",
                             l.format.name(),
                             r.format.name(),
                             l.format.name()
@@ -448,7 +448,7 @@ impl RulesComparator {
                         code: WarningCode::FormatMismatch,
                         message: format!(
                             "{right}: its format could not be detected ({e}); {} (the format of {left}) is used \
-                             for both (D-15)",
+                             for both",
                             l.format.name()
                         ),
                         spec: None,
@@ -504,7 +504,7 @@ impl ContentComparator for RulesComparator {
         let size_limit_warning = |what: &str| Warning {
             code: WarningCode::RulesSizeLimit,
             message: format!(
-                "{what} is larger than the rules-based comparison limit of {} bytes; compared by bytes (D-25)",
+                "{what} is larger than the rules-based comparison limit of {} bytes; compared by bytes",
                 self.max_bytes
             ),
             spec: None,

@@ -1327,3 +1327,77 @@ fn closing_views_releases_their_data() {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+
+/// Finding of the M1 review: the first-run format files must never delay the window or the endpoint. A slow
+/// deferred task (a fake store that blocks until released) does not hold up its caller, runs on its own thread
+/// and runs once.
+#[test]
+fn deferred_startup_work_never_blocks_the_caller() {
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let done = Arc::new(AtomicBool::new(false));
+    let task_done = Arc::clone(&done);
+    let caller = std::thread::current().id();
+    let mut deferred = crate::startup::Deferred::new(move || {
+        assert_ne!(
+            std::thread::current().id(),
+            caller,
+            "runs off the UI thread"
+        );
+        // The slow store: blocks until the test releases it.
+        release_rx.recv().expect("release");
+        task_done.store(true, Ordering::SeqCst);
+    });
+    assert!(deferred.pending());
+    let began = Instant::now();
+    let handle = deferred.start().expect("started");
+    assert!(
+        began.elapsed() < Duration::from_secs(2),
+        "start waited for the task"
+    );
+    assert!(!done.load(Ordering::SeqCst), "the task is still blocked");
+    assert!(!deferred.pending());
+    assert!(deferred.start().is_none(), "the task starts once");
+    release_tx.send(()).expect("release");
+    handle.join().expect("task");
+    assert!(done.load(Ordering::SeqCst));
+}
+
+/// The startup path up to the window (service, endpoint, core, the command line's view) writes no format file;
+/// the deferred first-run work then writes the built-ins and `order.toml` (D-21).
+#[test]
+fn startup_path_leaves_the_format_files_to_the_deferred_work() {
+    let world = World::new();
+    let formats = hikasa_session::FormatStore::new(world.service.config())
+        .dir()
+        .to_path_buf();
+    let endpoint: Endpoint = world.service.endpoint().expect("endpoint");
+    let server = IpcServer::bind(&endpoint).expect("bind");
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    let handle = server.spawn(Arc::new(handler)).expect("spawn");
+    let mut deferred = crate::startup::Deferred::materialize_formats(&world.service);
+    let mut app = world.app(Some(handle));
+    let (left, right) = text_pair(&world);
+    world.open(&mut app, &left, &right);
+    world.settle(&mut app);
+    assert!(
+        !formats.join("order.toml").exists(),
+        "nothing on the startup path writes the format files"
+    );
+    deferred
+        .start()
+        .expect("started")
+        .join()
+        .expect("materialize");
+    assert!(formats.join("order.toml").is_file(), "order.toml written");
+    let written = std::fs::read_dir(&formats)
+        .expect("formats folder")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+        .count();
+    assert!(written > 1, "the built-ins are written ({written} files)");
+    let _ = app.shutdown();
+}

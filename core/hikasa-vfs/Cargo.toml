@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-vfs"
-description = "Virtual file system: local, archives, snapshots, remote back-ends, clipboard, HTTP"
+description = "Virtual file system: local files, in-memory trees, standard-input and clipboard blobs, streamed and mapped content comparison"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-report"
-description = "Report generation: text, HTML, XML, patch, statistics, print model"
+description = "Report rendering for text and folder comparisons: plain text, HTML, patches, summaries, statistics CSV and JSON"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

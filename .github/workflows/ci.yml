@@ -31,11 +31,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install GUI system libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+      # No GUI system packages: eframe/egui with the default features load X11, Wayland,
+      # xkbcommon and fontconfig at run time (dlopen) and build with the runner's C
+      # compiler alone. The window tests are ignored by default and do not run here.
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace

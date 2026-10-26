@@ -194,8 +194,10 @@ row side becomes one layout job with a section per colour (egui keeps the laid-o
 small scroll lays out only the new rows), and backgrounds, highlights, gap bars, the thumbnail and the scroll bar
 are rectangles. The UTF-16 column → byte/char table of a row side is built in one pass, so painting a row is
 linear in its length (wave-6b review: a per-lookup scan made 4,096-column non-ASCII rows quadratic; the scripted
-scroll of 200 such lines under Xvfb now ends in about 80 s, where it did not end within 600 s; the ASCII pair
-took about 2 minutes in the review). The scroll position is a row index kept as `f64`, not a pixel offset (an
+scroll of 200 such lines now ends in about 80 s, where it did not end within 600 s; the ASCII pair took about
+2 minutes in the review). That 80 s run was started with `xvfb-run` but, with `WAYLAND_DISPLAY` still set, ran on
+the real display (Radeon RX 7900 XTX on Vulkan, 120 Hz, 1.5 points per pixel), not under Xvfb; window tests and
+measurements under Xvfb need `env -u WAYLAND_DISPLAY xvfb-run -a …` (17-agent-workflow §3.5). The scroll position is a row index kept as `f64`, not a pixel offset (an
 `f32` pixel offset does not resolve single rows of a million-row view). The folder tree is painted the same way from
 `FolderViewModel::window` (the rows on screen).
 
@@ -259,8 +261,14 @@ failed now and then. The benchmark now reads PSS and RSS from one `smaps_rollup`
 `VmHWM`. One run on the same desktop and display (2026-10-26, load average ≈ 20 from other builds): PSS 275 MiB,
 RSS 281 MiB, peak ≈ 365 MiB (first run: 280 / 288 / 369); the scroll phases ran at 119.8 / 117.9 / 116.5 fps with
 UI work p95 ≤ 6.9 ms. In that run the window's first frame came 52 s after the process start (the view then showed
-its first screen 1.6 s after it opened, under the load); this was not investigated further (the Xvfb runs start in
-0.3 s), and the first-screen figures above are those of the first run. The folder table's RSS column is from the
+its first screen 1.6 s after it opened, under the load), and the first-screen figures above are those of the
+first run. The M1 final review traced the 51 s before the view opened to the startup code before the window, most
+likely the first-run format files: on a fresh configuration folder the GUI wrote them (`FormatStore::materialize`, D-21: 22 atomic
+writes, each with a file and a folder flush) right after the benchmark had written about 100 MB into the same
+encrypted btrfs volume under heavy load. Since then the GUI binds its IPC endpoint and opens the window first and
+writes these files on a background thread after the first frame, so they no longer delay the window or the
+endpoint (with a fresh configuration folder under Xvfb, at load 15–17, the first frame came after 0.28–0.61 s
+before the change). The folder table's RSS column is from the
 first run (`VmRSS`).
 
 **Memory after views close.** Opening and closing views does not leak: a unit test
@@ -285,8 +293,12 @@ FFI call or a crate that is not approved) or a different allocator, which is lef
 
 ## 4. Build and tooling
 
-- `cargo fmt`, `cargo clippy -D warnings`, `cargo test`, `cargo deny`, `cargo
-  nextest` in CI on Linux, Windows, macOS.
+- `cargo fmt`, `cargo clippy -D warnings`, `cargo test` and `cargo deny` in CI on
+  Linux, Windows, macOS (`.github/workflows/ci.yml`). `cargo nextest`, a CI bench job
+  on a fixed runner and `cargo xtask commands-doc` are M2 items (`16-roadmap.md`); in
+  M1 the benchmarks and performance gates run by hand.
+- Window tests and GUI measurements run headless with `env -u WAYLAND_DISPLAY
+  xvfb-run -a …` (17-agent-workflow §3.5).
 - Release builds with LTO, `codegen-units=1`, `panic=unwind` (we must survive
   panics in a job and report them).
 - Packaging: AppImage/Flatpak (Linux), MSI/MSIX (Windows), DMG (macOS) — P1.

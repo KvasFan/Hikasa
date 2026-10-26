@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-text"
-description = "Text document model and Text Compare/Merge/Edit/Patch session logic"
+description = "Text document model and Text Compare: decoding, rules, importance classification, alignment, display filters, thumbnail"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

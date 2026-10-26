@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-table"
-description = "Tabular parsing (delimited, fixed, spreadsheets) and Table Compare"
+description = "Tabular parsing (delimited, fixed, spreadsheets) and Table Compare (planned; not implemented in M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -2,11 +2,17 @@
 //! ARCH-090): `gui open … --wait` launches the GUI and returns the view's exit code, `gui ping/list/close/quit`
 //! work, and a second `hikasa-gui a b` forwards its request to the running instance and exits 0.
 //!
-//! The tests open a window, so they need a display and are ignored by default. Run them with
+//! The tests open a window, so they need a display and are ignored by default. Run them on a virtual X display
+//! with
 //!
 //! ```text
-//! cargo build -p hikasa-cli && cargo test -p hikasa-gui --test cli_gui -- --ignored
+//! cargo build -p hikasa-cli && env -u WAYLAND_DISPLAY xvfb-run -a cargo test -p hikasa-gui --test cli_gui -- --ignored
 //! ```
+//!
+//! `xvfb-run` only sets `DISPLAY`: in a Wayland session the inherited `WAYLAND_DISPLAY` would make winit open
+//! the window on the real screen, so it is removed (`env -u WAYLAND_DISPLAY`, docs/17 §3.5). The tests also
+//! remove it themselves from every process they start whenever `DISPLAY` is set ([`use_x11`]); without
+//! `DISPLAY` they run on the Wayland display the caller names.
 //!
 //! Every process gets a private configuration folder (`--config-dir`) and a private endpoint
 //! (`HIKASA_IPC_ENDPOINT`) inside the test's temporary folder; the real configuration and endpoint are never
@@ -72,6 +78,8 @@ impl World {
             .env("HIKASA_IPC_ENDPOINT", self.endpoint())
             .env("HIKASA_GUI_EXE", GUI)
             .stdin(Stdio::null());
+        // The CLI passes its environment to the GUI it launches.
+        use_x11(&mut cmd);
         cmd
     }
 
@@ -89,6 +97,7 @@ impl World {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        use_x11(&mut cmd);
         cmd
     }
 
@@ -162,6 +171,15 @@ fn wait_child(child: &mut Child, limit: Duration) -> i32 {
     }
 }
 
+/// With `DISPLAY` set (`xvfb-run` sets it), the GUI must use that X display: winit prefers Wayland whenever
+/// `WAYLAND_DISPLAY` is set, which would put the window on the caller's real screen instead of the virtual one.
+fn use_x11(cmd: &mut Command) -> &mut Command {
+    if std::env::var_os("DISPLAY").is_some() {
+        cmd.env_remove("WAYLAND_DISPLAY");
+    }
+    cmd
+}
+
 fn has_display() -> bool {
     std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -224,6 +242,16 @@ fn gui_open_wait_control_commands_and_second_instance() {
         "{}",
         text(&ping.stdout)
     );
+    // The first-run format files (D-21) are written after the window is up, not before the endpoint.
+    let order = w.config().join("formats").join("order.toml");
+    let began = Instant::now();
+    while !order.is_file() {
+        assert!(
+            began.elapsed() < Duration::from_secs(30),
+            "the GUI did not write the format files"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
     let views = w.wait_for_views(1);
     assert_eq!(views[0]["kind"], "text_compare");
     assert_eq!(views[0]["specs"][0], s(&a));

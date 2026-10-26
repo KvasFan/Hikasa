@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-formats"
-description = "File format model, grammar tokenizer, conversions and built-in presets"
+description = "File format model, grammar tokenizer, encoding and binary detection, conversions and built-in presets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

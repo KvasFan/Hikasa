@@ -4,11 +4,12 @@
 //! (ARCH-090…092).
 //!
 //! Startup (contract §1.10): the command line is the legacy `gui open` syntax (`normalize_legacy_args` +
-//! `parse_open_args`, D-51) → logging → `Service::new` with a lazy standard-input source → the first-run
-//! format files (`FormatStore::materialize`, D-21) → `IpcServer::bind` on the configuration's endpoint. When
-//! another instance holds the endpoint, the request is forwarded to it (`Service::forward_open`) and this
-//! process exits 0 (ARCH-090; `--solo` runs without IPC). Otherwise the server starts, the command line's view
-//! opens (`resolve_open` + `open_view_request`) and the window runs.
+//! `parse_open_args`, D-51) → logging → `Service::new` with a lazy standard-input source → `IpcServer::bind` on
+//! the configuration's endpoint. When another instance holds the endpoint, the request is forwarded to it
+//! (`Service::forward_open`) and this process exits 0 (ARCH-090; `--solo` runs without IPC). Otherwise the
+//! server starts, the command line's view opens (`resolve_open` + `open_view_request`) and the window runs. The
+//! first-run format files (`FormatStore::materialize`, D-21) are written on a background thread after the
+//! window's first frame ([`startup::Deferred`]): disk flushes never delay the endpoint or the window.
 //!
 //! `HIKASA_GUI_BENCH=scroll` or `folder` runs the scripted performance mode of ARCH-GUI-003 on the command
 //! line's view (always without IPC) and prints one JSON summary on stdout.
@@ -22,6 +23,7 @@ mod ipc;
 mod job;
 mod mailbox;
 mod shared;
+mod startup;
 mod text_view;
 mod ui;
 
@@ -42,7 +44,7 @@ use hikasa_session::api::{
 };
 use hikasa_session::ipc::{IpcError, IpcServer};
 use hikasa_session::{
-    ApiOp, FormatStore, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
+    ApiOp, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
 };
 
 use crate::app::{AppCore, UiMsg};
@@ -50,6 +52,7 @@ use crate::bench::{BenchKind, BenchState};
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
+use crate::startup::Deferred;
 use crate::ui::HikasaApp;
 
 /// Exit code of every failure before the window runs (D-35).
@@ -108,9 +111,6 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     };
     for warning in service.startup_warnings() {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
-    }
-    if let Err(e) = FormatStore::new(service.config()).materialize() {
-        tracing::warn!(target: "hikasa::gui", "cannot write the format files: {e}");
     }
     let shared = Arc::new(Shared::new());
     let mailbox: Mailbox<UiMsg> = Mailbox::new();
@@ -171,6 +171,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         }
         None => None,
     };
+    // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
+    let deferred = Deferred::materialize_formats(&service);
     let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
     let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));
     if bench.is_some() && initial.is_none() {
@@ -201,7 +203,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
             b.set_view(view);
         }
     }
-    launch(app, mailbox, bench_state)
+    launch(app, mailbox, bench_state, deferred)
 }
 
 /// A second instance (ARCH-090): the request goes to the running GUI; exit 0 or the error's code. Without specs
@@ -279,7 +281,13 @@ fn init_logging(open: &OpenArgs) -> anyhow::Result<()> {
 }
 
 /// Runs the window until it closes; the process then exits 0 (the views reported their outcomes on the way).
-fn launch(app: AppCore, mailbox: Mailbox<UiMsg>, bench: Option<BenchState>) -> anyhow::Result<u8> {
+/// `deferred` starts after the first frame.
+fn launch(
+    app: AppCore,
+    mailbox: Mailbox<UiMsg>,
+    bench: Option<BenchState>,
+    deferred: Deferred,
+) -> anyhow::Result<u8> {
     // The benchmark measures a large window (about a maximised full-HD laptop window).
     let size = if bench.is_some() {
         [1920.0, 1200.0]
@@ -297,7 +305,7 @@ fn launch(app: AppCore, mailbox: Mailbox<UiMsg>, bench: Option<BenchState>) -> a
     eframe::run_native(
         "Hikasa",
         options,
-        Box::new(move |cc| Ok(Box::new(HikasaApp::new(cc, app, mailbox, bench)))),
+        Box::new(move |cc| Ok(Box::new(HikasaApp::new(cc, app, mailbox, bench, deferred)))),
     )
     .map_err(|e| anyhow::anyhow!("cannot open the window: {e}"))?;
     Ok(0)

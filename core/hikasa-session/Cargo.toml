@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-session"
-description = "Session, workspace, profile and options persistence; import/export packages"
+description = "Service API shared by the CLI and the GUI: configuration folders, options, format store, jobs and the IPC protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

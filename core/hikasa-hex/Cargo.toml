@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-hex"
-description = "Binary document model and Hex Compare"
+description = "Binary document model and Hex Compare (planned; not implemented in M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

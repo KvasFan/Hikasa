@@ -245,7 +245,8 @@ pub struct TextCompareArgs {
     /// File name of standard input, for format detection.
     #[arg(long, value_name = "NAME")]
     pub stdin_name: Option<String>,
-    /// Show the comparison in the GUI instead of comparing here (D-50).
+    // Hands the comparison to the GUI (D-50).
+    /// Show the comparison in the GUI instead of comparing here.
     #[arg(
         long,
         conflicts_with_all = ["output", "report", "patch_style", "html", "html_mono", "line_numbers",
@@ -397,7 +398,8 @@ pub struct FolderCompareArgs {
     /// Write the report to FILE (atomically) instead of stdout.
     #[arg(long, value_name = "FILE")]
     pub output: Option<OsString>,
-    /// Show the comparison in the GUI instead of comparing here (D-50).
+    // Hands the comparison to the GUI (D-50).
+    /// Show the comparison in the GUI instead of comparing here.
     #[arg(
         long,
         conflicts_with_all = ["output", "report", "columns", "html", "html_mono", "title"]

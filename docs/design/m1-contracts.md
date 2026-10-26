@@ -96,7 +96,8 @@
    `hikasa-vfs` cannot use `forbid`, because `forbid` cannot be relaxed. It uses `#![deny(unsafe_code)]`
    and puts `#[allow(unsafe_code)]` on exactly one item, `mod mmap;`. The current stub `lib.rs` has
    `#![forbid(unsafe_code)]`, and wave 2 changes it.
-3. Library errors use `thiserror` 2. `anyhow` appears only in `cli/hikasa-cli/src/main.rs` (top-level context).
+3. Library errors use `thiserror` 2. `anyhow` appears only in `gui/hikasa-gui/src/main.rs` (top-level context);
+   the CLI routes every error through `ApiError` and does not depend on `anyhow` (§0.5).
 4. No `unwrap()`/`expect()` on data derived from user input or the filesystem. Panics inside jobs are caught
    at the service boundary (§5.6).
 5. Core crates write only to `&mut dyn std::io::Write` values that callers pass in. They never write to
@@ -10158,8 +10159,9 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
 
 ### 6.4 Benchmarks and performance gates
 
-The benches use criterion. CI runs them on a fixed runner, and a regression of more than 10 % needs a
-justification (17-agent-workflow §3.3). Gates assume a release build on a 2020-class 8-thread laptop, warm cache
+The benches use criterion. In M1 they and the gates below are run by hand and the figures recorded in the docs;
+no CI job runs them. A CI bench job on a fixed runner, where a regression of more than 10 % needs a justification
+(17-agent-workflow §3.3), is an M2 item, like `cargo nextest` in CI and `cargo xtask commands-doc` (docs/16). Gates assume a release build on a 2020-class 8-thread laptop, warm cache
 unless stated, headless (§0.8).
 
 | Gate | Bench | Crate | Threshold |

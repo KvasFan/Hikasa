@@ -451,7 +451,7 @@ impl Prepared {
                 warnings.push(Warning {
                     code: WarningCode::BinaryContent,
                     message: format!(
-                        "{}: binary content ({}); the verdict is a binary comparison (D-12)",
+                        "{}: binary content ({}); the verdict is a binary comparison",
                         doc.origin().display(),
                         binary_reason(doc)
                     ),

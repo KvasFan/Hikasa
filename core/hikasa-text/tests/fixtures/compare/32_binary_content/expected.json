@@ -96,12 +96,12 @@
   "warnings": [
     {
       "code": "binary_content",
-      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison (D-12)",
+      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison",
       "spec": null
     },
     {
       "code": "binary_content",
-      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison (D-12)",
+      "message": "<memory>: binary content (Png signature); the verdict is a binary comparison",
       "spec": null
     }
   ],

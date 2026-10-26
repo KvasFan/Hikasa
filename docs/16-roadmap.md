@@ -3,21 +3,44 @@
 Each milestone ends with a tagged release, passing CI on three platforms, and the
 acceptance criteria below verified by automated tests where possible.
 
-## M0 — Skeleton (version 0.0.0, this repository state)
+## M0 — Skeleton (version 0.0.0, done)
 - Workspace, crate stubs, specifications, CI config. No functionality.
 
 ## M1 — Core engines and performance gate (0.1)
-- `hikasa-core`, `hikasa-vfs` (local), `hikasa-diff` (standard, Myers/histogram,
-  patience, closeness), `hikasa-formats` (model, tokenizer, 10 presets),
+
+Status: implemented on the branch `feat/m1-core-cli` (waves 1–6b, see `CHANGELOG.md`);
+the release steps are open. `[x]` done, `[ ]` open.
+
+- [x] `hikasa-core`, `hikasa-vfs` (local), `hikasa-diff` (standard, Myers/histogram,
+  patience, closeness), `hikasa-formats` (model, tokenizer, 10 presets — 21 shipped),
   `hikasa-text` document model, `hikasa-folder` scan/compare (quick tests, CRC,
   binary, rules-based), name filters.
-- CLI first: `hikasa quick`, `hikasa text compare` (unified/side-by-side/summary/
+- [x] CLI first: `hikasa quick`, `hikasa text compare` (unified/side-by-side/summary/
   patch reports), `hikasa folder compare` (`--json`), `hikasa format tokens`, with
-  exit codes and `--json`.
-- GUI prototype: one window, Folder Compare + Text Compare views, virtualized text
+  exit codes and `--json` (also `format list|show|detect`, `vfs ls|stat|cat`,
+  `gui open|ping|list|close|quit`, `completions`, `version`; `docs/12`).
+- [x] GUI prototype: one window, Folder Compare + Text Compare views, virtualized text
   panes, IPC server; `hikasa gui open … --wait`. **Performance gate ARCH-GUI-003
-  decided here.**
-- Acceptance: golden diffs; 1M-line scroll test; 100k-file folder scan < 5 s on SSD.
+  decided here:** egui/eframe (D-56 as amended); all three items met on a desktop
+  (`docs/02` §2). Not yet measured on a 2020-class laptop.
+- [x] Acceptance: golden diffs; 1M-line scroll test (`gui/hikasa-gui/tests/perf_gate.rs`,
+  run by hand); 100k-file folder scan < 5 s on SSD (0.694 s cold, `docs/12` §4).
+
+Open before M1 is closed (the maintainer's release step):
+- [ ] Version bumped to 0.1.0 (the workspace is still 0.0.0) and the CHANGELOG's
+  "Unreleased (M1)" section turned into the 0.1.0 entry.
+- [ ] Tagged release.
+- [ ] CI green on three platforms: the workflow has not run for this branch yet;
+  Windows and macOS have never been built (all checks so far are local, on Linux).
+- [ ] Help topics (P1): the definition of done asks for one per new command; there is
+  no `help/` folder yet (the commands are documented in `docs/12` and `--help`).
+
+Moved to M2 (promised by the process docs, not present in M1):
+- [ ] CI bench job on a fixed runner (criterion benches and the G1–G5 gates are run
+  by hand in M1; contract §6.4).
+- [ ] `cargo xtask commands-doc` generating `docs/reference/commands.md` with a CI
+  staleness check (the file is maintained by hand in M1).
+- [ ] `cargo nextest` in CI (CI runs `cargo test`).
 
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,

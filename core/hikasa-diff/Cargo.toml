@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-diff"
-description = "Alignment engines (standard, Myers/histogram, patience, closeness) and importance classification"
+description = "Pure token-sequence alignment (unaligned, standard, Myers, histogram, patience), closeness matching and inline differences"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

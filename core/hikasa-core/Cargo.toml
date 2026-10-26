@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-core"
-description = "Shared types: specs, sides, errors, cancellation, progress, settings schema, localization"
+description = "Shared vocabulary: sides, specs, errors, file masks and name filters, cancellation, progress, jobs, timestamps, exit codes and warnings"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

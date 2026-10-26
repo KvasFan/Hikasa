@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased — M1 wave 6b: the GUI on egui
+## Unreleased (M1)
+
+M1 (core engines, the `hikasa` command line and the GUI prototype) is implemented on the branch
+`feat/m1-core-cli`; the version stays 0.0.0 until the maintainer's release step (version 0.1.0, tag, CI on three
+platforms; see `docs/16-roadmap.md`). Entries per wave, newest first.
+
+### M1 final review fixes
+- `hikasa-gui` binds its IPC endpoint and opens the window before it writes the first-run format files
+  (`FormatStore::materialize`, D-21); the files are written on a background thread after the first frame, so
+  disk flushes on a slow or busy disk can no longer delay the window or make `gui open --wait` miss its launch
+  budget (unit tests with a blocking fake task and for the startup path; `tests/cli_gui.rs` checks that the
+  files appear after the launch).
+- Window tests run on a virtual X display only: `env -u WAYLAND_DISPLAY xvfb-run -a …` (`docs/17` §3.5);
+  `tests/cli_gui.rs` and `tests/perf_gate.rs` remove `WAYLAND_DISPLAY` from the processes they start whenever
+  `DISPLAY` is set. `docs/02` §2: the long non-ASCII scroll run was on the real display, not under Xvfb.
+- CI no longer installs GTK/WebKit packages (eframe needs none to build); the `--gui` help text no longer shows
+  an internal decision id; README, `docs/00` and `docs/16` describe the implemented state and the open release
+  items; crate descriptions say what each crate contains in M1; contract §0.4 rule 3 (`anyhow` only in the
+  GUI binary) and §6.4, `docs/02` and `docs/17` (CI bench job, `cargo xtask commands-doc` and nextest are M2
+  items); `docs/12` on `quick --size` and the folder report defaults.
+
+### Wave 6b — the GUI on egui
 - `hikasa-gui` moved from Dioxus 0.7 to **egui 0.37 with eframe** (D-56 as amended, ARCH-GUI-001): the Dioxus
   prototype met the first screen and the frame rate but not the ARCH-GUI-003 memory limit (598 MiB PSS, 456 MiB
   GUI RSS), so the maintainer moved the whole GUI. The view models, the command catalogue, the IPC handler and
@@ -24,7 +45,8 @@
   76 MiB PSS (Dioxus: 168). Folder scan with every folder open: 100,020 files per side in 0.21 s with UI work
   ≤ 3.3 ms per frame; 400,080 files with a warm cache ≤ 11.8 ms per frame.
 - Tests: 39 unit tests (the mailbox's notifier, egui key → catalogue shortcut, UTF-16 columns → layout
-  sections replace the Dioxus request-query and ticker tests); the window test runs under Xvfb; the benchmark
+  sections replace the Dioxus request-query and ticker tests); the window test runs under Xvfb (with
+  `env -u WAYLAND_DISPLAY`, see the final review fixes); the benchmark
   summary now reports per phase the frame work, the frame intervals and eframe's CPU time per frame.
 - Review fixes (wave 6b verification):
   - The benchmark reads PSS and RSS from one `smaps_rollup` snapshot and only the peak from `VmHWM` (the RSS came
@@ -45,7 +67,7 @@
     open/close cycles is glibc's retention of freed heap, bounded and documented in `docs/02` §2.
   - README, `docs/02`, `docs/05` and the contract no longer name Dioxus as the toolkit or an approved crate.
 
-## Unreleased — M1 wave 6: the GUI prototype
+### Wave 6 — the GUI prototype (Dioxus, replaced in wave 6b)
 - `hikasa-gui`: the desktop window on Dioxus 0.7 (D-56, ARCH-GUI-001) over the session service (contract §1.10,
   §3.7); it contains no comparison logic (ARCH-L3, architecture check 7). One window with tabs:
   - *Home*: two path fields and Compare, resolved like the command line (`resolve_open`, CLI-002) on a job
@@ -98,7 +120,7 @@
   item 37); `docs/reference/commands.md` lists `HomeCompare` and the Enter/Right/Left defaults.
 - `docs/02-tech-stack.md`: the D-56 approval and the ARCH-GUI-003 measurements.
 
-## Unreleased — M1 wave 5: the `hikasa` command line
+### Wave 5 — the `hikasa` command line
 - `hikasa-cli`: the `hikasa` binary over the session service (contract §1.9): `quick`, `text compare`,
   `folder compare`, `format list|show|detect|tokens`, `vfs ls|stat|cat`, `gui open|ping|list|close|quit`,
   `--gui` on the compare commands, `completions` (bash, elvish, fish, powershell, zsh) and `version`; the global
@@ -115,7 +137,8 @@
 - Gates G1 and G2 through the binary (`cargo test --release -p hikasa-cli --test perf_gates -- --ignored`;
   not run in CI). Measured 2026-10-25 (Ryzen 7 7800X3D, release): G1 (2 × 1M lines, `--report summary`)
   0.43 s auto, 0.45 s standard, 0.36 s identical, peak RSS 298 MiB (bound 427 MiB; threshold 3 s); G2 (100k files
-  per side, warm, `--content none`) 0.05 s (threshold 1.5 s; cold not measured).
+  per side, `--content none`) 0.05 s warm (threshold 1.5 s) and 0.694 s cold with dropped caches, measured
+  2026-10-26 on btrfs over NVMe (threshold 5 s; `docs/12` §4).
 - Wave-5 review fixes: `gui open -- -x a.c` reaches the shared parser with its `--` (D-51); `--json` counts
   only before `--`, a legacy `-json` selects the usage-error document when the `gui open` arguments do not
   parse, and that document keeps clap's whole message; `--version` prints `hikasa <version>` after a subcommand
@@ -129,6 +152,66 @@
   device (`/dev/null`) is written to directly and never replaced (`--output`; contract §1.2.7 item 12).
 - `docs/12-cli-and-scripting.md`: the M1 flag set, the wave-5 decisions and the measured gates; contract
   §1.9.3 (accepted additions and deviations of wave 5), §1.9.2 and §6.1 amended; `docs/11` §1 local writes.
+
+### Wave 4 — reports and the session service
+- `hikasa-report`: text reports (the annotated unified diff, normal, context and unified patches, side-by-side
+  text and self-contained HTML, the summary, the statistics CSV) and folder reports (status list, side-by-side
+  text and HTML, summary, the `hikasa.folder_compare.v1` JSON document); patches are byte-exact in every style
+  (checked with GNU `patch` and `git apply`), with BOM and encoding warnings, escaping, grapheme-aware column
+  widths and RPT-004 headers.
+- `hikasa-session`: host capture, configuration and cache folders, options, `FormatStore` (built-ins, user
+  formats, `order.toml`), the service API shared by the CLI and the GUI (requests, jobs, the panic boundary),
+  IPC protocol v1 with framing, client and server, one endpoint per user and configuration, and the
+  architecture test (checks 1–7).
+- Review fixes (78 findings from break, conformance and consumer reviews; 71 fixed with tests, 7 rejected with
+  reasons, contract §1.8.7): the IPC client verifies the socket folder's owner and permissions, dropped view
+  waiters close as `abandoned`, shutdown releases waiters, writes never block the GUI, per-call deadlines,
+  bounded frames and queues; `--config-dir` and the endpoint override reach a launched GUI (`HIKASA_GUI_EXE`
+  for tests); a private, symlink-safe standard-input spool; pool panics never abort; the effective
+  ignore-unimportant setting reaches folder JSON and reports; adapter API for the request ↔ view mapping, lazy
+  standard input, vocabulary parsers, the D-23 close rules and escaping helpers.
+- `hikasa-core`: `WarningCode::PatchEncoding`. Workspace at the end of the wave: 983 tests.
+
+### Wave 3 — text and folder comparison
+- `hikasa-text`: `TextDocument` (chunked, cancellable decoding; encodings, line endings, size limits), text
+  rules, the compare engine (an identity fast path equal to the general path for every grammar, bounded Auto
+  alignment, closeness pairing with work budgets), importance classification of differences, sections,
+  statistics, display filters, the thumbnail, a progressive observer, and quick compare by rules that agrees
+  with the full comparison (external conversions on every path).
+- `hikasa-folder`: folder rules and criteria, a parallel cancellable scanner with name-only prefilter and
+  re-stat, name alignment, the live `FolderModel` with O(1) counters, states and aggregates, display and folder
+  display filters, flatten mode, symbolic link loop handling, content tests within a byte budget through
+  injected comparators, and verdicts.
+- Adversarial and conformance reviews per crate; accepted deviations in contract §1.5.7 and §1.6.8. Gates G1,
+  G2 (warm), G4 and G5 pass. Workspace at the end of the wave: 724 tests.
+
+### Wave 2 — file access, alignment and file formats
+- `hikasa-vfs`: entry model, the `Vfs` trait, `LocalVfs`, `MemoryVfs` with fault injection, standard-input and
+  clipboard blobs, the router, name-only prefilter and re-stat, streaming and memory-mapped CRC32 and binary
+  comparison with scoped parallel chunks (results independent of the thread count). The memory-map module is
+  the only `unsafe` code in the libraries.
+- `hikasa-diff`: interner, the Unaligned, Standard, Myers, Histogram and Patience alignment engines, a bounded
+  Standard fallback (`alignment_degraded`), closeness matching with cell budgets, never-align, inline
+  differences and helper-thread cancellation.
+- `hikasa-formats`: the format model and its TOML form, the grammar tokenizer (linear on long lines,
+  cancellable inside a line), regular-expression engine selection, the registry with ordering and shadowing,
+  21 original presets, encoding and binary detection, Sorted and External conversions.
+- `hikasa-core`: `WarningCode::AlignmentDegraded`. Every crate had an adversarial and a conformance review;
+  accepted deviations are recorded in the contract. Workspace at the end of the wave: 519 tests.
+
+### Wave 1 — `hikasa-core`
+- Sides, spec parsing and canonical form (local, standard input, clipboard, remote and HTTP schemes), error
+  kinds and classification, cancellation tokens, progress sinks with per-phase throttling, job ids,
+  `FileTime` (strict RFC 3339), case folding, the file-mask engine and `NameFilter`, the content comparator
+  contract, warnings and exit codes (ARCH-020, VFS-010, FC-050, FC-051, FC-021, CLI-004).
+- The architecture test (checks 1, 2, 4, 5), property suites, golden tables and the `mask_match` benchmark.
+  Review: 22 findings from two reviewers, 20 fixed with regression tests, 1 rejected per contract §1.1.3.
+
+### Preparation
+- Workspace dependencies, lints (`unsafe_code` denied, `missing_docs`), MSRV 1.97 and the CI workflow (fmt,
+  clippy and tests on Linux, Windows and macOS, cargo-deny).
+- `docs/design/m1-contracts.md`: the binding M1 API contract (crate APIs, normative algorithms, JSON and IPC
+  shapes, concurrency and error model, test plan, wave acceptance criteria, decision register).
 
 ## 0.0.0 — 2026-10-19
 - Initial specification and workspace skeleton. No functionality.

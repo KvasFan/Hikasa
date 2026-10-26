@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-cli"
-description = "Command-line interface exposing every core function headless, plus IPC to the running GUI"
+description = "The hikasa command line: quick, text and folder compare, formats, VFS access and IPC control of the GUI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -7,6 +7,12 @@
 //! cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture --test-threads 1
 //! ```
 //!
+//! Headless, on a virtual X display: `env -u WAYLAND_DISPLAY xvfb-run -a cargo test …` (docs/17 §3.5).
+//! `xvfb-run` only sets `DISPLAY`, and winit prefers Wayland whenever `WAYLAND_DISPLAY` is set, so in a Wayland
+//! session the window would otherwise run on the real screen and GPU. The test also removes `WAYLAND_DISPLAY`
+//! from the GUI's environment itself whenever `DISPLAY` is set; the summary's `renderer` shows which adapter
+//! drew the frames (llvmpipe under Xvfb).
+//!
 //! * `text_scroll`: two 1,000,000-line C files (≈ 48 bytes per line, about 1 % of the lines changed in
 //!   clusters; seeded xorshift64*, §6.1). The window scrolls the text panes like a mouse wheel (3 lines per
 //!   frame), a page per frame, and through the whole comparison; the summary has the first screen (unaligned
@@ -177,7 +183,12 @@ fn generate_tree(dir: &Path, top: u64) -> (PathBuf, PathBuf) {
 /// Runs the GUI benchmark and returns its JSON summary.
 fn bench(kind: &str, dir: &Path, left: &Path, right: &Path) -> Value {
     let began = Instant::now();
-    let out = Command::new(GUI)
+    let mut cmd = Command::new(GUI);
+    if std::env::var_os("DISPLAY").is_some() {
+        // Under xvfb-run the window must use the virtual X display, not the caller's Wayland compositor.
+        cmd.env_remove("WAYLAND_DISPLAY");
+    }
+    let out = cmd
         .arg("--config-dir")
         .arg(dir.join("config"))
         .arg(left)

@@ -30,6 +30,7 @@ use crate::commands::{
     Scope,
 };
 use crate::mailbox::Mailbox;
+use crate::startup::Deferred;
 use crate::ui::folder::FolderUi;
 use crate::ui::text::TextUi;
 use crate::ui::theme::Palette;
@@ -56,17 +57,21 @@ pub struct HikasaApp {
     texts: HashMap<ViewId, TextUi>,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
+    /// First-run work started after the first frame (`startup`).
+    deferred: Deferred,
     hint: Option<&'static str>,
     closing: bool,
 }
 
 impl HikasaApp {
-    /// The application for the window `cc`; the mailbox wakes the window from now on.
+    /// The application for the window `cc`; the mailbox wakes the window from now on. `deferred` starts once the
+    /// first frame has been drawn.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         core: AppCore,
         mailbox: Mailbox<UiMsg>,
         mut bench: Option<BenchState>,
+        deferred: Deferred,
     ) -> HikasaApp {
         let ctx = cc.egui_ctx.clone();
         mailbox.set_notifier(Arc::new(move || ctx.request_repaint()));
@@ -90,6 +95,7 @@ impl HikasaApp {
             texts: HashMap::new(),
             folders: HashMap::new(),
             bench,
+            deferred,
             hint: None,
             closing: false,
         }
@@ -532,6 +538,10 @@ impl eframe::App for HikasaApp {
             self.apply(&ctx, effects);
         }
         self.prune();
+        if self.deferred.pending() {
+            // The first frame is laid out: the first-run work runs now, on its own thread (never awaited).
+            let _detached = self.deferred.start();
+        }
         if let Some(b) = self.bench.as_mut() {
             b.set_window(serde_json::json!({
                 "size_points": [ctx.content_rect().width(), ctx.content_rect().height()],

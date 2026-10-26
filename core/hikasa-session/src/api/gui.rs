@@ -1306,7 +1306,7 @@ impl Service {
                 }
                 Spec::Clipboard => {
                     return Err(ApiError::InvalidArgument(
-                        "clipboard:// cannot be opened in the GUI in this version (D-49)".into(),
+                        "clipboard:// cannot be opened in the GUI in this version".into(),
                     ));
                 }
                 spec => spec,
@@ -1393,7 +1393,7 @@ impl Service {
             match Spec::parse(spec, &absolute)? {
                 Spec::Stdin | Spec::Clipboard => {
                     return Err(ApiError::InvalidArgument(format!(
-                        "`{spec}` cannot be opened over IPC (D-49)"
+                        "`{spec}` cannot be opened over IPC"
                     )));
                 }
                 _ => {}
@@ -1624,7 +1624,7 @@ impl Service {
         let spec = match Spec::parse_os(&input, &self.spec_context())? {
             Spec::Stdin | Spec::Clipboard => {
                 return Err(ApiError::InvalidArgument(format!(
-                    "rules file `{}` cannot be sent to the GUI (D-49)",
+                    "rules file `{}` cannot be sent to the GUI",
                     input.to_string_lossy()
                 )));
             }

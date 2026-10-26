@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-script"
-description = "Script language parser and interpreter"
+description = "Script language parser and interpreter (planned; not implemented in M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

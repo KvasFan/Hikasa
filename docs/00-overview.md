@@ -1,7 +1,10 @@
 # Hikasa — Product Overview
 
 > Audience: AI coding agents and human contributors implementing Hikasa.
-> Status: specification only. Version 0.0.0 contains no implementation.
+> Status: milestone M1 is implemented on the branch `feat/m1-core-cli` (core engines,
+> the `hikasa` command line, the egui GUI prototype `hikasa-gui`); version 0.0.0 until
+> the 0.1 release. This document describes the whole product; what each milestone
+> delivers, and what M1 still lacks, is in `16-roadmap.md`.
 
 ## 1. What Hikasa is
 

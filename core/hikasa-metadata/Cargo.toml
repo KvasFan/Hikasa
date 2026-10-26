@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-metadata"
-description = "Key/value tree comparison: media tags, executable version info, registry files"
+description = "Key/value tree comparison: media tags, executable version info, registry files (planned; not implemented in M1)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

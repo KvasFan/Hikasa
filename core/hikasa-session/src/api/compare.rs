@@ -493,7 +493,7 @@ impl Service {
                                 code: WarningCode::FormatMismatch,
                                 message: format!(
                                     "{r}: its format could not be detected ({e}); {} (the format of {l}) is \
-                                     used for both (D-15)",
+                                     used for both",
                                     left_detection.format.name()
                                 ),
                                 spec: None,
@@ -616,7 +616,7 @@ fn mismatch_warning(
     Warning {
         code: WarningCode::FormatMismatch,
         message: format!(
-            "{left} is detected as {}, {right} as {}; {} is used for both (D-15)",
+            "{left} is detected as {}, {right} as {}; {} is used for both",
             left_format.name(),
             right_format.name(),
             left_format.name()

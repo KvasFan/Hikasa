@@ -338,7 +338,7 @@ values are a usage error (exit 100), wherever they stand.
 
 | Subcommand | Flags |
 |---|---|
-| `quick <left> <right>` | `--size` \| `--crc` \| `--binary` \| `--rules` (default); `--ignore-unimportant` (`--iu`); `--format <id\|name>`; `--rules-file <toml>`; `--unimportant <list>`, `--unimportant-text <text>`…, `--unimportant-regex <re>`…, `--compare-line-endings`; `--stdin-name <name>`. Prints nothing; the exit code is the result |
+| `quick <left> <right>` | `--size` \| `--crc` \| `--binary` \| `--rules` (default); `--ignore-unimportant` (`--iu`); `--format <id\|name>`; `--rules-file <toml>`; `--unimportant <list>`, `--unimportant-text <text>`…, `--unimportant-regex <re>`…, `--compare-line-endings`; `--stdin-name <name>`. Prints nothing; the exit code is the result. `--size` compares only the sizes and `--crc` only the CRC-32 checksums: equal sizes (or checksums) report `binary_same` and exit 1 as specified (contract §2.21) although the bytes were not compared one by one; `--binary` and `--rules` read and compare the contents |
 | `text compare <left> <right>` | `--format`; `--encoding`, `--left-encoding`, `--right-encoding <label>`; `--rules-file` (`--rules`); `--algorithm auto\|unaligned\|standard\|myers\|patience\|histogram`, `--skew <n>`, `--closeness`/`--no-closeness`, `--closeness-threshold <‰>`, `--never-align`; `--unimportant`, `--unimportant-text`, `--unimportant-regex`, `--compare-line-endings`, `--orphans-unimportant`; `--ignore-unimportant` (`--iu`); `--context <n>` (default 3, from the options), `--display all\|mismatches\|context\|matches`; `--report unified\|side-by-side\|summary\|patch\|statistics` (default: the annotated unified diff), `--patch-style normal\|context\|unified`, `--html`, `--html-mono`, `--line-numbers`/`--no-line-numbers`, `--width <n>` (160), `--wrap none\|character\|word`, `--title <text>`, `--output <file>`; `--stdin-name`; `--gui`, `--wait`, `--no-launch` |
 | `folder compare <left> <right>` | `--filters <masks>`; `--rules-file` (`--rules`); `--criteria <list>`; `--size`/`--no-size`, `--timestamps`/`--no-timestamps`, `--tolerance <secs>`, `--ignore-dst`, `--ignore-timezone`, `--filename-case`, `--attributes <letters>`, `--permissions`, `--owner`, `--group`; `--content none\|crc\|binary\|rules`, `--skip-if-quick-same`, `--no-override-quick`; `--text-rules-file <toml>`, `--unimportant`, `--unimportant-text`, `--unimportant-regex` (for `--content rules`); `--case-sensitive`\|`--case-insensitive`, `--align-extensions`, `--align-normalization`; `--cutoff <expr>`, `--size-filter <expr>`, `--include-protected`; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`; `--display <filter>` (default `differences`), `--folders always\|structure\|files-only` (default `structure`), `--ignore-unimportant` (`--iu`), `--suppress-filters`, `--expand-all`; `--report list\|side-by-side\|summary\|json` (default `list`), `--columns <list>`, `--html`, `--html-mono`, `--title`, `--output`; `--gui`, `--wait`, `--no-launch` |
 | `format list` / `format show <id\|name>` / `format detect <file>` / `format tokens <file>` | `detect`: `--stdin-name`; `tokens`: `--format`, `--encoding`, `--lines <a>-<b>`, `--stdin-name` |
@@ -356,8 +356,11 @@ file it points to is replaced and the link stays; a FIFO or a device (such as `/
 is written to directly instead, which is not atomic, and is never replaced. A layout that
 has no HTML form (`--report unified|patch|statistics --html`, `folder compare --report
 list|json --html`) is refused (exit 100) once the comparison has run. With `--json`, `text compare` shows
-the mismatches by default (`--context n` alone means `context` with n lines), and
-`folder compare` the differences with the folder structure; human reports show all lines.
+the mismatches by default (`--context n` alone means `context` with n lines). Human
+`text compare` reports show all lines (`--report side-by-side`, `summary`) or the
+differences with 3 lines of context (the default annotated unified diff and `--report
+patch`). `folder compare` shows the differences with the folder structure by default in
+every output, human (`list`, `side-by-side`, `summary`) and `--json` alike.
 
 **Human output.** One record per line where applicable, with control and bidirectional
 formatting characters in names and file text escaped (`\n`, `\t`, `\u{…}`, a backslash as

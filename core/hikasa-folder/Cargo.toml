@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-folder"
-description = "Folder scan/compare/merge/sync model, filters, file operations, snapshots"
+description = "Folder Compare engine: rules, name filters, a parallel cancellable scan and the live comparison model"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
