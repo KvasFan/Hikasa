@@ -6925,7 +6925,13 @@ impl EnvFacts { pub fn new(platform: Platform, temp_dir: PathBuf) -> EnvFacts; }
     timeout (`WRITE_TIMEOUT` = 5 s); `view_closed` only queues. A full queue or a failed write drops the client
     (the connection is shut down). A protocol error closes the connection after `Error{protocol}` (id 0), also when
     a waiter still holds it. On Windows a named pipe cannot be shut down from another thread without `unsafe`:
-    there a closed connection ends when the client disconnects (waiters are still notified).
+    there a closed connection ends when the client disconnects (waiters are still notified). *Amended in the
+    Windows/macOS port (§6.1):* a dropped `IpcClient` cannot close its pipe either while its reader thread waits,
+    so inside one process such a connection lingers until the process exits, and it keeps the pipe name busy.
+    The client therefore connects to a pipe with a bounded wait (the call's timeout; expiry → `IpcError::Timeout`)
+    instead of `interprocess`'s unbounded wait, and `ServerHandle::shutdown` keeps its self-connect open until the
+    accept thread has ended (a pipe client that connects and closes before the listener waits for it is discarded
+    by the listener, which would leave a freshly started server's accept thread blocked).
 14. **Client timeouts and queues** (decision 2). The client verifies the folder, connects, and decodes frames on a
     reader thread (`hikasa-ipc-read`) into a bounded channel; each call waits with one deadline
     (`crossbeam_channel::after(timeout)`), so the 10 s request timeout is the total of the call, whatever frames
@@ -9761,7 +9767,17 @@ it. Rust's default panic exit code 101 would collide with CLI-004 code 101 (D-35
   `Generated` header row, mask the machine's uid, gid and status-change times (`<UID>`, `<GID>`, `<CTIME>`),
   collapse the column padding after a replaced `<TMP>`, and drop the header line of a narrow side-by-side report
   that cuts the temporary folder at a length-dependent place; the completions golden replaces the script text
-  with `<SCRIPT>` in the raw document (field order is checked).
+  with `<SCRIPT>` in the raw document (field order is checked). *Amended in the Windows/macOS port:* every
+  spelling of the temporary folder is replaced (as created, canonical — macOS `/private/var/…`, Windows without
+  `\\?\` and with long names — and JSON-escaped); on Windows the path after `<TMP>` is written with `/`, and a patch header's quotes around it are dropped
+  (hikasa-report quotes a name with `\`, also a Windows path: readers that follow git's syntax refuse `\` in an
+  unquoted name). Outside
+  Linux, `assert_golden` compares a *platform view* of the golden and the output in which the values of `attrs`,
+  `mode`, `permissions`, `uid` and `gid` (Windows; on macOS a symbolic link's mode and permissions), the resolved
+  `"case"` and the capability lists are masked, so the Linux goldens stay exact; the tests that show such
+  metadata assert the platform's own values separately. Tests whose subject cannot exist on a platform (control
+  characters in Windows file names, macOS without an XDG runtime folder) are gated or use that platform's
+  equivalent. The repository is checked out byte for byte (`.gitattributes`: `* -text`).
 - **Proptest.** 256 cases per property in normal CI (`PROPTEST_CASES` overrides) and 100,000 in a nightly job.
   Failing seeds are persisted under `tests/proptest-regressions/` and committed, so every regression becomes
   permanent (17-agent-workflow §3.2).

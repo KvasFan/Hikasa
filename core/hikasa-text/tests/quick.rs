@@ -19,12 +19,15 @@ use hikasa_text::{
 use hikasa_vfs::{Fault, FollowLinks, MemMeta, MemoryVfs, Vfs, VfsOp, VfsSource};
 
 fn spec(path: &str) -> Spec {
-    Spec::Local(LocalPath::new(PathBuf::from(path)).unwrap())
+    Spec::Local(LocalPath::new(PathBuf::from(common::host(path))).unwrap())
 }
 
 fn files() -> MemoryVfs {
     let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
-    let put = |p: &str, c: &[u8]| vfs.insert_file(p, c.to_vec(), MemMeta::default()).unwrap();
+    let put = |p: &str, c: &[u8]| {
+        vfs.insert_file(&common::host(p), c.to_vec(), MemMeta::default())
+            .unwrap()
+    };
     put("/l/a.c", b"int  x = 1; // one\n");
     put("/r/a.c", b"int x = 1; // two\n");
     put("/l/same.c", b"same\n");
@@ -163,7 +166,7 @@ fn d25_size_limit_compares_by_bytes() {
 fn read_failures_are_error_results() {
     let vfs = files();
     vfs.inject(Fault {
-        path: "/r/bad.txt".into(),
+        path: common::host("/r/bad.txt"),
         op: VfsOp::Open,
         kind: ErrorKind::PermissionDenied,
     });
@@ -177,7 +180,7 @@ fn read_failures_are_error_results() {
     match out.result {
         ContentResult::Error { error } => {
             assert_eq!(error.kind, ErrorKind::PermissionDenied);
-            assert_eq!(error.spec.as_deref(), Some("/r/bad.txt"));
+            assert_eq!(error.spec, Some(common::host("/r/bad.txt")));
         }
         other => panic!("{other:?}"),
     }

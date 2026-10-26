@@ -143,6 +143,10 @@ pub(crate) fn csv_field(s: &str) -> Cow<'_, str> {
 /// specially (a control byte, DEL, `"` or `\`), in which case it is C-quoted the way git and GNU diff quote names:
 /// `"…"` with `\a \b \t \n \v \f \r \" \\` and other control bytes as three octal digits. Bytes ≥ 0x80 stay
 /// UTF-8.
+///
+/// A Windows path is quoted too (`"C:\\w\\x.c"`): `\` is the escape character of quoted names, so patch readers
+/// that follow git's syntax refuse it in an unquoted name, while GNU patch and git read the quoted form back to
+/// the exact path (decided in the Windows port).
 pub(crate) fn patch_name(s: &str) -> Cow<'_, str> {
     let needs = |b: u8| b < 0x20 || b == 0x7f || b == b'"' || b == b'\\';
     if !s.bytes().any(needs) {

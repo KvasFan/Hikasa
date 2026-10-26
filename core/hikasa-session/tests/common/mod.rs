@@ -70,12 +70,15 @@ pub fn my_uid() -> Option<u32> {
 /// Host facts for a test rooted at `root`: cwd `root/work`, home `root/home`, temp `root/tmp`, no XDG runtime
 /// dir, an explicit IPC endpoint override at `root/s.sock` (never the real runtime dir), the real uid.
 pub fn facts(root: &Path) -> EnvFacts {
-    for sub in ["work", "home", "tmp"] {
+    for sub in ["work", "home", "tmp", "appdata", "localappdata"] {
         std::fs::create_dir_all(root.join(sub)).unwrap();
     }
     EnvFacts {
         cwd: Some(root.join("work")),
         home: Some(root.join("home")),
+        // The Windows per-user folders (read only on Windows: `%APPDATA%`, `%LOCALAPPDATA%`).
+        appdata: Some(root.join("appdata")),
+        local_appdata: Some(root.join("localappdata")),
         uid: my_uid(),
         user: Some("tester".into()),
         ipc_endpoint_override: Some(endpoint_override(root)),

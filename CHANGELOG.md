@@ -5,6 +5,16 @@
 M1: the core engines, the `hikasa` command line and the GUI prototype (`docs/16-roadmap.md`). Entries per wave,
 newest first.
 
+### Windows and macOS port fixes
+- Opening a folder as a file is `is_a_directory` on Windows too (`LocalVfs::open_read`, `--log`; Windows reports
+  it as "access denied"), and the mapped binary compare and CRC fall back for a folder instead of failing.
+- IPC on Windows: a client's connect to a busy pipe waits at most the call's timeout (`IpcError::Timeout`, exit
+  100) instead of forever, and a server shut down right after it started no longer leaves its accept thread
+  blocked (the self-connect stays open until the accept thread ends; contract §1.8.7 item 13).
+- The repository checks files out byte for byte (`.gitattributes`: `* -text`), so goldens with CRLF or LF line
+  endings stay exact on Windows; CI runs `cargo test --workspace --no-fail-fast`. CLI goldens mask the
+  platform's file metadata, case sensitivity and capability lists outside Linux (contract §6.1).
+
 ### M1 final review fixes
 - `hikasa-gui` binds its IPC endpoint and opens the window before it writes the first-run format files
   (`FormatStore::materialize`, D-21); the files are written on a background thread after the first frame, so

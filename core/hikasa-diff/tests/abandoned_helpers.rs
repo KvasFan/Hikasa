@@ -19,8 +19,12 @@ use inputs::XorShift;
 
 const LATENCY: Duration = Duration::from_millis(100);
 
-/// Live threads named `hikasa-imara` (Linux only).
+/// Live threads named `hikasa-imara` (Linux only: elsewhere, e.g. a Windows build run under a compatibility
+/// layer on Linux, `/proc/self/task` may resolve to a host directory whose thread names are not ours).
 fn imara_threads() -> Option<usize> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
     let tasks = std::fs::read_dir("/proc/self/task").ok()?;
     Some(
         tasks

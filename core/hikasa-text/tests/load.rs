@@ -20,13 +20,13 @@ use hikasa_text::{LineIdx, LoadOptions, TextError, load_document};
 use hikasa_vfs::{Fault, MemMeta, MemoryVfs, VfsOp};
 
 fn spec(path: &str) -> Spec {
-    Spec::Local(LocalPath::new(PathBuf::from(path)).unwrap())
+    Spec::Local(LocalPath::new(PathBuf::from(common::host(path))).unwrap())
 }
 
 fn vfs() -> MemoryVfs {
     let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
     vfs.insert_file(
-        "/w/a.txt",
+        &common::host("/w/a.txt"),
         b"alpha\r\nbeta\n".to_vec(),
         MemMeta {
             mtime: FileTime::from_unix(1_700_000_000, 0),
@@ -34,7 +34,8 @@ fn vfs() -> MemoryVfs {
         },
     )
     .unwrap();
-    vfs.insert_dir("/w/dir", MemMeta::default()).unwrap();
+    vfs.insert_dir(&common::host("/w/dir"), MemMeta::default())
+        .unwrap();
     vfs
 }
 
@@ -90,8 +91,12 @@ fn errors_name_the_failure() {
     let err = load_document(&vfs, &spec("/w/dir"), &ee, &opts, None, &ctl).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::IsADirectory);
     // The size limit is checked before reading.
-    vfs.insert_file("/w/big.txt", vec![b'x'; 10_000], MemMeta::default())
-        .unwrap();
+    vfs.insert_file(
+        &common::host("/w/big.txt"),
+        vec![b'x'; 10_000],
+        MemMeta::default(),
+    )
+    .unwrap();
     let small = LoadOptions {
         max_bytes: 5000,
         ..LoadOptions::default()
@@ -104,12 +109,12 @@ fn errors_name_the_failure() {
     assert_eq!(err.kind(), ErrorKind::TooLarge);
     // A read failure (fault injection) keeps its kind.
     vfs.inject(Fault {
-        path: "/w/a.txt".into(),
+        path: common::host("/w/a.txt"),
         op: VfsOp::Read,
         kind: ErrorKind::PermissionDenied,
     });
     vfs.inject(Fault {
-        path: "/w/a.txt".into(),
+        path: common::host("/w/a.txt"),
         op: VfsOp::Open,
         kind: ErrorKind::PermissionDenied,
     });
@@ -166,14 +171,14 @@ fn a_cancel_during_decoding_is_never_answered_with_ok() {
         .flat_map(u16::to_le_bytes)
         .collect();
     vfs.insert_file(
-        "/w/u8.txt",
+        &common::host("/w/u8.txt"),
         "x\n".repeat(400_000).into_bytes(),
         MemMeta::default(),
     )
     .unwrap();
-    vfs.insert_file("/w/l1.txt", latin1, MemMeta::default())
+    vfs.insert_file(&common::host("/w/l1.txt"), latin1, MemMeta::default())
         .unwrap();
-    vfs.insert_file("/w/u16.txt", utf16, MemMeta::default())
+    vfs.insert_file(&common::host("/w/u16.txt"), utf16, MemMeta::default())
         .unwrap();
     for path in ["/w/u8.txt", "/w/l1.txt", "/w/u16.txt"] {
         let cancel = CancelToken::new();

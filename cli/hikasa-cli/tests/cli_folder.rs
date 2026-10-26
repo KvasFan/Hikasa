@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use common::{
@@ -72,6 +73,7 @@ fn json_golden() {
     assert_eq!(doc["result"]["verdict"], "differences");
     assert_eq!(doc["result"]["display"]["filter"], "differences");
     assert_eq!(doc["result"]["display"]["folders"], "compare_structure");
+    common::assert_platform_metadata(&stdout(&out));
     assert_golden("folder/json.json", &s.normalise(&stdout(&out)));
 }
 
@@ -498,7 +500,7 @@ fn gui_sends_the_comparison_to_the_gui() {
     };
     assert_eq!(kind.as_str(), "folder_compare");
     assert!(
-        specs[0].ends_with("/a") && specs[1].ends_with("/b"),
+        Path::new(&specs[0]).ends_with("a") && Path::new(&specs[1]).ends_with("b"),
         "{specs:?}"
     );
     assert_eq!(options.criteria.as_deref(), Some("size crc"));

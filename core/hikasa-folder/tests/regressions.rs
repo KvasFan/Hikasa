@@ -96,11 +96,13 @@ impl Vfs for Hooked<'_> {
         cancel: &CancelToken,
     ) -> Result<Listing, VfsError> {
         let path = dir.canonical();
+        // The hooks name `/`-separated suffixes; a Windows host path uses `\`.
+        let slashed = path.replace('\\', "/");
         if self
             .hooks
             .panic_on_list
             .as_ref()
-            .is_some_and(|p| path.ends_with(p.as_str()))
+            .is_some_and(|p| slashed.ends_with(p.as_str()))
         {
             panic!("scripted panic while listing {path}");
         }
@@ -124,7 +126,7 @@ impl Vfs for Hooked<'_> {
             .hooks
             .cancel_after_listing
             .as_ref()
-            .is_some_and(|p| path.ends_with(p.as_str()))
+            .is_some_and(|p| slashed.ends_with(p.as_str()))
             && self.listed.fetch_add(1, Ordering::SeqCst) == 1
         {
             self.cancel();

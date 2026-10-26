@@ -134,6 +134,7 @@ fn bidi_controls_are_escaped_in_lists_and_side_by_side() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn name_escaping_is_unambiguous() {
     let cmp = tree(
         &[("a\nb.txt", b"1"), ("a\\nb.txt", b"2")],
@@ -150,6 +151,21 @@ fn name_escaping_is_unambiguous() {
         rows[0].starts_with("a\\nb.txt ") && rows[1].starts_with("a\\\\nb.txt "),
         "{sbs}"
     );
+}
+
+/// On Windows `\` is a path separator and cannot occur in a name, so the second name of the Unix case is a file
+/// in a folder; the control character is still escaped.
+#[test]
+#[cfg(windows)]
+fn name_escaping_is_unambiguous() {
+    let cmp = tree(&[("a\nb.txt", b"1")], &FolderRules::default(), &[]);
+    let list = folder_text(&cmp, &layout(FolderLayout::List));
+    let lines: Vec<&str> = list.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(lines, ["=  a\\nb.txt"], "{list}");
+    let sbs = folder_text(&cmp, &layout(FolderLayout::SideBySide));
+    let rows = table(&sbs);
+    assert_eq!(rows.len(), 1, "{sbs}");
+    assert!(rows[0].starts_with("a\\nb.txt "), "{sbs}");
 }
 
 #[test]

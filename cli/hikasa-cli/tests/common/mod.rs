@@ -154,6 +154,29 @@ impl Sandbox {
         std::fs::write(config.join("options.toml"), text).expect("options");
     }
 
+    /// The spellings of the temporary folder in output, longest first: canonical (on macOS `/private/var/…`
+    /// for `/var/…`; on Windows without the `\\?\` prefix, with the long names of 8.3 short names) and as
+    /// created.
+    fn roots(&self) -> Vec<String> {
+        let mut roots: Vec<String> = [
+            std::fs::canonicalize(self.path()).ok(),
+            Some(self.path().to_path_buf()),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|p| {
+            let text = p.display().to_string();
+            match text.strip_prefix(r"\\?\") {
+                Some(rest) if !rest.starts_with("UNC\\") => rest.to_owned(),
+                _ => text,
+            }
+        })
+        .collect();
+        roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
+        roots.dedup();
+        roots
+    }
+
     /// Normalises output for a golden (§6.1): `<TMP>`, `<VERSION>`, no `Generated:` line (in HTML the
     /// `Generated` row), the column padding after a replaced folder collapsed, and the machine's uid, gid and
     /// status-change times masked.
@@ -165,19 +188,24 @@ impl Sandbox {
     /// narrow side-by-side report, cut at a place that depends on the folder's length) are dropped.
     pub fn normalise_with(&self, text: &str, truncated: bool) -> String {
         let mut text = text.to_owned();
-        for root in [
-            std::fs::canonicalize(self.path()).ok(),
-            Some(self.path().to_path_buf()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            text = text.replace(&root.display().to_string(), "<TMP>");
+        for root in self.roots() {
+            // JSON doubles the backslashes of a Windows path.
+            if root.contains('\\') {
+                text = text.replace(&root.replace('\\', "\\\\"), "<TMP>");
+            }
+            text = text.replace(&root, "<TMP>");
+        }
+        if cfg!(windows) {
+            text = slash_after_tmp(&text);
         }
         text = text.replace(hikasa_session::HIKASA_VERSION, "<VERSION>");
         let (uid, gid) = ids(self.path());
-        let root = self.path().display().to_string();
-        let root_start: String = root.chars().take(5).collect();
+        // The first characters of every spelling of the folder (macOS: `/var/` and `/priv`).
+        let root_starts: Vec<String> = self
+            .roots()
+            .iter()
+            .map(|r| r.chars().take(5).collect())
+            .collect();
         let mut out = String::new();
         for line in text.split_inclusive('\n') {
             // The report's generation time (text: `Generated: …`, HTML: the `Generated` header row).
@@ -186,9 +214,19 @@ impl Sandbox {
             }
             // A narrow column cuts the folder at a length-dependent place: drop such a header line.
             let first = line.trim_start();
-            if truncated && (first.starts_with("<TMP") || first.starts_with(&root_start)) {
+            if truncated
+                && (first.starts_with("<TMP")
+                    || root_starts.iter().any(|start| first.starts_with(start)))
+            {
                 continue;
             }
+            let unquoted;
+            let line = if cfg!(windows) {
+                unquoted = unquote_patch_header(line);
+                unquoted.as_str()
+            } else {
+                line
+            };
             let trimmed = line.trim_start();
             let indent = &line[..line.len() - trimmed.len()];
             let masked = if trimmed.starts_with("\"ctime\": \"") {
@@ -214,6 +252,152 @@ impl Sandbox {
             out.push_str(&masked);
         }
         out
+    }
+}
+
+/// Windows: the path that follows each `<TMP>` uses `/` like the goldens (`<TMP>\\a\\x.c` and its JSON spelling
+/// `<TMP>\\\\a\\\\x.c` become `<TMP>/a/x.c`). The path ends at white space, a quote, a comma, `<` or `)`.
+fn slash_after_tmp(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("<TMP>") {
+        let (head, tail) = rest.split_at(at + "<TMP>".len());
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | ',' | '<' | ')' | '\''))
+            .unwrap_or(tail.len());
+        let (path, after) = tail.split_at(end);
+        out.push_str(&path.replace("\\\\", "/").replace('\\', "/"));
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Windows: a patch header quotes a path with `\` (`--- "C:\\…\\a\\x.c"`, hikasa-report `patch_name`); once the
+/// folder is `<TMP>` and the separators are `/`, the quotes are dropped like the Linux golden has none.
+fn unquote_patch_header(line: &str) -> String {
+    for marker in ["--- ", "+++ ", "*** "] {
+        if let Some(rest) = line.strip_prefix(&format!("{marker}\"<TMP>"))
+            && let Some(end) = rest.find('"')
+        {
+            return format!("{marker}<TMP>{}{}", &rest[..end], &rest[end + 1..]);
+        }
+    }
+    line.to_owned()
+}
+
+/// The comparison view of a golden or an output (§6.1, amended in the Windows/macOS port): on Linux the text
+/// itself; elsewhere the platform's file metadata and case sensitivity are masked in both, so the Linux goldens
+/// stay exact and the rest of the document is still compared byte for byte. The tests that show such facts
+/// assert the platform's own values separately ([`assert_platform_metadata`]).
+///
+/// - Windows has no Unix mode or owner but DOS attributes: the values of `attrs`, `mode`, `permissions`, `uid`
+///   and `gid` become `<PLATFORM>`.
+/// - macOS: a symbolic link's mode follows the umask (`lrwxr-xr-x`), so a link's `mode` and `permissions`
+///   become `<PLATFORM>`.
+/// - Windows and macOS: the resolved name case (`"case": "sensitive"`/`"insensitive"`) becomes `<CASE>`, and a
+///   capability list (JSON array or `capabilities:` line) becomes `<CAPABILITIES>`.
+pub fn platform_view(text: &str) -> String {
+    if !cfg!(any(windows, target_os = "macos")) {
+        return text.to_owned();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut in_caps = false;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let indent = &line[..line.len() - trimmed.len()];
+        let comma = if trimmed.trim_end().ends_with(',') {
+            ","
+        } else {
+            ""
+        };
+        if in_caps {
+            if trimmed.starts_with(']') {
+                in_caps = false;
+                let last = out.last_mut().expect("capabilities line");
+                *last = format!("{}{comma}\n", last.trim_end());
+            }
+            continue;
+        }
+        if trimmed.starts_with("\"capabilities\": [") {
+            if trimmed.trim_end().trim_end_matches(',').ends_with(']') {
+                out.push(format!("{indent}\"capabilities\": <CAPABILITIES>{comma}\n"));
+            } else {
+                in_caps = true;
+                out.push(format!("{indent}\"capabilities\": <CAPABILITIES>\n"));
+            }
+            continue;
+        }
+        if trimmed.starts_with("capabilities: ") {
+            out.push(format!("{indent}capabilities: <CAPABILITIES>\n"));
+            continue;
+        }
+        if trimmed.starts_with("\"case\": \"sensitive\"")
+            || trimmed.starts_with("\"case\": \"insensitive\"")
+        {
+            out.push(format!("{indent}\"case\": <CASE>{comma}\n"));
+            continue;
+        }
+        let key = ["attrs", "mode", "permissions", "uid", "gid"]
+            .into_iter()
+            .find(|k| trimmed.starts_with(&format!("\"{k}\": ")));
+        if let Some(key) = key {
+            if cfg!(windows) {
+                out.push(format!("{indent}\"{key}\": <PLATFORM>{comma}\n"));
+                continue;
+            }
+            // macOS: only a symbolic link's mode (the line before its permissions).
+            if key == "permissions" && trimmed.starts_with("\"permissions\": \"l") {
+                if let Some(mode) = out
+                    .iter_mut()
+                    .rev()
+                    .find(|l| l.trim_start().starts_with("\"mode\": "))
+                {
+                    let mode_indent = &mode[..mode.len() - mode.trim_start().len()];
+                    *mode = format!("{mode_indent}\"mode\": <PLATFORM>,\n");
+                }
+                out.push(format!("{indent}\"permissions\": <PLATFORM>{comma}\n"));
+                continue;
+            }
+        }
+        // macOS `ls` text: a symbolic link's permission column.
+        if cfg!(target_os = "macos")
+            && trimmed.starts_with('l')
+            && trimmed.contains(" -> ")
+            && let Some((_, rest)) = trimmed.split_once(' ')
+        {
+            out.push(format!("{indent}<PLATFORM> {rest}"));
+            continue;
+        }
+        out.push(line.to_owned());
+    }
+    out.concat()
+}
+
+/// Asserts the platform's own metadata in a JSON document holding entries (`attrs`, `mode`, …) and capabilities:
+/// Unix mode and owner on Unix, DOS attributes on Windows; `case_sensitive` and `"case": "sensitive"` only
+/// where names are case-sensitive (Linux).
+pub fn assert_platform_metadata(doc: &str) {
+    if cfg!(windows) {
+        assert!(doc.contains("\"dos_attrs\""), "{doc}");
+        assert!(!doc.contains("\"unix_mode\""), "{doc}");
+        assert!(doc.contains("\"mode\": null"), "{doc}");
+        assert!(doc.contains("\"attrs\": \""), "{doc}");
+    } else {
+        assert!(doc.contains("\"unix_mode\""), "{doc}");
+        assert!(doc.contains("\"attrs\": null"), "{doc}");
+        assert!(doc.contains("\"permissions\": \"-rw-r--r--\""), "{doc}");
+    }
+    let sensitive = !cfg!(any(windows, target_os = "macos"));
+    assert_eq!(doc.contains("\"case_sensitive\""), sensitive, "{doc}");
+    if doc.contains("\"case\": \"") {
+        let expected = if sensitive {
+            "\"case\": \"sensitive\""
+        } else {
+            "\"case\": \"insensitive\""
+        };
+        assert!(doc.contains(expected), "{doc}");
     }
 }
 
@@ -282,7 +466,11 @@ pub fn assert_golden(name: &str, actual: &str) {
     }
     let expected = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("golden {} ({e}); run with HIKASA_BLESS=1", path.display()));
-    pretty_assertions::assert_eq!(expected, actual, "golden {name}");
+    pretty_assertions::assert_eq!(
+        platform_view(&expected),
+        platform_view(actual),
+        "golden {name}"
+    );
 }
 
 /// stdout of an assert as text.

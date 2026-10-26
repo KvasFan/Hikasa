@@ -1249,34 +1249,59 @@ fn a_woken_ui_finds_the_result_or_a_settling_job() {
 /// and the folder base strip; the `ListViews` title stays raw (the command line escapes it on output).
 #[test]
 fn names_are_escaped_where_the_window_draws_them() {
+    // Windows refuses C0 control characters in file names; it accepts the C1 ones, which are escaped alike.
+    let (nl, nl_shown, esc, esc_shown) = if cfg!(windows) {
+        ("\u{85}", "\\u{85}", "\u{9b}", "\\u{9b}")
+    } else {
+        ("\n", "\\n", "\u{1b}", "\\u{1b}")
+    };
     let world = World::new();
-    let left = world.write("work/new\nline.c", "a\n");
+    let left = world.write(&format!("work/new{nl}line.c"), "a\n");
     let right = world.write("work/rlo\u{202e}c.exe", "b\n");
     let mut app = world.app(None);
     let view = world.open(&mut app, &left, &right);
     world.settle(&mut app);
     let caption = app.tab_mut(view).expect("tab").caption();
-    assert_eq!(caption, "new\nline.c ⇄ rlo\u{202e}c.exe", "the raw title");
+    assert_eq!(
+        caption,
+        format!("new{nl}line.c ⇄ rlo\u{202e}c.exe"),
+        "the raw title"
+    );
     assert_eq!(
         crate::shared::shown_name(&caption),
-        "new\\nline.c ⇄ rlo\\u{202e}c.exe"
+        format!("new{nl_shown}line.c ⇄ rlo\\u{{202e}}c.exe")
     );
     let status = text_model(&mut app, view).status();
     for pane in &status.panes {
-        assert!(!pane.title.contains(['\n', '\u{202e}']), "{:?}", pane.title);
+        assert!(
+            !pane.title.contains(['\n', '\u{85}', '\u{202e}']),
+            "{:?}",
+            pane.title
+        );
     }
-    assert!(status.panes[0].title.ends_with("new\\nline.c"));
+    assert!(
+        status.panes[0]
+            .title
+            .ends_with(&format!("new{nl_shown}line.c"))
+    );
     assert!(status.panes[1].title.ends_with("rlo\\u{202e}c.exe"));
 
-    let l = world.path("work/L\u{1b}[31m");
+    let l = world.path(&format!("work/L{esc}[31m"));
     let r = world.path("work/R\u{2066}x");
     std::fs::create_dir_all(&l).expect("mkdir");
     std::fs::create_dir_all(&r).expect("mkdir");
     let folders = world.open(&mut app, &l, &r);
     world.settle(&mut app);
     let bases = folder_model(&mut app, folders).status().bases;
-    assert!(bases[0].ends_with("/L\\u{1b}[31m"), "{bases:?}");
-    assert!(bases[1].ends_with("/R\\u{2066}x"), "{bases:?}");
+    let sep = std::path::MAIN_SEPARATOR;
+    assert!(
+        bases[0].ends_with(&format!("{sep}L{esc_shown}[31m")),
+        "{bases:?}"
+    );
+    assert!(
+        bases[1].ends_with(&format!("{sep}R\\u{{2066}}x")),
+        "{bases:?}"
+    );
 }
 
 /// Closing a view releases its data (wave-6b review: memory stayed high after many open/close cycles). The

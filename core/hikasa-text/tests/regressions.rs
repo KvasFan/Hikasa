@@ -382,7 +382,7 @@ fn external_conversions_agree_on_every_path() {
         .unwrap(),
     );
     let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
-    let spec = |p: &str| Spec::Local(LocalPath::new(PathBuf::from(p)).unwrap());
+    let spec = |p: &str| Spec::Local(LocalPath::new(PathBuf::from(common::host(p))).unwrap());
     let rules = TextRules::default();
     let runner: Arc<dyn ProcessRunner> = Arc::new(Upper);
     let external: Option<(&std::path::Path, &dyn ProcessRunner)> =
@@ -394,9 +394,9 @@ fn external_conversions_agree_on_every_path() {
     ];
     for (k, (a, b, expected)) in cases.into_iter().enumerate() {
         let (pa, pb) = (format!("/w/a{k}.up"), format!("/w/b{k}.up"));
-        vfs.insert_file(&pa, a.to_vec(), MemMeta::default())
+        vfs.insert_file(&common::host(&pa), a.to_vec(), MemMeta::default())
             .unwrap();
-        vfs.insert_file(&pb, b.to_vec(), MemMeta::default())
+        vfs.insert_file(&common::host(&pb), b.to_vec(), MemMeta::default())
             .unwrap();
         let load = |p: &str| {
             load_document(

@@ -194,7 +194,8 @@ fn client_refuses_a_socket_folder_other_users_control() {
     ));
 }
 
-#[cfg(unix)]
+/// Not on macOS: its endpoint lives in the per-user `$TMPDIR` without an own folder (§2.23).
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn client_refuses_a_symlinked_own_folder_and_the_service_reports_100() {
     let tmp = short_tempdir();

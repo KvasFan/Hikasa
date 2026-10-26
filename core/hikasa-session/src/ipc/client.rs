@@ -99,12 +99,12 @@ impl IpcClient {
         min_version: u32,
     ) -> Result<IpcClient, IpcError> {
         endpoint.verify_folder()?;
-        let stream = connect_stream(endpoint)?;
         let timeout = if timeout.is_zero() {
             Duration::from_millis(1)
         } else {
             timeout
         };
+        let stream = connect_stream(endpoint, timeout)?;
         // A platform without send timeouts still works; writes then block like the stream does.
         let _ = stream.set_send_timeout(Some(timeout));
         let stream = Arc::new(stream);

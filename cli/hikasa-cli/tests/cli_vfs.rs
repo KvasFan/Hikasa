@@ -4,14 +4,15 @@ mod common;
 
 use common::{Sandbox, assert_golden, code, json, stderr, stdout};
 
-/// `d/` with a text file, a binary file, a name holding a tab and (on Unix) a symbolic link to the text file.
+/// `d/` with a text file, a binary file and (on Unix) a name holding a tab and a symbolic link to the text file.
 fn sandbox() -> Sandbox {
     let s = Sandbox::new();
     s.file("d/a.txt", "alpha\n");
     s.file("d/b.bin", b"\x00\x01\x02\xff");
-    s.file("d/tab\there.txt", "t\n");
     #[cfg(unix)]
     {
+        // Windows refuses control characters in file names.
+        s.file("d/tab\there.txt", "t\n");
         std::os::unix::fs::symlink("a.txt", s.join("d/link")).unwrap();
         let time = filetime::FileTime::from_unix_time(common::MTIME, 0);
         filetime::set_symlink_file_times(s.join("d/link"), time, time).unwrap();
@@ -62,6 +63,7 @@ fn stat_goldens() {
         .args(["vfs", "stat", "d/a.txt", "--json"])
         .output()
         .unwrap();
+    common::assert_platform_metadata(&stdout(&doc));
     assert_golden("vfs/stat.json", &s.normalise(&stdout(&doc)));
     let link = s.cmd().args(["vfs", "stat", "d/link"]).output().unwrap();
     assert!(stdout(&link).starts_with('l'), "{}", stdout(&link));

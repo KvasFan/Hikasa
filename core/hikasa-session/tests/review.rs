@@ -162,7 +162,7 @@ fn quick_and_text_responses_carry_their_ignore_unimportant() {
     assert_eq!(text.exit_code, ExitCode::RulesSame);
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn mode_of(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     std::fs::symlink_metadata(path)
@@ -172,8 +172,9 @@ fn mode_of(path: &Path) -> u32 {
         & 0o777
 }
 
-/// A service whose cache folder is the per-user temp fallback (no home, no XDG cache), with stdin.
-#[cfg(unix)]
+/// A service whose cache folder is the per-user temp fallback (no home, no XDG cache), with stdin. (Not on
+/// macOS: there the configuration folder needs the home folder too, so the fallback cannot be reached.)
+#[cfg(all(unix, not(target_os = "macos")))]
 fn fallback_cache_service(root: &Path, stdin: &[u8], name: &str) -> Service {
     let facts = EnvFacts {
         home: None,
@@ -195,7 +196,7 @@ fn fallback_cache_service(root: &Path, stdin: &[u8], name: &str) -> Service {
     Service::new(init).unwrap()
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn the_stdin_spool_is_private_and_refuses_planted_links() {
     let tmp = common::short_tempdir();

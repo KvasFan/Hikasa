@@ -142,7 +142,12 @@ struct Opened {
 impl Opened {
     /// Opens `path`; `None` when it is not a regular file or is empty (nothing to map).
     fn regular(path: &Path) -> io::Result<Option<Opened>> {
-        let file = File::open(path)?;
+        let file = match File::open(path) {
+            Ok(file) => file,
+            // Windows cannot open a folder as a file ("access denied"): a folder is still "not a regular file".
+            Err(_) if std::fs::metadata(path).is_ok_and(|m| m.is_dir()) => return Ok(None),
+            Err(e) => return Err(e),
+        };
         let meta = file.metadata()?;
         if !meta.is_file() || meta.len() == 0 {
             return Ok(None);

@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use common::{CloseMode, FakeGui, Sandbox, assert_golden, code, json, serve, stderr, stdout};
@@ -511,7 +512,7 @@ fn gui_sends_the_comparison_to_the_gui() {
     assert_eq!(kind.as_str(), "text_compare");
     assert!(wait);
     assert!(
-        specs[0].ends_with("/a/x.c") && specs[1].ends_with("/b/x.c"),
+        Path::new(&specs[0]).ends_with("a/x.c") && Path::new(&specs[1]).ends_with("b/x.c"),
         "{specs:?}"
     );
     assert_eq!(options.display.as_deref(), Some("context"));

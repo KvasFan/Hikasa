@@ -264,7 +264,15 @@ mod cases {
             log.contains(&format!("arg: --config-dir\narg: {}\n", config.display())),
             "--config-dir reached the GUI: {log}"
         );
-        let endpoint = format!("endpoint: {}/hikasa-", runtime.display());
+        // macOS has no XDG runtime folder: the endpoint is in the per-user `$TMPDIR` (§2.23).
+        let endpoint = if cfg!(target_os = "macos") {
+            format!(
+                "endpoint: {}",
+                std::env::temp_dir().join("hikasa-").display()
+            )
+        } else {
+            format!("endpoint: {}/hikasa-", runtime.display())
+        };
         assert!(log.contains(&endpoint), "{log}");
     }
 

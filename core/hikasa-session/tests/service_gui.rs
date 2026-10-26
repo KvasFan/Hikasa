@@ -245,11 +245,23 @@ fn stdin_is_spooled_and_deleted_after_wait() {
     assert!(second.exists());
     server.shutdown().unwrap();
 
-    // When the view cannot be opened the spool is removed again.
+    // When the view cannot be opened the spool is removed again. (Windows: the connections of the dropped
+    // clients above linger after the shutdown — a stopped server cannot close a named-pipe connection, §1.8.7 —
+    // and keep the pipe busy, so the connect ends with its bounded wait instead of "not running".)
     let gone = service
         .gui_open(&open(&[OsString::from("-"), os(&b)], false), None)
         .unwrap_err();
-    assert!(matches!(gone, ApiError::Ipc(IpcError::NotRunning)));
+    if cfg!(windows) {
+        assert!(
+            matches!(
+                gone,
+                ApiError::Ipc(IpcError::NotRunning | IpcError::Timeout)
+            ),
+            "{gone:?}"
+        );
+    } else {
+        assert!(matches!(gone, ApiError::Ipc(IpcError::NotRunning)));
+    }
     let leftovers: Vec<_> = std::fs::read_dir(&cache).unwrap().flatten().collect();
     assert_eq!(leftovers.len(), 2, "only the two un-waited spools remain");
     // `-` twice is refused.

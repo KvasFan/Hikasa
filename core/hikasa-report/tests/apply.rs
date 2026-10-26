@@ -281,6 +281,12 @@ fn gnu_patch_applies_every_style_without_fuzz() {
     if tool("patch", "--version").is_none() {
         return;
     }
+    // The options below are GNU patch's; another patch(1) (macOS ships a BSD one) is not what this checks.
+    let version = Command::new("patch").arg("--version").output().unwrap();
+    if !String::from_utf8_lossy(&version.stdout).contains("GNU patch") {
+        eprintln!("note: SKIPPED the GNU patch checks: `patch` is not GNU patch");
+        return;
+    }
     for case in rendered() {
         if case.left == case.right
             && !String::from_utf8_lossy(&case.patch)

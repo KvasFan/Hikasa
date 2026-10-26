@@ -36,7 +36,13 @@ fn raw(endpoint: &Endpoint) -> Stream {
         EndpointAddress::NamedPipe(n) => n.as_str().to_ns_name::<GenericNamespaced>().unwrap(),
     };
     let stream = ConnectOptions::new().name(name).connect_sync().unwrap();
-    stream.set_recv_timeout(Some(TIMEOUT)).unwrap();
+    // Windows named pipes have no I/O timeouts (`Unsupported`); there a lost answer blocks the test.
+    if let Err(e) = stream.set_recv_timeout(Some(TIMEOUT)) {
+        assert!(
+            cfg!(windows) && e.kind() == std::io::ErrorKind::Unsupported,
+            "{e}"
+        );
+    }
     stream
 }
 
@@ -404,6 +410,28 @@ fn not_running_and_the_single_instance_lock() {
     server.shutdown().unwrap();
 }
 
+/// Regression (Windows CI port): a shutdown right after the server started must still wake the accept thread. A
+/// pipe client that connected and closed before the listener waited for it is discarded by the listener, so the
+/// self-connect stays open until the accept thread has ended.
+#[test]
+fn shutdown_right_after_the_start_wakes_the_accept_thread() {
+    let dir = short_tempdir();
+    for _ in 0..20 {
+        let endpoint = test_endpoint(dir.path());
+        let server = start(
+            &endpoint,
+            FakeGui::new(CloseMode::Immediately, ExitCode::Similar),
+        );
+        let started = Instant::now();
+        server.shutdown().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+}
+
 #[test]
 fn shutdown_returns_quickly_through_the_self_connect() {
     let dir = short_tempdir();
@@ -422,14 +450,37 @@ fn shutdown_returns_quickly_through_the_self_connect() {
         started.elapsed()
     );
     drop(idle);
-    assert!(matches!(
-        IpcClient::connect(&endpoint, "t", TIMEOUT),
-        Err(IpcError::NotRunning)
-    ));
     #[cfg(unix)]
-    if let EndpointAddress::UnixSocket(path) = &endpoint.address {
-        assert!(!path.exists(), "the socket file is removed");
-    }
+    let endpoint = {
+        assert!(matches!(
+            IpcClient::connect(&endpoint, "t", TIMEOUT),
+            Err(IpcError::NotRunning)
+        ));
+        if let EndpointAddress::UnixSocket(path) = &endpoint.address {
+            assert!(!path.exists(), "the socket file is removed");
+        }
+        endpoint
+    };
+    // Windows: a stopped server cannot close a named-pipe connection, and the dropped client's reader thread
+    // keeps its end open (§1.8.7), so the idle connection lingers and keeps the pipe busy. A new connect neither
+    // reaches the stopped server nor waits forever: its wait is bounded by the timeout. The next server
+    // needs another pipe name.
+    #[cfg(windows)]
+    let endpoint = {
+        let started = Instant::now();
+        let result = IpcClient::connect(&endpoint, "t", Duration::from_millis(300));
+        assert!(
+            matches!(result, Err(IpcError::Timeout | IpcError::NotRunning)),
+            "{:?}",
+            result.map(|_| ())
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        test_endpoint(dir.path())
+    };
     // Dropping a handle shuts the server down too.
     let server = start(
         &endpoint,

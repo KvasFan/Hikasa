@@ -317,3 +317,13 @@ impl XorShift {
         self.next() % n.max(1)
     }
 }
+
+/// A host-style absolute path for `MemoryVfs` and `LocalPath` from a `/`-separated one: `/a/b` on Unix,
+/// `C:\a\b` on Windows (where `/a/b` is not absolute).
+pub fn host(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{}", path.replace('/', "\\"))
+    } else {
+        path.to_owned()
+    }
+}

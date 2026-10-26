@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{compare_bytes, compare_texts, folder_case, sibling_fixtures};
+use common::{compare_bytes, compare_texts, folder_case, host, sibling_fixtures};
 use hikasa_core::Pair;
 use hikasa_folder::{DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::{
@@ -145,10 +145,13 @@ fn text_headers_in_every_layout() {
             head[1],
             format!("{prefix}Generated: 2026-10-21T14:00:00+02:00 by hikasa 0.1.0")
         );
-        assert_eq!(head[2], format!("{prefix}Left: /l/a.txt (UTF-8, lf)"));
+        assert_eq!(
+            head[2],
+            format!("{prefix}Left: {} (UTF-8, lf)", host("/l/a.txt"))
+        );
         assert_eq!(
             head[3],
-            format!("{prefix}Right: /r/b.txt (UTF-8 BOM, cr_lf)")
+            format!("{prefix}Right: {} (UTF-8 BOM, cr_lf)", host("/r/b.txt"))
         );
         assert!(
             head[4].starts_with(&format!("{prefix}Mode: display: ")),
@@ -223,7 +226,10 @@ fn html_header_table() {
         assert!(html.contains(
             "<tr><th>Generated</th><td>2026-10-21T14:00:00+02:00 by hikasa &lt;0.1&gt;</td></tr>"
         ));
-        assert!(html.contains("<tr><th>Left</th><td>/l/left.txt (UTF-8, lf)</td></tr>"));
+        assert!(html.contains(&format!(
+            "<tr><th>Left</th><td>{} (UTF-8, lf)</td></tr>",
+            host("/l/left.txt")
+        )));
         assert!(html.contains("<tr class=\"error\"><th>Right error</th><td>gone</td></tr>"));
         assert!(
             html.contains("<tr><th>Mode</th><td>display: all; ignore unimportant: no</td></tr>")
@@ -273,8 +279,8 @@ fn folder_headers() {
             [
                 "Folder Compare",
                 "Generated: 2026-10-21T14:00:00+02:00 by hikasa 0.1.0",
-                "Left: /l",
-                "Right: /r",
+                format!("Left: {}", host("/l")).as_str(),
+                format!("Right: {}", host("/r")).as_str(),
                 "Mode: display: differences; folders: only files; ignore unimportant: yes; suppress filters: no",
                 "Rules: size, timestamps (2 s), content: rules; filters: none",
                 "Warning: rules_size_limit: compared by bytes",

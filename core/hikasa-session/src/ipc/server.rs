@@ -498,7 +498,11 @@ impl ServerHandle {
         };
         self.stop.store(true, Ordering::Release);
         let _ = self.wake.try_send(());
-        drop(connect_stream(&self.endpoint));
+        // The self-connect stays open until the accept thread has ended: a Windows pipe client that connects
+        // and closes before the server waits for it (`ConnectNamedPipe`) is a connection that never happened
+        // (`ERROR_NO_DATA`; the listener discards it and keeps waiting), so closing it at once could leave the
+        // accept thread blocked when the server is shut down right after it started.
+        let wake = connect_stream(&self.endpoint, SHUTDOWN_WAIT);
         let accept = match self.done.recv_timeout(SHUTDOWN_WAIT) {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => {
                 let _ = thread.join();
@@ -506,6 +510,7 @@ impl ServerHandle {
             }
             Err(RecvTimeoutError::Timeout) => Err(IpcError::Timeout),
         };
+        drop(wake);
         self.close_connections();
         accept
     }

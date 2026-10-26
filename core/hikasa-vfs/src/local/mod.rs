@@ -280,8 +280,16 @@ impl Vfs for LocalVfs {
 
     fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
         let path = local(spec)?;
-        let file = File::open(path.as_path())
-            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::Open, e))?;
+        let file = File::open(path.as_path()).map_err(|e| {
+            // Windows cannot open a folder as a file and reports "access denied".
+            if fs::metadata(path.as_path()).is_ok_and(|m| m.is_dir()) {
+                VfsError::IsADirectory {
+                    spec: spec.canonical(),
+                }
+            } else {
+                VfsError::from_io(spec.canonical(), VfsOp::Open, e)
+            }
+        })?;
         let meta = file
             .metadata()
             .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::Open, e))?;

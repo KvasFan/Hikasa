@@ -501,6 +501,13 @@ fn init_logging(globals: &GlobalArgs, env: &EnvFacts) -> Result<(), ApiError> {
                 .append(true)
                 .open(path)
                 .map_err(|e| {
+                    // A folder is `is_a_directory` everywhere, as in LocalVfs (Windows reports opening one
+                    // for writing as "access denied").
+                    if std::fs::metadata(path).is_ok_and(|m| m.is_dir()) {
+                        return ApiError::Vfs(VfsError::IsADirectory {
+                            spec: path.display().to_string(),
+                        });
+                    }
                     ApiError::Vfs(VfsError::from_io(
                         path.display().to_string(),
                         VfsOp::Write,
