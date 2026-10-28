@@ -39,7 +39,10 @@
     "switch_ignored",
     "alignment_degraded",
     "patch_encoding",
-    "invalid_config_value"
+    "invalid_config_value",
+    "spec_not_saved",
+    "session_missing",
+    "session_locked"
   ],
   "warnings": [
     {

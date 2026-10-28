@@ -1,0 +1,4 @@
+folder work/
+piped	text-edit	-	
+t	text-compare	-	
+work/api	folder-compare	-	The API

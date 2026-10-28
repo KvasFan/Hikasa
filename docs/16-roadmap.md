@@ -50,7 +50,11 @@ contract `docs/design/m2-contracts.md`. Done: wave 0 (catalogue in core, help to
 typed, versioned and written sparsely with unknown keys kept, change detection by
 polling, all `docs/15` keys OPT-001…OPT-022, `hikasa settings get|set|unset|list|
 restore-defaults`, the `hikasa format` write commands, colour schemes and Open With
-expansion in core; the window reads them from W4).
+expansion in core; the window reads them from W4); wave 2 (sessions: files, store, defaults, auto-save
+rotation, scopes and close prompts in core, `hikasa session …` with `session run`; workspaces and `hikasa
+workspace …`; settings packages `hikasa settings export|import`, `restore-defaults --category`; the window
+answers `LoadSession`/`LoadWorkspace`, `hikasa gui session|workspace` and the one-argument forms of `gui open`;
+the session UI itself comes with W4).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

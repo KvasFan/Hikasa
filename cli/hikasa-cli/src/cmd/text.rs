@@ -20,7 +20,6 @@ use crate::output::WriteError;
 
 /// Runs `text compare`.
 pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
-    let op = ApiOp::TextCompare;
     let request = match request(ctx, args) {
         Ok(request) => request,
         Err(e) => return fail(ctx, args, &e),
@@ -34,6 +33,13 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
         let open = GuiOpenRequest::for_text(&request, &words, args.wait);
         return gui::open_view(ctx, &open, args.no_launch, &[]);
     }
+    execute(ctx, args, &request)
+}
+
+/// Compares and prints (`text compare` without `--gui`, and `session run` of a Text Compare session, T11):
+/// `args` gives the presentation words, `request` the comparison.
+pub fn execute(ctx: &mut Ctx<'_>, args: &TextCompareArgs, request: &TextCompareRequest) -> u8 {
+    let op = ApiOp::TextCompare;
     // Every word is checked before the comparison runs, so a typo fails at once (exit 100). A layout/format
     // combination the renderer does not support (`--report patch --html`) is refused by the renderer after the
     // comparison (exit 100, `--output` untouched): checking it first needs a hikasa-report addition (§1.9.3 item
@@ -43,7 +49,7 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
         Err(e) => return ctx.fail(TEXT_COMPARE_SCHEMA, &e, op, &[]),
     };
     let job = ctx.job(JobKind::TextCompare);
-    let resp = match ctx.service.text_compare(&request, &job, None) {
+    let resp = match ctx.service.text_compare(request, &job, None) {
         Ok(resp) => resp,
         Err(e) => return ctx.fail(TEXT_COMPARE_SCHEMA, &e, op, &[]),
     };
@@ -125,6 +131,7 @@ fn request(ctx: &Ctx<'_>, args: &TextCompareArgs) -> Result<TextCompareRequest, 
         rules_file: args.rules_file.clone(),
         rules_patch,
         ignore_unimportant: args.ignore_unimportant,
+        base_rules: None,
     })
 }
 

@@ -1,0 +1,33 @@
+schema_version = 1
+type = "folder-compare"
+description = "A folder-compare session"
+favorite = true
+
+[specs]
+left = "/data/left"
+right = "/data/right"
+
+[rules.criteria]
+size = false
+
+[rules.handling]
+flatten = true
+
+[text_rules.importance]
+compare_line_endings = true
+
+[display]
+filter = "differences"
+
+[view]
+split = 0.5
+width_left = 300
+
+[[override]]
+scope = "pair"
+left = "src/a.c"
+right = "src/a.c"
+type = "text-compare"
+
+[override.rules.alignment]
+skew_tolerance = 3

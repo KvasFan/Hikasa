@@ -11,7 +11,9 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa text compare](topic:text-compare): compare two text files.
 - [hikasa folder compare](topic:folder-compare): compare two folder trees.
 - [hikasa format](topic:format): list, show, test and change file formats.
-- [hikasa settings](topic:settings): read and change the settings files.
+- [hikasa settings](topic:settings): read and change the settings files; export and import settings packages.
+- [hikasa session](topic:session): named sessions, defaults, auto-saved sessions; run a saved comparison.
+- [hikasa workspace](topic:workspace): saved sets of windows and tabs.
 - [hikasa vfs](topic:vfs): list, inspect and read any spec.
 - [hikasa gui](topic:gui): open views in the window and control it.
 - [hikasa completions](topic:completions), [hikasa version](topic:version), [hikasa help](topic:help).

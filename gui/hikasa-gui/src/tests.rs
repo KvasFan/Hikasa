@@ -1462,3 +1462,131 @@ fn startup_path_leaves_the_format_files_to_the_deferred_work() {
     assert!(written > 1, "the built-ins are written ({written} files)");
     let _ = app.shutdown();
 }
+
+/// A2.8 (D-89): the handler opens folder and text sessions with their rules, loads a workspace (closing the open
+/// views first), and answers `not_found` and `unsupported_request` for what it cannot open.
+#[test]
+fn ipc_handler_loads_sessions_and_workspaces() {
+    use hikasa_session::sessions::{Session, SessionRef, SessionRules, SessionType};
+    use hikasa_session::settings::Overwrite;
+
+    let world = World::new();
+    let (left, right) = text_pair(&world);
+    let (a, b) = folder_pair(&world);
+    let store = world.service.session_store();
+    let mut text = Session::builtin(SessionType::TextCompare);
+    text.specs.left = left.display().to_string();
+    text.specs.right = right.display().to_string();
+    if let SessionRules::Text(rules) = &mut text.rules {
+        rules.alignment.skew_tolerance = 9;
+    }
+    let mut folder = Session::builtin(SessionType::FolderCompare);
+    folder.specs.left = a.display().to_string();
+    folder.specs.right = b.display().to_string();
+    if let SessionRules::Folder(rules) = &mut folder.rules {
+        rules.handling.flatten = true;
+    }
+    let mut hex = Session::builtin(SessionType::HexCompare);
+    hex.specs = text.specs.clone();
+    for (name, session) in [("t", &text), ("work/f", &folder), ("h", &hex)] {
+        store
+            .save(
+                &SessionRef::parse(name).expect("ref"),
+                session,
+                Overwrite::IfUnchanged,
+            )
+            .expect("save");
+    }
+    world.write(
+        "config/workspaces/w.toml",
+        "[[window]]\n[[window.tab]]\nsession = \"t\"\n[[window.tab]]\nsession = \"gone\"\n[[window.tab]]\nsession = \"work/f\"\n",
+    );
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    let mut app = world.app(None);
+    use hikasa_session::ipc::IpcHandler;
+    let response = handler.handle(
+        Request::LoadSession {
+            name: "T".into(),
+            wait: false,
+        },
+        None,
+    );
+    assert!(
+        matches!(response, Response::ViewOpened { .. }),
+        "{response:?}"
+    );
+    let response = handler.handle(
+        Request::LoadSession {
+            name: "work/f".into(),
+            wait: false,
+        },
+        None,
+    );
+    assert!(
+        matches!(response, Response::ViewOpened { .. }),
+        "{response:?}"
+    );
+    world.settle(&mut app);
+    let mut kinds = Vec::new();
+    for tab in app.tabs() {
+        match &tab.model {
+            ViewModel::Text(m) => {
+                kinds.push("text");
+                let base = m.request().base_rules.as_ref().expect("session rules");
+                assert_eq!(base.alignment.skew_tolerance, 9);
+            }
+            ViewModel::Folder(m) => {
+                kinds.push("folder");
+                assert!(m.prepared().expect("prepared").rules().handling.flatten);
+            }
+            ViewModel::Home(_) => {}
+        }
+    }
+    assert_eq!(kinds, ["text", "folder"]);
+    // Errors of D-89.
+    for (name, code) in [
+        ("nope", "not_found"),
+        ("h", "unsupported_request"),
+        ("_bad", "invalid_request"),
+    ] {
+        let response = handler.handle(
+            Request::LoadSession {
+                name: name.into(),
+                wait: false,
+            },
+            None,
+        );
+        assert!(
+            matches!(&response, Response::Error { code: c, .. } if c == code),
+            "{name}: {response:?}"
+        );
+    }
+    // A workspace: the open views close, its tabs open (the missing session opens nothing).
+    let Response::Views { views } =
+        handler.handle(Request::LoadWorkspace { name: "w".into() }, None)
+    else {
+        panic!("views");
+    };
+    assert_eq!(views.len(), 2);
+    assert_eq!(views[0].kind, ViewKind::TextCompare);
+    assert_eq!(views[1].kind, ViewKind::FolderCompare);
+    world.settle(&mut app);
+    let ids: Vec<ViewId> = app
+        .tabs()
+        .iter()
+        .filter(|t| !matches!(t.model, ViewModel::Home(_)))
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(ids, views.iter().map(|v| v.view).collect::<Vec<_>>());
+    let missing = handler.handle(
+        Request::LoadWorkspace {
+            name: "absent".into(),
+        },
+        None,
+    );
+    assert!(matches!(&missing, Response::Error { code, .. } if code == "not_found"));
+}

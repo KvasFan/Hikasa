@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.session_write.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "action": "rename",
+    "ref": "archive/api",
+    "written": [
+      "<TMP>/cfg/sessions/archive/api.toml"
+    ],
+    "removed": [
+      "<TMP>/cfg/sessions/work/api.toml"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

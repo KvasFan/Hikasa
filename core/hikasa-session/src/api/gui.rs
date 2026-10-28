@@ -412,6 +412,7 @@ impl GuiOpenReport {
                 result: None,
                 view_exit_code: None,
                 spooled_stdin,
+                views: Vec::new(),
             },
             GuiOpenOutcome::Closed {
                 view,
@@ -423,6 +424,7 @@ impl GuiOpenReport {
                 result: Some(result.clone()),
                 view_exit_code: Some(*exit_code),
                 spooled_stdin,
+                views: Vec::new(),
             },
         }
     }
@@ -449,6 +451,8 @@ pub struct ResolvedOpen {
 
 /// The service requests of an `OpenView` ([`Service::open_view_request`]): what the GUI runs for a view.
 /// Additive (wave-4 review).
+// One request per view, built once and moved into the view: the size difference does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ViewRequest {
     /// A Text Compare view.
@@ -1144,8 +1148,8 @@ pub fn infer_view_kind(
     }
     let [left, right] = specs else {
         return Err(ApiError::InvalidArgument(format!(
-            "gui open needs two specs to infer the view (got {}); sessions, workspaces, merges, patches and \
-             snapshots come in a later version",
+            "gui open needs two specs to infer the view, or one name of a saved session or workspace (got {} \
+             specs); merges, patches and snapshots come in a later version",
             specs.len()
         )));
     };
@@ -1420,6 +1424,7 @@ impl Service {
                         rules_file: options.text_rules_file.clone().map(OsString::from),
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
+                        base_rules: None,
                     },
                     view: ViewOptions {
                         filter: mode.text_filter(),
@@ -1449,6 +1454,8 @@ impl Service {
                         text_rules_file: options.text_rules_file.clone().map(OsString::from),
                         text_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
+                        base_rules: None,
+                        base_text_rules: None,
                     },
                     display,
                     expand_all: options.expand_all,
@@ -1509,6 +1516,94 @@ impl Service {
             specs: resolved.specs,
             spooled_stdin: spool.clone(),
         })
+    }
+
+    /// `gui session <REF> [--wait]` and `gui open <session>` (D-88, D-89): the session is found and checked
+    /// locally (`not_found`, `unsupported` for a type the GUI cannot show yet), then `LoadSession` is sent
+    /// (launching the GUI unless `launcher` is `None`). A GUI that answers `unsupported_request` is an older
+    /// one: `unsupported`, "the running GUI does not support sessions; restart it" (exit 100).
+    pub fn gui_load_session(
+        &self,
+        reference: &str,
+        wait: bool,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<GuiOpenReport, ApiError> {
+        run_guarded(|| {
+            let wanted = crate::sessions::SessionRef::parse(reference)?;
+            let actual = self
+                .session_store()
+                .find(&wanted.to_string())
+                .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
+            let view = self.session_view(&actual)?;
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::LoadSession {
+                name: actual.to_string(),
+                wait,
+            };
+            let (id, response) = client.request(request).map_err(sessions_error)?;
+            let opened = match response {
+                Response::ViewOpened { view } => view,
+                other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            };
+            let outcome = if wait {
+                let (view, result, exit_code) = client.wait_view_closed(id)?;
+                GuiOpenOutcome::Closed {
+                    view,
+                    result,
+                    exit_code,
+                }
+            } else {
+                GuiOpenOutcome::Opened { view: opened }
+            };
+            Ok(GuiOpenReport {
+                outcome,
+                kind: view.kind,
+                specs: view.specs,
+                spooled_stdin: None,
+            })
+        })
+    }
+
+    /// `gui workspace <NAME>` and `gui open <workspace>` (D-85, D-88, D-89): the workspace is found locally
+    /// (`not_found`), then `LoadWorkspace` is sent; the result is the views it opened. An older GUI is reported
+    /// as for [`Service::gui_load_session`].
+    pub fn gui_load_workspace(
+        &self,
+        name: &str,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<Vec<ViewInfo>, ApiError> {
+        run_guarded(|| {
+            let actual = self
+                .workspace_store()
+                .find(name)
+                .ok_or_else(|| ApiError::NotFound(format!("no workspace `{name}`")))?;
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::LoadWorkspace {
+                name: actual.to_string(),
+            };
+            match client.request(request).map_err(sessions_error)?.1 {
+                Response::Views { views } => Ok(views),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        })
+    }
+
+    /// A connection to the GUI, launching it when `launcher` is given.
+    fn connect_for_sessions(
+        &self,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<IpcClient, ApiError> {
+        connect_or_launch(
+            &self.endpoint()?,
+            &self.generator(),
+            launcher,
+            &self.gui_launch(),
+            policy,
+            REQUEST_TIMEOUT,
+        )
     }
 
     /// `gui ping` (never launches, D-22).
@@ -1637,6 +1732,18 @@ impl Service {
             )));
         }
         Ok(Some(spec.canonical()))
+    }
+}
+
+/// D-89: a GUI that answers `unsupported_request` to `LoadSession`/`LoadWorkspace` is older than this build.
+fn sessions_error(error: crate::ipc::IpcError) -> ApiError {
+    match &error {
+        crate::ipc::IpcError::Remote { code, .. }
+            if code == crate::ipc::IpcErrorCode::UnsupportedRequest.as_str() =>
+        {
+            ApiError::Unsupported("the running GUI does not support sessions; restart it".into())
+        }
+        _ => ApiError::Ipc(error),
     }
 }
 

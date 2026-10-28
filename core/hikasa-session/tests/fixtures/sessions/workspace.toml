@@ -1,0 +1,44 @@
+schema_version = 1
+shortcut = "Ctrl+Alt+1"
+
+[[window]]
+active_tab = 1
+
+[[window.tab]]
+session = "work/api"
+
+[window.tab.view]
+scroll = 10
+
+[[window.tab]]
+
+[window.tab.inline]
+description = "A text-compare session"
+favorite = true
+type = "text-compare"
+
+[window.tab.inline.display]
+filter = "differences"
+
+[window.tab.inline.rules.alignment]
+skew_tolerance = 7
+
+[window.tab.inline.specs]
+format = "c-cpp"
+left = "/data/left"
+left_encoding = "utf-8"
+right = "/data/right"
+
+[window.tab.inline.view]
+split = 0.5
+width_left = 300
+
+[[window.tab]]
+session = "gone"
+
+[[window]]
+width = 640
+height = 480
+x = 10
+y = 20
+maximized = true

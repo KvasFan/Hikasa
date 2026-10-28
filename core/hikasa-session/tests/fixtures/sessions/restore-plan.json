@@ -1,0 +1,33 @@
+{
+  "items": [],
+  "deletes": [
+    "<TMP>/config/filters.toml",
+    "<TMP>/config/formats/my-c.toml",
+    "<TMP>/config/formats/order.toml",
+    "<TMP>/config/options.toml",
+    "<TMP>/config/sessions/_defaults/hex-compare.toml",
+    "<TMP>/config/workspaces/last.toml"
+  ],
+  "summary": {
+    "options": {
+      "added": 0,
+      "replaced": 0,
+      "deleted": 2
+    },
+    "sessions": {
+      "added": 0,
+      "replaced": 0,
+      "deleted": 1
+    },
+    "formats": {
+      "added": 0,
+      "replaced": 0,
+      "deleted": 2
+    },
+    "workspaces": {
+      "added": 0,
+      "replaced": 0,
+      "deleted": 1
+    }
+  }
+}

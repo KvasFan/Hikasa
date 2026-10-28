@@ -357,6 +357,9 @@ fn open(store: &SettingsStore, id: &FileId) -> Result<Box<dyn Handle>, ApiError>
         FileId::Filters => typed::<FilterPresets>(store, id),
         FileId::OpenWith => typed::<OpenWith>(store, id),
         FileId::Archives => typed::<ArchiveTypes>(store, id),
+        FileId::Session | FileId::Workspace => Err(ApiError::InvalidArgument(format!(
+            "`{id}` files are changed with `hikasa {id} …`, not with `hikasa settings`"
+        ))),
     }
 }
 
@@ -459,7 +462,7 @@ fn json(value: Option<&Value>) -> serde_json::Value {
 
 /// Parses the text of `settings set` (D-73): a TOML value; for the text kinds, any text that is not a TOML
 /// string is the string itself.
-fn parse_value(text: &str, kind: ValueKind) -> Result<Value, ApiError> {
+pub(crate) fn parse_value(text: &str, kind: ValueKind) -> Result<Value, ApiError> {
     let parsed = toml::from_str::<Table>(&format!("v = {text}"))
         .ok()
         .filter(|t| t.len() == 1)

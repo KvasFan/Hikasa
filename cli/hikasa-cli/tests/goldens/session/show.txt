@@ -1,0 +1,7 @@
+schema_version = 1
+type = "folder-compare"
+description = "The API"
+
+[specs]
+left = "<TMP>/l"
+right = "<TMP>/r"

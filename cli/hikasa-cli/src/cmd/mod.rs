@@ -8,10 +8,12 @@ pub mod format;
 pub mod gui;
 pub mod help;
 pub mod quick;
+pub mod session;
 pub mod settings;
 pub mod text;
 pub mod version;
 pub mod vfs;
+pub mod workspace;
 
 use clap::ArgMatches;
 use hikasa_core::{JobKind, Warning};
@@ -19,9 +21,11 @@ use hikasa_session::api::dto::{
     COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_EXPORT_SCHEMA,
     FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA,
     FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA, GUI_PING_SCHEMA,
-    GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SETTINGS_GET_SCHEMA,
-    SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA,
-    VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
+    GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SESSION_LIST_SCHEMA,
+    SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA,
+    SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
+    TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
+    WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -30,7 +34,8 @@ use hikasa_text::{TextPattern, TextRulesPatch, UnimportantItem};
 use serde::Serialize;
 
 use crate::args::{
-    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SettingsCmd, TextCmd, VfsCmd,
+    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SessionCmd, SettingsCmd, TextCmd,
+    VfsCmd, WorkspaceCmd,
 };
 use crate::output::{Output, WriteError};
 use crate::progress::ProgressLine;
@@ -156,7 +161,9 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }
-        | Command::Settings { .. } => None,
+        | Command::Settings { .. }
+        | Command::Session { .. }
+        | Command::Workspace { .. } => None,
     }
 }
 
@@ -198,6 +205,28 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             }
             SettingsCmd::List { .. } => (SETTINGS_LIST_SCHEMA, ApiOp::Other),
             SettingsCmd::RestoreDefaults(_) => (SETTINGS_RESTORE_SCHEMA, ApiOp::Other),
+            SettingsCmd::Export(_) => (SETTINGS_EXPORT_SCHEMA, ApiOp::Other),
+            SettingsCmd::Import(_) => (SETTINGS_IMPORT_SCHEMA, ApiOp::Other),
+        },
+        Command::Session { cmd } => match cmd {
+            SessionCmd::List { .. } => (SESSION_LIST_SCHEMA, ApiOp::Other),
+            SessionCmd::Show { .. } => (SESSION_SHOW_SCHEMA, ApiOp::Other),
+            SessionCmd::Run(_) => (FOLDER_COMPARE_SCHEMA, ApiOp::Other),
+            SessionCmd::New { .. }
+            | SessionCmd::Edit { .. }
+            | SessionCmd::Delete { .. }
+            | SessionCmd::Rename { .. }
+            | SessionCmd::Lock { .. }
+            | SessionCmd::Unlock { .. }
+            | SessionCmd::Mkdir { .. }
+            | SessionCmd::Rmdir { .. } => (SESSION_WRITE_SCHEMA, ApiOp::Other),
+        },
+        Command::Workspace { cmd } => match cmd {
+            WorkspaceCmd::List => (WORKSPACE_LIST_SCHEMA, ApiOp::Other),
+            WorkspaceCmd::Show { .. } => (WORKSPACE_SHOW_SCHEMA, ApiOp::Other),
+            WorkspaceCmd::Delete { .. } | WorkspaceCmd::Rename { .. } => {
+                (WORKSPACE_WRITE_SCHEMA, ApiOp::Other)
+            }
         },
         Command::Vfs { cmd } => match cmd {
             VfsCmd::Ls(_) => (VFS_LIST_SCHEMA, ApiOp::Vfs),
@@ -215,6 +244,8 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             GuiCmd::List => (GUI_LIST_SCHEMA, ApiOp::GuiControl),
             GuiCmd::Close { .. } => (GUI_CLOSE_SCHEMA, ApiOp::GuiControl),
             GuiCmd::Quit => (GUI_QUIT_SCHEMA, ApiOp::GuiControl),
+            GuiCmd::Session { wait, .. } => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: *wait }),
+            GuiCmd::Workspace { .. } => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: false }),
         },
         Command::Completions { .. } => (COMPLETIONS_SCHEMA, ApiOp::Other),
         Command::Version => (VERSION_SCHEMA, ApiOp::Other),
@@ -237,6 +268,8 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Vfs { cmd } => vfs::run(ctx, cmd),
         Command::Gui { cmd } => gui::run(ctx, cmd, open),
         Command::Settings { cmd } => settings::run(ctx, cmd),
+        Command::Session { cmd } => session::run(ctx, cmd),
+        Command::Workspace { cmd } => workspace::run(ctx, cmd),
         Command::Completions { shell } => completions::run(ctx.out, *shell),
         Command::Version => version::run(ctx.out),
         Command::Help(args) => help::run(ctx.out, args),

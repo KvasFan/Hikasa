@@ -41,12 +41,12 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 | `hikasa quick <left> <right> [--size\|--crc\|--binary\|--rules]` | all | Quick compare: no output, exit code only (`--qc`). |
 | `hikasa report <type> …` | `hikasa-report` | Shared report options (`13-reports.md`); every `compare` subcommand accepts `--report` as a shortcut. |
 | `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. |
-| `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. |
-| `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | |
+| `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. *M2 W2 (§1.2 of the contract, D-80…D-84):* `list [--folder <ref>] [--autosaved] [--defaults]`, `show <ref>` / `show --defaults <type>`, `new <ref> --type <type> [--left] [--right] [--description]`, `edit <ref> (--set <key>=<value>… \| --left \| --right \| --description) [--force]`, `edit --defaults <type> --set …`, `delete`, `rename <ref> <new ref>`, `lock`, `unlock`, `mkdir <folder>`, `rmdir <folder> [--recursive]`, `run <ref> [output flags of folder/text compare]`. `run` executes Folder Compare and Text Compare sessions through the same service call as `folder compare` / `text compare` (same output, JSON and exit codes, T11); other types exit 100 `unsupported` (Folder Sync after W6). `--set` keys are paths inside the session file, parsed like settings keys; a locked session needs `--force`. Session export and import go through settings packages (`settings export --item sessions:<ref>`). |
+| `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | *M2 W2 (D-85).* `show` warns `session_missing` for a tab whose session no longer exists. |
 | `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|enable\|disable\|move\|restore\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). The write forms are M2 W1 (§4, `10-file-formats.md` §1.1). |
 | `hikasa profile (list\|show\|new\|edit\|delete\|test) …` | `hikasa-session` + `hikasa-vfs` | Secrets prompted interactively or read from `--password-stdin`. |
 | `hikasa vfs (ls\|stat\|cat\|cp\|mv\|rm\|mkdir\|touch) <spec>…` | `hikasa-vfs` | Generic access to any back-end (archives, remote, snapshots). |
-| `hikasa settings (get\|set\|unset\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Every settings file, keys `<file>.<path>` (D-73). `get`/`set`/`unset`/`list`/`restore-defaults` are M2 W1 (§4); `export`/`import` (settings packages) come with W2. |
+| `hikasa settings (get\|set\|unset\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Every settings file, keys `<file>.<path>` (D-73). `get`/`set`/`unset`/`list`/`restore-defaults` are M2 W1 (§4). *M2 W2 (D-86, D-87):* `export -o <file.hikasa-pkg> [--category <cat>…] [--item <cat>:<name>…]`; `import <file> [--category] [--item] [--delete-existing sessions\|formats\|workspaces] (--dry-run \| --yes \| --silent)` validates every entry before writing anything and prints the plan (`delete`, `add`/`replace`, a summary per category); `restore-defaults --category <cat>… [--delete-sessions] [--delete-workspaces]` restores factory defaults by category. |
 | `hikasa gui …` | IPC client | See §1.1. |
 | `hikasa completions <shell>`, `hikasa help [topic]`, `hikasa version` | | |
 
@@ -76,6 +76,12 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   typo exits 100 before the GUI is contacted); `--wait` and `--no-launch` work as for
   `gui open`. The report flags (`--report`, `--output`, `--html`, …) cannot be combined
   with `--gui`. In M1 `gui session`, `gui workspace` and `gui script` are not available.
+- *M2 W2 notes (D-88, D-89):* `gui session <ref> [--wait] [--no-launch]` and `gui workspace <name>
+  [--no-launch]` find the session or workspace locally (unknown: exit 100 `not_found`; a session type the
+  window cannot show yet: `unsupported`) and send `LoadSession` / `LoadWorkspace`; both print
+  `hikasa.gui_open.v1` (a workspace adds `views`, every view it opened). A window of 0.1 answers
+  `unsupported_request`, reported as "the running GUI does not support sessions; restart it" (exit 100).
+  `gui script` comes with the script wave.
 
 ## 2. Legacy positional forms and switches (accepted by `hikasa gui open` and `hikasa-gui`)
 
@@ -87,6 +93,13 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
 
 - **CLI-001** (P0): Switches accept `--name`, `-name` and Windows-style `/name`
   spellings; values with `=`; quote arguments containing spaces. `--help` prints usage.
+- *M2 W2 interpretation of CLI-002 (D-88):* one positional argument that is **not an existing path** is
+  resolved as a named session (the exact reference, then case-insensitively) → `LoadSession`, else a
+  workspace → `LoadWorkspace`, else the M1 error; an existing path always wins over a name. An existing file
+  whose name ends in `.hikasa-pkg` (any case) is a settings package: with `--silent` it is imported headless
+  (every category and item, no deletes; `hikasa.settings_import.v1`), without it the window's import wizard is
+  needed (W4; until then exit 100 `unsupported`). `@file` stays reserved for the script wave. In W2 these forms
+  are served by `hikasa gui open`; the window's own command line keeps the M1 forms until W4.
 - **CLI-002** (P0): Positional arguments:
   - a **named session** → opens it;
   - a **named workspace** → loads it;

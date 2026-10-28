@@ -1,0 +1,4 @@
+options	options.toml
+sessions	sessions/_defaults/folder-compare.toml
+sessions	sessions/work/t.toml
+wrote <TMP>/all.hikasa-pkg

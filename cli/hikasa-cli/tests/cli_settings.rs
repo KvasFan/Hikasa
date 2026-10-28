@@ -447,7 +447,10 @@ fn restore_defaults_usage_names_every_alternative() {
     let s = Sandbox::new();
     let (c, _, err) = run(&s, &["settings", "restore-defaults", "--dry-run"]);
     assert_eq!(c, 100);
-    assert!(err.contains("<--all|--file <FILE>>"), "{err}");
+    assert!(
+        err.contains("<--all|--file <FILE>|--category <CAT>>"),
+        "{err}"
+    );
     let (c, _, err) = run(&s, &["format", "restore", "--dry-run"]);
     assert_eq!(c, 100);
     assert!(err.contains("<ID|--all>"), "{err}");

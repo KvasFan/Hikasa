@@ -724,6 +724,65 @@ resolution order, D-88; the new subcommands and `settings export|import`); `docs
 `docs/16` progress; `help/session.md`, `help/workspace.md`, `help/settings.md`, `help/index.md`;
 `CHANGELOG.md`.
 
+#### 1.2.9 W2 notes (implementation)
+
+*W2 note:* where the implementation had to interpret or extend the text above (the first four were accepted by
+the maintainer during the wave):
+
+- **Signatures.** `SessionStore` and `WorkspaceStore` methods return `Result<_, ApiError>` (they report
+  `not_found`, `already_exists` and `invalid_input`, which `SessionError` has no variants for);
+  `SessionStore::list(&self, now: &jiff::Zoned)` takes the injected clock's time for the groups (T1);
+  `close_action(origin, locked, dirty, explicit_save, auto_save: bool)` takes whether auto-save is on (row 1 of
+  §1.2.4 depends on `max_auto_saved_sessions`), with `is_dirty(loaded, current)` next to it. `TextCompareRequest`
+  gains `base_rules: Option<TextRules>` and `FolderCompareRequest` `base_rules: Option<FolderRules>` and
+  `base_text_rules: Option<TextRules>`: the rules a missing rules file means (`None`: the defaults), so
+  `session run` and the GUI's `LoadSession` run the same Service calls as `folder compare` / `text compare` (T11).
+- **Additive types.** `FileId::Session` and `FileId::Workspace` (engine-only files: no settings key names them;
+  `hikasa settings` refuses them); `ApiError::Unsupported` (kind `unsupported`) and `ApiError::InvalidData`
+  (kind `invalid_data`); warning codes `spec_not_saved` and `session_missing` in `hikasa_core::WarningCode`;
+  `GuiOpenDto::views` (`gui workspace`: every opened view, omitted when empty). In memory `Override::rules` stays
+  the sparse table of the file; `Session::saved_at` is a `Timestamp` (an auto-save writes it with the clock's
+  offset, any other save in UTC).
+- **Store.** `save(…, Overwrite)` has no stamp check (it takes a `Session`, not a loaded file): `Force` means "also
+  over a locked file"; an existing file keeps its unknown keys. A folder that exists in another case is reused
+  with its spelling. `Session::new` copies the type's defaults (description and specs included) without lock,
+  favorite, parent or overrides. Auto-save pruning reads `saved_at` from each file (a file without a readable
+  time counts as the oldest), ties broken by id. Listing skips unreadable files with warning
+  `invalid_config_value`. Auto-saved groups are `today`, `yesterday`, `days_2_to_6`, `older` in JSON; the label
+  is the description, else the input names (`a ⇄ b`).
+- **`session` commands.** `session list` always lists folders and named sessions; `--autosaved` and `--defaults`
+  add their sections (the JSON keys are always present); `--folder` restricts to a folder (case-insensitive).
+  `session show` prints the file as it is (the defaults without a file: the built-in defaults' file).
+  `session edit --set` may change `description`, `favorite`, `parent`, `specs`, `rules`, `text_rules`, `display`
+  and `view` (the defaults: `description`, `rules`, `text_rules`, `display`, `view`; `--left`/`--right` are
+  refused there); a key must exist in the whole session with every rule spelled out (else `not_found` with up to
+  five suggestions), except below the opaque `display` and `view`; text rules must compile. `session run` takes
+  the union of the output flags of both compare commands (`--report` defaults to `unified` or `list` by type); a
+  failure before the type is known uses `hikasa.folder_compare.v1` (exit 100). The plan's `session export|import`
+  are settings packages (`settings export --item sessions:<ref>`), not `session` subcommands.
+- **Packages.** Export without `--category`/`--item` takes every category but `system_info`; import without them
+  takes every category of the package; `system_info` named for import is `invalid_input`. Item names:
+  `options`/`filters`/`openwith`/`archives`, `theme`, `themes/<scheme>`, `commands`, `state`, a session
+  reference or `_defaults/<type>`, a format id or `order`, a workspace name, `system-info`. `system-info.txt`
+  writes the configuration folder with the home folder as `~`. Zip entries are deflated (level 6 through
+  `flate2`/`zlib-rs`; `zopfli` is compiled in by the `deflate` feature but unused at that level), Unix mode
+  0644, the manifest's `created` local time. An item whose target is deleted first is `add`; `--delete-existing
+  sessions` deletes named sessions and `_defaults` (never `_autosaved`). A failed delete is a result whose name is
+  its path. Every package entry (also of categories not chosen) is validated before anything is written.
+  `restore-defaults --category` keeps `hikasa.settings_restore.v1`: `file` is the category, `existed` is true (only
+  existing files are planned); `--delete-sessions` and `--delete-workspaces` require `--category` and add their
+  category.
+- **IPC and GUI (D-89).** The server passes `LoadSession` (with a waiter when `wait`) and `LoadWorkspace` to the
+  handler. The GUI handler answers an unknown name `not_found`, a type it cannot show `unsupported_request`, any
+  other failure `invalid_request`; `LoadWorkspace` first closes the open views (SES-040), skips Home tabs and
+  logs the warnings of tabs it cannot open. Sessions open with `display` cleared (as a script loads them,
+  SES-010). The CLI checks names and types locally before contacting the GUI. `docs/01` §6 of §1.2.8 is §5.1
+  there (the IPC section); the additions are written in §5.1.
+- **D-88.** The one-argument forms are resolved by `Service::classify_single_arg` for `hikasa gui open`; the
+  window's own command line (`hikasa-gui <name>`) keeps the M1 forms until W4. With `--silent`, a package is
+  imported as `settings import --silent` and prints `hikasa.settings_import.v1` (the switch's `switch_ignored`
+  warning is dropped); without it, exit 100 `unsupported` names the wizard of W4.
+
 ### 1.3–1.14 W3–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

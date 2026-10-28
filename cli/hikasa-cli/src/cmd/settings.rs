@@ -5,14 +5,18 @@
 
 use hikasa_core::{ExitCode, Warning};
 use hikasa_session::ApiError;
+use std::collections::{BTreeMap, BTreeSet};
+
 use hikasa_session::api::dto::{
-    SETTINGS_GET_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
+    SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, human};
+use hikasa_session::package::{Category, ExportRequest, ImportChoices, parse_item};
 use hikasa_session::settings::{FileId, parse_key};
 
 use super::Ctx;
-use crate::args::{RestoreDefaultsArgs, SettingsCmd};
+use crate::args::{RestoreDefaultsArgs, SettingsCmd, SettingsExportArgs, SettingsImportArgs};
 use crate::output::stderr_line;
 
 /// Exit code of a successful `settings` command.
@@ -86,6 +90,94 @@ pub fn run(ctx: &mut Ctx<'_>, cmd: &SettingsCmd) -> u8 {
             }
         }
         SettingsCmd::RestoreDefaults(args) => restore(ctx, args),
+        SettingsCmd::Export(args) => export(ctx, args),
+        SettingsCmd::Import(args) => import(ctx, args),
+    }
+}
+
+/// The `--item` names per category.
+type Items = BTreeMap<Category, Vec<String>>;
+
+/// Parses `--category` and `--item` words.
+fn categories_and_items(
+    categories: &[String],
+    items: &[String],
+) -> Result<(Vec<Category>, Items), ApiError> {
+    let categories = categories
+        .iter()
+        .map(|c| Category::parse(c))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut by_category: BTreeMap<Category, Vec<String>> = BTreeMap::new();
+    for item in items {
+        let (category, name) = parse_item(item)?;
+        by_category.entry(category).or_default().push(name);
+    }
+    Ok((categories, by_category))
+}
+
+/// `settings export` (SES-060).
+fn export(ctx: &mut Ctx<'_>, args: &SettingsExportArgs) -> u8 {
+    let schema = SETTINGS_EXPORT_SCHEMA;
+    let result =
+        categories_and_items(&args.category, &args.item).and_then(|(categories, items)| {
+            ctx.service
+                .settings_export(&ExportRequest { categories, items }, &args.output)
+        });
+    match result {
+        Ok(dto) => {
+            if ctx.out.json() {
+                ctx.json_success(schema, OK, &dto, &[], OP)
+            } else {
+                let written = ctx.out.lines(human::settings_export_lines(&dto));
+                ctx.human_done(written, OK, schema, &[], OP)
+            }
+        }
+        Err(e) => ctx.fail(schema, &e, OP, &[]),
+    }
+}
+
+/// `settings import` (SES-061; T12: `--dry-run` prints the plan, `--yes` or `--silent` executes it).
+fn import(ctx: &mut Ctx<'_>, args: &SettingsImportArgs) -> u8 {
+    let result =
+        categories_and_items(&args.category, &args.item).and_then(|(categories, items)| {
+            let delete_existing = args
+                .delete_existing
+                .iter()
+                .map(|c| Category::parse(c))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let choices = ImportChoices {
+                categories,
+                items,
+                delete_existing,
+                force: args.force,
+            };
+            ctx.service
+                .settings_import(&args.path, &choices, args.dry_run)
+        });
+    import_done(ctx, result)
+}
+
+/// The end of an import (also `gui open <package> --silent`, D-88): exit 100 when an item failed.
+pub fn import_done(
+    ctx: &mut Ctx<'_>,
+    result: Result<hikasa_session::api::SettingsImportDto, ApiError>,
+) -> u8 {
+    let schema = SETTINGS_IMPORT_SCHEMA;
+    match result {
+        Ok(dto) => {
+            let code = if dto.ok() {
+                OK
+            } else {
+                ExitCode::UnknownError.code()
+            };
+            if ctx.out.json() {
+                ctx.json_success(schema, code, &dto, &dto.warnings, OP)
+            } else {
+                let written = ctx.out.lines(human::settings_import_lines(&dto));
+                ctx.human_done(written, code, schema, &dto.warnings, OP)
+            }
+        }
+        Err(e) => ctx.fail(schema, &e, OP, &[]),
     }
 }
 
@@ -118,6 +210,32 @@ fn restore(ctx: &mut Ctx<'_>, args: &RestoreDefaultsArgs) -> u8 {
                 .into(),
         );
         return ctx.fail(schema, &e, OP, &[]);
+    }
+    if !args.category.is_empty() {
+        let result = args
+            .category
+            .iter()
+            .map(|c| Category::parse(c))
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|categories| {
+                ctx.service.settings_restore_categories(
+                    &categories,
+                    args.delete_sessions,
+                    args.delete_workspaces,
+                    args.dry_run,
+                )
+            });
+        return match result {
+            Ok(dto) => {
+                if ctx.out.json() {
+                    ctx.json_success(schema, OK, &dto, &[], OP)
+                } else {
+                    let written = ctx.out.lines(human::settings_restore_lines(&dto));
+                    ctx.human_done(written, OK, schema, &[], OP)
+                }
+            }
+            Err(e) => ctx.fail(schema, &e, OP, &[]),
+        };
     }
     let files = if args.all {
         Ok(FileId::every())

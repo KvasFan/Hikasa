@@ -76,8 +76,25 @@ pub const FORMAT_EXPORT_SCHEMA: &str = "hikasa.format_export.v1";
 /// `hikasa format restore --json` (M2 W1).
 pub const FORMAT_RESTORE_SCHEMA: &str = "hikasa.format_restore.v1";
 
+/// `hikasa session list` (M2 W2).
+pub const SESSION_LIST_SCHEMA: &str = "hikasa.session_list.v1";
+/// `hikasa session show` (M2 W2).
+pub const SESSION_SHOW_SCHEMA: &str = "hikasa.session_show.v1";
+/// The `hikasa session` writes (M2 W2).
+pub const SESSION_WRITE_SCHEMA: &str = "hikasa.session_write.v1";
+/// `hikasa workspace list` (M2 W2).
+pub const WORKSPACE_LIST_SCHEMA: &str = "hikasa.workspace_list.v1";
+/// `hikasa workspace show` (M2 W2).
+pub const WORKSPACE_SHOW_SCHEMA: &str = "hikasa.workspace_show.v1";
+/// The `hikasa workspace` writes (M2 W2).
+pub const WORKSPACE_WRITE_SCHEMA: &str = "hikasa.workspace_write.v1";
+/// `hikasa settings export` (M2 W2).
+pub const SETTINGS_EXPORT_SCHEMA: &str = "hikasa.settings_export.v1";
+/// `hikasa settings import` (M2 W2).
+pub const SETTINGS_IMPORT_SCHEMA: &str = "hikasa.settings_import.v1";
+
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 26] = [
+pub const SCHEMAS: [&str; 34] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -104,6 +121,14 @@ pub const SCHEMAS: [&str; 26] = [
     FORMAT_WRITE_SCHEMA,
     FORMAT_EXPORT_SCHEMA,
     FORMAT_RESTORE_SCHEMA,
+    SESSION_LIST_SCHEMA,
+    SESSION_SHOW_SCHEMA,
+    SESSION_WRITE_SCHEMA,
+    WORKSPACE_LIST_SCHEMA,
+    WORKSPACE_SHOW_SCHEMA,
+    WORKSPACE_WRITE_SCHEMA,
+    SETTINGS_EXPORT_SCHEMA,
+    SETTINGS_IMPORT_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -1005,6 +1030,10 @@ pub struct GuiOpenDto {
     pub view_exit_code: Option<u8>,
     /// The file stdin was spooled to (`gui open -`, D-49).
     pub spooled_stdin: Option<String>,
+    /// `gui workspace` (and `gui open <workspace>`, D-88): every view the workspace opened (`view` is the
+    /// first, 0 when none); absent for one view. Additive (M2 W2).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<u64>,
 }
 
 /// `hikasa.gui_ping.v1`.

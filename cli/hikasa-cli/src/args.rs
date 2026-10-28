@@ -90,6 +90,18 @@ pub enum Command {
         #[command(subcommand)]
         cmd: SettingsCmd,
     },
+    /// Named sessions, session folders, defaults and auto-saved sessions.
+    Session {
+        /// The session subcommand.
+        #[command(subcommand)]
+        cmd: SessionCmd,
+    },
+    /// Saved workspaces.
+    Workspace {
+        /// The workspace subcommand.
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
+    },
     /// Print shell completions.
     Completions {
         /// The shell.
@@ -602,15 +614,275 @@ pub enum SettingsCmd {
     },
     /// Delete settings files so that their defaults apply.
     RestoreDefaults(RestoreDefaultsArgs),
+    /// Write a settings package (`.hikasa-pkg`).
+    Export(SettingsExportArgs),
+    /// Import a settings package.
+    Import(SettingsImportArgs),
+}
+
+/// `hikasa settings export`.
+#[derive(Debug, clap::Args)]
+pub struct SettingsExportArgs {
+    /// The package to write.
+    #[arg(long, short = 'o', value_name = "FILE.hikasa-pkg")]
+    pub output: PathBuf,
+    /// A category: options, theme, commands, state, sessions, formats, workspaces, system_info (repeatable;
+    /// default: all but system_info).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// One item: `<CAT>:<NAME>` such as `sessions:work/api` (repeatable).
+    #[arg(long, value_name = "CAT:NAME")]
+    pub item: Vec<String>,
+}
+
+/// `hikasa settings import`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("mode").required(true).arg("dry_run").arg("yes").arg("silent")))]
+pub struct SettingsImportArgs {
+    /// The package.
+    pub path: PathBuf,
+    /// A category to import (repeatable; default: every category of the package).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// One item: `<CAT>:<NAME>` (repeatable).
+    #[arg(long, value_name = "CAT:NAME")]
+    pub item: Vec<String>,
+    /// Delete every existing item of a category first: sessions, formats or workspaces (repeatable).
+    #[arg(long, value_name = "CAT")]
+    pub delete_existing: Vec<String>,
+    /// Print the plan only.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Import without asking.
+    #[arg(long)]
+    pub yes: bool,
+    /// Import every category and item, no deletes, no prompt.
+    #[arg(long, conflicts_with_all = ["category", "item", "delete_existing"])]
+    pub silent: bool,
+    /// Also replace (or delete with --delete-existing) locked sessions.
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// `hikasa session …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum SessionCmd {
+    /// List folders and named sessions (and defaults, auto-saved sessions).
+    List {
+        /// Only this folder.
+        #[arg(long, value_name = "REF")]
+        folder: Option<String>,
+        /// Also the auto-saved sessions.
+        #[arg(long)]
+        autosaved: bool,
+        /// Also the types with saved defaults.
+        #[arg(long)]
+        defaults: bool,
+    },
+    /// Print a session file.
+    #[command(group(clap::ArgGroup::new("which").required(true).args(["reference", "defaults"])))]
+    Show {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+        /// The defaults of a type instead.
+        #[arg(long, value_name = "TYPE")]
+        defaults: Option<String>,
+    },
+    /// Create a named session from the type's defaults.
+    New {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// folder-compare, folder-sync, text-compare, text-edit, table-compare, hex-compare, picture-compare.
+        #[arg(long = "type", value_name = "TYPE")]
+        kind: String,
+        /// Left spec.
+        #[arg(long, value_name = "SPEC")]
+        left: Option<String>,
+        /// Right spec.
+        #[arg(long, value_name = "SPEC")]
+        right: Option<String>,
+        /// Description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+    },
+    /// Change a session, or the defaults of a type.
+    #[command(group(clap::ArgGroup::new("which").required(true).args(["reference", "defaults"])))]
+    #[command(group(clap::ArgGroup::new("change").required(true).multiple(true)
+        .args(["set", "unset", "left", "right", "description"])))]
+    Edit {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+        /// The defaults of a type instead (`--set` only).
+        #[arg(long, value_name = "TYPE")]
+        defaults: Option<String>,
+        /// Set a key of the session file (`rules.criteria.size=false`; repeatable).
+        #[arg(long, value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Remove a key of `rules`, `text_rules`, `display` or `view` (back to following the defaults;
+        /// repeatable).
+        #[arg(long, value_name = "KEY")]
+        unset: Vec<String>,
+        /// Left spec.
+        #[arg(long, value_name = "SPEC", conflicts_with = "defaults")]
+        left: Option<String>,
+        /// Right spec.
+        #[arg(long, value_name = "SPEC", conflicts_with = "defaults")]
+        right: Option<String>,
+        /// Description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+        /// Change a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Delete a named session.
+    Delete {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Delete a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Rename or move a named session.
+    Rename {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Its new reference.
+        #[arg(value_name = "NEW_REF")]
+        new: String,
+        /// Rename a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Lock a session (changes are not saved).
+    Lock {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
+    /// Unlock a session.
+    Unlock {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
+    /// Create a session folder.
+    Mkdir {
+        /// The folder: `a/b`.
+        folder: String,
+    },
+    /// Delete a session folder.
+    Rmdir {
+        /// The folder.
+        folder: String,
+        /// Also delete the sessions and folders inside.
+        #[arg(long)]
+        recursive: bool,
+    },
+    /// Run a saved Folder Compare or Text Compare session headless.
+    Run(Box<SessionRunArgs>),
+}
+
+/// `hikasa session run <ref>`: the output flags of `folder compare` and `text compare`.
+#[derive(Debug, clap::Args)]
+pub struct SessionRunArgs {
+    /// The session.
+    #[arg(value_name = "REF")]
+    pub reference: String,
+    /// Treat unimportant differences as same (verdict, exit code, report).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// Display filter (text: all, mismatches, context, matches; folders: a display filter).
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// Text: context lines (default from the options, 3).
+    #[arg(long, value_name = "N")]
+    pub context: Option<u32>,
+    /// Folders: folder mode of the display (always, structure, files-only).
+    #[arg(long, value_name = "MODE")]
+    pub folders: Option<String>,
+    /// Folders: show the items hidden by file filters.
+    #[arg(long)]
+    pub suppress_filters: bool,
+    /// Report layout (text: unified, side-by-side, summary, patch, statistics; folders: list, side-by-side,
+    /// summary, json).
+    #[arg(long, value_name = "LAYOUT")]
+    pub report: Option<String>,
+    /// Text: patch style of `--report patch` (normal, context, unified).
+    #[arg(long, value_name = "STYLE", default_value = "unified")]
+    pub patch_style: String,
+    /// Folders: columns of the side-by-side report.
+    #[arg(long, value_name = "LIST")]
+    pub columns: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Text: hide line numbers (side-by-side).
+    #[arg(long)]
+    pub no_line_numbers: bool,
+    /// Text: total width of side-by-side text.
+    #[arg(long, value_name = "N", default_value_t = 160)]
+    pub width: u16,
+    /// Text: line wrapping of side-by-side text (none, character, word).
+    #[arg(long, value_name = "MODE", default_value = "character")]
+    pub wrap: String,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+}
+
+/// `hikasa workspace …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum WorkspaceCmd {
+    /// List the workspaces.
+    List,
+    /// Print a workspace file.
+    Show {
+        /// The workspace.
+        name: String,
+    },
+    /// Delete a workspace.
+    Delete {
+        /// The workspace.
+        name: String,
+    },
+    /// Rename a workspace.
+    Rename {
+        /// The workspace.
+        name: String,
+        /// Its new name.
+        new: String,
+    },
 }
 
 /// `hikasa settings restore-defaults`.
 #[derive(Debug, clap::Args)]
-#[command(group(clap::ArgGroup::new("what").required(true).arg("all").arg("file")))]
+#[command(group(clap::ArgGroup::new("what").required(true).arg("all").arg("file").arg("category")))]
 pub struct RestoreDefaultsArgs {
     /// Every settings file (not sessions, workspaces or formats).
     #[arg(long)]
     pub all: bool,
+    /// A category of the factory-defaults plan: options, theme, commands, state, sessions (the defaults files),
+    /// formats, workspaces (repeatable).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// With `--category`: also delete every named session.
+    #[arg(long, requires = "category")]
+    pub delete_sessions: bool,
+    /// With `--category`: also delete every workspace.
+    #[arg(long, requires = "category")]
+    pub delete_workspaces: bool,
     /// One file: `options`, `state`, `commands`, `theme`, `themes`, `themes.<scheme>`, `filters`, `openwith`,
     /// `archives` (repeatable).
     #[arg(long, value_name = "FILE")]
@@ -693,6 +965,26 @@ pub enum GuiCmd {
     },
     /// Quit the GUI.
     Quit,
+    /// Open a named session in the GUI.
+    Session {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Wait until the view closes and exit with its code.
+        #[arg(long)]
+        wait: bool,
+        /// Do not start the GUI when it is not running.
+        #[arg(long)]
+        no_launch: bool,
+    },
+    /// Load a workspace in the GUI.
+    Workspace {
+        /// The workspace.
+        name: String,
+        /// Do not start the GUI when it is not running.
+        #[arg(long)]
+        no_launch: bool,
+    },
 }
 
 /// `gui open`: every argument after `open` (except the global flags clap sees directly after it) is passed raw to

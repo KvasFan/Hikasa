@@ -5,6 +5,35 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 2 — sessions, workspaces, settings packages
+- **Sessions** (SES-001…006, SES-008, SES-010, D-80…D-84): one TOML file per session (`sessions/<folder>/<name>.toml`,
+  defaults per type in `sessions/_defaults/`, auto-saved views in `sessions/_autosaved/`), read and written by the
+  settings engine. Rules are stored sparse against the type's defaults, so a later change of the defaults reaches
+  every session that did not change that rule; Folder and Text Compare rules are typed (the TOML of
+  `--rules-file`), the other types keep theirs as they are until their waves. Names are portable (D-80) and unique
+  per folder in any case; `-` and `clipboard://` are never stored (warning `spec_not_saved`, a new code).
+  Auto-save rotation with day groups and the `max_auto_saved_sessions` limit, the scope table of the session
+  settings dialog (view, defaults, these files / all files within the parent) and the close-prompt table are pure
+  core functions with table tests.
+- **`hikasa session list|show|new|edit|delete|rename|lock|unlock|mkdir|rmdir|run`**: `session run` runs a Folder or
+  Text Compare session through the same service call and output as `folder compare` / `text compare` (same JSON,
+  same exit codes); schemas `hikasa.session_list.v1`, `hikasa.session_show.v1`, `hikasa.session_write.v1`.
+- **Workspaces** (SES-040…042, D-85): `workspaces/<name>.toml` with windows, tabs (a named session or an inline
+  one) and layouts; `hikasa workspace list|show|delete|rename` (`hikasa.workspace_list.v1`,
+  `hikasa.workspace_show.v1`, `hikasa.workspace_write.v1`); a tab whose session is gone opens Home with warning
+  `session_missing` (a new code).
+- **Settings packages** (SES-060…062, D-86, D-87): `hikasa settings export` writes a `.hikasa-pkg` (a zip with
+  `manifest.toml`; deterministic: same configuration and time, same bytes); `hikasa settings import` validates
+  every entry (paths, sizes, schemas) before writing anything, then prints or executes the plan (`--dry-run`,
+  `--yes`, `--silent`, `--delete-existing`); `settings restore-defaults --category` restores factory defaults by
+  category. Schemas `hikasa.settings_export.v1`, `hikasa.settings_import.v1`. New dependency `zip` (pure-Rust
+  deflate only).
+- **The window opens sessions and workspaces over IPC** (ARCH-091, D-89): `LoadSession` and `LoadWorkspace` are
+  answered by the window; `hikasa gui session <ref> [--wait]`, `hikasa gui workspace <name>`, and `hikasa gui
+  open <name>` resolves one argument that is not an existing path as a session, then a workspace (CLI-002, D-88); a
+  `.hikasa-pkg` with `--silent` is imported. A window of 0.1 is reported as "does not support sessions; restart it".
+- Help topics `hikasa session` and `hikasa workspace`; `hikasa settings` and `hikasa gui` extended.
+
 ### Wave 1 — settings store
 - **One engine for every settings file** (D-70, T13): `options.toml`, `state.toml`, `commands.toml`,
   `theme.toml`, `themes/<name>.toml`, `filters.toml`, `openwith.toml` and `archives.toml` are typed

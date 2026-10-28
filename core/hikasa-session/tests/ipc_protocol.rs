@@ -310,6 +310,80 @@ fn wire_examples_of_4_4_3_are_golden() {
     assert_eq!(unknown.body, Request::Unknown);
 }
 
+/// A2.8 (D-89): the frames of `LoadSession` and `LoadWorkspace` and their answers.
+#[test]
+fn session_frames_are_golden() {
+    let messages: Vec<String> = vec![
+        to_line(
+            5,
+            &Request::LoadSession {
+                name: "work/api-v2".into(),
+                wait: true,
+            },
+        ),
+        to_line(5, &Response::ViewOpened { view: ViewId(8) }),
+        to_line(
+            5,
+            &Response::ViewClosed {
+                view: ViewId(8),
+                result: ViewResult::new(
+                    Some(ContentKind::BinarySame),
+                    None,
+                    false,
+                    CloseReason::User,
+                ),
+                exit_code: 1,
+            },
+        ),
+        to_line(
+            6,
+            &Request::LoadWorkspace {
+                name: "last".into(),
+            },
+        ),
+        to_line(
+            6,
+            &Response::Views {
+                views: vec![ViewInfo {
+                    view: ViewId(9),
+                    kind: ViewKind::FolderCompare,
+                    title: "work/api-v2".into(),
+                    specs: vec!["/w/l".into(), "/w/r".into()],
+                }],
+            },
+        ),
+        to_line(
+            7,
+            &Request::LoadSession {
+                name: "nope".into(),
+                wait: false,
+            },
+        ),
+        to_line(
+            7,
+            &Response::error(IpcErrorCode::NotFound, "no session `nope`"),
+        ),
+        to_line(
+            8,
+            &Response::error(
+                IpcErrorCode::UnsupportedRequest,
+                "`load_workspace` is not supported in this version",
+            ),
+        ),
+    ];
+    let actual = messages.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("session_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    for (k, line) in messages.iter().enumerate() {
+        if line.contains("\"load_") {
+            let back = decode_request_line(line);
+            assert_eq!(&to_line(back.id, &back.body), line, "{k}");
+        }
+    }
+}
+
 fn to_line<T: serde::Serialize>(id: u64, body: &T) -> String {
     serde_json::to_string(&Envelope { id, body }).unwrap()
 }

@@ -119,6 +119,9 @@ fn error_and_warning_shapes() {
             WarningCode::AlignmentDegraded,
             WarningCode::PatchEncoding,
             WarningCode::InvalidConfigValue,
+            WarningCode::SpecNotSaved,
+            WarningCode::SessionMissing,
+            WarningCode::SessionLocked,
         ],
         warnings: vec![
             Warning {

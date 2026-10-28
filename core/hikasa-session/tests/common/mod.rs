@@ -372,6 +372,11 @@ impl IpcHandler for FakeGui {
                 }
                 Response::Ok
             }
+            // An M1 GUI: sessions and workspaces are not served (D-89).
+            Request::LoadSession { .. } | Request::LoadWorkspace { .. } => Response::error(
+                hikasa_session::ipc::IpcErrorCode::UnsupportedRequest,
+                "not supported in this version",
+            ),
             _ => Response::error(hikasa_session::ipc::IpcErrorCode::InvalidRequest, "?"),
         }
     }

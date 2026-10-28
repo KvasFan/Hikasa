@@ -113,8 +113,12 @@ pub struct TimestampRule {
     /// Any whole number of hours apart (|k| ≤ 26, ± tolerance) counts as same. Default false.
     pub ignore_timezone: bool,
     /// Shift one side's times by whole hours before comparing (script `timezone:left+2`). Default `None`,
-    /// omitted from TOML.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// omitted from TOML; `offset = false` also reads as `None` (D-90: a session can turn off an offset its
+    /// defaults set).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "off_or::deserialize"
+    )]
     pub offset: Option<TzOffset>,
 }
 
@@ -389,11 +393,17 @@ fn epoch_fallback() -> FileTime {
 pub struct OtherFilters {
     /// Exclude items with both SYSTEM and HIDDEN attributes. Default true (no effect without DOS attributes).
     pub exclude_protected: bool,
-    /// Size filter. Default `None` (omitted from TOML).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Size filter. Default `None` (omitted from TOML; `size = false` also reads as `None`, D-90).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "off_or::deserialize"
+    )]
     pub size: Option<SizeFilter>,
-    /// Date filter. Default `None` (omitted from TOML).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Date filter. Default `None` (omitted from TOML; `date = false` also reads as `None`, D-90).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "off_or::deserialize"
+    )]
     pub date: Option<DateFilter>,
 }
 
@@ -924,6 +934,58 @@ mod u64_text {
     }
 }
 
+/// Serde for the optional rules (`offset`, `size`, `date`): a table is `Some`, `false` (or a JSON `null`) is
+/// `None`, so a file can write "off" over defaults that set the rule (D-90; TOML has no null). `true` is refused.
+mod off_or {
+    use std::marker::PhantomData;
+
+    use serde::de::value::MapAccessDeserializer;
+
+    use super::*;
+
+    pub(super) fn deserialize<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        d.deserialize_any(OffOrVisitor(PhantomData))
+    }
+
+    struct OffOrVisitor<T>(PhantomData<T>);
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for OffOrVisitor<T> {
+        type Value = Option<T>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a table, or `false` (off)")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<Option<T>, E> {
+            if v {
+                Err(E::invalid_value(de::Unexpected::Bool(true), &self))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Option<T>, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Option<T>, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> Result<Option<T>, D2::Error> {
+            d.deserialize_any(self)
+        }
+
+        fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Option<T>, A::Error> {
+            T::deserialize(MapAccessDeserializer::new(map)).map(Some)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,6 +1327,37 @@ mod tests {
             FolderRules::from_toml("").unwrap().0,
             FolderRules::default()
         );
+    }
+
+    /// D-90: `false` reads as "off" for the optional rules (a session turns off what its defaults set); `true`
+    /// is refused; JSON `null` and a table keep working.
+    #[test]
+    fn optional_rules_read_false_as_off() {
+        let (rules, warnings) = FolderRules::from_toml(
+            "[criteria.timestamps]\noffset = false\n[filters.other]\nsize = false\ndate = false\n",
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(rules, FolderRules::default());
+        assert!(FolderRules::from_toml("[filters.other]\nsize = true\n").is_err());
+        let (rules, _) = FolderRules::from_toml(
+            "[filters.other.size]\ncmp = \"less\"\nbytes = 10\n[criteria.timestamps.offset]\nside = \"left\"\nhours = 2\n",
+        )
+        .unwrap();
+        assert_eq!(
+            rules.filters.other.size,
+            Some(SizeFilter {
+                cmp: Cmp::Less,
+                bytes: 10
+            })
+        );
+        assert_eq!(rules.criteria.timestamps.offset.map(|o| o.hours), Some(2));
+        let json = serde_json::to_string(&rules).unwrap();
+        let back: FolderRules = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, rules);
+        let nulls: OtherFilters =
+            serde_json::from_str(r#"{"exclude_protected": true, "size": null}"#).unwrap();
+        assert_eq!(nulls.size, None);
     }
 
     #[test]

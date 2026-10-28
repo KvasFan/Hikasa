@@ -81,6 +81,8 @@ clap_complete = "4"
 directories = "6"
 interprocess = "2"
 jiff = "0.2"
+# Settings packages (D-63, D-86): pure-Rust deflate only (zlib-rs + zopfli); no AES, no other codecs.
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # GUI toolkit (D-56 amended: egui/eframe, maintainer decision after the ARCH-GUI-003 measurements)

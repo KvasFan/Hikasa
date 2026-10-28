@@ -8,8 +8,8 @@ use std::ffi::OsString;
 use std::ops::RangeInclusive;
 
 use hikasa_core::{Pair, Spec};
-use hikasa_folder::FolderRulesPatch;
-use hikasa_text::TextRulesPatch;
+use hikasa_folder::{FolderRules, FolderRulesPatch};
+use hikasa_text::{TextRules, TextRulesPatch};
 use serde::{Deserialize, Serialize};
 
 /// Quick compare method (`--size|--crc|--binary|--rules`; default Rules, CLI-003 `--qc`).
@@ -87,6 +87,9 @@ pub struct TextCompareRequest {
     pub rules_patch: TextRulesPatch,
     /// `--ignore-unimportant` (verdict and exit code).
     pub ignore_unimportant: bool,
+    /// The rules a missing `rules_file` means (`None`: the defaults): the effective rules of a session
+    /// (`session run`, `LoadSession`; D-82). Additive (M2 W2).
+    pub base_rules: Option<TextRules>,
 }
 
 impl TextCompareRequest {
@@ -131,6 +134,11 @@ pub struct FolderCompareRequest {
     pub text_patch: TextRulesPatch,
     /// `--ignore-unimportant` (verdict and exit code; also set by the criteria word `ignore-unimportant`).
     pub ignore_unimportant: bool,
+    /// The folder rules a missing `rules_file` means (`None`: the defaults): the effective rules of a session
+    /// (`session run`, `LoadSession`; D-82). Additive (M2 W2).
+    pub base_rules: Option<FolderRules>,
+    /// The text rules a missing `text_rules_file` means (`None`: the defaults). Additive (M2 W2).
+    pub base_text_rules: Option<TextRules>,
 }
 
 /// `hikasa format tokens`.

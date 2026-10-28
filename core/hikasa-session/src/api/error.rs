@@ -26,6 +26,14 @@ pub enum ApiError {
     /// `already_exists`).
     #[error("{0}")]
     AlreadyExists(String),
+    /// Not supported in this version (a reserved P1 session type, a session type `session run` cannot run yet,
+    /// a GUI that does not serve sessions, D-89). Added in M2 W2 (kind `unsupported`).
+    #[error("{0}")]
+    Unsupported(String),
+    /// Invalid data in a file the user gave (a settings package entry, D-86). Added in M2 W2 (kind
+    /// `invalid_data`).
+    #[error("{0}")]
+    InvalidData(String),
     /// Spec syntax.
     #[error(transparent)]
     Spec(#[from] SpecError),
@@ -101,6 +109,8 @@ impl ApiError {
             ApiError::InvalidArgument(_) => ErrorKind::InvalidInput,
             ApiError::NotFound(_) => ErrorKind::NotFound,
             ApiError::AlreadyExists(_) => ErrorKind::AlreadyExists,
+            ApiError::Unsupported(_) => ErrorKind::Unsupported,
+            ApiError::InvalidData(_) => ErrorKind::InvalidData,
             ApiError::Spec(e) => e.kind(),
             ApiError::LoadFailed { source, .. } | ApiError::Vfs(source) => source.kind(),
             ApiError::Format(e) => e.kind(),
@@ -189,6 +199,8 @@ impl ApiError {
             ApiError::InvalidArgument(_)
             | ApiError::NotFound(_)
             | ApiError::AlreadyExists(_)
+            | ApiError::Unsupported(_)
+            | ApiError::InvalidData(_)
             | ApiError::Spec(_)
             | ApiError::Vfs(_)
             | ApiError::Format(_)
@@ -218,6 +230,8 @@ impl ApiError {
             ApiError::InvalidArgument(_)
             | ApiError::NotFound(_)
             | ApiError::AlreadyExists(_)
+            | ApiError::Unsupported(_)
+            | ApiError::InvalidData(_)
             | ApiError::Spec(_)
             | ApiError::Format(_)
             | ApiError::Text(_)

@@ -1,0 +1,8 @@
+{"id":5,"type":"load_session","name":"work/api-v2","wait":true}
+{"id":5,"type":"view_opened","view":8}
+{"id":5,"type":"view_closed","view":8,"result":{"verdict":"binary_same","folder_verdict":null,"saved":false,"reason":"user"},"exit_code":1}
+{"id":6,"type":"load_workspace","name":"last"}
+{"id":6,"type":"views","views":[{"view":9,"kind":"folder_compare","title":"work/api-v2","specs":["/w/l","/w/r"]}]}
+{"id":7,"type":"load_session","name":"nope","wait":false}
+{"id":7,"type":"error","code":"not_found","message":"no session `nope`"}
+{"id":8,"type":"error","code":"unsupported_request","message":"`load_workspace` is not supported in this version"}

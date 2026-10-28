@@ -16,6 +16,9 @@
 //! | `vfs ls/stat/cat` | [`Service::vfs_ls`], [`Service::vfs_stat`], [`Service::vfs_cat`] |
 //! | `settings get/set/unset/list/restore-defaults` | [`Service::settings_get`], [`Service::settings_set`], [`Service::settings_unset`], [`Service::settings_list`], [`Service::settings_restore_defaults`] |
 //! | `format new/edit/delete/import/export/enable/disable/move/restore` | [`Service::format_new`], [`Service::format_edit`], [`Service::format_delete`], [`Service::format_import`], [`Service::format_export`], [`Service::format_enable`], [`Service::format_move`], [`Service::format_restore`] |
+//! | `session list/show/new/edit/delete/rename/lock/unlock/mkdir/rmdir/run` | [`Service::session_list`], [`Service::session_show`], [`Service::session_new`], [`Service::session_edit`], [`Service::session_delete`], [`Service::session_rename`], [`Service::session_lock`], [`Service::session_mkdir`], [`Service::session_rmdir`], [`Service::session_run_request`] |
+//! | `workspace list/show/delete/rename` | [`Service::workspace_list`], [`Service::workspace_show`], [`Service::workspace_delete`], [`Service::workspace_rename`] |
+//! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -24,9 +27,11 @@ mod error;
 pub mod gui;
 pub mod human;
 mod info;
+pub mod package;
 mod report;
 pub mod requests;
 pub mod responses;
+pub mod sessions;
 pub mod settings;
 pub mod vocab;
 
@@ -49,6 +54,7 @@ pub use gui::{
     ResolvedOpen, ViewOutcome, ViewRequest, ViewWords, find_gui_exe, gui_exe_candidates,
     infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
 };
+pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use report::ReportSettings;
 pub use requests::{
     FolderCompareRequest, FormatTokensRequest, QuickMethod, QuickRequest, TextCompareRequest,
@@ -56,6 +62,11 @@ pub use requests::{
 };
 pub use responses::{
     FolderCompareResponse, FormatChoice, PreparedFolderCompare, QuickResponse, TextCompareResponse,
+};
+pub use sessions::{
+    AutoSavedDto, SessionEdit, SessionItemDto, SessionListDto, SessionRunRequest, SessionShowDto,
+    SessionTarget, SessionView, SessionWriteDto, SingleArg, WorkspaceItemDto, WorkspaceListDto,
+    WorkspaceShowDto, WorkspaceWriteDto, parse_assignment,
 };
 pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,

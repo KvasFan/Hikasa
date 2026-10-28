@@ -1,0 +1,5 @@
+schema_version = 1
+type = "text-compare"
+
+[rules.alignment]
+skew_tolerance = 4

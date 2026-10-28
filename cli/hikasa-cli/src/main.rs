@@ -371,6 +371,8 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Vfs { .. }
         | Command::Gui { .. }
         | Command::Settings { .. }
+        | Command::Session { .. }
+        | Command::Workspace { .. }
         | Command::Completions { .. }
         | Command::Version
         | Command::Help(_) => None,

@@ -15,11 +15,18 @@
 //! | `settings list` | `<key> = <value>`, with `  # default: <value>` when changed ([`settings_list_lines`]) |
 //! | `settings restore-defaults` | `delete <path>` or `absent <path>` per file ([`settings_restore_lines`]) |
 //! | `format` writes | `wrote <path>`, `removed <path>` ([`format_write_lines`]); `format restore`: `delete`/`absent` |
+//! | `session list` | `folder <ref>/`, `<ref>\t<type>\t<flags>\t<description>`, `defaults <type>`, `autosaved <id>\t<type>\t<group>\t<label>` ([`session_list_lines`]) |
+//! | `session`/`workspace` writes | `wrote <path>`, `removed <path>` ([`session_write_lines`], [`workspace_write_lines`]) |
+//! | `workspace list` | `<name>\t<windows> windows\t<tabs> tabs\t<shortcut>` ([`workspace_list_lines`]) |
+//! | `settings export` | `<category>\t<path>` per item, then `wrote <package>` ([`settings_export_lines`]) |
+//! | `settings import` | `add`/`replace <path>`, `delete <path>`, one summary line per category, failures ([`settings_import_lines`]) |
 
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
+use super::package::SettingsImportDto;
+use super::sessions::{SessionListDto, SessionWriteDto, WorkspaceListDto, WorkspaceWriteDto};
 use super::settings::{
     FormatRestoreDto, FormatWriteDto, SettingsListDto, SettingsRestoreDto, SettingsSetDto,
     SettingsValueDto,
@@ -216,6 +223,129 @@ pub fn format_restore_lines(dto: &FormatRestoreDto) -> Vec<String> {
                 .map(|p| format!("absent {}", escape_controls(p))),
         )
         .collect()
+}
+
+/// Written and removed paths.
+fn write_lines(written: &[String], removed: &[String]) -> Vec<String> {
+    written
+        .iter()
+        .map(|p| format!("wrote {}", escape_controls(p)))
+        .chain(
+            removed
+                .iter()
+                .map(|p| format!("removed {}", escape_controls(p))),
+        )
+        .collect()
+}
+
+/// The lines of `session list`: folders (`folder <ref>/`), named sessions (`<ref>\t<type>\t<flags>\t<description>`,
+/// flags `L` locked and `F` favorite or `-`), then `defaults <type>` and `autosaved <id>\t<type>\t<group>\t<label>`.
+pub fn session_list_lines(dto: &SessionListDto) -> Vec<String> {
+    let mut lines: Vec<String> = dto
+        .folders
+        .iter()
+        .map(|f| format!("folder {}/", escape_controls(f)))
+        .collect();
+    for s in &dto.sessions {
+        let mut flags = String::new();
+        if s.locked {
+            flags.push('L');
+        }
+        if s.favorite {
+            flags.push('F');
+        }
+        if flags.is_empty() {
+            flags.push('-');
+        }
+        lines.push(format!(
+            "{}\t{}\t{flags}\t{}",
+            escape_controls(&s.reference),
+            s.kind,
+            escape_controls(&s.description)
+        ));
+    }
+    lines.extend(dto.defaults.iter().map(|d| format!("defaults {d}")));
+    lines.extend(dto.autosaved.iter().map(|a| {
+        format!(
+            "autosaved {}\t{}\t{}\t{}",
+            a.id,
+            a.kind,
+            a.group,
+            escape_controls(&a.label)
+        )
+    }));
+    lines
+}
+
+/// The lines of a `session` write.
+pub fn session_write_lines(dto: &SessionWriteDto) -> Vec<String> {
+    write_lines(&dto.written, &dto.removed)
+}
+
+/// The lines of a `workspace` write.
+pub fn workspace_write_lines(dto: &WorkspaceWriteDto) -> Vec<String> {
+    write_lines(&dto.written, &dto.removed)
+}
+
+/// The lines of `workspace list`.
+pub fn workspace_list_lines(dto: &WorkspaceListDto) -> Vec<String> {
+    dto.workspaces
+        .iter()
+        .map(|w| {
+            format!(
+                "{}\t{} windows\t{} tabs\t{}",
+                escape_controls(&w.name),
+                w.windows,
+                w.tabs,
+                escape_controls(&w.shortcut)
+            )
+        })
+        .collect()
+}
+
+/// The lines of `settings export`.
+pub fn settings_export_lines(dto: &crate::package::ExportDto) -> Vec<String> {
+    dto.items
+        .iter()
+        .map(|i| format!("{}\t{}", i.category, escape_controls(&i.path)))
+        .chain(std::iter::once(format!(
+            "wrote {}",
+            escape_controls(&dto.path)
+        )))
+        .collect()
+}
+
+/// The lines of `settings import`: the deletes, the items (`add`/`replace <path>`), one summary line per
+/// category (`<category>: <n> added, <n> replaced, <n> deleted`), then `failed <name>: <error>` per failure.
+pub fn settings_import_lines(dto: &SettingsImportDto) -> Vec<String> {
+    let plan = &dto.plan;
+    let mut lines: Vec<String> = plan
+        .deletes
+        .iter()
+        .map(|p| format!("delete {}", escape_controls(p)))
+        .collect();
+    for item in &plan.items {
+        let word = match item.action {
+            crate::package::PlanAction::Add => "add",
+            crate::package::PlanAction::Replace => "replace",
+            crate::package::PlanAction::SkipLocked => "skip (locked)",
+        };
+        lines.push(format!("{word} {}", escape_controls(&item.path)));
+    }
+    for (category, c) in &plan.summary {
+        lines.push(format!(
+            "{category}: {} added, {} replaced, {} deleted",
+            c.added, c.replaced, c.deleted
+        ));
+    }
+    for r in dto.results.iter().filter(|r| !r.ok) {
+        lines.push(format!(
+            "failed {}: {}",
+            escape_controls(&r.name),
+            escape_controls(r.error.as_deref().unwrap_or(""))
+        ));
+    }
+    lines
 }
 
 #[cfg(test)]

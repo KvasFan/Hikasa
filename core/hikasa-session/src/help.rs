@@ -35,6 +35,8 @@ topics!(
     "folder-compare",
     "format",
     "settings",
+    "session",
+    "workspace",
     "vfs",
     "gui",
     "completions",

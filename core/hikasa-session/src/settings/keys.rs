@@ -90,6 +90,11 @@ pub enum FileId {
     OpenWith,
     /// `archives.toml` (OPT-010).
     Archives,
+    /// A session file (`sessions/…/<name>.toml`, D-80; M2 W2). An engine file only: no settings key names it
+    /// (`hikasa session edit` addresses its keys).
+    Session,
+    /// A workspace file (`workspaces/<name>.toml`, D-85; M2 W2). An engine file only, like [`FileId::Session`].
+    Workspace,
 }
 
 impl FileId {
@@ -124,13 +129,18 @@ impl FileId {
             FileId::Filters => "filters".into(),
             FileId::OpenWith => "openwith".into(),
             FileId::Archives => "archives".into(),
+            FileId::Session => "session".into(),
+            FileId::Workspace => "workspace".into(),
         }
     }
 
-    /// The file's path relative to the configuration folder (`options.toml`, `themes/dark.toml`).
+    /// The file's path relative to the configuration folder (`options.toml`, `themes/dark.toml`; the folder
+    /// `sessions` or `workspaces` for the engine-only files).
     pub fn relative_path(&self) -> String {
         match self {
             FileId::Themes(name) => format!("themes/{name}.toml"),
+            FileId::Session => "sessions".into(),
+            FileId::Workspace => "workspaces".into(),
             other => format!("{}.toml", other.name()),
         }
     }
@@ -148,7 +158,12 @@ impl FileId {
             FileId::Commands => Some(("OPT-011", "P0")),
             FileId::OpenWith => Some(("OPT-012", "P0")),
             FileId::Filters => Some(("OPT-020", "P0")),
-            FileId::Options | FileId::State | FileId::Theme | FileId::Themes(_) => None,
+            FileId::Options
+            | FileId::State
+            | FileId::Theme
+            | FileId::Themes(_)
+            | FileId::Session
+            | FileId::Workspace => None,
         }
     }
 }

@@ -107,6 +107,12 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 - **`ropey`** keeps its default Unicode line breaks, so Hikasa keeps its own line table (lines end only at CR,
   LF or CRLF).
 
+### M2 additions (D-63; each crate enters in the wave that first uses it, with fixed features)
+
+| Crate | Wave | Features | Use |
+|---|---|---|---|
+| `zip` 9 (MIT) | W2 | `default-features = false`, `deflate` (the pure-Rust back-ends `zlib-rs` via `flate2`, and `zopfli`; no AES, no bzip2/lzma/zstd/time) | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`; W5 adds the archive features it needs |
+
 **mmap residual risk.** Mapping a file with `memmap2` is `unsafe`, because another process may modify or
 truncate a file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs
 (`core/hikasa-vfs/src/mmap.rs`, ARCH-005). Mitigations: the map is read-only and private to that module; it is

@@ -1301,6 +1301,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "jiff",
             "parking_lot",
             "crossbeam-channel",
+            "zip",
         ],
         &["tempfile", "pretty_assertions", "proptest"],
     ),

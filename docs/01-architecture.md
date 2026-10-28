@@ -178,6 +178,18 @@ struct Session<T: SessionKind> { id, name: Option<String>, folder: Option<String
   update defaults / (for child sessions) these files within parent / all files within
   parent.
 
+**M2 implementation (binding interpretation; `design/m2-contracts.md` §1.2, D-80…D-85).** The generic
+`Session<T>` above is one `hikasa_session::sessions::Session` with a type (`folder-compare`, `folder-sync`,
+`text-compare`, `text-edit`, `table-compare`, `hex-compare`, `picture-compare`), its specs, its full rules
+(typed `FolderRules`/`TextRules` for Folder and Text Compare and Text Edit, an opaque table for the other types
+until their engine waves), the text rules of rules-based content tests (folder types), opaque `display` and
+`view` tables, an optional parent link and, for folder types, per-pair and per-type overrides of children. The
+file stores only what differs from the type's defaults. The effective rules (ARCH-040/041) are, in order: the
+defaults of the type → the parent's `type` overrides for the child's type → the parent's `pair` override
+matching the child's relative paths → the child's own changes (`effective_rules`). The scopes are
+`apply_scope(View | Defaults | Pair | Type)`: `Defaults` writes `_defaults/<type>.toml` (rules only), `Pair` and
+`Type` store an override in the parent (named or auto-saved), which a locked parent keeps in memory only.
+
 ### 3.4 Comparison result models
 
 Each engine returns an immutable result that the view renders:
@@ -319,12 +331,23 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   the per-user pipe name in M1; an owner-only DACL is a P1 item. `ServerHandle::shutdown`
   wakes the blocked accept by connecting to its own endpoint once, notifies the
   outstanding waiters, closes the connections and returns within about 2 s.
-- **M1 requests.** The server itself answers `LoadSession`, `LoadWorkspace` and
-  `RunScript` with `unsupported_request` and `OpenView` of kinds other than
-  `folder_compare` and `text_compare` with `unsupported_view`; everything else goes to
-  the GUI's handler. A second `hikasa-gui` launch that cannot take the lock forwards its
+- **M1 requests.** The server itself answers `RunScript` with `unsupported_request` and
+  `OpenView` of kinds other than `folder_compare` and `text_compare` with
+  `unsupported_view`; everything else goes to the GUI's handler. (In M1 the server also
+  answered `LoadSession` and `LoadWorkspace` itself; see the M2 additions below.) A second `hikasa-gui` launch that cannot take the lock forwards its
   command line as `OpenView` without waiting (`Service::forward_open`: specs made absolute
   against its own current directory, standard input spooled) and exits with 0.
+- **M2 additions (D-89, additive to protocol v1).** `LoadSession{name, wait}` and
+  `LoadWorkspace{name}` reach the GUI's handler. `LoadSession` answers `ViewOpened{view}`
+  (and `ViewClosed` when waited; the server gives it a waiter like `OpenView`);
+  `LoadWorkspace` answers `Views{views}` with the views it opened, after closing the open
+  ones (SES-040). An unknown name is `Error{not_found}`, a session type the GUI cannot
+  show `Error{unsupported_request}`. The CLI (`hikasa gui session`, `gui workspace`,
+  `gui open <name>`) finds and checks the session or workspace locally first, and reports
+  a GUI that answers `unsupported_request` (a 0.1 GUI) as "the running GUI does not
+  support sessions; restart it" (exit 100). The GUI opens sessions through
+  `Service::session_view` / `Service::workspace_views`: the session's specs and its
+  effective rules as the `base_rules` of the view's request.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

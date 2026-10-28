@@ -27,6 +27,14 @@
     "hikasa.settings_restore.v1",
     "hikasa.format_write.v1",
     "hikasa.format_export.v1",
-    "hikasa.format_restore.v1"
+    "hikasa.format_restore.v1",
+    "hikasa.session_list.v1",
+    "hikasa.session_show.v1",
+    "hikasa.session_write.v1",
+    "hikasa.workspace_list.v1",
+    "hikasa.workspace_show.v1",
+    "hikasa.workspace_write.v1",
+    "hikasa.settings_export.v1",
+    "hikasa.settings_import.v1"
   ]
 }

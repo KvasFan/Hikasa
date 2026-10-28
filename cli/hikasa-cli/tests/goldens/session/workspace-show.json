@@ -1,0 +1,35 @@
+{
+  "schema": "hikasa.workspace_show.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "name": "last",
+    "path": "<TMP>/cfg/workspaces/last.toml",
+    "workspace": {
+      "schema_version": 1,
+      "shortcut": "F9",
+      "window": [
+        {
+          "active_tab": 1,
+          "tab": [
+            {
+              "session": "t"
+            },
+            {
+              "session": "gone"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "warnings": [
+    {
+      "code": "session_missing",
+      "message": "the session `gone` no longer exists; a Home tab takes its place",
+      "spec": null
+    }
+  ],
+  "error": null
+}

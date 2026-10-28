@@ -1,0 +1,25 @@
+schema_version = 1
+type = "text-compare"
+description = "A text-compare session"
+favorite = true
+
+[parent]
+session = "work/folders"
+left = "src/a.c"
+right = "src/a.c"
+
+[specs]
+left = "/data/left"
+right = "/data/right"
+format = "c-cpp"
+left_encoding = "utf-8"
+
+[rules.alignment]
+skew_tolerance = 7
+
+[display]
+filter = "differences"
+
+[view]
+split = 0.5
+width_left = 300

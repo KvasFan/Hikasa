@@ -54,15 +54,18 @@ pub enum Request {
         #[serde(default)]
         wait: bool,
     },
-    /// Loads a named session (M1: `Error{unsupported_request}`).
+    /// Loads a named session (D-89): `ViewOpened{view}` (and `ViewClosed` when waited); an unknown name is
+    /// `Error{not_found}`, a type the GUI cannot show `Error{unsupported_request}`. M1 GUIs answer
+    /// `Error{unsupported_request}`.
     LoadSession {
-        /// Session name.
+        /// Session reference (`work/api-v2`).
         name: String,
         /// Wait for the session's view to close.
         #[serde(default)]
         wait: bool,
     },
-    /// Loads a named workspace (M1: `Error{unsupported_request}`).
+    /// Loads a named workspace (D-89): `Views{views}` (the views it opened); unknown → `Error{not_found}`. M1
+    /// GUIs answer `Error{unsupported_request}`.
     LoadWorkspace {
         /// Workspace name.
         name: String,

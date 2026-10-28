@@ -1,0 +1,61 @@
+{
+  "items": [
+    {
+      "category": "options",
+      "name": "filters",
+      "path": "<TMP>/config/filters.toml",
+      "action": "add"
+    },
+    {
+      "category": "formats",
+      "name": "my-c",
+      "path": "<TMP>/config/formats/my-c.toml",
+      "action": "add"
+    },
+    {
+      "category": "options",
+      "name": "options",
+      "path": "<TMP>/config/options.toml",
+      "action": "replace"
+    },
+    {
+      "category": "sessions",
+      "name": "_defaults/hex-compare",
+      "path": "<TMP>/config/sessions/_defaults/hex-compare.toml",
+      "action": "add"
+    },
+    {
+      "category": "sessions",
+      "name": "notes",
+      "path": "<TMP>/config/sessions/notes.toml",
+      "action": "add"
+    },
+    {
+      "category": "sessions",
+      "name": "work/api",
+      "path": "<TMP>/config/sessions/work/api.toml",
+      "action": "add"
+    }
+  ],
+  "deletes": [
+    "<TMP>/config/sessions/mine.toml",
+    "<TMP>/config/sessions/work/api.toml"
+  ],
+  "summary": {
+    "options": {
+      "added": 1,
+      "replaced": 1,
+      "deleted": 0
+    },
+    "sessions": {
+      "added": 3,
+      "replaced": 0,
+      "deleted": 2
+    },
+    "formats": {
+      "added": 1,
+      "replaced": 0,
+      "deleted": 0
+    }
+  }
+}

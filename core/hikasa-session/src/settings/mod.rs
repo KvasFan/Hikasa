@@ -290,6 +290,7 @@ pub(crate) fn rules(file: &FileId) -> &'static [keys::KindRule] {
         FileId::Filters => filters::RULES,
         FileId::OpenWith => openwith::RULES,
         FileId::Archives => archives::RULES,
+        FileId::Session | FileId::Workspace => &[],
     }
 }
 
@@ -299,10 +300,14 @@ pub(crate) fn templates(file: &FileId) -> Vec<(&'static str, Value)> {
         FileId::Commands => commands::templates(),
         FileId::Filters => filters::templates(),
         FileId::OpenWith => openwith::templates(),
+        FileId::Workspace => crate::workspaces::templates(),
         // A scheme has no templates: its defaults are its built-in, and a syntax entry must keep what it sets.
-        FileId::Options | FileId::State | FileId::Theme | FileId::Themes(_) | FileId::Archives => {
-            Vec::new()
-        }
+        FileId::Options
+        | FileId::State
+        | FileId::Theme
+        | FileId::Themes(_)
+        | FileId::Archives
+        | FileId::Session => Vec::new(),
     }
 }
 
@@ -338,6 +343,7 @@ pub(crate) fn defaults_tree(file: &FileId, scheme: Option<&SchemeFile>) -> Value
         FileId::Filters => file::full_table(&FilterPresets::default()),
         FileId::OpenWith => file::full_table(&OpenWith::default()),
         FileId::Archives => file::full_table(&ArchiveTypes::default()),
+        FileId::Session | FileId::Workspace => toml::Table::new(),
     };
     Value::Table(table)
 }

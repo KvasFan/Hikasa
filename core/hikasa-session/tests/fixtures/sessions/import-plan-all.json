@@ -1,0 +1,103 @@
+{
+  "items": [
+    {
+      "category": "options",
+      "name": "filters",
+      "path": "<TMP>/config/filters.toml",
+      "action": "add"
+    },
+    {
+      "category": "formats",
+      "name": "my-c",
+      "path": "<TMP>/config/formats/my-c.toml",
+      "action": "add"
+    },
+    {
+      "category": "formats",
+      "name": "order",
+      "path": "<TMP>/config/formats/order.toml",
+      "action": "add"
+    },
+    {
+      "category": "options",
+      "name": "options",
+      "path": "<TMP>/config/options.toml",
+      "action": "replace"
+    },
+    {
+      "category": "sessions",
+      "name": "_defaults/hex-compare",
+      "path": "<TMP>/config/sessions/_defaults/hex-compare.toml",
+      "action": "add"
+    },
+    {
+      "category": "sessions",
+      "name": "notes",
+      "path": "<TMP>/config/sessions/notes.toml",
+      "action": "add"
+    },
+    {
+      "category": "sessions",
+      "name": "work/api",
+      "path": "<TMP>/config/sessions/work/api.toml",
+      "action": "replace"
+    },
+    {
+      "category": "state",
+      "name": "state",
+      "path": "<TMP>/config/state.toml",
+      "action": "add"
+    },
+    {
+      "category": "theme",
+      "name": "theme",
+      "path": "<TMP>/config/theme.toml",
+      "action": "add"
+    },
+    {
+      "category": "theme",
+      "name": "themes/mine",
+      "path": "<TMP>/config/themes/mine.toml",
+      "action": "add"
+    },
+    {
+      "category": "workspaces",
+      "name": "last",
+      "path": "<TMP>/config/workspaces/last.toml",
+      "action": "add"
+    }
+  ],
+  "deletes": [],
+  "summary": {
+    "options": {
+      "added": 1,
+      "replaced": 1,
+      "deleted": 0
+    },
+    "theme": {
+      "added": 2,
+      "replaced": 0,
+      "deleted": 0
+    },
+    "state": {
+      "added": 1,
+      "replaced": 0,
+      "deleted": 0
+    },
+    "sessions": {
+      "added": 2,
+      "replaced": 1,
+      "deleted": 0
+    },
+    "formats": {
+      "added": 2,
+      "replaced": 0,
+      "deleted": 0
+    },
+    "workspaces": {
+      "added": 1,
+      "replaced": 0,
+      "deleted": 0
+    }
+  }
+}
