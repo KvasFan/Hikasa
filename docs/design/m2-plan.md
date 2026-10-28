@@ -521,8 +521,10 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 
 ---
 
-## 3. New dependencies (all **need maintainer approval**)
+## 3. New dependencies (approved by the maintainer on 2026-10-28, see §4.1)
 
+Approved: every row below except `uzers` (Q10 = b, owner/group stay numeric). `xz` uses `lzma-rust2`, not
+`liblzma` (Q9 = b). `zip` is at 9.x at the time of the answers (the "≥ 4" below is a floor, not the target).
 Versions are the current major at the time of writing and must be re-checked when added (`docs/02` §1). Each
 row needs a `docs/02` line, a `deny.toml` check and a `[workspace.dependencies]` entry with fixed features.
 "In tree" means `Cargo.lock` already contains it through eframe at `v0.1.0`.
@@ -533,7 +535,7 @@ row needs a `docs/02` line, a `deny.toml` check and a `[workspace.dependencies]`
 | `tar` | 0.4 | MIT OR Apache-2.0 | vfs | read/write tar streams | in-house ustar/pax parser (moderate; pax and GNU long names are fiddly) |
 | `flate2` | 1 | MIT OR Apache-2.0 | vfs | gzip streams (pure-Rust `miniz_oxide` back-end) | in tree already (via png); `zlib-rs` back-end later if faster |
 | `bzip2` | 0.6 | MIT OR Apache-2.0 | vfs | `.bz2`; 0.6 uses a pure-Rust libbz2 port by default | `bzip2-rs` (decode only) |
-| `liblzma` | 0.4 | MIT OR Apache-2.0 (bundled C library 0BSD) | vfs | `.xz` read/write, fast | `xz2` (unmaintained), `lzma-rust2` (Apache-2.0, pure Rust, slower — the Q9 alternative), `lzma-rs` (MIT, decode-oriented) |
+| `lzma-rust2` | 0.24 | Apache-2.0 | vfs | `.xz` (and `.lzma`) read/write, pure Rust; also the back-end of `zip`'s `lzma`/`xz` features, so one LZMA codec in the tree (**chosen, Q9 = b**) | `liblzma` 0.4 (MIT OR Apache-2.0, bundled C library 0BSD; faster, but C code — rejected by the maintainer), `xz2` (unmaintained), `lzma-rs` (MIT, decode-oriented) |
 | `zstd` | 0.13 | MIT (`zstd-sys` MIT OR Apache-2.0; bundled libzstd BSD-3-Clause) | vfs | `.zst` read/write; also the `.hksnap` codec in M3 | `ruzstd` (MIT, pure Rust; encoder limited to the fastest level) |
 | `image` | 0.25 (in tree) | MIT OR Apache-2.0 (format crates: MIT/Apache, Zlib, BSD-3-Clause for `exr`) | picture | PX-001 decoders; png/jpeg/gif/bmp/ico/tiff/webp/tga/pnm/qoi/exr/hdr; `rayon` on, AVIF off | per-format crates by hand (more code, same licences); `zune-image` (less mature) |
 | `arboard` | 3 (in tree) | MIT OR Apache-2.0 | session host, gui | clipboard text and images for `clipboard://`, TC-065, PX-009 (CLI too, not only the GUI) | egui's clipboard (GUI only, text only); `copypasta` (text only) |
@@ -589,6 +591,28 @@ Each question has a recommended default; silence means the default.
     F1 maps each command id to its view's or dialog's topic; English strings centralised in the catalogue and
     help, the localization table stays P1 (ARCH-006) **[recommended]** (b) one topic per GUI command id (c) build
     the localization table in M2.
+
+### 4.1 Maintainer answers (2026-10-28)
+
+The maintainer accepted every recommended default except Q9:
+
+| Q | Answer | Consequence |
+|---|---|---|
+| 1 | a | all listed items deferred to M3; `docs/16` M3 list gains them in W0 |
+| 2 | a | Folder Sync P0 (FS-001/002/004/005) in M2, engine in W6, view in W9 |
+| 3 | a | `OPT-001…` ids added to `docs/15` in W0 |
+| 4 | a | config change detection by polling (focus + every 2 s); no `notify` |
+| 5 | a | in-house VFS browse dialog in egui; no `rfd` |
+| 6 | a | Print / Print Preview = HTML report in the default browser |
+| 7 | a | catalogue data in `hikasa_session::commands`, status `implemented` or `planned` |
+| 8 | a | read every P0 archive format; write zip and the tar family by full rebuild |
+| 9 | **b** | all crates of §3 approved, with the pure-Rust **`lzma-rust2`** for xz (no `liblzma`, no C code for LZMA) |
+| 10 | b | `thread-priority` only; owner/group stay numeric; no `uzers` |
+| 11 | a | unknown keys/sections preserved, comments and layout not; no `toml_edit` |
+| 12 | a | nextest + `commands-doc --check`/`help-check` in `ci.yml`; `bench.yml` manual, 25 % tolerance |
+| 13 | a | Markdown topics in `help/`, one per subcommand, view and dialog; localization table stays P1 |
+
+These answers become decisions D-59 onwards in `docs/design/m2-contracts.md` §0.6.
 
 ---
 
