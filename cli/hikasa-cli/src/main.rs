@@ -364,7 +364,8 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Vfs { .. }
         | Command::Gui { .. }
         | Command::Completions { .. }
-        | Command::Version => None,
+        | Command::Version
+        | Command::Help(_) => None,
     }
 }
 

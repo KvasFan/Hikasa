@@ -20,6 +20,31 @@ pub enum Scope {
     Text,
 }
 
+impl Scope {
+    /// The sections of the core catalogue (`hikasa_session::commands`) where this view type's commands live, own
+    /// section first (M2 W0).
+    pub fn catalogue_sections(self) -> &'static [&'static str] {
+        match self {
+            Scope::Global => &["global"],
+            Scope::Home => &["home", "global"],
+            Scope::Folder => &["folder-compare", "folder-shared", "session", "global"],
+            Scope::Text => &["text-compare", "file-shared", "session", "global"],
+        }
+    }
+
+    /// The help topic of this view type (the core catalogue's section topic; F1, UI-006).
+    pub fn help_topic(self) -> &'static str {
+        let key = self.catalogue_sections()[0];
+        hikasa_session::commands::catalogue().section(key).map_or(
+            hikasa_session::help::INDEX_TOPIC,
+            |s| {
+                hikasa_session::help::topic(&s.help)
+                    .map_or(hikasa_session::help::INDEX_TOPIC, |t| t.id)
+            },
+        )
+    }
+}
+
 /// Menus of the menu bar (UI-002).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Menu {
@@ -220,6 +245,10 @@ command_ids! {
     TabPrev,
     /// Program information.
     About,
+    /// Help: the contents topic.
+    HelpContents,
+    /// Help: the topic of the active view (F1).
+    ContextHelp,
     /// Home: compares the two typed paths.
     HomeCompare,
     /// Folder: terminates the comparison.
@@ -499,6 +528,28 @@ pub const CATALOGUE: &[Command] = &[
         "Exit",
         "Quits the application.",
         Some(Shortcut::ctrl(K::Char('Q'))),
+        None,
+        0,
+        P::Always,
+    ),
+    cmd(
+        C::HelpContents,
+        S::Global,
+        M::Help,
+        "Contents",
+        "Shows the contents of the help.",
+        None,
+        None,
+        0,
+        P::Always,
+    ),
+    cmd(
+        C::ContextHelp,
+        S::Global,
+        M::Help,
+        "Context Sensitive Help",
+        "Shows the help topic of the active view.",
+        Some(Shortcut::plain(K::F(1))),
         None,
         0,
         P::Always,
@@ -1197,6 +1248,52 @@ mod tests {
                 id.name()
             );
         }
+    }
+
+    /// M2 W0: every command the window executes is an `implemented` entry of the core catalogue (the source of
+    /// `docs/reference/commands.md`) with the same default shortcut, and every `implemented` entry of a section
+    /// the window shows is executed by the window.
+    #[test]
+    fn the_window_matches_the_core_catalogue() {
+        use hikasa_session::commands::{CommandStatus, catalogue};
+        let core = catalogue();
+        for c in CATALOGUE {
+            let (_, entry) = core
+                .find(c.scope.catalogue_sections(), c.id.name())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} ({:?}) is not in the core catalogue",
+                        c.id.name(),
+                        c.scope
+                    )
+                });
+            assert_eq!(entry.status, CommandStatus::Implemented, "{}", c.id.name());
+            // A contextual key (`Enter (in a path field)`) is handled by its widget, not bound by the catalogue.
+            if !entry.shortcut.contains('(') {
+                let ours = c.shortcut.map(|s| s.to_string()).unwrap_or_default();
+                assert_eq!(ours, entry.shortcut, "{} in {:?}", c.id.name(), c.scope);
+            }
+        }
+        for (section, entry) in core.entries() {
+            if entry.status != CommandStatus::Implemented {
+                continue;
+            }
+            assert!(
+                CATALOGUE.iter().any(|c| c.id.name() == entry.id
+                    && c.scope.catalogue_sections().contains(&section.key.as_str())),
+                "{} ({}) is implemented in core but the window does not execute it",
+                entry.id,
+                section.key
+            );
+        }
+    }
+
+    #[test]
+    fn every_view_type_has_a_help_topic() {
+        assert_eq!(Scope::Home.help_topic(), "view-home");
+        assert_eq!(Scope::Folder.help_topic(), "view-folder-compare");
+        assert_eq!(Scope::Text.help_topic(), "view-text-compare");
+        assert_eq!(Scope::Global.help_topic(), "main-window");
     }
 
     #[test]

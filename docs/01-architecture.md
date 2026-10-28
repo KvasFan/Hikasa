@@ -213,6 +213,12 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   registered in a per-view-type catalogue (`reference/commands.md`). Menus, toolbars,
   context menus and the "Toolbars, Shortcuts, Menus" options page are all generated
   from this catalogue; shortcuts are user-configurable per view type.
+  *M2 (D-65):* the catalogue data (id, menu, caption, default shortcut, description,
+  help topic, status `implemented`/`planned`) lives in core,
+  `core/hikasa-session/catalogue/commands.toml` (`hikasa_session::commands`), and
+  `docs/reference/commands.md` is generated from it (`cargo xtask commands-doc`). The GUI
+  keeps toolbar labels, radio groups and availability predicates next to its view
+  models; its tests check that it executes exactly the `implemented` entries.
 
 ## 4. Threading and runtime
 

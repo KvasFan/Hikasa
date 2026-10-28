@@ -31,18 +31,23 @@ Release:
 - [x] CI green on Linux, Windows and macOS (the performance gates were measured on
   Linux only).
 
-Still open from M1:
-- [ ] Help topics (P1): the definition of done asks for one per new command; there is
-  no `help/` folder yet (the commands are documented in `docs/12` and `--help`).
+Still open from M1 (done in M2 wave 0):
+- [x] Help topics: `help/` with one topic per CLI subcommand and view, `hikasa help`,
+  F1 in the window.
 
-Moved to M2 (promised by the process docs, not present in M1):
-- [ ] CI bench job on a fixed runner (criterion benches and the G1–G5 gates are run
-  by hand in M1; contract §6.4).
-- [ ] `cargo xtask commands-doc` generating `docs/reference/commands.md` with a CI
-  staleness check (the file is maintained by hand in M1).
-- [ ] `cargo nextest` in CI (CI runs `cargo test`).
+Moved to M2 (done in M2 wave 0):
+- [x] Bench job: `bench.yml`, started by hand on a GitHub-hosted runner (25 %
+  tolerance); reference figures stay hand measurements on a fixed machine (D-69).
+- [x] `cargo xtask commands-doc` generating `docs/reference/commands.md`, with a CI
+  staleness check.
+- [x] `cargo nextest` in CI.
 
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
+
+Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
+contract `docs/design/m2-contracts.md`. Done: wave 0 (catalogue in core, help topics,
+`xtask`, nextest and the docs/bench jobs).
+
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.
 - Folder Compare complete (display filters, other filters, columns, all file

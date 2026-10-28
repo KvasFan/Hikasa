@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (M2, branch `feat/m2`)
+
+M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
+`docs/design/m2-contracts.md`. Entries per wave, newest first.
+
+### Wave 0 — infrastructure
+- **Command catalogue in core** (D-65): every command of the reference (458 in 14 sections) is data in
+  `core/hikasa-session/catalogue/commands.toml`, read by `hikasa_session::commands`, with a status
+  `implemented` (the 60 the window executes) or `planned`. `docs/reference/commands.md` is generated from it by
+  `cargo xtask commands-doc` and gains a Status column; without it the file is the M1 one (D-66).
+- **Help topics** (D-67): 17 Markdown topics in `help/` (contents, command-line basics, exit codes, JSON output,
+  one per subcommand, the main window and the three views). `hikasa help [topic…]`, `hikasa help --list`, schema
+  `hikasa.help.v1` (appended to `hikasa version --json`); an unknown topic exits 100 with suggestions.
+- **The window**: Help ▸ Contents and Help ▸ Context Sensitive Help (F1) open the topics in a resizable panel on
+  the right; links open other topics; Esc closes it. Tests check that the window executes exactly the
+  `implemented` catalogue entries, with the catalogue's shortcuts.
+- **Tooling** (D-68, D-69): the `xtask` workspace member (`cargo xtask commands-doc [--check]`, `cargo xtask
+  help-check`); CI runs `cargo nextest run` (latency tests one at a time, retried on CI) plus doc tests, and a
+  `docs` job runs the two xtask checks; `bench.yml` runs the benches and the G1/G2 gates by hand.
+- Decisions D-59…D-69 record the maintainer's answers (xz through the pure-Rust `lzma-rust2`; no `uzers`).
+
 ## 0.1.0 — 2026-10-26 (M1)
 
 M1: the core engines, the `hikasa` command line and the GUI prototype (`docs/16-roadmap.md`). Entries per wave,

@@ -19,6 +19,8 @@ members = [
     "cli/hikasa-cli",
     # gui: desktop application built on core, reachable from the CLI over IPC
     "gui/hikasa-gui",
+    # repository tasks (`cargo xtask …`): generated docs and checks, never shipped
+    "xtask",
 ]
 
 [workspace.package]

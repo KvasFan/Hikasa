@@ -59,9 +59,11 @@ pub const COMPLETIONS_SCHEMA: &str = "hikasa.completions.v1";
 /// A command line that does not parse, with `--json` anywhere in it (`result` is `null`, `error.kind` is
 /// `invalid_input`, exit 100, D-35). Added in the wave-4 review.
 pub const USAGE_ERROR_SCHEMA: &str = "hikasa.usage_error.v1";
+/// `hikasa help [topic] --json` and `hikasa help --list --json` (M2 W0).
+pub const HELP_SCHEMA: &str = "hikasa.help.v1";
 
-/// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`).
-pub const SCHEMAS: [&str; 18] = [
+/// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
+pub const SCHEMAS: [&str; 19] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -80,6 +82,7 @@ pub const SCHEMAS: [&str; 18] = [
     VERSION_SCHEMA,
     COMPLETIONS_SCHEMA,
     USAGE_ERROR_SCHEMA,
+    HELP_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -193,6 +196,67 @@ pub struct CompletionsDto {
     pub shell: String,
     /// The script.
     pub script: String,
+}
+
+/// `hikasa.help.v1`: one topic (`hikasa help [topic]`) or the topic list (`hikasa help --list`); the other part
+/// is `null` / empty (§4.1 rule 3: arrays are never `null`). M2 W0.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpDto {
+    /// The topic shown (`null` with `--list`).
+    pub topic: Option<HelpTopicDto>,
+    /// Every topic, in contents order (empty unless `--list`).
+    pub topics: Vec<HelpListItemDto>,
+}
+
+/// One topic of `hikasa.help.v1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpTopicDto {
+    /// Id (`text-compare`).
+    pub id: String,
+    /// Title (the `#` heading).
+    pub title: String,
+    /// The Markdown source.
+    pub markdown: String,
+    /// The topics it links to.
+    pub links: Vec<String>,
+}
+
+/// One entry of `hikasa help --list --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpListItemDto {
+    /// Id.
+    pub id: String,
+    /// Title.
+    pub title: String,
+}
+
+impl HelpDto {
+    /// The document of one topic.
+    pub fn topic(topic: &crate::help::HelpTopic) -> HelpDto {
+        HelpDto {
+            topic: Some(HelpTopicDto {
+                id: topic.id.to_owned(),
+                title: topic.title(),
+                markdown: topic.source.to_owned(),
+                links: topic.links(),
+            }),
+            topics: Vec::new(),
+        }
+    }
+
+    /// The document of `--list`.
+    pub fn list() -> HelpDto {
+        HelpDto {
+            topic: None,
+            topics: crate::help::topics()
+                .iter()
+                .map(|t| HelpListItemDto {
+                    id: t.id.to_owned(),
+                    title: t.title(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Writes `value` as pretty JSON (2-space indentation) followed by `\n` (§4.1 rule 1).

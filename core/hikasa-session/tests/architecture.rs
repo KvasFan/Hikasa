@@ -384,7 +384,7 @@ fn unsafe_violations(rel: &str, raw: &str) -> Vec<String> {
 
 fn check_unsafe(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
-    for top in ["core", "cli", "gui"] {
+    for top in ["core", "cli", "gui", "xtask"] {
         for file in rust_files(&root.join(top)) {
             let rel = relative(root, &file);
             let Ok(raw) = fs::read_to_string(&file) else {
@@ -1354,6 +1354,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
         ],
         &["tempfile", "pretty_assertions"],
     ),
+    // M2 W0: the repository tasks use the session crate only (the catalogue and the help topics).
+    ("xtask", &["hikasa-session"], &[]),
     ("hikasa-table", &[], &[]),
     ("hikasa-hex", &[], &[]),
     ("hikasa-picture", &[], &[]),

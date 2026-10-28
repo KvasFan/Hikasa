@@ -102,6 +102,8 @@ pub struct AppCore {
     active: usize,
     message: Option<String>,
     quitting: bool,
+    /// The help topic shown in the help panel (M2 W0, UI-006).
+    help: Option<&'static str>,
 }
 
 impl AppCore {
@@ -121,9 +123,27 @@ impl AppCore {
             active: 0,
             message: None,
             quitting: false,
+            help: None,
         };
         app.new_home_tab();
         app
+    }
+
+    /// The help topic shown in the help panel (`None`: the panel is hidden).
+    pub fn help(&self) -> Option<&'static str> {
+        self.help
+    }
+
+    /// Shows the topic `id` in the help panel (a link inside the panel; an unknown id shows the contents).
+    pub fn show_help(&mut self, id: &str) {
+        let topic = hikasa_session::help::topic(id)
+            .or_else(|| hikasa_session::help::topic(hikasa_session::help::INDEX_TOPIC));
+        self.help = topic.map(|t| t.id);
+    }
+
+    /// Hides the help panel.
+    pub fn close_help(&mut self) {
+        self.help = None;
     }
 
     /// The view registry shared with the IPC handler.
@@ -435,6 +455,11 @@ impl AppCore {
                     "Hikasa {HIKASA_VERSION} — compare folders and files. GUI prototype (milestone 1); every \
                      function is also available from the hikasa command line."
                 ));
+            }
+            CommandId::HelpContents => self.show_help(hikasa_session::help::INDEX_TOPIC),
+            CommandId::ContextHelp => {
+                let topic = self.scope().help_topic();
+                self.show_help(topic);
             }
             CommandId::HomeCompare => {
                 let wake = self.wake();

@@ -347,6 +347,7 @@ values are a usage error (exit 100), wherever they stand.
 | `gui ping` / `gui list` / `gui close <id>` / `gui quit` | — |
 | `completions bash\|elvish\|fish\|powershell\|zsh` | — |
 | `version` | — |
+| `help [topic…]` | `--list`. *M2 W0 (D-67):* prints a help topic of `help/` (the words joined with `-` name it: `help text compare` → `text-compare`; a subcommand without its own topic shows its parent's); no topic prints the contents; an unknown topic exits 100 with suggestions; `--json` gives `hikasa.help.v1`. Reads no configuration |
 
 `-` names standard input (read once, when a command first needs it; `--stdin-name` gives
 it a file name for format detection, D-15). `--output <file>` writes the report through a
@@ -387,7 +388,9 @@ ok, exit_code, result, warnings, error}` with the schemas `hikasa.quick.v1`,
 `hikasa.vfs_list.v1`, `hikasa.vfs_stat.v1`, `hikasa.vfs_cat.v1`, `hikasa.gui_open.v1`,
 `hikasa.gui_ping.v1`, `hikasa.gui_list.v1`, `hikasa.gui_close.v1`, `hikasa.gui_quit.v1`,
 `hikasa.version.v1`, `hikasa.completions.v1` and, for a command line that does not parse,
-`hikasa.usage_error.v1` (its `error.message` is the parser's whole message in one line).
+`hikasa.usage_error.v1` (its `error.message` is the parser's whole message in one line);
+M2 adds `hikasa.help.v1` (`{topic: {id, title, markdown, links} | null, topics: [{id,
+title}]}`), appended last to the `schemas` of `hikasa version --json`.
 `warnings` start with the warnings of the configuration (unknown `options.toml` sections,
 skipped user formats), which human mode prints once on stderr; `version` and `completions`
 read no configuration (they work with a broken or newer one), so their documents carry no

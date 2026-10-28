@@ -30,6 +30,11 @@
 - **UI-006** (P0): Keyboard: all commands reachable; arrow navigation in trees/grids;
   Esc closes dialogs and (option) file views; F1 context help opens the manual page of
   the focused element.
+  *M2 W0 (D-67):* F1 (`ContextHelp`) shows the help topic of the active view type in a
+  resizable panel on the right of the window; Help ▸ Contents (`HelpContents`) shows the
+  contents; links open other topics; Esc or the panel's close button hides it. The topics
+  are the Markdown files of `help/`, the same ones `hikasa help` prints. Dialogs get their
+  own topics in the waves that add them.
 - **UI-007** (P0): Hints/tooltips for toolbar buttons with optional shortcut text;
   timing options.
 - **UI-008** (P0): Drag & drop from the OS into any path edit, pane or Home button.

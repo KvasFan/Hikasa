@@ -293,10 +293,13 @@ FFI call or a crate that is not approved) or a different allocator, which is lef
 
 ## 4. Build and tooling
 
-- `cargo fmt`, `cargo clippy -D warnings`, `cargo test` and `cargo deny` in CI on
-  Linux, Windows, macOS (`.github/workflows/ci.yml`). `cargo nextest`, a CI bench job
-  on a fixed runner and `cargo xtask commands-doc` are M2 items (`16-roadmap.md`); in
-  M1 the benchmarks and performance gates run by hand.
+- `cargo fmt`, `cargo clippy -D warnings`, `cargo nextest run` (plus `cargo test
+  --doc`) and `cargo deny` in CI on Linux, Windows, macOS (`.github/workflows/ci.yml`;
+  `.config/nextest.toml` runs the wall-clock latency tests one at a time and retries
+  them on CI, D-69). A `docs` job runs `cargo xtask commands-doc --check` and `cargo
+  xtask help-check` (`xtask/`, D-68). The criterion benches and the G1/G2 gates run in
+  `.github/workflows/bench.yml`, started by hand (25 % tolerance against a baseline);
+  the reference figures in the docs come from runs on a fixed machine.
 - Window tests and GUI measurements run headless with `env -u WAYLAND_DISPLAY
   xvfb-run -a …` (17-agent-workflow §3.5).
 - Release builds with LTO, `codegen-units=1`, `panic=unwind` (we must survive

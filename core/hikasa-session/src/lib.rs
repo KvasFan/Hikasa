@@ -16,8 +16,11 @@
 //! | [`jobs`] | [`JobControl`], [`JobHandle`], [`run_guarded`] (§5.6) |
 //! | [`api`] | [`api::Service`] and its requests, responses, DTOs (§4) and the `gui open` parser |
 //! | [`ipc`] | protocol v1, framing, endpoint, server and client (§4.4, §2.23) |
+//! | [`commands`] | the command catalogue of every view type (ARCH-070; M2 W0) |
+//! | [`help`] | the help topics of `help/` and their Markdown reader (M2 W0) |
 //!
-//! Specification: `docs/design/m1-contracts.md` §1.8, §2.21–§2.23, §3, §4, §5.
+//! Specification: `docs/design/m1-contracts.md` §1.8, §2.21–§2.23, §3, §4, §5; `docs/design/m2-contracts.md`
+//! (W0: catalogue and help).
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![cfg_attr(
@@ -27,8 +30,10 @@
 
 pub mod api;
 mod atomic;
+pub mod commands;
 mod error;
 pub mod formats;
+pub mod help;
 pub mod host;
 pub mod ipc;
 pub mod jobs;

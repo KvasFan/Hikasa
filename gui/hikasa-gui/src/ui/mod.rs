@@ -6,6 +6,7 @@
 //! job's news wakes it; while a job runs it also polls at a low rate (the status line shows progress).
 
 pub mod folder;
+pub mod help;
 pub mod home;
 pub mod keys;
 pub mod scroll;
@@ -48,6 +49,10 @@ enum Action {
     Activate(usize),
     CloseTab(usize),
     Dismiss,
+    /// Show a help topic (a link in the help panel).
+    Help(String),
+    /// Hide the help panel.
+    CloseHelp,
 }
 
 /// The eframe application.
@@ -138,6 +143,14 @@ impl HikasaApp {
             }
             Action::Dismiss => {
                 self.core.dismiss_message();
+                Vec::new()
+            }
+            Action::Help(topic) => {
+                self.core.show_help(&topic);
+                Vec::new()
+            }
+            Action::CloseHelp => {
+                self.core.close_help();
                 Vec::new()
             }
         };
@@ -489,6 +502,23 @@ impl eframe::App for HikasaApp {
                             }
                         });
                     });
+                });
+        }
+
+        if let Some(topic) = self.core.help() {
+            egui::Panel::right("hk-help")
+                .resizable(true)
+                .default_size(380.0)
+                .min_size(240.0)
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| match help::show(ui, topic, &pal) {
+                    Some(help::HelpAction::Open(id)) => actions.push(Action::Help(id)),
+                    Some(help::HelpAction::Close) => actions.push(Action::CloseHelp),
+                    None => {}
                 });
         }
 

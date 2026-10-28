@@ -1,0 +1,20 @@
+# cargo-nextest configuration (M2 W0, Q12a). CI runs `cargo nextest run --workspace --profile ci`; doc tests run
+# separately with `cargo test --workspace --doc` (nextest does not run them).
+
+# Tests that measure a latency against a wall-clock bound (cancellation, budgets, timeouts) run one at a time, so
+# that a crowded machine running every other test in parallel does not delay their wake-ups.
+[test-groups]
+timing = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(/cancel|latency|budget|within_|timeout|abandoned/)'
+test-group = 'timing'
+
+[profile.ci]
+fail-fast = false
+
+[[profile.ci.overrides]]
+filter = 'test(/cancel|latency|budget|within_|timeout|abandoned/)'
+test-group = 'timing'
+# A shared CI runner delivers timed wake-ups late now and then; nextest reports a retried pass as flaky.
+retries = 2

@@ -24,6 +24,35 @@ use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
 
+/// M2 W0: F1 shows the topic of the active view, Help ▸ Contents the index; links open topics; the panel closes.
+#[test]
+fn help_commands_show_topics() {
+    let world = World::new();
+    let mut app = world.app(None);
+    assert_eq!(app.help(), None);
+    app.execute(CommandId::ContextHelp);
+    assert_eq!(app.help(), Some("view-home"));
+    app.execute(CommandId::HelpContents);
+    assert_eq!(app.help(), Some(hikasa_session::help::INDEX_TOPIC));
+    app.show_help("exit-codes");
+    assert_eq!(app.help(), Some("exit-codes"));
+    app.show_help("no-such-topic");
+    assert_eq!(app.help(), Some(hikasa_session::help::INDEX_TOPIC));
+    let left = world.write("l/a.txt", "a\n");
+    let right = world.write("r/a.txt", "b\n");
+    world.open(&mut app, &left, &right);
+    world.settle(&mut app);
+    app.execute(CommandId::ContextHelp);
+    assert_eq!(app.help(), Some("view-text-compare"));
+    let (l, r) = (world.path("l"), world.path("r"));
+    world.open(&mut app, &l, &r);
+    world.settle(&mut app);
+    app.execute(CommandId::ContextHelp);
+    assert_eq!(app.help(), Some("view-folder-compare"));
+    app.close_help();
+    assert_eq!(app.help(), None);
+}
+
 /// A private test world: inputs, a configuration folder and an IPC endpoint inside one temporary folder.
 struct World {
     dir: tempfile::TempDir,
@@ -638,7 +667,14 @@ fn every_command_has_an_enabled_state() {
     // Home, empty.
     assert_eq!(
         enabled_in(&app, Scope::Home),
-        [C::TabNew, C::CloseTab, C::Exit, C::About]
+        [
+            C::TabNew,
+            C::CloseTab,
+            C::Exit,
+            C::HelpContents,
+            C::ContextHelp,
+            C::About
+        ]
     );
     // Folder, finished, nothing selected.
     let folder = world.open(&mut app, &a, &b);

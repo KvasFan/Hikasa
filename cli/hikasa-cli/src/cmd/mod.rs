@@ -6,6 +6,7 @@ pub mod completions;
 pub mod folder;
 pub mod format;
 pub mod gui;
+pub mod help;
 pub mod quick;
 pub mod text;
 pub mod version;
@@ -16,7 +17,7 @@ use hikasa_core::{JobKind, Warning};
 use hikasa_session::api::dto::{
     COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_LIST_SCHEMA,
     FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
-    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, JsonEnvelope, QUICK_SCHEMA, TEXT_COMPARE_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, TEXT_COMPARE_SCHEMA,
     VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
@@ -137,12 +138,13 @@ pub fn fail(
     err.exit_code(op).code()
 }
 
-/// Runs the commands that need no service and read no configuration (`completions`, `version`); `None` for
-/// every other command.
+/// Runs the commands that need no service and read no configuration (`completions`, `version`, `help`); `None`
+/// for every other command.
 pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
     match command {
         Command::Completions { shell } => Some(completions::run(out, *shell)),
         Command::Version => Some(version::run(out)),
+        Command::Help(args) => Some(help::run(out, args)),
         Command::Quick(_)
         | Command::Text { .. }
         | Command::Folder { .. }
@@ -193,6 +195,7 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
         },
         Command::Completions { .. } => (COMPLETIONS_SCHEMA, ApiOp::Other),
         Command::Version => (VERSION_SCHEMA, ApiOp::Other),
+        Command::Help(_) => (HELP_SCHEMA, ApiOp::Other),
     }
 }
 
@@ -212,6 +215,7 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Gui { cmd } => gui::run(ctx, cmd, open),
         Command::Completions { shell } => completions::run(ctx.out, *shell),
         Command::Version => version::run(ctx.out),
+        Command::Help(args) => help::run(ctx.out, args),
     }
 }
 

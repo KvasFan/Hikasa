@@ -1,0 +1,37 @@
+name: Bench
+
+# The criterion benches and the performance gates (contract §6.4; M2 plan Q12a). Started by hand only: a shared
+# GitHub-hosted runner is noisy, so a run compares against a baseline with a 25 % tolerance, and the reference
+# figures in the docs come from runs on a fixed machine by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "criterion baseline name to compare against (empty: just record)"
+        required: false
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: criterion benches
+        run: |
+          if [ -n "${{ inputs.baseline }}" ]; then
+            cargo bench --workspace -- --baseline "${{ inputs.baseline }}" --noise-threshold 0.25
+          else
+            cargo bench --workspace -- --save-baseline ci
+          fi
+      - name: gates G1 and G2 through the binary
+        run: cargo test --release -p hikasa-cli --test perf_gates -- --ignored --nocapture
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion
+          path: target/criterion

@@ -1,0 +1,17 @@
+index	Hikasa Help
+cli	Using the command line
+exit-codes	Exit codes
+json-output	JSON output
+quick	hikasa quick
+text-compare	hikasa text compare
+folder-compare	hikasa folder compare
+format	hikasa format
+vfs	hikasa vfs
+gui	hikasa gui
+completions	hikasa completions
+version	hikasa version
+help	hikasa help
+main-window	The main window
+view-home	The Home view
+view-folder-compare	The Folder Compare view
+view-text-compare	The Text Compare view

@@ -91,6 +91,19 @@ pub enum Command {
     },
     /// Print version information.
     Version,
+    /// Print a help topic (`hikasa help text compare`), or the contents.
+    Help(HelpArgs),
+}
+
+/// `hikasa help [topic…]`.
+#[derive(Debug, clap::Args)]
+pub struct HelpArgs {
+    /// The topic: words such as `text compare`, or an id such as `exit-codes`.
+    #[arg(value_name = "TOPIC")]
+    pub topic: Vec<String>,
+    /// List every topic (id and title).
+    #[arg(long, conflicts_with = "topic")]
+    pub list: bool,
 }
 
 /// Importance overrides shared by `quick`, `text compare` and `folder compare --content rules`.
