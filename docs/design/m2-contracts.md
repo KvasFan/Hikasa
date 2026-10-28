@@ -11,7 +11,7 @@
 ## Table of contents
 
 - §0 Ground rules: scope, new tenets, decision register D-59…, dependencies, documentation updates
-- §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2–§1.14 W2–W14 (outline in plan §6, written
+- §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages · §1.3–§1.14 W3–W14 (outline in plan §6, written
   before each wave)
 - §6 Tests and acceptance per wave
 
@@ -57,11 +57,21 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-77 | **Restore defaults** (CLI part of SES-062 for single files): `hikasa settings restore-defaults` deletes the chosen settings files (the next load sees defaults). It is a T12 plan: `--dry-run` prints it; without `--dry-run` it needs `--yes`, else exit 100 (`invalid_input`). Sessions, workspaces and formats are not touched (formats: `format restore`; sessions and the wizard: W2). | T12; destructive commands never run by accident in scripts. | 03 §6, 12 |
 | D-78 | **Themes** (UI-020…023). `theme.toml` picks the scheme for light and for dark mode (`light_scheme`, `dark_scheme`) and holds the four fonts; a scheme is `themes/<name>.toml`. The built-in schemes `light` and `dark` are embedded; a file `themes/light.toml` or `themes/dark.toml` overrides elements of the built-in (sparse); any other scheme names a `base` (`light` or `dark`) whose values fill the elements it does not set. Colours are `#rrggbb` or `#rrggbbaa`, written in lower case. Syntax colours are keyed by grammar element name (lower case); an element without an entry uses the eight-colour `fallback` cycle by element id, as in M1. | Editable built-ins without materializing them; every element has a value. | 14 §2 |
 | D-79 | **Advisory exceptions.** `deny.toml` ignores the "unmaintained" notices RUSTSEC-2026-0192 (`ttf-parser`), -0370 (`zvariant`), -0371 (`zbus_names`) and -0372 (`zvariant_derive`): GUI transitive dependencies pinned by eframe 0.37 (winit → sctk-adwaita; accesskit_unix → zbus 5). Each entry is removed when an upgrade drops the crate; a security (non-unmaintained) advisory is never ignored this way. | Maintainer, 2026-10-28 (option a); no fix reachable without leaving eframe 0.37. | 02 |
+| D-80 | **Session files** (SES-001…006, ARCH-040). A session is one TOML file loaded and saved by the D-70 engine: named sessions `sessions/<folder path>/<name>.toml`, defaults `sessions/_defaults/<type>.toml`, auto-saved `sessions/_autosaved/<id>.toml`. Names and folder names: 1–100 characters, none of `/ \ : * ? " < > |` or control characters, no leading or trailing space or dot, not starting with `_`, not a Windows device name (`CON`, `NUL`, `COM1`, …); unique per folder **case-insensitively**. A session reference is the folder path and name joined by `/` (`work/api-v2`). | Portable names on every platform; `_` keeps the reserved folders apart. | 03 §1, §5.3 |
+| D-81 | **Typed parts now, opaque parts later.** `specs` and `rules` are typed for Folder Compare (`hikasa_folder::FolderRules` + text rules for content tests, the same TOML as `--rules-file`), Text Compare and Text Edit (`hikasa_text::TextRules`, format, encodings). Folder Sync, Table, Hex and Picture sessions store `specs` typed and `rules` as an opaque table kept as it is until their engine wave (W6, W12) types it. `view` (layout, view state) and `display` (display filter, SES-010) are opaque tables in every type until the GUI waves type them. Reserved P1 types (`text-merge`, `folder-merge`, `media`, `version`, `registry`, …) are refused with `unsupported`. | The rules of M1 are already serializable; nothing is invented ahead of its wave. | 03 §1 |
+| D-82 | **Effective settings of a session** (ARCH-040/041, SES-021). `rules = defaults(type)` overlaid by the session file's `rules` (a session file stores only what differs from the type's defaults at save time, D-70 sparse against the defaults); for a child session (TC-052 `parent` link) the overlay order is `defaults(type)` → parent `[[override]]` with `scope = "type"` → parent `[[override]]` with `scope = "pair"` matching the child's relative paths → the child's own changes. Scopes: `view` (nothing persisted except the view's own session), `defaults` (writes `_defaults/<type>.toml`, rules only, never specs), `pair` and `type` (write an override into the parent session; the parent must be a named or auto-saved session). | One table, testable without the GUI. | 01 §3.3, 03 §2 |
+| D-83 | **Auto-save** (SES-002). One auto-saved file per open view: the first save creates `_autosaved/<YYYYMMDD-HHMMSS>-<n>.toml` (local time of the injected clock, `n` the first free counter) and later saves of the same view overwrite it. The file carries `saved_at` (RFC 3339 with offset). Groups are computed from `saved_at` against the injected local date: Today, Yesterday, 2–6 days ago, More than 6 days ago (future dates count as Today). After each auto-save the store keeps the newest `max_auto_saved_sessions` (OPT-019) by `saved_at`, then by name; 0 = no auto-save and every auto-saved file is removed at the next prune. Named sessions are never pruned. Timers stay in the adapters. | Deterministic with an injected clock (T1). | 03 §1 |
+| D-84 | **Lock and close prompts** (SES-004, SES-005) are the pure function `close_action(origin, locked, dirty, explicit_save) -> CloseAction` of the table in §1.2.4. A locked session file is never written by auto-save or by close; an explicit Save on a locked session asks "Save changes to locked session?" and writes only after Yes. | One state machine for the GUI (W4) and tests. | 03 §1 |
+| D-85 | **Workspaces** (SES-040…042) are `workspaces/<name>.toml` (D-70 engine): windows with geometry and active tab, tabs in order, each tab either a reference to a named session (`session = "work/api"`) or an inline session table (an unsaved or auto-saved view) plus its opaque `view` layout; an optional `shortcut`. Workspace names follow D-80 (no folders). Loading closes nothing in core; the GUI closes its views and restores (tabs load lazily, G12). A reference to a session that no longer exists restores a Home tab and adds warning `session_missing`. | SES-040; lazy restore keeps the first screen fast. | 03 §4 |
+| D-86 | **Settings packages** (SES-060…062). A `.hikasa-pkg` is a zip (stored or deflate, no encryption) holding `manifest.toml` and the files at their configuration-relative paths. Categories: `options` (`options.toml`, `filters.toml`, `openwith.toml`, `archives.toml`), `theme` (`theme.toml`, `themes/*.toml`), `commands`, `state`, `sessions` (named sessions and `_defaults`, per item; never `_autosaved`), `formats` (per item, plus `order.toml`), `workspaces` (per item), `system_info` (`system-info.txt`, export only, never imported); `profiles` is reserved (P1). Import is a T12 plan: every entry is validated (manifest match, allowed path pattern of its category, no `..`/absolute/backslash paths, ≤ 10,000 entries, ≤ 16 MiB per entry and 64 MiB in total uncompressed, each file parses with its schema, none newer than this build) **before** anything is written; then items are written one by one with per-item results. Collisions are items whose target exists (they are replaced). `--silent` imports every category and item without deletes. | Safe, previewable import; packages built from the same files the store reads. | 03 §6 |
+| D-87 | **Restore factory defaults** (SES-062) is an import plan against the built-ins: per category, the user files of that category are deleted (options, theme, commands, state, filters, openwith, archives files; `_defaults/*.toml`; format files that override or add formats and `order.toml`); named sessions and workspaces are deleted only with the explicit `--delete-sessions` / `--delete-workspaces` choices (the wizard's "delete all existing" options). It extends `settings restore-defaults` (D-77) with `--category`. | SES-062 "reuses the same wizard". | 03 §6 |
+| D-88 | **Command-line forms** (CLI-002, revises D-51 additively). One positional argument that is not an existing path is resolved as: a named session (exact reference, then case-insensitive) → `LoadSession`; else a workspace → `LoadWorkspace`; else the M1 error. An existing file whose name ends in `.hikasa-pkg` (case-insensitive) is a settings package: with `--silent` it is imported headless (D-86), without it the CLI asks the GUI to show the import wizard (W4; until then exit 100 `unsupported`). `@file` stays reserved for W8. | CLI-002 order; an existing path always wins over a name. | 12 §1 |
+| D-89 | **IPC** (ARCH-091, additive to protocol v1, D-46). `LoadSession{name, wait}` → `ViewOpened{view}` (and `ViewClosed` when waited); `LoadWorkspace{name}` → `Views{views}` (the views it opened). Unknown names → `Error{not_found}`; a type the GUI cannot render yet → `Error{unsupported_request}`. A GUI that answers `unsupported_request` to these requests is reported by the CLI as "the running GUI does not support sessions; restart it" (exit 100). | Forward compatibility per D-46. | 01 §6 |
 
 ### 0.4 Dependencies
 
 W0 and W1 add no third-party crate (the change stamp uses `hikasa_vfs::crc32_reader`). Member manifests (architecture check 3): + `xtask` = `[hikasa-session]`. The
-approved crates of D-63 enter the table of the wave that first uses them.
+approved crates of D-63 enter the table of the wave that first uses them. **W2** adds `zip` (D-63) to `hikasa-session` for settings packages, with the workspace-level features `deflate` only (pure-Rust back-end; W5 adds the archive features); `docs/02` gains its line.
 
 ### 0.5 Documentation updates of W0
 
@@ -497,7 +507,224 @@ the new `format` forms; `export|import` stay W2); `docs/14` §2.1 (new: theme an
   file; `format edit --set` refuses unknown keys (the canonical writer would drop them); `--from-file` copies the
   file as it is (like `import`).
 
-### 1.2–1.14 W2–W14
+### 1.2 W2 — Sessions, workspaces, settings packages
+
+**Ids.** SES-001…006, SES-008, SES-010, SES-021, SES-040…042, SES-060…062, ARCH-040, ARCH-041, ARCH-091
+(`LoadSession`, `LoadWorkspace`), CLI-002 (session, workspace and package forms), CLI-G02 (`gui session`,
+`gui workspace`), TC-052 (parent link data). Decisions D-80…D-89.
+
+**Files.** `core/hikasa-session/src/sessions/` (`mod.rs`, `name.rs`, `file.rs`, `store.rs`, `autosave.rs`,
+`scope.rs`, `close.rs`), `src/workspaces.rs`, `src/package/` (`mod.rs`, `manifest.rs`, `export.rs`,
+`import.rs`), `src/api/sessions.rs`, `src/api/package.rs`; `cli/hikasa-cli/src/cmd/session.rs`,
+`cmd/workspace.rs`, `cmd/settings.rs` (export/import/restore categories), `cmd/gui.rs` (`session`,
+`workspace`); the legacy parser in `api/` (D-88); `gui/hikasa-gui` IPC handler only (`ipc.rs`, opening views
+for loaded sessions with the existing view constructors); `help/session.md`, `help/workspace.md`,
+`help/settings.md` (extended), goldens.
+
+#### 1.2.1 Session file (D-80, D-81)
+
+```toml
+schema_version = 1
+type = "folder-compare"        # folder-compare | folder-sync | text-compare | text-edit | table-compare |
+                               # hex-compare | picture-compare
+description = ""
+locked = false
+favorite = false               # SES-031 "Favorite" (pinned to the top of the tree)
+saved_at = ""                  # RFC 3339; auto-saved files only
+[parent]                       # TC-052: child sessions only
+session = ""                   # reference of a named session, or "_autosaved/<id>"
+left = ""  ;  right = ""       # the child's paths relative to the parent's bases ("/"-separated)
+[specs]                        # canonical spec strings (absolute, `Spec` display form)
+left = ""  ;  right = ""       # text-edit: `left` only
+format = ""                    # file types: format id, "" = detect
+left_encoding = ""  ;  right_encoding = ""
+[rules]                        # folder-compare: FolderRules TOML (as --rules-file); file types: TextRules;
+                               # others: opaque until W6/W12
+[text_rules]                   # folder-compare and folder-sync: rules of rules-based content tests
+[display]                      # opaque (SES-010)
+[view]                         # opaque (layout, view state)
+[[override]]                   # folder types only (D-82)
+scope = "pair"                 # pair | type
+left = ""  ;  right = ""       # pair: relative paths; type: unused
+type = "text-compare"          # the child session type the override applies to
+[override.rules]               # sparse against defaults(type)
+```
+
+`[rules]` and `[[override]].rules` are written sparse against the defaults of the type **as resolved at
+save time** (D-82): a session saved before a change of the defaults keeps only its own differences. Specs of
+`-` (stdin) and `clipboard://` are never stored (the session keeps `""` for that side and warning
+`spec_not_saved`).
+
+```rust
+pub enum SessionType { FolderCompare, FolderSync, TextCompare, TextEdit, TableCompare, HexCompare, PictureCompare }
+// as_str()/parse() = the kebab-case names above; parse of a P1 type name → ApiError::Unsupported
+pub struct SessionName(String);                 // validated (D-80); Display = the reference
+pub struct SessionRef { pub folder: Vec<SessionName>, pub name: SessionName }   // parse("a/b/c")
+pub struct Session { pub kind: SessionType, pub description: String, pub locked: bool, pub favorite: bool,
+                     pub saved_at: Option<jiff::Timestamp>, pub parent: Option<ParentLink>, pub specs: Specs,
+                     pub rules: SessionRules, pub text_rules: Option<TextRules>, pub display: toml::Table,
+                     pub view: toml::Table, pub overrides: Vec<Override> }
+pub enum SessionRules { Folder(FolderRules), Text(TextRules), Opaque(toml::Table) }
+impl Session {
+    pub fn new(kind: SessionType, defaults: &Session) -> Session;      // SES-001: template = defaults
+    pub fn clear(&self, defaults: &Session) -> Session;                // SES-008 Clear Session (keeps type)
+    pub fn swap_sides(&mut self);                                      // SES-008: specs, encodings, parent paths,
+                                                                       // pair overrides; `view` keys ending in
+                                                                       // `_left`/`_right` are exchanged
+    pub fn for_script(&self) -> Session;                               // SES-010: `display` cleared
+}
+```
+
+#### 1.2.2 Store (`SessionStore`)
+
+```rust
+impl SessionStore {
+    pub fn new(&ConfigLocation, &Options) -> SessionStore;
+    pub fn list(&self) -> Result<SessionTree, SessionError>;          // folders, named, defaults, auto-saved (+ groups)
+    pub fn load(&self, &SessionRef, LoadMode) -> Result<Loaded<Session>, SessionError>;
+    pub fn defaults(&self, SessionType) -> Result<Session, SessionError>;   // missing file → built-in defaults
+    pub fn save(&self, &SessionRef, &Session, Overwrite) -> Result<PathBuf, SessionError>;  // refuses locked unless Overwrite::Force
+    pub fn save_defaults(&self, &Session) -> Result<PathBuf, SessionError>;
+    pub fn delete(&self, &SessionRef) -> Result<(), SessionError>;
+    pub fn rename(&self, from: &SessionRef, to: &SessionRef) -> Result<(), SessionError>;   // also moves between folders
+    pub fn create_folder(&self, &[SessionName]) / delete_folder(&self, &[SessionName], recursive: bool)
+        / rename_folder(&self, from: &[SessionName], to: &[SessionName]);
+    pub fn autosave(&self, slot: Option<&AutoId>, &Session, now: &jiff::Zoned) -> Result<Option<AutoId>, SessionError>;
+    pub fn prune_autosaved(&self, max: u32) -> Result<Vec<AutoId>, SessionError>;
+    pub fn find(&self, text: &str) -> Option<SessionRef>;              // D-88: exact, then case-insensitive
+}
+pub enum AutoGroup { Today, Yesterday, Days2To6, Older }
+pub fn auto_group(saved: jiff::civil::Date, today: jiff::civil::Date) -> AutoGroup;
+```
+
+Collisions: `save` to an existing reference with a different case of the same name → `already_exists`
+(never two files differing only by case); `rename` onto an existing session → `already_exists`;
+`delete_folder` of a non-empty folder without `recursive` → `invalid_input`. Every write is atomic; a
+rename is `std::fs::rename` within the configuration folder (folders created on demand).
+
+#### 1.2.3 Scope resolution (D-82)
+
+```rust
+pub enum Scope { View, Defaults, Pair, Type }
+pub fn effective_rules(defaults: &Session, parent: Option<&Session>, child: &Session) -> SessionRules;
+pub fn apply_scope(scope: Scope, change: &SessionRules, view: &mut Session, parent: Option<&mut Session>,
+                   defaults: &mut Session) -> Result<ScopeWrites, ApiError>;  // which files to save
+```
+
+`Pair`/`Type` without a parent, or on a non-folder parent → `invalid_input`. A `pair` override replaces an
+existing override for the same `(left, right, type)`; a `type` override for the same `type`. Table test with
+every scope × (named parent, auto-saved parent, no parent) × (locked parent or not: a locked parent → the
+override is kept in memory only, `ScopeWrites` says so).
+
+#### 1.2.4 Close prompts (D-84)
+
+`origin ∈ {Unnamed, AutoSaved, Named}`, `dirty` = specs or rules (not `view`/`display`) differ from the
+loaded file, `explicit_save` = the user chose Save.
+
+| origin | locked | dirty | explicit_save | `CloseAction` |
+|---|---|---|---|---|
+| Unnamed / AutoSaved | — | any | — | `AutoSave` (unless `max_auto_saved_sessions = 0`: `Nothing`) |
+| Named | no | no | — | `SaveViewState` (only `view`/`display`, silently) |
+| Named | no | yes | — | `AskSaveChanges` ("Save changes to session?": Yes → save, No → nothing, Cancel → stay) |
+| Named | yes | any | no | `Nothing` |
+| Named | yes | any | yes | `AskSaveLocked` ("Save changes to locked session?") |
+
+#### 1.2.5 Workspaces (D-85)
+
+```toml
+schema_version = 1
+shortcut = ""                  # SES-040 Manage Workspaces
+[[window]]
+width = 1200  ;  height = 800  ;  x = -1  ;  y = -1  ;  maximized = false   # as state.toml [window]
+active_tab = 0
+[[window.tab]]
+session = "work/api-v2"        # a named session reference, or …
+[window.tab.inline]            # … an inline session table (§1.2.1 without schema_version)
+[window.tab.view]              # opaque per-view layout
+```
+
+`WorkspaceStore` (`list`, `load`, `save`, `delete`, `rename`) as the session store; exactly one of `session`
+or `inline` per tab (problem otherwise); `active_tab` within range (lenient: 0). The GUI's "Save Workspace
+As" and "On exit, save workspace as" call `Service::workspace_save` (W4).
+
+#### 1.2.6 Packages (D-86, D-87)
+
+```toml
+# manifest.toml
+schema_version = 1
+format = "hikasa-pkg"
+hikasa_version = "0.2.0"
+created = "2026-10-28T12:00:00+01:00"          # injected clock
+[[item]]
+category = "sessions"                          # options | theme | commands | state | sessions | formats |
+name = "work/api-v2"                           # workspaces | system_info
+path = "sessions/work/api-v2.toml"
+```
+
+```rust
+pub enum Category { Options, Theme, Commands, State, Sessions, Formats, Workspaces, SystemInfo }
+pub struct ExportRequest { pub categories: Vec<Category>, pub items: BTreeMap<Category, Vec<String>> /* empty = all */ }
+pub fn export(&ConfigLocation, &ExportRequest, now: &jiff::Zoned, env: &EnvFacts, out: &Path) -> Result<ExportDto, ApiError>;
+pub struct ImportChoices { pub categories: Vec<Category>, pub items: BTreeMap<Category, Vec<String>>,
+                           pub delete_existing: BTreeSet<Category> /* sessions, formats, workspaces only */ }
+pub fn plan_import(&ConfigLocation, package: &Path, &ImportChoices) -> Result<ImportPlan, ApiError>;
+pub fn execute_import(&ConfigLocation, &ImportPlan) -> ImportReport;            // per-item results
+pub struct ImportPlan { pub items: Vec<PlanItem /* category, name, target, action: Add|Replace */>,
+                        pub deletes: Vec<PathBuf>, pub summary: ImportSummary /* per category: added, replaced, deleted */ }
+```
+
+Export writes the zip atomically (temp + rename); entries are sorted by path, with a fixed modification time
+(the manifest's `created`) so two exports of the same configuration at the same instant are byte-identical.
+`system-info.txt`: Hikasa version, platform, configuration mode and folder, and the item counts — no user
+names, no environment values. Import validation failures are `invalid_data` naming the entry; a newer
+schema is `unsupported`; nothing is written. Execution order: deletes, then items in manifest order; a
+failure of one item is recorded and the others continue (exit 100 when any failed). Restore defaults (D-87):
+`plan_restore(categories, delete_sessions, delete_workspaces) -> ImportPlan` with only deletes.
+
+#### 1.2.7 Service, CLI and JSON
+
+```
+hikasa session list [--folder <REF>] [--autosaved] [--defaults]
+hikasa session show <REF> | session show --defaults <TYPE>
+hikasa session new <REF> --type <TYPE> [--left <SPEC>] [--right <SPEC>] [--description <TEXT>]
+hikasa session edit <REF> (--set <KEY=VALUE>… | --left <SPEC> | --right <SPEC> | --description <TEXT>)
+hikasa session edit --defaults <TYPE> --set <KEY=VALUE>…
+hikasa session delete <REF> | session rename <REF> <NEW REF> | session lock <REF> | session unlock <REF>
+hikasa session mkdir <FOLDER> | session rmdir <FOLDER> [--recursive]
+hikasa session run <REF> [compare output flags of `folder compare` / `text compare`]
+hikasa workspace list | workspace show <NAME> | workspace delete <NAME> | workspace rename <NAME> <NEW>
+hikasa settings export -o <FILE.hikasa-pkg> [--category <CAT>…] [--item <CAT>:<NAME>…]
+hikasa settings import <FILE> [--category <CAT>…] [--item <CAT>:<NAME>…] [--delete-existing <CAT>…]
+                       (--dry-run | --yes | --silent)
+hikasa settings restore-defaults (--all | --file <FILE>… | --category <CAT>…) [--delete-sessions]
+                       [--delete-workspaces] (--dry-run | --yes)
+hikasa gui session <REF> [--wait]    hikasa gui workspace <NAME>
+```
+
+`session edit --set` keys are paths inside the session file (`rules.ignore_case=true`), parsed and validated
+like `settings set` (D-73), refused on a locked session unless `--force`. `session run` loads the effective
+session (D-82) and runs the same Service call as `folder compare` / `text compare`: same exit codes, same
+`hikasa.folder_compare.v1` / `hikasa.text_compare.v1` output (T11); other types → exit 100 `unsupported`
+(Folder Sync after W6). `settings import --silent` = every category and item, no deletes, no prompt.
+
+New schemas (appended to `SCHEMAS`): `hikasa.session_list.v1` (`{folders, sessions: [{ref, type,
+description, locked, favorite}], defaults: [type], autosaved: [{id, type, saved_at, group, label}]}`),
+`hikasa.session_show.v1` (`{ref, path, session}` — the session as JSON of its TOML), `hikasa.session_write.v1`
+(`{action, ref, written: [path], removed: [path]}`), `hikasa.workspace_list.v1`, `hikasa.workspace_show.v1`,
+`hikasa.workspace_write.v1`, `hikasa.settings_export.v1` (`{path, items: [{category, name, path}]}`),
+`hikasa.settings_import.v1` (`{dry_run, plan: {items, deletes, summary}, results: [{category, name, ok,
+error}]}`). `settings restore-defaults --category` keeps `hikasa.settings_restore.v1` with the plan's paths.
+`gui session` / `gui workspace` reuse `hikasa.gui_open.v1`. Human output: one line per item, as in W1.
+
+#### 1.2.8 Documentation updates of W2
+
+`docs/03` §1 (D-80…D-84 interpretations), new §5.3 (session, workspace and package files), §6 (package
+format, D-86/D-87); `docs/01` §3.3 (scope order) and §6 (IPC additions, D-89); `docs/12` §1 (CLI-002
+resolution order, D-88; the new subcommands and `settings export|import`); `docs/02` (`zip` line);
+`docs/16` progress; `help/session.md`, `help/workspace.md`, `help/settings.md`, `help/index.md`;
+`CHANGELOG.md`.
+
+### 1.3–1.14 W3–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -555,3 +782,30 @@ Outlines in plan §6; each section is written here before its wave starts.
   exist.
 - A1.12 The whole workspace is green (nextest, doc tests, fmt, clippy `-D warnings`, doc, deny, architecture
   test, xtask checks); the GUI builds and its tests pass, using `commands::view_sections`.
+
+### 6.2 W2 acceptance
+
+- A2.1 **Session files.** A TOML golden per session type (seven) and a proptest round trip per type; P1 type
+  names refused; `-`/`clipboard://` specs never stored; sparse rules against the defaults resolved at save
+  time (a later defaults change keeps the session's own differences).
+- A2.2 **Names (D-80).** Table test: every forbidden character, reserved device names, leading `_`, trailing
+  dot/space, length 0/100/101, case-insensitive collisions on save and rename, folder moves.
+- A2.3 **Auto-save (D-83).** Rotation table with injected dates: group boundaries (today, yesterday, 2, 6, 7
+  days, future), slot reuse, limit pruning order, 0 disables and clears, named sessions untouched.
+- A2.4 **Close prompts (D-84)** and **scopes (D-82):** the two tables of §1.2.3–1.2.4 as table tests,
+  including the locked parent.
+- A2.5 **Workspaces.** Golden, round trip, a missing referenced session → Home tab + `session_missing`.
+- A2.6 **Packages.** Export → import round trip into an empty configuration reproduces every file byte for
+  byte (TOML compared as values); two exports at the same instant are identical; import plan goldens
+  (collisions, deletes, summary); refusal tests for traversal, absolute and backslash paths, too many or too
+  large entries, a manifest mismatch, a newer schema — and in each case nothing is written; restore plan
+  goldens.
+- A2.7 **CLI.** Goldens (text and JSON) for every new form; `session run` gives the same exit code and the
+  same JSON as `folder compare`/`text compare` on the same inputs and rules (T11); CLI-002 resolution order
+  (existing path > session > workspace > error; `.hikasa-pkg` with and without `--silent`); read-only
+  commands create nothing (D-21).
+- A2.8 **IPC.** Golden frames for `LoadSession`/`LoadWorkspace` and their responses; the GUI handler opens
+  folder and text sessions (test through `AppCore`, no window); an `unsupported_request` answer is reported
+  as D-89 says.
+- A2.9 Whole workspace green (as A1.12), including `cargo deny` and the architecture test (`zip` in the
+  manifest table of `hikasa-session`).
