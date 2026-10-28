@@ -18,3 +18,14 @@ wildcards = "deny"
 
 [advisories]
 yanked = "deny"
+# "Unmaintained" notices on GUI transitive dependencies that eframe 0.37 pins (no fix available to us;
+# maintainer decision 2026-10-28, contract D-79). Remove each entry when an eframe/winit/accesskit upgrade
+# drops the crate.
+ignore = [
+    # ttf-parser: winit → sctk-adwaita → ab_glyph → owned_ttf_parser (Linux window decorations).
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained; pulled in by winit 0.30 via sctk-adwaita" },
+    # zvariant, zbus_names, zvariant_derive: accesskit_unix → atspi → zbus 5 (merged into zbus 6).
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained (merged into zbus 6); pulled in by accesskit_unix" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained (merged into zbus 6); pulled in by accesskit_unix" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained (merged into zbus 6); pulled in by accesskit_unix" },
+]
