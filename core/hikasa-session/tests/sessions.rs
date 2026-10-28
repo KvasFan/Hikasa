@@ -12,8 +12,8 @@ use common::{assert_golden, fixtures, service};
 use hikasa_core::WarningCode;
 use hikasa_session::api::{ApiError, PlanDto};
 use hikasa_session::package::{
-    Category, ExportRequest, ImportChoices, MAX_ENTRIES, MAX_ENTRY_BYTES, export, plan_import,
-    plan_restore,
+    Category, ExportRequest, ImportChoices, MAX_ENTRIES, MAX_ENTRY_BYTES, PlanAction, export,
+    plan_import, plan_restore,
 };
 use hikasa_session::paths::ConfigLocation;
 use hikasa_session::sessions::{
@@ -676,13 +676,14 @@ fn import_and_restore_plan_goldens() {
         &[Category::Options, Category::Sessions, Category::Formats],
         false,
         true,
+        false,
     );
     assert_golden(
         &fixtures("sessions").join("restore-plan.json"),
         &plan_json(&restore, tmp.path()),
     );
     // Restoring with the explicit choice also deletes the named sessions.
-    let all = plan_restore(svc.config(), &[], true, false);
+    let all = plan_restore(svc.config(), &[], true, false, false);
     assert_eq!(all.deletes.len(), 3, "{:?}", all.deletes);
 }
 
@@ -1127,6 +1128,49 @@ fn import_keeps_locked_sessions() {
     assert!(!store.path(&r("held")).exists());
     let text = std::fs::read_to_string(store.path(&r("keep"))).unwrap();
     assert!(text.contains("description = \"new\""), "{text}");
+}
+
+/// D-91: `restore-defaults --delete-sessions` keeps locked named sessions (`skip_locked`, warning
+/// `session_locked`) unless forced; the defaults files are deleted either way.
+#[test]
+fn restore_keeps_locked_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = service(tmp.path());
+    let store = svc.session_store();
+    let s = Session::builtin(SessionType::TextCompare);
+    store.save(&r("keep"), &s, Overwrite::IfUnchanged).unwrap();
+    store.save(&r("gone"), &s, Overwrite::IfUnchanged).unwrap();
+    store.set_locked(&r("keep"), true).unwrap();
+    let mut defaults = Session::builtin(SessionType::TextCompare);
+    defaults.description = "mine".into();
+    let defaults_file = store.save_defaults(&defaults).unwrap();
+    assert!(defaults_file.is_file(), "{}", defaults_file.display());
+    let plan = plan_restore(svc.config(), &[Category::Sessions], true, false, false);
+    assert_eq!(plan.items.len(), 1, "{:?}", plan.items);
+    assert_eq!(plan.items[0].name, "keep");
+    assert_eq!(plan.items[0].action, PlanAction::SkipLocked);
+    assert_eq!(plan.deletes.len(), 2, "{:?}", plan.deletes);
+    assert_eq!(plan.summary[&Category::Sessions].deleted, 2);
+    // The dry run and the execution report the kept session as a warning only.
+    let dto = svc
+        .settings_restore_categories(&[Category::Sessions], true, false, false, true)
+        .unwrap();
+    assert_eq!(dto.files.len(), 2);
+    let dto = svc
+        .settings_restore_categories(&[Category::Sessions], true, false, false, false)
+        .unwrap();
+    assert_eq!(dto.warnings.len(), 1, "{:?}", dto.warnings);
+    assert_eq!(dto.warnings[0].code, WarningCode::SessionLocked);
+    assert!(dto.warnings[0].message.contains("restore with --force"));
+    assert!(store.path(&r("keep")).is_file());
+    assert!(!store.path(&r("gone")).exists());
+    assert!(!defaults_file.exists());
+    // --force deletes it too.
+    let dto = svc
+        .settings_restore_categories(&[Category::Sessions], true, false, true, false)
+        .unwrap();
+    assert!(dto.warnings.is_empty() && dto.files.len() == 1, "{dto:?}");
+    assert!(!store.path(&r("keep")).exists());
 }
 
 /// A2.6: an entry whose header lies about its uncompressed size, and a package over the total cap, are refused.

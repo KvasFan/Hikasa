@@ -24,9 +24,9 @@ not a plain name is written in double quotes, an array position as a number.
 | `hikasa settings unset <key>` | puts the value back to its default |
 | `hikasa settings list [<key>] [--changed]` | every key with its value; `# default: …` after changed ones |
 | `hikasa settings restore-defaults (--all \| --file <file>…) (--dry-run \| --yes)` | deletes settings files |
-| `hikasa settings restore-defaults --category <cat>… [--delete-sessions] [--delete-workspaces] (--dry-run \| --yes)` | restores factory defaults by category |
+| `hikasa settings restore-defaults --category <cat>… [--delete-sessions [--force]] [--delete-workspaces] (--dry-run \| --yes)` | restores factory defaults by category |
 | `hikasa settings export -o <file.hikasa-pkg> [--category <cat>…] [--item <cat>:<name>…]` | writes a settings package |
-| `hikasa settings import <file> [--category <cat>…] [--item <cat>:<name>…] [--delete-existing <cat>…] (--dry-run \| --yes \| --silent)` | imports one |
+| `hikasa settings import <file> [--category <cat>…] [--item <cat>:<name>…] [--delete-existing <cat>…] [--force] (--dry-run \| --yes \| --silent)` | imports one |
 
 A value is TOML (`true`, `5`, `"text"`, `["Ctrl+Q", "F2"]`); a text value may be given without quotes
 (`hikasa settings set options.appearance.theme_mode dark`). A value equal to its default is removed from the
@@ -50,15 +50,20 @@ and `system_info` (a `system-info.txt` for support: version, platform, settings 
 on request, never imported). Export takes every category but `system_info` unless `--category` or `--item`
 narrow it; items are named as in the manifest (`sessions:work/api-v2`, `formats:my-c`).
 
-Import first checks the whole package (paths, sizes, every file against its format, nothing newer than this
-version) and writes nothing when anything is wrong. `--dry-run` prints the plan: `delete <path>`, then
-`add <path>` or `replace <path>` (a file that exists is replaced), then one summary line per category.
+Import first checks the whole package (paths, sizes, every file against its format, the rules of every
+session, nothing newer than this version) and writes nothing when anything is wrong. `--dry-run` prints the
+plan: `delete <path>`, then `add <path>` or `replace <path>` (a file that exists, whatever the case of its name,
+is replaced and keeps its spelling), then one summary line per category.
 `--delete-existing sessions|formats|workspaces` deletes the existing items of that category first. `--silent`
 imports every category and item without deleting anything.
 
+A locked session is neither replaced nor deleted: the plan says `skip (locked) <path>` (`skip_locked` in JSON)
+and the warning `session_locked` names it. Add `--force` to replace or delete locked sessions too.
+
 `restore-defaults --category` deletes the files of those categories so that the built-in defaults apply again:
 the settings files, the type defaults of sessions, the format files and `order.toml`. Named sessions and
-workspaces are deleted only with `--delete-sessions` and `--delete-workspaces`. See
+workspaces are deleted only with `--delete-sessions` and `--delete-workspaces`; a locked session is kept, with
+the warning `session_locked`, unless `--force` is added too. See
 [hikasa session](topic:session) and [hikasa workspace](topic:workspace).
 
 ## Changes from elsewhere

@@ -119,12 +119,14 @@ impl Service {
     }
 
     /// `settings restore-defaults --category` (D-87): the deletes of [`plan_restore`] and, unless `dry_run`,
-    /// their execution; one entry per file, named by its category.
+    /// their execution; one entry per file, named by its category. Locked named sessions are kept with warning
+    /// `session_locked` unless `force` (D-91).
     pub fn settings_restore_categories(
         &self,
         categories: &[Category],
         delete_sessions: bool,
         delete_workspaces: bool,
+        force: bool,
         dry_run: bool,
     ) -> Result<SettingsRestoreDto, ApiError> {
         run_guarded(|| {
@@ -133,6 +135,7 @@ impl Service {
                 categories,
                 delete_sessions,
                 delete_workspaces,
+                force,
             );
             let failed: Vec<String> = if dry_run {
                 Vec::new()
@@ -168,7 +171,11 @@ impl Service {
                     }
                 })
                 .collect();
-            Ok(SettingsRestoreDto { dry_run, files })
+            Ok(SettingsRestoreDto {
+                dry_run,
+                files,
+                warnings: plan.warnings,
+            })
         })
     }
 }

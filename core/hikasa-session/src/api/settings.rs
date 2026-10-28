@@ -144,6 +144,9 @@ pub struct SettingsRestoreDto {
     pub dry_run: bool,
     /// The files.
     pub files: Vec<RestoreFileDto>,
+    /// Warnings of the plan (`session_locked`: a locked session `--delete-sessions` keeps, D-91).
+    #[serde(skip)]
+    pub warnings: Vec<hikasa_core::Warning>,
 }
 
 /// `hikasa.format_write.v1`.
@@ -777,6 +780,7 @@ impl Service {
             let mut dto = SettingsRestoreDto {
                 dry_run,
                 files: Vec::new(),
+                warnings: Vec::new(),
             };
             for id in ids {
                 let path = store.path(id.clone());

@@ -222,16 +222,17 @@ fn restore(ctx: &mut Ctx<'_>, args: &RestoreDefaultsArgs) -> u8 {
                     &categories,
                     args.delete_sessions,
                     args.delete_workspaces,
+                    args.force,
                     args.dry_run,
                 )
             });
         return match result {
             Ok(dto) => {
                 if ctx.out.json() {
-                    ctx.json_success(schema, OK, &dto, &[], OP)
+                    ctx.json_success(schema, OK, &dto, &dto.warnings, OP)
                 } else {
                     let written = ctx.out.lines(human::settings_restore_lines(&dto));
-                    ctx.human_done(written, OK, schema, &[], OP)
+                    ctx.human_done(written, OK, schema, &dto.warnings, OP)
                 }
             }
             Err(e) => ctx.fail(schema, &e, OP, &[]),

@@ -442,7 +442,7 @@ pub fn plan_import(
         for (name, path) in category_files(&config.dir, *category) {
             let full = config.dir.join(&path);
             if *category == Category::Sessions && !choices.force && is_locked(&full) {
-                warnings.push(locked_warning(&name, "deleted"));
+                warnings.push(locked_warning(&name, "deleted", "import"));
                 continue;
             }
             deletes.push(full);
@@ -473,7 +473,7 @@ pub fn plan_import(
             && !choices.force
             && is_locked(&target)
         {
-            warnings.push(locked_warning(&item.name, "replaced"));
+            warnings.push(locked_warning(&item.name, "replaced", "import"));
             PlanAction::SkipLocked
         } else {
             PlanAction::Replace
@@ -535,12 +535,13 @@ fn is_locked(path: &Path) -> bool {
     SettingsFile::<SessionDoc>::load(path, LoadMode::Lenient).is_ok_and(|f| f.value().locked)
 }
 
-/// The warning of a locked session the import keeps (SES-004).
-fn locked_warning(name: &str, what: &str) -> Warning {
+/// The warning of a locked session an import or a restore keeps (SES-004); `verb` names the command (`import`,
+/// `restore`) whose `--force` would not keep it.
+fn locked_warning(name: &str, what: &str, verb: &str) -> Warning {
     Warning {
         code: WarningCode::SessionLocked,
         message: format!(
-            "the session `{name}` is locked and is not {what} (unlock it, or import with --force)"
+            "the session `{name}` is locked and is not {what} (unlock it, or {verb} with --force)"
         ),
         spec: None,
     }
@@ -595,14 +596,19 @@ fn category_of(config: &ConfigLocation, path: &Path) -> String {
 
 /// Restore factory defaults (D-87, SES-062): a plan of deletes only. Per category the user files are deleted
 /// (options, theme and scheme, commands, state files; `sessions/_defaults/*.toml`; every format file and
-/// `order.toml`); named sessions and workspaces only with `delete_sessions` / `delete_workspaces`.
+/// `order.toml`); named sessions and workspaces only with `delete_sessions` / `delete_workspaces`. A locked
+/// named session is not deleted unless `force` (D-91): it becomes a `skip_locked` item (never executed) with
+/// warning `session_locked`.
 pub fn plan_restore(
     config: &ConfigLocation,
     categories: &[Category],
     delete_sessions: bool,
     delete_workspaces: bool,
+    force: bool,
 ) -> ImportPlan {
     let mut deletes: Vec<(Category, PathBuf)> = Vec::new();
+    let mut items = Vec::new();
+    let mut warnings = Vec::new();
     let mut wanted: BTreeSet<Category> = categories.iter().copied().collect();
     if delete_sessions {
         wanted.insert(Category::Sessions);
@@ -612,14 +618,28 @@ pub fn plan_restore(
     }
     for category in wanted {
         for (name, path) in category_files(&config.dir, category) {
+            let defaults = name.starts_with("_defaults/");
             let take = match category {
-                Category::Sessions => delete_sessions || name.starts_with("_defaults/"),
+                Category::Sessions => delete_sessions || defaults,
                 Category::Workspaces => delete_workspaces,
                 _ => true,
             };
-            if take {
-                deletes.push((category, config.dir.join(path)));
+            if !take {
+                continue;
             }
+            let full = config.dir.join(path);
+            if category == Category::Sessions && !defaults && !force && is_locked(&full) {
+                warnings.push(locked_warning(&name, "deleted", "restore"));
+                items.push(PlanItem {
+                    category,
+                    name,
+                    target: full,
+                    action: PlanAction::SkipLocked,
+                    bytes: Vec::new(),
+                });
+                continue;
+            }
+            deletes.push((category, full));
         }
     }
     let mut summary: BTreeMap<Category, CategoryCounts> = BTreeMap::new();
@@ -629,9 +649,9 @@ pub fn plan_restore(
     let mut paths: Vec<PathBuf> = deletes.into_iter().map(|(_, p)| p).collect();
     paths.sort();
     ImportPlan {
-        items: Vec::new(),
+        items,
         deletes: paths,
         summary,
-        warnings: Vec::new(),
+        warnings,
     }
 }

@@ -38,11 +38,310 @@ fn read_only_commands_create_nothing() {
         &["session", "list"][..],
         &["session", "list", "--autosaved", "--defaults", "--json"],
         &["session", "show", "--defaults", "text-compare"],
+        &["session", "show", "--defaults", "folder-compare", "--json"],
         &["workspace", "list", "--json"],
+        &["settings", "get", "options.appearance.theme_mode"],
     ] {
         ok(&s, args);
     }
+    // Failing reads create nothing either.
+    for args in [
+        &["session", "show", "nope"][..],
+        &["session", "show", "nope", "--json"],
+        &["session", "list", "--folder", "nope"],
+        &["session", "run", "nope"],
+        &["workspace", "show", "nope", "--json"],
+        &["settings", "get", "options.nope"],
+    ] {
+        let (c, _, _) = run(&s, args);
+        assert_eq!(c, 100, "{args:?}");
+    }
+    // A dry-run import of a package made elsewhere.
+    let other = sandbox();
+    ok(
+        &other,
+        &[
+            "session",
+            "new",
+            "t",
+            "--type",
+            "text-compare",
+            "--left",
+            "a.c",
+            "--right",
+            "b.c",
+        ],
+    );
+    let pkg = other.join("p.hikasa-pkg");
+    ok(&other, &["settings", "export", "-o", pkg.to_str().unwrap()]);
+    ok(
+        &s,
+        &[
+            "settings",
+            "import",
+            pkg.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ],
+    );
     assert!(!s.config().exists(), "D-21");
+}
+
+/// D-90: `session edit --unset` removes a rule key, so the session follows the defaults again.
+#[test]
+fn session_edit_unset() {
+    let s = sandbox();
+    ok(
+        &s,
+        &[
+            "session",
+            "new",
+            "f",
+            "--type",
+            "folder-compare",
+            "--left",
+            "l",
+            "--right",
+            "r",
+        ],
+    );
+    ok(
+        &s,
+        &[
+            "session",
+            "edit",
+            "f",
+            "--set",
+            "rules.handling.flatten=true",
+            "--set",
+            "rules.criteria.size=false",
+        ],
+    );
+    assert_golden(
+        "session/edit-unset.txt",
+        &ok(
+            &s,
+            &["session", "edit", "f", "--unset", "rules.handling.flatten"],
+        ),
+    );
+    assert_golden(
+        "session/edit-unset.json",
+        &ok(
+            &s,
+            &[
+                "session",
+                "edit",
+                "f",
+                "--unset",
+                "rules.criteria.size",
+                "--json",
+            ],
+        ),
+    );
+    let file = std::fs::read_to_string(s.join("cfg/sessions/f.toml")).unwrap();
+    assert!(!file.contains("[rules"), "{file}");
+    let (c, out, _) = run(
+        &s,
+        &["session", "edit", "f", "--unset", "rules.nope", "--json"],
+    );
+    assert_eq!(
+        (c, json_text(&out)["error"]["kind"].as_str()),
+        (100, Some("not_found"))
+    );
+}
+
+/// SES-004: a locked session is deleted or renamed only with `--force`.
+#[test]
+fn locked_sessions_need_force() {
+    let s = sandbox();
+    for name in ["a", "b"] {
+        ok(
+            &s,
+            &[
+                "session",
+                "new",
+                name,
+                "--type",
+                "text-compare",
+                "--left",
+                "a.c",
+            ],
+        );
+        ok(&s, &["session", "lock", name]);
+    }
+    for args in [
+        &["session", "delete", "a", "--json"][..],
+        &["session", "rename", "b", "c", "--json"],
+    ] {
+        let (c, out, err) = run(&s, args);
+        assert_eq!(
+            (c, json_text(&out)["error"]["kind"].as_str()),
+            (100, Some("invalid_input")),
+            "{args:?}"
+        );
+        assert!(err.contains("locked"), "{err}");
+    }
+    assert!(s.join("cfg/sessions/a.toml").is_file());
+    assert!(s.join("cfg/sessions/b.toml").is_file());
+    ok(&s, &["session", "delete", "a", "--force"]);
+    ok(&s, &["session", "rename", "b", "c", "--force"]);
+    assert!(!s.join("cfg/sessions/a.toml").exists());
+    assert!(!s.join("cfg/sessions/b.toml").exists());
+    let moved = std::fs::read_to_string(s.join("cfg/sessions/c.toml")).unwrap();
+    assert!(moved.contains("locked = true"), "{moved}");
+}
+
+/// D-80 / D-88: session references resolve case-insensitively in `session show|run` and `gui open`.
+#[test]
+fn references_resolve_case_insensitively() {
+    let s = sandbox();
+    ok(
+        &s,
+        &[
+            "session",
+            "new",
+            "work/t",
+            "--type",
+            "text-compare",
+            "--left",
+            "a.c",
+            "--right",
+            "b.c",
+        ],
+    );
+    let shown = json_text(&ok(&s, &["session", "show", "WORK/T", "--json"]));
+    assert_eq!(shown["result"]["ref"], "work/t");
+    assert_eq!(
+        compare(&s, &["session", "run", "WORK/T", "--json"]),
+        compare(&s, &["session", "run", "work/t", "--json"])
+    );
+    // `gui open` resolves the session, then finds no GUI (not the one-spec error of an unknown name).
+    let (c, _, err) = run(&s, &["gui", "open", "work/T", "--no-launch"]);
+    assert_eq!(c, 100);
+    assert!(err.contains("not running"), "{err}");
+    let (c, _, err) = run(&s, &["gui", "open", "work/zz", "--no-launch"]);
+    assert_eq!(c, 100);
+    assert!(err.contains("two specs"), "{err}");
+}
+
+/// SES-004 / D-91: an import and a restore keep locked sessions (`skip_locked`, warning `session_locked`)
+/// unless `--force`.
+#[test]
+fn import_and_restore_keep_locked_sessions() {
+    let s = sandbox();
+    ok(
+        &s,
+        &[
+            "session",
+            "new",
+            "t",
+            "--type",
+            "text-compare",
+            "--description",
+            "from the package",
+        ],
+    );
+    let pkg = s.join("p.hikasa-pkg");
+    let pkg_arg = pkg.to_str().unwrap();
+    ok(
+        &s,
+        &[
+            "settings",
+            "export",
+            "-o",
+            pkg_arg,
+            "--category",
+            "sessions",
+        ],
+    );
+    let t = Sandbox::new();
+    ok(
+        &t,
+        &[
+            "session",
+            "new",
+            "t",
+            "--type",
+            "text-compare",
+            "--description",
+            "mine",
+        ],
+    );
+    ok(&t, &["session", "lock", "t"]);
+    let target = t.join("cfg/sessions/t.toml");
+    let before = std::fs::read(&target).unwrap();
+    let plan = t.normalise(&ok(
+        &t,
+        &["settings", "import", pkg_arg, "--dry-run", "--json"],
+    ));
+    assert_golden("session/import-locked.json", &plan);
+    let doc = json_text(&plan);
+    assert_eq!(doc["result"]["plan"]["items"][0]["action"], "skip_locked");
+    assert_eq!(doc["warnings"][0]["code"], "session_locked");
+    let (c, _, err) = run(&t, &["settings", "import", pkg_arg, "--yes"]);
+    assert_eq!(c, 0, "{err}");
+    assert!(err.contains("locked"), "{err}");
+    assert_eq!(std::fs::read(&target).unwrap(), before);
+    ok(&t, &["settings", "import", pkg_arg, "--yes", "--force"]);
+    let text = std::fs::read_to_string(&target).unwrap();
+    assert!(text.contains("from the package"), "{text}");
+    // Restore: --delete-sessions keeps the locked session unless forced.
+    ok(&t, &["session", "lock", "t"]);
+    ok(&t, &["session", "new", "u", "--type", "text-compare"]);
+    let plan = t.normalise(&ok(
+        &t,
+        &[
+            "settings",
+            "restore-defaults",
+            "--category",
+            "sessions",
+            "--delete-sessions",
+            "--dry-run",
+            "--json",
+        ],
+    ));
+    assert_golden("session/restore-locked.json", &plan);
+    let (c, _, err) = run(
+        &t,
+        &[
+            "settings",
+            "restore-defaults",
+            "--category",
+            "sessions",
+            "--delete-sessions",
+            "--yes",
+        ],
+    );
+    assert_eq!(c, 0, "{err}");
+    assert!(err.contains("restore with --force"), "{err}");
+    assert!(target.is_file());
+    assert!(!t.join("cfg/sessions/u.toml").exists());
+    ok(
+        &t,
+        &[
+            "settings",
+            "restore-defaults",
+            "--category",
+            "sessions",
+            "--delete-sessions",
+            "--yes",
+            "--force",
+        ],
+    );
+    assert!(!target.exists());
+    let (c, _, err) = run(
+        &t,
+        &[
+            "settings",
+            "restore-defaults",
+            "--category",
+            "sessions",
+            "--force",
+            "--yes",
+        ],
+    );
+    assert_eq!(c, 100, "--force requires --delete-sessions");
+    assert!(err.contains("--delete-sessions"), "{err}");
 }
 
 #[test]

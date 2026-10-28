@@ -715,7 +715,7 @@ pub enum SessionCmd {
         /// The session: `folder/name`.
         #[arg(value_name = "REF")]
         reference: Option<String>,
-        /// The defaults of a type instead (`--set` only).
+        /// The defaults of a type instead (`--set` and `--unset` only).
         #[arg(long, value_name = "TYPE")]
         defaults: Option<String>,
         /// Set a key of the session file (`rules.criteria.size=false`; repeatable).
@@ -883,6 +883,9 @@ pub struct RestoreDefaultsArgs {
     /// With `--category`: also delete every workspace.
     #[arg(long, requires = "category")]
     pub delete_workspaces: bool,
+    /// With `--delete-sessions`: also delete locked sessions.
+    #[arg(long, requires = "delete_sessions")]
+    pub force: bool,
     /// One file: `options`, `state`, `commands`, `theme`, `themes`, `themes.<scheme>`, `filters`, `openwith`,
     /// `archives` (repeatable).
     #[arg(long, value_name = "FILE")]

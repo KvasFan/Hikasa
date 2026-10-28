@@ -32,6 +32,17 @@ M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) an
   answered by the window; `hikasa gui session <ref> [--wait]`, `hikasa gui workspace <name>`, and `hikasa gui
   open <name>` resolves one argument that is not an existing path as a session, then a workspace (CLI-002, D-88); a
   `.hikasa-pkg` with `--silent` is imported. A window of 0.1 is reported as "does not support sessions; restart it".
+- **Explicit rules stay written** (D-90): a session file keeps every rule it already held, even one that now
+  equals the defaults, so a later change of the defaults does not change an explicit choice; `hikasa session edit
+  --unset <key>` removes a rule (also with `--defaults`). Unknown rule keys are kept. The folder size and date
+  filters and the time offset can be written `false` ("off") in a session or a `--rules-file`.
+- **Locked sessions are protected** (SES-004, D-91): `session delete` and `session rename` need `--force`;
+  `settings import` does not replace or delete a locked session and `settings restore-defaults
+  --delete-sessions` does not delete one unless `--force` (new flag on both; plan action `skip_locked`, new
+  warning code `session_locked`); auto-save never writes a locked file.
+- **Stricter package import**: every session's rules and text rules are built and their regular expressions
+  compiled before anything is written; names are matched without regard to case (two entries differing only by
+  case are refused; an existing file keeps its spelling); an unknown category in the manifest is refused.
 - Help topics `hikasa session` and `hikasa workspace`; `hikasa settings` and `hikasa gui` extended.
 
 ### Wave 1 — settings store

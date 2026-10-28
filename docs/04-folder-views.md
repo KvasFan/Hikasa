@@ -308,6 +308,10 @@ tables are in `design/m1-contracts.md` §2.2 and §2.3.
   the hidden side is read after alignment so that the pair is compared normally; no content test runs for a
   pair with a hidden side. Items hidden by size, date or attribute filters are read normally, and so are
   symbolic links and items whose directory record states no kind.
+- **Off in a rules file (D-90).** In a rules file (`--rules-file`) or a session's `[rules]`, the size filter
+  (`[filters.other] size`), the date filter (`date`) and the time offset (`[criteria.timestamps] offset`) are a
+  table when on and may be written `false` for "off" (JSON `null` too), so a session can switch off a filter
+  that its type's defaults set; `true` is refused.
 
 ### 6.3 Display filters
 

@@ -29,7 +29,7 @@
 - **SES-010** (P0): Session display filter state is saved with the session except
   when loading a session from a script (script loads use the script's filter state).
 
-*M2 interpretation (contract `docs/design/m2-contracts.md` §1.2, D-80…D-84):*
+*M2 interpretation (contract `docs/design/m2-contracts.md` §1.2, D-80…D-84, D-90, D-91):*
 
 - **Types and files (D-80, D-81).** The session types of M2 are `folder-compare`, `folder-sync`,
   `text-compare`, `text-edit`, `table-compare`, `hex-compare` and `picture-compare`; the P1 types (`text-merge`,
@@ -53,6 +53,16 @@
   auto-save is off); closing a named one writes its view state silently when it is not dirty, asks "Save changes
   to session?" when it is, and for a locked session writes nothing unless the user chose Save, which asks "Save
   changes to locked session?". A locked session file is never written by auto-save or by close.
+- **Locked sessions and other commands (SES-004, D-91).** `hikasa session edit`, `delete` and `rename` refuse a
+  locked session unless `--force`; `settings import` does not replace or delete one, and `settings
+  restore-defaults --delete-sessions` does not delete one, unless `--force` (the plan shows `skip_locked` and
+  the warning `session_locked` names the session).
+- **Stored rules (D-82, D-90).** A session file holds the rules that differ from the defaults of its type, plus
+  every rule it already held: a value chosen explicitly stays written even when it equals the defaults, so a
+  later change of the defaults does not change it. `hikasa session edit --unset <key>` removes a rule, and the
+  session follows the defaults for it again. The optional folder rules (time offset, size and date filters) are
+  written `false` to mean "off" where the defaults set them. Removing an entry of a map that the defaults hold
+  (such as one grammar element's importance) comes with the session settings dialog (W4).
 - **Display filter (SES-010).** `[display]` is stored with the session; a session loaded by a script (or opened
   over IPC) has it cleared, so the script's filter state applies.
 - **Specs that cannot be stored.** `-` (standard input) and `clipboard://` are never stored; the side stays
@@ -357,16 +367,20 @@ files at their configuration-relative paths (§6).
   same instant gives the same bytes. Import is a plan (T12): every entry is validated first — manifest and
   entries agree, each path is allowed for its category, no `..`, absolute or backslash paths, at most 10,000
   entries, 16 MiB per entry and 64 MiB in total uncompressed, each file parses with its schema and none is newer
-  than this version (`unsupported`; anything else `invalid_data` naming the entry) — and nothing is written when
-  anything fails. Then the deletes ("delete all existing sessions / file formats / workspaces") run, and the
+  than this version (`unsupported`; anything else `invalid_data` naming the entry), session rules and text rules
+  (also of overrides and of inline workspace tabs) build and their regular expressions compile, no two entries
+  differ only by case, and every manifest category is known — and nothing is written when anything fails. Then the deletes ("delete all existing sessions / file formats / workspaces") run, and the
   items are written one by one with a result each (a failure is recorded and the others continue; exit 100).
-  A collision is an item whose target exists: it is replaced. The summary counts added, replaced and deleted
+  A collision is an item whose target exists, compared without regard to case (the existing spelling is kept):
+  it is replaced — except a locked named session, which is kept (`skip_locked`, warning `session_locked`, not
+  counted) unless `--force`; `--delete-existing sessions` does not delete locked sessions either (D-91). The summary counts added, replaced and deleted
   per category. `--silent` imports every category and item without deletes (`hikasa settings import --silent`,
   `hikasa gui open <file.hikasa-pkg> --silent`).
 - *M2 interpretation of SES-062 (D-87):* restoring factory defaults is the same plan with deletes only: per
   chosen category the user files are deleted (the settings files, the scheme files, `sessions/_defaults/*.toml`,
   every format file and `order.toml`); named sessions and workspaces only with the explicit
-  `--delete-sessions` / `--delete-workspaces` choices (`hikasa settings restore-defaults --category …`).
+  `--delete-sessions` / `--delete-workspaces` choices (`hikasa settings restore-defaults --category …`); a
+  locked named session is kept with the warning `session_locked` unless `--force` (D-91).
 - **SES-063** (P1): **Support** dialog builds a support package (settings + system
   info + logs) and offers "Explore settings folder".
 

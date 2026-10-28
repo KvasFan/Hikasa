@@ -14,11 +14,11 @@ its case.
 | `hikasa session list [--folder <folder>] [--autosaved] [--defaults]` | folders and sessions; with the flags also auto-saved sessions and saved defaults |
 | `hikasa session show <ref>` / `show --defaults <type>` | the session file |
 | `hikasa session new <ref> --type <type> [--left <spec>] [--right <spec>] [--description <text>]` | a new session from the type's defaults |
-| `hikasa session edit <ref> (--set <key>=<value>… \| --left \| --right \| --description)` | changes a session |
-| `hikasa session edit --defaults <type> --set <key>=<value>…` | changes the defaults of a type |
-| `hikasa session rename <ref> <new ref>` | renames, or moves to another folder |
-| `hikasa session lock <ref>` / `unlock <ref>` | a locked session is used but never saved |
-| `hikasa session delete <ref>` | deletes it |
+| `hikasa session edit <ref> (--set <key>=<value>… \| --unset <key>… \| --left \| --right \| --description) [--force]` | changes a session |
+| `hikasa session edit --defaults <type> (--set <key>=<value>… \| --unset <key>…)` | changes the defaults of a type |
+| `hikasa session rename <ref> <new ref> [--force]` | renames, or moves to another folder |
+| `hikasa session lock <ref>` / `unlock <ref>` | a locked session is used but never saved, deleted or renamed without `--force` |
+| `hikasa session delete <ref> [--force]` | deletes it |
 | `hikasa session mkdir <folder>` / `rmdir <folder> [--recursive]` | session folders |
 | `hikasa session run <ref> [output flags]` | runs a Folder Compare or Text Compare session here |
 
@@ -30,9 +30,16 @@ Types: `folder-compare`, `folder-sync`, `text-compare`, `text-edit`, `table-comp
 `--set` keys are paths inside the session file, written like settings keys (see
 [hikasa settings](topic:settings)): `rules.criteria.size=false`, `rules.alignment.skew_tolerance=4`,
 `specs.format=c-cpp`, `view.split=0.25`. The rules are those of `--rules-file` of
-[hikasa folder compare](topic:folder-compare) and [hikasa text compare](topic:text-compare). A file holds only
-the rules that differ from the type's defaults, so a later change of the defaults reaches every session that
-did not change that rule itself.
+[hikasa folder compare](topic:folder-compare) and [hikasa text compare](topic:text-compare). A file holds the
+rules that differ from the type's defaults, so a later change of the defaults reaches every session that did not
+change that rule itself. A rule you set stays in the file even when it equals the defaults, so it keeps its
+value when the defaults change; `--unset <key>` removes it, and the session follows the defaults again
+(`hikasa session edit work/api --unset rules.handling.flatten`). The size and date filters and the time offset
+of a folder session may be written `false` to switch them off: `rules.filters.other.size=false`.
+
+`edit`, `delete` and `rename` refuse a locked session unless `--force`. A settings import does not replace a
+locked session, and restoring defaults does not delete one, unless `--force` (see
+[hikasa settings](topic:settings)).
 
 Standard input (`-`) and the clipboard are never stored in a session: that side stays empty, with the warning
 `spec_not_saved`.

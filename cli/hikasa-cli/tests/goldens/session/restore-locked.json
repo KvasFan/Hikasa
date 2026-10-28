@@ -1,0 +1,25 @@
+{
+  "schema": "hikasa.settings_restore.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": true,
+    "files": [
+      {
+        "file": "sessions",
+        "path": "<TMP>/cfg/sessions/u.toml",
+        "existed": true,
+        "deleted": false
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "session_locked",
+      "message": "the session `t` is locked and is not deleted (unlock it, or restore with --force)",
+      "spec": null
+    }
+  ],
+  "error": null
+}

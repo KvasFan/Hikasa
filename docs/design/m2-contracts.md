@@ -67,6 +67,8 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-87 | **Restore factory defaults** (SES-062) is an import plan against the built-ins: per category, the user files of that category are deleted (options, theme, commands, state, filters, openwith, archives files; `_defaults/*.toml`; format files that override or add formats and `order.toml`); named sessions and workspaces are deleted only with the explicit `--delete-sessions` / `--delete-workspaces` choices (the wizard's "delete all existing" options). It extends `settings restore-defaults` (D-77) with `--category`. | SES-062 "reuses the same wizard". | 03 §6 |
 | D-88 | **Command-line forms** (CLI-002, revises D-51 additively). One positional argument that is not an existing path is resolved as: a named session (exact reference, then case-insensitive) → `LoadSession`; else a workspace → `LoadWorkspace`; else the M1 error. An existing file whose name ends in `.hikasa-pkg` (case-insensitive) is a settings package: with `--silent` it is imported headless (D-86), without it the CLI asks the GUI to show the import wizard (W4; until then exit 100 `unsupported`). `@file` stays reserved for W8. | CLI-002 order; an existing path always wins over a name. | 12 §1 |
 | D-89 | **IPC** (ARCH-091, additive to protocol v1, D-46). `LoadSession{name, wait}` → `ViewOpened{view}` (and `ViewClosed` when waited); `LoadWorkspace{name}` → `Views{views}` (the views it opened). Unknown names → `Error{not_found}`; a type the GUI cannot render yet → `Error{unsupported_request}`. A GUI that answers `unsupported_request` to these requests is reported by the CLI as "the running GUI does not support sessions; restart it" (exit 100). | Forward compatibility per D-46. | 01 §6 |
+| D-90 | **Revises D-82 (how rules are written).** A save writes into `[rules]` and `[text_rules]` (of a named session, an auto-saved one and `_defaults/<type>.toml`) every key that differs from the defaults of the type **now**, plus **every key the file already held**, with its value now: an explicit choice stays written even when it equals the defaults (a later change of the defaults does not change it); a key the file did not hold is written only when it differs. `session edit --unset <key>` removes a key, so the session follows the defaults again. Unknown rule keys, nested ones included, are kept (D-70). The optional folder rules `criteria.timestamps.offset`, `filters.other.size` and `filters.other.date` are written whole, or `false` for "off" where the defaults set them; `false` (and JSON `null`) reads as off, in session files and in `--rules-file`; `true` is refused. Removing an entry of a map that the defaults hold (an `importance.elements` entry) is not representable in M2: deferred to W4 (the GUI's session settings). | Review of W2: an explicit choice must survive a change of the defaults, and "off" must be writable; maintainer, 2026-10-29 (the map entries). | 03 §1, 04 §3 |
+| D-91 | **Locked sessions and bulk commands** (SES-004). `settings import` does not replace a locked named session, nor delete one with `--delete-existing sessions`; `settings restore-defaults --delete-sessions` does not delete one. Each is planned as `skip_locked` (never executed, no result, not counted in the summary) with warning `session_locked`; `--force` on `settings import` / `restore-defaults` includes them. `session delete` and `session rename` of a locked session are `invalid_input` unless `--force`; auto-save never writes a locked file. The defaults files are never locked. | Maintainer, 2026-10-29: a lock protects a session from every command that would change it by accident. | 03 §1, §6, 12 |
 
 ### 0.4 Dependencies
 
@@ -511,7 +513,7 @@ the new `format` forms; `export|import` stay W2); `docs/14` §2.1 (new: theme an
 
 **Ids.** SES-001…006, SES-008, SES-010, SES-021, SES-040…042, SES-060…062, ARCH-040, ARCH-041, ARCH-091
 (`LoadSession`, `LoadWorkspace`), CLI-002 (session, workspace and package forms), CLI-G02 (`gui session`,
-`gui workspace`), TC-052 (parent link data). Decisions D-80…D-89.
+`gui workspace`), TC-052 (parent link data). Decisions D-80…D-91 (D-90 and D-91 added during the wave).
 
 **Files.** `core/hikasa-session/src/sessions/` (`mod.rs`, `name.rs`, `file.rs`, `store.rs`, `autosave.rs`,
 `scope.rs`, `close.rs`), `src/workspaces.rs`, `src/package/` (`mod.rs`, `manifest.rs`, `export.rs`,
@@ -554,6 +556,18 @@ type = "text-compare"          # the child session type the override applies to
 save time** (D-82): a session saved before a change of the defaults keeps only its own differences. Specs of
 `-` (stdin) and `clipboard://` are never stored (the session keeps `""` for that side and warning
 `spec_not_saved`).
+
+*Revised by D-90:* a save also keeps **every rule key the file already held** (with its value now), so an
+explicit choice that happens to equal the defaults stays written and a later change of the defaults does not
+change it; a key the file did not hold is written only when it differs from the defaults. `session edit --unset
+<key>` removes a key. Nested unknown rule keys are kept. The optional folder rules (`criteria.timestamps.offset`,
+`filters.other.size`, `filters.other.date`) are written whole, or `false` for "off" over defaults that set
+them:
+
+```toml
+[rules.filters.other]
+size = false                   # off, whatever the defaults say (also in --rules-file)
+```
 
 ```rust
 pub enum SessionType { FolderCompare, FolderSync, TextCompare, TextEdit, TableCompare, HexCompare, PictureCompare }
@@ -687,33 +701,39 @@ failure of one item is recorded and the others continue (exit 100 when any faile
 hikasa session list [--folder <REF>] [--autosaved] [--defaults]
 hikasa session show <REF> | session show --defaults <TYPE>
 hikasa session new <REF> --type <TYPE> [--left <SPEC>] [--right <SPEC>] [--description <TEXT>]
-hikasa session edit <REF> (--set <KEY=VALUE>… | --left <SPEC> | --right <SPEC> | --description <TEXT>)
-hikasa session edit --defaults <TYPE> --set <KEY=VALUE>…
-hikasa session delete <REF> | session rename <REF> <NEW REF> | session lock <REF> | session unlock <REF>
+hikasa session edit <REF> (--set <KEY=VALUE>… | --unset <KEY>… | --left <SPEC> | --right <SPEC>
+                       | --description <TEXT>) [--force]
+hikasa session edit --defaults <TYPE> (--set <KEY=VALUE>… | --unset <KEY>…)
+hikasa session delete <REF> [--force] | session rename <REF> <NEW REF> [--force]
+hikasa session lock <REF> | session unlock <REF>
 hikasa session mkdir <FOLDER> | session rmdir <FOLDER> [--recursive]
 hikasa session run <REF> [compare output flags of `folder compare` / `text compare`]
 hikasa workspace list | workspace show <NAME> | workspace delete <NAME> | workspace rename <NAME> <NEW>
 hikasa settings export -o <FILE.hikasa-pkg> [--category <CAT>…] [--item <CAT>:<NAME>…]
 hikasa settings import <FILE> [--category <CAT>…] [--item <CAT>:<NAME>…] [--delete-existing <CAT>…]
-                       (--dry-run | --yes | --silent)
-hikasa settings restore-defaults (--all | --file <FILE>… | --category <CAT>…) [--delete-sessions]
+                       [--force] (--dry-run | --yes | --silent)
+hikasa settings restore-defaults (--all | --file <FILE>… | --category <CAT>…) [--delete-sessions [--force]]
                        [--delete-workspaces] (--dry-run | --yes)
 hikasa gui session <REF> [--wait]    hikasa gui workspace <NAME>
 ```
 
 `session edit --set` keys are paths inside the session file (`rules.ignore_case=true`), parsed and validated
-like `settings set` (D-73), refused on a locked session unless `--force`. `session run` loads the effective
+like `settings set` (D-73), refused on a locked session unless `--force`; `--unset <key>` removes a key from the
+file (D-90; it may be combined with `--set` of other keys). `session delete` and `session rename` of a locked
+session exit 100 `invalid_input` unless `--force` (D-91). `session run` loads the effective
 session (D-82) and runs the same Service call as `folder compare` / `text compare`: same exit codes, same
 `hikasa.folder_compare.v1` / `hikasa.text_compare.v1` output (T11); other types → exit 100 `unsupported`
-(Folder Sync after W6). `settings import --silent` = every category and item, no deletes, no prompt.
+(Folder Sync after W6). `settings import --silent` = every category and item, no deletes, no prompt. A locked named session is kept by
+`settings import` (replace and `--delete-existing sessions`) and by `restore-defaults --delete-sessions`: plan
+action `skip_locked` with warning `session_locked`; `--force` includes it (D-91).
 
 New schemas (appended to `SCHEMAS`): `hikasa.session_list.v1` (`{folders, sessions: [{ref, type,
 description, locked, favorite}], defaults: [type], autosaved: [{id, type, saved_at, group, label}]}`),
 `hikasa.session_show.v1` (`{ref, path, session}` — the session as JSON of its TOML), `hikasa.session_write.v1`
 (`{action, ref, written: [path], removed: [path]}`), `hikasa.workspace_list.v1`, `hikasa.workspace_show.v1`,
 `hikasa.workspace_write.v1`, `hikasa.settings_export.v1` (`{path, items: [{category, name, path}]}`),
-`hikasa.settings_import.v1` (`{dry_run, plan: {items, deletes, summary}, results: [{category, name, ok,
-error}]}`). `settings restore-defaults --category` keeps `hikasa.settings_restore.v1` with the plan's paths.
+`hikasa.settings_import.v1` (`{dry_run, plan: {items: [{category, name, path, action: add|replace|skip_locked}],
+deletes, summary}, results: [{category, name, ok, error}]}`). `settings restore-defaults --category` keeps `hikasa.settings_restore.v1` with the plan's paths.
 `gui session` / `gui workspace` reuse `hikasa.gui_open.v1`. Human output: one line per item, as in W1.
 
 #### 1.2.8 Documentation updates of W2
@@ -782,6 +802,25 @@ the maintainer during the wave):
   window's own command line (`hikasa-gui <name>`) keeps the M1 forms until W4. With `--silent`, a package is
   imported as `settings import --silent` and prints `hikasa.settings_import.v1` (the switch's `switch_ignored`
   warning is dropped); without it, exit 100 `unsupported` names the wizard of W4.
+- **Review fixes (D-90, D-91).** Import validation is strict: each session file is read with
+  `LoadMode::Strict` and its rules, text rules and every `[[override]]` are built and checked
+  (`FolderRules::validate`, `TextRules::validate`), regular expressions compiled with `RegexLimits::default()`
+  (`plan_import` has no `Service`; these are the limits the registry uses, and no code changes them today —
+  revisit if they become configurable); the inline sessions of workspace tabs are checked the same way. A
+  package with two entries whose paths differ only by case is `invalid_data`; an item's target is matched
+  case-insensitively against existing files and folders and against earlier items of the plan (the existing
+  spelling is kept), in every category. An unknown manifest category is `invalid_data`. `--item` without
+  `--category` exports the categories of its items only. `session edit --set specs.*` stores the spec like
+  `--left`/`--right`. `session edit --unset` (also with `--defaults`) takes keys below `rules`, `text_rules`,
+  `display` and `view`; an unknown key is `not_found`. Removing an entry of a map the defaults hold (an
+  `importance.elements` entry) is not representable (D-90): deferred to W4. Locked sessions (D-91): new warning
+  code `session_locked` in `hikasa_core::WarningCode`; `ImportChoices::force`, `plan_restore(…, force)` and
+  `Service::settings_restore_categories(…, force, dry_run)`; a `skip_locked` item has no entry in `results`
+  (import) or in `files` (restore) and is not counted in the summary — the warning names it.
+  `SettingsImportDto::warnings` and `SettingsRestoreDto::warnings` carry the plan's warnings (not serialized in
+  `result`; the envelope's `warnings` holds them). An auto-save whose slot holds a locked file writes nothing
+  and keeps the slot. `CONIN$`, `CONOUT$` and the superscript device names (`COM¹`…`COM³`, `LPT¹`…`LPT³`) are reserved names
+  too.
 
 ### 1.3–1.14 W3–W14
 
