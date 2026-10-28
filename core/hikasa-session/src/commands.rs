@@ -104,6 +104,33 @@ pub struct Catalogue {
 #[error("command catalogue: {0}")]
 pub struct CatalogueError(pub String);
 
+/// The view types of `commands.toml` (OPT-011, D-65), in reference order.
+pub const VIEWS: [&str; 8] = [
+    "home",
+    "folder-compare",
+    "folder-sync",
+    "text-compare",
+    "text-edit",
+    "table-compare",
+    "hex-compare",
+    "picture-compare",
+];
+
+/// The catalogue sections of a view type, own section first (M2 W1; moved here from the GUI). An unknown view has
+/// none.
+pub fn view_sections(view: &str) -> &'static [&'static str] {
+    match view {
+        "home" => &["home", "global"],
+        "folder-compare" => &["folder-compare", "folder-shared", "session", "global"],
+        "folder-sync" => &["folder-sync", "folder-shared", "session", "global"],
+        "text-compare" | "text-edit" => &["text-compare", "file-shared", "session", "global"],
+        "table-compare" => &["table-compare", "file-shared", "session", "global"],
+        "hex-compare" => &["hex-compare", "file-shared", "session", "global"],
+        "picture-compare" => &["picture-compare", "session", "global"],
+        _ => &[],
+    }
+}
+
 /// The embedded catalogue (parsed once). A catalogue that does not parse is a build defect that the tests and
 /// `cargo xtask commands-doc` report; this function then returns an empty catalogue instead of panicking (T9).
 pub fn catalogue() -> &'static Catalogue {
@@ -165,8 +192,8 @@ impl Catalogue {
     }
 
     /// Every problem of the catalogue: malformed or duplicate section keys, duplicate ids inside a section,
-    /// malformed ids, help topics that do not exist, and text that is not one table cell (a `|`, a line break or
-    /// surrounding spaces).
+    /// malformed ids, help topics that do not exist, text that is not one table cell (a `|`, a line break or
+    /// surrounding spaces), and shortcuts that do not parse (UI-003, M2 W1).
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
         for (k, section) in self.sections.iter().enumerate() {
@@ -190,6 +217,11 @@ impl Catalogue {
                 }
                 if section.commands[..i].iter().any(|c| c.id == *id) {
                     problems.push(format!("section {key}: id {id} is listed twice"));
+                }
+                if !command.shortcut.is_empty()
+                    && let Err(e) = crate::settings::Shortcut::parse(&command.shortcut)
+                {
+                    problems.push(format!("section {key}: {id}: {e}"));
                 }
                 for (field, text) in [
                     ("menu", &command.menu),
@@ -301,6 +333,7 @@ status = "planned"
 
 [[section.command]]
 id = "X"
+shortcut = "Ctrl+Nope"
 status = "implemented"
 "#;
         let parsed = parse_catalogue(text).expect("parses");
@@ -309,11 +342,24 @@ status = "implemented"
         assert!(problems.contains("does not exist"), "{problems}");
         assert!(problems.contains("listed twice"), "{problems}");
         assert!(problems.contains("not one table cell"), "{problems}");
+        assert!(problems.contains("is not a shortcut"), "{problems}");
         assert!(parse_catalogue("schema_version = 2\ntitle = \"T\"\nintro = \"I\"\n").is_err());
         assert!(parse_catalogue("schema_version = 1\ntitle = 3\nintro = \"I\"\n").is_err());
         assert!(
             parse_catalogue("schema_version = 1\ntitle = \"T\"\nintro = \"I\"\nx = 1\n").is_err()
         );
+    }
+
+    #[test]
+    fn every_view_has_sections_of_the_catalogue() {
+        for view in VIEWS {
+            let sections = view_sections(view);
+            assert!(!sections.is_empty(), "{view}");
+            for key in sections {
+                assert!(catalogue().section(key).is_some(), "{view}: {key}");
+            }
+        }
+        assert!(view_sections("nowhere").is_empty());
     }
 
     #[test]

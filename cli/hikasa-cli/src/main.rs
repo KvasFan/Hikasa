@@ -30,6 +30,7 @@ use hikasa_core::ExitCode;
 use hikasa_formats::StdProcessRunner;
 use hikasa_session::api::dto::JsonEnvelope;
 use hikasa_session::api::{OpenArgs, normalize_legacy_args, open_usage, parse_open_args};
+use hikasa_session::settings::LoadMode;
 use hikasa_session::{
     ApiError, ApiOp, EnvFacts, Platform, Service, ServiceInit, StdinSource, SystemClock,
     capture_env, run_guarded,
@@ -168,6 +169,12 @@ fn execute(
                 stdin: Some(StdinSource::new(stdin_name, read_stdin)),
                 clock: Arc::new(SystemClock),
                 runner: Arc::new(StdProcessRunner),
+                // The settings commands read `options.toml` leniently so that `settings set` can repair it (D-71).
+                options_mode: if matches!(command, Command::Settings { .. }) {
+                    LoadMode::Lenient
+                } else {
+                    LoadMode::Strict
+                },
             };
             match Service::new(init) {
                 Ok(service) => {
@@ -363,6 +370,7 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }
+        | Command::Settings { .. }
         | Command::Completions { .. }
         | Command::Version
         | Command::Help(_) => None,

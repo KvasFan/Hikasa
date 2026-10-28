@@ -6,6 +6,7 @@ quick	hikasa quick
 text-compare	hikasa text compare
 folder-compare	hikasa folder compare
 format	hikasa format
+settings	hikasa settings
 vfs	hikasa vfs
 gui	hikasa gui
 completions	hikasa completions

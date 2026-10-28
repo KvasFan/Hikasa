@@ -1,0 +1,5 @@
+go_to_first_difference_on_load = true
+go_to_next_difference_after_copy = false
+limit_next_difference_files_to_current_folder = false
+show_message_panel = true
+wrap_around = false

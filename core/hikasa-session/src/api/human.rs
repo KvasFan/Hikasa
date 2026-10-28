@@ -10,12 +10,23 @@
 //! | `gui list` | `<view>\t<kind>\t<escaped title>\t<escaped spec>…` ([`gui_list_line`]) |
 //! | `format list` | `<position>\t<id>\t<status>\t<name>\t<mask>` ([`format_list_line`]) |
 //! | `format detect` | `<id or ->\t<name>` ([`format_detect_line`]) |
+//! | `settings get` | the TOML value; a subtree as a TOML document ([`settings_get_text`]) |
+//! | `settings set/unset` | `<key> = <value>`, then `(file unchanged)` when nothing was written ([`settings_set_lines`]) |
+//! | `settings list` | `<key> = <value>`, with `  # default: <value>` when changed ([`settings_list_lines`]) |
+//! | `settings restore-defaults` | `delete <path>` or `absent <path>` per file ([`settings_restore_lines`]) |
+//! | `format` writes | `wrote <path>`, `removed <path>` ([`format_write_lines`]); `format restore`: `delete`/`absent` |
 
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
+use super::settings::{
+    FormatRestoreDto, FormatWriteDto, SettingsListDto, SettingsRestoreDto, SettingsSetDto,
+    SettingsValueDto,
+};
 use crate::ipc::ViewInfo;
+use crate::settings::ShortcutConflict;
+use crate::settings::tree::inline;
 
 /// The `format tokens` lines: one per token, `L<line>:<start>-<end>\t<element>\t<escaped text>` (byte offsets,
 /// end exclusive).
@@ -115,6 +126,96 @@ pub fn format_detect_line(dto: &FormatDetectDto) -> String {
         dto.format.id.as_deref().unwrap_or("-"),
         escape_controls(&dto.format.name)
     )
+}
+
+/// The value of `settings get`: a leaf as its TOML value on one line, a subtree as a TOML document, `(not set)`
+/// for an optional key without a value.
+pub fn settings_get_text(dto: &SettingsValueDto) -> String {
+    match &dto.toml {
+        None => "(not set)\n".to_owned(),
+        Some(toml::Value::Table(table)) => toml::to_string(table).unwrap_or_default(),
+        Some(value) => format!("{}\n", inline(value)),
+    }
+}
+
+/// The lines of `settings set` and `settings unset`.
+pub fn settings_set_lines(dto: &SettingsSetDto) -> Vec<String> {
+    let value = dto
+        .toml
+        .as_ref()
+        .map_or_else(|| "(not set)".to_owned(), inline);
+    let mut lines = vec![format!("{} = {value}", dto.key)];
+    if !dto.written {
+        lines.push("(file unchanged)".to_owned());
+    }
+    lines
+}
+
+/// The lines of `settings list`: `<key> = <value>`, then `  # default: <value>` for a changed key or
+/// `  # unknown key (kept)` for a key this version does not know.
+pub fn settings_list_lines(dto: &SettingsListDto) -> Vec<String> {
+    dto.entries
+        .iter()
+        .map(|e| {
+            let mut line = format!("{} = {}", e.key, inline(&e.toml));
+            if e.unknown {
+                line.push_str("  # unknown key (kept)");
+            } else if !e.is_default
+                && let Some(default) = &e.default_toml
+            {
+                line.push_str(&format!("  # default: {}", inline(default)));
+            }
+            line
+        })
+        .collect()
+}
+
+/// A shortcut conflict as a warning text: `shortcut conflict in <view>: <shortcut> is bound to A, B`.
+pub fn shortcut_conflict_text(conflict: &ShortcutConflict) -> String {
+    format!(
+        "shortcut conflict in {}: {} is bound to {}",
+        conflict.view,
+        conflict.shortcut,
+        conflict.commands.join(", ")
+    )
+}
+
+/// The lines of `settings restore-defaults`: `delete <path>` for a file that exists, `absent <path>` for one
+/// that does not.
+pub fn settings_restore_lines(dto: &SettingsRestoreDto) -> Vec<String> {
+    dto.files
+        .iter()
+        .map(|f| {
+            let word = if f.existed { "delete" } else { "absent" };
+            format!("{word} {}", escape_controls(&f.path))
+        })
+        .collect()
+}
+
+/// The lines of a `format` write: `wrote <path>` and `removed <path>`.
+pub fn format_write_lines(dto: &FormatWriteDto) -> Vec<String> {
+    dto.written
+        .iter()
+        .map(|p| format!("wrote {}", escape_controls(p)))
+        .chain(
+            dto.removed
+                .iter()
+                .map(|p| format!("removed {}", escape_controls(p))),
+        )
+        .collect()
+}
+
+/// The lines of `format restore`: `delete <path>` per removed file, `absent <path>` per named id without one.
+pub fn format_restore_lines(dto: &FormatRestoreDto) -> Vec<String> {
+    dto.removed
+        .iter()
+        .map(|p| format!("delete {}", escape_controls(p)))
+        .chain(
+            dto.absent
+                .iter()
+                .map(|p| format!("absent {}", escape_controls(p))),
+        )
+        .collect()
 }
 
 #[cfg(test)]

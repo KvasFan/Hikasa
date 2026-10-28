@@ -61,9 +61,23 @@ pub const COMPLETIONS_SCHEMA: &str = "hikasa.completions.v1";
 pub const USAGE_ERROR_SCHEMA: &str = "hikasa.usage_error.v1";
 /// `hikasa help [topic] --json` and `hikasa help --list --json` (M2 W0).
 pub const HELP_SCHEMA: &str = "hikasa.help.v1";
+/// `hikasa settings get --json` (M2 W1).
+pub const SETTINGS_GET_SCHEMA: &str = "hikasa.settings_get.v1";
+/// `hikasa settings set|unset --json` (M2 W1).
+pub const SETTINGS_SET_SCHEMA: &str = "hikasa.settings_set.v1";
+/// `hikasa settings list --json` (M2 W1).
+pub const SETTINGS_LIST_SCHEMA: &str = "hikasa.settings_list.v1";
+/// `hikasa settings restore-defaults --json` (M2 W1, D-77).
+pub const SETTINGS_RESTORE_SCHEMA: &str = "hikasa.settings_restore.v1";
+/// `hikasa format new|edit|delete|import|enable|disable|move --json` (M2 W1, D-75).
+pub const FORMAT_WRITE_SCHEMA: &str = "hikasa.format_write.v1";
+/// `hikasa format export --json` (M2 W1).
+pub const FORMAT_EXPORT_SCHEMA: &str = "hikasa.format_export.v1";
+/// `hikasa format restore --json` (M2 W1).
+pub const FORMAT_RESTORE_SCHEMA: &str = "hikasa.format_restore.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 19] = [
+pub const SCHEMAS: [&str; 26] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -83,6 +97,13 @@ pub const SCHEMAS: [&str; 19] = [
     COMPLETIONS_SCHEMA,
     USAGE_ERROR_SCHEMA,
     HELP_SCHEMA,
+    SETTINGS_GET_SCHEMA,
+    SETTINGS_SET_SCHEMA,
+    SETTINGS_LIST_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA,
+    FORMAT_WRITE_SCHEMA,
+    FORMAT_EXPORT_SCHEMA,
+    FORMAT_RESTORE_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

@@ -20,6 +20,13 @@
     "hikasa.version.v1",
     "hikasa.completions.v1",
     "hikasa.usage_error.v1",
-    "hikasa.help.v1"
+    "hikasa.help.v1",
+    "hikasa.settings_get.v1",
+    "hikasa.settings_set.v1",
+    "hikasa.settings_list.v1",
+    "hikasa.settings_restore.v1",
+    "hikasa.format_write.v1",
+    "hikasa.format_export.v1",
+    "hikasa.format_restore.v1"
   ]
 }

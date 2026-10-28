@@ -56,6 +56,9 @@ pub enum WarningCode {
     AlignmentDegraded,
     /// A patch was written in UTF-8 for a file stored in another encoding, so it may not apply to the file's bytes.
     PatchEncoding,
+    /// A configuration value of the wrong type or out of range was replaced by its default (D-71; only the
+    /// `settings` commands load leniently, every other command fails).
+    InvalidConfigValue,
 }
 
 impl WarningCode {
@@ -80,6 +83,7 @@ impl WarningCode {
             WarningCode::SwitchIgnored => "switch_ignored",
             WarningCode::AlignmentDegraded => "alignment_degraded",
             WarningCode::PatchEncoding => "patch_encoding",
+            WarningCode::InvalidConfigValue => "invalid_config_value",
         }
     }
 }
@@ -116,6 +120,7 @@ mod tests {
             WarningCode::SwitchIgnored,
             WarningCode::AlignmentDegraded,
             WarningCode::PatchEncoding,
+            WarningCode::InvalidConfigValue,
         ];
         for code in all {
             assert_eq!(

@@ -14,6 +14,8 @@
 //! | `folder compare` | [`Service::folder_prepare`] + [`Service::folder_run`] = [`Service::folder_compare`], [`Service::render_folder`] |
 //! | `format list/show/detect/tokens` | [`Service::format_list`], [`Service::format_show`], [`Service::format_detect`], [`Service::format_tokens`] |
 //! | `vfs ls/stat/cat` | [`Service::vfs_ls`], [`Service::vfs_stat`], [`Service::vfs_cat`] |
+//! | `settings get/set/unset/list/restore-defaults` | [`Service::settings_get`], [`Service::settings_set`], [`Service::settings_unset`], [`Service::settings_list`], [`Service::settings_restore_defaults`] |
+//! | `format new/edit/delete/import/export/enable/disable/move/restore` | [`Service::format_new`], [`Service::format_edit`], [`Service::format_delete`], [`Service::format_import`], [`Service::format_export`], [`Service::format_enable`], [`Service::format_move`], [`Service::format_restore`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -25,6 +27,7 @@ mod info;
 mod report;
 pub mod requests;
 pub mod responses;
+pub mod settings;
 pub mod vocab;
 
 use std::ffi::OsStr;
@@ -54,6 +57,10 @@ pub use requests::{
 pub use responses::{
     FolderCompareResponse, FormatChoice, PreparedFolderCompare, QuickResponse, TextCompareResponse,
 };
+pub use settings::{
+    FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
+    SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
+};
 pub use vocab::{
     parse_algorithm, parse_content_method, parse_folder_mode, parse_line_range,
     resolve_folder_display, resolve_text_display,
@@ -65,8 +72,9 @@ use crate::ipc::Endpoint;
 use crate::jobs::{
     JobControl, JobHandle, LossySink, PROGRESS_CAPACITY, PROGRESS_INTERVAL, run_guarded,
 };
-use crate::options::{ProgramOptions, load_options};
+use crate::options::{ProgramOptions, load_options_with};
 use crate::paths::{ConfigLocation, resolve_config_dir};
+use crate::settings::LoadMode;
 
 /// Version of this build (`CARGO_PKG_VERSION`), as written in `hikasa_version` and the client/generator names.
 pub const HIKASA_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -130,6 +138,9 @@ pub struct ServiceInit {
     pub clock: Arc<dyn Clock>,
     /// External conversion runner (`StdProcessRunner` in adapters, fakes in tests).
     pub runner: Arc<dyn ProcessRunner>,
+    /// How `options.toml` is read: `Strict` for every command, `Lenient` for the `settings` commands (D-71;
+    /// added in M2 W1).
+    pub options_mode: LoadMode,
 }
 
 impl ServiceInit {
@@ -146,6 +157,7 @@ impl ServiceInit {
             stdin: None,
             clock,
             runner,
+            options_mode: LoadMode::Strict,
         }
     }
 }
@@ -157,6 +169,7 @@ impl std::fmt::Debug for ServiceInit {
             .field("config_dir", &self.config_dir)
             .field("threads", &self.threads)
             .field("stdin", &self.stdin)
+            .field("options_mode", &self.options_mode)
             .finish_non_exhaustive()
     }
 }
@@ -256,10 +269,11 @@ impl Service {
             stdin,
             clock,
             runner,
+            options_mode,
         } = init;
         let exists = |p: &std::path::Path| p.is_file();
         let config = resolve_config_dir(&env, config_dir.as_deref(), &exists)?;
-        let options_load = load_options(&config)?;
+        let options_load = load_options_with(&config, options_mode)?;
         let (registry, format_warnings) = FormatStore::new(&config).load(RegexLimits::default())?;
         let mut startup_warnings = options_load.warnings;
         startup_warnings.extend(format_warnings);

@@ -46,7 +46,11 @@ Moved to M2 (done in M2 wave 0):
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
 contract `docs/design/m2-contracts.md`. Done: wave 0 (catalogue in core, help topics,
-`xtask`, nextest and the docs/bench jobs).
+`xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
+typed, versioned and written sparsely with unknown keys kept, change detection by
+polling, all `docs/15` keys OPT-001…OPT-022, `hikasa settings get|set|unset|list|
+restore-defaults`, the `hikasa format` write commands, colour schemes and Open With
+expansion in core; the window reads them from W4).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.
@@ -59,6 +63,12 @@ contract `docs/design/m2-contracts.md`. Done: wave 0 (catalogue in core, help to
   reports; single-instance IPC; `hikasa-cli` wait mode.
 
 ## M3 — 1.0 — all P1
+- Moved from M2 (D-59, plan Q1): the merge-only parts of TC-015/TC-040/TC-050/TC-052/
+  TC-053/FC-004; FC-081 and the snapshot/remote/profile parts of FC-001/TC-002/TC-005;
+  FF-030 built-in document converters; TB-001 spreadsheet/HTML extraction; PX-001 DDS;
+  FC-070 ACL and 8.3 options; SES-091 taskbar previews (OPT-004 `show_taskbar_previews`
+  is stored only); UI-031 "update available" (OPT-013 is stored only); the FF-027
+  third-party highlighter fallback.
 - Folder Merge, Folder Sync with Sync Memory, Text Merge (GUI + automerge), Text
   Patch, alignment overrides, replacements, snapshots, remote back-ends (FTP/FTPS/
   SFTP/WebDAV/S3), profiles + keychain, 7z, spreadsheet/office/PDF conversions,

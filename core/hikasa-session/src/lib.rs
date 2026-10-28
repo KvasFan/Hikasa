@@ -18,9 +18,10 @@
 //! | [`ipc`] | protocol v1, framing, endpoint, server and client (§4.4, §2.23) |
 //! | [`commands`] | the command catalogue of every view type (ARCH-070; M2 W0) |
 //! | [`help`] | the help topics of `help/` and their Markdown reader (M2 W0) |
+//! | [`settings`] | the settings store: every program-owned settings file, keys, change detection (M2 W1) |
 //!
 //! Specification: `docs/design/m1-contracts.md` §1.8, §2.21–§2.23, §3, §4, §5; `docs/design/m2-contracts.md`
-//! (W0: catalogue and help).
+//! (W0: catalogue and help; W1: settings store).
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![cfg_attr(
@@ -39,6 +40,7 @@ pub mod ipc;
 pub mod jobs;
 pub mod options;
 pub mod paths;
+pub mod settings;
 
 pub use api::{ApiError, ApiOp, HIKASA_VERSION, Service, ServiceInit, StdinSource};
 pub use atomic::{TEMP_NAME_PREFIX_MAX, write_atomic};

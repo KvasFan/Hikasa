@@ -1,0 +1,66 @@
+{
+  "schema": "hikasa.settings_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "entries": [
+      {
+        "key": "options.colours.red",
+        "value": 1,
+        "default": null,
+        "is_default": false,
+        "kind": "int",
+        "opt": null,
+        "unknown": true
+      },
+      {
+        "key": "options.tabs.hide_tab_bar_if_single_tab",
+        "value": true,
+        "default": false,
+        "is_default": false,
+        "kind": "bool",
+        "opt": "OPT-004",
+        "unknown": false
+      },
+      {
+        "key": "options.tabs.later",
+        "value": 1,
+        "default": null,
+        "is_default": false,
+        "kind": "int",
+        "opt": null,
+        "unknown": true
+      },
+      {
+        "key": "commands.view.home.command.Exit.shortcuts",
+        "value": [
+          "Ctrl+T"
+        ],
+        "default": null,
+        "is_default": false,
+        "kind": "list",
+        "opt": "OPT-011",
+        "unknown": false
+      }
+    ],
+    "conflicts": [
+      {
+        "view": "home",
+        "shortcut": "Ctrl+T",
+        "commands": [
+          "TabNew",
+          "Exit"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "unknown_config_key",
+      "message": "<TMP>/cfg/options.toml: unknown section `colours`",
+      "spec": null
+    }
+  ],
+  "error": null
+}

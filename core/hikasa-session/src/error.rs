@@ -49,18 +49,25 @@ pub enum SessionError {
         #[source]
         source: SchemaError,
     },
+    /// A settings file changed on disk since it was read (D-74); the save did not write. Added in M2 W1 (kind
+    /// `invalid_data`).
+    #[error("{path}: changed on disk since it was read")]
+    Conflict {
+        /// The file.
+        path: String,
+    },
 }
 
 impl Classify for SessionError {
     /// `NoConfigDir` → `not_found`; `RelativeConfigDir`, `EmptyConfigDir` → `invalid_input`; `Config` → `invalid_data`; `Format` →
-    /// its kind; `Io` → [`io_error_kind`]; `Schema` → `unsupported`.
+    /// its kind; `Io` → [`io_error_kind`]; `Schema` → `unsupported`; `Conflict` → `invalid_data`.
     fn kind(&self) -> ErrorKind {
         match self {
             SessionError::NoConfigDir => ErrorKind::NotFound,
             SessionError::RelativeConfigDir(_) | SessionError::EmptyConfigDir => {
                 ErrorKind::InvalidInput
             }
-            SessionError::Config { .. } => ErrorKind::InvalidData,
+            SessionError::Config { .. } | SessionError::Conflict { .. } => ErrorKind::InvalidData,
             SessionError::Format(e) => e.kind(),
             SessionError::Io { source, .. } => io_error_kind(source),
             SessionError::Schema { source, .. } => source.kind(),
@@ -69,8 +76,8 @@ impl Classify for SessionError {
 }
 
 impl SessionError {
-    /// An [`SessionError::Io`] for `path`.
-    pub(crate) fn io(path: &std::path::Path, source: std::io::Error) -> SessionError {
+    /// An [`SessionError::Io`] for `path` (additive, M2 W1: public).
+    pub fn io(path: &std::path::Path, source: std::io::Error) -> SessionError {
         SessionError::Io {
             path: path.display().to_string(),
             source,

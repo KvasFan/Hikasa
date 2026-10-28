@@ -49,7 +49,7 @@ pub struct GlobalArgs {
     pub no_color: bool,
 }
 
-/// The subcommands of M1.
+/// The subcommands.
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
     /// Quick compare two files; exit code only (1/2/11/12/13/100).
@@ -83,6 +83,12 @@ pub enum Command {
         /// The GUI subcommand.
         #[command(subcommand)]
         cmd: GuiCmd,
+    },
+    /// Read and change the settings files.
+    Settings {
+        /// The settings subcommand.
+        #[command(subcommand)]
+        cmd: SettingsCmd,
     },
     /// Print shell completions.
     Completions {
@@ -440,6 +446,181 @@ pub enum FormatCmd {
     Detect(DetectArgs),
     /// Dump the grammar tokens of a file.
     Tokens(TokensArgs),
+    /// Create a user format (empty, or a copy of another one).
+    New(FormatNewArgs),
+    /// Change a format (a built-in gets an override file).
+    Edit(FormatEditArgs),
+    /// Delete a user format.
+    Delete {
+        /// The format id.
+        id: String,
+    },
+    /// Copy a format file into the formats folder.
+    Import {
+        /// The format file.
+        path: PathBuf,
+        /// Replace a format with the same id.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Print a format as TOML or write it to a file.
+    Export {
+        /// Format id or name.
+        name: String,
+        /// Write to PATH instead of stdout.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+    /// Enable a format (detection uses it).
+    Enable {
+        /// The format id.
+        id: String,
+    },
+    /// Disable a format (detection skips it).
+    Disable {
+        /// The format id.
+        id: String,
+    },
+    /// Move a format in the detection order.
+    Move(FormatMoveArgs),
+    /// Remove user files that override built-in formats.
+    Restore(FormatRestoreArgs),
+}
+
+/// `hikasa format new <id>`.
+#[derive(Debug, clap::Args)]
+pub struct FormatNewArgs {
+    /// The new format id (a-z, 0-9 and `-`).
+    pub id: String,
+    /// Copy this format (id or name).
+    #[arg(long, value_name = "ID")]
+    pub from: Option<String>,
+    /// The display name.
+    #[arg(long, value_name = "TEXT")]
+    pub name: Option<String>,
+    /// The file name mask (`*.ext;*.other`).
+    #[arg(long, value_name = "MASK")]
+    pub mask: Option<String>,
+    /// The kind: text, table, hex, picture, media, version, registry, external.
+    #[arg(long, value_name = "KIND")]
+    pub kind: Option<String>,
+}
+
+/// `hikasa format edit <id>`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("edit").required(true).args(["from_file", "set"])))]
+pub struct FormatEditArgs {
+    /// The format id.
+    pub id: String,
+    /// Replace the format with this file (its id must match).
+    #[arg(long, value_name = "PATH", conflicts_with = "set")]
+    pub from_file: Option<PathBuf>,
+    /// Set one key of the format's TOML (`mask=*.x`, `text.tab_size=8`; repeatable).
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub set: Vec<String>,
+}
+
+/// `hikasa format move <id>`.
+#[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("to")
+        .required(true)
+        .args(["up", "down", "top", "bottom", "before", "after"])
+))]
+pub struct FormatMoveArgs {
+    /// The format id.
+    pub id: String,
+    /// One place up.
+    #[arg(long)]
+    pub up: bool,
+    /// One place down.
+    #[arg(long)]
+    pub down: bool,
+    /// First.
+    #[arg(long)]
+    pub top: bool,
+    /// Last.
+    #[arg(long)]
+    pub bottom: bool,
+    /// Right before this format.
+    #[arg(long, value_name = "ID")]
+    pub before: Option<String>,
+    /// Right after this format.
+    #[arg(long, value_name = "ID")]
+    pub after: Option<String>,
+}
+
+/// `hikasa format restore`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).arg("ids").arg("all")))]
+pub struct FormatRestoreArgs {
+    /// Built-in format ids whose override files are removed.
+    #[arg(value_name = "ID")]
+    pub ids: Vec<String>,
+    /// Remove every user format file and `order.toml`.
+    #[arg(long)]
+    pub all: bool,
+    /// Print the plan only.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Delete without asking (required unless `--dry-run`).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// `hikasa settings …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum SettingsCmd {
+    /// Print the value of a key (a table as TOML).
+    Get {
+        /// The key: `<file>.<path>`, such as `options.text_editing.auto_indent`.
+        key: String,
+    },
+    /// Set a key (a value equal to the default removes it from the file).
+    Set {
+        /// The key.
+        key: String,
+        /// The value: TOML (`true`, `5`, `"text"`, `["a", "b"]`) or plain text for text keys.
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+        /// Overwrite a file changed on disk since it was read.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Put a key back to its default.
+    Unset {
+        /// The key.
+        key: String,
+    },
+    /// List keys with their values.
+    List {
+        /// Only the keys under this key or file.
+        prefix: Option<String>,
+        /// Only the keys that differ from their defaults.
+        #[arg(long)]
+        changed: bool,
+    },
+    /// Delete settings files so that their defaults apply.
+    RestoreDefaults(RestoreDefaultsArgs),
+}
+
+/// `hikasa settings restore-defaults`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).arg("all").arg("file")))]
+pub struct RestoreDefaultsArgs {
+    /// Every settings file (not sessions, workspaces or formats).
+    #[arg(long)]
+    pub all: bool,
+    /// One file: `options`, `state`, `commands`, `theme`, `themes`, `themes.<scheme>`, `filters`, `openwith`,
+    /// `archives` (repeatable).
+    #[arg(long, value_name = "FILE")]
+    pub file: Vec<String>,
+    /// Print the plan only.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Delete without asking (required unless `--dry-run`).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// `hikasa format detect <file>`.

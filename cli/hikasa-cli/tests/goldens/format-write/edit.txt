@@ -1,0 +1,1 @@
+wrote <TMP>/cfg/formats/notes.toml

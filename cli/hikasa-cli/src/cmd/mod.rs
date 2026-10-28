@@ -8,6 +8,7 @@ pub mod format;
 pub mod gui;
 pub mod help;
 pub mod quick;
+pub mod settings;
 pub mod text;
 pub mod version;
 pub mod vfs;
@@ -15,9 +16,11 @@ pub mod vfs;
 use clap::ArgMatches;
 use hikasa_core::{JobKind, Warning};
 use hikasa_session::api::dto::{
-    COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_LIST_SCHEMA,
-    FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
-    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, TEXT_COMPARE_SCHEMA,
+    COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_EXPORT_SCHEMA,
+    FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA,
+    FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA, GUI_PING_SCHEMA,
+    GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SETTINGS_GET_SCHEMA,
+    SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA,
     VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
@@ -26,7 +29,9 @@ use hikasa_session::{ApiError, Service};
 use hikasa_text::{TextPattern, TextRulesPatch, UnimportantItem};
 use serde::Serialize;
 
-use crate::args::{Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, TextCmd, VfsCmd};
+use crate::args::{
+    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SettingsCmd, TextCmd, VfsCmd,
+};
 use crate::output::{Output, WriteError};
 use crate::progress::ProgressLine;
 
@@ -150,7 +155,8 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         | Command::Folder { .. }
         | Command::Format { .. }
         | Command::Vfs { .. }
-        | Command::Gui { .. } => None,
+        | Command::Gui { .. }
+        | Command::Settings { .. } => None,
     }
 }
 
@@ -175,6 +181,23 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             FormatCmd::Show { .. } => (FORMAT_SHOW_SCHEMA, ApiOp::Format),
             FormatCmd::Detect(_) => (FORMAT_DETECT_SCHEMA, ApiOp::Format),
             FormatCmd::Tokens(_) => (FORMAT_TOKENS_SCHEMA, ApiOp::Format),
+            FormatCmd::New(_)
+            | FormatCmd::Edit(_)
+            | FormatCmd::Delete { .. }
+            | FormatCmd::Import { .. }
+            | FormatCmd::Enable { .. }
+            | FormatCmd::Disable { .. }
+            | FormatCmd::Move(_) => (FORMAT_WRITE_SCHEMA, ApiOp::Format),
+            FormatCmd::Export { .. } => (FORMAT_EXPORT_SCHEMA, ApiOp::Format),
+            FormatCmd::Restore(_) => (FORMAT_RESTORE_SCHEMA, ApiOp::Format),
+        },
+        Command::Settings { cmd } => match cmd {
+            SettingsCmd::Get { .. } => (SETTINGS_GET_SCHEMA, ApiOp::Other),
+            SettingsCmd::Set { .. } | SettingsCmd::Unset { .. } => {
+                (SETTINGS_SET_SCHEMA, ApiOp::Other)
+            }
+            SettingsCmd::List { .. } => (SETTINGS_LIST_SCHEMA, ApiOp::Other),
+            SettingsCmd::RestoreDefaults(_) => (SETTINGS_RESTORE_SCHEMA, ApiOp::Other),
         },
         Command::Vfs { cmd } => match cmd {
             VfsCmd::Ls(_) => (VFS_LIST_SCHEMA, ApiOp::Vfs),
@@ -213,6 +236,7 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Format { cmd } => format::run(ctx, cmd),
         Command::Vfs { cmd } => vfs::run(ctx, cmd),
         Command::Gui { cmd } => gui::run(ctx, cmd, open),
+        Command::Settings { cmd } => settings::run(ctx, cmd),
         Command::Completions { shell } => completions::run(ctx.out, *shell),
         Command::Version => version::run(ctx.out),
         Command::Help(args) => help::run(ctx.out, args),

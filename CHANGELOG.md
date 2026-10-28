@@ -5,6 +5,31 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 1 — settings store
+- **One engine for every settings file** (D-70, T13): `options.toml`, `state.toml`, `commands.toml`,
+  `theme.toml`, `themes/<name>.toml`, `filters.toml`, `openwith.toml` and `archives.toml` are typed
+  (`hikasa_session::settings`), carry `schema_version` with a migration chain (older files are written back on
+  the next save, newer ones refused), keep unknown keys, are written sparsely (only values that differ from the
+  defaults) and atomically, and refuse to overwrite a file changed on disk since it was read (`--force`).
+- **Every option of `docs/15`** (OPT-001…OPT-022, D-71): `options.toml` is read completely; a wrong type or a
+  value out of range is an error naming the file and the key for every command except `hikasa settings`, which
+  warns `invalid_config_value` (a new warning code) and uses the default so that `settings set` repairs the file.
+  Entries of `[[app]]` and `[[preset]]` are never dropped or reordered by that repair.
+- **`hikasa settings get|set|unset|list|restore-defaults`** (D-73, D-77) with keys `<file>.<path>`, suggestions
+  for unknown keys, shortcut-conflict warnings, a `--dry-run` plan and `--yes` for deleting files; schemas
+  `hikasa.settings_get.v1`, `hikasa.settings_set.v1`, `hikasa.settings_list.v1`, `hikasa.settings_restore.v1`.
+- **`hikasa format new|edit|delete|import|export|enable|disable|move|restore`** (D-75): they write only the files
+  they change; a built-in can be disabled or restored, not deleted; the id `order` is reserved; schemas `hikasa.format_write.v1`,
+  `hikasa.format_export.v1`, `hikasa.format_restore.v1`.
+- **Change detection** (D-74): `ConfigWatch` polls length, time and CRC-32 of every settings and format file.
+- **Themes** (D-78): built-in `light` and `dark` schemes (the M1 palettes) with every element of UI-021…023,
+  editable by override files, custom schemes with a `base`; contrast of default text ≥ 4.5:1 is tested.
+- **Shortcuts, Open With, archive types, filter presets** in core: the shortcut spelling of the command
+  reference (every catalogue shortcut parses), per-view customization and conflicts (UI-003); pure Open With
+  command expansion with quoting (D-76); archive type masks (OPT-010); name filter presets (OPT-020).
+- Help topic `hikasa settings`; `hikasa format` extended. The window takes the sections of its view types from
+  `hikasa_session::commands::view_sections`.
+
 ### Wave 0 — infrastructure
 - **Command catalogue in core** (D-65): every command of the reference (458 in 14 sections) is data in
   `core/hikasa-session/catalogue/commands.toml`, read by `hikasa_session::commands`, with a status

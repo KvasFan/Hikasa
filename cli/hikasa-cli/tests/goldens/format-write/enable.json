@@ -1,0 +1,16 @@
+{
+  "schema": "hikasa.format_write.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "action": "enable",
+    "id": "python",
+    "written": [
+      "<TMP>/cfg/formats/order.toml"
+    ],
+    "removed": []
+  },
+  "warnings": [],
+  "error": null
+}

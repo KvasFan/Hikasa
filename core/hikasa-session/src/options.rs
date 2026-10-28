@@ -1,19 +1,21 @@
-//! Program options: the M1 subset of `options.toml` (docs/15; D-25, D-31): [`ProgramOptions`],
+//! Program options: the M1 view of `options.toml` (docs/15; D-25, D-31, D-71): [`ProgramOptions`],
 //! [`OptionsLoad`], [`load_options`], [`OPTION_SECTIONS`].
 //!
-//! Loading rules (D-31): a missing file means defaults; a `schema_version` newer than
-//! [`OPTIONS_SCHEMA_VERSION`] is an error (SES-052); unknown keys inside the top-level sections of docs/15
-//! ([`OPTION_SECTIONS`]) are ignored silently (M2 writes the whole file) and listed in
-//! [`OptionsLoad::ignored_keys`] for `--verbose` logging; an unknown top-level section produces warning
-//! `unknown_config_key`. The file is never written in M1, so every key Hikasa does not use is preserved.
+//! Since M2 W1 these are thin wrappers over [`crate::settings::options::Options`] read by
+//! [`crate::settings::SettingsFile`] (contract §1.1): every key of docs/15 "Keys" is typed and checked; a
+//! `schema_version` newer than [`OPTIONS_SCHEMA_VERSION`] is an error (SES-052); unknown keys inside the
+//! top-level sections are ignored silently and listed in [`OptionsLoad::ignored_keys`] for `--verbose` logging;
+//! an unknown top-level section produces warning `unknown_config_key`; a wrong type or range is an error
+//! ([`load_options`]) or, for the `settings` commands, warning `invalid_config_value` ([`load_options_with`]).
 
-use hikasa_core::{SchemaCompat, Warning, WarningCode, check_schema_version};
+use hikasa_core::Warning;
 use hikasa_vfs::StreamOptions;
 use serde::{Deserialize, Serialize};
-use toml::{Table, Value};
 
 use crate::error::SessionError;
 use crate::paths::ConfigLocation;
+use crate::settings::options::Options;
+use crate::settings::{LoadMode, Loaded, SettingsFile};
 
 /// File name of the program options inside the configuration folder (SES-051).
 pub const OPTIONS_FILE: &str = "options.toml";
@@ -21,8 +23,9 @@ pub const OPTIONS_FILE: &str = "options.toml";
 /// Newest `schema_version` of `options.toml` this build reads.
 pub const OPTIONS_SCHEMA_VERSION: u32 = 1;
 
-/// Top-level sections of `options.toml` (docs/15 pages). Unknown keys inside them are ignored silently;
-/// unknown top-level sections produce warning `unknown_config_key` (D-31).
+/// Top-level sections of `options.toml` (docs/15 pages; `archive_types`, `commands` and `open_with` are reserved,
+/// D-72). Unknown keys inside them are ignored silently; unknown top-level sections produce warning
+/// `unknown_config_key` (D-31).
 pub const OPTION_SECTIONS: &[&str] = &[
     "startup",
     "tabs",
@@ -37,14 +40,7 @@ pub const OPTION_SECTIONS: &[&str] = &[
     "tweaks",
 ];
 
-/// The dotted key of `context_lines`.
-const KEY_CONTEXT_LINES: &str = "text_editing.number_of_context_lines";
-/// The dotted key of `binary_buffer_size`.
-const KEY_BUFFER_SIZE: &str = "tweaks.file_operations.buffer_size_for_binary_compare";
-/// The dotted key of `content_memory_budget_mib`.
-const KEY_CONTENT_BUDGET: &str = "tweaks.file_operations.content_memory_budget_mib";
-
-/// M1 subset of `options.toml` (15-options-reference). All other keys are preserved by not touching the file.
+/// M1 subset of `options.toml` (15-options-reference): the view [`Options::program_options`] computes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgramOptions {
     /// `[text_editing] number_of_context_lines` (default 3).
@@ -96,168 +92,35 @@ pub struct OptionsLoad {
     pub ignored_keys: Vec<String>,
 }
 
-/// Loads `options.toml` (missing file → defaults; newer `schema_version` → error).
+/// Loads `options.toml` strictly (missing file → defaults; newer `schema_version`, a wrong type or a value out of
+/// range → error; D-71).
 pub fn load_options(config: &ConfigLocation) -> Result<OptionsLoad, SessionError> {
-    let path = config.dir.join(OPTIONS_FILE);
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let origin = path.display().to_string();
-            let text = String::from_utf8(bytes).map_err(|_| SessionError::Config {
-                path: origin.clone(),
-                message: "the file is not valid UTF-8".into(),
-            })?;
-            parse_options(&text, &origin)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(OptionsLoad {
-            options: ProgramOptions::default(),
-            warnings: Vec::new(),
-            ignored_keys: Vec::new(),
-        }),
-        Err(e) => Err(SessionError::io(&path, e)),
-    }
+    load_options_with(config, LoadMode::Strict)
 }
 
-/// Parses the text of an `options.toml` (`origin` names it in messages). The pure core of [`load_options`]
-/// (additive).
+/// Loads `options.toml` in `mode` (`Lenient`: the `settings` commands, D-71). Additive (M2 W1).
+pub fn load_options_with(
+    config: &ConfigLocation,
+    mode: LoadMode,
+) -> Result<OptionsLoad, SessionError> {
+    let file = SettingsFile::<Options>::load(&config.dir.join(OPTIONS_FILE), mode)?;
+    Ok(view(file.loaded()))
+}
+
+/// Parses the text of an `options.toml` strictly (`origin` names it in messages). The pure core of
+/// [`load_options`] (additive).
 pub fn parse_options(text: &str, origin: &str) -> Result<OptionsLoad, SessionError> {
-    let config_error = |message: String| SessionError::Config {
-        path: origin.to_owned(),
-        message,
-    };
-    let table: Table = toml::from_str(text).map_err(|e| {
-        config_error(
-            e.to_string()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
-    })?;
-    if let Some(version) = table.get("schema_version") {
-        let found = match version {
-            Value::Integer(n) if *n < 0 => {
-                return Err(config_error(
-                    "`schema_version` must be a non-negative integer".into(),
-                ));
-            }
-            Value::Integer(n) => u32::try_from(*n).unwrap_or(u32::MAX),
-            _ => return Err(config_error("`schema_version` must be an integer".into())),
-        };
-        match check_schema_version(found, OPTIONS_SCHEMA_VERSION) {
-            Ok(SchemaCompat::Current | SchemaCompat::Older { .. }) => {}
-            Err(source) => {
-                return Err(SessionError::Schema {
-                    path: origin.to_owned(),
-                    source,
-                });
-            }
-        }
-    }
-    let mut load = OptionsLoad {
-        options: ProgramOptions::default(),
-        warnings: Vec::new(),
-        ignored_keys: Vec::new(),
-    };
-    for (key, value) in &table {
-        if key == "schema_version" {
-            continue;
-        }
-        if !OPTION_SECTIONS.contains(&key.as_str()) {
-            load.warnings.push(Warning {
-                code: WarningCode::UnknownConfigKey,
-                message: format!("{origin}: unknown section `{key}`"),
-                spec: None,
-            });
-            ignore_all(&mut vec![key.as_str()], value, &mut load.ignored_keys);
-            continue;
-        }
-        if !value.is_table() {
-            return Err(config_error(format!(
-                "`{key}` must be a table (a [{key}] section)"
-            )));
-        }
-        walk(&mut vec![key.as_str()], value, &mut load, origin)?;
-    }
-    Ok(load)
+    let file = SettingsFile::<Options>::parse(text, origin, LoadMode::Strict)?;
+    Ok(view(file.loaded()))
 }
 
-/// The M1 option at a key path (matched on the table structure, never on a joined dotted string: a quoted key
-/// `"text_editing.number_of_context_lines"` is one unknown key, not the option).
-fn option_slot<'a>(path: &[&str], options: &'a mut ProgramOptions) -> Option<&'a mut u32> {
-    let dotted = |key: &str| key.split('.').eq(path.iter().copied());
-    if dotted(KEY_CONTEXT_LINES) {
-        Some(&mut options.context_lines)
-    } else if dotted(KEY_BUFFER_SIZE) {
-        Some(&mut options.binary_buffer_size)
-    } else if dotted(KEY_CONTENT_BUDGET) {
-        Some(&mut options.content_memory_budget_mib)
-    } else {
-        None
+/// The M1 view of a loaded file.
+fn view(loaded: &Loaded<Options>) -> OptionsLoad {
+    OptionsLoad {
+        options: loaded.value.program_options(),
+        warnings: loaded.warnings.clone(),
+        ignored_keys: loaded.ignored_keys.clone(),
     }
-}
-
-/// Visits the leaves below `path` of a known section: the M1 keys set their option, every other leaf is
-/// ignored (D-31) and listed.
-fn walk<'k>(
-    path: &mut Vec<&'k str>,
-    value: &'k Value,
-    load: &mut OptionsLoad,
-    origin: &str,
-) -> Result<(), SessionError> {
-    if let Some(slot) = option_slot(path, &mut load.options) {
-        let name = path.join(".");
-        *slot = match value {
-            Value::Integer(n) => u32::try_from(*n).map_err(|_| SessionError::Config {
-                path: origin.to_owned(),
-                message: format!("`{name}` must be an integer from 0 to {}", u32::MAX),
-            })?,
-            _ => {
-                return Err(SessionError::Config {
-                    path: origin.to_owned(),
-                    message: format!("`{name}` must be an integer"),
-                });
-            }
-        };
-        return Ok(());
-    }
-    match value {
-        Value::Table(table) => {
-            for (key, child) in table {
-                path.push(key.as_str());
-                walk(path, child, load, origin)?;
-                path.pop();
-            }
-        }
-        _ => load.ignored_keys.push(display_path(path)),
-    }
-    Ok(())
-}
-
-/// Lists every leaf below `path` as ignored (an unknown section).
-fn ignore_all<'k>(path: &mut Vec<&'k str>, value: &'k Value, ignored: &mut Vec<String>) {
-    match value {
-        Value::Table(table) => {
-            for (key, child) in table {
-                path.push(key.as_str());
-                ignore_all(path, child, ignored);
-                path.pop();
-            }
-        }
-        _ => ignored.push(display_path(path)),
-    }
-}
-
-/// A key path for messages: segments joined with `.`, a segment holding a `.` quoted.
-fn display_path(path: &[&str]) -> String {
-    path.iter()
-        .map(|segment| {
-            if segment.contains('.') {
-                format!("{segment:?}")
-            } else {
-                (*segment).to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(".")
 }
 
 #[cfg(test)]

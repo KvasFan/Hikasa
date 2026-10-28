@@ -102,6 +102,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         stdin: Some(StdinSource::new(open.stdin_name.clone(), read_stdin)),
         clock: Arc::new(SystemClock),
         runner: Arc::new(StdProcessRunner),
+        options_mode: hikasa_session::settings::LoadMode::Strict,
     }) {
         Ok(service) => service,
         Err(e) => {

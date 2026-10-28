@@ -1,0 +1,1 @@
+options.appearance.theme_mode = "dark"

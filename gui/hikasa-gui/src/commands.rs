@@ -22,13 +22,13 @@ pub enum Scope {
 
 impl Scope {
     /// The sections of the core catalogue (`hikasa_session::commands`) where this view type's commands live, own
-    /// section first (M2 W0).
+    /// section first (M2 W0; the view types' lists come from `commands::view_sections` since W1).
     pub fn catalogue_sections(self) -> &'static [&'static str] {
         match self {
             Scope::Global => &["global"],
-            Scope::Home => &["home", "global"],
-            Scope::Folder => &["folder-compare", "folder-shared", "session", "global"],
-            Scope::Text => &["text-compare", "file-shared", "session", "global"],
+            Scope::Home => hikasa_session::commands::view_sections("home"),
+            Scope::Folder => hikasa_session::commands::view_sections("folder-compare"),
+            Scope::Text => hikasa_session::commands::view_sections("text-compare"),
         }
     }
 

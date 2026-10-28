@@ -43,10 +43,10 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 | `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. |
 | `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. |
 | `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | |
-| `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). |
+| `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|enable\|disable\|move\|restore\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). The write forms are M2 W1 (§4, `10-file-formats.md` §1.1). |
 | `hikasa profile (list\|show\|new\|edit\|delete\|test) …` | `hikasa-session` + `hikasa-vfs` | Secrets prompted interactively or read from `--password-stdin`. |
 | `hikasa vfs (ls\|stat\|cat\|cp\|mv\|rm\|mkdir\|touch) <spec>…` | `hikasa-vfs` | Generic access to any back-end (archives, remote, snapshots). |
-| `hikasa settings (get\|set\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Program options. |
+| `hikasa settings (get\|set\|unset\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Every settings file, keys `<file>.<path>` (D-73). `get`/`set`/`unset`/`list`/`restore-defaults` are M2 W1 (§4); `export`/`import` (settings packages) come with W2. |
 | `hikasa gui …` | IPC client | See §1.1. |
 | `hikasa completions <shell>`, `hikasa help [topic]`, `hikasa version` | | |
 
@@ -342,6 +342,8 @@ values are a usage error (exit 100), wherever they stand.
 | `text compare <left> <right>` | `--format`; `--encoding`, `--left-encoding`, `--right-encoding <label>`; `--rules-file` (`--rules`); `--algorithm auto\|unaligned\|standard\|myers\|patience\|histogram`, `--skew <n>`, `--closeness`/`--no-closeness`, `--closeness-threshold <‰>`, `--never-align`; `--unimportant`, `--unimportant-text`, `--unimportant-regex`, `--compare-line-endings`, `--orphans-unimportant`; `--ignore-unimportant` (`--iu`); `--context <n>` (default 3, from the options), `--display all\|mismatches\|context\|matches`; `--report unified\|side-by-side\|summary\|patch\|statistics` (default: the annotated unified diff), `--patch-style normal\|context\|unified`, `--html`, `--html-mono`, `--line-numbers`/`--no-line-numbers`, `--width <n>` (160), `--wrap none\|character\|word`, `--title <text>`, `--output <file>`; `--stdin-name`; `--gui`, `--wait`, `--no-launch` |
 | `folder compare <left> <right>` | `--filters <masks>`; `--rules-file` (`--rules`); `--criteria <list>`; `--size`/`--no-size`, `--timestamps`/`--no-timestamps`, `--tolerance <secs>`, `--ignore-dst`, `--ignore-timezone`, `--filename-case`, `--attributes <letters>`, `--permissions`, `--owner`, `--group`; `--content none\|crc\|binary\|rules`, `--skip-if-quick-same`, `--no-override-quick`; `--text-rules-file <toml>`, `--unimportant`, `--unimportant-text`, `--unimportant-regex` (for `--content rules`); `--case-sensitive`\|`--case-insensitive`, `--align-extensions`, `--align-normalization`; `--cutoff <expr>`, `--size-filter <expr>`, `--include-protected`; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`; `--display <filter>` (default `differences`), `--folders always\|structure\|files-only` (default `structure`), `--ignore-unimportant` (`--iu`), `--suppress-filters`, `--expand-all`; `--report list\|side-by-side\|summary\|json` (default `list`), `--columns <list>`, `--html`, `--html-mono`, `--title`, `--output`; `--gui`, `--wait`, `--no-launch` |
 | `format list` / `format show <id\|name>` / `format detect <file>` / `format tokens <file>` | `detect`: `--stdin-name`; `tokens`: `--format`, `--encoding`, `--lines <a>-<b>`, `--stdin-name` |
+| `format new <id>` / `edit <id>` / `delete <id>` / `import <path>` / `export <id\|name>` / `enable <id>` / `disable <id>` / `move <id>` / `restore [<id>…]` | *M2 W1 (D-75):* `new`: `--from <id\|name>`, `--name <text>`, `--mask <mask>`, `--kind <kind>`; `edit`: `--from-file <path>` \| `--set <key=value>`…; `import`: `--replace`; `export`: `-o`/`--output <path>`; `move`: one of `--up`, `--down`, `--top`, `--bottom`, `--before <id>`, `--after <id>`; `restore`: `<id>`… \| `--all`, and `--dry-run` \| `--yes`. They write only the files they change (`10-file-formats.md` §1.1) |
+| `settings get <key>` / `set <key> <value>` / `unset <key>` / `list [<key>]` / `restore-defaults` | *M2 W1 (D-71, D-73, D-77):* `set`: `--force` (overwrite a file changed since it was read); `list`: `--changed`; `restore-defaults`: `--all` \| `--file <file>`…, and `--dry-run` \| `--yes`. A key is `<file>.<path>`: the file is `options`, `state`, `commands`, `theme`, `themes.<scheme>`, `filters`, `openwith` or `archives`; the path is the TOML key path, a segment that is not a plain name in double quotes, an array position as a number (`openwith.app.0.command`). A key naming a table gives the whole table (`get`, `list`); `set` takes a leaf or a whole array. The value is TOML; for text keys (strings, paths, masks, colours, shortcuts, enumerations) text that is not a TOML string is taken as it is. These commands read `options.toml` leniently (a bad value is the warning `invalid_config_value`), every other command refuses it (`03-sessions-settings-profiles.md` §5.2). An unknown key (also an array position past the end, or a command id that its view does not have) is `not_found` with up to five suggestions; a key the file holds but Hikasa does not know is listed as unknown |
 | `vfs ls <spec>` / `vfs stat <spec>` / `vfs cat <spec>` | `ls`, `stat`: `--follow-symlinks` |
 | `gui open <args…>` | the forms and switches of §2 (`--wait`, `--no-launch`, `--fv`, `--title1`…`--title4`, `--ro`, `--ro1`, `--ro2`, `--filters`, `--expandall`, `--format`, `--iu`, `--stdin-name`, `--help`); the arguments after `open` reach that parser unchanged, so `hikasa gui open -- -x a.c` opens the files `-x` and `a.c` exactly like `hikasa-gui -- -x a.c`; the global flags may also follow the specs (the same flag given twice with different values exits 100) |
 | `gui ping` / `gui list` / `gui close <id>` / `gui quit` | — |
@@ -380,6 +382,12 @@ e.g. `quick --crc` on a file that cannot be read); warnings are `hikasa: warning
 | `vfs stat` | the `vfs ls` line, then `capabilities: …` |
 | `gui list` | `<view>\t<kind>\t<title>\t<spec>…` |
 | `gui ping` | `<server>\t<protocol version>` |
+| `settings get` | the TOML value (`3`, `"dark"`, `["a"]`); a table as TOML; `(not set)` for an optional key without a value |
+| `settings set`, `settings unset` | `<key> = <value>`, then `(file unchanged)` when nothing was written |
+| `settings list` | `<key> = <value>`, with `  # default: <value>` when changed and `  # unknown key (kept)` for a key Hikasa does not know; a shortcut conflict that involves a changed shortcut is a warning on stderr |
+| `settings restore-defaults`, `format restore` | `delete <path>` or `absent <path>` per file (also with `--dry-run`) |
+| `format new`, `edit`, `delete`, `import`, `enable`, `disable`, `move` | `wrote <path>`, `removed <path>` |
+| `format export` | the TOML (with `-o`: `wrote <path>`) |
 
 **JSON (D-29, D-32, D-35, D-40).** Every document is an envelope `{schema, hikasa_version,
 ok, exit_code, result, warnings, error}` with the schemas `hikasa.quick.v1`,
@@ -390,7 +398,15 @@ ok, exit_code, result, warnings, error}` with the schemas `hikasa.quick.v1`,
 `hikasa.version.v1`, `hikasa.completions.v1` and, for a command line that does not parse,
 `hikasa.usage_error.v1` (its `error.message` is the parser's whole message in one line);
 M2 adds `hikasa.help.v1` (`{topic: {id, title, markdown, links} | null, topics: [{id,
-title}]}`), appended last to the `schemas` of `hikasa version --json`.
+title}]}`), appended last to the `schemas` of `hikasa version --json`, then (W1)
+`hikasa.settings_get.v1` (`{key, file, path, value, default, is_default, kind, opt}`),
+`hikasa.settings_set.v1` (`{key, file, path, old, new, written}`, also for `unset`),
+`hikasa.settings_list.v1` (`{entries: [{key, value, default, is_default, kind, opt, unknown}],
+conflicts: [{view, shortcut, commands}]}`), `hikasa.settings_restore.v1` (`{dry_run, files:
+[{file, path, existed, deleted}]}`), `hikasa.format_write.v1` (`{action, id, written, removed}`),
+`hikasa.format_export.v1` (`{id, path, toml}`) and `hikasa.format_restore.v1` (`{dry_run, ids,
+removed}`). TOML values appear as JSON values (a table as an object, a datetime as a string;
+`null` for an optional key without a value or a key without a default).
 `warnings` start with the warnings of the configuration (unknown `options.toml` sections,
 skipped user formats), which human mode prints once on stderr; `version` and `completions`
 read no configuration (they work with a broken or newer one), so their documents carry no

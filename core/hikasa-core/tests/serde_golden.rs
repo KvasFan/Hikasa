@@ -118,6 +118,7 @@ fn error_and_warning_shapes() {
             WarningCode::SwitchIgnored,
             WarningCode::AlignmentDegraded,
             WarningCode::PatchEncoding,
+            WarningCode::InvalidConfigValue,
         ],
         warnings: vec![
             Warning {

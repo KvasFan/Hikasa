@@ -18,6 +18,14 @@ pub enum ApiError {
     /// Bad argument combination or value (also unknown `gui open` switches and vocabulary words).
     #[error("{0}")]
     InvalidArgument(String),
+    /// A named item does not exist (a settings key, a format id of a `format` write command). Added in M2 W1
+    /// (kind `not_found`).
+    #[error("{0}")]
+    NotFound(String),
+    /// The target already exists (`format new`, `format import` without `--replace`). Added in M2 W1 (kind
+    /// `already_exists`).
+    #[error("{0}")]
+    AlreadyExists(String),
     /// Spec syntax.
     #[error(transparent)]
     Spec(#[from] SpecError),
@@ -91,6 +99,8 @@ impl ApiError {
     pub fn kind(&self) -> ErrorKind {
         match self {
             ApiError::InvalidArgument(_) => ErrorKind::InvalidInput,
+            ApiError::NotFound(_) => ErrorKind::NotFound,
+            ApiError::AlreadyExists(_) => ErrorKind::AlreadyExists,
             ApiError::Spec(e) => e.kind(),
             ApiError::LoadFailed { source, .. } | ApiError::Vfs(source) => source.kind(),
             ApiError::Format(e) => e.kind(),
@@ -177,6 +187,8 @@ impl ApiError {
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::InvalidArgument(_)
+            | ApiError::NotFound(_)
+            | ApiError::AlreadyExists(_)
             | ApiError::Spec(_)
             | ApiError::Vfs(_)
             | ApiError::Format(_)
@@ -204,6 +216,8 @@ impl ApiError {
                 _ => None,
             },
             ApiError::InvalidArgument(_)
+            | ApiError::NotFound(_)
+            | ApiError::AlreadyExists(_)
             | ApiError::Spec(_)
             | ApiError::Format(_)
             | ApiError::Text(_)

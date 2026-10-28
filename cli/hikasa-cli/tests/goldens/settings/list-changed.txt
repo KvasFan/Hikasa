@@ -1,0 +1,4 @@
+options.colours.red = 1  # unknown key (kept)
+options.tabs.hide_tab_bar_if_single_tab = true  # default: false
+options.tabs.later = 1  # unknown key (kept)
+commands.view.home.command.Exit.shortcuts = ["Ctrl+T"]

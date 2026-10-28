@@ -441,6 +441,61 @@ the new `format` forms; `export|import` stay W2); `docs/14` §2.1 (new: theme an
 "Keys" (written with this contract) and the M1 section's pointer to D-71; `docs/16` M2 progress;
 `help/settings.md` (new), `help/format.md`, `help/index.md` link; `CHANGELOG.md`.
 
+#### 1.1.8 W1 notes (implementation)
+
+*W1 note:* where the implementation had to interpret or extend the text above:
+
+- **Order of kept keys.** `toml` is built without `preserve_order` (features are fixed at workspace level), so a
+  table read from a file is sorted: kept unknown keys are written in sorted order after the known keys of their
+  table, and unknown sections in sorted order after the known ones (save step 3). Known keys keep the declaration
+  order of the schema (taken from its serde serialization).
+- **Change stamps without a clock.** Core code may not read the clock (T1), so `ConfigWatch::poll` computes the
+  CRC whenever length and time are unchanged (instead of only for files modified less than 2 s before the
+  previous poll); settings files are small. `ConfigWatch::track_folder` (additive) is how `formats/` and `themes/`
+  are listed at each poll.
+- **Conflicts in `settings list`.** The catalogue binds the Copy and Take commands of the file views to the same
+  keys by design (20 pairs), so `settings_list` reports `CommandOverrides::user_conflicts`: the conflicts that
+  involve a command whose `shortcuts` the file overrides. `conflicts(view)` still returns all (W4 editor). In human
+  mode they are `warning:` lines on stderr; there is no warning code for them.
+- **Sparse entries.** Entries of maps and arrays of tables are also written sparsely against the defaults of a new
+  entry (`[view.<v>]`, `[[app]]`, `[[preset]]`). A scheme file is sparse against the built-in of its base on every
+  save (`SettingsSchema::save_defaults`; additive, default `T::default()`), whatever produced the value: a change
+  of `base` keeps only the elements the file set, and colours compare as colours (`#FFFFFF` = `#ffffff`). Every
+  W1 schema reads `schema_version = 0` as 1 (an identity migration; an M1 test loads such a file).
+- **Arrays of tables in lenient loading.** Lenient loading never drops or reorders the elements of an array, so
+  the positions in memory (`openwith.app.1`) are the positions in the file. A leaf of the wrong type inside an
+  element is located by its full key (`app.1.wait_for_previous`) and repaired to the default of that leaf, like a
+  scalar. A check that fails for a whole element (an empty required field, a duplicate preset name) names the
+  element (`app.1`): the element is kept as it is, with warning `invalid_config_value` "(the entry is kept as it
+  is)", and written back unchanged. `settings set` refuses only a problem the change adds, so the other entries
+  (and the bad entry itself) stay editable.
+- **Known keys.** A kind rule whose last segment is a wildcard (`tabs.*`) gives the kind of the keys a table has;
+  it does not make another name a key, so a misspelt key is `not_found` with suggestions (D-73) and an unknown
+  key kept in the file is shown by `get`/`list` as `unknown`. An array position past the end, a view that is not
+  a view type and a command id that is not in the sections of its view are `not_found` for `get`, `set` and
+  `unset` (`commands.view.home.command.NoSuch.menu` included).
+- **Change stamps** of a load and of a later poll share one spelling of the modification time (a time before
+  1970 is a negative number of nanoseconds).
+- **API shapes.** `SettingsSchema::repair` has a default (on the serialized tree); `FILE` of the scheme schema is
+  `FileId::Themes(String::new())`. Additive: `SettingsFile::{new_default, loaded, unknown, path}`,
+  `SettingsStore::{file, scheme_file, resolved_scheme, scheme_names, scheme_files, dir}`, `FileId::{every, parse,
+  relative_path, name}`, `FolderFont` (the folder font has `use_system`), `MruList`, `ServiceInit::options_mode`
+  (`LoadMode::Lenient` for the `settings` commands; the service reads `options.toml` at construction),
+  `ApiError::{NotFound, AlreadyExists}`, `Service::settings_store`, `parse_format_kind`. `store.scheme` returns
+  `Loaded<SchemeFile>`; `settings_list` returns a `Result` (a newer or unparsable file is an error);
+  `format_edit(id, set, file)` and `format_restore(ids, all, dry_run)` take both alternatives; `format_new --from`
+  accepts an id or a name and names the copy `<name> (copy)`. The DTOs carry the load warnings (and the TOML
+  value for human output) in fields the JSON skips.
+- **Format ids.** `order` (in any case) is reserved: `format new`, `import` and `edit` refuse it with
+  `invalid_input`, since `formats/order.toml` is the order file. `format new <id>` and `format import` without
+  `--replace` are `already_exists` also when `formats/<id>.toml` exists but was skipped at load (it does not
+  parse). `format new` writes `<id>.toml`, then `order.toml`; when the second write fails the first file is
+  removed. The clap usage of `settings restore-defaults` and `format restore` names both alternatives
+  (`<--all|--file <FILE>>`, `<ID|--all>`).
+- **Human `format restore`** prints `delete <path>` for removed files and `absent <path>` for named ids without a
+  file; `format edit --set` refuses unknown keys (the canonical writer would drop them); `--from-file` copies the
+  file as it is (like `import`).
+
 ### 1.2–1.14 W2–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

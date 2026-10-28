@@ -136,7 +136,7 @@ directory into the configuration folder).
 
 **Read-only commands never create either folder.** Missing files mean defaults.
 
-**`options.toml` (D-31).** A missing file means defaults. A `schema_version` newer than
+**`options.toml` (D-31; revised by D-71 in M2, see §5.2).** A missing file means defaults. A `schema_version` newer than
 this build supports is an error (SES-052); an older one is read as it is. Unknown keys
 inside the top-level sections of `15-options-reference.md` (`startup`, `tabs`,
 `appearance`, `text_editing`, `next_difference`, `backups`, `file_operations`,
@@ -168,6 +168,84 @@ and with the `format` write commands of M2, and never overwrites an existing fil
 **Atomic writes (SES-053).** Every configuration and report file is written to a
 temporary file in the same folder (created exclusively), flushed to disk and renamed over
 the target; on any failure the target is untouched and the temporary file is removed.
+
+### 5.2 The settings store (M2; contract `docs/design/m2-contracts.md` §1.1; D-70…D-78)
+
+**One engine (D-70).** Every program-owned settings file — `options.toml`, `state.toml`, `commands.toml`,
+`theme.toml`, `themes/<name>.toml`, `filters.toml`, `openwith.toml`, `archives.toml` — is read and written by
+the same engine (`hikasa_session::settings::SettingsFile`):
+
+- **Versions (SES-052).** `schema_version` absent means the current version (1); a negative or non-integer
+  value is an error; a newer value is an error for every command. An older file is migrated in memory, step by
+  step, and written back in the current version on its next save (never at load). `schema_version = 0` reads as
+  version 1.
+- **Unknown keys (Q11).** Keys this version does not know are kept and written back with their values (comments
+  and layout are not kept). An unknown top-level section warns `unknown_config_key`; unknown keys inside known
+  tables are silent (`--verbose` logs them). Unknown keys inside `[[app]]` and `[[preset]]` entries stay with
+  their entry. *Interpretation:* `toml` is used without its order-preserving feature, so kept unknown keys are
+  written in sorted order after the known keys of their table, and unknown sections after the known ones.
+- **Sparse writes.** A key equal to its default is not written, so a later change of a default reaches every
+  user; an empty table is not written; a file that would hold only `schema_version` is not created. Known keys
+  are written in the order of the schema. Entries of maps and arrays of tables (`[view.<v>.command.<id>]`,
+  `[[app]]`, `[[preset]]`) are written sparsely against the defaults of a new entry. Writes are atomic (SES-053).
+- **Strict and lenient reading (D-71, revises D-31).** `options.toml` is read completely through the typed model
+  of `15-options-reference.md` ("Keys"). A value of the wrong type or out of range is an error that names the
+  file and the key, for every command except `hikasa settings`, which reads leniently: the bad value is reported
+  as warning `invalid_config_value` and replaced by its default, so `hikasa settings set` repairs the file (any
+  save writes the repaired values). The entries of `[[app]]` and `[[preset]]` are never dropped or reordered: a
+  bad value inside one is replaced by its default, and an entry that fails a check as a whole (an empty command)
+  is kept as it is, with the warning.
+
+**`state.toml` (SES-051).** The program's own memory, not options:
+
+```toml
+schema_version = 1
+last_session = ""                        # name of the session last used (W2)
+[mru]                                    # each list newest first, capped at max_mru_items on push
+left = []
+right = []
+center = []
+folders = []
+files = []
+find = []
+replace = []
+name_filters = []
+workspaces = []
+[window]                                 # the last main window (a workspace stores its own)
+width = 1200                             # 200..=32767
+height = 800                             # 200..=32767
+x = -1                                   # -1..=32767; -1: the platform places the window
+y = -1
+maximized = false
+[flags]
+first_run_done = false                   # set by the GUI's first start (the D-21 materialization)
+hints_seen = []                          # ids of the one-time hints already shown
+[dialogs]                                # free tables per dialog id ("remembers last choices"), kept as they are
+```
+
+Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
+`[tweaks.metrics] max_mru_items` entries.
+
+**Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
+bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
+(every settings file, every scheme file and every `formats/*.toml`) and reports created, changed and removed
+files; it holds no timer: the window polls on focus and every 2 s. *Interpretation:* core code does not read
+the clock, so the CRC is computed at every poll that finds an unchanged length and time (the files are small);
+an edit that keeps the length and the time is still found. A save first compares the stamp on disk with the
+stamp of the load: a file changed in between is not overwritten (error, exit 100) unless
+`hikasa settings set --force`.
+
+**Keys and the `settings` command (D-73).** `hikasa settings get|set|unset|list` address every value as
+`<file>.<path>` (`options.text_editing.auto_indent`, `openwith.app.0.command`, `themes.dark.folder.background`);
+see `12-cli-and-scripting.md` §4. `set` refuses a value of the wrong type, out of range or failing a check
+(an unknown command id or view in `commands.toml`, a shortcut that does not parse, a duplicate preset name, an
+Open With command that does not split) and leaves the file as it was. Setting a value equal to its default
+removes the key.
+
+**Restore defaults (D-77; the single-file part of SES-062).** `hikasa settings restore-defaults (--all |
+--file <file>…)` deletes settings files so that the next load sees defaults. It is a plan: `--dry-run` prints
+it (`delete <path>` / `absent <path>` per file); without `--dry-run` it needs `--yes`. `--file themes` means every
+scheme file. Sessions, workspaces and file formats are not touched (`hikasa format restore` restores formats).
 
 ## 6. Import, export, restore defaults, support package
 

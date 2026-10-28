@@ -109,7 +109,8 @@ right; Apply / OK / Cancel. Every setting below maps to a key in `options.toml`
 sub-pages are sub-tables (`[tweaks.file_operations]`). The file may carry
 `schema_version = 1`.
 
-**Keys read in M1** (all other keys are kept as they are; M1 never writes the file):
+**Keys read in M1** (all other keys were kept as they are; M1 never writes the file; since
+M2 W1 the whole table "Keys" below is read and `hikasa settings` writes the file):
 
 | Key | Type | Default | Used by |
 |---|---|---|---|
@@ -128,7 +129,8 @@ buffer_size_for_binary_compare = 4194304
 content_memory_budget_mib = 512
 ```
 
-**Loading rules (D-31).** A missing file means the defaults. A `schema_version` newer
+**Loading rules (D-31; revised by D-71 in M2: every key of "Keys" below is typed, see
+`03-sessions-settings-profiles.md` §5.2).** A missing file means the defaults. A `schema_version` newer
 than this build supports stops the program with an error (SES-052). Unknown keys inside
 the sections above are ignored silently (`--verbose` logs each one); an unknown
 top-level section produces the warning `unknown_config_key`. A syntax error, a value of

@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.format_write.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "action": "delete",
+    "id": "c2",
+    "written": [
+      "<TMP>/cfg/formats/order.toml"
+    ],
+    "removed": [
+      "<TMP>/cfg/formats/c2.toml"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}
