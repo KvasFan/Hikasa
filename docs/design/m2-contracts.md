@@ -11,9 +11,10 @@
 ## Table of contents
 
 - §0 Ground rules: scope, new tenets, decision register D-59…, dependencies, documentation updates
-- §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages · §1.3–§1.14 W3–W14 (outline in plan §6, written
-  before each wave)
-- §6 Tests and acceptance per wave
+- §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
+  §1.3 W3 VFS mutations, clipboard, generic copy · §1.4–§1.14 W4–W14 (outline in plan §6, written before each
+  wave)
+- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3
 
 ---
 
@@ -69,11 +70,29 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-89 | **IPC** (ARCH-091, additive to protocol v1, D-46). `LoadSession{name, wait}` → `ViewOpened{view}` (and `ViewClosed` when waited); `LoadWorkspace{name}` → `Views{views}` (the views it opened). Unknown names → `Error{not_found}`; a type the GUI cannot render yet → `Error{unsupported_request}`. A GUI that answers `unsupported_request` to these requests is reported by the CLI as "the running GUI does not support sessions; restart it" (exit 100). | Forward compatibility per D-46. | 01 §6 |
 | D-90 | **Revises D-82 (how rules are written).** A save writes into `[rules]` and `[text_rules]` (of a named session, an auto-saved one and `_defaults/<type>.toml`) every key that differs from the defaults of the type **now**, plus **every key the file already held**, with its value now: an explicit choice stays written even when it equals the defaults (a later change of the defaults does not change it); a key the file did not hold is written only when it differs. `session edit --unset <key>` removes a key, so the session follows the defaults again. Unknown rule keys, nested ones included, are kept (D-70). The optional folder rules `criteria.timestamps.offset`, `filters.other.size` and `filters.other.date` are written whole, or `false` for "off" where the defaults set them; `false` (and JSON `null`) reads as off, in session files and in `--rules-file`; `true` is refused. Removing an entry of a map that the defaults hold (an `importance.elements` entry) is not representable in M2: deferred to W4 (the GUI's session settings). | Review of W2: an explicit choice must survive a change of the defaults, and "off" must be writable; maintainer, 2026-10-29 (the map entries). | 03 §1, 04 §3 |
 | D-91 | **Locked sessions and bulk commands** (SES-004). `settings import` does not replace a locked named session, nor delete one with `--delete-existing sessions`; `settings restore-defaults --delete-sessions` does not delete one. Each is planned as `skip_locked` (never executed, no result, not counted in the summary) with warning `session_locked`; `--force` on `settings import` / `restore-defaults` includes them. `session delete` and `session rename` of a locked session are `invalid_input` unless `--force`; auto-save never writes a locked file. The defaults files are never locked. | Maintainer, 2026-10-29: a lock protects a session from every command that would change it by accident. | 03 §1, §6, 12 |
+| D-92 | **Mutating VFS = single-item primitives + one generic layer** (VFS-001, ARCH-031). The `Vfs` trait gains `create_dir`, `remove` (file, link or empty folder), `rename` (one back-end), `set_times`, `set_attrs`, `create_symlink`, `move_to_trash` and the optional `copy_file_fast`, each with a default body returning `OperationUnsupported` and each behind a capability bit (seven new bits, `SET_TIMES` now used). Recursion, cross-back-end copy, move, plans and per-item results live once in `hikasa_vfs::ops` over the primitives. `MemoryVfs` implements every primitive with fault hooks (§1.3.8). | One owner of the algorithms (T11); `MemoryVfs` faults test them for every back-end; W5 archives only implement primitives. | 01 §3.2, 11 §1 |
+| D-93 | **Errors of mutations.** New `ErrorKind::NotEmpty` (`not_empty`); `VfsError::{NotEmpty, CrossDevice, OperationUnsupported, InvalidTarget, Unavailable}` with the kinds of §1.3.2 (`CrossDevice`, `OperationUnsupported`, `Unavailable` → `unsupported`; `InvalidTarget` → `invalid_input`); seven new `VfsOp` names. Exit codes unchanged: any `vfs` error or failed item is 100. | "Folder not empty" is a common, user-visible outcome that deserves its own kind; the rest maps onto existing kinds. | 11, 12 §2 |
+| D-94 | **Writes never follow the final link** (plan §5.1 "never follow a link being deleted"). `remove`, `rename`, `move_to_trash`, `set_times` act on a link itself; `set_attrs` on a link is unsupported; a copy or move onto a link replaces the link (`WriteOptions::replace_link`), never the file it points to; trees are never descended or written through links; links are copied **as links** (`LinkPolicy::Copy`, or `Skip`), root arguments are followed only with `--follow-symlinks`. `open_write` keeps the M1 follow-the-link save semantics by default. | A copied tree stays faithful, never pulls data from outside the tree and cannot loop; deleting through a link is the classic data-loss bug. | 11 §1 |
+| D-95 | **Generic copy** (ARCH-031). Per file: `open_read` → `open_write` to a temporary sibling → `commit` (atomic rename); any read/write/cancel fault drops the writer, so the target is untouched. Local → local uses `std::fs::copy` into the temporary sibling for files ≤ 64 MiB (larger files stream, to keep cancellation ≤ 100 ms). Metadata after content, in the order times, then attributes; a folder's metadata after its subtree; owner never. A missing capability skips the step with one `capability_missing` warning per operation; a failing supported step fails the item and keeps the content. | ARCH-031 text; a read-only result must not block the time change; the OS copy is not cancellable. | 01 §3.2, 11 §1 |
+| D-96 | **Overwrite policy** `fail` (default) / `skip` / `always` / `newer` (strictly newer `mtime`; unknown → not newer). A link at the target counts as a file; a folder is never deleted to make room for a file; folders merge. Special files (FIFO, socket, device) are skipped, never opened. At execution an item planned without a target that finds one fails ("changed since the plan was made"). | Safe default for a headless tool; execution never does more than the plan showed (T12). | 11, 12 |
+| D-97 | **Move.** Same back-end, rename capability, target absent → one `rename` (atomic, O(1)); known different devices, another back-end or an existing target folder → copy + remove per item (folders merged, a source folder removed only when empty). A `rename` failing with `CrossDevice` at execution is expanded in place. When removing the source fails, the fresh copy is removed again unless it replaced an existing target. | Rename where possible; no duplicate and no loss otherwise; matches the W6 acceptance "copy + delete with rollback". | 11 |
+| D-98 | **Remove and trash** (FC-073 primitive). `rm` removes files, links and empty folders; non-empty folders need `--recursive` (also with `--trash`); recursion is post-order and keeps a folder whose child failed (`children_failed`). Trash is `LocalVfs` only, through `trash` 5 (`chrono` for the freedesktop `DeletionDate`), one call per root item, links trashed as links, and **never falls back to a permanent delete**. A file-system root is never removed or moved. `trash` reads the home/data folders and the clock inside the call: accepted as an OS side effect (not a result input, T1), confined to `local/trash.rs`; tests isolate it with `XDG_DATA_HOME`/`HOME` in a subprocess. | Recoverable deletes must be recoverable or fail; T1's purpose (deterministic results) is kept. | 11 §1, 02 |
+| D-99 | **Times and attributes** (FC-076 primitive). `set_times` sets the modification time and, where `SET_CREATED` (Windows, macOS), the creation time; the access time is never changed. `set_attrs` sets Unix permission bits (`std`) or DOS bits; on Windows only `R` is settable (`H`, `S`, `A` need Win32 calls, i.e. `unsafe`, which is forbidden); owner and group are never changed. `touch` defaults to the injected clock's now. | std-only, no `unsafe`; FC-075 (attributes dialog) is P1. | 11 §1, 04 §7 |
+| D-100 | **Clipboard back-end** (TC-002, TC-065 data). A pure `ClipboardProvider` trait in `hikasa_session::clipboard`; `host::SystemClipboard` (adapter-only) reads through `arboard` 3 (text, else image, else empty). The service reads it lazily on the first `clipboard://` spec and once per service; `Service::read_clipboard` re-reads (GUI). Text → UTF-8 blob without a name; image → an in-house stored-deflate PNG named `clipboard.png`. No clipboard (headless, CI) → `unsupported`, empty → `not_found`, both exit 100. Tests use `FixedClipboard` or `HIKASA_CLIPBOARD_FILE`, never the real clipboard. | Q9 (`arboard` approved for the CLI too); the VFS stays free of OS clipboard calls; no image encoder dependency before W12. | 10, 11 §1, 12 §4 |
+| D-101 | **Revises D-49.** `gui open clipboard://` and `--gui` with `clipboard://` are allowed: the CLI sends `clipboard://` verbatim in `OpenView.specs`; the GUI reads **its own** clipboard (`Service::read_clipboard`) when it opens the view. `-` keeps the M1 spool; rules files may still not be `-` or `clipboard://`; sessions still never store either (D-80). | `arboard` approved (Q9); the GUI runs on the user's desktop while the CLI may be headless. | 12 §1.1, 01 §5.1 |
+| D-102 | **`hikasa vfs cp\|mv\|rm\|mkdir\|touch`** (§1.3.7). Target naming as `cp`/`mv` (into an existing folder, else the new name; several sources need a folder), owned by core (`ops::resolve_targets`). `rm` needs `--yes` unless `--dry-run` (as D-77); the other four need no confirmation because they replace nothing without an explicit `--overwrite always\|newer`. One schema `hikasa.vfs_op.v1`; item failures give `ok: true`, exit 100 (as W2 import); human output one line per item plus an ARCH-101 summary. | CLI-first (T10) before W6/W9 use the same primitives; destructive commands never run by accident. | 12 §1, §4 |
+| D-103 | **Plans of VFS operations** (T12, minimal). Every write command builds the complete serializable `ops::Plan` (whole source trees listed, items in execution order) before the first write; `--dry-run` prints that plan; execution re-checks each target and never exceeds the plan; results are per item (`planned`, `done`, `skipped`, `failed`, `not_run`). W6's `OpPlan` wraps these items (sides, conflicts, backups, confirmation). | The plan is the unit W6 extends; a finite plan also makes "copy a folder into itself" harmless. | 12 §4 |
 
 ### 0.4 Dependencies
 
 W0 and W1 add no third-party crate (the change stamp uses `hikasa_vfs::crc32_reader`). Member manifests (architecture check 3): + `xtask` = `[hikasa-session]`. The
 approved crates of D-63 enter the table of the wave that first uses them. **W2** adds `zip` (D-63) to `hikasa-session` for settings packages, with the workspace-level features `deflate` only (pure-Rust back-end; W5 adds the archive features); `docs/02` gains its line.
+**W3** adds `trash` 5 to `hikasa-vfs` (`default-features = false`, features `chrono`, `coinit_apartmentthreaded`;
+called only from `local/trash.rs`) and `arboard` 3 to `hikasa-session` (`default-features = false`, features
+`image-data`, `wayland-data-control`, the set `Cargo.lock` already compiles through `egui-winit`; named only in
+`host.rs`). Member manifests: `hikasa-vfs` += `trash`, `hikasa-session` += `arboard`; check 2 gains the two
+confinement rules of §1.3.9; `docs/02` gains both lines; `cargo deny` must pass without new exceptions (D-98,
+D-100).
 
 ### 0.5 Documentation updates of W0
 
@@ -822,7 +841,538 @@ the maintainer during the wave):
   and keeps the slot. `CONIN$`, `CONOUT$` and the superscript device names (`COM¹`…`COM³`, `LPT¹`…`LPT³`) are reserved names
   too.
 
-### 1.3–1.14 W3–W14
+### 1.3 W3 — VFS mutations, clipboard, generic copy
+
+**Ids.** ARCH-031 (generic cross-back-end copy), ARCH-030 and VFS-001 (the new capabilities; operations degrade by
+capability), the clipboard back-end (`docs/11` §1 table, P0, no id), TC-002 (the clipboard part), TC-065 (data:
+the Service call that reads the clipboard), FC-073 (recycle-bin primitive), FC-076 (set-times primitive), FC-077
+(create-folder primitive; archive extensions stay W5), ARCH-101 (per-item results of `vfs` write commands),
+CLI-000 (the new subcommands comply). Decisions D-92…D-103. No archive back-end (W5), no folder operation plans,
+backups or confirmation model (W6): §1.3.10 names the hooks they build on.
+
+**Files.** `core/hikasa-core/src/` (`error.rs`: `ErrorKind::NotEmpty`; `progress.rs`: `Phase::Writing`; `job.rs`:
+`JobKind::VfsWrite`; `spec/mod.rs`: `Spec::parent`); `core/hikasa-vfs/src/` (`vfs.rs`, `caps.rs`, `error.rs`,
+`router.rs`, `memory.rs`, `local/mod.rs`, `local/unix.rs`, `local/windows.rs`, new `local/trash.rs`, new `ops/`
+with `mod.rs`, `plan.rs`, `copy.rs`, `remove.rs`, `rename.rs`, `touch.rs`, `lib.rs`); `core/hikasa-vfs/tests/`
+(`mutations.rs`, `ops.rs`, `ops_faults.rs`, `symlinks.rs`, `trash.rs`); `core/hikasa-session/src/clipboard.rs`
+(new), `src/host.rs` (`SystemClipboard`, `FileClipboard`), `src/api/mod.rs` (`ServiceInit::clipboard`, the blob
+router), new `src/api/vfs_ops.rs` (requests, DTOs), `src/api/dto.rs`, `src/api/human.rs`, `src/api/gui.rs`
+(D-101), `src/ipc/protocol.rs` (doc comment of `OpenView::specs`); `cli/hikasa-cli/src/args.rs`,
+`cmd/vfs.rs`, `cmd/gui.rs`, `main.rs` (provider wiring); `gui/hikasa-gui` provider wiring and IPC handler only
+(`main.rs`, `ipc.rs`; D-101); workspace `Cargo.toml`, `core/hikasa-vfs/Cargo.toml`,
+`core/hikasa-session/Cargo.toml`, `deny.toml` (only if a new transitive licence appears: stop and ask),
+`core/hikasa-session/tests/architecture.rs` (manifest table and two confinement rules, §1.3.9); `help/vfs.md`,
+`help/cli.md`, `help/gui.md`; goldens.
+
+#### 1.3.1 Mutating primitives (D-92, D-94, D-99)
+
+The `Vfs` trait gains **single-item** primitives. Recursive and cross-back-end algorithms are not trait methods:
+they live once in `hikasa_vfs::ops` (§1.3.4) and call these primitives, so `MemoryVfs` faults test the
+algorithms of every back-end. Every new method has a default body that returns
+`VfsError::OperationUnsupported { spec, op }`, so existing implementors compile unchanged.
+
+```rust
+// hikasa_vfs::vfs (additive)
+/// What `set_times` changes; `None` keeps the current value. The access time is never changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SetTimes { pub modified: Option<FileTime>, pub created: Option<FileTime> }
+
+/// What `set_attrs` changes. Owner and group are never changed (D-99).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrChange {
+    /// Unix permission bits: `mode & 0o7777` is applied; other bits of the argument are an `InvalidAttributes`.
+    Mode(u32),
+    /// DOS attributes: `set` are turned on, `clear` turned off, the others kept. `set ∩ clear ≠ ∅` →
+    /// `InvalidAttributes`.
+    Dos { set: DosAttrs, clear: DosAttrs },
+}
+
+pub struct WriteOptions {
+    pub create_parents: bool,
+    pub overwrite: bool,
+    /// New (breaks struct literals; use `..Default::default()`). `false` (default, M1): a target that is a
+    /// symbolic link is resolved and the file it points to is replaced (save semantics, `docs/11` §1 "Local
+    /// writes"). `true`: the link itself is replaced by the new file and the file it pointed to is untouched
+    /// (copy semantics, D-94).
+    pub replace_link: bool,
+}
+
+pub trait Vfs: Send + Sync {
+    // … the M1 methods unchanged …
+
+    /// Creates the folder `spec`. `parents = false`: a missing parent is `NotFound`, an existing item of any kind
+    /// is `AlreadyExists`. `parents = true`: missing ancestors are created; an existing folder (or a link to one)
+    /// is success; an existing non-folder (at `spec` or an ancestor) is `NotADirectory`. `Ok(true)` when `spec`
+    /// was created, `Ok(false)` when it already was a folder.
+    fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError>;
+    /// Removes one item: a file, a special file, a symbolic link (the link itself, never its target; on Windows
+    /// also a folder link or junction) or an **empty** folder. A non-empty folder is `NotEmpty`; a missing item
+    /// `NotFound`.
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError>;
+    /// Renames within this back-end (atomic where the platform renames atomically). The final components of
+    /// `from` and `to` are never followed (a link is renamed, or replaced, as a link). `replace = false`: an
+    /// existing `to` is `AlreadyExists`. `replace = true`: a file or link replaces a file or link; a folder
+    /// replaces only an empty folder (else `NotEmpty`); folder ↔ non-folder is `IsADirectory`/`NotADirectory`.
+    /// A rename whose `to` is the same item as `from` (case-only rename on a case-insensitive back-end; checked by
+    /// file identity) changes the spelling and always succeeds. Different file systems → `CrossDevice`.
+    fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError>;
+    /// Sets the times of the item itself; a symbolic link gets its own times where the platform allows (else
+    /// `OperationUnsupported`). `created` needs `SET_CREATED`, else `OperationUnsupported` (nothing changed).
+    fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError>;
+    /// Changes the attributes of the item itself. On a symbolic link → `OperationUnsupported` (Unix has no
+    /// portable `lchmod`; a link's own attributes are never what the user means). The wrong family (`Mode` on a
+    /// DOS back-end, `Dos` on a Unix one) → `OperationUnsupported`.
+    fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError>;
+    /// Creates a symbolic link at `spec` whose target text is `target`, stored verbatim (never resolved or
+    /// rewritten). `target_is_dir` makes a folder link on Windows and is ignored elsewhere. Existing item →
+    /// `AlreadyExists`; no privilege (Windows) → `PermissionDenied`.
+    fn create_symlink(&self, spec: &Spec, target: &OsStr, target_is_dir: bool) -> Result<(), VfsError>;
+    /// Moves one item (a file, a link as a link, or a whole folder) to the platform's recycle bin. Never falls
+    /// back to a permanent delete: any failure is an error and the item stays (D-98).
+    fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError>;
+    /// A back-end-specific copy of the regular file `from` to `to` (both on this back-end) with exactly the
+    /// semantics of `open_write(to, opts)` + streaming + `commit`: atomic, target untouched on failure or
+    /// cancellation. `Ok(None)`: no fast path for these specs (the caller streams). Default: `Ok(None)`.
+    fn copy_file_fast(&self, from: &Spec, to: &Spec, opts: &WriteOptions, cancel: &CancelToken)
+        -> Result<Option<u64>, VfsError> { Ok(None) }
+}
+```
+
+`Spec::parent(&self) -> Option<Spec>` (hikasa-core, additive): the parent of a local path (`None` for a root),
+`None` for every other spec kind in W3 (W5 adds archive members). The parent folders of every operation are
+reached through `Spec::parent` and `Vfs::child`; nothing joins path strings.
+
+**Capabilities (VFS-001, ARCH-030).** `SET_TIMES` (bit 6, unused in M1) now means `set_times(modified)` works.
+New bits, appended in this order (names in JSON, §4.1 rule 9; `NAMES` grows from 14 to 21):
+
+| Bit | Flag | Name | Meaning |
+|---|---|---|---|
+| 14 | `MKDIR` | `mkdir` | `create_dir` |
+| 15 | `REMOVE` | `remove` | `remove` |
+| 16 | `RENAME` | `rename` | `rename` |
+| 17 | `SET_ATTRS` | `set_attrs` | `set_attrs` for the family the back-end reports (`DOS_ATTRS` or `UNIX_MODE`) |
+| 18 | `TRASH` | `trash` | `move_to_trash` |
+| 19 | `CREATE_SYMLINKS` | `create_symlinks` | `create_symlink` |
+| 20 | `SET_CREATED` | `set_created` | `set_times` with `created` |
+
+| Back-end | Capabilities added in W3 |
+|---|---|
+| `LocalVfs`, Linux and other Unix | `SET_TIMES MKDIR REMOVE RENAME SET_ATTRS TRASH CREATE_SYMLINKS` |
+| `LocalVfs`, macOS | the Unix set plus `SET_CREATED` |
+| `LocalVfs`, Windows | `SET_TIMES MKDIR REMOVE RENAME SET_ATTRS TRASH CREATE_SYMLINKS SET_CREATED` (`SET_ATTRS`: the `R` bit only, D-99; `CREATE_SYMLINKS` may still fail with `PermissionDenied`) |
+| `MemoryVfs` | all 21 (as before, `set_capabilities` removes some; a primitive whose bit is removed returns `OperationUnsupported`) |
+| blobs (`-`, `clipboard://`) | none (unchanged: `READ SEEK MTIME`); every primitive → `OperationUnsupported` |
+
+Capabilities stay platform sets (M1): a mount that refuses an operation (a read-only file system, a network share
+without a recycle bin) fails at the call with the OS error, per item.
+
+**Router dispatch** (extends the M1 table of `router.rs`):
+
+| Spec | `create_dir`, `remove`, `set_times`, `set_attrs`, `create_symlink`, `move_to_trash` | `rename(from, to)` | `copy_file_fast` |
+|---|---|---|---|
+| `Local` | `LocalVfs` | `LocalVfs` when both are `Local` | `LocalVfs` when both are `Local` |
+| `Stdin`, `Clipboard` | `OperationUnsupported` | `OperationUnsupported` | `Ok(None)` |
+| archive, snapshot, remote, profile, HTTP | `Unsupported { what: "<scheme> specs" }` (D-05) | same | `Ok(None)` |
+| mixed kinds | — | `OperationUnsupported` (callers fall back to copy + remove only on `CrossDevice`, D-97) | `Ok(None)` |
+
+**`LocalVfs` implementation notes (normative where stated).** `create_dir`: `fs::create_dir` /
+`fs::create_dir_all`. `remove`: `fs::symlink_metadata` first; a link → `fs::remove_file` (Unix) or, on Windows,
+`fs::remove_dir` for a folder link or junction and `fs::remove_file` otherwise; a folder → `fs::remove_dir`
+(`io::ErrorKind::DirectoryNotEmpty` → `NotEmpty`); anything else → `fs::remove_file`. `rename`: `lstat(to)` for
+the `replace = false` check and the same-item check (`same-file` handles of both, case-only renames), then
+`fs::rename` (`io::ErrorKind::CrossesDevices` → `CrossDevice`). The check-then-rename is not atomic against a
+racing writer (no `renameat2` without `unsafe`); the window is documented in `docs/11`. `set_times`: `filetime`
+(`set_symlink_file_times` for links, keeping the current access time); `created` through
+`std::fs::File::set_times` with the platform's `FileTimesExt::set_created` (Windows, macOS; a folder is opened
+with backup semantics on Windows). `set_attrs`: Unix `fs::set_permissions` with `PermissionsExt::from_mode`
+(never on a link: `lstat` first); Windows `Permissions::set_readonly` for `R`, any other bit in `set`/`clear` →
+`Unsupported { what: "changing DOS attributes other than R" }`. `create_symlink`: `std::os::unix::fs::symlink`,
+`std::os::windows::fs::{symlink_file, symlink_dir}`. `move_to_trash`: `local/trash.rs` calls `trash::delete` on
+the absolute path (the crate canonicalizes the parent only, so a link is trashed as a link; D-98).
+`copy_file_fast`: §1.3.4 step 5.
+
+#### 1.3.2 Errors (D-93)
+
+New `VfsError` variants (the enum is `#[non_exhaustive]`) and the new `ErrorKind::NotEmpty` (`"not_empty"`,
+hikasa-core, additive; `ErrorKind` is `#[non_exhaustive]`):
+
+| Variant | `kind()` | Message | `From<VfsError> for io::Error` |
+|---|---|---|---|
+| `NotEmpty { spec }` | `not_empty` | `{spec}: folder is not empty` | `DirectoryNotEmpty` |
+| `CrossDevice { from, to }` | `unsupported` | `{from} -> {to}: cannot rename across file systems` | `CrossesDevices` |
+| `OperationUnsupported { spec, op: VfsOp }` | `unsupported` | `{spec}: {op} is not supported here` (op as `VfsOp::as_str`) | `Unsupported` |
+| `InvalidTarget { spec, reason: &'static str }` | `invalid_input` | `{spec}: {reason}` | `InvalidInput` |
+| `Unavailable { spec, reason: String }` | `unsupported` | `{spec}: {reason}` | `Unsupported` |
+
+`InvalidTarget` reasons (stable text): `"is the source itself"`, `"is inside the source folder"`, `"is not an
+existing folder"`, `"needs a file name"`, `"is a root folder"`, `"changed since the plan was made"`.
+`Unavailable` is the clipboard's "no clipboard" (§1.3.6). `VfsError::spec()` returns `from` for `CrossDevice`
+and the spec for the others. `VfsError::from_io` adds `DirectoryNotEmpty` → `NotEmpty` and `CrossesDevices` →
+`CrossDevice { from: spec, to: spec }` (callers that know both specs build it themselves);
+`hikasa_core::io_error_kind` adds `DirectoryNotEmpty` → `NotEmpty`. `VfsOp` gains `Mkdir`, `Remove`, `Rename`,
+`SetTimes`, `SetAttrs`, `Symlink`, `Trash` (serde and `as_str`: `mkdir`, `remove`, `rename`, `set_times`,
+`set_attrs`, `symlink`, `trash`; `VfsOp::ALL` grows to 14). Exit codes are unchanged (§2.21 of M1): every `vfs`
+error and every failed item is 100; `ApiError::exit_code` needs no new row (`ErrorKind::NotEmpty` falls into
+"everything else").
+
+#### 1.3.3 Symbolic links (D-94)
+
+Normative, for every back-end with `SYMLINKS` (a table test per row, §6.3 A3.6):
+
+| # | Operation | Rule |
+|---|---|---|
+| 1 | `remove`, `move_to_trash`, `rename`, `set_times` | act on the link itself; the target is never touched |
+| 2 | `set_attrs` on a link | `OperationUnsupported` |
+| 3 | `ops::remove_tree` | lists with `FollowLinks::No`; a link inside the tree is removed as a link; a link to a folder is never descended. Before listing a folder it re-`lstat`s it and requires `kind == Dir` and, where both are known, the `FileId` seen in the parent's listing (narrows, but cannot close, the race with a process that swaps a folder for a link; documented) |
+| 4 | copy/move whose **target** item is a link | the link is replaced (`WriteOptions::replace_link = true`, `rename(…, replace = true)`); the file it pointed to is unchanged |
+| 5 | copy/move into a target **subfolder** that is a link | never written through: the link is a non-folder target item, so the source folder meets a kind conflict (D-96: `Fail` → `already_exists`, `Skip` → skipped subtree; `Always` replaces the link by a real folder, then copies into it) |
+| 6 | copy of a link (source) | `LinkPolicy::Copy` (default): a new link with the same target text (`create_symlink`, `target_is_dir` from following the source link; a broken link copies as a link to a file); `LinkPolicy::Skip`: skipped, reason `symlink`. A target back-end without `CREATE_SYMLINKS` → skipped, reason `symlinks_unsupported`, warning `capability_missing`. Links are never followed inside a tree |
+| 7 | root arguments that are links | taken as links (rule 6) unless `follow_roots` (CLI `--follow-symlinks`): then a root link is replaced by what it points to, for that root only |
+| 8 | intermediate components (`/data` → `/mnt/data`) | followed, as by every OS call; only the final component of an operated item is ever protected |
+| 9 | `open_write` without `replace_link` (save, `--output`) | unchanged M1 behaviour: the file the link points to is replaced |
+
+Copying links as links (rather than following them) is what keeps a copied tree faithful, never pulls data from
+outside the source tree into the target, and cannot loop; following stays a per-root, explicit choice. W6 may add
+a "follow links inside trees" policy with loop detection if Folder Compare's follow option needs it.
+
+#### 1.3.4 Generic copy (ARCH-031; D-95, D-96)
+
+```rust
+// hikasa_vfs::ops
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum OverwritePolicy { #[default] Fail, Skip, Always, Newer }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum LinkPolicy { #[default] Copy, Skip }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Preserve { pub times: bool, pub attrs: bool, pub created: bool }   // Default: times and attrs, not created
+pub struct CopyOptions { pub recursive: bool, pub overwrite: OverwritePolicy, pub links: LinkPolicy,
+                         pub preserve: Preserve, pub follow_roots: bool, pub create_parents: bool }
+pub struct MoveOptions { pub overwrite: OverwritePolicy, pub create_parents: bool }
+```
+
+**Overwrite policy (D-96).** Decided per item when the target exists (`lstat`); a link at the target counts as a
+file (D-94 rule 4):
+
+| Source \ target | absent | file or link | folder |
+|---|---|---|---|
+| file or link | copy | `Fail` → item fails `already_exists`; `Skip` → skipped `exists`; `Always` → replace; `Newer` → replace when the source `mtime` is strictly newer, else skipped `not_newer` (an unknown `mtime` on either side → skipped `not_newer`) | fails `is_a_directory` (whatever the policy: a folder is never deleted to make room for a file) |
+| folder | create, then its contents | `Always` → the file or link is removed, then the folder created; other policies as for files | merged: the folder is kept (`keep_dir`), its contents follow the policy item by item |
+| special file (FIFO, socket, device) | skipped `special_file` (never opened: reading a FIFO can block forever) | same | same |
+
+**Algorithm of one file** (normative; `src` and `dst` are `(vfs, spec)` pairs, possibly different back-ends):
+
+1. `lstat` the source (`FollowLinks::No`; `FollowLinks::Yes` for a root with `follow_roots`). Kind dispatch as in
+   the table; a link → D-94 rule 6.
+2. Same-item and nesting checks (planning, §1.3.5): `dst == src` (same back-end and same canonical spec, or the
+   same `FileId`) → `InvalidTarget "is the source itself"`; `dst` lexically inside a source folder (canonical
+   specs, case-folded when the back-end is not `CASE_SENSITIVE`) → `InvalidTarget "is inside the source folder"`.
+3. `lstat` the target; apply the overwrite table.
+4. If `src.vfs` and `dst.vfs` are the same instance (`std::ptr::addr_eq`), call `copy_file_fast`; `Ok(Some(n))`
+   → step 6.
+5. Otherwise stream: `w = dst.open_write(dst, WriteOptions { create_parents, overwrite: <decided in step 3>,
+   replace_link: true })`, `r = src.open_read(src)`, copy in buffers of `StreamOptions::effective_buffer_size`,
+   checking `ctl.cancel` before every buffer and reporting `Phase::Writing` bytes; any read, write or cancel error
+   drops `w` (the temporary sibling is removed, the target is untouched: INV-VFS-3) and fails the item; then
+   `w.commit()`. **`LocalVfs::copy_file_fast`** (local → local): files up to `FAST_COPY_MAX = 64 MiB` are copied
+   with `std::fs::copy` into a temporary sibling created exactly as `open_write` creates one, then committed with
+   the same rename protocol; larger files return `Ok(None)` (streamed), because `std::fs::copy` cannot be
+   cancelled and G4 (cancel ≤ 100 ms) holds for copies too. The OS copy may carry more metadata (Windows: `H`,
+   `S`, `A` and times; macOS: extended attributes); that is allowed, the steps below run anyway.
+6. Metadata, in this order, each only when its `Preserve` field is set: **times** (`set_times { modified: src.mtime,
+   created: src.ctime if preserve.created and SET_CREATED }`), then **attributes** (`set_attrs` with the
+   source's mode or DOS bits; between families nothing is mapped). Times before attributes because a read-only
+   result must not stop the time change; owner and group are never copied (D-99). A folder's metadata is applied
+   **after its whole subtree** (creating children changes a folder's `mtime`). A missing capability on the target
+   (or no `mtime` on the source) skips that step silently and adds **one** warning `capability_missing` per
+   operation naming the capability; a failing call of a supported step fails the item with that error and **keeps**
+   the copied content (the item reports `failed`, the file is complete).
+7. Never rolled back: a committed file stays even if a later item fails.
+
+**Bytes and progress.** `Phase::Scanning` (`Unit::Items`) while planning, `Phase::Writing` (`Unit::Bytes`, total =
+the plan's bytes) while executing; `current` = the item's target spec.
+
+#### 1.3.5 Plans, execution and per-item results (D-103, T12)
+
+Every `vfs` write operation is computed as a complete **plan** before the first write, and executed from that
+plan; `--dry-run` prints the same plan and writes nothing (T12). The plan holds every item of every tree (the
+whole source tree is listed during planning, so a target inside a source can never be copied into itself, and
+the plan is finite).
+
+```rust
+#[derive(Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum OpKind { Copy, Move, Remove, Mkdir, Touch }
+#[derive(Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum Action { CreateDir, KeepDir, Copy, Link, Rename, Move, Remove, RemoveDir, Trash, Touch, Create, Skip }
+#[derive(Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum SkipReason { Exists, NotNewer, SpecialFile, Symlink, SymlinksUnsupported, ChildrenFailed }
+#[derive(Serialize, Deserialize)]
+pub struct PlanItem { pub action: Action, pub kind: EntryKind, pub source: Option<Spec>, pub target: Spec,
+                      pub size: Option<u64>, pub replaces: bool, pub skip: Option<SkipReason>,
+                      pub error: Option<ErrorReport>, pub depth: u32 }
+#[derive(Serialize, Deserialize)]
+pub enum PlanOptions { Copy(CopyOptions), Move(MoveOptions), Remove(RemoveOptions), Mkdir { parents: bool },
+                       Touch(TouchOptions) }
+#[derive(Serialize, Deserialize)]
+pub struct Plan { pub op: OpKind, pub options: PlanOptions, pub items: Vec<PlanItem>, pub warnings: Vec<Warning> }
+#[derive(Serialize)] #[serde(rename_all = "snake_case")]
+pub enum ItemStatus { Planned, Done, Skipped, Failed, NotRun }
+pub struct ItemResult { pub status: ItemStatus, pub skip: Option<SkipReason>, pub error: Option<ErrorReport> }
+pub struct Summary { pub planned: u64, pub done: u64, pub skipped: u64, pub failed: u64, pub bytes: u64 }
+pub struct OpReport { pub plan: Plan, pub results: Vec<ItemResult>, pub summary: Summary, pub cancelled: bool,
+                      pub warnings: Vec<Warning> }
+impl OpReport { pub fn ok(&self) -> bool; }          // failed == 0 && !cancelled
+
+pub fn resolve_targets(dst: &dyn Vfs, sources: &[Spec], target: &Spec, into_folder: bool, create_parents: bool)
+    -> Result<Vec<(Spec, Spec)>, VfsError>;
+pub fn plan_copy(src: &dyn Vfs, dst: &dyn Vfs, pairs: &[(Spec, Spec)], opts: &CopyOptions, cancel: &CancelToken)
+    -> Result<Plan, VfsError>;                       // Err only for Cancelled
+pub fn plan_move(src: &dyn Vfs, dst: &dyn Vfs, pairs: &[(Spec, Spec)], opts: &MoveOptions, cancel: &CancelToken)
+    -> Result<Plan, VfsError>;
+pub fn plan_remove(vfs: &dyn Vfs, specs: &[Spec], opts: &RemoveOptions, cancel: &CancelToken) -> Result<Plan, VfsError>;
+pub fn plan_mkdir(vfs: &dyn Vfs, specs: &[Spec], parents: bool) -> Plan;
+pub fn plan_touch(vfs: &dyn Vfs, specs: &[Spec], opts: &TouchOptions) -> Plan;
+pub fn dry_run(plan: Plan) -> OpReport;              // every result Planned (or Failed for items with an error)
+pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpReport;
+```
+
+**`resolve_targets`** (the `cp`/`mv` naming rule, owned by core so the CLI, scripts and the GUI agree, T11):
+`target` an existing folder (a root link to a folder is followed: the user named it) → each source goes to
+`target/<source file name>`; otherwise one source → `target` is the new name, several sources → `InvalidTarget
+"is not an existing folder"`; `into_folder` (the argument ended with a path separator) and `target` missing →
+with `create_parents` the folder is planned (`create_dir`), else `NotFound`. A source without a file name (`-`,
+`clipboard://`) into a folder → `InvalidTarget "needs a file name"`.
+
+**Plan rules.** Items are in **execution order**: roots in argument order; copy and move pre-order (a folder's
+`create_dir`/`keep_dir`, then its children sorted by `Listing::sort_by_name`); remove post-order (children, then
+the folder). A listing failure or a per-entry error is an item with `error` set (its subtree is not planned);
+a root that cannot be read is an item with `error` set; other roots continue (ARCH-101). Planning never writes.
+`depth` is the item's level below its root (0 = root).
+
+**Execution rules.** Items run in order. Each item re-checks its target with `lstat`: an item planned without a
+target (`create_dir`, `copy`, `link`, `rename`, `move`, `create`) that now finds one fails with `InvalidTarget
+"changed since the plan was made"` — execution never replaces anything the plan did not show; an item planned to
+replace that finds no target just writes. An item with `error` from planning is `failed` without a call. A folder
+whose child failed or was skipped is not removed by `remove`/`move` (status `skipped`, reason
+`children_failed`). Cancellation is checked between items and inside copies: the running item fails with
+`cancelled` (its target untouched), later items are `not_run`, `cancelled = true`. Exit code: 0 when `ok()`, else
+100 (also when cancelled).
+
+**Move (D-97).** Per root: same back-end instance, same spec scheme, `RENAME` on both sides and the target absent
+(or replaceable by the policy) → one `rename` item; but when both `FileId::dev` values are known (the source and
+the target's existing parent) and differ, planning expands the root at once. Otherwise — another back-end, or a
+target folder that exists (merge) — the root is **expanded**: `create_dir`/`keep_dir` for folders, `move` (=
+copy + remove source) for files and links, then `remove_dir` of each source folder after its contents. A
+`rename` that fails with `CrossDevice` at execution is expanded there and executed in place; the report's plan
+shows the expansion (the dry run could not know it; `docs/11` says so). A `move` item whose source removal fails
+removes the new copy again (rollback) when it did not replace an existing target, and fails with the removal's
+error; when it replaced one, the copy stays and the item fails.
+
+**Remove and trash (D-98).** `RemoveOptions { recursive: bool, trash: bool }`. Without `recursive` a non-empty
+folder is an item error `NotEmpty` (planning lists the folder once); an empty folder is removed. With `trash`
+each root is one `trash` item (`move_to_trash` of the whole item, never per child); a non-empty folder still
+needs `recursive`. A root that is a file-system root (`Spec::parent() == None`) → `InvalidTarget "is a root
+folder"`, for `remove` and for `move` sources.
+
+**Touch and mkdir.** `TouchOptions { times: SetTimes, create: bool }`: an existing item → `touch`
+(`set_times`); a missing item → `create` (an empty file through `open_write`, then `set_times`) with `create`,
+else an item error `NotFound`. `plan_mkdir`: a missing folder → `create_dir`; an existing folder → `keep_dir`
+with `parents`, else item error `AlreadyExists`.
+
+#### 1.3.6 Clipboard (D-100, D-101)
+
+```rust
+// hikasa_session::clipboard (pure)
+pub enum ClipboardContent { Text(String), Image { width: u32, height: u32, rgba: Vec<u8> } }
+#[derive(Debug, thiserror::Error)]
+pub enum ClipboardError {
+    #[error("no clipboard is available ({0})")] Unavailable(String),   // headless, no display, not supported
+    #[error("the clipboard holds no text or image")] Empty,
+    #[error("cannot read the clipboard: {0}")] Failed(String),
+}
+pub trait ClipboardProvider: Send + Sync { fn read(&self) -> Result<ClipboardContent, ClipboardError>; }
+pub struct NoClipboard;                                   // Unavailable("no clipboard provider"); ServiceInit::new's default
+pub struct FixedClipboard { /* content or error */ }     // tests: FixedClipboard::text(..), ::image(..), ::empty(), ::unavailable(..); counts reads
+pub fn clipboard_blob(content: ClipboardContent, mtime: FileTime) -> Result<Blob, VfsError>;
+pub fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, VfsError>;
+
+// hikasa_session::host (adapter-only, like SystemClock)
+pub struct SystemClipboard;      // arboard: get_text, else get_image, else Empty
+pub struct FileClipboard(pub PathBuf);   // the file's bytes as text: missing → Unavailable, empty → Empty
+pub fn clipboard_provider(env: &EnvFacts) -> Arc<dyn ClipboardProvider>;   // FileClipboard when
+                                 // env.clipboard_file_override is set, else SystemClipboard
+```
+
+- **Content.** Text wins when the clipboard holds both. Text → the UTF-8 bytes, no name hint (format detection by
+  content, as for `-` without `--stdin-name`). Image → a PNG (`encode_png_rgba`: 8-bit RGBA, colour type 6, one
+  IDAT of stored deflate blocks, `crc32fast` CRCs, Adler-32; deterministic; > 1 GiB of pixels → `TooLarge`), name
+  hint `clipboard.png`. The PNG bytes are not a stable format beyond "a PNG that decodes to the clipboard's pixels"
+  (W12 may switch to a compressing encoder). Blob `mtime` = the injected clock at capture (T1).
+- **Capture.** `ServiceInit` gains `clipboard: Arc<dyn ClipboardProvider>` (breaks literals; `ServiceInit::new`
+  sets `NoClipboard`). The provider is called **only** when a `clipboard://` spec is parsed (`Service::parse_spec`)
+  — never for other commands, so no display connection is opened by them — and **once per service**: both sides of
+  `quick clipboard:// clipboard://` see the same snapshot. From then on the router serves the blob for
+  `Spec::Clipboard` beside the stdin blob. `Service::read_clipboard(&self) -> Result<ClipboardDto, ApiError>`
+  (TC-065 data, the GUI) reads the provider **again** and replaces the snapshot for later calls; `ClipboardDto {
+  kind: text|image, size, name: Option<String> }`. `Service::vfs()` returns `Arc<VfsRouter>` (a snapshot; was
+  `&VfsRouter`) because the router changes when a blob is captured.
+- **Errors.** `Unavailable` → `VfsError::Unavailable { spec: "clipboard://", reason }` (kind `unsupported`);
+  `Empty` → `VfsError::NotFound { spec: "clipboard://" }` (kind `not_found`); `Failed` → `VfsError::Io` (op
+  `read`). In `quick`/`text compare` they arrive as `LoadFailed` (exit 100); in `vfs cat|stat|cp` as the
+  command's error (exit 100). A failure is cached for the service like stdin's (`read_clipboard` retries).
+- **Where `clipboard://` works.** `quick`, `text compare`, `vfs cat`, `vfs stat`, `vfs cp clipboard://
+  <file>` (needs an explicit file name), and `gui open` / `--gui` (D-101). It stays refused as a rules file over
+  IPC, is never stored in a session (D-80), cannot be written (`OperationUnsupported`) and is not a folder
+  (`folder compare` → `NotADirectory`, M1).
+- **`arboard`.** `SystemClipboard` creates an `arboard::Clipboard` per read. Error mapping: initialization failure,
+  `ClipboardNotSupported` and `ClipboardOccupied` → `Unavailable(<arboard's message>)`; `ContentNotAvailable`
+  for text and image → `Empty`; `ConversionFailure` and others → `Failed`. A slow selection owner is bounded by
+  `arboard`'s own timeouts (no timer in core).
+- **Tests never touch the real clipboard.** Unit and Service tests use `FixedClipboard`; CLI tests set
+  `HIKASA_CLIPBOARD_FILE` (captured by `capture_env` into the new `EnvFacts::clipboard_file_override`, like
+  `HIKASA_IPC_ENDPOINT`). Only `cli/` and `gui/` name `SystemClipboard` / `clipboard_provider` (architecture
+  check, §1.3.9).
+
+**`gui open clipboard://` (D-101, revises D-49).** The CLI sends `clipboard://` **verbatim** in `OpenView.specs`
+(never reads its own clipboard for the GUI); `-` keeps the M1 spool. `Service::open_view_request` accepts
+`clipboard://` (still refuses `-` and relative specs); the GUI's IPC handler calls `Service::read_clipboard`
+before it opens the view, so the GUI reads **its own** clipboard (same desktop session as the user; the CLI may
+run headless). A clipboard error is answered `Error{invalid_request}` with the message (exit 100 at the CLI). A
+view loaded from `clipboard://` keeps the bytes it loaded; when a reload re-reads the clipboard is a W11 choice.
+The Home view's refusal of a typed `clipboard://` stays until W4/W11 lift it.
+
+#### 1.3.7 Service, CLI and JSON (D-102)
+
+```rust
+// hikasa_session::api::vfs_ops
+pub enum VfsOpRequest {
+    Copy   { sources: Vec<OsString>, target: OsString, options: CopyOptions },
+    Move   { sources: Vec<OsString>, target: OsString, options: MoveOptions },
+    Remove { specs: Vec<OsString>, options: RemoveOptions },
+    Mkdir  { specs: Vec<OsString>, parents: bool },
+    Touch  { specs: Vec<OsString>, time: TouchTime, created: Option<FileTime>, create: bool },
+}
+pub enum TouchTime { Now, At(FileTime), Reference(OsString) }   // Now = the injected clock; Reference = its mtime
+impl Service {
+    pub fn vfs_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpDto, ApiError>;  // --dry-run
+    pub fn vfs_run(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpDto, ApiError>;   // plan + execute
+}
+```
+
+The trailing separator of the `cp`/`mv` target argument (`/`, and `\` on Windows) is read from the raw
+`OsString` before parsing (`into_folder`). Both calls use the service's router for source and target. Whole-command
+errors (`ApiError`: spec syntax, `resolve_targets`, usage) exit 100 with the failure envelope; item failures do not
+make an `ApiError`.
+
+```
+hikasa vfs cp <SRC>… <DST> [-r|--recursive] [--overwrite fail|skip|always|newer] [--symlinks copy|skip]
+                          [--follow-symlinks] [--no-preserve] [--preserve-created] [-p|--parents] [--dry-run]
+hikasa vfs mv <SRC>… <DST> [--overwrite fail|skip|always|newer] [-p|--parents] [--dry-run]
+hikasa vfs rm <SPEC>… [-r|--recursive] [--trash] (--dry-run | --yes)
+hikasa vfs mkdir <SPEC>… [-p|--parents] [--dry-run]
+hikasa vfs touch <SPEC>… [--time <RFC3339> | --reference <SPEC>] [--created <RFC3339>] [--create] [--dry-run]
+```
+
+- `cp` without `--recursive` and a folder source → item error `IsADirectory` ("use --recursive"). `--no-preserve`
+  clears every `Preserve` field; `--preserve-created` sets `created`. `--follow-symlinks` = `follow_roots`.
+- `mv` moves folders without `--recursive`. `rm` needs `--yes` unless `--dry-run` (D-77 rule): without either →
+  exit 100 `invalid_input` "rm deletes items: pass --yes, or --dry-run to see the plan", and nothing is planned
+  or touched. `cp`, `mv`, `mkdir` and `touch` need no `--yes`: they replace nothing unless `--overwrite
+  always|newer` says so, which is the explicit choice.
+- `touch` with neither `--time` nor `--reference` uses the injected clock's now; `--time` and `--reference`
+  conflict (clap). `--created` needs `SET_CREATED` at the item (else that item fails `unsupported`).
+- `JobKind::VfsWrite` (`"vfs_write"`) for every write command and its dry run.
+
+**Human output** (stdout, one line per plan item in plan order, then the summary; names escaped with
+`escape_controls`): the word of the action, then `<target>` (`mkdir`, `exists` for `keep_dir`, `rmdir`, `remove`,
+`trash`, `touch`, `create`) or `<source> -> <target>` (`copy`, `replace`, `link`, `rename`, `move`); a skipped item
+`skip (<reason>) <target>`; after execution a failed item `failed <word> <target>: <message>` and a not-run item
+`not run <word> <target>`. Summary: `<verb> <done> of <planned> items (<skipped> skipped, <failed> failed)` with
+`<verb>` = `copied`, `moved`, `removed`, `created`, `touched` (ARCH-101); a dry run ends with `would <verb>
+<planned> items`, a cancelled run with `cancelled`. Warnings (`capability_missing`) on stderr as usual.
+
+**JSON.** One new schema for the five commands (appended to `SCHEMAS`, 34 → 35):
+
+| Schema | `result` |
+|---|---|
+| `hikasa.vfs_op.v1` | `{op: "copy"\|"move"\|"remove"\|"mkdir"\|"touch", dry_run: bool, cancelled: bool, items: [{action, kind, source: str\|null, target: str, size: u64\|null, replaces: bool, status: "planned"\|"done"\|"skipped"\|"failed"\|"not_run", reason: str\|null, error: ErrorReport\|null}], summary: {planned, done, skipped, failed, bytes}}` |
+
+Item failures are not an envelope error: `ok: true`, `exit_code: 100`, `error: null`, the failures in `items`
+(as `hikasa.settings_import.v1`, W2). The envelope's `warnings` hold the plan's and execution's warnings.
+`hikasa.vfs_stat.v1` keeps its shape; its `capabilities` show the new names (goldens change).
+
+#### 1.3.8 `MemoryVfs` (D-92)
+
+`MemoryVfs` implements every primitive with POSIX semantics (as its M1 reads), honours `set_capabilities`, and
+adds test hooks (additive):
+
+| Hook | Effect |
+|---|---|
+| `Fault { op: Mkdir \| Remove \| Rename \| SetTimes \| SetAttrs \| Symlink \| Trash, .. }` | the primitive on that path fails with the kind (`Rename` matches the `from` path); nothing changes |
+| `inject_read_error_after(path, bytes: u64, kind)` | `open_read(path)` succeeds; reads return the first `bytes`, then fail |
+| `inject_write_error_after(path, bytes: u64, kind)` | `open_write(path)` succeeds; `write` fails once `bytes` were accepted (the writer is then dropped by the caller: nothing visible) |
+| `Fault { op: Commit, .. }` (M1) | `commit` fails; nothing visible |
+| `set_device(prefix: &str, dev: u64)` | items under `prefix` get `FileId { dev, .. }`; `rename` between different devices → `CrossDevice` |
+| `set_journal(bool)`, `journal() -> Vec<(VfsOp, String)>` | every mutating call in order (`commit` as `Commit`), for order assertions (content → times → attributes; folder times after children) |
+| `trashed() -> Vec<String>` | the original paths moved to the trash, in order (the items leave the tree) |
+| `dump() -> Vec<MemDump>` | deterministic snapshot of the tree: path, kind, length and CRC-32 of content, mtime, ctime, attrs, link target (for "target untouched" assertions) |
+
+`set_times` on a link and `create_symlink` are supported; `set_attrs` follows D-94 rule 2. Paths follow the host
+syntax (M1); case-insensitive instances fold names on every primitive and a case-only `rename` changes the kept
+spelling.
+
+#### 1.3.9 Dependencies and architecture test
+
+- **`trash`** 5 (MIT; 5.2.9 at the time of writing): `[workspace.dependencies] trash = { version = "5",
+  default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }` (`chrono` writes the
+  `DeletionDate` the freedesktop trash requires; apartment-threaded COM is the crate's default on Windows), used by
+  `hikasa-vfs` only, called only from `core/hikasa-vfs/src/local/trash.rs`. New transitive crates: `chrono` (Linux
+  and the BSDs), `windows` 0.62 (Windows), `objc2-foundation` (macOS); licences MIT or MIT/Apache.
+- **`arboard`** 3 (MIT OR Apache-2.0; 3.7.0 already in `Cargo.lock` through `egui-winit`): `arboard = { version =
+  "3", default-features = false, features = ["image-data", "wayland-data-control"] }` (the feature set the lock
+  already compiles; no new crate), used by `hikasa-session`, named only in `core/hikasa-session/src/host.rs`.
+- `docs/02`: a line for each (version, features, crate, why), and the M1 constraint row on `arboard` replaced by
+  "D-100, D-101". `cargo deny check` must pass without new exceptions.
+- Architecture test: manifest table `hikasa-vfs` += `trash`, `hikasa-session` += `arboard`; check 2 gains two
+  confinement rules: the token `trash::` only in `core/hikasa-vfs/src/local/trash.rs`; the token `arboard` only in
+  `core/hikasa-session/src/host.rs` under `core/`. `SystemClipboard` and `clipboard_provider` join `capture_env`
+  and `SystemClock` as adapter-only names (referenced only by `cli/`, `gui/` and hikasa-session's own tests).
+- T1: `trash` reads the home and data folders from the environment and the clock for `DeletionDate` inside the
+  call. This is a side effect of the OS operation, not an input of a result, so it is accepted (D-98) and the
+  call is confined to one file.
+
+#### 1.3.10 Hooks for W5 and W6
+
+- **W5 (archives).** `ArchiveVfs` implements the same primitives (and `open_write`) by staging changes and
+  rebuilding the archive atomically (temp + rename, Q8). `ops::execute` is the single place an operation ends,
+  so W5 may add a defaulted `Vfs::finish(&self, at: &Spec)` called there once per touched back-end root (one
+  rebuild per operation) without changing the primitives; a failed rebuild turns that root's done items into
+  failed ones. `Spec::parent` and `resolve_targets` gain archive members. `create_dir` of a name with an archive
+  extension creates an empty archive (FC-077) in W5, a plain folder in W3.
+- **W6 (folder operations, sync).** `OpPlan` wraps `ops::Plan` items with sides, conflicts (read-only, system,
+  newer), confirmation answers and backups; `Action::Copy` with `replaces = true` and `Action::Remove` are the two
+  points where a backup step and the recycle-bin choice (`RemoveOptions::trash`, FC-073 "if possible") are
+  inserted. Per-item results, the execution re-check, cancellation and the move fallback are reused as they are.
+  "Delete to recycle bin if possible" (FS-005) falling back to a permanent delete is a W6 confirmation choice;
+  the W3 primitive never falls back.
+
+#### 1.3.11 Documentation updates of W3
+
+`docs/01` §3.2 (the trait sketch gains the mutating primitives; ARCH-031 points to `ops`); `docs/02` (the
+`trash` and `arboard` lines; the M1 `arboard` constraint row); `docs/10` (format detection of clipboard content:
+text without a name, images as `clipboard.png`); `docs/11` §1 (Clipboard row: text or image, captured once per
+command, errors; "Local writes" gains the mutation rules, D-94 and the rename race; recycle bin, D-98); `docs/12`
+§1 (the `vfs` row with the W3 forms; the D-49 note of §1.1 replaced by D-101) and §4 (flags table, human output
+table, schema list with `hikasa.vfs_op.v1`, the `HIKASA_CLIPBOARD_FILE` variable); `docs/16` M2 progress;
+`help/vfs.md` (read and write commands, plans, `--dry-run`/`--yes`, overwrite policies, links, trash,
+`clipboard://`; `hikasa help vfs cp` resolves to it by the D-67 fallback), `help/cli.md` (specs: `clipboard://`
+and its errors), `help/gui.md` (`gui open clipboard://`); `CHANGELOG.md`. The command catalogue does not change
+(the GUI file-operation commands stay `planned` until W9), so `docs/reference/commands.md` is unchanged.
+
+#### 1.3.12 W3 notes (implementation)
+
+*W3 note:* where the implementation had to interpret or extend the text above. (Filled in during the wave.)
+
+### 1.4–1.14 W4–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -907,3 +1457,75 @@ Outlines in plan §6; each section is written here before its wave starts.
   as D-89 says.
 - A2.9 Whole workspace green (as A1.12), including `cargo deny` and the architecture test (`zip` in the
   manifest table of `hikasa-session`).
+
+### 6.3 W3 acceptance
+
+- A3.1 **Primitives (D-92, D-99).** One table test per primitive, run on `MemoryVfs` (case-sensitive and
+  case-insensitive) and on `LocalVfs` in a tempdir (host path syntax; Windows and macOS rows run on those
+  platforms, the maintainer's platform run before merge): rows for a missing item, a file, an empty folder, a
+  non-empty folder, a link to a file, a link to a folder, a broken link, an existing target with and without
+  `replace`, a case-only rename, a missing parent with and without `parents`, a non-folder ancestor; each row
+  states the outcome or the error kind. `set_times` with and without `created` (`SET_CREATED` per platform);
+  `set_attrs` `Mode` (Unix), `Dos` `R` and an unsupported bit (Windows), the wrong family. The capability table
+  of §1.3.1 per back-end; the router dispatch table (local, blobs, an unsupported scheme, mixed kinds).
+- A3.2 **Errors (D-93).** Every new `VfsError` variant: kind, message, `spec()`, the `io::Error` round trip;
+  `from_io` of `DirectoryNotEmpty` and `CrossesDevices`; `ErrorKind::NotEmpty` serde `"not_empty"`; the §2.21
+  table test still total (`vfs` → 100); `VfsOp::ALL` and `Capabilities::names` (21, canonical bit order).
+- A3.3 **Copy (ARCH-031, D-95).** Table tests on `MemoryVfs` → `MemoryVfs` (two instances: another back-end),
+  `MemoryVfs` → itself and `LocalVfs` → `LocalVfs`: file, empty file, folder tree, preserve on/off, created time;
+  the journal shows content (`commit`) → `set_times` → `set_attrs` per file and each folder's metadata after its
+  last child; a target without `SET_TIMES`/`SET_ATTRS` gives exactly one `capability_missing` warning and done
+  items; a failing `set_attrs` fails the item and keeps the content; owner never changes. The local fast path and
+  the streamed path give the same bytes, times and mode (a file of 64 MiB + 1 byte takes the streamed path).
+- A3.4 **Faults (D-95, D-103).** Property test over generated trees (≤ 50 items) × fault position × fault op
+  (`Open`, `Read`, `Write`, `Commit`, `Mkdir`, `SetTimes`, `SetAttrs`, `Symlink`, `Remove`, `Rename`, read and write
+  errors after N bytes): the failing item's target is exactly as before (`dump()` equal for that path; no
+  temporary sibling anywhere), every other item reaches its expected state, the summary counts match, exit code
+  100. Cancellation at a random item: the running item's target untouched, later items `not_run`, `cancelled`.
+- A3.5 **Overwrite (D-96).** The policy table: 4 policies × target absent / older file / newer file / equal
+  `mtime` / unknown `mtime` / folder / link / special file, and source folder × target file/link/folder; the
+  execution re-check (a target created between plan and execution → `changed since the plan was made`, nothing
+  replaced); a source FIFO is skipped and never opened (Unix, with a timeout guard).
+- A3.6 **Links (D-94).** The nine rules of §1.3.3, each a test on `MemoryVfs` and on a Unix tempdir (Windows:
+  run when creating links is permitted, else skipped with a message): removing a link to a folder keeps the
+  folder's content; `remove_tree` over a tree with a link to an outside folder leaves that folder intact; copying
+  onto a link replaces the link and leaves the pointed-to file byte-identical; a target subfolder that is a link
+  is never written through; `set_times` on a link leaves the target's times; `set_attrs` on a link is
+  `unsupported`; `rename` and trash move the link; `--follow-symlinks` follows a root only; `open_write` without
+  `replace_link` still writes through (M1 test kept).
+- A3.7 **Move (D-97).** Same device: one `rename` item, the folder's `FileId` kept; `MemoryVfs::set_device` and two
+  `MemoryVfs` instances: copy + remove per item, merge into an existing folder, a source folder kept when one child
+  failed (`children_failed`); a `rename` that returns `CrossDevice` at execution is expanded and the report shows
+  the expansion; a source-removal fault rolls the copy back (and keeps it when it replaced a target).
+- A3.8 **Remove and trash (D-98).** `rm` table (file, link, empty folder, non-empty without/with `--recursive`, a
+  root refused); `MemoryVfs::trashed()` order; a trash fault leaves the item in place and never removes it
+  permanently. Linux: a CLI test runs `hikasa vfs rm --trash --yes` with `HOME` and `XDG_DATA_HOME` in a tempdir
+  that also holds the file, and finds it under `$XDG_DATA_HOME/Trash/files` with a `.trashinfo` that has `Path`
+  and `DeletionDate`; on other platforms the real-trash test is `#[ignore]` (manual). Blobs report
+  `OperationUnsupported`.
+- A3.9 **Clipboard (D-100).** With `FixedClipboard`: text, image, empty and unavailable through the Service calls
+  of `quick`, `text compare`, `vfs cat`, `vfs stat` and `vfs cp clipboard:// <file>` (kinds and exit codes as
+  §1.3.6); the provider is never called by a command without a `clipboard://` spec and called once for
+  `quick clipboard:// clipboard://`; `read_clipboard` replaces the snapshot; text wins over an image; the image blob
+  is a valid PNG (the test parses chunks, CRCs and the stored deflate blocks back to the pixels) named
+  `clipboard.png`; > 1 GiB of pixels is `too_large`. CLI tests through `HIKASA_CLIPBOARD_FILE` (text, empty file,
+  missing file). No test constructs `SystemClipboard` (architecture check).
+- A3.10 **GUI handover (D-101).** `gui open clipboard:// x` sends `clipboard://` verbatim (fake GUI server golden
+  frame); `open_view_request` accepts it and the handler path reads the injected provider (Service test with a
+  fake handler); a provider error is answered `invalid_request` and exits 100; `-` is still spooled; a rules file
+  `clipboard://` is still refused; `session new … --left clipboard://` still stores `""` with `spec_not_saved`.
+- A3.11 **CLI (D-102).** Goldens (text and JSON) for `cp`, `mv`, `rm`, `mkdir`, `touch`: success, `--dry-run`, a
+  partial failure (`ok: true`, exit 100, the failed item's error), a whole-command failure (bad spec, several
+  sources into a non-folder), `rm` without `--yes` (exit 100 `invalid_input`, the tree unchanged), each
+  `--overwrite` policy, `--symlinks skip`, `touch --time/--reference/--created/--create`; the `resolve_targets`
+  table (existing folder, new name, trailing separator with and without `--parents`, several sources, a blob
+  source, target inside source, target = source); `vfs stat` goldens with the new capability names; `version
+  --json` lists 35 schemas; `hikasa help vfs cp` resolves to the `vfs` topic; `cargo xtask help-check` and
+  `commands-doc --check` pass (no catalogue change). CLI results equal direct `Service::vfs_run` results (T11).
+- A3.12 **Nothing is created by reading.** `vfs ls|stat|cat`, every `--dry-run`, `rm` without `--yes` and
+  clipboard reads leave the tempdir, the configuration folder and the cache folder exactly as they were (tree
+  snapshot before/after; D-21).
+- A3.13 The whole workspace is green (nextest, doc tests, fmt, clippy `-D warnings`, doc, `cargo deny` without new
+  exceptions, the architecture test with `trash` in the manifest table of `hikasa-vfs`, `arboard` in that of
+  `hikasa-session` and the two confinement rules, xtask checks); the GUI builds and its tests pass (the provider
+  wiring and the D-101 handler change).
