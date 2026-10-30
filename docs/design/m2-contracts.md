@@ -10,11 +10,11 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-133, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
-  §1.3 W3 VFS mutations, clipboard, generic copy · §1.4–§1.14 W4–W14 (outline in plan §6, written before each
-  wave)
-- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3
+  §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
+  dialogs) · §1.5–§1.14 W5–W14 (outline in plan §6, written before each wave)
+- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4
 
 ---
 
@@ -82,6 +82,36 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-101 | **Revises D-49.** `gui open clipboard://` and `--gui` with `clipboard://` are allowed: the CLI sends `clipboard://` verbatim in `OpenView.specs`; the GUI reads **its own** clipboard (`Service::read_clipboard`) when it opens the view. `-` keeps the M1 spool; rules files may still not be `-` or `clipboard://`; sessions still never store either (D-80). | `arboard` approved (Q9); the GUI runs on the user's desktop while the CLI may be headless. | 12 §1.1, 01 §5.1 |
 | D-102 | **`hikasa vfs cp\|mv\|rm\|mkdir\|touch`** (§1.3.7). Target naming as `cp`/`mv` (into an existing folder, else the new name; several sources need a folder), owned by core (`ops::resolve_targets`). `rm` needs `--yes` unless `--dry-run` (as D-77); the other four need no confirmation because they replace nothing without an explicit `--overwrite always\|newer`. One schema `hikasa.vfs_op.v1`; item failures give `ok: true`, exit 100 (as W2 import); human output one line per item plus an ARCH-101 summary. | CLI-first (T10) before W6/W9 use the same primitives; destructive commands never run by accident. | 12 §1, §4 |
 | D-103 | **Plans of VFS operations** (T12, minimal). Every write command builds the complete serializable `ops::Plan` (whole source trees listed, items in execution order) before the first write; `--dry-run` prints that plan; execution re-checks each target and never exceeds the plan; results are per item (`planned`, `done`, `skipped`, `failed`, `not_run`); nothing runs below a folder item that failed or was skipped, or below a folder that changed since planning (`not_run`, §1.3.12). W6's `OpPlan` wraps these items (sides, conflicts, backups, confirmation). | The plan is the unit W6 extends; a finite plan also makes "copy a folder into itself" harmless. | 12 §4 |
+| D-104 | **W4 in three sequential parts** (plan §2 "GUI waves may split into a/b"). W4a *Shell* (windows and tabs, commands, theme application, icons, status bar, jobs, message and log panels, notifications and polling, dialog framework, OS drag and drop), then W4b *Sessions* (sessions of views, close prompts, auto-save, Session Settings dialog shell, Home view, workspaces, the GUI command line), then W4c *Settings dialogs* (Options dialog with the toolbar/shortcut/menu editor and the theme editor, Export/Import/Restore wizards, IPC `ImportPackage`). One implementer per part; a part starts when the previous one is merged on `feat/m2`; each part ends with the tree green (its acceptance subset of §6.4 and the full checks). The whole-wave gates (§1.4.17) are re-measured once at the end of W4c. | Size L and the maintainer's "few agents at a time"; each part is reviewable alone and leaves a working window. | 16 |
+| D-105 | **The GUI calls of W4** (T11, ARCH-L3). The GUI reaches files only through `Service` calls; it may call pure core functions and types directly (`close_action`, `is_dirty`, `Shortcut::parse`, `Scheme::resolve`, `T::validate`, `CommandOverrides` helpers, `LogBook`). Every `Service` call that reads or writes a file runs off the UI thread (`Service::spawn`, or the watch thread of D-117); the UI thread only calls in-memory accessors. W4 adds **no `hikasa` subcommand**: each new `Service` call is either a typed form of an operation an existing subcommand already performs (same engine function, same files written — a test per call compares the files with the CLI's) or GUI-only state (`state.toml` layout, the log book). | CLI-first (plan §0.1) without duplicate commands; the UI thread never blocks (M1 §1.10). | 01 §3.6 |
+| D-106 | **Window model** (UI-001, SES-090). Each top-level window is an egui viewport shown with `show_viewport_immediate` from the root viewport's frame; one `AppCore` owns every window (`Vec<WindowModel>`, toolkit-free), each window owns its tabs, and a view (its `ViewId`, jobs, IPC waiter) lives in exactly one tab. `windows[0]` is always drawn by eframe's root viewport: closing it while other windows are open moves the next window's model into the root viewport (its geometry is applied) and closes that window's viewport, so the process never ends while a window is open. Opens from IPC, the command line and Home go to the window focused last; `[tabs] open_sessions_in = "window"` and `open_child_sessions_in = "window"` open a new window instead (OPT-004). | One owner without locks; eframe ends the process when the root viewport closes; immediate viewports repaint on demand like M1. | 14 §1, 03 §9 |
+| D-107 | **Tab moves** (SES-090). New global catalogue commands (context menu of a tab, no default shortcut): `TabDuplicate`, `TabMoveToNewWindow`, `TabMoveToWindow` (a submenu of the other windows), `TabCloseOthers`. Dragging a tab inside its tab bar reorders it; releasing it over another window's tab bar moves it there **when the platform reports window positions**; releasing it outside every window opens it in a new window at that position under the same condition. Where positions are unknown (Wayland, A17) a release outside the source tab bar does nothing and the two Move commands remain the way. A window whose last tab moves away closes. Duplicate opens a new view of the same session (its own comparison, no shared model) right of the source tab. | Cross-window pointer delivery is platform-dependent (plan §5.1); the commands always work and are testable without a window. | 03 §9 |
+| D-108 | **Layout memory** (UI-001). `state.toml` gains `[layout.<view type>]` (an opaque table per view type, keys owned by the views: W4 defines `toolbar`, `log_panel`, `log_height`, `font_size`, `thumbnail`; W9/W11/W13 add theirs) next to `[window]`, which holds the geometry of the last window closed. The schema stays version 1 (an additive known section). Precedence when a view opens: the session's `[view]` keys (D-81) → `[layout.<view type>]` → built-in defaults. The GUI writes `state.toml` only through `Service::state_update`, which loads leniently, applies the change, saves with `Overwrite::IfUnchanged` and on `Conflict` reloads and applies once more. Sizes are restored on every platform, positions where the platform allows (A17). | Per-type layout survives restarts without touching sessions; the closure keeps concurrent CLI edits of `state.toml`. | 03 §5.2, 14 §1 |
+| D-109 | **Effective command table in core; GUI presentation only** (UI-003, refines D-65). `hikasa_session::commands::effective(view, &CommandOverrides) -> ViewCommands` merges the catalogue entries of the view's sections (`view_sections`) with `commands.toml`: shortcuts (override replaces the default; `[]` removes), menu and toolbar visibility, the four per-view flags. A catalogue entry gains the optional field `toolbar` (bool, default `false`: on the default toolbar); `docs/reference/commands.md` keeps its layout. Menus, toolbars, context menus, shortcuts and the Shortcuts page show **`implemented` entries only**. The GUI's own table keeps per id only presentation: icon, toolbar label, radio group, availability predicate and context-menu area; captions, descriptions (hints), menus and shortcuts come from core. | One source of captions and shortcuts for the GUI, `commands-doc` and `settings`; overrides apply in one place. | 01 §3.6, 14 §1 |
+| D-110 | **Menu assembly** (UI-002, UI-004, UI-005). Menu bar: Session, File, Edit, Actions, Search, View, Tools, Help; a menu without a visible entry is hidden. Inside a menu, entries are grouped by catalogue section in `view_sections` order (own section first, `global` last) with a separator between groups, catalogue order inside a group; the Session menu puts the `global` entries before `CloseTab` first, then the view's groups, then `CloseTab` and `Exit`. An entry is visible when it is `implemented`, has a caption and a menu, and its effective menu flag (or `show_all_in_menu`) is set. `MacWindow` entries are keyboard-only. The pseudo-menus `DropDown`, `Favorites`, `Toggles` are the display-filter presentation chosen by `display_filter_mode` (toolbar control; View ▸ Display Filter submenu). Entries with an empty `menu` appear only in context menus and on the toolbar. Context menus are lists of command ids per area (tab, toolbar, sessions tree in W4; panes in W9/W11/W13). | Deterministic menus derived from data, testable as text. | 14 §1 |
+| D-111 | **Shortcut dispatch** (UI-003, UI-006). A key press becomes a core `Shortcut` (on macOS a catalogue `Ctrl+` is the Command key). Candidates are the visible, available entries of the active view whose effective shortcuts contain it. (1) An entry whose shortcut has a context (`Enter (in a path field)`), whose `menu` is empty, or whose shortcut is focus-bound (no Ctrl/Alt/Cmd and a key among letters, digits, punctuation, Enter, Tab, Esc, Space, BkSp, Del, Ins, Home, End, PgUp, PgDn, arrows) is taken only by the focus area it belongs to. (2) Among the rest the first entry in `view_sections` order, then catalogue order, wins. (3) A workspace shortcut (SES-040) applies only when no command took the key. While a dialog is open in a window, that window's commands take no key. | Extends the M1 focus rule to overrides and context-only commands; the catalogue's deliberate duplicates (Copy/Take) are resolved by focus. | 14 §1 |
+| D-112 | **Dialog framework** (SES-092 framework, UI-006). Dialogs are egui windows inside their native window, modal to it (a dimmed backdrop takes the window's input), one stack per window; never extra viewports. A dialog is a toolkit-free model (`DialogModel`: title, help topic, buttons, `on_button`, `on_key`) tested without a window. Esc = Cancel (or Close), Enter = the default button, F1 = the dialog's help topic. `Prompt` (message, buttons, default, optional "Do not ask again" bound to an option key) serves D-84 questions, the multiple-close warnings and conflicts; W6 confirmations, W8's status window and W11's per-file prompts (SES-092) reuse it. | Cheaper than viewports (memory gate), works on Wayland, testable. | 14 §4 |
+| D-113 | **Theme application** (UI-020…022, FC-031). The window's colours come only from the resolved `Scheme` of `ThemeSelection::scheme_for(theme_mode, os_dark)` (`os_dark` = egui's system theme, re-evaluated when it changes); egui's chrome visuals start from the scheme's base (light or dark) with the selection colour of `[folder] selection` unless `use_system_selection`. `ui/theme.rs` maps scheme elements to the painters' colours through one data table. Fonts: the four `theme.toml` sizes apply (editor: text panes, folder: tree, listing and hex: their W11/W13 views); `family = ""` is the built-in font; a non-empty family uses the built-in font and raises one warning notice per family (no font discovery in W4, D-133). | Every colour configurable through one model; no dependency for fonts. | 14 §2 |
+| D-114 | **In-house vector icons** (UI-010). Icons are constant lists of drawing operations (lines, polylines, polygons, circles, rounded rectangles) on a 16 × 16 design grid, painted with egui's painter at the window's current pixels-per-point in a colour from the palette, so they are sharp at 100/125/150/200 % and any other scale, in light and dark schemes. No image files, no icon font, no dependency. The inventory is §1.4.5; every toolbar entry of the presentation table and every session type has an icon (test). Original drawings only (`docs/17` §5). | Scale-free and small; nothing copied. | 14 §1 |
+| D-115 | **Status bar, jobs, message panel** (UI-030). Each window has a status bar: left the active view's context text, right its state items (comparison state, then encodings and line endings for file views; zoom and insert mode arrive with their views), and a job indicator that aggregates the running jobs of every view of the window (title, phase, fraction when known, count); clicking it lists the jobs, each with Cancel; `Stop` cancels the active view's jobs. Each view has a message panel (one line, kind info/warning/error, a close button, optional "Do not show again" bound to an option key such as `[next_difference] show_message_panel`). The M1 window-wide message is replaced by the view's panel; About becomes a dialog. | UI-030 as specified; progress per window, cancel per job. | 14 §3 |
+| D-116 | **Log book** (FC-100 panel). `hikasa_session::log::LogBook` is a pure bounded list of entries (`time`, `kind` summary/detail/warning/error/debug, `source`, `text`); OPT-018 filters at insertion (errors always kept), `display_up_to` is the capacity (oldest dropped). One book per GUI process, shared by every window and shown by the folder views' Log panel (`ShowLog`; later views add it). With `save_to_file` set, new lines are appended by `Service::log_append` from the watch thread. Sources in W4: finished jobs (summary), warnings and errors of every `Service` result the GUI receives, notifications, settings reloads, workspace and package results, and `hikasa::*` tracing events at debug level when `debug_messages` is on. | W6 file operations and W8 scripts append to the same book. | 04 FC-100, 15 |
+| D-117 | **Polling and notifications** (UI-031, SES-053, D-62). A GUI thread `hikasa-watch` (an adapter timer, D-83) polls every 2 s and at once when any window gains focus: `ConfigWatch` over every settings file, `themes/` and `formats/`, then the stamps of the inputs of open file views. Results are posted to the UI thread. Reactions are the table of §1.4.7; paths the GUI wrote itself are acknowledged first and raise nothing. Notifications are non-modal, in the window concerned (settings: the window focused last): at most three visible, newest on top; info ones hide after 8 s, warnings, errors and those with actions stay until dismissed; equal keys replace each other; each is also a log entry. | No `notify` (Q4); the UI never waits for the disk. | 03 §5.2, 14 §3 |
+| D-118 | **Changes of input files** (OPT-015). The inputs of open file views (W4: Text Compare) are watched by `InputStamp` = (length, modification time) from the VFS `stat`, never by reading content (inputs may be gigabytes); `-`, `clipboard://` and other blobs are not watched; folder views' bases are not watched (FC-082 refresh is P1). On a change: with `automatically_reload` and no unsaved edits (always none before W11) the view reloads and an info notice says so; otherwise a warning notice offers Reload. A removed input gives a warning notice. `check_for_files_changed_on_disk = false` disables the watch. | Cheap polling; the edit-aware prompt of W11 builds on it. | 15 |
+| D-119 | **Reloading settings in a running service.** `Service::reload_settings()` re-reads `options.toml` (leniently, warnings returned) and the format registry and swaps them atomically; later calls and jobs use the new values, running jobs keep theirs. `Service::options()` returns `Arc<ProgramOptions>` and `Service::registry()` an `Arc<FormatRegistry>` snapshot (signature change, callers adapt). | The GUI is long-lived; SES-053 "reload" must reach comparisons started later. | 01 §3.6 |
+| D-120 | **Sessions of views** (SES-001…005, D-84). Every comparison view owns a `ViewSession`: origin (`Unnamed`, `AutoSaved(id)`, `Named(ref)`), the session as loaded, locked, `explicit_save`, its auto-save slot. The current session is built by core (`Service::session_for_view`); `dirty` is `is_dirty(loaded, current)`; closing a view runs `close_action` and acts on its `CloseAction`. Closes that cannot ask — IPC `CloseView`, IPC `Shutdown`, the end of a desktop session — answer **No** to both questions (nothing is written for a named session; unnamed and auto-saved ones are auto-saved as usual); the D-23 outcome of a waited view is unchanged. Save on an unnamed or auto-saved view opens Save Session As; after a save the origin becomes `Named` and the auto-saved slot of the view is deleted. | One state machine (D-84) for every close path; non-interactive callers never block on a prompt. | 03 §1 |
+| D-121 | **Auto-save timer** (SES-002, D-83). In the GUI adapter: a view of origin `Unnamed` or `AutoSaved` is auto-saved when it closes (D-84), at program exit, and every 300 s while its current session (`view` and `display` included) differs from the last auto-saved one. Each save is `Service::session_autosave` (the injected clock; prunes to OPT-019). A named view is never auto-saved. The period is a constant (no option exists). | SES-002 "periodically while open" with a deterministic, testable rule. | 03 §1 |
+| D-122 | **Session Settings dialog shell** (SES-020, SES-021). A dialog with a tab registry per session type: W4 provides the **Specs** tab (left/right inputs with MRU lists and drop, description, for file types the format and the two encodings) for the types the GUI can show, and the footer's scope selector (*this view only*, *update session defaults*, and for a child session with a named or auto-saved folder parent *these files within parent* and *all files within parent*). The default scope is *this view only*. Specs never go to the defaults (D-82). Rule changes are applied with `Service::session_apply_scope`; the rule tabs are added by W9, W11 and W13 into the same registry, so in W4 only test-registered tabs change rules. `Rules` (SES-022) stays `planned` until the first rule tab exists. | Framework now, tabs with their views; scope semantics already in core (D-82). | 03 §2 |
+| D-123 | **Removing an inherited map entry** (W2 note, D-90 deferral). A session or override removes an entry of a rule map that the defaults hold (`importance.elements.<name>`) by writing the entry as `false`; the effective rules drop it; `session edit --set rules.importance.elements.<name>=false` is the CLI form. Implemented in **W11** with the importance tab, the first editor that needs it (moved from W4). | Same convention as D-90's optional rules; no GUI in W4 can remove such an entry. | 03 §1 |
+| D-124 | **Home view** (SES-030, SES-031, SES-093). Type buttons (one per session type the GUI can open; drop targets), a search box (`Find`, Ctrl+F), the sessions tree and the management panel (`ShowManage`, `MaximizeManage`). Tree: *New* (one entry per type: its defaults), named sessions in folders (folders first, then favorites, then the rest, each case-insensitively sorted), *Auto-saved* in the four D-83 groups, newest first. Search: case-insensitive substring of the name, folder path or description; matches are shown with their ancestors. The M1 path form becomes the management panel's Specs editor; `HomeCompare` opens the selection. The tree's context-menu commands (SES-031) are new catalogue entries of the `home` section (§1.4.11). The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. `SessionHome` (Alt+Home) replaces the view by Home after its close action; `SessionsCombo` lists the named sessions of the view's type and opens the chosen one in this tab. | SES-030/031 with the store of W2; no polling of `sessions/`. | 03 §3 |
+| D-125 | **Workspaces in the GUI** (SES-040…042). Save Workspace As captures every window (root first, then in opening order): geometry, active tab, and per tab a reference for `Named` views, an inline session (`Service::inline_table`) for the others, the pending session of a not yet restored tab, and the view layout; Home tabs are not saved (D-85 has no Home tab; a window without saved tabs restores as one Home tab). Load Workspace runs every open view's close action first (a Cancel aborts the load), then restores the windows lazily (D-126). A workspace `shortcut` is dispatched by D-111 rule 3; Manage Workspaces renames, deletes, edits the shortcut (conflicts with global commands and other workspaces are shown) and loads. Startup: without view arguments and with `[startup] load_workspace` set, that workspace is loaded (missing: a warning notice and Home); exit: with `on_exit_save_workspace_as` set it is saved after the close warnings and before the views close. IPC `LoadWorkspace` restores windows the same way. | SES-040/041 on the W2 files. | 03 §4 |
+| D-126 | **Lazy restore** (G12). A restored tab is *pending* (its session or reference, title, layout) until it is first activated; only the active tab of each window starts its comparison. A pending tab is registered with the IPC view list (`gui list`) and closes with `close_unopened` semantics. A pending tab's caption is the session reference, else its description, else the input names. | First screen < 1 s whatever the workspace size; memory per unopened tab is a session value. | 03 §4 |
+| D-127 | **GUI command line and `ImportPackage`** (CLI-002, SES-061; revises D-88's wizard clause, additive to protocol v1 per D-46/D-89). `hikasa-gui <one argument>` uses `Service::classify_single_arg` like `gui open`: a session or workspace opens (or is forwarded as `LoadSession`/`LoadWorkspace` to a running GUI), a `.hikasa-pkg` without `--silent` shows the Import wizard. New request `ImportPackage{path}` (absolute path) → `Ok` once the wizard is shown in the window focused last; a GUI that answers `unsupported_request` is reported as for D-89. `hikasa gui open <file.hikasa-pkg>` without `--silent` sends it (exit 0) instead of exiting 100 `unsupported`. | Completes D-88; old GUIs fail clearly. | 12 §1, 01 §5.1 |
+| D-128 | **Options dialog** (OPT, docs/15). Searchable page tree on the left (pages and sub-pages of §1.4.13), page on the right, Apply / OK / Cancel. Each P0 key of `key_infos(FileId::Options)` appears on exactly one page; P1/P2 keys are not shown (they stay stored and validated). Widgets follow `ValueKind`; values are validated live with the schema's `validate`, and Apply is disabled while a problem remains. The dialog edits a typed working copy (`SettingsSnapshot`) taken when it opens; Apply writes the changed files with `Service::settings_save` (`IfUnchanged` per file; a file equal to its snapshot is not written); a `Conflict` asks *Overwrite* / *Reload this file (discard my edits)* / *Cancel*; OK = Apply, then close when every file succeeded; Cancel discards unapplied edits and ends the theme preview. Search matches page titles, labels, key paths and OPT ids, case-insensitively. | One dialog over the W1 models; the CLI's sparse, preserving writes (T13). | 15 |
+| D-129 | **Toolbars, Shortcuts, Menus page** (UI-003, OPT-011). View selector (the view types the GUI shows), search over id, caption, description and shortcut, and a list of the view's `implemented` commands with Menu and Toolbar check boxes (Toolbar only for commands with an icon) and their shortcuts: Add (capture a key), Remove (the selected shortcut; removing all writes `shortcuts = []`), Default (drops the override). Conflicts (`CommandOverrides::conflicts`) are computed live on the working copy and shown on both rows; they never block Apply. Also the view's display-filter mode, large buttons, show all in menu and show all on toolbar. Edits use pure `CommandOverrides` helpers; overrides of `planned` commands in the file are kept untouched. | UI-003 editor over the W1 model; conflicts are warnings (W1). | 14 §1, 15 |
+| D-130 | **Theme editor with live preview** (UI-020…023). The Appearance pages edit working copies of `theme.toml` and the scheme files: mode, the light and the dark scheme, every element of `[folder]`, `[file]` (with syntax elements and the fallback cycle) and `[picture]`, the flags, the four fonts; per element *Reset* (back to the base value: removed from the file); New (name and base), Clone, Delete (not for built-ins; *Reset all* on a built-in deletes its override file). Every change is applied at once to every window (the preview is always on); Cancel restores the applied theme; Apply writes `theme.toml` and the changed scheme files (sparse, D-78). Default text below 4.5:1 contrast on a background is a warning, not an error. | UI-020 "live Preview in the open view" without a separate preview mode. | 14 §2 |
+| D-131 | **Export, Import and Restore wizards** (SES-060…062). Step dialogs (Back / Next / Finish / Cancel) over the W2 calls: Export = categories and items → target file (default `~/hikasa-settings-<YYYY-MM-DD>.hikasa-pkg`, injected clock) → `settings_export`; Import = package → the dry-run plan of every category → categories, items (collisions in red, locked sessions kept unless "include locked sessions"), delete-existing choices → summary (dry run of the exact choices) → `settings_import`; Restore = categories and the two delete choices → the dry-run plan → `settings_restore_categories`. Finish re-plans in core (T12); when the executed plan differs from the summary shown, the result page says so. Written paths are acknowledged, then settings reload as in D-117; open views keep running. | SES-060…062 as wizards over the CLI's calls (T11). | 03 §6 |
+| D-132 | **Measuring the W4 gates** (§1.4.17). Scripted bench modes of the binary (`HIKASA_GUI_BENCH=scroll|folder|options|two_windows|workspace`) driven by `gui/hikasa-gui/tests/perf_gate.rs`, release build, **only** under `env -u WAYLAND_DISPLAY xvfb-run -a`; the test fails when the renderer is not a software one (llvmpipe), so the real display is never used. Memory = PSS from `smaps_rollup` (MiB; 400 MB = 381.47 MiB) plus peak RSS; under Xvfb the frame-rate item of ARCH-GUI-003 is checked as UI frame work (p95 < 8 ms, max < 16.7 ms), the ≥ 60 fps figure on a GPU display is the maintainer's run (W14). | `docs/17` §3.5; llvmpipe cannot reach 60 fps (docs/02). | 02, 17 |
+| D-133 | **No new dependency in W4.** egui/eframe draw everything (icons D-114); fonts are the built-ins (D-113); the Web Resources panel (`ShowWeb`) and website links stay `planned` until `open` (D-63) enters with print (W7/W13). | Plan §0.5; smallest surface. | 02 |
 
 ### 0.4 Dependencies
 
@@ -93,6 +123,9 @@ called only from `local/trash.rs`) and `arboard` 3 to `hikasa-session` (`default
 `host.rs`). Member manifests: `hikasa-vfs` += `trash`, `hikasa-session` += `arboard`; check 2 gains the two
 confinement rules of §1.3.9; `docs/02` gains both lines; `cargo deny` must pass without new exceptions (D-98,
 D-100).
+**W4** adds no dependency (D-133): icons are drawn with egui's painter (D-114), fonts are egui's built-ins (D-113),
+and `open` waits for W7/W13; `Cargo.lock` gains no package and the member manifests of check 3 are unchanged. The
+architecture test gains one check-7 rule (§1.4.16 rule 4).
 
 ### 0.5 Documentation updates of W0
 
@@ -1488,7 +1521,585 @@ documented, user-visible override):
   `super::trash::`: `local/mod.rs` calls its own `trash` module); `SystemClipboard` is refused in every test file
   of `core/`, `cli/` and `gui/` (A3.9).
 
-### 1.4–1.14 W4–W14
+### 1.4 W4 — GUI shell: windows, tabs, menus, shortcuts, theming, options, Home, sessions
+
+**Ids.** UI-001…008, UI-010, UI-020…023 (UI-023: the colours are editable; Picture Compare paints them in W13),
+UI-030, UI-031, SES-001…006 (GUI), SES-020…022 (dialog shell), SES-030, SES-031, SES-040…042 (GUI), SES-053
+(notice), SES-060…062 (wizards), SES-090, SES-091, SES-092 (framework), SES-093, FC-031 (configurable colours),
+FC-100 (panel), CLI-002 (the GUI's own command line, D-88), OPT-001, OPT-004…009, OPT-011, OPT-012, OPT-014,
+OPT-015, OPT-017…021 (the P0 keys of the Options dialog; each takes effect in the wave of its feature), ARCH-GUI-003
+(re-measured), G12. Decisions D-104…D-133. Out of scope (W5+): archives, folder operations and sync, scripts, the
+report and Quick Compare dialogs, text editing, the table/hex/picture views, the VFS browse dialog (W9), the rule
+tabs of the Session Settings dialog (W9/W11/W13).
+
+This section is written like M1 §1.10: it states the **GUI's needs** — the window model, the view-model rules, the
+`Service` calls (§1.4.15, marked *exists* or *new*), theme application, the icon inventory and the notification
+sources. Core keeps all logic (T11, D-105); the GUI holds presentation and the toolkit-free models that are tested
+without a window (§1.4.16).
+
+**Parts (D-104).** Sequential, one implementer each; each ends green with its acceptance subset of §6.4.
+
+| Part | Content | Requirement ids | Acceptance |
+|---|---|---|---|
+| **W4a Shell** | §1.4.1–§1.4.8: windows and tabs, layout memory, commands from the catalogue and `commands.toml` (menus, toolbars and their right-click menu, tab context menu, shortcuts, hints), dialog framework and prompts, theme application, icons, status bar and jobs, message panel, log book and panel, notifications and polling, OS drag and drop | UI-001…008, UI-010, UI-020…022 (applied), UI-030, UI-031, SES-053, SES-090, SES-091, SES-092 (framework), FC-031, FC-100, OPT-004, OPT-005, OPT-015, OPT-017…019 (hints, MRU) | A4.1–A4.10 |
+| **W4b Sessions** | §1.4.9–§1.4.12: sessions of views (save, lock, close prompts, auto-save), Session Settings dialog shell, Home view, workspaces, startup and exit, the GUI command line (sessions and workspaces) | SES-001…006, SES-020…022, SES-030, SES-031, SES-040…042, SES-093, CLI-002 (GUI), OPT-001, OPT-019 (auto-save limit) | A4.11–A4.16 |
+| **W4c Settings dialogs** | §1.4.13–§1.4.14: Options dialog (every P0 page, the Toolbars/Shortcuts/Menus page, the theme editor with live preview), Export/Import/Restore wizards, IPC `ImportPackage` and `.hikasa-pkg` on the command line | UI-003 (editor), UI-020…023 (editor), OPT pages, SES-060…062, FC-031 (editor) | A4.17–A4.23 |
+
+**Files.**
+
+- *W4a.* `core/hikasa-session/catalogue/commands.toml` (the `toolbar` flags, the new tab entries, statuses);
+  `core/hikasa-session/src/commands.rs` (`toolbar` field, `effective`, `ViewCommands`); new `src/log.rs`; new
+  `src/watch.rs` (`InputStamp`, `InputState`, `InputWatch`); `src/settings/state.rs` (`layout`);
+  `src/settings/mod.rs` (`SettingsSnapshot`, `SettingsChanges`); `src/api/settings.rs` (`settings_snapshot`,
+  `settings_save`, `state_update`, `log_append`, `input_stamp`), `src/api/mod.rs` (`reload_settings`, the
+  `options()`/`registry()` snapshots, D-119); `gui/hikasa-gui/src/`: `app.rs` (windows), new `window.rs` (window
+  and tab operations), `commands.rs` (presentation table, `Invocation`), new `menus.rs` (menu and context-menu
+  assembly), new `dialog.rs` (`DialogModel`, `DialogStack`, `Prompt`, About), new `status.rs` (status items, job
+  list, message panel), new `notify.rs` (notices), new `watch.rs` (the `hikasa-watch` thread), new `dnd.rs`,
+  `ui/mod.rs` (viewports), `ui/theme.rs` (`Palette` from `Scheme`), new `ui/icons.rs`, new `ui/menus.rs`,
+  `ui/dialog.rs`, `ui/status.rs`, `ui/notify.rs`, `ui/log.rs`, `ui/keys.rs`, `folder_view.rs`/`text_view.rs`
+  (status items, message panel, palette, `ShowLog`, reload on input change), `main.rs`, `bench.rs`
+  (`two_windows`), `tests.rs` (or `src/tests/` split by area), `tests/perf_gate.rs`;
+  `core/hikasa-session/tests/architecture.rs` (check 7: model files name no `egui`/`eframe`, §1.4.16);
+  `help/main-window.md`.
+- *W4b.* `core/hikasa-session/catalogue/commands.toml` (the `Tree*` entries of `home`, statuses);
+  `core/hikasa-session/src/help.rs` (topic list); `src/api/sessions.rs` (the new session and workspace calls of
+  §1.4.15; `view_of` made public as `session_view_of`); `gui/hikasa-gui/src/`: new `view_session.rs`
+  (`ViewSession`, auto-save timer), `app.rs` (close flow, pending tabs), `home.rs` and `ui/home.rs` (rewritten: tree, search, management
+  panel, drop targets), new `session_dialog.rs` + `ui/session_dialog.rs`, new `workspace.rs` +
+  `ui/workspace.rs` (Save As, Manage), `ipc.rs` (`LoadSession`/`LoadWorkspace` through the window model), `main.rs`
+  (startup workspace, D-88 forms), `bench.rs` (`workspace`), tests; help `view-home.md` (rewritten), new
+  `dialog-session-settings.md`, `dialog-save-session.md`, `dialog-workspaces.md`.
+- *W4c.* `core/hikasa-session/catalogue/commands.toml` (statuses); `core/hikasa-session/src/help.rs` (topic
+  list); `src/settings/commands.rs` (editing helpers); `src/ipc/protocol.rs`,
+  `src/ipc/server.rs` (`ImportPackage`), `src/api/gui.rs` (`gui_import_package`); `cli/hikasa-cli/src/cmd/gui.rs`;
+  `gui/hikasa-gui/src/`: new `options/` (`mod.rs` dialog model, `pages.rs` page table, `commands_page.rs`,
+  `theme_page.rs`, `lists.rs` for presets, Open With and archive types), new `ui/options/`, new `wizards.rs` +
+  `ui/wizards.rs`, `ipc.rs`, `main.rs` (`.hikasa-pkg`), `bench.rs` (`options`), tests; help new
+  `dialog-options.md`, `wizard-export.md`, `wizard-import.md`, `wizard-restore.md`; goldens (IPC frames).
+
+#### 1.4.1 Rules of the GUI wave (D-105)
+
+1. `AppCore` and every model below (`WindowModel`, `ViewSession`, `HomeModel`, dialog models, `Notices`,
+   `StatusBar`) contain no egui type; `ui/` only draws them and turns input into `Invocation`s and model calls.
+2. Every disk access is a `Service` call made from a job (`Service::spawn`; the result is polled per frame as in
+   M1) or from the watch thread; a dialog that waits shows "Loading…"/"Saving…" and stays responsive.
+3. Pure core functions are called directly (listed in D-105). No settings, session, filter or comparison logic is
+   written in `gui/` (architecture check 7 unchanged; reviewers check the rest).
+4. Every new user-visible dialog and view gets a help topic (D-67); F1 in a dialog shows its topic.
+5. A command the GUI starts to execute becomes `implemented` in the catalogue in the same part, and
+   `docs/reference/commands.md` is regenerated (T14).
+
+#### 1.4.2 Windows, tabs and layout memory (D-106, D-107, D-108)
+
+```rust
+// gui/hikasa-gui/src/window.rs (toolkit-free)
+pub struct WindowId(pub u32);                     // allocated once, never reused in a process
+pub struct WindowModel {
+    pub id: WindowId, pub tabs: Vec<Tab>, pub active: usize,
+    pub geometry: WindowState,                    // hikasa_session::settings::WindowState (x/y −1 = unknown)
+    pub dialogs: DialogStack, pub notices: Notices, pub focused_seq: u64,
+}
+pub enum TabContent { Live(ViewModel), Pending(PendingTab) }   // Pending: W4b (D-126)
+pub struct Invocation { pub id: CommandId, pub arg: Option<CommandArg> }
+pub enum CommandArg { Window(WindowId), Tab(usize), SessionType(SessionType), Session(SessionRef),
+                      AutoSaved(AutoId), Workspace(SessionName), Page(&'static str), Paths(Vec<PathBuf>) }
+impl AppCore {
+    pub fn windows(&self) -> &[WindowModel];
+    pub fn execute(&mut self, window: WindowId, inv: Invocation) -> Vec<Effect>;
+    pub fn focus(&mut self, window: WindowId);                         // focused_seq; triggers a watch poll
+    pub fn move_tab(&mut self, from: WindowId, tab: usize, to: Option<WindowId>, index: Option<usize>) -> Vec<Effect>;
+    pub fn close_window(&mut self, window: WindowId) -> Vec<Effect>;   // warnings, close actions, root swap
+}
+pub enum Effect { /* M1: */ TextDirty(ViewId), FolderScroll(ViewId, u32), Exit,
+                  OpenViewport(WindowId), CloseViewport(WindowId), Geometry(WindowId, WindowState),
+                  ApplyTheme, ApplyCommands }
+```
+
+Rules (each a headless test, A4.1):
+
+| Operation | Rule |
+|---|---|
+| `WindowNew` | a new window with one Home tab; size = `state.toml [window]`; position = the source window's + (32, 32) when known, else unknown |
+| `TabNew`, opens | new tab after the active one when `open_new_tab_next_to_active`, else last; an untouched lone Home tab is replaced (M1) |
+| target window | IPC `OpenView`/`LoadSession`, the command line, Home: the window with the highest `focused_seq`; `open_sessions_in = "window"` (Home, IPC, command line) and `open_child_sessions_in = "window"` (FC-062 Open) open a new window |
+| `TabDuplicate` | a new view of the same session (W4a: the same request; W4b: `session_for_view` → `session_view_of`, origin `Unnamed`) right of the source; Home copies its fields |
+| `TabMoveToNewWindow` | available with ≥ 2 tabs in the window; the tab (view, jobs, waiter, layout) moves unchanged |
+| `TabMoveToWindow` | submenu of the other windows (caption: the window's active tab caption); appends there and activates it |
+| tab drag | reorder inside the bar; release over another window's tab bar → move there; release outside every window → new window there; both only when global positions are known (`ViewportInfo::outer_rect` is `Some` for all windows), else nothing |
+| `TabCloseOthers` | closes every other tab of the window; `warn_when_closing_multiple_tabs` and ≥ 2 tabs to close → Prompt "Close N tabs?" first |
+| `CloseTab` on the last tab | `closing_last_tab_closes_window` → the window closes, else a Home tab replaces it (M1) |
+| a window loses its last tab by a move | the window closes (no Home tab) |
+| close a window | `warn_when_closing_multiple_tabs` with > 1 tab → Prompt; then each tab's close action (W4b); the last window → `Exit`; `windows[0]` with others open → root swap (`windows[1]` becomes `windows[0]`, `Geometry(root)` and `CloseViewport(old id)`) |
+| `Exit` | `warn_when_closing_multiple_windows` with > 1 window, else `warn_when_closing_multiple_tabs` with > 1 tab → Prompt; then (W4b) the exit workspace save, then every close action (a Cancel stops the exit), then M1 shutdown |
+| tab bar | hidden when `hide_tab_bar_if_single_tab` and one tab |
+| IPC `Shutdown`, `CloseView` | no prompts (D-120); D-23 outcomes as in M1 |
+
+Viewports: `windows[0]` is drawn in eframe's root viewport; every other window by
+`ctx.show_viewport_immediate(ViewportId::from_hash_of(window.id), builder, …)` from the same frame, with title
+`<active tab caption> — Hikasa`. A viewport's close request becomes `close_window` (the request is cancelled when a
+prompt is shown). Geometry is read each frame from `ViewportInfo` (`inner_rect` size; `outer_rect` position when
+`Some`; `maximized`) into `WindowModel::geometry`.
+
+Layout memory (D-108): when a window closes and at exit, `state_update` writes `[window]` from that window's
+geometry and `[layout.<view type>]` from the views it held (the last closed view of a type wins). W4 keys:
+`toolbar` (bool, true; `ShowToolbar`), `log_panel` (bool, false; `ShowLog`), `log_height` (float points, 160),
+`font_size` (float points; the text view's font commands; default the theme's editor size), `thumbnail` (bool,
+true; `ShowThumbnail`). `State` gains `layout: BTreeMap<String, toml::Table>` (view type name → table, kept as
+is; `settings get state.layout.text-compare` reads it).
+
+#### 1.4.3 Commands: catalogue, overrides, menus, toolbars, shortcuts (D-109, D-110, D-111)
+
+```rust
+// hikasa_session::commands (W4a; pure)
+pub struct CommandEntry { /* W0 fields */ pub toolbar: bool }      // serde default false; parse and problems unchanged
+pub struct EffectiveCommand<'a> {
+    pub section: &'a str, pub entry: &'a CommandEntry,
+    pub shortcuts: Vec<Shortcut>,            // effective (override or the parsed default; empty when none)
+    pub default_shortcuts: Vec<Shortcut>, pub in_menu: bool, pub on_toolbar: bool, pub customized: bool,
+}
+pub struct ViewCommands<'a> { pub view: &'a str, pub custom: ViewCustomization, pub entries: Vec<EffectiveCommand<'a>> }
+pub fn effective<'a>(catalogue: &'a Catalogue, view: &'a str, overrides: &CommandOverrides) -> ViewCommands<'a>;
+impl ViewCommands<'_> {
+    pub fn get(&self, id: &str) -> Option<&EffectiveCommand<'_>>;           // first in view_sections order
+    pub fn with_shortcut(&self, s: &Shortcut) -> Vec<&EffectiveCommand<'_>>; // context-less match, in order
+    pub fn conflicts(&self) -> Vec<ShortcutConflict>;                        // same as CommandOverrides::conflicts
+}
+```
+
+`in_menu` default: `menu` and `caption` non-empty; `on_toolbar` default: `toolbar`. An override's `menu`/`toolbar`
+replaces the default; `show_all_in_menu`/`show_all_on_toolbar` force them on for display only. Entries with
+status `planned` are in the table (for `settings`), the GUI filters them out.
+
+**Catalogue changes (W4a).** `toolbar = true` on the commands the M1 toolbars show today (unchanged default
+toolbars). New `global` entries, `status = "implemented"`, no menu, no shortcut: `TabDuplicate` ("Duplicate
+Tab", "Opens current session again in new tab."), `TabMoveToNewWindow` ("Move Tab to New Window", "Moves current
+tab into new window."), `TabMoveToWindow` ("Move Tab to Window", "Moves current tab into picked window."),
+`TabCloseOthers` ("Close Other Tabs", "Closes all other tabs of this window."). New `home` entries (W4b; no menu;
+the sessions tree's context menu, SES-031): `TreeOpen` (Enter), `TreeOpenAsNew`, `TreeOpenAll`, `TreeNewSession`,
+`TreeNewFolder`, `TreeClear`, `TreeDelete` (Del), `TreeSaveAs`, `TreeRename` (F2), `TreeEdit`, `TreeExpandAll`,
+`TreeCollapseAll`, `TreeFavorite` — captions and descriptions written with the entries (English, original wording).
+Statuses become `implemented` per part: W4a `WindowNew`, `ShowToolbar`, `ShowLog`; W4b `SessionNewList`,
+`SessionOpen`, `WorkspaceLoadList`, `WorkspaceManager`, `WorkspaceSaveAs`, `SessionHome`, `SessionsCombo`,
+`SessionSave`, `SessionSaveAs`, `SessionEdit`, `SessionLocked`, `ShowManage`, `MaximizeManage`, `Find` (home);
+W4c `ProgramOptions`, `Export`, `Import`, `Restore`. They stay `planned`: `FileFormatManager`, `EditTextFile`,
+`ViewPatch` (W11), `ProfileManager`, `SaveSnapshot` (P1), `Rules`, `Swap`, `SessionClear`, `Info`, `Legend`
+(W9/W11), `ShowWeb` (D-133), the Edit commands (their views).
+
+**GUI presentation table** (`commands.rs`). `CommandId` stays a Rust enum with `name()` and `from_name()`; one row
+per (scope, id): `icon: Option<IconId>`, `toolbar_label: Option<&str>` (short label for large buttons),
+`group` (radio/check group), `enabled_when: Predicate`, `areas: &[Area]` (`Area::{Tab, Toolbar, SessionTree}`;
+W9+ add pane areas). Captions, hints (= the catalogue `description`), menus and shortcuts are read from
+`ViewCommands`. The window rebuilds the effective tables (one per view type) at start and on
+`Effect::ApplyCommands` (a `commands.toml` change or Apply), never per frame.
+
+**Menus, toolbar, context menus** follow D-110. The Session menu's dynamic entries: `SessionNewList` (one item per
+session type the GUI can open), `WorkspaceLoadList` (saved workspaces, then Manage Workspaces…). The View menu
+holds `ShowToolbar` and the view's Display Filter submenu. The toolbar shows the visible `on_toolbar` entries
+with an icon (and the label under it with `large_buttons`), plus the display filter control of
+`display_filter_mode`, plus `SessionsCombo` for session views (W4b). **Toolbar right-click menu** (UI-004):
+radio Dropdown / Favorites / Toggles, check "Large buttons with text labels", "Toolbar Options…"
+(`ProgramOptions` with `CommandArg::Page("commands")` and the view preselected; W4c, before that hidden), "Hide
+Toolbar" (`ShowToolbar`). The first two write `commands.toml` (`settings_save`, a job). **Tab context menu:**
+`TabNew`, `TabDuplicate`, `TabMoveToNewWindow`, `TabMoveToWindow ▸`, `TabCloseOthers`, `CloseTab`.
+
+**Hints** (UI-007): tooltip = caption, then the first effective shortcut in parentheses when
+`show_shortcut_in_hints`, then the description on a second line; none when `show_hints` is off; shown after
+`hint_show_ms` (egui `tooltip_delay`), hidden after `hint_hide_ms` of hover (0 = never; the UI layer tracks the
+hover start).
+
+**Keys** (D-111): `ui/keys.rs` maps egui keys and modifiers to `Shortcut` (letters upper case, digits, `F1`…`F24`,
+the named keys of W1, keypad keys where egui distinguishes them); a key egui cannot report is simply not
+bindable (the Shortcuts page refuses to capture it). The focus areas of W4: the window root, a view's main area
+(folder tree, text panes), a path field, the sessions tree, the Home search box, a dialog.
+
+#### 1.4.4 Dialog framework and prompts (D-112)
+
+```rust
+// gui/hikasa-gui/src/dialog.rs
+pub trait DialogModel {
+    fn title(&self) -> String;  fn help_topic(&self) -> &'static str;
+    fn buttons(&self) -> Vec<DialogButton>;           // label, role (Ok|Apply|Cancel|Yes|No|Back|Next|Finish|Other), enabled, default
+    fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep;   // Stay | Close | CloseWith(Vec<Invocation>)
+    fn on_key(&mut self, key: &Shortcut) -> Option<ButtonRole> { /* Esc → Cancel/Close, Enter → default */ }
+    fn poll(&mut self, svc: &Service) -> bool { false }   // jobs of the dialog
+}
+pub struct DialogStack { /* Vec<Box<dyn DialogModel>> */ }
+pub struct Prompt { pub message: String, pub buttons: Vec<(ButtonRole, String)>, pub default: ButtonRole,
+                    pub do_not_ask: Option<&'static str> /* options key set to false when ticked */ }
+```
+
+The top dialog of a window receives the keys and pointer of that window; the window's commands are disabled while
+the stack is not empty (except `Exit` from the OS close button, which first closes the dialogs with Cancel).
+`About` shows a dialog (version, the line "every function is also available from the hikasa command line"). The
+prompts W4 uses: the multiple-close warnings (with "Do not ask again" → `[tabs] warn_when_closing_multiple_*`),
+D-84 "Save changes to session?" (Yes/No/Cancel) and "Save changes to locked session?" (Yes/No), settings
+conflicts (D-128), overwrite of an existing session, workspace or package file, deletes in the Home tree.
+
+#### 1.4.5 Theme application and icons (D-113, D-114)
+
+- `ui/theme.rs`: `Palette::from_scheme(&Scheme) -> Palette` (replaces the two hard-coded palettes); one table
+  `(element name, Palette field)` covers every field; the folder tree paints `[folder]` (FC-031 classes →
+  `same`, `newer`, `older`, `orphan`, `different`, `unknown`, `filtered_out`, `stripes`, `selection`, …), the
+  text panes paint `[file]` (backgrounds of important/unimportant lines and text, orphan, gutter, line numbers,
+  current line, selection, find highlight, syntax colours through `Scheme::syntax_colour`), the log panel
+  `log_panel`. `Visuals::light()`/`dark()` by `Scheme::base_of`, selection from `[folder] selection` unless
+  `use_system_selection`.
+- The theme is (re)applied at start, when the OS theme changes under `follow_os`, on `Effect::ApplyTheme`
+  (a theme file changed on disk, Apply, a preview step of D-130) — never per frame.
+- Fonts (D-113): editor size → text panes; folder size and `use_system` → tree (system = egui's proportional at
+  its default size); listing and hex sizes are stored for W11/W13. Font size commands of the text view scale from
+  the editor size and are remembered in `[layout.text-compare] font_size`.
+- HiDPI (UI-010): egui follows each monitor's scale factor (winit); custom painters work in points; icons are
+  vector.
+
+**Icon inventory (W4; `ui/icons.rs`, `IconId`).** Session types: `FolderCompare`, `FolderSync`, `TextCompare`,
+`TextEdit`, `TableCompare`, `HexCompare`, `PictureCompare`. Window and session: `Home`, `NewTab`, `NewWindow`,
+`Close`, `Open`, `Save`, `SaveAs`, `Settings`, `Lock`, `Unlock`, `Favorite`, `Folder`, `Session`, `AutoSaved`,
+`Defaults`, `Workspace`. Actions: `Stop`, `Reload`, `Expand`, `Collapse`, `ExpandAll`, `CollapseAll`,
+`OpenPair`, `NextDiff`, `PrevDiff`, `NextSection`, `PrevSection`, `Swap`, `Rules`, `Search`. Display filters:
+`FilterAll`, `FilterDiff`, `FilterSame`, `FilterOrphans`, `FilterLeftOrphan`, `FilterRightOrphan`,
+`FilterLeftNewer`, `FilterRightNewer`, `FilterNone`, `Context`, `Unimportant`. Panels and state: `Log`,
+`Thumbnail`, `FontLarger`, `FontSmaller`, `FontReset`, `Info`, `Warning`, `Error`, `Notice`, `Drop`, `Options`,
+`Export`, `Import`, `Restore`, `Help`. Each is `&'static [Op]` (`Op::{Line, Polyline, Polygon, FilledPolygon,
+Circle, FilledCircle, Rect, FilledRect}` with coordinates in `0.0..=16.0`, stroke 1.5 units scaled with the icon);
+`paint(painter, rect, id, colour)`; `IconId::ALL`. Later waves add icons to the same table (W9 centre icons, W13
+picture tools).
+
+#### 1.4.6 Status bar, jobs, message panel, log panel (D-115, D-116)
+
+```rust
+// gui/hikasa-gui/src/status.rs
+pub struct StatusItems { pub left: String, pub right: Vec<String> }   // ViewModel::status() per view
+pub struct JobStatus { pub view: ViewId, pub title: String, pub phase: Option<Phase>, pub fraction: Option<f32> }
+pub struct Message { pub kind: MessageKind, pub text: String, pub do_not_show: Option<&'static str> }
+// ViewModel gains: status(), jobs() -> Vec<JobStatus>, cancel_jobs(), message(), dismiss_message()
+
+// hikasa_session::log (pure)
+pub enum LogKind { Summary, Detail, Warning, Error, Debug }
+pub struct LogEntry { pub time: jiff::Zoned, pub kind: LogKind, pub source: String, pub text: String }
+pub struct LogFilter { pub summaries: bool, pub details: bool, pub warnings: bool, pub debug: bool, pub capacity: usize }
+impl LogFilter { pub fn from_options(o: &Options) -> LogFilter; }        // OPT-018
+pub struct LogBook { /* VecDeque<LogEntry>, filter, generation, unsaved lines */ }
+impl LogBook {
+    pub fn new(filter: LogFilter, save: bool) -> LogBook;  pub fn set_filter(&mut self, f: LogFilter, save: bool);
+    pub fn push(&mut self, e: LogEntry) -> bool;            // false: filtered out
+    pub fn push_warnings(&mut self, time: &jiff::Zoned, source: &str, w: &[Warning]);
+    pub fn entries(&self) -> impl Iterator<Item = &LogEntry>; pub fn generation(&self) -> u64; pub fn clear(&mut self);
+    pub fn take_unsaved(&mut self) -> Vec<String>;          // formatted lines since the last call (save on)
+}
+pub fn format_line(e: &LogEntry) -> String;                 // "2026-10-30 14:03:07  warning  <source>: <text>"
+```
+
+The job indicator lists `jobs()` of every view of the window; Cancel on a row cancels that view's jobs (the
+model's `cancel` as M1 Stop). Job summaries for the log come from each view's finished job (source = tab caption;
+text = the outcome and counts the view already shows, and the duration). Warning codes keep their stable code in
+the text (`[unknown_config_key] …`). The log panel is a bottom panel of the folder view (resizable,
+`log_height`), newest last, follows the end unless scrolled up, *Clear* button; colours `log_panel` and the
+warning/error colours of the scheme.
+
+#### 1.4.7 Notifications and polling (D-117, D-118, D-119)
+
+```rust
+// hikasa_session::watch (pure + VFS stat)
+pub struct InputStamp { pub len: u64, pub modified_ns: Option<i128> }
+pub enum InputState { Unwatched, Missing, Present(InputStamp) }
+pub struct InputWatch { /* spec → InputState */ }
+impl InputWatch { pub fn track(&mut self, spec: String, now: InputState); pub fn untrack(&mut self, spec: &str);
+                  pub fn poll(&mut self, svc: &Service) -> Vec<(String, ChangeKind)>; }
+// gui/hikasa-gui/src/notify.rs
+pub enum NoticeKind { Info, Warning, Error }
+pub enum NoticeAction { ReloadView(ViewId), ReloadSettings, KeepMine, ShowTab(ViewId), OpenOptions, Dismiss }
+pub struct Notice { pub key: String, pub kind: NoticeKind, pub text: String, pub actions: Vec<NoticeAction> }
+pub struct Notices { /* per window; push(now), visible(now), act(index, action) */ }
+```
+
+The watch thread owns a `ConfigWatch` (`Service::settings_store().watch()`) and an `InputWatch`; the UI sends it
+`Poll` (window focus), `Track`/`Untrack` (file views opening and closing), `Acknowledge(paths)` (after each own
+write, before the write's job returns its result to the UI), `Stop` (exit). It sleeps with
+`recv_timeout(2 s)`, so a poll runs at most every 2 s plus on focus. Tests drive `Watcher::poll_once` directly.
+
+| Change | Reaction |
+|---|---|
+| `options.toml` | `reload_settings` (job) → the window applies tabs, interface, hints, metrics, log filter; notice info "Settings reloaded: options.toml changed on disk." (a problem: warning notice naming the keys reset to defaults) |
+| `commands.toml` | effective tables rebuilt (`ApplyCommands`); info notice |
+| `theme.toml`, `themes/*.toml` | theme re-applied (`ApplyTheme`); info notice |
+| `formats/*.toml`, `order.toml` | `reload_settings` (registry); info notice "…; open comparisons use the new formats when reloaded" |
+| `filters.toml`, `openwith.toml`, `archives.toml` | snapshot refreshed; info notice |
+| `state.toml` | nothing (merged by `state_update`) |
+| a file removed | as changed; the text says "removed: defaults apply" |
+| a file the Options dialog has unapplied edits for | warning notice with *Reload (discard my edits)* / *Keep my edits* (the next Apply then meets `Conflict`, D-128) |
+| an input of a file view changed | D-118: reload + info notice, or warning notice with *Reload* |
+| an input removed | warning notice "<path> was removed or renamed." |
+| startup warnings, `LoadWorkspace` warnings | warning notices |
+| a job of a background tab failed | error notice with *Show* |
+
+Notices are timed with the frame time (`ctx.input(|i| i.time)`), so tests pass explicit times. Later waves add
+sources: W5 archive cache limits, W6 operation results, W8 script end, W10/W11 edited files changed on disk.
+
+#### 1.4.8 Drag and drop from the OS (UI-008)
+
+`dnd.rs`: `DropTarget::{PathField(FieldId), HomeType(SessionType), Window}` and
+`AppCore::drop_paths(window, target, paths) -> Vec<Effect>`. A path field takes the first path (two paths on the
+left field of a pair: left and right). The window (any view other than Home's targets) with two paths opens a
+comparison like the command line (`resolve_open` in a job), with one path does nothing but a message panel hint,
+with more than two a message "Drop one or two files or folders.". Home type buttons (W4b): one path → a new
+session of that type with the left side filled, shown in the management panel; two paths → that type's view
+(`open_view_request`; a mismatch such as files on Folder Compare → the panel's error). The UI layer reads
+`raw.dropped_files` (paths only; bytes-only drops are ignored) and highlights the target under
+`raw.hovered_files`. Delivery depends on the platform backend (winit); the model is tested headless, the delivery
+manually.
+
+#### 1.4.9 Sessions of views: save, lock, close prompts, auto-save (W4b; D-120, D-121)
+
+```rust
+// gui/hikasa-gui/src/view_session.rs
+pub enum ViewOrigin { Unnamed, AutoSaved(AutoId), Named(SessionRef) }
+pub struct ViewSession { pub origin: ViewOrigin, pub loaded: Option<Session>, pub locked: bool,
+                         pub explicit_save: bool, pub slot: Option<AutoId>, pub last_autosaved: Option<Session>,
+                         pub parent: Option<ParentLink>, pub next_autosave_at: f64 }
+```
+
+| Command / event | Behaviour |
+|---|---|
+| open from Home *New*, a drop, IPC `OpenView`, the command line | origin `Unnamed` |
+| open a named session (tree, `SessionsCombo`, IPC `LoadSession`, workspace) | origin `Named`, `loaded` = the effective session (D-82), `locked` from the file |
+| open an auto-saved session | origin `AutoSaved(id)`, slot = id (later auto-saves overwrite it, D-83) |
+| FC-062 Open of a pair | origin `Unnamed`, `parent` = the folder view's reference (named or auto-saved) and relative paths (TC-052) |
+| `SessionSave` | `Named` and not locked → `session_save`; `Named` and locked → Prompt "Save changes to locked session?" → Yes: `session_save(force)`; otherwise → Save Session As |
+| `SessionSaveAs` | dialog: name, folder (existing folders, new folder), existing names offered (overwrite → Prompt); `session_save` → origin `Named`, the auto-saved slot of the view is deleted (`session_delete_autosaved`) |
+| `SessionLocked` | toggles with `session_lock` (named only; check state = `locked`) |
+| `SessionHome` | the view's close action, then a Home tab in its place |
+| `SessionsCombo` | the named sessions of the view's type; choosing one runs the close action and opens it in this tab |
+| close (tab, window, exit, Load Workspace) | `close_action(origin, locked, dirty, explicit_save, auto_save_on)` → `AutoSave` (`session_autosave`), `SaveViewState` (`session_save` of `view`/`display` only), `AskSaveChanges` (Prompt Yes/No/Cancel), `AskSaveLocked` (Prompt Yes/No), `Nothing`; a Cancel stops the whole close (the tab, the window, the exit or the load) |
+| IPC `CloseView`, `Shutdown` | as close, every Ask answered No (D-120) |
+| timer | every 300 s per `Unnamed`/`AutoSaved` view whose current session differs from `last_autosaved` (D-121); jobs run in the background, at most one per view |
+
+`dirty` and the current session come from `Service::session_for_view` (specs as stored, D-80; the rules the view
+was built from; `view` = the layout keys of §1.4.2 the view owns; `display` = its display filter state).
+
+#### 1.4.10 Session Settings dialog shell (W4b; D-122, D-123)
+
+`SessionEdit` opens the dialog for the active view; `TreeEdit` for a named session or a defaults entry (then OK
+writes the file through `session_save`/`session_save_defaults` and no view is involved). Registry:
+`fn tabs(kind: SessionType) -> Vec<Box<dyn SessionTab>>` with `SessionTab { title, help_topic, changes_rules(),
+draw-independent model methods }`. **Specs tab:** left and right (MRU drop-downs from `state.mru.left/right`,
+pushed on OK), description, for file types format (*Detect* + `format_list`) and the two encodings (empty =
+detect; checked with `TextEncoding::for_label`); for a defaults entry the specs are disabled (D-82). **Footer:**
+the scope radio buttons with availability = `Pair`/`Type` only when `parent` is a named or auto-saved folder
+session; all but *this view only* disabled while no rule tab changed anything. **OK:** specs changed → the view
+reopens with the new specs (`open_view_request`, origin kept, dirty from then on); rules changed →
+`session_apply_scope(scope, …)` and the view re-runs with the effective rules. **Cancel** discards. F1 →
+`dialog-session-settings`.
+
+#### 1.4.11 Home view (W4b; D-124)
+
+```rust
+// gui/hikasa-gui/src/home.rs
+pub enum TreeNode { NewType(SessionType), Folder(String), Named { reference: SessionRef, kind: SessionType,
+                    description: String, locked: bool, favorite: bool }, AutoGroup(AutoGroup),
+                    AutoSaved { id: AutoId, kind: SessionType, label: String } }
+pub struct HomeModel { pub tree: Vec<TreeRow>, pub search: String, pub selected: Option<usize>,
+                       pub expanded: BTreeSet<String>, pub panel: ManagementPanel, pub panel_mode: PanelMode /* Shown|Hidden|Maximized */ }
+impl HomeModel { pub fn load(&mut self, list: &SessionListDto); pub fn set_search(&mut self, text: &str);
+                 pub fn visible(&self) -> Vec<&TreeRow>; pub fn drop_paths(…); }
+```
+
+| Tree command (SES-031) | Applies to | Service |
+|---|---|---|
+| `TreeOpen` (Enter, double-click) | named, auto-saved, *New* type | `session_view` / `session_load` + `session_view_of` / an empty session in the panel |
+| `TreeOpenAsNew` | named, auto-saved | `session_load` → origin `Unnamed` |
+| `TreeOpenAll` | folder | `session_view` for each named session directly in it |
+| `TreeNewSession`, `TreeNewFolder` | folder or root | name prompt → `session_new` / `session_mkdir` |
+| `TreeClear` | named (not locked) | `session_defaults` → `Session::clear` → `session_save` |
+| `TreeDelete` (Del) | named, folder, auto-saved | Prompt → `session_delete` / `session_rmdir(recursive)` (the prompt names the count) / `session_delete_autosaved` |
+| `TreeSaveAs` | named, auto-saved | Save Session As → `session_load` + `session_save` under the new reference |
+| `TreeRename` (F2) | named, folder | inline edit → `session_rename` / `session_rename_folder`; locked → Prompt, then `force` |
+| `TreeEdit` | named, defaults | Session Settings dialog (§1.4.10) |
+| `TreeExpandAll`, `TreeCollapseAll` | tree | — |
+| `TreeFavorite` | named (not locked) | `session_edit` (`favorite = true/false`) |
+| drag a named session onto a folder | named | `session_rename` (move; locked → Prompt, then `force`) |
+
+The management panel shows the selection: a *New* type → an empty session of that type (Specs editor, Compare);
+a named session → description, Specs editor, Locked, buttons Save (`session_save`), Save As…, Factory Defaults
+(the panel's copy becomes `Session::clear`; written on Save), Cancel (revert), Open; an auto-saved one → read-only
+Specs, Open, Open as New, Delete. `HomeCompare` = Open of the selection with the panel's specs. The M1 refusals
+of `-` stay; `clipboard://` is accepted (D-101: the GUI reads its own clipboard when the view opens).
+
+#### 1.4.12 Workspaces, startup and exit, command line (W4b; D-125, D-126, D-127)
+
+- **Save Workspace As** (`WorkspaceSaveAs`): name combo (existing names offered; overwrite → Prompt); capture of
+  D-125 → `workspace_save`; `state.mru.workspaces` pushed (OPT-019).
+- **Load Workspace** (`WorkspaceLoadList` item, a workspace shortcut, IPC `LoadWorkspace`, startup):
+  `workspace_load` (job) → close actions of every open view (D-120; Cancel aborts) → windows beyond the
+  workspace's count close, `windows[i]` take the workspace's windows (geometry applied as allowed), tabs become
+  `Pending` except each window's active tab, which starts. Warnings → notices and log.
+- **Manage Workspaces** (`WorkspaceManager`): list (name, windows, tabs, shortcut); Load, Rename
+  (`workspace_rename`), Delete (Prompt, `workspace_delete`), Shortcut (capture; `workspace_load` + modified
+  `Workspace` + `workspace_save`); conflicts with the effective `global` shortcuts and other workspaces are shown,
+  never blocking.
+- **Startup and exit** (OPT-001): as D-125; the startup load runs after the first frame (like D-21's deferred
+  work) so the window appears first.
+- **Command line** (D-127): `main.rs` classifies a single non-path argument with `classify_single_arg` before
+  the M1 path handling; forwarded to a running GUI as `LoadSession`/`LoadWorkspace` (W4b) or `ImportPackage`
+  (W4c); `--silent` with a package keeps the headless import (W2).
+
+#### 1.4.13 Options dialog (W4c; D-128, D-129, D-130)
+
+```rust
+// hikasa_session::settings (W4a; used by W4a's toolbar menu and W4c)
+#[derive(Clone)] pub struct SettingsSnapshot {
+    pub options: SettingsFile<Options>, pub commands: SettingsFile<CommandOverrides>,
+    pub theme: SettingsFile<ThemeSelection>, pub schemes: BTreeMap<String, SettingsFile<SchemeFile>>,
+    pub filters: SettingsFile<FilterPresets>, pub openwith: SettingsFile<OpenWith>, pub archives: SettingsFile<ArchiveTypes>,
+}
+#[derive(Default)] pub struct SettingsChanges {
+    pub options: Option<Options>, pub commands: Option<CommandOverrides>, pub theme: Option<ThemeSelection>,
+    pub schemes: BTreeMap<String, Option<SchemeFile>>,       // None: delete themes/<name>.toml
+    pub filters: Option<FilterPresets>, pub openwith: Option<OpenWith>, pub archives: Option<ArchiveTypes>,
+}
+pub enum FileOutcome { Written, Unchanged, Deleted, Conflict, Invalid(Vec<Problem>), Failed(String) }
+pub struct SettingsSaveDto { pub files: Vec<(FileId, PathBuf, FileOutcome)>, pub snapshot: SettingsSnapshot }
+// CommandOverrides helpers (W4c; pure)
+impl CommandOverrides {
+    pub fn set_shortcuts(&mut self, view: &str, id: &str, s: Option<Vec<Shortcut>>);   // None = Default
+    pub fn set_in_menu(&mut self, view: &str, id: &str, v: Option<bool>);
+    pub fn set_on_toolbar(&mut self, view: &str, id: &str, v: Option<bool>);
+    pub fn view_mut(&mut self, view: &str) -> &mut ViewCustomization;                // created on demand
+    pub fn reset_view(&mut self, view: &str);
+}
+```
+
+`settings_save` processes the files in `FileId::every` order, each independently: unchanged value → `Unchanged`;
+`validate` problems → `Invalid` (not written); else `SettingsFile::save(IfUnchanged | Force)` → `Written` /
+`Conflict`; a deleted scheme file → `Deleted`; and returns a fresh snapshot. It is the same `SettingsFile` path as
+`settings set` (A4.17 compares the files).
+
+**Pages** (`options/pages.rs`, data; label wording original, after `docs/15`):
+
+| Page id | Title | Content |
+|---|---|---|
+| `startup` | Startup | OPT-001 (workspace combos from `workspace_list`; the Quick Compare keys note "used from W13") |
+| `tabs` | Tabs | OPT-004 P0 keys |
+| `appearance` | Theme, Colors, Fonts | `theme_mode`, light and dark scheme; sub-pages `appearance.folder`, `appearance.file`, `appearance.picture`, `appearance.fonts` (D-130) |
+| `text_editing` | Text Editing | OPT-006 |
+| `next_difference` | Next Difference | OPT-007 |
+| `backups` | Backups | OPT-008 |
+| `file_operations` | File Operations | OPT-009 |
+| `archive_types` | Archive Types | OPT-010 (`archives.toml`; mask per type, restart note) |
+| `commands` | Toolbars, Shortcuts, Menus | OPT-011 (D-129) |
+| `open_with` | Open With | OPT-012 list (New / Edit / Clone / Delete; item dialog checked with `OpenWith::validate` and `split_words`) |
+| `tweaks.editor_display` … `tweaks.scripts` | Tweaks ▸ Editor Display, File Operations, Interface, Log Panel, Metrics, Name Filter Presets, Scripts | OPT-014, OPT-015, OPT-017, OPT-018, OPT-019, OPT-020 (`filters.toml` list), OPT-021 |
+
+Widgets by `ValueKind`: Bool → check box; Int/Float → drag value clamped to the range; Enum → combo with a caption
+per value (a test checks every value has one); String/Path → text field (drop accepted; Browse in W9); Mask →
+text field checked with `MaskList`; Colour → colour button; Shortcut → capture field; lists → the page's editors.
+The dialog opens on the page of `CommandArg::Page` or the last page used (`state.dialogs.options.page`).
+
+#### 1.4.14 Export, Import and Restore wizards (W4c; D-131, D-127)
+
+| Wizard | Steps | Service |
+|---|---|---|
+| Export (`Export`) | 1 categories (Program Options, Theme, Toolbars/Shortcuts/Menus, Program State, Sessions all/some, File Formats all/some, Workspaces all/some, System Info) with item pickers; 2 target file (overwrite → Prompt); result | `session_list`, `format_list`, `workspace_list`; `settings_export` |
+| Import (`Import`, D-127) | 1 package path (prefilled from the command line or IPC); 2 categories present in the package and their items (action Add, Replace in red, Kept for locked sessions; "Include locked sessions" = force), delete-existing choices for sessions, formats, workspaces; 3 summary ("12 sessions will be imported, replacing 3 existing." per category); result per item | `settings_import(dry_run = true)` for steps 2 and 3, `settings_import(dry_run = false)` at Finish |
+| Restore (`Restore`) | 1 categories, "Delete all named sessions", "Delete all workspaces", "Include locked sessions"; 2 the files to delete; result | `settings_restore_categories(dry_run = true / false)` |
+
+A package that does not validate shows the core message on step 1 and nothing can proceed. After Finish the written
+and deleted paths are acknowledged with the watch thread, then the settings reload path of §1.4.7 runs and the Home
+tree refreshes.
+
+#### 1.4.15 Service calls of the GUI
+
+*Exists* = available at `1fc12e2`; *new* = added in core by the named part (D-105: typed forms of existing CLI
+operations, or GUI-only state). Pure functions the GUI calls directly are not listed.
+
+| GUI need | Call | Status |
+|---|---|---|
+| comparisons, IPC, M1 | `text_compare`, `folder_prepare`/`folder_run`, `spawn`, `open_view_request`, `resolve_open`, `forward_open`, `endpoint`, `read_clipboard`, `startup_warnings` | exists |
+| sessions of views | `session_view` (named, effective), `session_load(&SessionRef) -> Loaded<Session>`, `session_defaults(SessionType) -> Session`, `session_save(&SessionRef, &Session, force) -> SessionWriteDto`, `session_save_defaults(&Session)`, `session_autosave(Option<&AutoId>, &Session) -> Option<AutoId>` (clock, prune, `None` when off or the slot is locked), `session_delete_autosaved(&AutoId)`, `session_for_view(&ViewRequest, view: Table, display: Table, parent: Option<ParentLink>) -> (Session, Vec<Warning>)`, `session_view_of(&Session, title) -> SessionView`, `session_apply_scope(Scope, &SessionRules, &mut Session, parent: Option<&SessionRef>) -> ScopeWritesDto` | `session_view` exists; the others new (W4b) |
+| Home tree and management | `session_list(None, true, true)`, `session_new`, `session_edit` (favorite), `session_delete`, `session_rename`, `session_lock`, `session_mkdir`, `session_rmdir`, `format_list`; `session_rename_folder(from, to)` | exist; `session_rename_folder` new (W4b; `SessionStore::rename_folder`) |
+| workspaces | `workspace_list`, `workspace_save`, `workspace_delete`, `workspace_rename`, `classify_single_arg`; `workspace_load(&SessionName) -> WorkspaceLoadDto { workspace, windows: Vec<RestoredWindow>, warnings }`, `inline_table(&Session) -> Table` | first five exist; last two new (W4b; wrap `workspaces::restore` and `inline_table`) |
+| settings for the window and the dialogs | `settings_snapshot() -> SettingsSnapshot` (lenient; a newer schema is an error), `settings_save(&SettingsSnapshot, &SettingsChanges, force) -> SettingsSaveDto`, `reload_settings() -> Vec<Warning>`, `key_infos` (pure), `settings_store().watch()` | `settings_store` exists; the others new (W4a) |
+| state and layout | `state_update(&mut dyn FnMut(&mut State)) -> Result<bool, ApiError>` | new (W4a) |
+| log and inputs | `log_append(&Path, &[String])` (append, create the parent folder; not atomic), `input_stamp(&str) -> InputState` | new (W4a) |
+| packages | `settings_export`, `settings_import`, `settings_restore_categories` | exist |
+| IPC client (CLI) | `gui_import_package(&Path)` | new (W4c) |
+
+`Service::options()` and `registry()` return snapshots (D-119). The IPC handler of the GUI gains
+`ImportPackage` (W4c).
+
+#### 1.4.16 View-model tests without a window
+
+Tests construct `AppCore` with a `Service` over a temporary configuration (`ServiceInit` with a fixed clock,
+`FixedClipboard`, a private IPC endpoint) and drive it only through `execute(window, Invocation)`, `move_tab`,
+`drop_paths`, dialog models (`on_button`, `on_key`), `Watcher::poll_once` and `poll()`; jobs are awaited by
+polling (bounded). Rules:
+
+1. **Catalogue parity** (extends A0.2): every `implemented` entry of every section a shown view type uses is
+   executed by the GUI (an `Invocation` with a test argument where needed changes the model or opens a dialog),
+   and every id the GUI executes is `implemented` with the same default shortcut; every presentation row with
+   `toolbar` has an icon.
+2. **Menus as text:** a golden per view type (Home, Folder Compare, Text Compare) of the menu bar rendered by
+   `menus.rs` as indented text (separators, check/radio state, shortcuts), before and after a fixture
+   `commands.toml`.
+3. **Shortcuts:** a table test of D-111 (focus areas, own over global, overrides, removed shortcuts, contexts, a
+   workspace shortcut, dialogs open).
+4. **No egui in models:** the architecture test's check that `app.rs`, `window.rs`, `commands.rs`, `menus.rs`,
+   `dialog.rs`, `status.rs`, `notify.rs`, `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`,
+   `wizards.rs` and `options/*.rs` do not name `egui`/`eframe` (new rule of check 7).
+5. **Shapes, not pixels:** where drawing matters (icons, theme colours), a headless `egui::Context::run_ui` produces
+   the shapes, and tests check their bounds and colours; no screenshot comparison.
+
+#### 1.4.17 Performance gates and measurement (D-132)
+
+| Gate | Bench mode (part) | Scenario | Threshold |
+|---|---|---|---|
+| ARCH-GUI-003 (unchanged) | `scroll` (W4a, again at the end of W4c) | the M1 1M-line C pair, three scroll phases | first screen < 1 s; PSS < 381.5 MiB and peak RSS reported; UI frame work p95 < 8 ms, max < 16.7 ms |
+| two windows | `two_windows` (W4a) | the same comparison in window 1, then `WindowNew` (Home) as window 2; the three scroll phases in window 1 | PSS < 381.5 MiB; frame work as above |
+| Options open | `options` (W4c) | one window with Home; `ProgramOptions`, every page shown once, then 60 idle frames | PSS < 120 MiB |
+| G12 workspace | `workspace` (W4b) | a workspace of 10 tabs in one window: active tab the 1M-line session, then 5 text sessions of 10,000-line pairs and 4 folder sessions of 1,000-file trees; `hikasa-gui <workspace>` | first screen of the active tab < 1 s after the process start; no job started for the 9 pending tabs; PSS − PSS of `scroll` at its first screen < 9 × 20 MiB |
+
+Measurement: `env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate --
+--ignored --nocapture --test-threads 1` (new tests `two_windows`, `options_memory`, `workspace_restore`; the
+existing `text_scroll` and `folder_scan` stay). Each summary carries `renderer`; a test fails when `DISPLAY` is
+unset or the adapter is not a software renderer (llvmpipe), so no run uses the real display. Memory as in docs/02
+(PSS from `smaps_rollup`, MiB; peak RSS from `VmHWM`). The figures, machine and load are recorded in
+`docs/02` (W4 section); a gate that fails stops the part and is reported (`docs/17` §7.1); a failure caused only
+by the software renderer is reported with that evidence, never measured again on the real display by the agent.
+
+#### 1.4.18 Hooks for later waves
+
+- **Dialogs** (D-112): W6 confirmation dialogs and the delete dialog, W8's script status window, W9's VFS browse
+  dialog, W11's per-file unsaved-edits prompt (SES-092), W13's report and Quick Compare dialogs are `DialogModel`s.
+- **Notices and the log** (D-116, D-117): W5, W6, W8, W10/W11 add sources; W6 file operations append summaries and
+  per-item details.
+- **Session Settings tabs** (D-122): W9 folder rules tabs, W11 text tabs (with D-123), W13 table/hex/picture tabs
+  register in the same registry; `Rules` becomes `implemented` with the first one.
+- **Context-menu areas** (D-110): W9 folder panes, W11 text panes and gutter, W13 grids.
+- **Layout keys** (D-108) and icons (D-114) grow with their views.
+
+#### 1.4.19 Documentation updates of W4
+
+`docs/14` §1 (window model, tab moves, menus, shortcut dispatch, hints, UI-008 targets: D-106…D-111), §2 (theme
+application, fonts, live preview: D-113, D-130), §3 (status bar, jobs, message panel, log, notifications and
+their sources: D-115…D-118), §4 (the dialog framework, D-112); `docs/15` (the Options dialog: pages, search,
+Apply/OK/Cancel, conflicts: D-128, D-129); `docs/03` §1 (periodic auto-save, non-interactive closes: D-120,
+D-121), §2 (dialog shell and scopes: D-122; the D-123 note), §3 (Home: D-124), §4 (workspaces in the GUI, lazy
+restore: D-125, D-126), §5.2 (`[layout.<view>]`, D-108), §6 (the wizards, D-131), §9 (tabs and windows); `docs/04`
+FC-100 (the log panel and book, D-116); `docs/01` §3.6 (effective command table, D-109; `reload_settings`, D-119)
+and §5.1 (`ImportPackage`, D-127); `docs/12` §1 (D-88 package wizard now available); `docs/02` (the W4
+measurements, D-132); `docs/16` M2 progress; `docs/reference/commands.md` regenerated; help topics
+`main-window`, `view-home`, `dialog-session-settings`, `dialog-save-session`, `dialog-workspaces`,
+`dialog-options`, `wizard-export`, `wizard-import`, `wizard-restore` (and `help/gui.md` for `ImportPackage`),
+linked from `index`/`main-window`; `CHANGELOG.md` per part.
+
+#### 1.4.20 W4 notes (implementation)
+
+*W4 note:* where the implementation had to interpret or extend the text above:
+
+- (none yet)
+
+### 1.5–1.14 W5–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -1645,3 +2256,130 @@ Outlines in plan §6; each section is written here before its wave starts.
   exceptions, the architecture test with `trash` in the manifest table of `hikasa-vfs`, `arboard` in that of
   `hikasa-session` and the two confinement rules, xtask checks); the GUI builds and its tests pass (the provider
   wiring and the D-101 handler change).
+
+### 6.4 W4 acceptance
+
+Window tests and measurements run only under `env -u WAYLAND_DISPLAY xvfb-run -a` (D-132); every other test is
+headless through the models (§1.4.16). Each part ends with its items and the full checks green.
+
+**W4a — Shell**
+
+- A4.1 **Windows and tabs (D-106, D-107).** Table tests through `AppCore` for every row of §1.4.2: `WindowNew`,
+  tab placement (`open_new_tab_next_to_active` on/off), the target window of IPC and command-line opens (focus
+  order; `open_sessions_in = "window"`), `TabDuplicate` (Home and a comparison: a second view with its own job),
+  `TabMoveToNewWindow` (refused with one tab), `TabMoveToWindow`, drag moves with known and unknown positions,
+  `TabCloseOthers` with and without the warning, last-tab closing both ways, a window emptied by a move closes, the
+  root swap (window 1 becomes window 0, `Geometry` and `CloseViewport` effects), `Exit` warnings by window and tab
+  count, `hide_tab_bar_if_single_tab`. `ViewId`s stay unique across windows; a waited view moved to another window
+  still reports its D-23 outcome once (IPC test with a fake client).
+- A4.2 **Layout memory (D-108).** `[layout.<view>]` and `[window]` written on window close and exit (golden
+  `state.toml`), read back on the next start (fixture), precedence session `[view]` → layout → defaults;
+  `state_update` keeps a concurrent external edit (edit between load and save: the retry applies both) and writes
+  nothing when unchanged; `State` round trip with `layout` (A1.1 property extended); `settings get
+  state.layout.text-compare` works.
+- A4.3 **Commands (D-109…D-111).** Core: `effective` table tests (defaults; an override replacing, removing,
+  adding shortcuts; menu/toolbar overrides; `show_all_*`; `planned` entries present but marked; the `toolbar`
+  field parsed, absent = false, `commands-doc --check` unchanged in layout). GUI: catalogue parity (§1.4.16 rule
+  1), menu goldens per view type with and without a fixture `commands.toml` (rule 2), the D-111 dispatch table
+  (rule 3), toolbar right-click menu (mode, large buttons write `commands.toml` through `settings_save`; Hide
+  Toolbar toggles `[layout] toolbar`), tab context menu entries, hint text with and without
+  `show_shortcut_in_hints`, hint timing from `hint_show_ms`/`hint_hide_ms` with explicit times.
+- A4.4 **Dialogs (D-112).** Prompt keys (Esc, Enter, F1 → topic), stacking, the window's commands disabled while a
+  dialog is open, "Do not ask again" writes its option key, About is a dialog; the multiple-close prompts of A4.1
+  answer Cancel → nothing closed.
+- A4.5 **Theme and fonts (D-113).** `Palette::from_scheme` for both built-ins and a custom scheme with a `base`:
+  every palette field is mapped exactly once, changing an element changes exactly its field(s); `follow_os` picks
+  `light_scheme`/`dark_scheme` from the OS flag; a changed `theme.toml` re-applies once (`ApplyTheme`) and not per
+  frame; font sizes reach the text panes and the tree; a non-empty family gives one warning notice and the
+  built-in font.
+- A4.6 **Icons (D-114).** `IconId::ALL` covers the inventory of §1.4.5; every operation lies in `0..=16`; no two
+  icons have equal operation lists; every presentation row on a toolbar, every session type and every notice kind
+  has an icon; painted through a headless `egui::Context` at 1.0, 1.25, 1.5 and 2.0 points per pixel, the shapes
+  stay inside the target rectangle and use the given colour.
+- A4.7 **Status, jobs, message and log (D-115, D-116).** The job indicator aggregates the jobs of two views and
+  cancels one (the other keeps running); `Stop` cancels the active view; the message panel shows, dismisses and
+  honours "Do not show again"; `LogBook` table tests (each OPT-018 filter, errors always kept, capacity and
+  `set_filter` shrinking, `format_line` golden, `take_unsaved` only with `save_to_file`); `log_append` creates
+  and appends; `ShowLog` toggles the folder view's panel and its layout key; warnings of a folder comparison appear
+  as log entries with their codes.
+- A4.8 **Polling and notifications (D-117…D-119).** With `Watcher::poll_once`: each row of the §1.4.7 table (a
+  changed, created and removed settings file; a changed format file → `reload_settings` and a later comparison uses
+  the new registry while a running one keeps the old); the GUI's own `settings_save`/`state_update` raise no notice
+  (acknowledged); an input file of a text view changed with `automatically_reload` on (reloaded, info notice) and
+  off (warning notice; *Reload* reloads), removed (warning), `check_for_files_changed_on_disk = false` (nothing);
+  blobs untracked; `Notices` dedupe by key, at most three visible, info hidden after 8 s, actions persist.
+- A4.9 **Drag and drop (UI-008).** `drop_paths` to a path field (one and two paths), to the window (two paths
+  open a comparison of the inferred kind; one and three paths give the message); drops without a path (bytes
+  only) are ignored.
+- A4.10 **Gates (D-132)** `text_scroll` (ARCH-GUI-003) and `two_windows` under Xvfb meet §1.4.17; the figures are
+  in `docs/02`. Whole workspace green (nextest, doc tests, fmt, clippy `-D warnings`, doc, `cargo deny` without new
+  exceptions, the architecture test with the new check-7 rule, `commands-doc --check`, `help-check`); no new crate
+  in `Cargo.lock` (D-133).
+
+**W4b — Sessions**
+
+- A4.11 **Sessions of views (D-120, D-121, D-84).** Through `AppCore` with a temporary configuration: every row of
+  the D-84 table reached by closing a tab, a window, `Exit`, Load Workspace, `SessionHome` and `SessionsCombo`
+  (the files written or not, the prompts shown, Cancel stops each of them); IPC `CloseView` and `Shutdown`
+  answer No (a dirty named session file unchanged, an unnamed view auto-saved); `SessionSave` on named, locked
+  (prompt, force) and unnamed (Save As) views; Save As deletes the view's auto-saved slot; `SessionLocked`
+  toggles the file; the auto-save timer with explicit times (no save before 300 s, a save after a change, none
+  without a change, none for named views, pruning to `max_auto_saved_sessions`, `0` = none); FC-062 Open gives a
+  child with the parent link. `session_save`, `session_autosave` and `session_save_defaults` write the same bytes
+  as `session new`/`session edit`/the W2 auto-save for the same session (T11).
+- A4.12 **Session Settings dialog (D-122).** Specs tab: specs, description, format, encodings (an invalid label
+  refused), MRU lists pushed on OK; defaults entries have specs disabled; scope availability table (no parent,
+  named parent, auto-saved parent, non-folder parent; no rule change); with a test-registered rule tab, each scope
+  writes what `apply_scope` writes (files compared with the D-82 table of A2.4); OK reopens the view with new specs.
+- A4.13 **Home (D-124).** Tree goldens from `session_list` fixtures (folders, favorites first, defaults, the four
+  auto-saved groups, locked marks); search cases (name, folder, description, case-insensitive, ancestors shown,
+  empty restores the expansion); every SES-031 command of the §1.4.11 table on a temporary configuration (files
+  after each; locked refusals and force prompts; `TreeFavorite` disabled on locked); drag onto a folder moves; the
+  management panel Save / Save As / Factory Defaults / Cancel; type-button drops (one path, two paths, a
+  mismatch); `HomeCompare` with `clipboard://` (fixed provider) opens a view; `SessionHome` and `SessionsCombo`.
+- A4.14 **Workspaces (D-125, D-126).** Save of two windows with named, unnamed, auto-saved, pending and Home tabs
+  → `workspace show --json` golden; Load closes views through their close actions (a Cancel aborts with nothing
+  closed), restores windows and geometry, starts only the active tabs (job counter), a pending tab starts on
+  activation and is listed by `gui list`; a missing session → Home tab + notice; Manage Workspaces rename,
+  delete, shortcut with a conflict shown, a workspace shortcut loads it unless a command takes the key; startup
+  `load_workspace` and exit `on_exit_save_workspace_as` (fixture options); IPC `LoadWorkspace` restores windows.
+- A4.15 **Command line (D-127, sessions and workspaces).** `hikasa-gui <session>` and `hikasa-gui <workspace>`
+  open them and, with a GUI running, forward `LoadSession`/`LoadWorkspace` (fake-server golden frames); an
+  existing path still wins (CLI-002).
+- A4.16 **Gate G12** (`workspace_restore`) meets §1.4.17. Whole workspace green as A4.10; the new help topics
+  pass `help-check`; `commands-doc --check` with the W4b statuses.
+
+**W4c — Settings dialogs**
+
+- A4.17 **Options dialog (D-128).** Every P0 key of `key_infos(FileId::Options)` is on exactly one page and no
+  P1/P2 key is shown; every enum value has a caption; widgets clamp at both range bounds; search cases (a title, a
+  label, a key path, an OPT id; no match → empty tree); Apply with no change writes nothing; Apply of one change
+  writes only that file, sparse, unknown keys kept (A1.2 fixture), identical to `hikasa settings set` of the same
+  key; an invalid value disables Apply; a concurrent CLI edit → `Conflict` → Overwrite / Reload / Cancel each
+  tested; OK closes only when every file succeeded; Cancel leaves the files untouched; the window applies the new
+  values (tabs, hints, log filter) after Apply.
+- A4.18 **Toolbars, Shortcuts, Menus (D-129).** On a working copy: add, remove (all → `shortcuts = []`) and
+  Default of a shortcut, menu and toolbar flags, display-filter mode, large buttons, show-all flags → the written
+  `commands.toml` golden; live conflicts shown for a duplicate within the view and none across views; overrides of
+  `planned` commands untouched; after Apply the menus and dispatch of the window follow (menu golden of A4.3 with
+  the new file).
+- A4.19 **Theme editor (D-130).** Round trip: change elements of a built-in and of a new scheme → Apply →
+  `settings_snapshot` → `Scheme::resolve` equals the edited scheme, files sparse against their base (A1.8);
+  *Reset* removes the element; New / Clone / Delete / Reset all; every edit step emits one `ApplyTheme` with the
+  working scheme (preview) and Cancel emits one with the saved scheme; contrast warnings for a background below
+  4.5:1; font sizes written to `theme.toml`.
+- A4.20 **Wizards (D-131).** Export of chosen categories and items gives the same package entries as `hikasa
+  settings export` with the same choices (manifest compared without `created`); Import steps on a package with
+  collisions, a locked session (kept, then included with force) and delete-existing choices: the summary text,
+  the executed results and the files equal `hikasa settings import` with the same choices; an invalid package
+  stops at step 1 with nothing written; Restore plan and execution equal `settings restore-defaults --category`;
+  after Finish the settings reload without a notice for the GUI's own writes.
+- A4.21 **`ImportPackage` (D-127).** Golden request/response frames; the GUI shows the wizard prefilled and
+  answers `Ok`; an M1-style server answering `unsupported_request` gives the D-89 message and exit 100; `hikasa
+  gui open x.hikasa-pkg` exits 0 with a running GUI; `hikasa-gui x.hikasa-pkg` shows the wizard; `--silent` still
+  imports headless (W2 goldens unchanged).
+- A4.22 **Gates (D-132).** `options_memory` < 120 MiB PSS, then the whole set re-measured once: `text_scroll`,
+  `two_windows`, `workspace_restore`, `folder_scan` (M1 acceptance (b)); all recorded in `docs/02`.
+- A4.23 **Wave end.** Whole workspace green as A4.10; every W4 help topic linked and `help-check` clean;
+  `docs/reference/commands.md` regenerated with every W4 status; the documentation updates of §1.4.19 done; the
+  `docs/16` progress line updated.
