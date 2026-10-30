@@ -83,6 +83,12 @@ interprocess = "2"
 jiff = "0.2"
 # Settings packages (D-63, D-86): pure-Rust deflate only (zlib-rs + zopfli); no AES, no other codecs.
 zip = { version = "9", default-features = false, features = ["deflate"] }
+# Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
+# Called only from core/hikasa-vfs/src/local/trash.rs.
+trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }
+# Clipboard (D-63, D-100): the feature set Cargo.lock already compiles through egui-winit; named only in
+# core/hikasa-session/src/host.rs.
+arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # GUI toolkit (D-56 amended: egui/eframe, maintainer decision after the ARCH-GUI-003 measurements)

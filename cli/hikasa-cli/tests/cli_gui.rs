@@ -409,8 +409,7 @@ fn bad_open_arguments_are_100() {
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
     let server = serve(&s, Arc::clone(&gui));
     for args in [
-        &["clipboard://", "a.c"][..],
-        &["--bogus", "a.c", "b.c"],
+        &["--bogus", "a.c", "b.c"][..],
         &["a.c"],
         &["a.c", "l"],
         &["--fv=Spreadsheet", "a.c", "b.c"],

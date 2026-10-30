@@ -35,11 +35,13 @@ pub enum Phase {
     Hashing,
     /// Rendering a report.
     Reporting,
+    /// Writing files (VFS write operations, M2 W3; additive).
+    Writing,
 }
 
 impl Phase {
     /// Number of phases (size of per-phase tables).
-    const COUNT: usize = 9;
+    const COUNT: usize = 10;
 
     /// Dense index of the phase.
     const fn index(self) -> usize {
@@ -53,6 +55,7 @@ impl Phase {
             Phase::ComparingContent => 6,
             Phase::Hashing => 7,
             Phase::Reporting => 8,
+            Phase::Writing => 9,
         }
     }
 
@@ -68,6 +71,7 @@ impl Phase {
             Phase::ComparingContent => "comparing_content",
             Phase::Hashing => "hashing",
             Phase::Reporting => "reporting",
+            Phase::Writing => "writing",
         }
     }
 }

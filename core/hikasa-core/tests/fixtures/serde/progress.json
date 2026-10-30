@@ -8,7 +8,8 @@
     "scanning",
     "comparing_content",
     "hashing",
-    "reporting"
+    "reporting",
+    "writing"
   ],
   "units": [
     "items",
@@ -40,7 +41,8 @@
     "report",
     "format_tokens",
     "vfs_list",
-    "vfs_read"
+    "vfs_read",
+    "vfs_write"
   ],
   "sides": [
     "left",

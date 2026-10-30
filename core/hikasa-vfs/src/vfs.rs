@@ -1,18 +1,24 @@
 //! The [`Vfs`] trait (VFS-001) and its companions: [`ReadSeek`], [`AtomicWrite`], [`FollowLinks`],
-//! [`ListOptions`], [`Prefilter`], [`Listing`], [`NameOnly`], [`EntryError`], [`WriteOptions`].
+//! [`ListOptions`], [`Prefilter`], [`Listing`], [`NameOnly`], [`EntryError`], [`WriteOptions`], and the
+//! arguments of the mutating primitives of M2 W3 ([`SetTimes`], [`AttrChange`]; contract M2 §1.3.1).
+//!
+//! The mutating primitives act on **one** item each and never follow the final symbolic link (D-94); every
+//! one has a default body that returns [`VfsError::OperationUnsupported`] and a capability bit. Recursion,
+//! copies across back-ends, moves, plans and per-item results live once in [`crate::ops`] (D-92).
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fmt;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
-use hikasa_core::{CancelToken, ErrorReport, Spec};
+use hikasa_core::{CancelToken, ErrorReport, FileTime, Spec};
 use serde::{Deserialize, Serialize};
 
 use crate::caps::Capabilities;
-use crate::entry::{Entry, EntryKind, FileName};
-use crate::error::VfsError;
+use crate::entry::{DosAttrs, Entry, EntryKind, FileName};
+use crate::error::{VfsError, VfsOp};
 
 /// Whether symlinks are followed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -129,13 +135,69 @@ pub struct EntryError {
     pub error: ErrorReport,
 }
 
-/// Write options (minimal in M1: report output files).
+/// Write options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WriteOptions {
     /// Create missing parent folders.
     pub create_parents: bool,
     /// Replace an existing file (otherwise `AlreadyExists`).
     pub overwrite: bool,
+    /// M2 W3 (D-94; breaks struct literals: use `..Default::default()`). `false` (default, M1): a target that
+    /// is a symbolic link is resolved and the file it points to is replaced (save semantics, `docs/11` §1 "Local
+    /// writes"). `true`: the link itself is replaced by the new file and the file it pointed to is untouched
+    /// (copy semantics).
+    pub replace_link: bool,
+}
+
+/// What [`Vfs::set_times`] changes; `None` keeps the current value. The access time is never changed (D-99).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SetTimes {
+    /// The new modification time.
+    pub modified: Option<FileTime>,
+    /// The new creation time (needs `SET_CREATED`).
+    pub created: Option<FileTime>,
+}
+
+/// What [`Vfs::set_attrs`] changes. Owner and group are never changed (D-99).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrChange {
+    /// Unix permission bits: `mode & 0o7777` is applied; other bits of the argument are an
+    /// [`VfsError::InvalidAttributes`].
+    Mode(u32),
+    /// DOS attributes: `set` are turned on, `clear` turned off, the others kept. `set ∩ clear ≠ ∅` →
+    /// [`VfsError::InvalidAttributes`].
+    Dos {
+        /// Attributes to turn on.
+        set: DosAttrs,
+        /// Attributes to turn off.
+        clear: DosAttrs,
+    },
+}
+
+impl AttrChange {
+    /// Checks the argument itself: `Mode` with bits above `0o7777`, or `Dos` whose `set` and `clear` overlap,
+    /// is [`VfsError::InvalidAttributes`].
+    pub fn validate(&self) -> Result<(), VfsError> {
+        match *self {
+            AttrChange::Mode(mode) if mode & !0o7777 != 0 => Err(VfsError::InvalidAttributes {
+                input: format!("{mode:o}"),
+            }),
+            AttrChange::Dos { set, clear } if set.intersects(clear) => {
+                Err(VfsError::InvalidAttributes {
+                    input: format!("+{} -{}", set.letters(), clear.letters()),
+                })
+            }
+            AttrChange::Mode(_) | AttrChange::Dos { .. } => Ok(()),
+        }
+    }
+}
+
+/// `OperationUnsupported` for `op` at `spec` (the default body of every mutating primitive).
+pub(crate) fn op_unsupported(spec: &Spec, op: VfsOp) -> VfsError {
+    VfsError::OperationUnsupported {
+        spec: spec.canonical(),
+        op,
+    }
 }
 
 /// `Read + Seek + Send`.
@@ -179,6 +241,80 @@ pub trait Vfs: Send + Sync {
     /// parameter `_spec` (§0.4 rule 6).
     fn local_path(&self, _spec: &Spec) -> Option<PathBuf> {
         None
+    }
+
+    // ---- mutating primitives (M2 W3, D-92; contract §1.3.1) ---------------------------------------------
+
+    /// Creates the folder `spec`. `parents = false`: a missing parent is `NotFound`, an existing item of any kind
+    /// is `AlreadyExists`. `parents = true`: missing ancestors are created; an existing folder (or a link to one)
+    /// is success; an existing non-folder (at `spec` or an ancestor) is `NotADirectory`. `Ok(true)` when `spec`
+    /// was created, `Ok(false)` when it already was a folder. Default: `OperationUnsupported`.
+    fn create_dir(&self, spec: &Spec, _parents: bool) -> Result<bool, VfsError> {
+        Err(op_unsupported(spec, VfsOp::Mkdir))
+    }
+
+    /// Removes one item: a file, a special file, a symbolic link (the link itself, never its target; on Windows
+    /// also a folder link or junction) or an **empty** folder. A non-empty folder is `NotEmpty`; a missing item
+    /// `NotFound`. Default: `OperationUnsupported`.
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::Remove))
+    }
+
+    /// Renames within this back-end (atomic where the platform renames atomically). The final components of
+    /// `from` and `to` are never followed (a link is renamed, or replaced, as a link). `replace = false`: an
+    /// existing `to` is `AlreadyExists`. `replace = true`: a file or link replaces a file or link; a folder
+    /// replaces only an empty folder (else `NotEmpty`); folder ↔ non-folder is `IsADirectory`/`NotADirectory`.
+    /// A rename whose `to` is the same item as `from` (case-only rename on a case-insensitive back-end) changes
+    /// the spelling and always succeeds. Different file systems → `CrossDevice`. Default:
+    /// `OperationUnsupported`.
+    fn rename(&self, from: &Spec, _to: &Spec, _replace: bool) -> Result<(), VfsError> {
+        Err(op_unsupported(from, VfsOp::Rename))
+    }
+
+    /// Sets the times of the item itself; a symbolic link gets its own times where the platform allows (else
+    /// `OperationUnsupported`). `created` needs `SET_CREATED`, else `OperationUnsupported` (nothing changed).
+    /// Default: `OperationUnsupported`.
+    fn set_times(&self, spec: &Spec, _times: &SetTimes) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::SetTimes))
+    }
+
+    /// Changes the attributes of the item itself. On a symbolic link → `OperationUnsupported`; the wrong family
+    /// (`Mode` on a DOS back-end, `Dos` on a Unix one) → `OperationUnsupported`. Default:
+    /// `OperationUnsupported`.
+    fn set_attrs(&self, spec: &Spec, _change: &AttrChange) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::SetAttrs))
+    }
+
+    /// Creates a symbolic link at `spec` whose target text is `target`, stored verbatim (never resolved or
+    /// rewritten). `target_is_dir` makes a folder link on Windows and is ignored elsewhere. Existing item →
+    /// `AlreadyExists`; no privilege (Windows) → `PermissionDenied`. Default: `OperationUnsupported`.
+    fn create_symlink(
+        &self,
+        spec: &Spec,
+        _target: &OsStr,
+        _target_is_dir: bool,
+    ) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::Symlink))
+    }
+
+    /// Moves one item (a file, a link as a link, or a whole folder) to the platform's recycle bin. Never falls
+    /// back to a permanent delete: any failure is an error and the item stays (D-98). Default:
+    /// `OperationUnsupported`.
+    fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::Trash))
+    }
+
+    /// A back-end-specific copy of the regular file `from` to `to` (both on this back-end) with exactly the
+    /// semantics of `open_write(to, opts)` + streaming + `commit`: atomic, target untouched on failure or
+    /// cancellation. `Ok(None)`: no fast path for these specs (the caller streams). Default: `Ok(None)`.
+    fn copy_file_fast(
+        &self,
+        _from: &Spec,
+        _to: &Spec,
+        _opts: &WriteOptions,
+        _cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        Ok(None)
     }
 }
 

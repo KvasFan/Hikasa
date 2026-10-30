@@ -93,8 +93,11 @@ pub const SETTINGS_EXPORT_SCHEMA: &str = "hikasa.settings_export.v1";
 /// `hikasa settings import` (M2 W2).
 pub const SETTINGS_IMPORT_SCHEMA: &str = "hikasa.settings_import.v1";
 
+/// `hikasa vfs cp|mv|rm|mkdir|touch` (M2 W3, D-102).
+pub const VFS_OP_SCHEMA: &str = "hikasa.vfs_op.v1";
+
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 34] = [
+pub const SCHEMAS: [&str; 35] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -129,6 +132,7 @@ pub const SCHEMAS: [&str; 34] = [
     WORKSPACE_WRITE_SCHEMA,
     SETTINGS_EXPORT_SCHEMA,
     SETTINGS_IMPORT_SCHEMA,
+    VFS_OP_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

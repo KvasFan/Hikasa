@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 115c3c69dc757e8fc445f9391a6db303429354e325c260ea0f79329dbcd72f3b # shrinks to shape = [(0, File(0)), (0, File(0)), (0, File(0)), (5984602655567345, File(145))], op = MoveOther, fault = Mkdir, pick = 4002679160584103122, after = 5970896572242036934
+cc 23a619eec8fe1bed6903e84420437733e0f00faf8c9d1b5ce284e7453d2dbc8c # shrinks to shape = [(0, File(0)), (0, File(0)), (0, File(0)), (0, File(0)), (0, Link(0))], op = CopyOverExisting, fault = Symlink, pick = 0, after = 0

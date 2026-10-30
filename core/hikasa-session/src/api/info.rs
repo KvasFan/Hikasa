@@ -144,7 +144,7 @@ impl Service {
         let load = self.load_options(req.encoding.as_deref())?;
         let ctl = job.ctl();
         let (doc, raw) = load_document(
-            &**self.router(),
+            &*self.router(),
             &spec,
             &detection.format,
             &load,

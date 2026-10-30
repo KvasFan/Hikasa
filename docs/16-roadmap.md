@@ -54,7 +54,9 @@ expansion in core; the window reads them from W4); wave 2 (sessions: files, stor
 rotation, scopes and close prompts in core, `hikasa session …` with `session run`; workspaces and `hikasa
 workspace …`; settings packages `hikasa settings export|import`, `restore-defaults --category`; the window
 answers `LoadSession`/`LoadWorkspace`, `hikasa gui session|workspace` and the one-argument forms of `gui open`;
-the session UI itself comes with W4).
+the session UI itself comes with W4); wave 3 (VFS mutations: single-item primitives on every back-end with
+capabilities, the generic plan/execute layer for copy, move, remove and trash, mkdir and touch with per-item
+results, `hikasa vfs cp|mv|rm|mkdir|touch`; the clipboard as `clipboard://` for the CLI and the window, D-92…D-103).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

@@ -19,6 +19,9 @@ start the window when it is not running.
   2, 12, 13 or 100 for folder views, 0 for a view without a verdict.
 - `--no-launch` never starts the window; with `--wait` and no window the code is 102.
 - 103 means no window executable was found next to `hikasa` or on `PATH`.
+- `gui open clipboard:// <file>` (and `--gui` with `clipboard://`) compares the clipboard: the window reads
+  its own clipboard when it opens the view, so this works even when `hikasa` runs without a display. No or an
+  empty clipboard in the window exits 100. A view keeps what it read.
 - `gui open` accepts the switches of `hikasa-gui` itself: `--title1` … `--title4`, `--ro`, `--filters`,
   `--expandall`, `--format`, `--iu`, `--stdin-name`; `hikasa gui open --help` lists them.
 

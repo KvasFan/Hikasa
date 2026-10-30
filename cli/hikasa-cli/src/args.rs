@@ -939,6 +939,122 @@ pub enum VfsCmd {
         /// The file.
         spec: OsString,
     },
+    /// Copy files and folders (`--dry-run` prints the plan).
+    Cp(VfsCpArgs),
+    /// Move or rename files and folders.
+    Mv(VfsMvArgs),
+    /// Remove files, links and folders (needs --yes, or --dry-run).
+    Rm(VfsRmArgs),
+    /// Create folders.
+    Mkdir(VfsMkdirArgs),
+    /// Set the modification (and creation) time of items.
+    Touch(VfsTouchArgs),
+}
+
+/// `vfs cp`.
+#[derive(Debug, clap::Args)]
+pub struct VfsCpArgs {
+    /// The sources, then the target (an existing folder receives them; a trailing separator means a folder).
+    #[arg(required = true, num_args = 2.., value_name = "SRC… DST")]
+    pub paths: Vec<OsString>,
+    /// Copy folders with their contents.
+    #[arg(short, long)]
+    pub recursive: bool,
+    /// What an existing target means: fail (default), skip, always, newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+    /// How symbolic links are copied: copy (as links, default), skip.
+    #[arg(long, value_name = "POLICY")]
+    pub symlinks: Option<String>,
+    /// Follow root arguments that are symbolic links (never links inside trees).
+    #[arg(long)]
+    pub follow_symlinks: bool,
+    /// Copy no times or attributes.
+    #[arg(long, conflicts_with = "preserve_created")]
+    pub no_preserve: bool,
+    /// Also copy the creation time (where the target supports it).
+    #[arg(long)]
+    pub preserve_created: bool,
+    /// Create missing parent folders of the target.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs mv`.
+#[derive(Debug, clap::Args)]
+pub struct VfsMvArgs {
+    /// The sources, then the target.
+    #[arg(required = true, num_args = 2.., value_name = "SRC… DST")]
+    pub paths: Vec<OsString>,
+    /// What an existing target means: fail (default), skip, always, newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+    /// Create missing parent folders of the target.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs rm`.
+#[derive(Debug, clap::Args)]
+pub struct VfsRmArgs {
+    /// The items.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// Remove folders with their contents.
+    #[arg(short, long)]
+    pub recursive: bool,
+    /// Move each item to the recycle bin instead (never a permanent delete).
+    #[arg(long)]
+    pub trash: bool,
+    /// Print the plan; remove nothing.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Confirm the removal.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// `vfs mkdir`.
+#[derive(Debug, clap::Args)]
+pub struct VfsMkdirArgs {
+    /// The folders.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// Create missing parents; an existing folder is no error.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; create nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs touch`.
+#[derive(Debug, clap::Args)]
+pub struct VfsTouchArgs {
+    /// The items.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// The modification time (RFC 3339); default: now.
+    #[arg(long, value_name = "RFC3339", conflicts_with = "reference")]
+    pub time: Option<String>,
+    /// Use the modification time of this item.
+    #[arg(long, value_name = "SPEC")]
+    pub reference: Option<OsString>,
+    /// Also set the creation time (RFC 3339; where supported).
+    #[arg(long, value_name = "RFC3339")]
+    pub created: Option<String>,
+    /// Create missing items as empty files.
+    #[arg(long)]
+    pub create: bool,
+    /// Print the plan; change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// The spec and link handling of `vfs ls` and `vfs stat`.

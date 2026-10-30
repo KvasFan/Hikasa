@@ -33,7 +33,7 @@ use hikasa_session::api::{OpenArgs, normalize_legacy_args, open_usage, parse_ope
 use hikasa_session::settings::LoadMode;
 use hikasa_session::{
     ApiError, ApiOp, EnvFacts, Platform, Service, ServiceInit, StdinSource, SystemClock,
-    capture_env, run_guarded,
+    capture_env, clipboard_provider, run_guarded,
 };
 use hikasa_vfs::{VfsError, VfsOp};
 
@@ -162,6 +162,8 @@ fn execute(
     let code = match cmd::run_without_service(out, command) {
         Some(code) => code,
         None => {
+            // The clipboard is read only when a `clipboard://` spec is parsed (D-100).
+            let clipboard = clipboard_provider(&env);
             let init = ServiceInit {
                 env,
                 config_dir: globals.config_dir.clone(),
@@ -175,6 +177,7 @@ fn execute(
                 } else {
                     LoadMode::Strict
                 },
+                clipboard,
             };
             match Service::new(init) {
                 Ok(service) => {

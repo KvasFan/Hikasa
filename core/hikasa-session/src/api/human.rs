@@ -23,6 +23,7 @@
 
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
+use hikasa_vfs::ops::ItemStatus;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
 use super::package::SettingsImportDto;
@@ -31,6 +32,7 @@ use super::settings::{
     FormatRestoreDto, FormatWriteDto, SettingsListDto, SettingsRestoreDto, SettingsSetDto,
     SettingsValueDto,
 };
+use super::vfs_ops::{VfsOpDto, VfsOpItemDto};
 use crate::ipc::ViewInfo;
 use crate::settings::ShortcutConflict;
 use crate::settings::tree::inline;
@@ -344,6 +346,72 @@ pub fn settings_import_lines(dto: &SettingsImportDto) -> Vec<String> {
             escape_controls(&r.name),
             escape_controls(r.error.as_deref().unwrap_or(""))
         ));
+    }
+    lines
+}
+
+/// The word of a `vfs` write item (§1.3.7): `mkdir`, `exists`, `copy`, `replace`, `link`, `rename`, `move`,
+/// `remove`, `rmdir`, `trash`, `touch`, `create`, `skip`.
+fn vfs_op_word(item: &VfsOpItemDto) -> &'static str {
+    match item.action {
+        "create_dir" => "mkdir",
+        "keep_dir" => "exists",
+        "copy" if item.replaces => "replace",
+        "remove_dir" => "rmdir",
+        other => other,
+    }
+}
+
+/// The subject of an item line: `<source> -> <target>` for copies, links, renames and moves, else `<target>`.
+fn vfs_op_subject(item: &VfsOpItemDto) -> String {
+    let target = escape_controls(&item.target);
+    match (&item.source, item.action) {
+        (Some(source), "copy" | "link" | "rename" | "move") => {
+            format!("{} -> {target}", escape_controls(source))
+        }
+        _ => target.into_owned(),
+    }
+}
+
+/// `hikasa vfs cp|mv|rm|mkdir|touch` (§1.3.7, ARCH-101): one line per plan item in plan order, then the summary
+/// (`<verb> <done> of <planned> items (<skipped> skipped, <failed> failed)`; a dry run ends with `would <base
+/// verb> <planned> items` — `would copy 4 items` —, a cancelled run with `cancelled`).
+pub fn vfs_op_lines(dto: &VfsOpDto) -> Vec<String> {
+    let mut lines = Vec::with_capacity(dto.items.len() + 2);
+    for item in &dto.items {
+        let word = vfs_op_word(item);
+        let target = escape_controls(&item.target);
+        let line = match item.status {
+            ItemStatus::Failed => {
+                let message = item.error.as_ref().map_or("", |e| e.message.as_str());
+                format!("failed {word} {target}: {}", escape_controls(message))
+            }
+            ItemStatus::NotRun => format!("not run {word} {target}"),
+            _ => match item.reason {
+                Some(reason) => format!("skip ({}) {target}", reason.as_str()),
+                None => format!("{word} {}", vfs_op_subject(item)),
+            },
+        };
+        lines.push(line);
+    }
+    let (verb, base) = match dto.op {
+        "copy" => ("copied", "copy"),
+        "move" => ("moved", "move"),
+        "remove" => ("removed", "remove"),
+        "mkdir" => ("created", "create"),
+        _ => ("touched", "touch"),
+    };
+    let s = &dto.summary;
+    if dto.dry_run {
+        lines.push(format!("would {base} {} items", s.planned));
+    } else {
+        lines.push(format!(
+            "{verb} {} of {} items ({} skipped, {} failed)",
+            s.done, s.planned, s.skipped, s.failed
+        ));
+        if dto.cancelled {
+            lines.push("cancelled".to_owned());
+        }
     }
     lines
 }

@@ -24,8 +24,8 @@ use hikasa_session::api::dto::{
     GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SESSION_LIST_SCHEMA,
     SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA,
     SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
-    TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_STAT_SCHEMA,
-    WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
+    TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA,
+    VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -232,6 +232,9 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             VfsCmd::Ls(_) => (VFS_LIST_SCHEMA, ApiOp::Vfs),
             VfsCmd::Stat(_) => (VFS_STAT_SCHEMA, ApiOp::Vfs),
             VfsCmd::Cat { .. } => (VFS_CAT_SCHEMA, ApiOp::Vfs),
+            VfsCmd::Cp(_) | VfsCmd::Mv(_) | VfsCmd::Rm(_) | VfsCmd::Mkdir(_) | VfsCmd::Touch(_) => {
+                (VFS_OP_SCHEMA, ApiOp::Vfs)
+            }
         },
         Command::Gui { cmd } => match cmd {
             GuiCmd::Open(_) => (

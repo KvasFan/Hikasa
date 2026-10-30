@@ -40,7 +40,8 @@
       "hikasa.workspace_show.v1",
       "hikasa.workspace_write.v1",
       "hikasa.settings_export.v1",
-      "hikasa.settings_import.v1"
+      "hikasa.settings_import.v1",
+      "hikasa.vfs_op.v1"
     ]
   },
   "warnings": [],

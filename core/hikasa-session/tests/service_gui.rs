@@ -274,23 +274,18 @@ fn stdin_is_spooled_and_deleted_after_wait() {
     ));
 }
 
+/// D-101 (revises D-49): `clipboard://` is sent verbatim (the GUI reads its own clipboard); a missing stdin
+/// is still refused.
 #[test]
-fn clipboard_and_missing_stdin_are_rejected() {
+fn clipboard_is_sent_verbatim_and_missing_stdin_is_rejected() {
     let tmp = common::short_tempdir();
     let service = common::service(tmp.path());
     let w = tmp.path().join("work");
     let a = write(&w, "a.txt", b"a\n");
-    let err = service
-        .gui_open(
-            &open(&[OsString::from("clipboard://"), os(&a)], false),
-            None,
-        )
-        .unwrap_err();
-    assert!(matches!(err, ApiError::InvalidArgument(_)));
-    assert_eq!(
-        err.exit_code(ApiOp::GuiOpen { wait: false }),
-        ExitCode::UnknownError
-    );
+    let resolved = service
+        .resolve_open(&open(&[OsString::from("clipboard://"), os(&a)], false))
+        .unwrap();
+    assert_eq!(resolved.specs[0], "clipboard://");
     let err = service
         .gui_open(&open(&[OsString::from("-"), os(&a)], false), None)
         .unwrap_err();

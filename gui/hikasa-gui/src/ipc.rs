@@ -1,5 +1,6 @@
 //! The GUI's `IpcHandler` (ARCH-090…092, contract §4.4.3 rule 5): it never blocks; `OpenView` is mapped to
-//! the view's request with `Service::open_view_request`, registered (with its waiter) and posted to the UI
+//! the view's request with `Service::open_view_from_ipc` (which reads the GUI's own clipboard for a
+//! `clipboard://` spec first, M2 W3 D-101), registered (with its waiter) and posted to the UI
 //! thread; `LoadSession` and `LoadWorkspace` (M2 W2, D-89) take their views from `Service::session_view` and
 //! `Service::workspace_views` and open them the same way (a workspace first closes the open views, SES-040);
 //! `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
@@ -98,7 +99,8 @@ impl IpcHandler for GuiHandler {
                         ),
                     );
                 }
-                match self.service.open_view_request(kind, &specs, &options) {
+                // `clipboard://` is read from the GUI's own clipboard first (D-101).
+                match self.service.open_view_from_ipc(kind, &specs, &options) {
                     Err(e) => Response::error(IpcErrorCode::InvalidRequest, e.to_string()),
                     Ok(view_request) => {
                         // The tab caption's title, so `gui list` shows one title from the start.

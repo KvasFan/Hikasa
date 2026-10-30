@@ -79,7 +79,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `tokio` | IPC is blocking: one accept thread plus one thread per connection (ARCH-080's tokio runtime is deferred). |
 | `ignore`, `globset` | In-house folder walker (`hikasa-folder` scanner) and mask engine (`hikasa_core::mask`, `04-folder-views.md` §6.1). |
 | `notify` | No file watching: FC-017 automatic refresh, TC-006 and SES-053 change detection are M2+. |
-| `arboard` | `clipboard://` resolves only when an adapter injects the clipboard content; the CLI reports "unsupported"; `gui open clipboard://` is rejected. |
+| `arboard` | M2 W3 (D-100, D-101): `clipboard://` works in the CLI and the window; see the M2 table below. |
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
 | a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
@@ -111,6 +111,8 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 
 | Crate | Wave | Features | Use |
 |---|---|---|---|
+| `trash` 5 (MIT) | W3 | `default-features = false`, `chrono`, `coinit_apartmentthreaded` (`chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows). New transitive crates: `chrono`, `iana-time-zone`, `urlencoding` (Linux and the BSDs), `windows` (Windows), `objc2-foundation` (macOS) | the recycle bin of `LocalVfs` (`rm --trash`, FC-073, D-98) in `hikasa-vfs`, called only from `local/trash.rs`; it reads the home and data folders and the clock inside the call (an OS side effect, not a result input, T1) and never falls back to a permanent delete |
+| `arboard` 3 (MIT OR Apache-2.0) | W3 | `default-features = false`, `image-data`, `wayland-data-control` (the set `Cargo.lock` already compiled through `egui-winit`; no new crate) | the system clipboard behind `clipboard://` (D-100) in `hikasa-session`, named only in `host.rs` (`SystemClipboard`, adapter-only); images become an in-house uncompressed PNG until W12 |
 | `zip` 9 (MIT) | W2 | `default-features = false`, `deflate` (the pure-Rust back-ends `zlib-rs` via `flate2`, and `zopfli`; no AES, no bzip2/lzma/zstd/time) | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`; W5 adds the archive features it needs |
 
 **mmap residual risk.** Mapping a file with `memmap2` is `unsafe`, because another process may modify or

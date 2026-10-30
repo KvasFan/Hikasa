@@ -1,0 +1,14 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": false,
+  "exit_code": 100,
+  "result": null,
+  "warnings": [],
+  "error": {
+    "kind": "unsupported",
+    "message": "clipboard://: write is not supported here",
+    "spec": "clipboard://",
+    "causes": []
+  }
+}

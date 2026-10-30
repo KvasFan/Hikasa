@@ -317,6 +317,21 @@ impl Spec {
         }
     }
 
+    /// The parent of a local path (`None` for a root); `None` for every other spec kind (M2 W3, additive;
+    /// archive members follow in W5). Operations reach parent folders through this and `Vfs::child` only.
+    pub fn parent(&self) -> Option<Spec> {
+        match self {
+            Spec::Local(path) => path.parent().map(Spec::Local),
+            Spec::ArchiveMember { .. }
+            | Spec::Snapshot { .. }
+            | Spec::Remote(_)
+            | Spec::Profile { .. }
+            | Spec::Http(_)
+            | Spec::Clipboard
+            | Spec::Stdin => None,
+        }
+    }
+
     /// Returns a copy with every secret removed (`RemoteUrl::password = None`, `HttpUrl::password = None`).
     pub fn without_secrets(&self) -> Spec {
         match self {

@@ -86,13 +86,15 @@ impl Sandbox {
         self.join("s.sock")
     }
 
-    /// `hikasa --config-dir <tmp>/cfg` in `<tmp>`, with the private endpoint, a missing GUI executable, a UTF-8
-    /// locale and the UTC zone.
+    /// `hikasa --config-dir <tmp>/cfg` in `<tmp>`, with the private endpoint, a missing GUI executable, a missing
+    /// clipboard file (never the real clipboard), a UTF-8 locale and the UTC zone.
     pub fn cmd(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::new(hikasa_exe());
         cmd.current_dir(self.path())
             .env("HIKASA_IPC_ENDPOINT", self.socket())
             .env("HIKASA_GUI_EXE", self.join("no-such-gui"))
+            // Tests never touch the real clipboard (D-100): a file that does not exist means "no clipboard".
+            .env("HIKASA_CLIPBOARD_FILE", self.join("no-clipboard"))
             .env("LC_ALL", "C.UTF-8")
             .env("TZ", "UTC")
             .env_remove("NO_COLOR")

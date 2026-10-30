@@ -17,6 +17,7 @@ memmap2.workspace = true
 filetime.workspace = true
 bitflags.workspace = true
 same-file.workspace = true
+trash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

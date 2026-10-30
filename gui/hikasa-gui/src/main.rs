@@ -45,6 +45,7 @@ use hikasa_session::api::{
 use hikasa_session::ipc::{IpcError, IpcServer};
 use hikasa_session::{
     ApiOp, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
+    clipboard_provider,
 };
 
 use crate::app::{AppCore, UiMsg};
@@ -95,14 +96,18 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "folder" => Some(BenchKind::Folder),
         Some(v) => anyhow::bail!("HIKASA_GUI_BENCH must be `scroll` or `folder`, not {v:?}"),
     };
+    let env = capture_env();
+    // The GUI reads its own clipboard for `clipboard://` (D-100, D-101).
+    let clipboard = clipboard_provider(&env);
     let service = match Service::new(ServiceInit {
-        env: capture_env(),
+        env,
         config_dir: open.config_dir.clone(),
         threads: None,
         stdin: Some(StdinSource::new(open.stdin_name.clone(), read_stdin)),
         clock: Arc::new(SystemClock),
         runner: Arc::new(StdProcessRunner),
         options_mode: hikasa_session::settings::LoadMode::Strict,
+        clipboard,
     }) {
         Ok(service) => service,
         Err(e) => {

@@ -11,6 +11,15 @@
 //!
 //! `<scheme>` is [`Spec::scheme_name`]: `archive`, `snapshot`, `ftp`, …, `svn+ssh`, `mtp`, `profile`, `http`,
 //! `https`. `child` of a blob spec is `NotADirectory`; of an unsupported spec, `Unsupported`.
+//!
+//! Mutating primitives (M2 W3, contract M2 §1.3.1):
+//!
+//! | Spec | `create_dir`, `remove`, `set_times`, `set_attrs`, `create_symlink`, `move_to_trash` | `rename(from, to)` | `copy_file_fast` |
+//! |---|---|---|---|
+//! | `Local` | `LocalVfs` | `LocalVfs` when both are `Local` | `LocalVfs` when both are `Local` |
+//! | `Stdin`, `Clipboard` | `OperationUnsupported` | `OperationUnsupported` | `Ok(None)` |
+//! | archive, snapshot, remote, profile, HTTP | `Unsupported{what:"<scheme> specs"}` | same | `Ok(None)` |
+//! | mixed kinds | — | `OperationUnsupported` | `Ok(None)` |
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -23,9 +32,12 @@ use hikasa_core::{CancelToken, FileTime, Spec};
 
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileName};
-use crate::error::VfsError;
+use crate::error::{VfsError, VfsOp};
 use crate::local::LocalVfs;
-use crate::vfs::{AtomicWrite, FollowLinks, ListOptions, Listing, ReadSeek, Vfs, WriteOptions};
+use crate::vfs::{
+    AtomicWrite, AttrChange, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
+    WriteOptions, op_unsupported,
+};
 
 /// In-memory content injected by an adapter (stdin bytes read once; clipboard text).
 #[derive(Clone)]
@@ -49,6 +61,43 @@ impl fmt::Debug for Blob {
     }
 }
 
+/// Why a blob could not be captured (M2 W3, D-100): `stat` and `open_read` of its spec return this error, so a
+/// failed clipboard read reaches every command with its own kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlobFailure {
+    /// No source (no clipboard): `VfsError::Unavailable` (kind `unsupported`).
+    Unavailable(String),
+    /// The source holds nothing: `NotFound`.
+    Empty,
+    /// Reading failed: `Io` (op `read`).
+    Failed(String),
+    /// The content is larger than `limit` bytes: `TooLarge`.
+    TooLarge(u64),
+}
+
+impl BlobFailure {
+    /// The error for `spec`.
+    pub fn error(&self, spec: &Spec) -> VfsError {
+        let spec = spec.canonical();
+        match self {
+            BlobFailure::Unavailable(reason) => VfsError::Unavailable {
+                spec,
+                reason: reason.clone(),
+            },
+            BlobFailure::Empty => VfsError::NotFound { spec },
+            BlobFailure::Failed(reason) => VfsError::from_io(
+                spec,
+                crate::error::VfsOp::Read,
+                std::io::Error::other(reason.clone()),
+            ),
+            BlobFailure::TooLarge(limit) => VfsError::TooLarge {
+                spec,
+                limit: *limit,
+            },
+        }
+    }
+}
+
 /// Dispatches specs to back-ends (table in the module documentation). This is the `Vfs` the session layer
 /// uses.
 #[derive(Debug, Clone)]
@@ -56,6 +105,7 @@ pub struct VfsRouter {
     local: LocalVfs,
     stdin: Option<Blob>,
     clipboard: Option<Blob>,
+    clipboard_failure: Option<BlobFailure>,
 }
 
 /// Capabilities of a blob spec.
@@ -110,6 +160,8 @@ enum Route<'a> {
     Blob(&'a Blob),
     /// `Stdin` or `Clipboard` without a blob.
     MissingBlob,
+    /// A capture that failed.
+    FailedBlob(&'a BlobFailure),
     Unsupported,
 }
 
@@ -120,6 +172,7 @@ impl VfsRouter {
             local,
             stdin: None,
             clipboard: None,
+            clipboard_failure: None,
         }
     }
 
@@ -131,10 +184,20 @@ impl VfsRouter {
         }
     }
 
-    /// Makes `Spec::Clipboard` readable (no clipboard crate in M1: adapters may leave this unset).
+    /// Makes `Spec::Clipboard` readable.
     pub fn with_clipboard(self, blob: Blob) -> VfsRouter {
         VfsRouter {
             clipboard: Some(blob),
+            clipboard_failure: None,
+            ..self
+        }
+    }
+
+    /// Makes `stat` and `open_read` of `Spec::Clipboard` fail with `failure` (a failed capture, M2 W3).
+    pub fn with_clipboard_failure(self, failure: BlobFailure) -> VfsRouter {
+        VfsRouter {
+            clipboard: None,
+            clipboard_failure: Some(failure),
             ..self
         }
     }
@@ -157,10 +220,11 @@ impl VfsRouter {
         match spec {
             Spec::Local(_) => Route::Local,
             Spec::Stdin => self.stdin.as_ref().map_or(Route::MissingBlob, Route::Blob),
-            Spec::Clipboard => self
-                .clipboard
-                .as_ref()
-                .map_or(Route::MissingBlob, Route::Blob),
+            Spec::Clipboard => match (&self.clipboard, &self.clipboard_failure) {
+                (Some(blob), _) => Route::Blob(blob),
+                (None, Some(failure)) => Route::FailedBlob(failure),
+                (None, None) => Route::MissingBlob,
+            },
             _ => Route::Unsupported,
         }
     }
@@ -192,7 +256,7 @@ impl Vfs for VfsRouter {
     fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
         match self.route(at) {
             Route::Local => self.local.capabilities(at),
-            Route::Blob(_) | Route::MissingBlob => Ok(BLOB_CAPS),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => Ok(BLOB_CAPS),
             Route::Unsupported => Err(unsupported(at)),
         }
     }
@@ -201,6 +265,7 @@ impl Vfs for VfsRouter {
         match self.route(spec) {
             Route::Local => self.local.stat(spec, follow),
             Route::Blob(blob) => Ok(blob_entry(spec, blob)),
+            Route::FailedBlob(failure) => Err(failure.error(spec)),
             Route::MissingBlob | Route::Unsupported => Err(unsupported(spec)),
         }
     }
@@ -213,9 +278,11 @@ impl Vfs for VfsRouter {
     ) -> Result<Listing, VfsError> {
         match self.route(dir) {
             Route::Local => self.local.list(dir, opts, cancel),
-            Route::Blob(_) | Route::MissingBlob => Err(VfsError::NotADirectory {
-                spec: dir.canonical(),
-            }),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => {
+                Err(VfsError::NotADirectory {
+                    spec: dir.canonical(),
+                })
+            }
             Route::Unsupported => Err(unsupported(dir)),
         }
     }
@@ -224,6 +291,7 @@ impl Vfs for VfsRouter {
         match self.route(spec) {
             Route::Local => self.local.open_read(spec),
             Route::Blob(blob) => Ok(Box::new(Cursor::new(Arc::clone(&blob.bytes)))),
+            Route::FailedBlob(failure) => Err(failure.error(spec)),
             Route::MissingBlob | Route::Unsupported => Err(unsupported(spec)),
         }
     }
@@ -235,7 +303,7 @@ impl Vfs for VfsRouter {
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         match self.route(spec) {
             Route::Local => self.local.open_write(spec, opts),
-            Route::Blob(_) | Route::MissingBlob | Route::Unsupported => {
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => {
                 Err(write_unsupported(spec))
             }
         }
@@ -244,9 +312,11 @@ impl Vfs for VfsRouter {
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
         match self.route(dir) {
             Route::Local => self.local.child(dir, name),
-            Route::Blob(_) | Route::MissingBlob => Err(VfsError::NotADirectory {
-                spec: dir.canonical(),
-            }),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => {
+                Err(VfsError::NotADirectory {
+                    spec: dir.canonical(),
+                })
+            }
             Route::Unsupported => Err(unsupported(dir)),
         }
     }
@@ -254,7 +324,78 @@ impl Vfs for VfsRouter {
     fn local_path(&self, spec: &Spec) -> Option<PathBuf> {
         match self.route(spec) {
             Route::Local => self.local.local_path(spec),
-            Route::Blob(_) | Route::MissingBlob | Route::Unsupported => None,
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => None,
+        }
+    }
+
+    fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
+        self.mutate(spec, VfsOp::Mkdir, |l| l.create_dir(spec, parents))
+    }
+
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        self.mutate(spec, VfsOp::Remove, |l| l.remove(spec))
+    }
+
+    fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
+        match (self.route(from), self.route(to)) {
+            (Route::Local, Route::Local) => self.local.rename(from, to, replace),
+            (Route::Unsupported, _) => Err(unsupported(from)),
+            (_, Route::Unsupported) => Err(unsupported(to)),
+            _ => Err(op_unsupported(from, VfsOp::Rename)),
+        }
+    }
+
+    fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
+        self.mutate(spec, VfsOp::SetTimes, |l| l.set_times(spec, times))
+    }
+
+    fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
+        self.mutate(spec, VfsOp::SetAttrs, |l| l.set_attrs(spec, change))
+    }
+
+    fn create_symlink(
+        &self,
+        spec: &Spec,
+        target: &OsStr,
+        target_is_dir: bool,
+    ) -> Result<(), VfsError> {
+        self.mutate(spec, VfsOp::Symlink, |l| {
+            l.create_symlink(spec, target, target_is_dir)
+        })
+    }
+
+    fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
+        self.mutate(spec, VfsOp::Trash, |l| l.move_to_trash(spec))
+    }
+
+    fn copy_file_fast(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        opts: &WriteOptions,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        match (self.route(from), self.route(to)) {
+            (Route::Local, Route::Local) => self.local.copy_file_fast(from, to, opts, cancel),
+            _ => Ok(None),
+        }
+    }
+}
+
+impl VfsRouter {
+    /// Dispatches a single-spec mutating primitive (table in the module documentation).
+    fn mutate<T>(
+        &self,
+        spec: &Spec,
+        op: VfsOp,
+        local: impl FnOnce(&LocalVfs) -> Result<T, VfsError>,
+    ) -> Result<T, VfsError> {
+        match self.route(spec) {
+            Route::Local => local(&self.local),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => {
+                Err(op_unsupported(spec, op))
+            }
+            Route::Unsupported => Err(unsupported(spec)),
         }
     }
 }

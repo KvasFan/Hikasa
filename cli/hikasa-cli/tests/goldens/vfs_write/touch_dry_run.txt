@@ -1,0 +1,2 @@
+touch <TMP>/other.txt
+would touch 1 items

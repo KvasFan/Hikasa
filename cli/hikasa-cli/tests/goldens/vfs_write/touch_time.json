@@ -1,0 +1,33 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "touch",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "touch",
+        "kind": "file",
+        "source": null,
+        "target": "<TMP>/other.txt",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 1,
+      "done": 1,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

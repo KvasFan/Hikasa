@@ -31,6 +31,8 @@ mod windows;
 #[cfg(windows)]
 use windows as platform;
 
+mod trash;
+
 #[cfg(not(any(unix, windows)))]
 mod platform {
     //! Fallback for targets without Unix or Windows metadata.
@@ -46,9 +48,42 @@ mod platform {
     }
     pub(super) fn capabilities() -> crate::caps::Capabilities {
         use crate::caps::Capabilities as C;
-        C::READ | C::WRITE | C::LIST | C::SEEK | C::MTIME | C::SYMLINKS | C::LOCAL_PATH
+        C::READ
+            | C::WRITE
+            | C::LIST
+            | C::SEEK
+            | C::MTIME
+            | C::SYMLINKS
+            | C::LOCAL_PATH
+            | C::SET_TIMES
+            | C::MKDIR
+            | C::REMOVE
+            | C::RENAME
     }
     pub(super) fn sync_dir(_dir: &Path) {}
+    pub(super) fn set_created(
+        _path: &Path,
+        _time: std::time::SystemTime,
+    ) -> Option<std::io::Result<()>> {
+        None
+    }
+    pub(super) fn set_attrs(
+        _path: &Path,
+        _meta: &Metadata,
+        _change: &crate::vfs::AttrChange,
+    ) -> Result<(), super::AttrFailure> {
+        Err(super::AttrFailure::WrongFamily)
+    }
+    pub(super) fn remove_link(path: &Path, _meta: &Metadata) -> std::io::Result<()> {
+        std::fs::remove_file(path)
+    }
+    pub(super) fn symlink(
+        _target: &std::ffi::OsStr,
+        _path: &Path,
+        _target_is_dir: bool,
+    ) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+    }
 }
 
 use std::ffi::{OsStr, OsString};
@@ -62,9 +97,25 @@ use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek, Vfs,
-    WriteOptions,
+    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
+    SetTimes, Vfs, WriteOptions, op_unsupported,
 };
+
+/// Files up to this size are copied by `copy_file_fast` with `std::fs::copy` (not cancellable); larger ones are
+/// streamed so that cancellation stays within 100 ms (D-95, G4).
+pub const FAST_COPY_MAX: u64 = 64 * 1024 * 1024;
+
+/// Why a platform `set_attrs` refused a change.
+#[derive(Debug)]
+pub(crate) enum AttrFailure {
+    /// `Mode` on a DOS back-end or `Dos` on a Unix one.
+    WrongFamily,
+    /// DOS bits other than `R` (D-99).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    OtherDosBits,
+    /// The OS call failed.
+    Io(io::Error),
+}
 
 /// Local file system back-end.
 #[derive(Debug, Clone, Default)]
@@ -307,58 +358,10 @@ impl Vfs for LocalVfs {
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         let path = local(spec)?;
-        let spec_text = spec.canonical();
-        if path.parent().is_none() || path.file_name().is_none() {
-            return Err(VfsError::IsADirectory { spec: spec_text });
+        match prepare_write(path, &spec.canonical(), opts)? {
+            Prepared::Direct(writer) => Ok(Box::new(writer)),
+            Prepared::Temp(writer) => Ok(Box::new(writer)),
         }
-        let io_error = |e: io::Error| VfsError::from_io(spec_text.as_str(), VfsOp::Write, e);
-        // The file to replace: a symbolic link is resolved, so the file it points to is replaced and the link
-        // stays (contract §1.2.7 item 12).
-        let target = match fs::symlink_metadata(path.as_path()) {
-            Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
-            Ok(_) if !opts.overwrite => return Err(VfsError::AlreadyExists { spec: spec_text }),
-            Ok(meta) if meta.file_type().is_symlink() => {
-                resolve_links(path.as_path()).map_err(io_error)?
-            }
-            Ok(_) => path.as_path().to_path_buf(),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => path.as_path().to_path_buf(),
-            Err(e) => return Err(io_error(e)),
-        };
-        match fs::symlink_metadata(&target) {
-            Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
-            // A FIFO, a character or block device, a socket: written to directly, never replaced.
-            Ok(meta) if !meta.is_file() => {
-                let file = OpenOptions::new()
-                    .write(true)
-                    .open(&target)
-                    .map_err(io_error)?;
-                return Ok(Box::new(DirectWriter {
-                    file: Some(BufWriter::new(file)),
-                    spec: spec_text,
-                }));
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(io_error(e)),
-        }
-        let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
-            return Err(VfsError::IsADirectory { spec: spec_text });
-        };
-        if opts.create_parents {
-            fs::create_dir_all(parent)
-                .map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
-        }
-        let (file, tmp) = create_temp(parent, name).map_err(io_error)?;
-        let dir = parent.to_path_buf();
-        Ok(Box::new(LocalWriter {
-            file: Some(BufWriter::new(file)),
-            tmp,
-            target,
-            dir,
-            spec: spec_text,
-            overwrite: opts.overwrite,
-            pending: true,
-        }))
     }
 
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
@@ -380,6 +383,327 @@ impl Vfs for LocalVfs {
             .filter(Metadata::is_file)
             .map(|_| path.as_path().to_path_buf())
     }
+
+    fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
+        let path = local(spec)?;
+        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::Mkdir, e);
+        if !parents {
+            return fs::create_dir(path.as_path()).map(|()| true).map_err(fail);
+        }
+        match fs::metadata(path.as_path()) {
+            Ok(meta) if meta.is_dir() => return Ok(false),
+            Ok(_) => {
+                return Err(VfsError::NotADirectory {
+                    spec: spec.canonical(),
+                });
+            }
+            Err(_) => {}
+        }
+        fs::create_dir_all(path.as_path()).map_err(|e| {
+            // An ancestor that is a file: `create_dir_all` reports "already exists" or "not a folder"
+            // depending on the platform; both mean a non-folder ancestor.
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                VfsError::NotADirectory {
+                    spec: spec.canonical(),
+                }
+            } else {
+                fail(e)
+            }
+        })?;
+        Ok(true)
+    }
+
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        let path = local(spec)?;
+        operable(path, spec)?;
+        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::Remove, e);
+        let meta = fs::symlink_metadata(path.as_path()).map_err(fail)?;
+        if meta.file_type().is_symlink() {
+            platform::remove_link(path.as_path(), &meta).map_err(fail)
+        } else if meta.is_dir() {
+            fs::remove_dir(path.as_path()).map_err(|e| {
+                // Some platforms report a non-empty folder with an `Other` kind ("directory not empty").
+                if e.kind() == io::ErrorKind::DirectoryNotEmpty
+                    || fs::read_dir(path.as_path()).is_ok_and(|mut d| d.next().is_some())
+                {
+                    VfsError::NotEmpty {
+                        spec: spec.canonical(),
+                    }
+                } else {
+                    fail(e)
+                }
+            })
+        } else {
+            fs::remove_file(path.as_path()).map_err(fail)
+        }
+    }
+
+    fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
+        let (from_path, to_path) = (local(from)?, local(to)?);
+        operable(from_path, from)?;
+        operable(to_path, to)?;
+        let fail = |e: io::Error| match e.kind() {
+            io::ErrorKind::CrossesDevices => VfsError::CrossDevice {
+                from: from.canonical(),
+                to: to.canonical(),
+            },
+            _ => VfsError::from_io(from.canonical(), VfsOp::Rename, e),
+        };
+        let from_meta = fs::symlink_metadata(from_path.as_path()).map_err(fail)?;
+        match fs::symlink_metadata(to_path.as_path()) {
+            Ok(to_meta) => {
+                if !same_item(from_path.as_path(), &from_meta, to_path.as_path(), &to_meta) {
+                    if !replace {
+                        return Err(VfsError::AlreadyExists {
+                            spec: to.canonical(),
+                        });
+                    }
+                    match (from_meta.is_dir(), to_meta.is_dir()) {
+                        (true, false) => {
+                            return Err(VfsError::NotADirectory {
+                                spec: to.canonical(),
+                            });
+                        }
+                        (false, true) => {
+                            return Err(VfsError::IsADirectory {
+                                spec: to.canonical(),
+                            });
+                        }
+                        (true, true) => {
+                            if fs::read_dir(to_path.as_path()).is_ok_and(|mut d| d.next().is_some())
+                            {
+                                return Err(VfsError::NotEmpty {
+                                    spec: to.canonical(),
+                                });
+                            }
+                        }
+                        (false, false) => {}
+                    }
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(VfsError::from_io(to.canonical(), VfsOp::Rename, e)),
+        }
+        fs::rename(from_path.as_path(), to_path.as_path()).map_err(|e| match e.kind() {
+            io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty {
+                spec: to.canonical(),
+            },
+            _ => fail(e),
+        })
+    }
+
+    fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
+        let path = local(spec)?;
+        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::SetTimes, e);
+        let meta = fs::symlink_metadata(path.as_path()).map_err(fail)?;
+        let is_link = meta.file_type().is_symlink();
+        let created = match times.created {
+            Some(created) => {
+                if is_link || !platform::capabilities().contains(Capabilities::SET_CREATED) {
+                    return Err(op_unsupported(spec, VfsOp::SetTimes));
+                }
+                Some(system_time(created).ok_or_else(|| fail(out_of_range()))?)
+            }
+            None => None,
+        };
+        if let Some(modified) = times.modified {
+            let mtime = filetime_of(modified);
+            let atime = filetime::FileTime::from_last_access_time(&meta);
+            filetime::set_symlink_file_times(path.as_path(), atime, mtime).map_err(fail)?;
+        }
+        if let Some(created) = created
+            && let Some(result) = platform::set_created(path.as_path(), created)
+        {
+            result.map_err(fail)?;
+        }
+        Ok(())
+    }
+
+    fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
+        let path = local(spec)?;
+        change.validate()?;
+        let meta = fs::symlink_metadata(path.as_path())
+            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::SetAttrs, e))?;
+        if meta.file_type().is_symlink() {
+            return Err(op_unsupported(spec, VfsOp::SetAttrs));
+        }
+        platform::set_attrs(path.as_path(), &meta, change).map_err(|failure| match failure {
+            AttrFailure::WrongFamily => op_unsupported(spec, VfsOp::SetAttrs),
+            AttrFailure::OtherDosBits => VfsError::Unsupported {
+                spec: spec.canonical(),
+                what: "changing DOS attributes other than R",
+            },
+            AttrFailure::Io(e) => VfsError::from_io(spec.canonical(), VfsOp::SetAttrs, e),
+        })
+    }
+
+    fn create_symlink(
+        &self,
+        spec: &Spec,
+        target: &OsStr,
+        target_is_dir: bool,
+    ) -> Result<(), VfsError> {
+        let path = local(spec)?;
+        platform::symlink(target, path.as_path(), target_is_dir)
+            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::Symlink, e))
+    }
+
+    fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
+        let path = local(spec)?;
+        operable(path, spec)?;
+        let meta = fs::symlink_metadata(path.as_path())
+            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::Trash, e))?;
+        self::trash::move_to_trash(path.as_path(), &meta, &spec.canonical())
+    }
+
+    /// Local → local files up to [`FAST_COPY_MAX`]: `std::io::copy` from the source into the temporary sibling
+    /// `open_write` creates (`copy_file_range` on Linux), then the same commit protocol (D-95). Larger files, and targets `open_write`
+    /// would write to directly, return `Ok(None)` (the caller streams).
+    fn copy_file_fast(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        opts: &WriteOptions,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        let (from_path, to_path) = (local(from)?, local(to)?);
+        cancel.check()?;
+        let meta = fs::metadata(from_path.as_path())
+            .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
+        if !meta.is_file() || meta.len() > FAST_COPY_MAX {
+            return Ok(None);
+        }
+        let mut writer = match prepare_write(to_path, &to.canonical(), opts)? {
+            Prepared::Direct(_) => return Ok(None),
+            Prepared::Temp(writer) => writer,
+        };
+        // Stream into the handle `prepare_write` opened (never reopened by name: a read-only source must not
+        // make the temporary file unwritable); on Linux `io::copy` between files uses `copy_file_range`. The mode
+        // is applied later by the metadata step (D-95 step 6).
+        let mut source = File::open(from_path.as_path())
+            .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
+        let buffered = writer
+            .file
+            .take()
+            .ok_or_else(|| writer.fail(io::Error::other("the writer was already committed")))?;
+        let mut file = buffered
+            .into_inner()
+            .map_err(|e| VfsError::from_io(to.canonical(), VfsOp::Write, e.into_error()))?;
+        let copied = io::copy(&mut source, &mut file).map_err(|e| {
+            if fs::metadata(from_path.as_path()).is_err() {
+                VfsError::from_io(from.canonical(), VfsOp::Read, e)
+            } else {
+                VfsError::from_io(to.canonical(), VfsOp::Write, e)
+            }
+        })?;
+        writer.file = Some(BufWriter::new(file));
+        cancel.check()?;
+        writer.commit_inner()?;
+        Ok(Some(copied))
+    }
+}
+
+/// The checks of an item `remove`, `rename` and `move_to_trash` act on: a final component `.` or `..` →
+/// `InvalidTarget "needs a file name"`; a root, also once its parent is resolved (`fs::canonicalize` of the parent
+/// joined with the name) → `InvalidTarget "is a root folder"`.
+fn operable(path: &LocalPath, spec: &Spec) -> Result<(), VfsError> {
+    let invalid = |reason: &'static str| VfsError::InvalidTarget {
+        spec: spec.canonical(),
+        reason,
+    };
+    match path.file_name() {
+        Some(name) if name == "." || name == ".." => return Err(invalid("needs a file name")),
+        Some(_) => {}
+        None => return Err(invalid("is a root folder")),
+    }
+    let (Some(parent), Some(name)) = (path.as_path().parent(), path.as_path().file_name()) else {
+        return Err(invalid("is a root folder"));
+    };
+    if let Ok(canonical) = fs::canonicalize(parent)
+        && canonical.join(name).parent().is_none()
+    {
+        return Err(invalid("is a root folder"));
+    }
+    Ok(())
+}
+
+/// How a write reaches its target.
+enum Prepared {
+    /// A FIFO or a device written to directly (never with `replace_link`).
+    Direct(DirectWriter),
+    /// A temporary sibling renamed onto the target by `commit`.
+    Temp(LocalWriter),
+}
+
+/// The target resolution of `open_write` (and of `copy_file_fast`): a folder is `IsADirectory`, an existing item
+/// without `overwrite` is `AlreadyExists`; without `replace_link` a symbolic link is resolved (the file it points
+/// to is replaced) and a target that is not a regular file is written to directly (contract M1 §1.2.7 item 12);
+/// with `replace_link` (M2 W3, D-94) the item at `path` itself — a link, a FIFO, a device — is replaced by the new
+/// file.
+fn prepare_write(
+    path: &LocalPath,
+    spec_text: &str,
+    opts: &WriteOptions,
+) -> Result<Prepared, VfsError> {
+    let spec_text = spec_text.to_owned();
+    if path.parent().is_none() || path.file_name().is_none() {
+        return Err(VfsError::IsADirectory { spec: spec_text });
+    }
+    let io_error = |e: io::Error| VfsError::from_io(spec_text.as_str(), VfsOp::Write, e);
+    let mut replaces_other = false;
+    // The file to replace: without `replace_link` a symbolic link is resolved, so the file it points to is
+    // replaced and the link stays (contract §1.2.7 item 12).
+    let target = match fs::symlink_metadata(path.as_path()) {
+        Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
+        Ok(_) if !opts.overwrite => return Err(VfsError::AlreadyExists { spec: spec_text }),
+        Ok(meta) if opts.replace_link => {
+            replaces_other = !meta.is_file();
+            path.as_path().to_path_buf()
+        }
+        Ok(meta) if meta.file_type().is_symlink() => {
+            resolve_links(path.as_path()).map_err(io_error)?
+        }
+        Ok(_) => path.as_path().to_path_buf(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => path.as_path().to_path_buf(),
+        Err(e) => return Err(io_error(e)),
+    };
+    if !opts.replace_link {
+        match fs::symlink_metadata(&target) {
+            Ok(meta) if meta.is_dir() => return Err(VfsError::IsADirectory { spec: spec_text }),
+            // A FIFO, a character or block device, a socket: written to directly, never replaced.
+            Ok(meta) if !meta.is_file() => {
+                let file = OpenOptions::new()
+                    .write(true)
+                    .open(&target)
+                    .map_err(io_error)?;
+                return Ok(Prepared::Direct(DirectWriter {
+                    file: Some(BufWriter::new(file)),
+                    spec: spec_text,
+                }));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_error(e)),
+        }
+    }
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(VfsError::IsADirectory { spec: spec_text });
+    };
+    if opts.create_parents {
+        fs::create_dir_all(parent).map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
+    }
+    let (file, tmp) = create_temp(parent, name).map_err(io_error)?;
+    let dir = parent.to_path_buf();
+    Ok(Prepared::Temp(LocalWriter {
+        file: Some(BufWriter::new(file)),
+        tmp,
+        target,
+        dir,
+        spec: spec_text,
+        overwrite: opts.overwrite,
+        keep_permissions: !replaces_other,
+        pending: true,
+    }))
 }
 
 /// Longest target name that is embedded in the temporary file name.
@@ -449,6 +773,9 @@ struct LocalWriter {
     dir: PathBuf,
     spec: String,
     overwrite: bool,
+    /// Copy the permissions of a replaced regular file onto the new one (not when a link or a special file is
+    /// replaced, M2 W3).
+    keep_permissions: bool,
     /// The temporary file still exists and belongs to this writer.
     pending: bool,
 }
@@ -476,7 +803,9 @@ impl LocalWriter {
             file.sync_all().map_err(|e| self.fail(e))?;
         }
         if self.overwrite {
-            if let Ok(old) = fs::metadata(&self.target) {
+            if self.keep_permissions
+                && let Ok(old) = fs::metadata(&self.target)
+            {
                 // Keep the permissions of the file being replaced (best effort).
                 let _ = fs::set_permissions(&self.tmp, old.permissions());
             }
@@ -577,4 +906,48 @@ impl AtomicWrite for DirectWriter {
         writer.into_inner().map_err(|e| fail(e.into_error()))?;
         Ok(())
     }
+}
+
+/// The `filetime` value of a [`FileTime`].
+fn filetime_of(t: FileTime) -> filetime::FileTime {
+    filetime::FileTime::from_unix_time(t.unix_seconds(), t.subsec_nanos())
+}
+
+/// The `SystemTime` of a [`FileTime`] (`None` when the platform cannot represent it).
+fn system_time(t: FileTime) -> Option<std::time::SystemTime> {
+    let nanos = std::time::Duration::from_nanos(u64::from(t.subsec_nanos()));
+    let secs = t.unix_seconds();
+    if secs >= 0 {
+        std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(secs.unsigned_abs()))?
+            .checked_add(nanos)
+    } else {
+        std::time::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(secs.unsigned_abs()))?
+            .checked_add(nanos)
+    }
+}
+
+/// "The time is out of range" as an I/O error.
+fn out_of_range() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "the time is out of the platform's range",
+    )
+}
+
+/// True when `from` and `to` are the same item (a case-only rename on a case-insensitive file system): the same
+/// device and inode where the platform reports them, else the same file through `same-file` (links are compared
+/// as links: two different links are never the same item).
+fn same_item(from: &Path, from_meta: &Metadata, to: &Path, to_meta: &Metadata) -> bool {
+    if let (Some(a), Some(b)) = (platform::file_id(from_meta), platform::file_id(to_meta)) {
+        return a == b;
+    }
+    if from_meta.file_type().is_symlink() || to_meta.file_type().is_symlink() {
+        // Without file ids a link is the same item only when the paths differ by case alone.
+        return from.as_os_str().to_string_lossy().to_lowercase()
+            == to.as_os_str().to_string_lossy().to_lowercase()
+            && from.parent() == to.parent();
+    }
+    same_file::is_same_file(from, to).unwrap_or(false)
 }

@@ -1,11 +1,16 @@
-//! Unix metadata mapping (`std::os::unix::fs::MetadataExt`): mode, uid, gid, device and inode.
+//! Unix metadata mapping (`std::os::unix::fs::MetadataExt`): mode, uid, gid, device and inode; the Unix parts
+//! of the mutating primitives (M2 W3): permission bits, symbolic links, creation times (macOS).
 
-use std::fs::{File, Metadata};
-use std::os::unix::fs::MetadataExt;
+use std::ffi::OsStr;
+use std::fs::{self, File, Metadata, Permissions};
+use std::io;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
+use super::AttrFailure;
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, FileId, UnixMeta};
+use crate::vfs::AttrChange;
 
 /// `Attrs::Unix` with the permission bits (`st_mode & 0o7777`), uid and gid.
 pub(super) fn attrs(meta: &Metadata) -> Attrs {
@@ -27,9 +32,23 @@ pub(super) fn file_id(meta: &Metadata) -> Option<FileId> {
 }
 
 /// Read, write, list, seek, mtime, ctime (birth time where the file system records one), Unix mode and owner,
-/// symlinks, local paths.
+/// symlinks, local paths; set times, mkdir, remove, rename, set attributes (mode), trash, create symlinks; on
+/// macOS also set the creation time.
 pub(super) fn capabilities() -> Capabilities {
-    Capabilities::READ
+    let created = if cfg!(target_os = "macos") {
+        Capabilities::SET_CREATED
+    } else {
+        Capabilities::empty()
+    };
+    created
+        | Capabilities::SET_TIMES
+        | Capabilities::MKDIR
+        | Capabilities::REMOVE
+        | Capabilities::RENAME
+        | Capabilities::SET_ATTRS
+        | Capabilities::TRASH
+        | Capabilities::CREATE_SYMLINKS
+        | Capabilities::READ
         | Capabilities::WRITE
         | Capabilities::LIST
         | Capabilities::SEEK
@@ -46,4 +65,42 @@ pub(super) fn sync_dir(dir: &Path) {
     if let Ok(handle) = File::open(dir) {
         let _ = handle.sync_all();
     }
+}
+
+/// Sets the creation time (macOS: `File::set_times` with `FileTimesExt::set_created`); `None` where the platform
+/// cannot (the caller checked `SET_CREATED` first).
+#[cfg(target_os = "macos")]
+pub(super) fn set_created(path: &Path, time: std::time::SystemTime) -> Option<io::Result<()>> {
+    use std::os::macos::fs::FileTimesExt;
+    let times = fs::FileTimes::new().set_created(time);
+    Some(File::open(path).and_then(|file| file.set_times(times)))
+}
+
+/// No creation times on this platform.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn set_created(_path: &Path, _time: std::time::SystemTime) -> Option<io::Result<()>> {
+    None
+}
+
+/// `Mode` → `fs::set_permissions` (the caller refused links); `Dos` → the wrong family.
+pub(super) fn set_attrs(
+    path: &Path,
+    _meta: &Metadata,
+    change: &AttrChange,
+) -> Result<(), AttrFailure> {
+    match *change {
+        AttrChange::Mode(mode) => fs::set_permissions(path, Permissions::from_mode(mode & 0o7777))
+            .map_err(AttrFailure::Io),
+        AttrChange::Dos { .. } => Err(AttrFailure::WrongFamily),
+    }
+}
+
+/// Removes a symbolic link (never its target).
+pub(super) fn remove_link(path: &Path, _meta: &Metadata) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+/// `symlink(target, path)`; `target_is_dir` is ignored on Unix.
+pub(super) fn symlink(target: &OsStr, path: &Path, _target_is_dir: bool) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, path)
 }

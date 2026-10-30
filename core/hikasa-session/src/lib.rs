@@ -34,6 +34,7 @@
 
 pub mod api;
 mod atomic;
+pub mod clipboard;
 pub mod commands;
 mod error;
 pub mod formats;
@@ -53,7 +54,7 @@ pub use atomic::{TEMP_NAME_PREFIX_MAX, write_atomic};
 pub use error::SessionError;
 pub use formats::FormatStore;
 pub use host::{Clock, EnvFacts, FixedClock, Platform};
-pub use host::{SystemClock, capture_env};
+pub use host::{SystemClipboard, SystemClock, capture_env, clipboard_provider};
 pub use jobs::{JobControl, JobHandle, run_guarded};
 pub use options::{OPTION_SECTIONS, OptionsLoad, ProgramOptions, load_options};
 pub use paths::{

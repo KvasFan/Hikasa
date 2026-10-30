@@ -9,7 +9,9 @@
 //!    must say `#![allow(unsafe_code)]`, and each occurrence still needs its `// SAFETY:` comment;
 //! 2. no banned tokens in `core/*/src` (T1, T8) except at the three allow-points, `tracing::` only in
 //!    hikasa-session, and `capture_env`/`SystemClock` referenced nowhere under `core/` except their definition
-//!    (and hikasa-session's own tests). Imports are expanded first, so grouped and aliased forms are caught as
+//!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
+//!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
+//!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
 //!    `.elapsed()` counts as a clock read;
 //! 3. every dependency of every workspace member is `workspace = true` and listed in `[workspace.dependencies]`,
@@ -432,8 +434,10 @@ const BANNED: &[&str] = &[
 /// The pseudo-token of a `.elapsed()` method call (it reads the clock: `Instant::elapsed`, `SystemTime::elapsed`).
 const ELAPSED_CALL: &str = ".elapsed()";
 
-/// The three allow-points of §6.1 (each file carries a comment naming the rule).
+/// The three allow-points of §6.1 (each file carries a comment naming the rule), plus the recycle bin of
+/// `LocalVfs` (M2 §1.3.12: it reads the two variables the `trash` crate itself reads, D-98).
 const ALLOW_POINTS: &[(&str, &[&str])] = &[
+    ("core/hikasa-vfs/src/local/trash.rs", &["std::env"]),
     (
         "core/hikasa-core/src/progress.rs",
         &["Instant::now", "Instant::elapsed", ELAPSED_CALL],
@@ -1001,7 +1005,7 @@ fn check_inclusions(root: &Path) -> Vec<String> {
     violations
 }
 
-/// `capture_env` and `SystemClock` are adapter-only (§1.8.2): nothing under `core/` references them except their
+/// `capture_env` and `SystemClock` (and, M2 W3, `SystemClipboard` and `clipboard_provider`) are adapter-only (§1.8.2): nothing under `core/` references them except their
 /// definition in hikasa-session's `host.rs`, re-export lines of hikasa-session (which may not rename them: an
 /// alias would hide later uses from this scan), and hikasa-session's own tests.
 fn check_adapter_only(root: &Path) -> Vec<String> {
@@ -1017,7 +1021,12 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
         };
         let code = code_only(&raw);
         let lines: Vec<&str> = code.lines().collect();
-        for token in ["capture_env", "SystemClock"] {
+        for token in [
+            "capture_env",
+            "SystemClock",
+            "SystemClipboard",
+            "clipboard_provider",
+        ] {
             for at in find_token(&code, token) {
                 let line = line_of(&code, at);
                 let reexport =
@@ -1035,6 +1044,61 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
                         "{rel}:{line}: `{token}` re-exported under another name (aliases hide its uses)"
                     ));
                 }
+            }
+        }
+    }
+    violations
+}
+
+/// The two confinement rules of M2 W3 (§1.3.9), part of check 2: under `core/`, the `trash` crate (`trash::`,
+/// not a module path such as `self::trash::`) is named only in `core/hikasa-vfs/src/local/trash.rs`, and the
+/// `arboard` crate only in `core/hikasa-session/src/host.rs`. And no test anywhere constructs or names
+/// `SystemClipboard` (tests never touch the real clipboard, A3.9).
+fn check_confined_crates(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("core")) {
+        let rel = relative(root, &file);
+        let Ok(raw) = fs::read_to_string(&file) else {
+            continue;
+        };
+        let code = code_only(&raw);
+        if rel != "core/hikasa-vfs/src/local/trash.rs" {
+            for at in find_token(&code, "trash::") {
+                let before = code[..at].trim_end();
+                if before.ends_with("self::") || before.ends_with("super::") {
+                    continue;
+                }
+                violations.push(format!(
+                    "{rel}:{}: the `trash` crate is called only from core/hikasa-vfs/src/local/trash.rs",
+                    line_of(&code, at)
+                ));
+            }
+        }
+        if rel != "core/hikasa-session/src/host.rs" {
+            for at in find_token(&code, "arboard") {
+                violations.push(format!(
+                    "{rel}:{}: the `arboard` crate is named only in core/hikasa-session/src/host.rs",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    for top in ["core", "cli", "gui"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            let is_test = rel.contains("/tests/") || rel.ends_with("/tests.rs");
+            if !is_test || rel == "core/hikasa-session/tests/architecture.rs" {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(&file) else {
+                continue;
+            };
+            let code = code_only(&raw);
+            for at in find_token(&code, "SystemClipboard") {
+                violations.push(format!(
+                    "{rel}:{}: tests never use the real clipboard (`SystemClipboard`)",
+                    line_of(&code, at)
+                ));
             }
         }
     }
@@ -1165,6 +1229,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "filetime",
             "bitflags",
             "same-file",
+            "trash",
         ],
         &["tempfile", "proptest", "pretty_assertions", "criterion"],
     ),
@@ -1302,6 +1367,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "parking_lot",
             "crossbeam-channel",
             "zip",
+            "arboard",
         ],
         &["tempfile", "pretty_assertions", "proptest"],
     ),
@@ -2399,6 +2465,7 @@ fn check_2_no_banned_tokens_in_core() {
     let root = workspace_root();
     let mut violations = check_banned_tokens(&root);
     violations.extend(check_adapter_only(&root));
+    violations.extend(check_confined_crates(&root));
     violations.extend(check_inclusions(&root));
     assert_none(
         "2 (banned tokens, adapter-only functions, file inclusion)",
@@ -2999,6 +3066,55 @@ fn check_2_refuses_renamed_reexports_of_the_adapter_only_functions() {
     let violations = check_adapter_only(root);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("another name"), "{violations:?}");
+}
+
+/// M2 W3 (§1.3.9): `trash::` and `arboard` are confined to one file each; no test names `SystemClipboard`.
+#[test]
+fn check_2_confines_trash_and_arboard() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-vfs/src/local/trash.rs",
+        "pub fn t() { trash::delete(\"x\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-vfs/src/local/mod.rs",
+        "mod trash;\nfn a() { self::trash::t(); }\nfn b() { trash::delete(\"y\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/host.rs",
+        "fn c() { arboard::Clipboard::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/mod.rs",
+        "// arboard in a comment is fine\nfn d() { arboard::Clipboard::new(); }\n",
+    );
+    put(
+        root,
+        "cli/hikasa-cli/tests/clip.rs",
+        "fn e() { let _ = hikasa_session::SystemClipboard; }\n",
+    );
+    let violations = check_confined_crates(root);
+    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-vfs/src/local/mod.rs:3"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-session/src/api/mod.rs:2"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("cli/hikasa-cli/tests/clip.rs:1"))
+    );
 }
 
 #[test]

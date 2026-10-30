@@ -23,10 +23,17 @@
     "seek",
     "mtime",
     "ctime",
+    "set_times",
     "unix_mode",
     "unix_owner",
     "symlinks",
     "local_path",
-    "case_sensitive"
+    "case_sensitive",
+    "mkdir",
+    "remove",
+    "rename",
+    "set_attrs",
+    "trash",
+    "create_symlinks"
   ]
 }

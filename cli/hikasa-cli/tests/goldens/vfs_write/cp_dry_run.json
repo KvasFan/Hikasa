@@ -1,0 +1,66 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "copy",
+    "dry_run": true,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": "<TMP>/src",
+        "target": "<TMP>/dst",
+        "size": null,
+        "replaces": false,
+        "status": "planned",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/src/a.txt",
+        "target": "<TMP>/dst/a.txt",
+        "size": 6,
+        "replaces": false,
+        "status": "planned",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": "<TMP>/src/sub",
+        "target": "<TMP>/dst/sub",
+        "size": null,
+        "replaces": false,
+        "status": "planned",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/src/sub/b.txt",
+        "target": "<TMP>/dst/sub/b.txt",
+        "size": 5,
+        "replaces": false,
+        "status": "planned",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 4,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

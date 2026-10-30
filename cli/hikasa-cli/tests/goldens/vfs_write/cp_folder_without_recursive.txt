@@ -1,0 +1,2 @@
+failed mkdir <TMP>/dst: <TMP>/src: is a folder (use --recursive)
+copied 0 of 1 items (0 skipped, 1 failed)

@@ -1,0 +1,66 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "remove",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "remove",
+        "kind": "file",
+        "source": null,
+        "target": "<TMP>/src/a.txt",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "remove",
+        "kind": "file",
+        "source": null,
+        "target": "<TMP>/src/sub/b.txt",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "remove_dir",
+        "kind": "dir",
+        "source": null,
+        "target": "<TMP>/src/sub",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "remove_dir",
+        "kind": "dir",
+        "source": null,
+        "target": "<TMP>/src",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 4,
+      "done": 4,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

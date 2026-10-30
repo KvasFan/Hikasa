@@ -1,0 +1,38 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 100,
+  "result": {
+    "op": "remove",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "remove_dir",
+        "kind": "dir",
+        "source": null,
+        "target": "<TMP>/src",
+        "size": null,
+        "replaces": false,
+        "status": "failed",
+        "reason": null,
+        "error": {
+          "kind": "not_empty",
+          "message": "<TMP>/src: folder is not empty",
+          "spec": "<TMP>/src",
+          "causes": []
+        }
+      }
+    ],
+    "summary": {
+      "planned": 1,
+      "done": 0,
+      "skipped": 0,
+      "failed": 1,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

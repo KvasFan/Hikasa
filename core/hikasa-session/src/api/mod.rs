@@ -14,6 +14,8 @@
 //! | `folder compare` | [`Service::folder_prepare`] + [`Service::folder_run`] = [`Service::folder_compare`], [`Service::render_folder`] |
 //! | `format list/show/detect/tokens` | [`Service::format_list`], [`Service::format_show`], [`Service::format_detect`], [`Service::format_tokens`] |
 //! | `vfs ls/stat/cat` | [`Service::vfs_ls`], [`Service::vfs_stat`], [`Service::vfs_cat`] |
+//! | `vfs cp/mv/rm/mkdir/touch` (M2 W3) | [`Service::vfs_plan`] (`--dry-run`), [`Service::vfs_run`] |
+//! | `clipboard://` (M2 W3) | [`Service::parse_spec`] (captured once), [`Service::read_clipboard`] |
 //! | `settings get/set/unset/list/restore-defaults` | [`Service::settings_get`], [`Service::settings_set`], [`Service::settings_unset`], [`Service::settings_list`], [`Service::settings_restore_defaults`] |
 //! | `format new/edit/delete/import/export/enable/disable/move/restore` | [`Service::format_new`], [`Service::format_edit`], [`Service::format_delete`], [`Service::format_import`], [`Service::format_export`], [`Service::format_enable`], [`Service::format_move`], [`Service::format_restore`] |
 //! | `session list/show/new/edit/delete/rename/lock/unlock/mkdir/rmdir/run` | [`Service::session_list`], [`Service::session_show`], [`Service::session_new`], [`Service::session_edit`], [`Service::session_delete`], [`Service::session_rename`], [`Service::session_lock`], [`Service::session_mkdir`], [`Service::session_rmdir`], [`Service::session_run_request`] |
@@ -33,6 +35,7 @@ pub mod requests;
 pub mod responses;
 pub mod sessions;
 pub mod settings;
+pub mod vfs_ops;
 pub mod vocab;
 
 use std::ffi::OsStr;
@@ -45,8 +48,10 @@ use hikasa_core::{
     Warning,
 };
 use hikasa_formats::{FormatRegistry, ProcessRunner, RegexLimits, TextEncoding};
-use hikasa_vfs::{Blob, LocalOptions, LocalVfs, StreamOptions, VfsError, VfsOp, VfsRouter};
-use parking_lot::Mutex;
+use hikasa_vfs::{
+    Blob, BlobFailure, LocalOptions, LocalVfs, StreamOptions, VfsError, VfsOp, VfsRouter,
+};
+use parking_lot::{Mutex, RwLock};
 
 pub use error::ApiError;
 pub use gui::{
@@ -72,11 +77,18 @@ pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
     SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
 };
+pub use vfs_ops::{
+    TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
+    parse_overwrite, parse_time,
+};
 pub use vocab::{
     parse_algorithm, parse_content_method, parse_folder_mode, parse_line_range,
     resolve_folder_display, resolve_text_display,
 };
 
+use crate::clipboard::{
+    ClipboardContent, ClipboardError, ClipboardProvider, NoClipboard, clipboard_blob,
+};
 use crate::formats::FormatStore;
 use crate::host::{Clock, EnvFacts};
 use crate::ipc::Endpoint;
@@ -152,6 +164,10 @@ pub struct ServiceInit {
     /// How `options.toml` is read: `Strict` for every command, `Lenient` for the `settings` commands (D-71;
     /// added in M2 W1).
     pub options_mode: LoadMode,
+    /// The clipboard behind `clipboard://` (M2 W3, D-100): read only when a `clipboard://` spec is parsed (once
+    /// per service) and by [`Service::read_clipboard`]. Adapters pass `host::clipboard_provider`; tests a
+    /// `FixedClipboard`. [`ServiceInit::new`] sets [`NoClipboard`].
+    pub clipboard: Arc<dyn ClipboardProvider>,
 }
 
 impl ServiceInit {
@@ -169,6 +185,7 @@ impl ServiceInit {
             clock,
             runner,
             options_mode: LoadMode::Strict,
+            clipboard: Arc::new(NoClipboard),
         }
     }
 }
@@ -222,8 +239,8 @@ struct Inner {
     options: ProgramOptions,
     ignored_keys: Vec<String>,
     registry: Arc<FormatRegistry>,
-    /// The router without standard input.
-    router: Arc<VfsRouter>,
+    /// The router: local files, plus standard input and the clipboard once captured (replaced on capture).
+    router: RwLock<Arc<VfsRouter>>,
     pool: Arc<rayon::ThreadPool>,
     clock: Arc<dyn Clock>,
     runner: Arc<dyn ProcessRunner>,
@@ -234,6 +251,10 @@ struct Inner {
     stdin_read: Mutex<Option<StdinRead>>,
     /// Standard input once read: the blob and the router that serves it (or why it is unavailable).
     stdin: OnceLock<Result<StdinState, StdinUnavailable>>,
+    /// The clipboard provider (M2 W3).
+    clipboard: Arc<dyn ClipboardProvider>,
+    /// The clipboard snapshot: `None` until the first `clipboard://` spec (or `read_clipboard`).
+    clipboard_state: Mutex<Option<Result<Blob, BlobFailure>>>,
 }
 
 /// Why standard input is unavailable.
@@ -248,7 +269,17 @@ enum StdinUnavailable {
 /// Standard input after it was read.
 struct StdinState {
     blob: Blob,
-    router: Arc<VfsRouter>,
+}
+
+/// What `Service::read_clipboard` found (TC-065 data).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ClipboardDto {
+    /// `"text"` or `"image"`.
+    pub kind: &'static str,
+    /// Bytes of the blob (UTF-8 text, or the PNG).
+    pub size: u64,
+    /// The name hint (`clipboard.png` for images).
+    pub name: Option<String>,
 }
 
 impl std::fmt::Debug for Service {
@@ -281,6 +312,7 @@ impl Service {
             clock,
             runner,
             options_mode,
+            clipboard,
         } = init;
         let exists = |p: &std::path::Path| p.is_file();
         let config = resolve_config_dir(&env, config_dir.as_deref(), &exists)?;
@@ -341,7 +373,7 @@ impl Service {
                 options: options_load.options,
                 ignored_keys: options_load.ignored_keys,
                 registry: Arc::new(registry),
-                router: Arc::new(router),
+                router: RwLock::new(Arc::new(router)),
                 pool: Arc::new(pool),
                 clock,
                 runner,
@@ -350,6 +382,8 @@ impl Service {
                 stdin_name,
                 stdin_read: Mutex::new(stdin_read),
                 stdin: OnceLock::new(),
+                clipboard,
+                clipboard_state: Mutex::new(None),
             }),
         })
     }
@@ -384,9 +418,9 @@ impl Service {
         &self.inner.env
     }
 
-    /// The VFS router (local files, and standard input once a `-` spec was parsed; additive). GUIs read
-    /// through it.
-    pub fn vfs(&self) -> &VfsRouter {
+    /// The VFS router (local files, and standard input and the clipboard once captured; additive). GUIs read
+    /// through it. A snapshot (M2 W3: was `&VfsRouter`): the router changes when a blob is captured.
+    pub fn vfs(&self) -> Arc<VfsRouter> {
         self.router()
     }
 
@@ -429,13 +463,89 @@ impl Service {
     }
 
     /// Parses a user spec. A `-` spec reads standard input now, once per service ([`StdinSource`]): an
-    /// error reading it, or no source, is an error here.
+    /// error reading it, or no source, is an error here. A `clipboard://` spec reads the clipboard now, once per
+    /// service (M2 W3, D-100); a failed read is not an error here: the router answers it when the spec is read
+    /// (`unsupported`, `not_found` or `io`).
     pub fn parse_spec(&self, input: &OsStr) -> Result<Spec, ApiError> {
         let spec = Spec::parse_os(input, &self.spec_context())?;
-        if spec == Spec::Stdin {
-            self.stdin_state()?;
+        match spec {
+            Spec::Stdin => {
+                self.stdin_state()?;
+            }
+            Spec::Clipboard => {
+                let mut state = self.inner.clipboard_state.lock();
+                if state.is_none() {
+                    *state = Some(self.capture_clipboard());
+                    drop(state);
+                    self.rebuild_router();
+                }
+            }
+            _ => {}
         }
         Ok(spec)
+    }
+
+    /// Reads the clipboard **again** and replaces the snapshot later `clipboard://` specs see (TC-065 data; the
+    /// GUI before it opens a `clipboard://` view, D-101). Errors: no clipboard → `unsupported`, empty →
+    /// `not_found`, a failed read → `io`.
+    pub fn read_clipboard(&self) -> Result<ClipboardDto, ApiError> {
+        run_guarded(|| {
+            let captured = self.capture_clipboard();
+            *self.inner.clipboard_state.lock() = Some(captured.clone());
+            self.rebuild_router();
+            match captured {
+                Ok(blob) => Ok(ClipboardDto {
+                    kind: if blob.name.is_some() { "image" } else { "text" },
+                    size: blob.bytes.len() as u64,
+                    name: blob.name,
+                }),
+                Err(failure) => Err(ApiError::Vfs(failure.error(&Spec::Clipboard))),
+            }
+        })
+    }
+
+    /// One read of the provider, stamped with the injected clock (T1).
+    fn capture_clipboard(&self) -> Result<Blob, BlobFailure> {
+        let content = self.inner.clipboard.read().map_err(|e| match e {
+            ClipboardError::Unavailable(_) => BlobFailure::Unavailable(e.to_string()),
+            ClipboardError::Empty => BlobFailure::Empty,
+            ClipboardError::Failed(_) => BlobFailure::Failed(e.to_string()),
+            ClipboardError::TooLarge(limit) => BlobFailure::TooLarge(limit),
+        })?;
+        let mtime = self
+            .clock_file_time()
+            .ok_or_else(|| BlobFailure::Failed("the clock's time is out of range".to_owned()))?;
+        if let ClipboardContent::Text(text) = &content {
+            tracing::debug!(target: "hikasa::clipboard", "clipboard text, {} bytes", text.len());
+        }
+        clipboard_blob(content, mtime).map_err(|e| match e {
+            VfsError::NotFound { .. } => BlobFailure::Empty,
+            VfsError::TooLarge { limit, .. } => BlobFailure::TooLarge(limit),
+            other => BlobFailure::Failed(other.to_string()),
+        })
+    }
+
+    /// The injected clock's now as a `FileTime`.
+    pub(crate) fn clock_file_time(&self) -> Option<FileTime> {
+        let now = self.inner.clock.now().timestamp();
+        let nanos = u32::try_from(now.subsec_nanosecond())
+            .unwrap_or(0)
+            .min(999_999_999);
+        FileTime::from_unix(now.as_second(), nanos)
+    }
+
+    /// Rebuilds the router from the captured blobs.
+    fn rebuild_router(&self) {
+        let mut router = VfsRouter::new(LocalVfs::new(LocalOptions::default()));
+        if let Some(blob) = self.stdin() {
+            router = router.with_stdin(blob.clone());
+        }
+        match &*self.inner.clipboard_state.lock() {
+            Some(Ok(blob)) => router = router.with_clipboard(blob.clone()),
+            Some(Err(failure)) => router = router.with_clipboard_failure(failure.clone()),
+            None => {}
+        }
+        *self.inner.router.write() = Arc::new(router);
     }
 
     /// The `--stdin-name` hint (additive): format detection of `-` uses it without reading standard input.
@@ -455,11 +565,7 @@ impl Service {
             let bytes = read().map_err(|e| {
                 StdinUnavailable::Failed(format!("cannot read standard input: {e}"))
             })?;
-            let now = self.inner.clock.now().timestamp();
-            let nanos = u32::try_from(now.subsec_nanosecond())
-                .unwrap_or(0)
-                .min(999_999_999);
-            let mtime = FileTime::from_unix(now.as_second(), nanos).ok_or_else(|| {
+            let mtime = self.clock_file_time().ok_or_else(|| {
                 StdinUnavailable::Failed("the clock's time is out of range".to_owned())
             })?;
             let blob = Blob {
@@ -467,13 +573,11 @@ impl Service {
                 mtime,
                 name: self.inner.stdin_name.clone(),
             };
-            let router =
-                VfsRouter::new(LocalVfs::new(LocalOptions::default())).with_stdin(blob.clone());
-            Ok(StdinState {
-                blob,
-                router: Arc::new(router),
-            })
+            Ok(StdinState { blob })
         });
+        if state.is_ok() {
+            self.rebuild_router();
+        }
         state.as_ref().map_err(|unavailable| match unavailable {
             StdinUnavailable::Missing => {
                 ApiError::InvalidArgument("`-` needs standard input, which was not provided".into())
@@ -572,11 +676,8 @@ impl Service {
         }
     }
 
-    /// The router as a shared value: with standard input once it was read.
-    pub(crate) fn router(&self) -> &Arc<VfsRouter> {
-        match self.inner.stdin.get() {
-            Some(Ok(state)) => &state.router,
-            Some(Err(_)) | None => &self.inner.router,
-        }
+    /// The router as a shared value: with standard input and the clipboard once captured.
+    pub(crate) fn router(&self) -> Arc<VfsRouter> {
+        Arc::clone(&self.inner.router.read())
     }
 }

@@ -12,7 +12,8 @@
     "io",
     "too_large",
     "protocol",
-    "internal"
+    "internal",
+    "not_empty"
   ],
   "report": {
     "kind": "internal",

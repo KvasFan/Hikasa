@@ -45,7 +45,8 @@ pub enum Request {
     OpenView {
         /// View type.
         kind: ViewKind,
-        /// Canonical, absolute spec strings (`-` and `clipboard://` never appear, D-49).
+        /// Canonical, absolute spec strings, or `clipboard://` (read by the GUI from its own clipboard, D-101); `-`
+        /// never appears (D-49: it is spooled to a file first).
         specs: Vec<String>,
         /// View options.
         #[serde(default)]

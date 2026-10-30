@@ -83,6 +83,7 @@ pub mod entry;
 pub mod error;
 pub mod local;
 pub mod memory;
+pub mod ops;
 pub mod router;
 pub mod source;
 pub mod stream;
@@ -97,12 +98,12 @@ pub use caps::Capabilities;
 pub use compare::{BinaryComparator, BinaryOutcome, CrcComparator, compare_sources, crc32_source};
 pub use entry::{Attrs, DosAttrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 pub use error::{VfsError, VfsOp};
-pub use local::{LocalOptions, LocalVfs};
-pub use memory::{Fault, ListingOrder, MemMeta, MemoryVfs};
-pub use router::{Blob, VfsRouter};
+pub use local::{FAST_COPY_MAX, LocalOptions, LocalVfs};
+pub use memory::{Fault, ListingOrder, MemDump, MemMeta, MemoryVfs};
+pub use router::{Blob, BlobFailure, VfsRouter};
 pub use source::VfsSource;
 pub use stream::{MmapPolicy, StreamOptions, compare_readers, crc32_reader};
 pub use vfs::{
-    AtomicWrite, EntryError, FollowLinks, ListOptions, Listing, NameOnly, Prefilter, ReadSeek, Vfs,
-    WriteOptions,
+    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, Prefilter,
+    ReadSeek, SetTimes, Vfs, WriteOptions,
 };

@@ -78,7 +78,8 @@ impl Service {
             ));
         }
         let ctl = job.ctl();
-        let vfs: &dyn Vfs = &**self.router();
+        let router = self.router();
+        let vfs: &dyn Vfs = &*router;
         let stream = self.stream_options();
         let (format, outcome) = match req.method {
             QuickMethod::Size => {
@@ -224,7 +225,8 @@ impl Service {
             self.load_options(req.encodings.right.as_deref())?,
         );
         let ctl = job.ctl();
-        let vfs: &dyn Vfs = &**self.router();
+        let router = self.router();
+        let vfs: &dyn Vfs = &*router;
         let external = Some(self.external());
         let format = &chosen.format;
         let (left_loaded, right_loaded) = self.pool().join(
@@ -404,8 +406,9 @@ impl Service {
         };
         let engines = ContentEngines::with_stream_options(stream, rules_comparator);
         let now = self.clock().now();
+        let router = self.router();
         let env = FolderEnv {
-            vfs: &**self.router(),
+            vfs: &*router,
             content: &engines,
             pool: Some(self.pool()),
             ctl: job.ctl(),

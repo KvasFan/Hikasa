@@ -5,6 +5,32 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 3 — VFS mutations, clipboard, generic copy
+- **Mutating VFS** (VFS-001, ARCH-030, D-92…D-99): every back-end gains single-item primitives — create a folder,
+  remove, rename, set times, set attributes, create a symbolic link, move to the recycle bin, an optional fast
+  copy — each behind a new capability (`mkdir`, `remove`, `rename`, `set_attrs`, `trash`, `create_symlinks`,
+  `set_created`; `set_times` is now used). Writes never follow the final symbolic link; new error kind
+  `not_empty`.
+- **Generic copy, move, remove** (ARCH-031, D-95…D-98, D-103): `hikasa_vfs::ops` plans every operation completely
+  (whole trees, in execution order) before the first write, then executes it item by item with per-item results
+  (`planned`, `done`, `skipped`, `failed`, `not_run`), re-checking each target. Copies are atomic per file (local
+  files up to 64 MiB in one call, `copy_file_range` on Linux), keep times and permissions, copy links as links and follow overwrite
+  policies `fail` (default), `skip`, `always`, `newer`; moves rename where they can, else copy and remove per item
+  with rollback; the recycle bin never falls back to a permanent delete. Review fixes: `.`/`..` names and roots
+  (also through `..`) are never operated on; a failed replacement (a link or folder over a file) leaves the old
+  item; nothing runs below a folder that failed or was swapped for a link after planning (`not_run`), and
+  removals re-check folder identity; `newer` is re-checked at execution; a move keeps its copy when the source
+  vanished; case-only `mv` renames; local copies of read-only files work; planning reports `scanning` progress
+  and can be cancelled; a link on another file system than the recycle bin is refused.
+- **`hikasa vfs cp|mv|rm|mkdir|touch`** (D-102): `--dry-run` prints the plan; `rm` needs `--yes`; schema
+  `hikasa.vfs_op.v1` (35 schemas); failed items keep `ok: true` and exit 100.
+- **Clipboard** (TC-002, TC-065 data, D-100, D-101): `clipboard://` reads the clipboard's text, or an image as an
+  in-house PNG named `clipboard.png`, once per command and only when given; `HIKASA_CLIPBOARD_FILE` stands in for
+  it (empty → `not_found`, above 1 GiB → `too_large`). `gui open clipboard://` and `--gui` now send it to the
+  window, which reads its own clipboard. Writing to `-` or `clipboard://` is `unsupported`.
+- New dependencies `trash` (recycle bin, `hikasa-vfs`) and `arboard` (clipboard, `hikasa-session`), each confined
+  to one file by the architecture test.
+
 ### Wave 2 — sessions, workspaces, settings packages
 - **Sessions** (SES-001…006, SES-008, SES-010, D-80…D-84): one TOML file per session (`sessions/<folder>/<name>.toml`,
   defaults per type in `sessions/_defaults/`, auto-saved views in `sessions/_autosaved/`), read and written by the

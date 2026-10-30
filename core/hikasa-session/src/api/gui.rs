@@ -4,7 +4,7 @@
 //! `hikasa gui open` and `hikasa-gui` accept the same arguments (D-51): [`normalize_legacy_args`] rewrites the
 //! legacy spellings (`-name`, `/name` on Windows, aliases) to `--name[=value]`, and [`parse_open_args`] turns the
 //! result into [`OpenArgs`]. [`Service::resolve_open`] resolves the specs (absolute canonical strings; `-` spooled
-//! to the cache folder; `clipboard://` rejected), infers the view kind and makes the rules files absolute;
+//! to the cache folder; `clipboard://` sent verbatim, D-101), infers the view kind and makes the rules files absolute;
 //! [`Service::gui_open`] then validates the request ([`Service::check_open`]), connects to (or launches,
 //! [`Service::gui_launch`]) the GUI and sends `OpenView`. The GUI turns an `OpenView` back into service requests
 //! with [`Service::open_view_request`] and reports a closing view's exit code with [`ViewOutcome::close`] (D-23).
@@ -268,7 +268,7 @@ fn strip_quotes(part: OsString) -> OsString {
 #[derive(Debug, Clone, Default)]
 pub struct GuiOpenRequest {
     /// Raw specs (resolved to absolute canonical specs before sending: the GUI has another cwd; "-" is spooled,
-    /// `clipboard://` is rejected, D-49).
+    /// D-49; `clipboard://` is sent verbatim and read by the GUI, D-101).
     pub specs: Vec<OsString>,
     /// Forced view kind (`--fv`); None → inferred (CLI-002).
     pub kind: Option<ViewKind>,
@@ -1153,7 +1153,14 @@ pub fn infer_view_kind(
             specs.len()
         )));
     };
-    let stat = |spec: &Spec| service.vfs().stat(spec, FollowLinks::Yes);
+    // `clipboard://` is a file (text or a PNG) the GUI reads itself (D-101): never stat'ed here.
+    let stat = |spec: &Spec| match spec {
+        Spec::Clipboard => Ok(hikasa_vfs::Entry::new(
+            hikasa_vfs::FileName::from_os(std::ffi::OsStr::new("clipboard://")),
+            EntryKind::File,
+        )),
+        _ => service.vfs().stat(spec, FollowLinks::Yes),
+    };
     let kinds = match (stat(left), stat(right)) {
         (Ok(l), Ok(r)) => (l.kind, r.kind),
         (Ok(l), Err(_)) => (l.kind, l.kind),
@@ -1229,8 +1236,8 @@ impl Service {
     /// [`Service::gui_open`] with an explicit retry policy, returning what was sent and the spool file
     /// (additive; `hikasa.gui_open.v1` needs `spooled_stdin`).
     ///
-    /// Steps (§3.6): [`Service::resolve_open`] (specs → canonical absolute strings; `-` → the stdin spool file;
-    /// `clipboard://` → `InvalidArgument`, D-49; rules files absolute; kind ← `req.kind` or
+    /// Steps (§3.6): [`Service::resolve_open`] (specs → canonical absolute strings; `-` → the stdin spool file, D-49;
+    /// `clipboard://` sent verbatim, D-101; rules files absolute; kind ← `req.kind` or
     /// [`infer_view_kind`]); [`Service::check_open`] (vocabulary, formats, encodings and rules are validated
     /// locally, so a typo exits 100 before the GUI is contacted); connect (or launch with
     /// [`Service::gui_launch`] and retry, [`connect_or_launch`]); `OpenView`; with `wait`, block until
@@ -1272,8 +1279,8 @@ impl Service {
     }
 
     /// Resolves a `gui open` request for sending, or for the GUI's own command line (additive): specs →
-    /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://` and
-    /// paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
+    /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://`
+    /// verbatim, D-101; paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
     /// and `folder_rules_file`, else the strings already in the options) made absolute (`-`, `clipboard://` and
     /// non-UTF-8 paths → `InvalidArgument`); kind ← `req.kind` or [`infer_view_kind`]. On error nothing is left
     /// behind (a spool file is removed).
@@ -1297,7 +1304,12 @@ impl Service {
     ) -> Result<ResolvedOpen, ApiError> {
         let mut specs = Vec::with_capacity(req.specs.len());
         for raw in &req.specs {
-            let spec = match self.parse_spec(raw)? {
+            // `clipboard://` travels verbatim (D-101): the GUI reads its own clipboard; the CLI never reads it.
+            let spec = match Spec::parse_os(raw, &self.spec_context())? {
+                Spec::Clipboard => Spec::Clipboard,
+                _ => self.parse_spec(raw)?,
+            };
+            let spec = match spec {
                 Spec::Stdin => {
                     if spool.is_some() {
                         return Err(ApiError::InvalidArgument(
@@ -1307,11 +1319,6 @@ impl Service {
                     let file = self.spool_stdin()?;
                     *spool = Some(file.clone());
                     self.parse_spec(file.as_os_str())?
-                }
-                Spec::Clipboard => {
-                    return Err(ApiError::InvalidArgument(
-                        "clipboard:// cannot be opened in the GUI in this version".into(),
-                    ));
                 }
                 spec => spec,
             };
@@ -1371,10 +1378,30 @@ impl Service {
         Ok(())
     }
 
+    /// The IPC handler's path of an `OpenView` (D-101; additive): when a spec is `clipboard://`, the clipboard
+    /// is read **again** ([`Service::read_clipboard`], the GUI's own clipboard) and a failure is the error;
+    /// then [`Service::open_view_request`]. The handler answers an error `invalid_request`.
+    pub fn open_view_from_ipc(
+        &self,
+        kind: ViewKind,
+        specs: &[String],
+        options: &OpenOptions,
+    ) -> Result<ViewRequest, ApiError> {
+        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
+        if specs
+            .iter()
+            .any(|spec| Spec::parse(spec, &absolute).is_ok_and(|s| s == Spec::Clipboard))
+        {
+            self.read_clipboard()?;
+        }
+        self.open_view_request(kind, specs, options)
+    }
+
     /// Turns an `OpenView` into the service request of its view (additive; the GUI's inverse of
     /// [`GuiOpenRequest::for_text`] / [`GuiOpenRequest::for_folder`], D-50). The specs must be exactly two
-    /// canonical absolute specs (§4.4.3 rule 4: relative specs, `-` and `clipboard://` are `InvalidArgument`;
-    /// they are never resolved against the GUI's cwd). Text: format, encodings, rules file and patch,
+    /// canonical absolute specs or `clipboard://` (§4.4.3 rule 4: relative specs and `-` are `InvalidArgument`;
+    /// they are never resolved against the GUI's cwd; `clipboard://` is read by the caller through
+    /// [`Service::read_clipboard`] first, D-101). Text: format, encodings, rules file and patch,
     /// ignore-unimportant; the view options from `display`/`context_lines` (default: all). Folders: rules file,
     /// criteria, patch (the legacy `filters` switch, when given, replaces the patch's `name_filter`), text rules
     /// file and patch, ignore-unimportant; the display options from `display`/`folders`/`suppress_filters`
@@ -1394,13 +1421,11 @@ impl Service {
         };
         let absolute = SpecContext::absolute_only(self.env().platform.path_style());
         for spec in [left, right] {
-            match Spec::parse(spec, &absolute)? {
-                Spec::Stdin | Spec::Clipboard => {
-                    return Err(ApiError::InvalidArgument(format!(
-                        "`{spec}` cannot be opened over IPC"
-                    )));
-                }
-                _ => {}
+            // `clipboard://` is allowed (D-101): the GUI reads its own clipboard before it opens the view.
+            if Spec::parse(spec, &absolute)? == Spec::Stdin {
+                return Err(ApiError::InvalidArgument(format!(
+                    "`{spec}` cannot be opened over IPC"
+                )));
             }
         }
         let pair = Pair::new(OsString::from(left), OsString::from(right));

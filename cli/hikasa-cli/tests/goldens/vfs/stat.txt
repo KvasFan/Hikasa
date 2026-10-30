@@ -1,2 +1,2 @@
 -rw-r--r-- 6 2026-10-19T13:12:00Z a.txt
-capabilities: read write list seek mtime ctime unix_mode unix_owner symlinks local_path case_sensitive
+capabilities: read write list seek mtime ctime set_times unix_mode unix_owner symlinks local_path case_sensitive mkdir remove rename set_attrs trash create_symlinks

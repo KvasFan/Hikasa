@@ -1590,3 +1590,49 @@ fn ipc_handler_loads_sessions_and_workspaces() {
     );
     assert!(matches!(&missing, Response::Error { code, .. } if code == "not_found"));
 }
+
+/// M2 W3 (D-101, A3.10): an `OpenView` with `clipboard://` makes the handler read the GUI's own (injected)
+/// clipboard before it opens the view; no clipboard is answered `invalid_request`.
+#[test]
+fn the_handler_reads_its_own_clipboard_for_clipboard_specs() {
+    use hikasa_session::clipboard::FixedClipboard;
+    use hikasa_session::ipc::{IpcErrorCode, IpcHandler};
+    let fixed = Arc::new(FixedClipboard::text("alpha\n"));
+    let provider = Arc::clone(&fixed);
+    let world = World::with_init(move |init| init.clipboard = provider);
+    let (left, _) = text_pair(&world);
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    let open = || Request::OpenView {
+        kind: ViewKind::TextCompare,
+        specs: vec!["clipboard://".to_owned(), left.display().to_string()],
+        options: OpenOptions::default(),
+        wait: false,
+    };
+    let response = handler.handle(open(), None);
+    assert!(
+        matches!(response, Response::ViewOpened { .. }),
+        "{response:?}"
+    );
+    assert_eq!(fixed.reads(), 1);
+
+    let world = World::with_init(|init| {
+        init.clipboard = Arc::new(FixedClipboard::unavailable("headless"));
+    });
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    match handler.handle(open(), None) {
+        Response::Error { code, message } => {
+            assert_eq!(code, IpcErrorCode::InvalidRequest.as_str());
+            assert!(message.contains("no clipboard"), "{message}");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+    assert!(world.shared.is_empty());
+}

@@ -151,8 +151,17 @@ trait Vfs {
     fn list(&self, dir:&Spec, cancel:&Cancel) -> Result<Box<dyn Iterator<Item=Result<Entry>>>>;
     fn open_read(&self, spec:&Spec) -> Result<Box<dyn ReadSeek>>;   // streaming
     fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn Write>>;
-    fn mkdir / remove / rename / copy_within / set_times / set_attrs / set_mode ...
     fn capabilities(&self) -> Caps; // timestamps writable? attrs? unix mode? recycle bin? locks? crc provided?
+    // M2 W3 (D-92): single-item mutating primitives, each behind a capability, default "unsupported";
+    // they never follow the final link (D-94)
+    fn create_dir(&self, spec:&Spec, parents:bool) -> Result<bool>;
+    fn remove(&self, spec:&Spec) -> Result<()>;                 // file, link or empty folder
+    fn rename(&self, from:&Spec, to:&Spec, replace:bool) -> Result<()>;
+    fn set_times(&self, spec:&Spec, times:&SetTimes) -> Result<()>;
+    fn set_attrs(&self, spec:&Spec, change:&AttrChange) -> Result<()>;
+    fn create_symlink(&self, spec:&Spec, target:&OsStr, target_is_dir:bool) -> Result<()>;
+    fn move_to_trash(&self, spec:&Spec) -> Result<()>;           // never a permanent delete
+    fn copy_file_fast(&self, from:&Spec, to:&Spec, ..) -> Result<Option<u64>>;  // optional fast path
 }
 struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttrs|UnixMode, owner, group, link_target, crc32: Option<u32>, version: Option<VersionInfo> }
 ```
@@ -161,7 +170,8 @@ struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttr
   gracefully (e.g. "touch" greyed out when timestamps are read-only).
 - **ARCH-031** (P0): Copy between back-ends is implemented generically (stream from
   source `open_read` to target `open_write`, then apply times/attrs if supported),
-  with a fast path for local→local.
+  with a fast path for local→local. *M2 W3:* implemented once in `hikasa_vfs::ops` over the
+  primitives (plan, then execute with per-item results; copy, move, remove/trash, mkdir, touch).
 
 ### 3.3 Session model (hikasa-session)
 

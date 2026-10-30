@@ -45,7 +45,7 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 | `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | *M2 W2 (D-85).* `show` warns `session_missing` for a tab whose session no longer exists. |
 | `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|enable\|disable\|move\|restore\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). The write forms are M2 W1 (§4, `10-file-formats.md` §1.1). |
 | `hikasa profile (list\|show\|new\|edit\|delete\|test) …` | `hikasa-session` + `hikasa-vfs` | Secrets prompted interactively or read from `--password-stdin`. |
-| `hikasa vfs (ls\|stat\|cat\|cp\|mv\|rm\|mkdir\|touch) <spec>…` | `hikasa-vfs` | Generic access to any back-end (archives, remote, snapshots). |
+| `hikasa vfs (ls\|stat\|cat\|cp\|mv\|rm\|mkdir\|touch) <spec>…` | `hikasa-vfs` | Generic access to any back-end (archives, remote, snapshots). *M2 W3 (D-102):* `cp`, `mv`, `rm`, `mkdir`, `touch` over the generic plan/execute layer (`hikasa_vfs::ops`); `--dry-run` prints the plan, `rm` needs `--yes`; see §4. |
 | `hikasa settings (get\|set\|unset\|list\|export\|import\|restore-defaults)` | `hikasa-session` | Every settings file, keys `<file>.<path>` (D-73). `get`/`set`/`unset`/`list`/`restore-defaults` are M2 W1 (§4). *M2 W2 (D-86, D-87):* `export -o <file.hikasa-pkg> [--category <cat>…] [--item <cat>:<name>…]`; `import <file> [--category] [--item] [--delete-existing sessions\|formats\|workspaces] [--force] (--dry-run \| --yes \| --silent)` validates every entry before writing anything and prints the plan (`delete`, `add`/`replace`/`skip_locked`, a summary per category); `restore-defaults --category <cat>… [--delete-sessions [--force]] [--delete-workspaces]` restores factory defaults by category. A locked named session is neither replaced nor deleted by either command unless `--force` (plan action `skip_locked`, warning `session_locked`, D-91). |
 | `hikasa gui …` | IPC client | See §1.1. |
 | `hikasa completions <shell>`, `hikasa help [topic]`, `hikasa version` | | |
@@ -68,8 +68,11 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   `--stdin-name`, else `stdin.txt`) and sends that absolute path; with `--wait` the file is
   deleted after the view closes. If the waiting CLI is interrupted (Ctrl-C, a signal), the
   spooled file and its numbered folder stay in `<cache>/stdin/` and may be deleted by hand
-  (the CLI installs no signal handler). `clipboard://` is refused by `gui open` and `--gui`
-  (exit 100): specs sent over IPC must be absolute and there is no payload transfer.
+  (the CLI installs no signal handler). *M2 W3 (D-101, revises D-49):* `gui open clipboard://`
+  and `--gui` with `clipboard://` send `clipboard://` verbatim; the GUI reads **its own**
+  clipboard when it opens the view (the CLI never reads it, so it may run headless); no or an
+  empty clipboard in the GUI is answered `invalid_request` (exit 100). Rules files may still not
+  be `-` or `clipboard://`, and sessions never store either.
   `--gui` on `text compare` and `folder compare` never compares locally: it sends the same
   specs, rules files, rule flags and view options (`--display`, `--context`, `--folders`,
   `--suppress-filters`, `--expand-all`) to the GUI, after checking every word locally (a
@@ -329,7 +332,8 @@ M1 implements the subcommands below in the `hikasa` binary. Every subcommand is 
 adapter over the session service: vocabulary words (`--display`, `--criteria`,
 `--unimportant`, `--report`, …) are parsed by the core crates, so the CLI, scripts and the
 GUI read the same words. Other rows of the table in §1 (sync, merge, patch, table, hex,
-picture, script, session, profile, settings, `vfs cp`/`mv`/…) come in later milestones.
+picture, script, session, profile, settings, `vfs cp`/`mv`/…) come in later milestones (M2 adds
+the `settings`, `session`, `workspace` and `vfs cp`/`mv`/`rm`/`mkdir`/`touch` rows below).
 
 **Global flags** (accepted before or after the subcommand):
 
@@ -358,6 +362,7 @@ values are a usage error (exit 100), wherever they stand.
 | `format new <id>` / `edit <id>` / `delete <id>` / `import <path>` / `export <id\|name>` / `enable <id>` / `disable <id>` / `move <id>` / `restore [<id>…]` | *M2 W1 (D-75):* `new`: `--from <id\|name>`, `--name <text>`, `--mask <mask>`, `--kind <kind>`; `edit`: `--from-file <path>` \| `--set <key=value>`…; `import`: `--replace`; `export`: `-o`/`--output <path>`; `move`: one of `--up`, `--down`, `--top`, `--bottom`, `--before <id>`, `--after <id>`; `restore`: `<id>`… \| `--all`, and `--dry-run` \| `--yes`. They write only the files they change (`10-file-formats.md` §1.1) |
 | `settings get <key>` / `set <key> <value>` / `unset <key>` / `list [<key>]` / `restore-defaults` | *M2 W1 (D-71, D-73, D-77):* `set`: `--force` (overwrite a file changed since it was read); `list`: `--changed`; `restore-defaults`: `--all` \| `--file <file>`…, and `--dry-run` \| `--yes`. A key is `<file>.<path>`: the file is `options`, `state`, `commands`, `theme`, `themes.<scheme>`, `filters`, `openwith` or `archives`; the path is the TOML key path, a segment that is not a plain name in double quotes, an array position as a number (`openwith.app.0.command`). A key naming a table gives the whole table (`get`, `list`); `set` takes a leaf or a whole array. The value is TOML; for text keys (strings, paths, masks, colours, shortcuts, enumerations) text that is not a TOML string is taken as it is. These commands read `options.toml` leniently (a bad value is the warning `invalid_config_value`), every other command refuses it (`03-sessions-settings-profiles.md` §5.2). An unknown key (also an array position past the end, or a command id that its view does not have) is `not_found` with up to five suggestions; a key the file holds but Hikasa does not know is listed as unknown |
 | `vfs ls <spec>` / `vfs stat <spec>` / `vfs cat <spec>` | `ls`, `stat`: `--follow-symlinks` |
+| `vfs cp <src>… <dst>` / `mv <src>… <dst>` / `rm <spec>…` / `mkdir <spec>…` / `touch <spec>…` | *M2 W3 (D-102, D-103):* `cp`: `-r`/`--recursive`, `--overwrite fail\|skip\|always\|newer` (default `fail`), `--symlinks copy\|skip`, `--follow-symlinks` (root arguments only), `--no-preserve`, `--preserve-created`, `-p`/`--parents`, `--dry-run`; `mv`: `--overwrite`, `-p`, `--dry-run` (folders move without `-r`); `rm`: `-r`, `--trash`, and `--dry-run` \| `--yes` (without either: exit 100 `invalid_input`, nothing touched; `--trash` too); `mkdir`: `-p`, `--dry-run`; `touch`: `--time <RFC 3339>` \| `--reference <spec>` (default: now), `--created <RFC 3339>` (needs creation times: Windows, macOS), `--create`, `--dry-run`. Targets: an existing folder receives the sources under their names, else one source gets the new name; several sources need a folder; a trailing separator means a folder (`-p` creates it). Each command plans every item first (whole trees), then executes the plan item by item, re-checking every target (`11-vfs-remote-archives.md` §1) |
 | `gui open <args…>` | the forms and switches of §2 (`--wait`, `--no-launch`, `--fv`, `--title1`…`--title4`, `--ro`, `--ro1`, `--ro2`, `--filters`, `--expandall`, `--format`, `--iu`, `--stdin-name`, `--help`); the arguments after `open` reach that parser unchanged, so `hikasa gui open -- -x a.c` opens the files `-x` and `a.c` exactly like `hikasa-gui -- -x a.c`; the global flags may also follow the specs (the same flag given twice with different values exits 100) |
 | `gui ping` / `gui list` / `gui close <id>` / `gui quit` | — |
 | `completions bash\|elvish\|fish\|powershell\|zsh` | — |
@@ -393,6 +398,7 @@ e.g. `quick --crc` on a file that cannot be read); warnings are `hikasa: warning
 | `format tokens` | `L<line>:<start>-<end>\t<element>\t<text>` |
 | `vfs ls` | `<kind><permissions or attributes> <size> <mtime> <name>[ -> <target>]` |
 | `vfs stat` | the `vfs ls` line, then `capabilities: …` |
+| `vfs cp`, `mv`, `rm`, `mkdir`, `touch` | one line per plan item: `mkdir <target>`, `exists <target>` (a kept folder), `copy <source> -> <target>`, `replace <source> -> <target>`, `link …`, `rename …`, `move …`, `remove <target>`, `rmdir <target>`, `trash <target>`, `touch <target>`, `create <target>`, `skip (<reason>) <target>`; after execution `failed <word> <target>: <message>` and `not run <word> <target>`; then `<verb> <done> of <planned> items (<skipped> skipped, <failed> failed)` (`copied`, `moved`, `removed`, `created`, `touched`), for a dry run `would <copy\|move\|remove\|create\|touch> <planned> items`, and `cancelled` after a cancelled run. Exit 0, or 100 when an item failed |
 | `gui list` | `<view>\t<kind>\t<title>\t<spec>…` |
 | `gui ping` | `<server>\t<protocol version>` |
 | `settings get` | the TOML value (`3`, `"dark"`, `["a"]`); a table as TOML; `(not set)` for an optional key without a value |
@@ -418,7 +424,12 @@ title}]}`), appended last to the `schemas` of `hikasa version --json`, then (W1)
 conflicts: [{view, shortcut, commands}]}`), `hikasa.settings_restore.v1` (`{dry_run, files:
 [{file, path, existed, deleted}]}`), `hikasa.format_write.v1` (`{action, id, written, removed}`),
 `hikasa.format_export.v1` (`{id, path, toml}`) and `hikasa.format_restore.v1` (`{dry_run, ids,
-removed}`). TOML values appear as JSON values (a table as an object, a datetime as a string;
+removed}`), then (W2) the session, workspace and settings-package schemas, then (W3)
+`hikasa.vfs_op.v1` (`{op, dry_run, cancelled, items: [{action, kind, source, target, size, replaces,
+status, reason, error}], summary: {planned, done, skipped, failed, bytes}}`; failed items keep
+`ok: true`, `error: null` and exit 100, as `hikasa.settings_import.v1`); 35 schemas in all.
+`hikasa.vfs_stat.v1` lists the capabilities of M2 W3 too (`mkdir`, `remove`, `rename`,
+`set_attrs`, `trash`, `create_symlinks`, `set_created`). TOML values appear as JSON values (a table as an object, a datetime as a string;
 `null` for an optional key without a value or a key without a default).
 `warnings` start with the warnings of the configuration (unknown `options.toml` sections,
 skipped user formats), which human mode prints once on stderr; `version` and `completions`
@@ -432,7 +443,10 @@ carries the content as base64 (D-32).
 **Environment.** `NO_COLOR` (no colours), `HIKASA_IPC_ENDPOINT` (the IPC socket or pipe
 name instead of the per-user endpoint; tests) and `HIKASA_GUI_EXE` (the GUI executable to
 start instead of `hikasa-gui` next to `hikasa` or on `PATH`, where a candidate without an
-execute bit is skipped; a relative path is taken relative to the current folder; tests).
+execute bit is skipped; a relative path is taken relative to the current folder; tests) and,
+M2 W3, `HIKASA_CLIPBOARD_FILE` (a file whose text stands in for the clipboard of `clipboard://`:
+scripts, headless machines and tests; a missing file means "no clipboard", an empty one an
+empty clipboard).
 No usable GUI executable — none found, or one that cannot be started (not executable, a
 missing interpreter) — exits 103 with a message naming it.
 
