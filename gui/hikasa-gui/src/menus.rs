@@ -10,10 +10,17 @@
 //! `Favorites` and `Toggles` make the View ▸ Display Filter submenu.
 
 use hikasa_session::commands::EffectiveCommand;
+use hikasa_session::sessions::{SessionName, SessionType};
 use hikasa_session::settings::commands::DisplayFilterMode;
 
 use crate::commands::{CommandId, CommandTables, Ctx, Group, Scope, lookup};
 use crate::window::{CommandArg, Invocation, WindowId};
+
+/// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
+pub const OPENABLE_TYPES: [(SessionType, &str); 2] = [
+    (SessionType::FolderCompare, "Folder Compare"),
+    (SessionType::TextCompare, "Text Compare"),
+];
 
 /// The menus of the menu bar, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -123,6 +130,8 @@ pub struct MenuContext<'a> {
     pub ctx: Ctx,
     /// The check state of a command in the active view (`None`: not checkable).
     pub checked: &'a dyn Fn(CommandId) -> Option<bool>,
+    /// The saved workspaces (`WorkspaceLoadList`).
+    pub workspaces: &'a [String],
 }
 
 impl MenuContext<'_> {
@@ -154,6 +163,55 @@ impl MenuContext<'_> {
         }
     }
 
+    /// The item of a menu entry: the dynamic commands of the Session menu are submenus (§1.4.3).
+    fn entry_item(&self, id: CommandId) -> MenuItem {
+        let plain = |invocation: Invocation, caption: String| MenuItem::Command {
+            invocation,
+            caption,
+            shortcut: None,
+            check: Check::None,
+            enabled: !self.ctx.dialog_open,
+            description: String::new(),
+        };
+        match id {
+            CommandId::SessionNewList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: OPENABLE_TYPES
+                    .iter()
+                    .map(|(kind, caption)| {
+                        plain(
+                            Invocation::with(id, CommandArg::SessionType(*kind)),
+                            (*caption).to_owned(),
+                        )
+                    })
+                    .collect(),
+            },
+            CommandId::WorkspaceLoadList => {
+                let mut items: Vec<MenuItem> = self
+                    .workspaces
+                    .iter()
+                    .filter_map(|name| {
+                        let name = SessionName::parse(name).ok()?;
+                        let caption = name.to_string();
+                        Some(plain(
+                            Invocation::with(id, CommandArg::Workspace(name)),
+                            caption,
+                        ))
+                    })
+                    .collect();
+                if !items.is_empty() {
+                    items.push(MenuItem::Separator);
+                }
+                items.push(self.item(CommandId::WorkspaceManager, None));
+                MenuItem::Submenu {
+                    caption: self.tables.caption(self.scope, id),
+                    items,
+                }
+            }
+            id => self.item(id, None),
+        }
+    }
+
     /// The visible entries of `menu` in the active view, as (section, id).
     fn entries(&self, menu: &str) -> Vec<(&'static str, CommandId)> {
         let table = self.tables.view(self.scope);
@@ -176,7 +234,7 @@ fn grouped(ctx: &MenuContext<'_>, entries: &[(&'static str, CommandId)]) -> Vec<
             items.push(MenuItem::Separator);
         }
         last = Some(section);
-        items.push(ctx.item(*id, None));
+        items.push(ctx.entry_item(*id));
     }
     items
 }
@@ -295,6 +353,24 @@ pub fn tab_menu(ctx: &MenuContext<'_>, tab: usize, others: &[(WindowId, String)]
     items
 }
 
+/// The context menu of the sessions tree (D-110, SES-031): the commands of `Area::SessionTree`, in catalogue
+/// order, those available for the selection.
+pub fn tree_menu(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    ctx.tables
+        .view(Scope::Home)
+        .entries
+        .iter()
+        .filter_map(|e| CommandId::from_name(e.id()))
+        .filter(|id| {
+            lookup(Scope::Home, *id).is_some_and(|r| {
+                r.areas.contains(&crate::commands::Area::SessionTree)
+                    && r.enabled_when.holds(&ctx.ctx)
+            })
+        })
+        .map(|id| ctx.item(id, None))
+        .collect()
+}
+
 /// One element of a toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolItem {
@@ -304,6 +380,8 @@ pub enum ToolItem {
     DisplayFilter,
     /// The folder mode combo (Folder Compare).
     FolderMode,
+    /// `SessionsCombo`: the named sessions of the view's type (W4b).
+    Sessions,
 }
 
 /// The toolbar of a view type: the visible `on_toolbar` entries with an icon (all of them with
@@ -333,6 +411,9 @@ pub fn toolbar_items(tables: &CommandTables, scope: Scope) -> Vec<ToolItem> {
     }
     if scope == Scope::Folder {
         items.push(ToolItem::FolderMode);
+    }
+    if lookup(scope, CommandId::SessionsCombo).is_some() {
+        items.push(ToolItem::Sessions);
     }
     items
 }

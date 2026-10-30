@@ -44,6 +44,9 @@ topics!(
     "help",
     "main-window",
     "view-home",
+    "dialog-session-settings",
+    "dialog-save-session",
+    "dialog-workspaces",
     "view-folder-compare",
     "view-text-compare",
 );

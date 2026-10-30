@@ -22,7 +22,7 @@ id = "SessionNewList"
 menu = "Session"
 caption = "New Session"
 description = "Opens empty session of picked type in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TabNew"
@@ -45,28 +45,28 @@ menu = "Session"
 caption = "Open Session"
 shortcut = "Shift+Ctrl+O"
 description = "Opens Home in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "WorkspaceLoadList"
 menu = "Session"
 caption = "Load Workspace"
 description = "Restores picked saved view configuration."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "WorkspaceManager"
 menu = "Session"
 caption = "Manage Workspaces..."
 description = "Manages the saved view configurations that can be restored."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "WorkspaceSaveAs"
 menu = "Session"
 caption = "Save Workspace As..."
 description = "Stores current view configuration."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CloseTab"
@@ -1803,23 +1803,105 @@ status = "implemented"
 [[section.command]]
 id = "Find"
 menu = "Search"
+caption = "Find..."
 shortcut = "Ctrl+F"
-description = "Finds search string."
-status = "planned"
+description = "Filters the sessions tree by name, folder or description."
+status = "implemented"
 
 [[section.command]]
 id = "ShowManage"
 menu = "View"
 caption = "Show Session Management"
 description = "Shows or hides management panel."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MaximizeManage"
 menu = "View"
 caption = "Maximize Session Management"
 description = "Maximizes or restores management panel."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "TreeOpen"
+caption = "Open"
+shortcut = "Enter"
+description = "Opens the selected session."
+status = "implemented"
+
+[[section.command]]
+id = "TreeOpenAsNew"
+caption = "Open as New"
+description = "Opens the selected session as a new unnamed one."
+status = "implemented"
+
+[[section.command]]
+id = "TreeOpenAll"
+caption = "Open All"
+description = "Opens every session directly in the selected folder."
+status = "implemented"
+
+[[section.command]]
+id = "TreeNewSession"
+caption = "New Session..."
+description = "Creates a session in the selected folder."
+status = "implemented"
+
+[[section.command]]
+id = "TreeNewFolder"
+caption = "New Folder..."
+description = "Creates a folder in the selected folder."
+status = "implemented"
+
+[[section.command]]
+id = "TreeClear"
+caption = "Clear"
+description = "Resets the selected session to the defaults of its type."
+status = "implemented"
+
+[[section.command]]
+id = "TreeDelete"
+caption = "Delete..."
+shortcut = "Del"
+description = "Deletes the selected session or folder."
+status = "implemented"
+
+[[section.command]]
+id = "TreeSaveAs"
+caption = "Save As..."
+description = "Saves a copy of the selected session under a new name."
+status = "implemented"
+
+[[section.command]]
+id = "TreeRename"
+caption = "Rename"
+shortcut = "F2"
+description = "Renames the selected session or folder."
+status = "implemented"
+
+[[section.command]]
+id = "TreeEdit"
+caption = "Session Settings..."
+description = "Edits the selected session or the defaults of a type."
+status = "implemented"
+
+[[section.command]]
+id = "TreeExpandAll"
+caption = "Expand All"
+description = "Opens every folder of the tree."
+status = "implemented"
+
+[[section.command]]
+id = "TreeCollapseAll"
+caption = "Collapse All"
+description = "Closes every folder of the tree."
+status = "implemented"
+
+[[section.command]]
+id = "TreeFavorite"
+caption = "Favorite"
+description = "Pins the selected session to the top of its folder."
+status = "implemented"
 
 [[section.command]]
 id = "ShowWeb"
@@ -2190,15 +2272,16 @@ help = "main-window"
 [[section.command]]
 id = "SessionHome"
 menu = "Session"
+caption = "Go to Home"
 shortcut = "Alt+Home"
 description = "Replaces current view with Home view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionsCombo"
 menu = "Session"
 description = "Focuses on dropdown button listing sessions that can be opened in this view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionSave"
@@ -2206,28 +2289,28 @@ menu = "Session"
 caption = "Save Session"
 shortcut = "Shift+Ctrl+S"
 description = "Saves this session."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionSaveAs"
 menu = "Session"
 caption = "Save Session As..."
 description = "Saves this session with new name."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionEdit"
 menu = "Session"
 caption = "Session Settings..."
 description = "Edits current session settings."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionLocked"
 menu = "Session"
 caption = "Locked"
 description = "Locks or unlocks current session."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionClear"

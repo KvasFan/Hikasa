@@ -307,3 +307,42 @@ fn gui_open_wait_control_commands_and_second_instance() {
     w.wait_running(false);
     assert_eq!(code(&w.run(&["gui", "ping"])), 100);
 }
+
+/// A4.15 (D-127): `hikasa-gui <session>` and `hikasa-gui <workspace>` open them; with a GUI running a second
+/// process forwards them and exits 0.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn the_gui_command_line_opens_sessions_and_workspaces() {
+    if !ready() {
+        return;
+    }
+    let world = World::new();
+    let left = world.file("a.txt", "one\n");
+    let right = world.file("b.txt", "two\n");
+    let (l, r) = (left.display().to_string(), right.display().to_string());
+    let out = world.run(&[
+        "session",
+        "new",
+        "work/api",
+        "--type",
+        "text-compare",
+        "--left",
+        &l,
+        "--right",
+        &r,
+    ]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    world.file(
+        "config/workspaces/w.toml",
+        "schema_version = 1\n[[window]]\n[[window.tab]]\nsession = \"work/api\"\n",
+    );
+    let mut gui = world.gui(&["work/api"]).spawn().expect("spawn");
+    world.wait_running(true);
+    let views = world.wait_for_views(1);
+    assert_eq!(views[0]["title"], "work/api");
+    // A second process forwards the workspace and exits 0.
+    let mut second = world.gui(&["w"]).spawn().expect("spawn");
+    assert_eq!(wait_child(&mut second, Duration::from_secs(30)), 0);
+    assert_eq!(code(&world.run(&["gui", "quit"])), 0);
+    assert_eq!(wait_child(&mut gui, Duration::from_secs(30)), 0);
+}

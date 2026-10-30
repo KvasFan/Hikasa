@@ -21,6 +21,8 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 ## The window
 
 - [The main window](topic:main-window): menus, tabs, toolbar, shortcuts, help.
-- [The Home view](topic:view-home).
+- [The Home view](topic:view-home): sessions tree, search, management panel.
+- [Session Settings](topic:dialog-session-settings), [Save Session As](topic:dialog-save-session) and
+  [Workspaces](topic:dialog-workspaces).
 - [The Folder Compare view](topic:view-folder-compare).
 - [The Text Compare view](topic:view-text-compare).

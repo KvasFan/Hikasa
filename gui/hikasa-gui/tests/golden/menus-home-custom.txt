@@ -1,11 +1,24 @@
 Session
+  > New Session
+    Folder Compare
+    Text Compare
   New Tab	Ctrl+T
   New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
   ---
   Compare	Enter (in a path field) (disabled)
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
+Search
+  Find...	Ctrl+F
+View
+  [x] Show Session Management
+  [ ] Maximize Session Management
 Help
   Contents
   Context Sensitive Help	F1

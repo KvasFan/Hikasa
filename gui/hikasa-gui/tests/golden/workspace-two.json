@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "window": [
+    {
+      "active_tab": 1,
+      "height": 700,
+      "tab": [
+        {
+          "session": "a",
+          "view": {
+            "font_size": 13.0,
+            "thumbnail": true,
+            "toolbar": true
+          }
+        },
+        {
+          "inline": {
+            "display": {
+              "filter": {
+                "mode": "all"
+              },
+              "ignore_unimportant": false
+            },
+            "specs": {
+              "left": "<W>/work/left.c",
+              "right": "<W>/work/right.c"
+            },
+            "type": "text-compare",
+            "view": {
+              "font_size": 13.0,
+              "thumbnail": true,
+              "toolbar": true
+            }
+          },
+          "view": {
+            "font_size": 13.0,
+            "thumbnail": true,
+            "toolbar": true
+          }
+        }
+      ],
+      "width": 1000,
+      "x": 10,
+      "y": 20
+    },
+    {
+      "tab": [
+        {
+          "inline": {
+            "display": {
+              "filter": {
+                "mode": "all"
+              },
+              "ignore_unimportant": false
+            },
+            "specs": {
+              "left": "<W>/work/left.c",
+              "right": "<W>/work/right.c"
+            },
+            "type": "text-compare",
+            "view": {
+              "font_size": 13.0,
+              "thumbnail": true,
+              "toolbar": true
+            }
+          },
+          "view": {
+            "font_size": 13.0,
+            "thumbnail": true,
+            "toolbar": true
+          }
+        }
+      ]
+    }
+  ]
+}

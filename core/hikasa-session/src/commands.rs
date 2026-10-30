@@ -587,7 +587,7 @@ status = "implemented"
             "the text view's own entry is implemented"
         );
         // Planned entries are in the table, marked.
-        let save = text.get("SessionSave").expect("SessionSave");
+        let save = text.get("SessionClear").expect("SessionClear");
         assert!(!save.implemented());
         // Ids are unique; the order is view_sections then catalogue order.
         let ids: Vec<&str> = text.entries.iter().map(|e| e.id()).collect();
@@ -668,7 +668,7 @@ status = "implemented"
         let enter = home.with_shortcut(&Shortcut::parse("Enter").unwrap());
         assert_eq!(
             enter.iter().map(|e| e.id()).collect::<Vec<_>>(),
-            vec!["HomeCompare"]
+            vec!["HomeCompare", "TreeOpen"]
         );
         assert!(effective(cat, "nowhere", &none).entries.is_empty());
     }

@@ -1,5 +1,6 @@
-//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder|two_windows`, see `main`;
-//! `two_windows` is the M2 W4a gate of §1.4.17: the text scroll with a second window holding Home): the window
+//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder|two_windows|workspace`, see
+//! `main`; `two_windows` is the M2 W4a gate of §1.4.17: the text scroll with a second window holding Home;
+//! `workspace` is G12: the first screen of a restored workspace, its tabs pending): the window
 //! opens the command line's view and drives it frame by frame — scrolling the text panes through the whole
 //! comparison, or scrolling the folder tree while the scan runs — records the first-screen marks, the frame
 //! times (the UI thread's work per frame, the frame intervals and eframe's CPU time per frame) and the memory
@@ -24,6 +25,8 @@ pub enum BenchKind {
     Folder,
     /// The text scroll with a second window (Home) open (M2 W4a, D-132).
     TwoWindows,
+    /// A restored workspace: the first screen of its active tab (M2 W4b, G12).
+    Workspace,
 }
 
 /// One scroll phase of the text benchmark.
@@ -70,6 +73,8 @@ const PHASES: &[PhaseSpec] = &[
 const WARM_UP_FRAMES: u32 = 30;
 /// The same for `two_windows`, whose second window opens at the first screen.
 const TWO_WINDOWS_WARM_UP_FRAMES: u32 = 240;
+/// `workspace`: idle frames drawn after the coloured screen with no job left, before the memory is sampled.
+const WORKSPACE_TAIL_FRAMES: u32 = 60;
 /// Folder benchmark: rows the tree scrolls per frame.
 const FOLDER_ROWS_PER_FRAME: f64 = 2.0;
 /// Folder benchmark: how long frames keep being drawn after the scan.
@@ -136,6 +141,13 @@ pub struct BenchState {
     reported: bool,
     frames: u64,
     first_frame_work: Option<f64>,
+    /// The memory when the first screen came up.
+    first_screen_memory: Value,
+    /// `workspace`: the memory after the coloured screen, every job done and a few idle frames (G12 compares it:
+    /// at the first screen the comparison is still running, so a sample there measures its progress).
+    settled_memory: Value,
+    /// `workspace`: idle frames since the coloured screen.
+    tail: u32,
     /// `two_windows`: the second window was asked for.
     second_window: bool,
     /// `two_windows`: the second window opens at the coloured screen instead of the first screen
@@ -167,6 +179,9 @@ impl BenchState {
             reported: false,
             frames: 0,
             first_frame_work: None,
+            first_screen_memory: Value::Null,
+            settled_memory: Value::Null,
+            tail: 0,
             second_window: false,
             second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
                 .is_some_and(|v| v == "coloured"),
@@ -206,6 +221,7 @@ impl BenchState {
         self.first_frame.get_or_insert(now);
         if self.drawn_pending[0].take().is_some() && self.first_screen.is_none() {
             self.first_screen = Some(now);
+            self.first_screen_memory = memory();
         }
         if self.drawn_pending[1].take().is_some() && self.ready_screen.is_none() {
             self.ready_screen = Some(now);
@@ -230,11 +246,28 @@ impl BenchState {
         texts: &mut HashMap<ViewId, TextUi>,
         folders: &mut HashMap<ViewId, FolderUi>,
     ) {
+        if self.kind == BenchKind::Workspace && self.view.is_none() {
+            // The restored window's active tab, once it is a live view.
+            if let Some(tab) = core.active_tab(core.root())
+                && matches!(tab.model(), Some(ViewModel::Text(_)))
+            {
+                self.set_view(tab.id);
+            }
+        }
         let Some(view) = self.view else {
             return;
         };
         match self.kind {
             BenchKind::Scroll | BenchKind::TwoWindows => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Workspace => {
+                if self.ready_screen.is_some() && !core.busy() {
+                    self.tail += 1;
+                    if self.tail >= WORKSPACE_TAIL_FRAMES {
+                        self.settled_memory = memory();
+                        self.script = Script::Done;
+                    }
+                }
+            }
             BenchKind::Folder => {
                 let busy = core
                     .tab(view)
@@ -439,12 +472,18 @@ impl BenchState {
                 BenchKind::Scroll => "text_scroll",
                 BenchKind::Folder => "folder_scan",
                 BenchKind::TwoWindows => "two_windows",
+                BenchKind::Workspace => "workspace_restore",
             },
             "windows": core.windows().len(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
                 if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
             ),
             "memory": memory(),
+            "memory_at_first_screen": self.first_screen_memory.clone(),
+            "memory_settled": self.settled_memory.clone(),
+            "tabs": core.windows().iter().map(|w| w.tabs.len()).sum::<usize>(),
+            "pending_tabs": core.pending_tabs(),
+            "views_built": core.views_built(),
             "renderer": self.renderer.clone(),
             "window": self.window.clone(),
             "first_frame_ms_from_process_start": self.since_start(self.first_frame),
@@ -454,7 +493,7 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
-                BenchKind::Scroll | BenchKind::TwoWindows => {
+                BenchKind::Scroll | BenchKind::TwoWindows | BenchKind::Workspace => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({

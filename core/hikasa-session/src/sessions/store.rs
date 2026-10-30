@@ -132,6 +132,11 @@ impl SessionStore {
         }
     }
 
+    /// `max_auto_saved_sessions` of this store.
+    pub fn max_auto_saved(&self) -> u32 {
+        self.max_auto_saved
+    }
+
     /// `<config>/sessions`.
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -453,6 +458,19 @@ impl SessionStore {
         Ok(dir)
     }
 
+    /// The named sessions below a folder, at any depth (`not_found` when it does not exist; unreadable files are
+    /// skipped as in [`SessionStore::list`]).
+    pub fn sessions_in_folder(&self, folder: &[SessionName]) -> Result<Vec<NamedEntry>, ApiError> {
+        let mut found = self
+            .resolve_folder(folder)
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| ApiError::NotFound(format!("no session folder `{}`", join(folder))))?;
+        let mut tree = SessionTree::default();
+        self.walk(&mut found, &mut tree);
+        tree.named.sort_by_key(|e| e.reference.to_string());
+        Ok(tree.named)
+    }
+
     /// Renames (or moves) a session folder.
     pub fn rename_folder(
         &self,
@@ -624,6 +642,16 @@ impl SessionStore {
         Ok(Some(id))
     }
 
+    /// Deletes an auto-saved file (a missing one is no error); returns its path.
+    pub fn delete_autosaved(&self, id: &AutoId) -> Result<PathBuf, ApiError> {
+        let path = self.autosaved_path(id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
+            Err(e) => Err(SessionError::io(&path, e).into()),
+        }
+    }
+
     /// Keeps the newest `max` auto-saved sessions by `saved_at`, then by name (a file without a readable time
     /// counts as the oldest); returns the removed ids. Named sessions are never touched.
     pub fn prune_autosaved(&self, max: u32) -> Result<Vec<AutoId>, ApiError> {
@@ -664,7 +692,7 @@ impl SessionStore {
 }
 
 /// The label of an auto-saved session: its description, or the names of its inputs.
-pub(crate) fn label(session: &Session) -> String {
+pub fn label(session: &Session) -> String {
     if !session.description.is_empty() {
         return session.description.clone();
     }

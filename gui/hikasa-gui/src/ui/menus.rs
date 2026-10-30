@@ -147,6 +147,10 @@ pub enum ToolbarAction {
 
 /// Everything a toolbar needs.
 pub struct ToolbarCtx<'a> {
+    /// The named sessions of the view's type (`SessionsCombo`).
+    pub sessions: &'a [String],
+    /// `SessionsCombo` asked to open the drop-down this frame.
+    pub open_sessions: bool,
     /// The command tables.
     pub tables: &'a CommandTables,
     /// The view type.
@@ -312,6 +316,28 @@ pub fn toolbar(
                             if icon_button(ui, t, *id, large, hover, status_hint) {
                                 out.push(ToolbarAction::Run(Invocation::new(*id)));
                             }
+                        }
+                    }
+                    ToolItem::Sessions => {
+                        ui.separator();
+                        let combo = egui::ComboBox::from_id_salt("hk-sessions")
+                            .selected_text("Sessions")
+                            .width(120.0);
+                        let response = combo.show_ui(ui, |ui| {
+                            for name in t.sessions {
+                                if ui.selectable_label(false, name).clicked()
+                                    && let Ok(reference) =
+                                        hikasa_session::sessions::SessionRef::parse(name)
+                                {
+                                    out.push(ToolbarAction::Run(Invocation::with(
+                                        CommandId::SessionsCombo,
+                                        crate::window::CommandArg::Session(reference),
+                                    )));
+                                }
+                            }
+                        });
+                        if t.open_sessions {
+                            response.response.request_focus();
                         }
                     }
                     ToolItem::FolderMode => {

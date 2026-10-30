@@ -1,14 +1,14 @@
 //! The GUI's `IpcHandler` (ARCH-090…092, contract §4.4.3 rule 5): it never blocks; `OpenView` is mapped to
 //! the view's request with `Service::open_view_from_ipc` (which reads the GUI's own clipboard for a
 //! `clipboard://` spec first, M2 W3 D-101), registered (with its waiter) and posted to the UI
-//! thread; `LoadSession` and `LoadWorkspace` (M2 W2, D-89) take their views from `Service::session_view` and
-//! `Service::workspace_views` and open them the same way (a workspace first closes the open views, SES-040);
+//! thread; `LoadSession` reads the session and posts it, `LoadWorkspace` reads the workspace, registers its tabs
+//! and posts it (M2 W4b, D-125: the window runs the close actions and restores the tabs lazily, D-126);
 //! `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
 
 use std::sync::Arc;
 
 use hikasa_core::ErrorKind;
-use hikasa_session::api::{SessionView, ViewRequest};
+use hikasa_session::api::ViewRequest;
 use hikasa_session::ipc::{
     IpcErrorCode, IpcHandler, OpenOptions, PROTOCOL_VERSION, Request, Response, ServerInfo, ViewId,
     ViewInfo, ViewKind, ViewWaiter,
@@ -16,9 +16,10 @@ use hikasa_session::ipc::{
 use hikasa_session::sessions::{SessionName, SessionRef};
 use hikasa_session::{ApiError, HIKASA_VERSION, Service};
 
-use crate::app::UiMsg;
+use crate::app::{OpenedSession, UiMsg, load_named};
 use crate::mailbox::Mailbox;
 use crate::shared::{Shared, view_title};
+use crate::workspace::register_tabs;
 
 /// The handler of the GUI's IPC server.
 pub struct GuiHandler {
@@ -56,12 +57,12 @@ impl GuiHandler {
         view
     }
 
-    /// The view of a session (D-89 error codes).
-    fn session(&self, name: &str) -> Result<SessionView, Response> {
+    /// The session of `LoadSession` (D-89 error codes); its display is cleared, as for a script (SES-010).
+    fn session(&self, name: &str) -> Result<OpenedSession, Response> {
         let reference = SessionRef::parse(name).map_err(|e| error_response(&e))?;
-        self.service
-            .session_view(&reference)
-            .map_err(|e| error_response(&e))
+        let mut opened = load_named(&self.service, &reference).map_err(|e| error_response(&e))?;
+        opened.session = opened.session.for_script();
+        Ok(opened)
     }
 
     /// A handler posting to `mailbox`.
@@ -115,44 +116,45 @@ impl IpcHandler for GuiHandler {
                 }
             }
             Request::LoadSession { name, wait: _ } => match self.session(&name) {
-                Ok(v) => {
-                    let view = self.open(v.kind, v.specs, v.title, v.request, v.options, waiter);
+                Ok(opened) => {
+                    let view = self.shared.allocate();
+                    self.shared.register(
+                        ViewInfo {
+                            view,
+                            kind: opened.view.kind,
+                            title: opened.view.title.clone(),
+                            specs: opened.view.specs.clone(),
+                        },
+                        waiter,
+                    );
+                    self.mailbox.post(UiMsg::OpenSession {
+                        view,
+                        opened: Box::new(opened),
+                    });
                     Response::ViewOpened { view }
                 }
                 Err(response) => response,
             },
             Request::LoadWorkspace { name } => {
-                let views = SessionName::parse(&name)
-                    .and_then(|n| self.service.workspace_views(&n))
+                let load = SessionName::parse(&name)
+                    .and_then(|n| self.service.workspace_load(&n))
                     .map_err(|e| error_response(&e));
-                match views {
-                    Ok((views, warnings)) => {
-                        for warning in &warnings {
-                            tracing::warn!(target: "hikasa::gui", "{}: {}", warning.code, warning.message);
-                        }
-                        // Loading a workspace closes the open views (SES-040).
-                        for open in self.shared.list() {
-                            self.mailbox.post(UiMsg::Close { view: open.view });
-                        }
-                        let mut opened = Vec::new();
-                        for v in views {
-                            let specs = v.specs.clone();
-                            let view = self.open(
-                                v.kind,
-                                v.specs,
-                                v.title.clone(),
-                                v.request,
-                                v.options,
-                                None,
-                            );
-                            opened.push(ViewInfo {
-                                view,
-                                kind: v.kind,
-                                title: v.title,
-                                specs,
-                            });
-                        }
-                        Response::Views { views: opened }
+                match load {
+                    Ok(load) => {
+                        // The tabs are listed from now on (D-126); the window restores them lazily.
+                        let ids = register_tabs(&self.shared, &load);
+                        let wanted: Vec<ViewId> = ids.iter().flatten().flatten().copied().collect();
+                        let views = self
+                            .shared
+                            .list()
+                            .into_iter()
+                            .filter(|v| wanted.contains(&v.view))
+                            .collect();
+                        self.mailbox.post(UiMsg::LoadWorkspace {
+                            load: Box::new(load),
+                            ids,
+                        });
+                        Response::Views { views }
                     }
                     Err(response) => response,
                 }

@@ -2430,6 +2430,7 @@ fn adapter_violations(rel: &str, raw: &str) -> Vec<String> {
 /// The GUI's toolkit-free model files (§1.4.16 rule 4): `src/<name>` and every file below `src/options/`.
 const GUI_MODEL_FILES: &[&str] = &[
     "app.rs",
+    "app/flow.rs",
     "window.rs",
     "commands.rs",
     "menus.rs",

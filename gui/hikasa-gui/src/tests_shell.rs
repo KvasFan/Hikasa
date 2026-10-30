@@ -85,6 +85,7 @@ fn menus_text(app: &TestApp, w: WindowId) -> String {
         scope: app.0.scope(w),
         ctx: app.0.ctx(w),
         checked: &checked,
+        workspaces: &[],
     };
     render_text(&menu_bar(&mc))
 }
@@ -213,8 +214,8 @@ fn duplicate_tab_runs_its_own_view() {
     let root = app.root();
     // Home copies its fields.
     if let Some(ViewModel::Home(h)) = app.active_tab_mut().and_then(|t| t.model_mut()) {
-        h.left = "/a".into();
-        h.right = "/b".into();
+        h.panel.left = "/a".into();
+        h.panel.right = "/b".into();
     }
     app.0.execute(root, CommandId::TabDuplicate);
     let w = app.window(root).unwrap();
@@ -223,7 +224,10 @@ fn duplicate_tab_runs_its_own_view() {
     let Some(ViewModel::Home(copy)) = w.tabs[1].model() else {
         panic!("home")
     };
-    assert_eq!((copy.left.as_str(), copy.right.as_str()), ("/a", "/b"));
+    assert_eq!(
+        (copy.panel.left.as_str(), copy.panel.right.as_str()),
+        ("/a", "/b")
+    );
     assert_ne!(w.tabs[0].id, w.tabs[1].id);
     // A comparison: a second view with its own job, right of the source.
     let (l, r) = text_pair(&world);
@@ -619,6 +623,7 @@ fn tab_context_menu_entries() {
         scope: Scope::Home,
         ctx: app.0.ctx(root),
         checked: &checked,
+        workspaces: &[],
     };
     let text = render_text(&[crate::menus::Menu {
         title: crate::menus::MenuTitle::Session,
@@ -1115,7 +1120,7 @@ fn drops_fill_fields_open_comparisons_or_explain() {
     let root = app.root();
     let (l, r) = text_pair(&world);
     let home = |app: &TestApp| match app.active_tab().and_then(|t| t.model()) {
-        Some(ViewModel::Home(h)) => (h.left.clone(), h.right.clone()),
+        Some(ViewModel::Home(h)) => (h.panel.left.clone(), h.panel.right.clone()),
         _ => panic!("home"),
     };
     app.drop_paths(

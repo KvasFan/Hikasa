@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 
 use hikasa_session::ipc::ViewId;
-use hikasa_session::sessions::{AutoId, SessionName, SessionRef, SessionType};
+use hikasa_session::sessions::{
+    AutoId, OpaqueTable, Session, SessionName, SessionRef, SessionType,
+};
 use hikasa_session::settings::state::WindowState;
 
 use crate::commands::{CommandId, Scope};
@@ -16,6 +18,7 @@ use crate::home::HomeModel;
 use crate::notify::Notices;
 use crate::status::Message;
 use crate::text_view::TextViewModel;
+use crate::view_session::ViewSession;
 
 /// A window's id: allocated once, never reused in a process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -49,7 +52,7 @@ impl From<CommandId> for Invocation {
 }
 
 /// The argument of a command.
-#[allow(dead_code)] // variants for W4b/W4c (contract seams)
+#[allow(dead_code)] // `Page` is W4c's (contract seam)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandArg {
     /// A window (`TabMoveToWindow`).
@@ -73,7 +76,7 @@ pub enum CommandArg {
 /// A tab's view.
 pub enum ViewModel {
     /// Home.
-    Home(HomeModel),
+    Home(Box<HomeModel>),
     /// Folder Compare.
     Folder(Box<FolderViewModel>),
     /// Text Compare.
@@ -91,10 +94,40 @@ impl ViewModel {
     }
 }
 
-/// What a tab holds: a live view (W4b adds the pending tabs of a restored workspace, D-126).
+/// A restored tab that was not activated yet (D-126): no comparison runs for it, and its memory is this value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingTab {
+    /// The session type.
+    pub kind: SessionType,
+    /// The named session it refers to.
+    pub reference: Option<SessionRef>,
+    /// Its session (a named one as read when the workspace loaded).
+    pub session: Session,
+    /// The caption: the reference, else the description, else the input names.
+    pub caption: String,
+    /// The `view` table of the workspace tab.
+    pub view: OpaqueTable,
+    /// The inline table of the workspace tab (empty for a reference).
+    pub inline: OpaqueTable,
+    /// Its activation started: the view is being prepared.
+    pub starting: bool,
+}
+
+/// The command scope of a session type.
+pub fn scope_of(kind: SessionType) -> Scope {
+    match kind {
+        SessionType::FolderCompare => Scope::Folder,
+        SessionType::TextCompare => Scope::Text,
+        _ => Scope::Home,
+    }
+}
+
+/// What a tab holds: a live view, or the pending tab of a restored workspace (D-126).
 pub enum TabContent {
     /// A view.
     Live(ViewModel),
+    /// Not started yet.
+    Pending(Box<PendingTab>),
 }
 
 /// One tab.
@@ -107,6 +140,10 @@ pub struct Tab {
     pub message: Option<Message>,
     /// The view's toolbar is shown (`[layout.<view>] toolbar`, `ShowToolbar`).
     pub toolbar: bool,
+    /// The session of a comparison view (D-120).
+    pub session: Option<ViewSession>,
+    /// The caption of a view opened from a session (`None`: the view's own, the input names).
+    pub title: Option<String>,
 }
 
 impl Tab {
@@ -117,6 +154,20 @@ impl Tab {
             content: TabContent::Live(model),
             message: None,
             toolbar,
+            session: None,
+            title: None,
+        }
+    }
+
+    /// A pending tab.
+    pub fn pending(id: ViewId, pending: PendingTab, toolbar: bool) -> Tab {
+        Tab {
+            id,
+            content: TabContent::Pending(Box::new(pending)),
+            message: None,
+            toolbar,
+            session: None,
+            title: None,
         }
     }
 
@@ -124,6 +175,7 @@ impl Tab {
     pub fn model(&self) -> Option<&ViewModel> {
         match &self.content {
             TabContent::Live(m) => Some(m),
+            TabContent::Pending(_) => None,
         }
     }
 
@@ -131,26 +183,42 @@ impl Tab {
     pub fn model_mut(&mut self) -> Option<&mut ViewModel> {
         match &mut self.content {
             TabContent::Live(m) => Some(m),
+            TabContent::Pending(_) => None,
+        }
+    }
+
+    /// The pending tab.
+    pub fn pending_tab(&self) -> Option<&PendingTab> {
+        match &self.content {
+            TabContent::Pending(p) => Some(p),
+            TabContent::Live(_) => None,
         }
     }
 
     /// The command scope of the tab.
     pub fn scope(&self) -> Scope {
-        self.model().map_or(Scope::Home, ViewModel::scope)
+        match &self.content {
+            TabContent::Live(m) => m.scope(),
+            TabContent::Pending(p) => scope_of(p.kind),
+        }
     }
 
     /// Tab caption.
     pub fn caption(&self) -> String {
-        match self.model() {
-            Some(ViewModel::Home(_)) | None => "Home".into(),
-            Some(ViewModel::Folder(m)) => m.caption(),
-            Some(ViewModel::Text(m)) => m.caption(),
+        if let Some(title) = &self.title {
+            return title.clone();
+        }
+        match &self.content {
+            TabContent::Pending(p) => p.caption.clone(),
+            TabContent::Live(ViewModel::Home(_)) => "Home".into(),
+            TabContent::Live(ViewModel::Folder(m)) => m.caption(),
+            TabContent::Live(ViewModel::Text(m)) => m.caption(),
         }
     }
 
     /// True for an untouched Home tab (an open replaces it, M1).
     pub fn untouched_home(&self) -> bool {
-        matches!(self.model(), Some(ViewModel::Home(h)) if *h == HomeModel::default())
+        matches!(self.model(), Some(ViewModel::Home(h)) if h.untouched())
     }
 }
 
@@ -174,6 +242,8 @@ pub struct WindowModel {
     pub focused_seq: u64,
     /// The help topic of its help panel (`None`: hidden).
     pub help: Option<&'static str>,
+    /// `SessionsCombo` asks the UI to open the toolbar's sessions drop-down.
+    pub focus_sessions: bool,
 }
 
 impl WindowModel {
@@ -189,6 +259,7 @@ impl WindowModel {
             notices: Notices::default(),
             focused_seq,
             help: None,
+            focus_sessions: false,
         }
     }
 

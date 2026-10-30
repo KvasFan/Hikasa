@@ -31,6 +31,15 @@
 //!   < 381.5 MiB, UI frame work p95 < 8 ms and max < 16.7 ms. `two_windows_late` opens the second window once
 //!   the coloured screen is up instead (`HIKASA_PERF_SECOND_WINDOW=coloured`), same gate.
 //!
+//! * `workspace_restore` (M2 W4b, G12, D-132): a workspace of 10 tabs in one window (active: the session of the
+//!   `text_scroll` pair; then 5 sessions of 10,000-line pairs and 4 of 1,000-file trees) opened with
+//!   `hikasa-gui <workspace>`: first screen of the active tab < 1 s after the process start, no view built for the
+//!   9 pending tabs. The cost per pending tab comes from two more workspaces over the same files with a small
+//!   active pair (1,000 lines), one with the 9 pending tabs and one with the active tab alone, each sampled in
+//!   `memory_settled` (coloured screen, no job left, 60 idle frames) and run three times: median
+//!   (PSS_10 − PSS_1) / 9 < 20 MiB. The anonymous memory is printed beside the PSS (the PSS under llvmpipe moves
+//!   with the file-backed share of Mesa).
+//!
 //! Every run requires `DISPLAY` and a software renderer (llvmpipe): the benchmarks never use the real display
 //! (D-132).
 //!
@@ -195,6 +204,11 @@ fn bench(kind: &str, dir: &Path, left: &Path, right: &Path) -> Value {
 
 /// [`bench`] with extra environment variables.
 fn bench_with(kind: &str, dir: &Path, left: &Path, right: &Path, env: &[(&str, &str)]) -> Value {
+    bench_args(kind, dir, &[left.as_os_str(), right.as_os_str()], env)
+}
+
+/// [`bench`] with the command line's words.
+fn bench_args(kind: &str, dir: &Path, words: &[&std::ffi::OsStr], env: &[(&str, &str)]) -> Value {
     assert!(
         std::env::var_os("DISPLAY").is_some(),
         "run under `env -u WAYLAND_DISPLAY xvfb-run -a`: DISPLAY is not set"
@@ -211,8 +225,7 @@ fn bench_with(kind: &str, dir: &Path, left: &Path, right: &Path, env: &[(&str, &
     let out = cmd
         .arg("--config-dir")
         .arg(dir.join("config"))
-        .arg(left)
-        .arg(right)
+        .args(words)
         .env("HIKASA_GUI_BENCH", kind)
         .env("HIKASA_IPC_ENDPOINT", dir.join("unused.sock"))
         .stdin(Stdio::null())
@@ -380,4 +393,113 @@ fn two_windows_gate(env: &[(&str, &str)]) {
     let gate = total_pss < limit && p95 < 8.0 && max < 16.7;
     eprintln!("gate (PSS < 381.5 MiB, p95 < 8 ms, max < 16.7 ms): {gate}");
     assert!(total_pss > 0.0 && total_pss < limit, "memory gate");
+}
+
+/// One text session file.
+fn session_file(dir: &Path, name: &str, kind: &str, left: &Path, right: &Path) {
+    let path = dir.join("config/sessions").join(format!("{name}.toml"));
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    let text = format!(
+        "schema_version = 1\ntype = \"{kind}\"\n[specs]\nleft = {:?}\nright = {:?}\n",
+        left.display().to_string(),
+        right.display().to_string()
+    );
+    std::fs::write(path, text).expect("write");
+}
+
+fn write_lines(path: &Path, seed: u64, lines: u64) {
+    let mut rng = Rng(seed);
+    let mut text = String::new();
+    for i in 0..lines {
+        text.push_str(&c_line(&mut rng, i));
+        text.push('\n');
+    }
+    std::fs::write(path, text).expect("write");
+}
+
+#[test]
+#[ignore = "opens a window and generates 100 MB of input: run in release with --ignored"]
+fn workspace_restore() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    let (l, r) = generate_text(root);
+    session_file(root, "main", "text-compare", &l, &r);
+    let (small_l, small_r) = (root.join("small-l.c"), root.join("small-r.c"));
+    write_lines(&small_l, 301, 1000);
+    write_lines(&small_r, 302, 1000);
+    session_file(root, "small", "text-compare", &small_l, &small_r);
+    let mut tabs = String::new();
+    for k in 0..5u64 {
+        let (a, b) = (
+            root.join(format!("t{k}-l.c")),
+            root.join(format!("t{k}-r.c")),
+        );
+        write_lines(&a, 100 + k, 10_000);
+        write_lines(&b, 200 + k, 10_000);
+        let name = format!("text{k}");
+        session_file(root, &name, "text-compare", &a, &b);
+        tabs.push_str(&format!("[[window.tab]]\nsession = \"{name}\"\n"));
+    }
+    for k in 0..4u64 {
+        let (a, b) = (root.join(format!("d{k}-l")), root.join(format!("d{k}-r")));
+        for side in [&a, &b] {
+            for i in 0..1000 {
+                let folder = side.join(format!("f{}", i % 10));
+                std::fs::create_dir_all(&folder).expect("mkdir");
+                std::fs::write(folder.join(format!("{i}.txt")), "x\n").expect("write");
+            }
+        }
+        let name = format!("tree{k}");
+        session_file(root, &name, "folder-compare", &a, &b);
+        tabs.push_str(&format!("[[window.tab]]\nsession = \"{name}\"\n"));
+    }
+    let workspace = |name: &str, active: &str, others: &str| {
+        let path = root.join(format!("config/workspaces/{name}.toml"));
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        let text = format!(
+            "schema_version = 1\n[[window]]\nactive_tab = 0\n[[window.tab]]\nsession = \"{active}\"\n{others}"
+        );
+        std::fs::write(path, text).expect("write");
+    };
+    workspace("ten", "main", &tabs);
+    workspace("small_ten", "small", &tabs);
+    workspace("small_one", "small", "");
+    let doc = bench_args("workspace", root, &[std::ffi::OsStr::new("ten")], &[]);
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    eprintln!(
+        "G12: first screen {first:.0} ms, tabs {}, pending {}, views built {}",
+        doc["tabs"], doc["pending_tabs"], doc["views_built"],
+    );
+    let settled = |name: &str, tabs: u64| {
+        let doc = bench_args("workspace", root, &[std::ffi::OsStr::new(name)], &[]);
+        assert_eq!(doc["tabs"], tabs, "{name}");
+        assert_eq!(doc["pending_tabs"], tabs - 1, "{name}");
+        assert_eq!(doc["views_built"], 1, "{name}");
+        let m = &doc["memory_settled"];
+        (f(&m["total_pss_mib"]), f(&m["gui_pss_anon_mib"]))
+    };
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let mut per_pss = Vec::new();
+    let mut per_anon = Vec::new();
+    for round in 0..3 {
+        let (pss_10, anon_10) = settled("small_ten", 10);
+        let (pss_1, anon_1) = settled("small_one", 1);
+        let (pss, anon) = ((pss_10 - pss_1) / 9.0, (anon_10 - anon_1) / 9.0);
+        eprintln!(
+            "G12 round {round}: PSS {pss_10:.1} vs {pss_1:.1} MiB, {pss:.2} MiB per tab; \
+             anonymous {anon_10:.1} vs {anon_1:.1} MiB, {anon:.2} MiB per tab"
+        );
+        per_pss.push(pss);
+        per_anon.push(anon);
+    }
+    let (pss, anon) = (median(per_pss), median(per_anon));
+    eprintln!("G12: per pending tab {pss:.2} MiB PSS, {anon:.2} MiB anonymous (limit 20 MiB PSS)");
+    assert_eq!(doc["tabs"], 10);
+    assert_eq!(doc["pending_tabs"], 9, "no job for the 9 pending tabs");
+    assert_eq!(doc["views_built"], 1);
+    assert!(first < 1000.0, "first screen {first} ms");
+    assert!(pss < 20.0, "{pss} MiB per pending tab");
 }

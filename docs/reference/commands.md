@@ -8,13 +8,13 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `SessionNewList` | Session | New Session |  | Opens empty session of picked type in new view. | planned |
+| `SessionNewList` | Session | New Session |  | Opens empty session of picked type in new view. | implemented |
 | `TabNew` | Session | New Tab | Ctrl+T | Opens Home view in new tab. | implemented |
 | `WindowNew` | Session | New Window |  | Opens Home view in new window. | implemented |
-| `SessionOpen` | Session | Open Session | Shift+Ctrl+O | Opens Home in new view. | planned |
-| `WorkspaceLoadList` | Session | Load Workspace |  | Restores picked saved view configuration. | planned |
-| `WorkspaceManager` | Session | Manage Workspaces... |  | Manages the saved view configurations that can be restored. | planned |
-| `WorkspaceSaveAs` | Session | Save Workspace As... |  | Stores current view configuration. | planned |
+| `SessionOpen` | Session | Open Session | Shift+Ctrl+O | Opens Home in new view. | implemented |
+| `WorkspaceLoadList` | Session | Load Workspace |  | Restores picked saved view configuration. | implemented |
+| `WorkspaceManager` | Session | Manage Workspaces... |  | Manages the saved view configurations that can be restored. | implemented |
+| `WorkspaceSaveAs` | Session | Save Workspace As... |  | Stores current view configuration. | implemented |
 | `CloseTab` | Session | Close Tab | Ctrl+W | Closes active tab. | implemented |
 | `TabDuplicate` |  | Duplicate Tab |  | Opens current session again in new tab. | implemented |
 | `TabMoveToNewWindow` |  | Move Tab to New Window |  | Moves current tab into new window. | implemented |
@@ -290,9 +290,22 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
 | `HomeCompare` | Session | Compare | Enter (in a path field) | Compares the two typed paths; the comparison replaces the Home view (M1 addition, UI-001). | implemented |
-| `Find` | Search |  | Ctrl+F | Finds search string. | planned |
-| `ShowManage` | View | Show Session Management |  | Shows or hides management panel. | planned |
-| `MaximizeManage` | View | Maximize Session Management |  | Maximizes or restores management panel. | planned |
+| `Find` | Search | Find... | Ctrl+F | Filters the sessions tree by name, folder or description. | implemented |
+| `ShowManage` | View | Show Session Management |  | Shows or hides management panel. | implemented |
+| `MaximizeManage` | View | Maximize Session Management |  | Maximizes or restores management panel. | implemented |
+| `TreeOpen` |  | Open | Enter | Opens the selected session. | implemented |
+| `TreeOpenAsNew` |  | Open as New |  | Opens the selected session as a new unnamed one. | implemented |
+| `TreeOpenAll` |  | Open All |  | Opens every session directly in the selected folder. | implemented |
+| `TreeNewSession` |  | New Session... |  | Creates a session in the selected folder. | implemented |
+| `TreeNewFolder` |  | New Folder... |  | Creates a folder in the selected folder. | implemented |
+| `TreeClear` |  | Clear |  | Resets the selected session to the defaults of its type. | implemented |
+| `TreeDelete` |  | Delete... | Del | Deletes the selected session or folder. | implemented |
+| `TreeSaveAs` |  | Save As... |  | Saves a copy of the selected session under a new name. | implemented |
+| `TreeRename` |  | Rename | F2 | Renames the selected session or folder. | implemented |
+| `TreeEdit` |  | Session Settings... |  | Edits the selected session or the defaults of a type. | implemented |
+| `TreeExpandAll` |  | Expand All |  | Opens every folder of the tree. | implemented |
+| `TreeCollapseAll` |  | Collapse All |  | Closes every folder of the tree. | implemented |
+| `TreeFavorite` |  | Favorite |  | Pins the selected session to the top of its folder. | implemented |
 | `ShowWeb` | View | Show Web Resources |  | Shows or hides web panel. | planned |
 
 ## Media Compare
@@ -363,12 +376,12 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `SessionHome` | Session |  | Alt+Home | Replaces current view with Home view. | planned |
-| `SessionsCombo` | Session |  |  | Focuses on dropdown button listing sessions that can be opened in this view. | planned |
-| `SessionSave` | Session | Save Session | Shift+Ctrl+S | Saves this session. | planned |
-| `SessionSaveAs` | Session | Save Session As... |  | Saves this session with new name. | planned |
-| `SessionEdit` | Session | Session Settings... |  | Edits current session settings. | planned |
-| `SessionLocked` | Session | Locked |  | Locks or unlocks current session. | planned |
+| `SessionHome` | Session | Go to Home | Alt+Home | Replaces current view with Home view. | implemented |
+| `SessionsCombo` | Session |  |  | Focuses on dropdown button listing sessions that can be opened in this view. | implemented |
+| `SessionSave` | Session | Save Session | Shift+Ctrl+S | Saves this session. | implemented |
+| `SessionSaveAs` | Session | Save Session As... |  | Saves this session with new name. | implemented |
+| `SessionEdit` | Session | Session Settings... |  | Edits current session settings. | implemented |
+| `SessionLocked` | Session | Locked |  | Locks or unlocks current session. | implemented |
 | `SessionClear` | Session | Clear Session | Shift+Ctrl+C | Replaces current view with empty session. | planned |
 | `Rules` | Session |  |  | Edits current Rules definitions. | planned |
 | `Swap` | Session | Swap Sides |  | Exchanges left, right files. | planned |

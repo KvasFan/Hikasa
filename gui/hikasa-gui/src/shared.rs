@@ -99,6 +99,13 @@ impl Shared {
         }
     }
 
+    /// Replaces the specs of a view (Session Settings changed them).
+    pub fn set_specs(&self, view: ViewId, specs: Vec<String>) {
+        if let Some(slot) = self.views.lock().get_mut(&view) {
+            slot.info.specs = specs;
+        }
+    }
+
     /// Removes a view and reports its result to its waiter (exactly once; never blocks, §1.8.7 item 13).
     /// Returns false when the view was not registered.
     pub fn close(&self, view: ViewId, result: ViewResult, code: ExitCode) -> bool {

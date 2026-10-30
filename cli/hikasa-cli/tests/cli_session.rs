@@ -555,6 +555,24 @@ fn session_command_goldens() {
         (c, json_text(&out)["error"]["kind"].as_str()),
         (100, Some("invalid_input"))
     );
+    // D-91: a lock inside stops --recursive until --force.
+    ok(&s, &["session", "lock", "archive/api"]);
+    let (c, out, _) = run(
+        &s,
+        &["session", "rmdir", "archive", "--recursive", "--json"],
+    );
+    let doc = json_text(&out);
+    assert_eq!(
+        (c, doc["error"]["kind"].as_str()),
+        (100, Some("invalid_input"))
+    );
+    assert!(
+        doc["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("1 locked")
+    );
+    ok(&s, &["session", "unlock", "archive/api"]);
     assert_golden(
         "session/rmdir.txt",
         &ok(&s, &["session", "rmdir", "archive", "--recursive"]),

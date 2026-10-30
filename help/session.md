@@ -19,7 +19,7 @@ its case.
 | `hikasa session rename <ref> <new ref> [--force]` | renames, or moves to another folder |
 | `hikasa session lock <ref>` / `unlock <ref>` | a locked session is used but never saved, deleted or renamed without `--force` |
 | `hikasa session delete <ref> [--force]` | deletes it |
-| `hikasa session mkdir <folder>` / `rmdir <folder> [--recursive]` | session folders |
+| `hikasa session mkdir <folder>` / `rmdir <folder> [--recursive] [--force]` | session folders; a folder holding locked sessions needs `--force` |
 | `hikasa session run <ref> [output flags]` | runs a Folder Compare or Text Compare session here |
 
 Types: `folder-compare`, `folder-sync`, `text-compare`, `text-edit`, `table-compare`, `hex-compare`,

@@ -16,5 +16,8 @@ version	hikasa version
 help	hikasa help
 main-window	The main window
 view-home	The Home view
+dialog-session-settings	Session Settings
+dialog-save-session	Save Session As
+dialog-workspaces	Workspaces
 view-folder-compare	The Folder Compare view
 view-text-compare	The Text Compare view

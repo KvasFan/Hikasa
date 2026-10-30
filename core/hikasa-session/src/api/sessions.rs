@@ -20,14 +20,16 @@ use super::{ApiError, Service};
 use crate::help::edit_distance;
 use crate::ipc::{OpenOptions, ViewKind};
 use crate::jobs::run_guarded;
-use crate::sessions::store::label;
 use crate::sessions::{
-    AutoId, KeyEdits, Session, SessionDoc, SessionName, SessionRef, SessionRules, SessionStore,
-    SessionType, effective_rules, parse_folder,
+    AutoId, KeyEdits, NamedEntry, ParentLink, Scope, ScopeWrites, Session, SessionDoc, SessionName,
+    SessionRef, SessionRules, SessionStore, SessionType, Specs, apply_scope, effective_rules,
+    parse_folder,
 };
 use crate::settings::keys::{KeySegment, ValueKind, parse_path};
-use crate::settings::{LoadMode, Options, Overwrite, SettingsFile, SettingsStore, tree};
-use crate::workspaces::{RestoredTab, Workspace, WorkspaceStore, inline_session, restore};
+use crate::settings::{LoadMode, Loaded, Options, Overwrite, SettingsFile, SettingsStore, tree};
+use crate::workspaces::{
+    RestoredWindow, Workspace, WorkspaceStore, inline_session, inline_table, restore,
+};
 
 /// One named session of `hikasa.session_list.v1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -134,6 +136,28 @@ pub struct WorkspaceItemDto {
     pub windows: usize,
     /// Tabs.
     pub tabs: usize,
+}
+
+/// What [`Service::session_apply_scope`] wrote (D-82, §1.4.10).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ScopeWritesDto {
+    /// Which parts changed ([`ScopeWrites`]).
+    pub writes: ScopeWrites,
+    /// The files written.
+    pub written: Vec<String>,
+}
+
+/// A workspace read for the GUI (W4b, D-125): its tabs as sessions (lazily opened, D-126).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceLoadDto {
+    /// The name, as spelled on disk.
+    pub name: String,
+    /// The workspace as stored.
+    pub workspace: Workspace,
+    /// Its windows with their tabs.
+    pub windows: Vec<RestoredWindow>,
+    /// The warnings of loading it (`session_missing`, keys reset to defaults).
+    pub warnings: Vec<Warning>,
 }
 
 /// `hikasa.workspace_list.v1`.
@@ -560,6 +584,271 @@ impl Service {
         })
     }
 
+    /// A named session as its file holds it (`session_load`, W4b): rules overlaid on the defaults, no parent
+    /// resolution; `not_found` for an unknown reference.
+    pub fn session_load(&self, reference: &SessionRef) -> Result<Loaded<Session>, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            let actual = store
+                .resolve(reference)
+                .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
+            store.load(&actual, LoadMode::Lenient)
+        })
+    }
+
+    /// An auto-saved session as its file holds it (W4b).
+    pub fn session_load_autosaved(&self, id: &AutoId) -> Result<Loaded<Session>, ApiError> {
+        run_guarded(|| self.session_store().load_autosaved(id, LoadMode::Lenient))
+    }
+
+    /// The defaults of a type (`session show --defaults`, typed; a missing file gives the built-in defaults).
+    pub fn session_defaults(&self, kind: SessionType) -> Result<Session, ApiError> {
+        run_guarded(|| self.session_store().defaults(kind))
+    }
+
+    /// Saves a named session: the engine `session new` and `session edit` write with (same bytes, T11). A
+    /// locked file needs `force`; a name taken in another case is `already_exists`. `action` of the result:
+    /// `new` for a new file, else `edit`.
+    pub fn session_save(
+        &self,
+        reference: &SessionRef,
+        session: &Session,
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            let action = if store.resolve(reference).is_some() {
+                "edit"
+            } else {
+                "new"
+            };
+            let overwrite = if force {
+                Overwrite::Force
+            } else {
+                Overwrite::IfUnchanged
+            };
+            let path = store.save(reference, session, overwrite)?;
+            Ok(write_dto(
+                action,
+                reference.to_string(),
+                vec![path],
+                Vec::new(),
+                Vec::new(),
+            ))
+        })
+    }
+
+    /// Saves `_defaults/<type>.toml` (`session edit --defaults`, typed): rules, text rules, `display`, `view` and
+    /// the description; specs never go to the defaults (D-82).
+    pub fn session_save_defaults(&self, session: &Session) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let path = self.session_store().save_defaults(session)?;
+            Ok(write_dto(
+                "edit",
+                format!("_defaults/{}", session.kind),
+                vec![path],
+                Vec::new(),
+                Vec::new(),
+            ))
+        })
+    }
+
+    /// Auto-saves a view (D-83, D-121) with the injected clock and prunes to `max_auto_saved_sessions`. `None`
+    /// when auto-save is off; a slot holding a locked file is kept unwritten.
+    pub fn session_autosave(
+        &self,
+        slot: Option<&AutoId>,
+        session: &Session,
+    ) -> Result<Option<AutoId>, ApiError> {
+        run_guarded(|| {
+            self.session_store()
+                .autosave(slot, session, &self.clock().now())
+        })
+    }
+
+    /// Keeps the newest `max_auto_saved_sessions` auto-saved files now (with 0: removes them all, D-83): for the
+    /// GUI at startup and when the option changes. Returns the removed ids.
+    pub fn session_prune_autosaved(&self) -> Result<Vec<AutoId>, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            store.prune_autosaved(store.max_auto_saved())
+        })
+    }
+
+    /// Deletes an auto-saved session (D-120: after Save As; Home's Delete). A missing file is no error.
+    pub fn session_delete_autosaved(&self, id: &AutoId) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let path = self.session_store().delete_autosaved(id)?;
+            Ok(write_dto(
+                "delete",
+                format!("_autosaved/{id}"),
+                Vec::new(),
+                vec![path],
+                Vec::new(),
+            ))
+        })
+    }
+
+    /// The current session of a view (D-120): the view's specs as stored (D-80; `-` and `clipboard://` stay
+    /// empty, warning `spec_not_saved`), the rules it was built from, its `view` and `display` tables and its
+    /// `parent` link. Description, lock and favorite are the identity of a file and stay at their defaults.
+    pub fn session_for_view(
+        &self,
+        request: &ViewRequest,
+        view: Table,
+        display: Table,
+        parent: Option<ParentLink>,
+    ) -> Result<(Session, Vec<Warning>), ApiError> {
+        run_guarded(|| {
+            let mut warnings = Vec::new();
+            let store = self.session_store();
+            let mut specs = Specs::default();
+            let (kind, left, right) = match request {
+                ViewRequest::Text { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_encoding = request.encodings.left.clone().unwrap_or_default();
+                    specs.right_encoding = request.encodings.right.clone().unwrap_or_default();
+                    (SessionType::TextCompare, &request.left, &request.right)
+                }
+                ViewRequest::Folder { request, .. } => {
+                    (SessionType::FolderCompare, &request.left, &request.right)
+                }
+            };
+            for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
+                let (spec, warning) = self.stored_spec(&raw.to_string_lossy())?;
+                *slot = spec;
+                warnings.extend(warning);
+            }
+            let defaults = store.defaults(kind)?;
+            let (rules, text_rules) = match request {
+                ViewRequest::Text { request, .. } => {
+                    let base = match &request.base_rules {
+                        Some(rules) => Some(rules.clone()),
+                        None => match &defaults.rules {
+                            SessionRules::Text(rules) => Some(rules.clone()),
+                            _ => None,
+                        },
+                    };
+                    let rules = self.text_rules_from(
+                        base.as_ref(),
+                        request.rules_file.as_deref(),
+                        &request.rules_patch,
+                        &mut warnings,
+                    )?;
+                    (SessionRules::Text(rules), None)
+                }
+                ViewRequest::Folder { request, .. } => {
+                    let mut with_defaults = request.clone();
+                    if with_defaults.base_rules.is_none()
+                        && let SessionRules::Folder(rules) = &defaults.rules
+                    {
+                        with_defaults.base_rules = Some(rules.clone());
+                    }
+                    if with_defaults.base_text_rules.is_none() {
+                        with_defaults
+                            .base_text_rules
+                            .clone_from(&defaults.text_rules);
+                    }
+                    let effective = self.folder_rules(&with_defaults, &mut warnings)?;
+                    let text = effective
+                        .text_rules
+                        .or(with_defaults.base_text_rules.clone());
+                    (SessionRules::Folder(effective.rules), text)
+                }
+            };
+            Ok((
+                Session {
+                    description: String::new(),
+                    specs,
+                    rules,
+                    text_rules,
+                    view,
+                    display,
+                    parent,
+                    ..Session::builtin(kind)
+                },
+                warnings,
+            ))
+        })
+    }
+
+    /// The effective rules of a session with a parent link, in place (D-82).
+    pub fn session_resolve_parent(&self, session: &mut Session) -> Result<(), ApiError> {
+        run_guarded(|| self.resolve_parent(&self.session_store(), session))
+    }
+
+    /// Applies a change of rules with a scope (D-82, §1.4.10): `view` takes the change, the defaults or the
+    /// parent are written as the scope says (`parent` is the link's text: a reference or `_autosaved/<id>`; a
+    /// locked parent keeps the override in memory only, nothing is written). The view's own session is the
+    /// caller's to save.
+    pub fn session_apply_scope(
+        &self,
+        scope: Scope,
+        change: &SessionRules,
+        view: &mut Session,
+        parent: Option<&str>,
+    ) -> Result<ScopeWritesDto, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            let mut defaults = store.defaults(view.kind)?;
+            let mut loaded = match parent {
+                None => None,
+                Some(link) => Some(self.load_parent(&store, link)?),
+            };
+            let writes = apply_scope(
+                scope,
+                change,
+                view,
+                loaded.as_mut().map(|(session, _)| session),
+                &mut defaults,
+            )?;
+            let mut written = Vec::new();
+            if writes.defaults {
+                written.push(store.save_defaults(&defaults)?);
+            }
+            if writes.parent
+                && let Some((session, target)) = &loaded
+            {
+                match target {
+                    ParentFile::Named(reference) => {
+                        written.push(store.save(reference, session, Overwrite::IfUnchanged)?);
+                    }
+                    ParentFile::AutoSaved(id) => {
+                        store.autosave(Some(id), session, &self.clock().now())?;
+                        written.push(store.autosaved_path(id));
+                    }
+                }
+            }
+            Ok(ScopeWritesDto {
+                writes,
+                written: written.iter().map(|p| p.display().to_string()).collect(),
+            })
+        })
+    }
+
+    /// The parent session of a link's text.
+    fn load_parent(
+        &self,
+        store: &SessionStore,
+        link: &str,
+    ) -> Result<(Session, ParentFile), ApiError> {
+        match link.strip_prefix("_autosaved/") {
+            Some(id) => {
+                let id = AutoId::parse(id)?;
+                let session = store.load_autosaved(&id, LoadMode::Lenient)?.value;
+                Ok((session, ParentFile::AutoSaved(id)))
+            }
+            None => {
+                let wanted = SessionRef::parse(link)?;
+                let actual = store
+                    .resolve(&wanted)
+                    .ok_or_else(|| ApiError::NotFound(format!("no session `{link}`")))?;
+                let session = store.load(&actual, LoadMode::Lenient)?.value;
+                Ok((session, ParentFile::Named(actual)))
+            }
+        }
+    }
+
     /// `session delete`; a locked session needs `force` (SES-004).
     pub fn session_delete(
         &self,
@@ -634,21 +923,57 @@ impl Service {
         })
     }
 
-    /// `session rmdir` (a folder that is not empty needs `recursive`).
+    /// The named sessions below a folder at any depth, sorted by reference (W4b: what a folder command acts on).
+    pub fn session_folder_contents(&self, folder: &str) -> Result<Vec<NamedEntry>, ApiError> {
+        run_guarded(|| {
+            self.session_store()
+                .sessions_in_folder(&parse_folder(folder)?)
+        })
+    }
+
+    /// `session rmdir` (a folder that is not empty needs `recursive`; a subtree holding locked sessions needs
+    /// `force`, D-91).
     pub fn session_rmdir(
         &self,
         folder: &str,
         recursive: bool,
+        force: bool,
     ) -> Result<SessionWriteDto, ApiError> {
         run_guarded(|| {
-            let path = self
-                .session_store()
-                .delete_folder(&parse_folder(folder)?, recursive)?;
+            let store = self.session_store();
+            let path = parse_folder(folder)?;
+            if recursive {
+                refuse_locked_folder(&store, &path, folder, force)?;
+            }
+            let path = store.delete_folder(&path, recursive)?;
             Ok(write_dto(
                 "rmdir",
                 folder.to_owned(),
                 Vec::new(),
                 vec![path],
+                Vec::new(),
+            ))
+        })
+    }
+
+    /// Renames or moves a session folder (W4b, the Home tree; `SessionStore::rename_folder`); a subtree holding
+    /// locked sessions needs `force` (D-91).
+    pub fn session_rename_folder(
+        &self,
+        from: &str,
+        to: &str,
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            let source = parse_folder(from)?;
+            refuse_locked_folder(&store, &source, from, force)?;
+            let (old, new) = store.rename_folder(&source, &parse_folder(to)?)?;
+            Ok(write_dto(
+                "rename",
+                to.to_owned(),
+                vec![new],
+                vec![old],
                 Vec::new(),
             ))
         })
@@ -704,6 +1029,16 @@ impl Service {
             let session = self.session_effective(&actual)?.for_script();
             self.view_of(&session, actual.to_string())
         })
+    }
+
+    /// What the GUI opens for a session it holds (W4b): a Text or Folder Compare request with the session's
+    /// specs and rules; `session_view` on a session value. Specs must be absolute and both present.
+    pub fn session_view_of(
+        &self,
+        session: &Session,
+        title: String,
+    ) -> Result<SessionView, ApiError> {
+        run_guarded(|| self.view_of(session, title))
     }
 
     /// The view of a session (absolute specs required).
@@ -770,45 +1105,6 @@ impl Service {
             options,
             request,
             title,
-        })
-    }
-
-    /// What the GUI opens for a workspace (`LoadWorkspace`, D-85): the views of its tabs in order (Home tabs
-    /// and tabs of types the GUI cannot show yet open nothing; each adds a warning), and the warnings.
-    pub fn workspace_views(
-        &self,
-        name: &SessionName,
-    ) -> Result<(Vec<SessionView>, Vec<Warning>), ApiError> {
-        run_guarded(|| {
-            let workspace = self.workspace_store().load(name, LoadMode::Lenient)?.value;
-            let store = self.session_store();
-            let (windows, mut warnings) = restore(&workspace, &store);
-            let mut views = Vec::new();
-            for window in windows {
-                for tab in window.tabs {
-                    let made = match tab {
-                        RestoredTab::Home => continue,
-                        RestoredTab::Named { reference, session } => {
-                            let mut session = *session;
-                            self.resolve_parent(&store, &mut session)?;
-                            self.view_of(&session.for_script(), reference.to_string())
-                        }
-                        RestoredTab::Inline(session) => {
-                            let title = label(&session);
-                            self.view_of(&session.for_script(), title)
-                        }
-                    };
-                    match made {
-                        Ok(view) => views.push(view),
-                        Err(e) => warnings.push(Warning {
-                            code: WarningCode::SessionMissing,
-                            message: format!("a tab cannot be opened: {e}"),
-                            spec: None,
-                        }),
-                    }
-                }
-            }
-            Ok((views, warnings))
         })
     }
 
@@ -888,6 +1184,34 @@ impl Service {
         })
     }
 
+    /// A workspace for the GUI (W4b, D-125): the sessions of its tabs, read once; nothing is opened.
+    pub fn workspace_load(&self, name: &SessionName) -> Result<WorkspaceLoadDto, ApiError> {
+        run_guarded(|| {
+            let store = self.workspace_store();
+            let actual = store
+                .resolve(name)
+                .ok_or_else(|| ApiError::NotFound(format!("no workspace `{name}`")))?;
+            let loaded = store.load(&actual, LoadMode::Lenient)?;
+            let (windows, mut warnings) = restore(&loaded.value, &self.session_store());
+            warnings.splice(0..0, loaded.warnings);
+            Ok(WorkspaceLoadDto {
+                name: actual.to_string(),
+                workspace: loaded.value,
+                windows,
+                warnings,
+            })
+        })
+    }
+
+    /// The inline table of a session (a workspace tab, D-125): the on-disk shape without `schema_version`.
+    pub fn inline_table(
+        &self,
+        session: &Session,
+        previous: Option<&Table>,
+    ) -> Result<Table, ApiError> {
+        run_guarded(|| inline_table(session, &self.session_store(), previous))
+    }
+
     /// `workspace delete`.
     pub fn workspace_delete(&self, name: &SessionName) -> Result<WorkspaceWriteDto, ApiError> {
         run_guarded(|| {
@@ -924,6 +1248,12 @@ impl Service {
     pub fn inline_session(&self, table: &Table) -> Result<Session, ApiError> {
         inline_session(table, &self.session_store())
     }
+}
+
+/// Where a parent session is saved.
+enum ParentFile {
+    Named(SessionRef),
+    AutoSaved(AutoId),
 }
 
 /// The request of `session run`.
@@ -979,6 +1309,32 @@ fn refuse_locked(
         )));
     }
     Ok(())
+}
+
+/// D-91: a folder command does not touch locked sessions unless forced; the refusal names the count.
+fn refuse_locked_folder(
+    store: &SessionStore,
+    folder: &[SessionName],
+    text: &str,
+    force: bool,
+) -> Result<(), ApiError> {
+    if force {
+        return Ok(());
+    }
+    let locked: Vec<String> = store
+        .sessions_in_folder(folder)?
+        .into_iter()
+        .filter(|e| e.locked)
+        .map(|e| e.reference.to_string())
+        .collect();
+    if locked.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::InvalidArgument(format!(
+        "the folder `{text}` holds {} locked session(s): {} (unlock them, or add --force)",
+        locked.len(),
+        locked.join(", ")
+    )))
 }
 
 /// `Some(text)` unless empty.

@@ -53,8 +53,8 @@ Help ▸ About shows the version.
 
 ## Drag and drop
 
-Drop one file or folder on a path field of the Home view to fill it (two on the left field fill both). Drop two
-files or two folders on a window to compare them.
+Drop one file or folder on a path field of the Home view to fill it (two on the left field fill both), or on a type
+button (two open as that type). Drop two files or two folders on a window to compare them.
 
 ## Help
 
@@ -69,6 +69,7 @@ sizes of `theme.toml` set the text panes and the folder tree.
 
 ## Starting the window
 
-`hikasa-gui <left> <right>` opens a comparison directly; a second start sends its request to the running
-window and exits. See [hikasa gui](topic:gui), [Folder Compare](topic:view-folder-compare) and
+`hikasa-gui <left> <right>` opens a comparison directly, `hikasa-gui <session>` a named session and `hikasa-gui
+<workspace>` a [workspace](topic:dialog-workspaces); a second start sends its request to the running window and
+exits. Closing a view with unsaved session changes asks first: see [Save Session As](topic:dialog-save-session). See [hikasa gui](topic:gui), [Folder Compare](topic:view-folder-compare) and
 [Text Compare](topic:view-text-compare).

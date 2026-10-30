@@ -29,16 +29,21 @@ mod job;
 mod mailbox;
 mod menus;
 mod notify;
+mod session_dialog;
 mod shared;
 mod startup;
 mod status;
 mod text_view;
 mod ui;
+mod view_session;
 mod watch;
 mod window;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_sessions;
 #[cfg(test)]
 mod tests_shell;
 
@@ -53,15 +58,15 @@ use hikasa_core::ContentMethod;
 use hikasa_folder::FolderDisplayFilter;
 use hikasa_formats::StdProcessRunner;
 use hikasa_session::api::{
-    OpenArgs, ViewRequest, normalize_legacy_args, open_usage, parse_open_args,
+    OpenArgs, SingleArg, ViewRequest, normalize_legacy_args, open_usage, parse_open_args,
 };
-use hikasa_session::ipc::{IpcError, IpcServer};
+use hikasa_session::ipc::{IpcError, IpcServer, RetryPolicy};
 use hikasa_session::{
     ApiOp, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
     clipboard_provider,
 };
 
-use crate::app::{AppCore, UiMsg};
+use crate::app::{AppCore, Startup, UiMsg};
 use crate::bench::{BenchKind, BenchState};
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
@@ -111,8 +116,11 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "scroll" => Some(BenchKind::Scroll),
         Some(v) if v == "folder" => Some(BenchKind::Folder),
         Some(v) if v == "two_windows" => Some(BenchKind::TwoWindows),
+        Some(v) if v == "workspace" => Some(BenchKind::Workspace),
         Some(v) => {
-            anyhow::bail!("HIKASA_GUI_BENCH must be `scroll`, `folder` or `two_windows`, not {v:?}")
+            anyhow::bail!(
+                "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows` or `workspace`, not {v:?}"
+            )
         }
     };
     let env = capture_env();
@@ -137,6 +145,11 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     for warning in service.startup_warnings() {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
     }
+    // One argument that is not an existing path may name a session or a workspace (D-88, D-127).
+    let single = match open.request.specs.as_slice() {
+        [arg] => service.classify_single_arg(arg),
+        _ => SingleArg::Spec,
+    };
     let shared = Arc::new(Shared::new());
     let server = if open.solo || bench.is_some() {
         None
@@ -150,7 +163,9 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         };
         match IpcServer::bind(&endpoint) {
             Ok(server) => Some(server),
-            Err(IpcError::AlreadyRunning) => return Ok(forward(&service, &open)),
+            Err(IpcError::AlreadyRunning) => {
+                return Ok(forward(&service, &open, &single, &RetryPolicy::default()));
+            }
             Err(e @ IpcError::InsecureEndpoint { .. }) => {
                 eprintln!("hikasa-gui: error: {e}");
                 return Ok(FAILURE);
@@ -166,7 +181,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         }
     };
     // The command line's own view (resolved against this process's current folder).
-    let initial = if open.request.specs.is_empty() {
+    let named = matches!(single, SingleArg::Session(_) | SingleArg::Workspace(_));
+    let initial = if open.request.specs.is_empty() || named {
         None
     } else {
         let resolved = service.resolve_open(&open.request).and_then(|r| {
@@ -204,8 +220,15 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
     app.set_debug_flag(debug);
     let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));
-    if bench.is_some() && initial.is_none() {
+    if bench.is_some() && initial.is_none() && !named {
         anyhow::bail!("the benchmark mode needs two specs");
+    }
+    // The startup workspace and the command line's session open after the first frame (§1.4.12).
+    match &single {
+        SingleArg::Session(reference) => app.set_startup(Startup::Session(reference.clone())),
+        SingleArg::Workspace(name) => app.set_startup(Startup::Workspace(name.to_string())),
+        _ if initial.is_none() => app.set_startup(Startup::Options),
+        _ => {}
     }
     if let Some((resolved, mut request)) = initial {
         if bench == Some(BenchKind::Folder)
@@ -238,8 +261,20 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
 
 /// A second instance (ARCH-090): the request goes to the running GUI; exit 0 or the error's code. Without specs
 /// there is nothing to open: the running instance must answer.
-fn forward(service: &Service, open: &OpenArgs) -> u8 {
-    let result = if open.request.specs.is_empty() {
+///
+/// A session or a workspace goes as `LoadSession` / `LoadWorkspace` (D-127).
+fn forward(service: &Service, open: &OpenArgs, single: &SingleArg, retry: &RetryPolicy) -> u8 {
+    let result = if let SingleArg::Session(reference) = single {
+        service
+            .gui_load_session(&reference.to_string(), false, None, retry)
+            .map(|_| ())
+            .map_err(|e| (e, ApiOp::GuiOpen { wait: false }))
+    } else if let SingleArg::Workspace(name) = single {
+        service
+            .gui_load_workspace(name.as_str(), None, retry)
+            .map(|_| ())
+            .map_err(|e| (e, ApiOp::GuiOpen { wait: false }))
+    } else if open.request.specs.is_empty() {
         service
             .gui_ping()
             .map(|_| ())

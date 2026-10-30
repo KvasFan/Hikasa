@@ -424,7 +424,7 @@ fn workspace_golden_and_restore() {
                         ..WorkspaceTab::default()
                     },
                     WorkspaceTab {
-                        inline: inline_table(&inline, &sessions).unwrap(),
+                        inline: inline_table(&inline, &sessions, None).unwrap(),
                         ..WorkspaceTab::default()
                     },
                     WorkspaceTab {

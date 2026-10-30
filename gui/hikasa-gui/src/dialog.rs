@@ -13,10 +13,11 @@ use std::any::Any;
 use hikasa_session::settings::Shortcut;
 use hikasa_session::{HIKASA_VERSION, Service};
 
+use crate::session_dialog::SessionAction;
 use crate::window::Invocation;
 
 /// The role of a dialog button.
-#[allow(dead_code)] // variants for W4b/W4c (contract seams)
+#[allow(dead_code)] // `Apply`, `Back`, `Next`, `Finish` are W4c's (contract seams)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ButtonRole {
     /// OK.
@@ -55,7 +56,7 @@ pub struct DialogButton {
 }
 
 /// What the window does after a dialog was confirmed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Followup {
     /// Runs a command in the dialog's window without asking again.
     Run(Invocation),
@@ -65,10 +66,12 @@ pub enum Followup {
     Exit,
     /// "Do not ask again": sets the boolean `options.toml` key (a dotted path below `options`) to `false`.
     DisableOption(&'static str),
+    /// A session or workspace action of the window (W4b).
+    Session(SessionAction),
 }
 
 /// What a button or key did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DialogStep {
     /// The dialog stays open.
     Stay,
@@ -146,6 +149,7 @@ impl DialogStack {
     }
 
     /// The top dialog.
+    #[cfg(test)]
     pub fn top(&self) -> Option<&dyn DialogModel> {
         self.dialogs.last().map(|d| &**d)
     }
@@ -165,11 +169,6 @@ impl DialogStack {
         self.dialogs.is_empty()
     }
 
-    /// Closes every dialog (the window closes).
-    pub fn clear(&mut self) {
-        self.dialogs.clear();
-    }
-
     /// Polls every dialog's jobs; true when one changed.
     pub fn poll(&mut self, svc: &Service) -> bool {
         let mut changed = false;
@@ -181,7 +180,7 @@ impl DialogStack {
 }
 
 /// A question with buttons (D-112): the multiple-close warnings, conflicts, overwrites, deletes, D-84.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Prompt {
     /// The title.
     pub title: String,
@@ -276,6 +275,34 @@ impl DialogModel for Prompt {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+impl Prompt {
+    /// A question with the buttons `buttons`, each with what it does.
+    pub fn ask(
+        title: impl Into<String>,
+        message: impl Into<String>,
+        default: ButtonRole,
+        buttons: Vec<(ButtonRole, &str, Vec<Followup>)>,
+        topic: &'static str,
+    ) -> Prompt {
+        Prompt {
+            title: title.into(),
+            message: message.into(),
+            default,
+            do_not_ask: None,
+            ticked: false,
+            actions: buttons
+                .iter()
+                .map(|(role, _, then)| (*role, then.clone()))
+                .collect(),
+            buttons: buttons
+                .into_iter()
+                .map(|(role, label, _)| (role, label.to_owned()))
+                .collect(),
+            topic,
+        }
     }
 }
 

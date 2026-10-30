@@ -70,9 +70,9 @@ pub use responses::{
     FolderCompareResponse, FormatChoice, PreparedFolderCompare, QuickResponse, TextCompareResponse,
 };
 pub use sessions::{
-    AutoSavedDto, SessionEdit, SessionItemDto, SessionListDto, SessionRunRequest, SessionShowDto,
-    SessionTarget, SessionView, SessionWriteDto, SingleArg, WorkspaceItemDto, WorkspaceListDto,
-    WorkspaceShowDto, WorkspaceWriteDto, parse_assignment,
+    AutoSavedDto, ScopeWritesDto, SessionEdit, SessionItemDto, SessionListDto, SessionRunRequest,
+    SessionShowDto, SessionTarget, SessionView, SessionWriteDto, SingleArg, WorkspaceItemDto,
+    WorkspaceListDto, WorkspaceLoadDto, WorkspaceShowDto, WorkspaceWriteDto, parse_assignment,
 };
 pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,

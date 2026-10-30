@@ -54,7 +54,8 @@
   to session?" when it is, and for a locked session writes nothing unless the user chose Save, which asks "Save
   changes to locked session?". A locked session file is never written by auto-save or by close.
 - **Locked sessions and other commands (SES-004, D-91).** `hikasa session edit`, `delete` and `rename` refuse a
-  locked session unless `--force`; `settings import` does not replace or delete one, and `settings
+  locked session unless `--force`; `hikasa session rmdir --recursive` and renaming a folder in Home refuse a folder
+  holding locked sessions unless forced (`--force`; in Home the prompt names them); `settings import` does not replace or delete one, and `settings
   restore-defaults --delete-sessions` does not delete one, unless `--force` (the plan shows `skip_locked` and
   the warning `session_locked` names the session).
 - **Stored rules (D-82, D-90).** A session file holds the rules that differ from the defaults of its type, plus
@@ -67,6 +68,17 @@
   over IPC) has it cleared, so the script's filter state applies.
 - **Specs that cannot be stored.** `-` (standard input) and `clipboard://` are never stored; the side stays
   empty, with the warning `spec_not_saved`.
+
+*M2 W4b (D-120, D-121):* every comparison view of the GUI owns a session: origin (unnamed, auto-saved, named), the
+session as loaded, the lock, its auto-saved slot. All close paths (tab, window, exit, Home, the Sessions drop-down,
+Load Workspace) run the D-84 table; a Cancel stops the whole close, and all questions are asked before anything is
+closed or written. Closes that cannot ask (`gui close`, `gui quit`, the end of a desktop session) answer No: a named
+file stays as it is, unnamed and auto-saved views are auto-saved. A view of origin unnamed or auto-saved is also
+auto-saved every 300 s while its session (`view` and `display` included) differs from the last auto-saved one, also in
+a minimized window. Yes at a close keeps the tab until the save returned: a failed save leaves it open with the reason
+and stops the whole close, Exit included. Renaming, moving or deleting a session in Home reaches its open views; a Save
+is refused when the file is no longer the session the view loaded. A view whose auto-saved file is locked asks at its
+close, and Yes writes a new auto-saved file.
 
 ## 2. Session settings dialog (common contract)
 
@@ -88,6 +100,11 @@
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.
+- *M2 W4b (D-122, D-123):* the dialog is a shell with a tab registry per session type: W4 provides Specs and the
+  scope selector; the rule tabs arrive with W9, W11 and W13, and `Rules` stays `planned` until then. The default
+  scope is *this view only*; every other scope needs a change in a rule tab, and the two parent scopes a named or
+  auto-saved folder parent. Removing an inherited map entry (`false` in a session or override) comes with the
+  importance tab (W11).
 
 ## 3. Home view and session management
 
@@ -106,6 +123,12 @@
 - **SES-033** (P1): Incremental search in trees and lists (type-ahead) with a
   configurable reset delay.
 
+*M2 W4b (D-124):* the tree shows *New* (one entry per type the GUI opens), the named sessions (folders first, then
+favorites, then the rest, each sorted case-insensitively) and *Auto-saved* in the four D-83 groups, newest first.
+Search is a case-insensitive substring of the name, folder path or description; matches show with their ancestors.
+The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. The Web
+Resources panel stays `planned` (D-133).
+
 ## 4. Workspaces
 
 - **SES-040** (P0): A workspace = all open windows and tabs with their sessions,
@@ -121,6 +144,13 @@
   tabs (lazily); a tab whose session no longer exists opens Home, with the warning `session_missing`. On the
   command line, `hikasa gui workspace <name>` and `hikasa gui open <name>` (one argument that is neither an
   existing path nor a session) load a workspace (`12-cli-and-scripting.md` §1).
+
+*M2 W4b (D-125, D-126):* Save Workspace As captures every window (root first): named views by reference, others as
+inline sessions, pending tabs as they are, Home tabs not at all. Load Workspace runs every view's close action (a
+Cancel aborts with nothing closed), closes the windows beyond the workspace's count, then restores lazily: only each
+window's active tab starts; the others are pending (listed by `gui list`, closed with `close_unopened`) until first
+activated. A pending tab's caption is the reference, else the description, else the input names. IPC `LoadWorkspace`
+restores the same way.
 
 ## 5. Settings storage
 
@@ -441,3 +471,6 @@ New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorde
 the platform reports window positions — to move between windows or out into a new window,
 and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
 P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.
+
+*M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
+the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.

@@ -876,6 +876,27 @@ impl FolderViewModel {
         )
     }
 
+    /// The display options (the session's `display`, D-120).
+    pub fn display_options(&self) -> &DisplayOptions {
+        &self.display
+    }
+
+    /// The paths of a pair relative to the bases (TC-052): `/`-separated; `None` outside them.
+    pub fn relative_pair(&self, request: &TextCompareRequest) -> Option<[String; 2]> {
+        let relative = |base: &std::ffi::OsString, path: &std::ffi::OsString| {
+            std::path::Path::new(path).strip_prefix(base).ok().map(|p| {
+                p.components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+        };
+        Some([
+            relative(&self.request.left, &request.left)?,
+            relative(&self.request.right, &request.right)?,
+        ])
+    }
+
     /// The bases as specs (the view list).
     pub fn specs(&self) -> Vec<String> {
         self.names.to_vec()

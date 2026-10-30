@@ -783,6 +783,9 @@ pub enum SessionCmd {
         /// Also delete the sessions and folders inside.
         #[arg(long)]
         recursive: bool,
+        /// Also delete locked sessions inside.
+        #[arg(long)]
+        force: bool,
     },
     /// Run a saved Folder Compare or Text Compare session headless.
     Run(Box<SessionRunArgs>),

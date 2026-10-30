@@ -1,8 +1,22 @@
 Session
+  > New Session
+    Folder Compare
+    Text Compare
   New Tab	Ctrl+T
   New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
   ---
   Reload Files	F5
+  ---
+  Go to Home	Alt+Home
+  Save Session	Shift+Ctrl+S
+  Save Session As...
+  Session Settings...
+  [ ] Locked (disabled)
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q

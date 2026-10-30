@@ -208,6 +208,60 @@ command_ids! {
     ShowToolbar,
     /// Folder: shows or hides the log panel (M2 W4a, FC-100).
     ShowLog,
+    /// A Home tab with the picked session type selected (M2 W4b).
+    SessionNewList,
+    /// Opens Home in a new tab.
+    SessionOpen,
+    /// Loads a workspace (the argument; D-125).
+    WorkspaceLoadList,
+    /// The Manage Workspaces dialog.
+    WorkspaceManager,
+    /// The Save Workspace As dialog.
+    WorkspaceSaveAs,
+    /// Replaces the view by Home after its close action.
+    SessionHome,
+    /// Opens the picked named session of the view's type in this tab.
+    SessionsCombo,
+    /// Saves the view's session (D-120).
+    SessionSave,
+    /// The Save Session As dialog.
+    SessionSaveAs,
+    /// The Session Settings dialog of the view (D-122).
+    SessionEdit,
+    /// Locks or unlocks the view's named session.
+    SessionLocked,
+    /// Home: shows or hides the management panel.
+    ShowManage,
+    /// Home: maximizes or restores the management panel.
+    MaximizeManage,
+    /// Home: focuses the search box.
+    Find,
+    /// Sessions tree: opens the selection.
+    TreeOpen,
+    /// Sessions tree: opens the selection as a new unnamed session.
+    TreeOpenAsNew,
+    /// Sessions tree: opens every session directly in the folder.
+    TreeOpenAll,
+    /// Sessions tree: a new session.
+    TreeNewSession,
+    /// Sessions tree: a new folder.
+    TreeNewFolder,
+    /// Sessions tree: resets a named session to the defaults.
+    TreeClear,
+    /// Sessions tree: deletes the selection.
+    TreeDelete,
+    /// Sessions tree: saves a copy of the selection.
+    TreeSaveAs,
+    /// Sessions tree: renames the selection in place.
+    TreeRename,
+    /// Sessions tree: the Session Settings dialog of a session or a type's defaults.
+    TreeEdit,
+    /// Sessions tree: opens every folder.
+    TreeExpandAll,
+    /// Sessions tree: closes every folder.
+    TreeCollapseAll,
+    /// Sessions tree: toggles the favorite mark.
+    TreeFavorite,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -237,6 +291,18 @@ pub struct Ctx {
     pub prev_difference: bool,
     /// Home: both paths are filled in.
     pub home_ready: bool,
+    /// The active view's session is a named one.
+    pub named: bool,
+    /// Sessions tree: a named session is selected.
+    pub tree_named: bool,
+    /// Sessions tree: a locked named session is selected.
+    pub tree_locked: bool,
+    /// Sessions tree: an auto-saved session is selected.
+    pub tree_auto: bool,
+    /// Sessions tree: a folder is selected.
+    pub tree_folder: bool,
+    /// Sessions tree: a *New* type is selected.
+    pub tree_new: bool,
 }
 
 /// Availability predicates (ARCH-070 `enabled_when`).
@@ -266,6 +332,22 @@ pub enum Predicate {
     PrevDifference,
     /// Home: both paths are given.
     HomeReady,
+    /// The view's session is named.
+    Named,
+    /// Tree: a named session, an auto-saved one or a *New* type.
+    TreeOpenable,
+    /// Tree: a named or auto-saved session.
+    TreeSession,
+    /// Tree: a folder.
+    TreeFolder,
+    /// Tree: a named session that is not locked.
+    TreeUnlocked,
+    /// Tree: a named session, a folder or an auto-saved session.
+    TreeDeletable,
+    /// Tree: a named session or a folder.
+    TreeRenamable,
+    /// Tree: a named session or a *New* type (its defaults).
+    TreeEditable,
 }
 
 impl Predicate {
@@ -284,12 +366,19 @@ impl Predicate {
             Predicate::NextDifference => ctx.next_difference,
             Predicate::PrevDifference => ctx.prev_difference,
             Predicate::HomeReady => ctx.home_ready,
+            Predicate::Named => ctx.named,
+            Predicate::TreeOpenable => ctx.tree_named || ctx.tree_auto || ctx.tree_new,
+            Predicate::TreeSession => ctx.tree_named || ctx.tree_auto,
+            Predicate::TreeFolder => ctx.tree_folder,
+            Predicate::TreeUnlocked => ctx.tree_named && !ctx.tree_locked,
+            Predicate::TreeDeletable => ctx.tree_named || ctx.tree_auto || ctx.tree_folder,
+            Predicate::TreeRenamable => ctx.tree_named || ctx.tree_folder,
+            Predicate::TreeEditable => ctx.tree_named || ctx.tree_new,
         }
     }
 }
 
 /// Where a command appears in a context menu (D-110; W9+ add pane areas).
-#[allow(dead_code)] // variants for W4b/W4c (contract seams)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Area {
     /// The tab's context menu.
@@ -364,6 +453,7 @@ use Scope as S;
 
 const NONE: &[Area] = &[];
 const TAB: &[Area] = &[A::Tab];
+const TREE: &[Area] = &[A::SessionTree];
 
 /// The presentation table, one row per (scope, id). A view type's row wins over a global one.
 pub const PRESENTATION: &[Row] = &[
@@ -477,7 +567,196 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
+    row(
+        C::SessionNewList,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionOpen,
+        S::Global,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceLoadList,
+        S::Global,
+        Some(I::Workspace),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceManager,
+        S::Global,
+        Some(I::Workspace),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceSaveAs,
+        S::Global,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     // Home
+    row(
+        C::ShowManage,
+        S::Home,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::MaximizeManage,
+        S::Home,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Find,
+        S::Home,
+        Some(I::Search),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TreeOpen,
+        S::Home,
+        Some(I::Open),
+        None,
+        G::None,
+        P::TreeOpenable,
+        TREE,
+    ),
+    row(
+        C::TreeOpenAsNew,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeSession,
+        TREE,
+    ),
+    row(
+        C::TreeOpenAll,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeFolder,
+        TREE,
+    ),
+    row(
+        C::TreeNewSession,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeNewFolder,
+        S::Home,
+        Some(I::Folder),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeClear,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeUnlocked,
+        TREE,
+    ),
+    row(
+        C::TreeDelete,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeDeletable,
+        TREE,
+    ),
+    row(
+        C::TreeSaveAs,
+        S::Home,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::TreeSession,
+        TREE,
+    ),
+    row(
+        C::TreeRename,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeRenamable,
+        TREE,
+    ),
+    row(
+        C::TreeEdit,
+        S::Home,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::TreeEditable,
+        TREE,
+    ),
+    row(
+        C::TreeExpandAll,
+        S::Home,
+        Some(I::ExpandAll),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeCollapseAll,
+        S::Home,
+        Some(I::CollapseAll),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeFavorite,
+        S::Home,
+        Some(I::Favorite),
+        None,
+        G::None,
+        P::TreeUnlocked,
+        TREE,
+    ),
     row(
         C::HomeCompare,
         S::Home,
@@ -984,6 +1263,115 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         &[A::Toolbar],
     ),
+    // The session commands of the views.
+    row(
+        C::SessionHome,
+        S::Folder,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Folder,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Folder,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Folder,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Folder,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
+    row(
+        C::SessionHome,
+        S::Text,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Text,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Text,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Text,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Text,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
 ];
 
 /// The presentation row of `id` in `scope` (or the global row).
@@ -1139,10 +1527,11 @@ pub fn is_focus_bound(s: &Shortcut) -> bool {
 }
 
 /// The focus area a restricted shortcut belongs to: a context naming a path field → [`FocusArea::PathField`],
-/// else the view's main area.
-fn area_of(shortcut: &Shortcut) -> FocusArea {
+/// a command of the sessions tree → [`FocusArea::SessionsTree`], else the view's main area.
+fn area_of(shortcut: &Shortcut, row: &Row) -> FocusArea {
     match &shortcut.context {
         Some(context) if context.contains("path field") => FocusArea::PathField,
+        _ if row.areas.contains(&Area::SessionTree) => FocusArea::SessionsTree,
         _ => FocusArea::ViewMain,
     }
 }
@@ -1183,7 +1572,7 @@ pub fn dispatch(
         let restricted =
             matched.context.is_some() || entry.menu.is_empty() || is_focus_bound(matched);
         let here = if restricted {
-            at == area_of(matched)
+            at == area_of(matched, row)
         } else {
             at == FocusArea::Root
         };
@@ -1502,8 +1891,26 @@ mod tests {
             run(&custom, Scope::Text, "Ctrl+W", FocusArea::Root),
             Some(CommandId::CloseTab)
         );
-        // Planned commands never take a key (Find is Ctrl+F in the catalogue).
+        // Planned commands never take a key (Find is Ctrl+F in the catalogue, implemented in Home only).
         assert_eq!(run(&tables, Scope::Folder, "Ctrl+F", FocusArea::Root), None);
+        assert_eq!(
+            run(&tables, Scope::Home, "Ctrl+F", FocusArea::Root),
+            Some(CommandId::Find)
+        );
+        // The tree's keys belong to the tree (W4b).
+        let tree = Ctx {
+            tree_named: true,
+            ..ctx(Scope::Home)
+        };
+        for (key, id) in [
+            ("Enter", CommandId::TreeOpen),
+            ("Del", CommandId::TreeDelete),
+            ("F2", CommandId::TreeRename),
+        ] {
+            let at = |area| tables.dispatch(Scope::Home, &tree, &sc(key), area);
+            assert_eq!(at(FocusArea::SessionsTree), Some(id), "{key}");
+            assert_eq!(at(FocusArea::Root), None, "{key}");
+        }
     }
 
     #[test]

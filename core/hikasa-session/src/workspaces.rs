@@ -248,13 +248,33 @@ pub fn inline_session(table: &Table, sessions: &SessionStore) -> Result<Session,
 }
 
 /// An inline table of a session (for "Save Workspace As", W4): the on-disk shape without `schema_version`.
-pub fn inline_table(session: &Session, sessions: &SessionStore) -> Result<Table, ApiError> {
+/// `previous` is the table the tab was restored from: as in a session file (D-90), the keys it wrote stay written
+/// and its unknown keys are kept.
+pub fn inline_table(
+    session: &Session,
+    sessions: &SessionStore,
+    previous: Option<&Table>,
+) -> Result<Table, ApiError> {
     let defaults = sessions.defaults(session.kind)?;
+    let old: Option<SessionDoc> = previous.and_then(|t| Value::Table(t.clone()).try_into().ok());
     let mut doc = SettingsFile::<SessionDoc>::new_default(Path::new("inline.toml"));
-    *doc.value_mut() = session.to_doc(&defaults);
+    *doc.value_mut() = session.to_doc_over(&defaults, old.as_ref());
     let mut table: Table = toml::from_str(&doc.to_toml())
         .map_err(|e| ApiError::Internal(format!("inline session: {e}")))?;
     table.remove("schema_version");
+    if let Some(previous) = previous {
+        let known = crate::settings::file::full_table(doc.value());
+        let mut root = Value::Table(table);
+        for path in crate::settings::tree::unknown_paths(previous, &known) {
+            if let Some(value) = crate::settings::tree::get_in(previous, &path) {
+                let _ = crate::settings::tree::set(&mut root, &path, value.clone());
+            }
+        }
+        table = match root {
+            Value::Table(t) => t,
+            _ => Table::new(),
+        };
+    }
     Ok(table)
 }
 

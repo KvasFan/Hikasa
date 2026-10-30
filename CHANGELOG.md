@@ -5,6 +5,32 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 4b — Sessions in the window
+- **Sessions of views** (SES-001…006, D-120, D-121): every comparison view has a session: Save, Save As, Locked,
+  close prompts ("Save changes to session?", "Save changes to locked session?") on every close path (tab, window,
+  exit, Go to Home, the Sessions drop-down, Load Workspace; Cancel stops them), auto-save on close, at exit and every
+  300 s while the view changes. `hikasa gui close` and `gui quit` never ask. A pair opened from a saved folder session
+  is its child (TC-052).
+- **Session Settings dialog** (SES-020…022, D-122): the Specs tab (inputs with recent paths, description, format,
+  encodings), the scope selector and the tab registry the rule tabs of later waves join.
+- **Home view** (SES-030, SES-031, SES-093, D-124): type buttons as drop targets, search, the sessions tree (New,
+  folders, favorites, four auto-saved groups) with its context menu (13 new `Tree*` catalogue commands) and the
+  management panel. `HomeCompare` accepts `clipboard://`.
+- **Workspaces** (SES-040…042, D-125, D-126): Save Workspace As, Load Workspace, Manage Workspaces (rename, delete,
+  shortcuts with conflicts shown), `[startup] load_workspace` and `on_exit_save_workspace_as`, lazy restore: a tab
+  starts when first activated, and `gui list` shows the pending ones.
+- **Command line** (CLI-002, SES-042, D-127): `hikasa-gui <session>` and `hikasa-gui <workspace>`, forwarded as
+  `LoadSession`/`LoadWorkspace` to a running GUI.
+- **Keeping changes safe:** Yes at a close holds the tab until the save returned; a failed save keeps it open with the
+  reason and stops the close, Exit included. Renames, moves and deletes in Home reach open views and pending tabs; a
+  Save refuses a file that is no longer the session the view loaded. Auto-save keeps a parent's overrides, works in an
+  idle or minimized window, and asks at the close when its file is locked.
+- **Locked sessions in folders** (D-91): `hikasa session rmdir --recursive` takes `--force`, and refuses a folder
+  holding locked sessions without it; deleting or renaming such a folder in Home names them first.
+- **Service calls** (§1.4.15): `session_load`, `session_load_autosaved`, `session_defaults`, `session_save`,
+  `session_save_defaults`, `session_autosave`, `session_delete_autosaved`, `session_for_view`, `session_view_of`,
+  `session_resolve_parent`, `session_apply_scope`, `session_rename_folder`, `session_folder_contents`, `session_prune_autosaved`, `workspace_load`, `inline_table`.
+
 ### Wave 4a — GUI shell
 - **Windows and tabs** (UI-001, SES-090, SES-091, D-106…D-108): several windows in one process (Session ▸ New
   Window); the tab context menu (New Tab, Duplicate Tab, Move Tab to New Window, Move Tab to Window ▸, Close Other

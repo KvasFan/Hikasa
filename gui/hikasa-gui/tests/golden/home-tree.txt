@@ -1,0 +1,23 @@
+[-] New
+  Folder Compare
+  Text Compare (customized)
+[-] archive
+  old <text-compare> (locked)
+[-] empty
+[-] work
+  [-] deep
+    inner <text-compare>
+  api <text-compare> -- The API
+zeta <text-compare> *
+alpha <text-compare>
+Beta <folder-compare>
+[-] Auto-saved
+  [-] Today
+    newest <text-compare>
+    new <text-compare>
+  [-] Yesterday
+    last night <text-compare>
+  [-] 2-6 days ago
+    this week <text-compare>
+  [-] More than 6 days ago
+    long ago <text-compare>

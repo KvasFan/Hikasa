@@ -28,7 +28,7 @@ use crate::commands::{CommandId, CommandTables, Ctx, FocusArea, HintTiming, Scop
 use crate::dialog::{AboutDialog, ButtonRole, DialogStep, Followup, Prompt};
 use crate::dnd::{DropOutcome, DropTarget, FieldId, decide};
 use crate::folder_view::FolderViewModel;
-use crate::home::{HomeModel, HomeOpen};
+use crate::home::HomeOpen;
 use crate::job::Job;
 use crate::mailbox::Mailbox;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
@@ -39,6 +39,13 @@ use crate::watch::{WatchCmd, WatchEvent, WatchLink};
 pub use crate::window::{
     CommandArg, Invocation, Tab, TabContent, ViewModel, WindowId, WindowModel,
 };
+
+mod flow;
+
+#[cfg(test)]
+pub use flow::OpenHow;
+pub use flow::{Catalog, OpenedSession, PanelAction, load_named};
+use flow::{CloseFlow, StoreDone, StoreKind, StoreWork, Then};
 
 /// Messages to the UI thread.
 #[derive(Debug)]
@@ -51,6 +58,20 @@ pub enum UiMsg {
         request: Box<ViewRequest>,
         /// Options (titles).
         options: Box<OpenOptions>,
+    },
+    /// Open a session view (IPC `LoadSession`, already registered in [`Shared`] under `view`).
+    OpenSession {
+        /// The view id answered to the client.
+        view: ViewId,
+        /// The session.
+        opened: Box<OpenedSession>,
+    },
+    /// Load a workspace (IPC `LoadWorkspace`; its tabs are registered in [`Shared`]).
+    LoadWorkspace {
+        /// The workspace.
+        load: Box<hikasa_session::api::WorkspaceLoadDto>,
+        /// The view ids per window and tab.
+        ids: Vec<Vec<Option<ViewId>>>,
     },
     /// Close a view (IPC `CloseView`).
     Close {
@@ -88,6 +109,8 @@ pub enum Effect {
     ApplyTheme,
     /// The command tables were rebuilt (`commands.toml` changed or was written).
     ApplyCommands,
+    /// A prompt waits in this window: bring it to the front.
+    Raise(WindowId),
 }
 
 /// Where an opened view goes.
@@ -119,6 +142,19 @@ enum CoreJob {
     Log(String, Job<()>),
     /// The resolution of two dropped paths (opens a comparison in the window).
     Drop(WindowId, Job<HomeOpen>),
+    /// A store job (`flow`): session and workspace files, one at a time.
+    Store(Job<StoreDone>, Option<ViewId>, StoreKind),
+}
+
+/// What runs after the first frame (§1.4.12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Startup {
+    /// `[startup] load_workspace` (no view on the command line).
+    Options,
+    /// The workspace of the command line.
+    Workspace(String),
+    /// The session of the command line.
+    Session(hikasa_session::sessions::SessionRef),
 }
 
 impl CoreJob {
@@ -129,6 +165,7 @@ impl CoreJob {
             CoreJob::State(j) => j.settling(),
             CoreJob::Log(_, j) => j.settling(),
             CoreJob::Drop(_, j) => j.settling(),
+            CoreJob::Store(j, ..) => j.settling(),
         }
     }
 }
@@ -184,6 +221,32 @@ pub struct AppCore {
     watch: Option<WatchLink>,
     /// The frame time (seconds) of the last `set_now` (notices).
     now: f64,
+    /// A monotonic time (seconds) for the auto-save timer: egui's frame time stands still while the window is
+    /// hidden, and the timer must not.
+    timer_now: f64,
+    /// A store job runs.
+    store_running: bool,
+    /// Views that became named after their tab closed: their queued auto-save is dropped.
+    named_after_close: std::collections::HashSet<ViewId>,
+    /// `max_auto_saved_sessions` as last applied (a change prunes).
+    auto_limit: u32,
+    /// The store jobs not started yet (one at a time, in order).
+    queued_store: std::collections::VecDeque<StoreWork>,
+    /// The tree and the menus want fresh data: a read after the queue drained.
+    refresh_wanted: bool,
+    /// What the Home tree and the menus show.
+    catalog: Arc<Catalog>,
+    /// The auto-saved slot of each view that has one: the only record of it, kept after the tab closed until no
+    /// store job is left (a queued job reads it when it starts).
+    slots: std::collections::HashMap<ViewId, hikasa_session::sessions::AutoId>,
+    /// The close running through its questions.
+    flow: Option<CloseFlow>,
+    /// The workspace of `on_exit_save_workspace_as` was saved.
+    exit_saved: bool,
+    /// What runs after the first frame.
+    startup: Option<Startup>,
+    /// Views built so far (the G12 job counter: a pending tab builds none).
+    views_built: u64,
 }
 
 /// The tab caption cut for the title of a menu entry.
@@ -220,6 +283,12 @@ impl AppCore {
             LogFilter::from_options(&options),
             !options.tweaks.log_panel.save_to_file.is_empty(),
         );
+        let auto_limit = settings
+            .options
+            .value()
+            .tweaks
+            .metrics
+            .max_auto_saved_sessions;
         let mut app = AppCore {
             service,
             shared,
@@ -248,9 +317,22 @@ impl AppCore {
             )),
             watch: None,
             now: 0.0,
+            queued_store: std::collections::VecDeque::new(),
+            refresh_wanted: false,
+            catalog: Arc::new(Catalog::default()),
+            slots: std::collections::HashMap::new(),
+            timer_now: 0.0,
+            store_running: false,
+            named_after_close: std::collections::HashSet::new(),
+            auto_limit,
+            flow: None,
+            exit_saved: false,
+            startup: None,
+            views_built: 0,
         };
         let root = app.new_window(None);
         app.new_home_tab(root);
+        app.refresh_sessions();
         let mut warnings: Vec<Warning> = app.service.startup_warnings().to_vec();
         warnings.extend(app.settings.warnings());
         for w in &warnings {
@@ -394,6 +476,12 @@ impl AppCore {
     /// The frame time (seconds) for notices.
     pub fn set_now(&mut self, now: f64) {
         self.now = now;
+        self.timer_now = now;
+    }
+
+    /// Sets the auto-save timer's time (monotonic seconds, also while the window is hidden).
+    pub fn set_timer_now(&mut self, now: f64) {
+        self.timer_now = now;
     }
 
     /// The OS theme (egui's system theme) changed or was read: under `follow_os` the theme is re-applied.
@@ -480,10 +568,31 @@ impl AppCore {
             .and_then(WindowModel::active_tab_mut)
     }
 
+    /// What runs after the first frame (the GUI's command line, D-125).
+    pub fn set_startup(&mut self, startup: Startup) {
+        self.startup = Some(startup);
+    }
+
+    /// Views built so far (the G12 job counter).
+    pub fn views_built(&self) -> u64 {
+        self.views_built
+    }
+
+    /// Tabs not started yet.
+    pub fn pending_tabs(&self) -> usize {
+        self.windows
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .filter(|t| t.pending_tab().is_some())
+            .count()
+    }
+
     /// True while a job of any view or of the core runs.
     pub fn busy(&self) -> bool {
         !self.jobs.is_empty()
             || !self.queued_settings.is_empty()
+            || !self.queued_store.is_empty()
+            || self.refresh_wanted
             || self
                 .windows
                 .iter()
@@ -556,6 +665,7 @@ impl AppCore {
             w.focused_seq = seq;
         }
         self.send_watch(WatchCmd::Poll);
+        self.refresh_sessions();
     }
 
     /// The platform's geometry of a window (read each frame).
@@ -577,7 +687,8 @@ impl AppCore {
 
     fn new_home_tab(&mut self, window: WindowId) {
         let id = self.shared.allocate();
-        let tab = Tab::live(id, ViewModel::Home(HomeModel::default()), true);
+        let home = self.new_home_model();
+        let tab = Tab::live(id, ViewModel::Home(Box::new(home)), true);
         self.insert_tab(window, tab, false);
     }
 
@@ -609,6 +720,15 @@ impl AppCore {
         {
             w.active = index;
         }
+        self.after_activation(window);
+    }
+
+    /// A tab became active: a pending one starts (D-126), Home's tree refreshes (D-124).
+    fn after_activation(&mut self, window: WindowId) {
+        self.start_active_pending();
+        if self.scope(window) == Scope::Home {
+            self.refresh_sessions();
+        }
     }
 
     // ---- opening views ---------------------------------------------------------------------------------------
@@ -629,7 +749,37 @@ impl AppCore {
         }
     }
 
-    fn build_model(&self, request: ViewRequest, titles: [Option<String>; 2]) -> ViewModel {
+    fn build_model(&mut self, request: ViewRequest, titles: [Option<String>; 2]) -> ViewModel {
+        self.build_model_with(
+            titles,
+            request,
+            &hikasa_session::sessions::OpaqueTable::new(),
+        )
+    }
+
+    /// The model of a request; a session's `view` keys win over the layout of the view type (D-108).
+    fn build_model_with(
+        &mut self,
+        titles: [Option<String>; 2],
+        request: ViewRequest,
+        session_view: &hikasa_session::sessions::OpaqueTable,
+    ) -> ViewModel {
+        self.views_built += 1;
+        let overlaid;
+        let layout = if session_view.is_empty() {
+            &self.state
+        } else {
+            let mut state = self.state.clone();
+            let name = match &request {
+                ViewRequest::Text { .. } => Scope::Text,
+                ViewRequest::Folder { .. } => Scope::Folder,
+            }
+            .view_name()
+            .unwrap_or_default();
+            state.overlay_view(name, session_view);
+            overlaid = state;
+            &overlaid
+        };
         let editor_px = self.theme().fonts.editor.size.round().clamp(1.0, 1000.0) as u32;
         match request {
             ViewRequest::Text {
@@ -637,7 +787,7 @@ impl AppCore {
                 view: opts,
             } => {
                 let mut m = TextViewModel::new(&self.service, request, opts, titles, self.wake());
-                m.apply_layout(&self.state, editor_px);
+                m.apply_layout(layout, editor_px);
                 ViewModel::Text(Box::new(m))
             }
             ViewRequest::Folder {
@@ -653,7 +803,7 @@ impl AppCore {
                     titles,
                     self.wake(),
                 );
-                m.apply_layout(&self.state);
+                m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
             }
         }
@@ -671,9 +821,15 @@ impl AppCore {
         let titles = [options.titles[0].clone(), options.titles[1].clone()];
         let model = self.build_model(request, titles);
         let scope = model.scope();
-        let tab = Tab::live(view, model, self.toolbar_default(scope));
+        let mut tab = Tab::live(view, model, self.toolbar_default(scope));
+        tab.session = Some(crate::view_session::ViewSession::unnamed(self.timer_now));
         self.shared.set_title(view, tab.caption());
         self.track_inputs(&tab);
+        self.place_tab(tab, target)
+    }
+
+    /// Puts a tab at `target`; returns the window.
+    fn place_tab(&mut self, tab: Tab, target: OpenTarget) -> WindowId {
         match target {
             OpenTarget::Replace(window, index)
                 if self.window(window).is_some_and(|w| index < w.tabs.len()) =>
@@ -684,6 +840,7 @@ impl AppCore {
                     std::mem::replace(&mut w.tabs[index], tab)
                 };
                 let mut old = old;
+                self.remember_layout(&old);
                 self.close_model(&mut old, CloseReason::User);
                 window
             }
@@ -803,6 +960,24 @@ impl AppCore {
                     self.open_view(view, *request, &options, target);
                 }
             }
+            UiMsg::OpenSession { view, opened } => {
+                if self.quitting {
+                    let (result, code) = ViewOutcome::close_unopened(CloseReason::Shutdown);
+                    self.shared.close(view, result, code);
+                } else {
+                    effects.extend(self.open_registered(view, *opened));
+                }
+            }
+            UiMsg::LoadWorkspace { load, ids } => {
+                if self.quitting {
+                    for view in ids.into_iter().flatten().flatten() {
+                        let (result, code) = ViewOutcome::close_unopened(CloseReason::Shutdown);
+                        self.shared.close(view, result, code);
+                    }
+                } else {
+                    effects.extend(self.load_registered(*load, ids));
+                }
+            }
             UiMsg::Close { view } => {
                 if let Some(window) = self.window_of(view) {
                     let index = self.window(window).and_then(|w| w.index_of(view));
@@ -817,6 +992,7 @@ impl AppCore {
             }
             UiMsg::Quit => return self.shutdown(),
             UiMsg::Tick | UiMsg::Wake => {
+                self.autosave_tick();
                 effects.extend(self.poll_all());
             }
             UiMsg::Watch(events) => effects.extend(self.on_watch(events)),
@@ -944,6 +1120,7 @@ impl AppCore {
         };
         if let Some(tab) = w.active_tab() {
             ctx.scope = tab.scope();
+            ctx.named = tab.session.as_ref().is_some_and(|s| s.named());
             match tab.model() {
                 Some(ViewModel::Home(m)) => m.ctx_into(&mut ctx),
                 Some(ViewModel::Folder(m)) => m.ctx_into(&mut ctx),
@@ -973,8 +1150,17 @@ impl AppCore {
         if id == CommandId::ShowToolbar {
             return (tab.scope() != Scope::Home).then_some(tab.toolbar);
         }
+        if id == CommandId::SessionLocked {
+            return tab.session.as_ref().map(|s| s.locked);
+        }
         match tab.model()? {
-            ViewModel::Home(_) => None,
+            ViewModel::Home(h) => match id {
+                CommandId::ShowManage => Some(h.panel_mode != crate::home::PanelMode::Hidden),
+                CommandId::MaximizeManage => {
+                    Some(h.panel_mode == crate::home::PanelMode::Maximized)
+                }
+                _ => None,
+            },
             ViewModel::Folder(m) => m.checked(id),
             ViewModel::Text(m) => m.checked(id),
         }
@@ -1007,6 +1193,20 @@ impl AppCore {
         })
     }
 
+    /// The workspace shortcut of a key press no command took (D-111 rule 3).
+    pub fn dispatch_workspace(
+        &self,
+        window: WindowId,
+        keys: &[Shortcut],
+        at: FocusArea,
+    ) -> Option<Invocation> {
+        if self.window(window).is_none_or(|w| !w.dialogs.is_empty()) {
+            return None;
+        }
+        self.workspace_key(keys, at)
+            .map(|name| Invocation::with(CommandId::WorkspaceLoadList, CommandArg::Workspace(name)))
+    }
+
     /// Executes a command in a window (ignored when it is not available there).
     pub fn execute(&mut self, window: WindowId, inv: impl Into<Invocation>) -> Vec<Effect> {
         let inv = inv.into();
@@ -1027,15 +1227,33 @@ impl AppCore {
         let before = self.window_ids();
         let mut effects = Vec::new();
         let service = self.service.clone();
+        if let Some(done) = self.session_command(window, &inv) {
+            effects.extend(done);
+            self.start_active_pending();
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
         match inv.id {
-            CommandId::TabNew => self.new_home_tab(window),
+            CommandId::TabNew => {
+                self.new_home_tab(window);
+                self.refresh_sessions();
+            }
             CommandId::WindowNew => {
                 let id = self.new_window(Some(window));
                 self.new_home_tab(id);
             }
             CommandId::CloseTab => {
-                let index = self.window(window).map_or(0, |w| w.active);
-                effects.extend(self.remove_tab(window, index, CloseReason::User, true));
+                if let Some(view) = self.active_tab(window).map(|t| t.id) {
+                    effects.extend(self.start_close(
+                        vec![view],
+                        Then::Tabs {
+                            window,
+                            views: vec![view],
+                            user: true,
+                        },
+                    ));
+                }
             }
             CommandId::TabNext | CommandId::TabPrev => {
                 if let Some(w) = self.window_mut(window) {
@@ -1046,6 +1264,7 @@ impl AppCore {
                         (w.active + n - 1) % n
                     };
                 }
+                self.after_activation(window);
             }
             CommandId::TabDuplicate => self.duplicate(window),
             CommandId::TabMoveToNewWindow => {
@@ -1069,16 +1288,6 @@ impl AppCore {
             CommandId::ContextHelp => {
                 let topic = self.scope(window).help_topic();
                 self.show_help(window, topic);
-            }
-            CommandId::HomeCompare => {
-                let wake = self.wake();
-                if let Some(Tab {
-                    content: TabContent::Live(ViewModel::Home(home)),
-                    ..
-                }) = self.active_tab_mut(window)
-                {
-                    home.compare(&service, wake);
-                }
             }
             CommandId::ShowToolbar => {
                 let scope = self.scope(window);
@@ -1106,15 +1315,20 @@ impl AppCore {
                     }
                 };
                 if let Some((request, view)) = open {
-                    let specs = vec![
-                        request.left.to_string_lossy().into_owned(),
-                        request.right.to_string_lossy().into_owned(),
-                    ];
+                    let parent = self.child_link(window, &request);
                     let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window {
                         OpenTarget::NewWindow
                     } else {
                         OpenTarget::Window(window)
                     };
+                    if let Some(parent) = parent {
+                        self.open_child(ViewRequest::Text { request, view }, parent, target);
+                        return effects;
+                    }
+                    let specs = vec![
+                        request.left.to_string_lossy().into_owned(),
+                        request.right.to_string_lossy().into_owned(),
+                    ];
                     self.open_local(
                         ViewKind::TextCompare,
                         ViewRequest::Text { request, view },
@@ -1125,9 +1339,30 @@ impl AppCore {
                 }
             }
         }
+        self.start_active_pending();
         effects.extend(self.new_viewports(&before));
         effects.extend(self.dirty_effects());
         effects
+    }
+
+    /// The parent link of a pair opened from the folder view of `window` (FC-062, TC-052): the view's reference
+    /// (named or auto-saved) and the pair's paths relative to its bases; `None` for a view without a file.
+    fn child_link(
+        &self,
+        window: WindowId,
+        request: &hikasa_session::api::TextCompareRequest,
+    ) -> Option<hikasa_session::sessions::ParentLink> {
+        let tab = self.active_tab(window)?;
+        let session = tab.session.as_ref()?.link_text(self.slots.get(&tab.id))?;
+        let Some(ViewModel::Folder(m)) = tab.model() else {
+            return None;
+        };
+        let [left, right] = m.relative_pair(request)?;
+        Some(hikasa_session::sessions::ParentLink {
+            session,
+            left,
+            right,
+        })
     }
 
     /// `TabDuplicate` (D-107): a new view of the same request with its own job, right of the source tab; a Home
@@ -1149,10 +1384,15 @@ impl AppCore {
             None => return,
         };
         let toolbar = tab.toolbar;
+        let now = self.now;
         // Right of the source, whatever `open_new_tab_next_to_active` says.
         let at = self.window(window).map_or(0, |w| w.active + 1);
         let tab = match copy {
-            Err(home) => Tab::live(self.shared.allocate(), ViewModel::Home(home), toolbar),
+            Err(home) => Tab::live(
+                self.shared.allocate(),
+                ViewModel::Home(Box::new(home)),
+                toolbar,
+            ),
             Ok((kind, request, titles, specs)) => {
                 let view = self.shared.allocate();
                 self.shared.register(
@@ -1167,6 +1407,7 @@ impl AppCore {
                 let model = self.build_model(request, titles);
                 let mut tab = Tab::live(view, model, toolbar);
                 tab.toolbar = toolbar;
+                tab.session = Some(crate::view_session::ViewSession::unnamed(now));
                 self.shared.set_title(view, tab.caption());
                 self.track_inputs(&tab);
                 tab
@@ -1243,6 +1484,7 @@ impl AppCore {
         if self.window(from).is_some_and(|w| w.tabs.is_empty()) {
             effects.extend(self.close_window_now(from));
         }
+        self.start_active_pending();
         effects.extend(self.new_viewports(&before));
         effects
     }
@@ -1270,14 +1512,24 @@ impl AppCore {
             return Vec::new();
         }
         let keep = self.window(window).map(|w| w.tabs[w.active].id);
-        let mut effects = Vec::new();
-        while let Some(index) = self
+        let views: Vec<ViewId> = self
             .window(window)
-            .and_then(|w| w.tabs.iter().position(|t| Some(t.id) != keep))
-        {
-            effects.extend(self.remove_tab(window, index, CloseReason::User, false));
-        }
-        effects
+            .map(|w| {
+                w.tabs
+                    .iter()
+                    .map(|t| t.id)
+                    .filter(|v| Some(*v) != keep)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.start_close(
+            views.clone(),
+            Then::Tabs {
+                window,
+                views,
+                user: false,
+            },
+        )
     }
 
     /// Closes the tab `index` of a window: its view reports the D-23 outcome to its waiter (if any), its jobs
@@ -1331,12 +1583,19 @@ impl AppCore {
                 w.active = w.active.saturating_sub(1).min(w.tabs.len() - 1);
             }
         }
+        self.after_activation(window);
         Vec::new()
     }
 
     fn close_model(&mut self, tab: &mut Tab, reason: CloseReason) {
+        self.decide_silently(tab);
         let service = self.service.clone();
         let id = tab.id;
+        if tab.pending_tab().is_some() {
+            // Never started: `close_unopened` semantics (D-126).
+            let (result, code) = ViewOutcome::close_unopened(reason);
+            self.shared.close(id, result, code);
+        }
         let outcome = match tab.model_mut() {
             Some(ViewModel::Folder(m)) => {
                 let outcome = m.outcome(&service);
@@ -1383,6 +1642,37 @@ impl AppCore {
         }
     }
 
+    /// Stops tracking a view's inputs.
+    fn untrack_view(&mut self, view: ViewId) {
+        for spec in self.tracked.remove(&view).unwrap_or_default() {
+            self.send_watch(WatchCmd::Untrack(spec));
+        }
+    }
+
+    /// Runs `change` on `state.toml` with `state_update` on a job (D-108).
+    fn update_state(&mut self, change: impl FnMut(&mut State) + Send + 'static) {
+        let mut change = change;
+        let path = self
+            .service
+            .settings_store()
+            .path(hikasa_session::settings::FileId::State);
+        let watch = self.watch.clone();
+        let job = Job::spawn(
+            &self.service,
+            JobKind::VfsWrite,
+            "save the state".into(),
+            &self.wake(),
+            move |svc, _| {
+                let written = svc.state_update(&mut change)?;
+                if let Some(link) = watch {
+                    link.send(WatchCmd::Acknowledge(vec![path]));
+                }
+                Ok(written)
+            },
+        );
+        self.jobs.push(CoreJob::State(job));
+    }
+
     /// Writes `[window]` (from `geometry`) and every `[layout.<view>]` this process knows (D-108), on a job.
     fn persist_state(&mut self, geometry: Option<WindowState>) {
         if let Some(g) = geometry {
@@ -1427,10 +1717,11 @@ impl AppCore {
             return Vec::new();
         };
         if !w.dialogs.is_empty() {
-            // The dialogs close with Cancel first (D-112); the window stays.
+            // The top dialog closes with Cancel first (D-112): the window stays, what lies under it is not lost.
             if let Some(w) = self.window_mut(window) {
-                w.dialogs.clear();
+                w.dialogs.pop();
             }
+            return self.cancel_flow(window);
         }
         let tabs = self.window(window).map_or(0, |w| w.tabs.len());
         if tabs > 1 && self.options().tabs.warn_when_closing_multiple_tabs {
@@ -1445,7 +1736,19 @@ impl AppCore {
             }
             return Vec::new();
         }
-        self.close_window_now(window)
+        self.close_window_confirmed(window)
+    }
+
+    /// The close actions of a window's tabs, then it closes (the last window: the exit).
+    fn close_window_confirmed(&mut self, window: WindowId) -> Vec<Effect> {
+        let views = self.window(window).map_or_else(Vec::new, |w| {
+            w.tabs.iter().map(|t| t.id).collect::<Vec<_>>()
+        });
+        if self.windows.len() == 1 {
+            self.start_close(views, Then::Exit)
+        } else {
+            self.start_close(views, Then::Window(window))
+        }
     }
 
     /// Closes a window without asking.
@@ -1506,7 +1809,17 @@ impl AppCore {
                 return Vec::new();
             }
         }
-        self.shutdown()
+        self.exit_confirmed()
+    }
+
+    /// The exit workspace, then every close action (a Cancel stops the exit), then the shutdown (D-106).
+    fn exit_confirmed(&mut self) -> Vec<Effect> {
+        let views: Vec<ViewId> = self
+            .windows
+            .iter()
+            .flat_map(|w| w.tabs.iter().map(|t| t.id))
+            .collect();
+        self.start_close(views, Then::Exit)
     }
 
     /// Quits without asking (IPC `Shutdown`, a confirmed Exit, the end of the desktop session): every view closes
@@ -1516,6 +1829,7 @@ impl AppCore {
         if self.quitting {
             return vec![Effect::Exit];
         }
+        self.exit_workspace_save();
         self.quitting = true;
         let geometry = self.window(self.focused()).map(|w| w.geometry.clone());
         for wi in 0..self.windows.len() {
@@ -1540,6 +1854,7 @@ impl AppCore {
         let began = std::time::Instant::now();
         self.flush_log();
         self.next_settings_job();
+        self.next_store_job();
         while !self.jobs.is_empty() && began.elapsed() < limit {
             self.poll_jobs();
             if !self.jobs.is_empty() {
@@ -1635,8 +1950,9 @@ impl AppCore {
                     Vec::new()
                 }
             }
-            Followup::CloseWindow => self.close_window_now(window),
-            Followup::Exit => self.shutdown(),
+            Followup::CloseWindow => self.close_window_confirmed(window),
+            Followup::Exit => self.exit_confirmed(),
+            Followup::Session(action) => self.session_action(window, action),
             Followup::DisableOption(key) => {
                 self.set_option_false(key);
                 Vec::new()
@@ -2039,6 +2355,13 @@ impl AppCore {
                     Some(Ok(())) => {}
                     Some(Err(e)) => self.stop_log_saving(&file, &e),
                 },
+                CoreJob::Store(j, view, kind) => match j.try_result() {
+                    None => pending.push(CoreJob::Store(j, view, kind)),
+                    Some(result) => {
+                        self.store_running = false;
+                        effects.extend(self.store_finished(result, view, kind));
+                    }
+                },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {
@@ -2064,6 +2387,7 @@ impl AppCore {
         pending.append(&mut self.jobs);
         self.jobs = pending;
         self.next_settings_job();
+        self.next_store_job();
         self.flush_log();
         effects
     }
@@ -2082,6 +2406,11 @@ impl AppCore {
             effects.push(Effect::ApplyCommands);
         }
         let options = self.options().clone();
+        let limit = options.tweaks.metrics.max_auto_saved_sessions;
+        if limit != self.auto_limit {
+            self.auto_limit = limit;
+            self.prune_autosaved();
+        }
         self.log.set_filter(
             LogFilter::from_options(&options),
             !options.tweaks.log_panel.save_to_file.is_empty() && !self.log_save_failed,
@@ -2267,8 +2596,8 @@ impl AppCore {
                 {
                     for (field, text) in fields {
                         match field {
-                            FieldId::HomeLeft => home.left = text,
-                            FieldId::HomeRight => home.right = text,
+                            FieldId::HomeLeft => home.panel.left = text,
+                            FieldId::HomeRight => home.panel.right = text,
                         }
                     }
                     home.error = None;
@@ -2279,6 +2608,8 @@ impl AppCore {
                     self.set_message(view, Message::info(text));
                 }
             }
+            DropOutcome::NewSession(kind, left) => self.drop_new_session(window, kind, left),
+            DropOutcome::OpenType(kind, paths) => self.drop_open_type(window, kind, paths),
             DropOutcome::Open([left, right]) => {
                 let request = hikasa_session::api::GuiOpenRequest {
                     specs: vec![left.into_os_string(), right.into_os_string()],

@@ -18,9 +18,11 @@ pub mod log;
 pub mod menus;
 pub mod notify;
 pub mod scroll;
+pub mod session_dialog;
 pub mod status;
 pub mod text;
 pub mod theme;
+pub mod workspace;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,6 +44,7 @@ use crate::startup::Deferred;
 use crate::ui::dialog::DialogInput;
 use crate::ui::folder::FolderUi;
 use crate::ui::hint::Hint as _;
+use crate::ui::home as ui_home;
 use crate::ui::log::LogAction;
 use crate::ui::menus::{Hover, ToolbarAction, ToolbarCtx};
 use crate::ui::status::{MessageAction, StatusAction};
@@ -73,6 +76,7 @@ enum Action {
     LogHeight(ViewId, f64),
     MoveTab(usize, Option<WindowId>, Option<usize>, Option<[f32; 2]>),
     Drop(DropTarget, Vec<std::path::PathBuf>),
+    Home(ui_home::HomeAction),
 }
 
 /// Where a window's parts were last drawn (tab drags, D-107).
@@ -89,6 +93,8 @@ struct Placement {
 /// The eframe application.
 pub struct HikasaApp {
     core: AppCore,
+    /// The auto-save timer's time (§1.4.9).
+    clock: std::time::Instant,
     mailbox: Mailbox,
     texts: HashMap<ViewId, TextUi>,
     folders: HashMap<ViewId, FolderUi>,
@@ -181,6 +187,7 @@ impl HikasaApp {
         set_theme(ctx, &palette, core.scheme());
         HikasaApp {
             core,
+            clock: std::time::Instant::now(),
             mailbox,
             texts: HashMap::new(),
             folders: HashMap::new(),
@@ -223,22 +230,37 @@ impl HikasaApp {
                         Palette::from_scheme_base(self.core.scheme(), self.core.scheme_base());
                     set_theme(ctx, &self.palette, self.core.scheme());
                 }
-                Effect::Geometry(_, g) => {
+                Effect::Geometry(window, g) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
                     ctx.send_viewport_cmd_to(
-                        ViewportId::ROOT,
+                        target,
                         ViewportCommand::InnerSize(egui::vec2(g.width as f32, g.height as f32)),
                     );
                     if g.x >= 0 && g.y >= 0 {
                         ctx.send_viewport_cmd_to(
-                            ViewportId::ROOT,
+                            target,
                             ViewportCommand::OuterPosition(egui::pos2(g.x as f32, g.y as f32)),
                         );
                     }
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Maximized(g.maximized));
                     self.root_title.clear();
                 }
                 // A window drawn in the root viewport since the root swap gets a new builder if it ever leaves it.
                 Effect::CloseViewport(w) => {
                     self.builders.remove(&w);
+                }
+                Effect::Raise(window) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Focus);
                 }
                 Effect::OpenViewport(_) | Effect::ApplyCommands => {}
             }
@@ -328,6 +350,34 @@ impl HikasaApp {
                 effects
             }
             Action::Drop(target, paths) => self.core.drop_paths(window, target, paths),
+            Action::Home(action) => match action {
+                ui_home::HomeAction::Run(id) => self.core.execute(window, id),
+                ui_home::HomeAction::Select(key) => {
+                    self.core.home_select(window, &key);
+                    Vec::new()
+                }
+                ui_home::HomeAction::Toggle(key) => {
+                    if let Some(ViewModel::Home(home)) =
+                        self.core.active_tab_mut(window).and_then(|t| t.model_mut())
+                    {
+                        home.toggle(&key);
+                    }
+                    Vec::new()
+                }
+                ui_home::HomeAction::Panel(a) => self.core.panel_action(window, a),
+                ui_home::HomeAction::Rename(commit) => {
+                    if commit {
+                        self.core.commit_rename(window);
+                    } else {
+                        self.core.cancel_rename(window);
+                    }
+                    Vec::new()
+                }
+                ui_home::HomeAction::Move(reference, folder) => {
+                    self.core.tree_move(window, reference, &folder);
+                    Vec::new()
+                }
+            },
         };
         self.apply(ctx, effects);
     }
@@ -447,10 +497,17 @@ impl HikasaApp {
                     }
                     match core.dispatch_keys(window, &candidates, area) {
                         Some(id) => {
-                            run.push(id);
+                            run.push(Invocation::new(id));
                             false
                         }
-                        None => true,
+                        // D-111 rule 3: a workspace shortcut applies when no command took the key.
+                        None => match core.dispatch_workspace(window, &candidates, area) {
+                            Some(inv) => {
+                                run.push(inv);
+                                false
+                            }
+                            None => true,
+                        },
                     }
                 });
             });
@@ -459,8 +516,8 @@ impl HikasaApp {
             let effects = self.core.dialog_key(window, &key);
             self.apply(&ctx, effects);
         }
-        for id in run {
-            actions.push(Action::Run(Invocation::new(id)));
+        for inv in run {
+            actions.push(Action::Run(inv));
         }
 
         // OS drops (UI-008): paths only; bytes-only drops are ignored.
@@ -497,11 +554,13 @@ impl HikasaApp {
         // Menu bar.
         let menus = {
             let checked = |id: CommandId| self.core.checked(window, id);
+            let names = self.core.workspace_names();
             let mc = MenuContext {
                 tables: self.core.tables(),
                 scope,
                 ctx: state,
                 checked: &checked,
+                workspaces: &names,
             };
             menu_bar(&mc)
         };
@@ -551,6 +610,11 @@ impl HikasaApp {
                 .as_ref()
                 .map(|(_, _, items)| items.clone())
                 .unwrap_or_default();
+            let sessions = self.core.sessions_of(scope);
+            let open_sessions = self
+                .core
+                .window_mut(window)
+                .is_some_and(|w| std::mem::take(&mut w.focus_sessions));
             let enabled = |id: CommandId| self.core.enabled(window, id);
             let checked = |id: CommandId| self.core.checked(window, id);
             let t = ToolbarCtx {
@@ -560,6 +624,8 @@ impl HikasaApp {
                 checked: &checked,
                 timing: self.core.hints(),
                 pal: &pal,
+                sessions: &sessions,
+                open_sessions,
             };
             let mut hover = self.hover;
             let out = egui::Panel::top("hk-toolbar")
@@ -649,6 +715,7 @@ impl HikasaApp {
             pal.bg
         };
         let mut drop_fields: Option<[egui::Rect; 2]> = None;
+        let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
             if f.use_system { 13.0 } else { f.size as f32 }
@@ -665,13 +732,33 @@ impl HikasaApp {
                     return;
                 };
                 let keys = !dialog_open;
+                if tab.pending_tab().is_some() {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(RichText::new("Loading…").color(pal.muted));
+                    });
+                    return;
+                }
                 match tab.model_mut() {
                     Some(ViewModel::Home(home)) => {
-                        let (run, fields) = home::show(ui, view, home, &pal);
-                        drop_fields = Some(fields);
-                        if let Some(id) = run {
-                            invocations.push(Invocation::new(id));
+                        let menu = |h: &crate::home::HomeModel| {
+                            let mut c = dispatch_ctx;
+                            h.ctx_into(&mut c);
+                            let none = |_: CommandId| None;
+                            crate::menus::tree_menu(&MenuContext {
+                                tables: &tables,
+                                scope: Scope::Home,
+                                ctx: c,
+                                checked: &none,
+                                workspaces: &[],
+                            })
+                        };
+                        let out = home::show(ui, view, home, &pal, &menu);
+                        if let [Some(l), Some(r)] = out.fields {
+                            drop_fields = Some([l, r]);
                         }
+                        drop_types = out.types;
+                        invocations.extend(out.invocations);
+                        actions.extend(out.actions.into_iter().map(Action::Home));
                     }
                     Some(ViewModel::Folder(m)) => {
                         let s = m.status();
@@ -717,7 +804,9 @@ impl HikasaApp {
                 (Some([_, r]), Some(p)) if r.contains(p) => {
                     DropTarget::PathField(FieldId::HomeRight)
                 }
-                _ => DropTarget::Window,
+                _ => pointer
+                    .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
+                    .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
             };
             actions.push(Action::Drop(target, dropped));
         }
@@ -737,11 +826,12 @@ impl HikasaApp {
         }
 
         // The top dialog.
-        if let Some(w) = self.core.window(window)
-            && let Some(top) = w.dialogs.top()
-        {
-            for input in dialog::show(ui, top, w.dialogs.len(), &pal) {
-                actions.push(Action::Dialog(input));
+        if let Some(w) = self.core.window_mut(window) {
+            let depth = w.dialogs.len();
+            if let Some(top) = w.dialogs.top_mut() {
+                for input in dialog::show(ui, &mut **top, depth, &pal) {
+                    actions.push(Action::Dialog(input));
+                }
             }
         }
 
@@ -812,6 +902,7 @@ impl HikasaApp {
                             ..state
                         },
                         checked: &checked,
+                        workspaces: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);
@@ -919,6 +1010,8 @@ impl HikasaApp {
             {
                 FocusArea::PathField
             }
+            Some(ViewModel::Home(_)) if focused == home::tree_id(tab.id) => FocusArea::SessionsTree,
+            Some(ViewModel::Home(_)) if focused == home::search_id(tab.id) => FocusArea::HomeSearch,
             Some(ViewModel::Text(_)) if focused == text::pane_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Folder(_)) if focused == folder::tree_id(tab.id) => FocusArea::ViewMain,
             _ => FocusArea::Root,
@@ -928,6 +1021,7 @@ impl HikasaApp {
     /// The work of a frame before drawing (eframe's `logic`): the OS theme, the mailbox, the jobs, the bench.
     fn step(&mut self, ctx: &egui::Context) {
         self.core.set_now(ctx.input(|i| i.time));
+        self.core.set_timer_now(self.clock.elapsed().as_secs_f64());
         hint::set_timing(ctx, self.core.hints());
         // The OS theme (egui's system theme), re-evaluated when it changes (D-113).
         let dark = ctx.system_theme().map(|t| t == egui::Theme::Dark);
@@ -944,6 +1038,11 @@ impl HikasaApp {
         effects.extend(self.core.handle(UiMsg::Tick));
         if !effects.is_empty() {
             self.apply(ctx, effects);
+        }
+        // The auto-save timer needs a frame also in an idle window; eframe calls `logic` for a repaint while the
+        // window is hidden (no `ui`), so this reaches a minimized window too.
+        if let Some(wait) = self.core.autosave_wake_in() {
+            ctx.request_repaint_after(Duration::from_secs_f64(wait.max(0.05)));
         }
         if self.core.settling() {
             // A job woke the window before its result was published (microseconds): look again at once.
@@ -985,6 +1084,8 @@ impl HikasaApp {
             });
         }
         self.prune();
+        // The startup workspace loads once the window is up (§1.4.12).
+        self.core.after_first_frame();
         if self.deferred.pending() {
             // The first frame is laid out: the first-run work runs now, on its own thread (never awaited).
             let _detached = self.deferred.start();

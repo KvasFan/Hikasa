@@ -697,8 +697,8 @@ fn home_compare_resolves_paths_like_the_command_line() {
     if let Some(tab) = app.active_tab_mut()
         && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
-        home.left = "left.c".into(); // relative to the GUI's current folder (`work`)
-        home.right = right.display().to_string();
+        home.panel.left = "left.c".into(); // relative to the GUI's current folder (`work`)
+        home.panel.right = right.display().to_string();
     }
     assert!(app.enabled(CommandId::HomeCompare));
     app.execute(CommandId::HomeCompare);
@@ -724,8 +724,8 @@ fn home_compare_resolves_paths_like_the_command_line() {
     if let Some(tab) = app.active_tab_mut()
         && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
-        home.left = "missing-1.c".into();
-        home.right = "missing-2.c".into();
+        home.panel.left = "missing-1.c".into();
+        home.panel.right = "missing-2.c".into();
     }
     app.execute(CommandId::HomeCompare);
     world.settle(&mut app);
@@ -776,7 +776,19 @@ fn every_command_has_an_enabled_state() {
             C::Exit,
             C::HelpContents,
             C::ContextHelp,
-            C::About
+            C::About,
+            C::SessionNewList,
+            C::SessionOpen,
+            C::WorkspaceLoadList,
+            C::WorkspaceManager,
+            C::WorkspaceSaveAs,
+            C::ShowManage,
+            C::MaximizeManage,
+            C::Find,
+            C::TreeNewSession,
+            C::TreeNewFolder,
+            C::TreeExpandAll,
+            C::TreeCollapseAll,
         ]
     );
     // Folder, finished, nothing selected.
@@ -1115,8 +1127,8 @@ fn set_home(app: &mut TestApp, left: &str, right: &str) {
     if let Some(tab) = app.active_tab_mut()
         && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
-        home.left = left.into();
-        home.right = right.into();
+        home.panel.left = left.into();
+        home.panel.right = right.into();
     }
 }
 
@@ -1131,7 +1143,7 @@ fn home_error(app: &TestApp) -> Option<String> {
 /// `clipboard://` are refused with an inline message before anything runs; the typed paths are passed verbatim
 /// (§2.1: spaces are legal in names); the resolution runs as a job.
 #[test]
-fn home_refuses_stdin_and_clipboard_keeps_spaces_and_resolves_on_a_job() {
+fn home_refuses_stdin_keeps_spaces_and_resolves_on_a_job() {
     let read = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&read);
     let world = World::with_init(move |init| {
@@ -1143,17 +1155,13 @@ fn home_refuses_stdin_and_clipboard_keeps_spaces_and_resolves_on_a_job() {
     let (_, right) = text_pair(&world);
     let right = right.display().to_string();
     let mut app = world.app(None);
-    for (left, message) in [
-        ("-", crate::home::NO_STDIN),
-        ("clipboard://", crate::home::NO_CLIPBOARD),
-    ] {
-        set_home(&mut app, left, &right);
-        app.execute(CommandId::HomeCompare);
-        assert!(!app.busy(), "nothing runs for {left}");
-        world.settle(&mut app);
-        assert_eq!(app.scope(), Scope::Home);
-        assert_eq!(home_error(&app).as_deref(), Some(message));
-    }
+    world.settle(&mut app);
+    set_home(&mut app, "-", &right);
+    app.execute(CommandId::HomeCompare);
+    assert!(!app.busy(), "nothing runs for -");
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Home);
+    assert_eq!(home_error(&app).as_deref(), Some(crate::home::NO_STDIN));
     set_home(&mut app, &right, "-");
     app.execute(CommandId::HomeCompare);
     assert_eq!(home_error(&app).as_deref(), Some(crate::home::NO_STDIN));

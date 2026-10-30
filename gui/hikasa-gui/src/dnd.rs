@@ -23,7 +23,6 @@ pub enum FieldId {
 }
 
 /// Where paths were dropped.
-#[allow(dead_code)] // variants for W4b/W4c (contract seams)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DropTarget {
     /// A path field.
@@ -43,12 +42,17 @@ pub enum DropOutcome {
     Open([PathBuf; 2]),
     /// Shows a message in the view's message panel.
     Message(&'static str),
+    /// A Home type button took one path: a new session of that type with the left side filled.
+    NewSession(SessionType, String),
+    /// A Home type button took two paths: that type's view.
+    OpenType(SessionType, [PathBuf; 2]),
     /// Nothing (no path).
     Ignore,
 }
 
 /// The rule of a drop: a path field takes the first path (two paths on the left field: left and right); the
-/// window opens two paths, hints at one and refuses more. Home type buttons are W4b's (here: like the window).
+/// window opens two paths, hints at one and refuses more; a Home type button takes one path into a new session
+/// of its type and opens two as that type.
 pub fn decide(target: DropTarget, paths: &[PathBuf]) -> DropOutcome {
     let text = |p: &PathBuf| p.to_string_lossy().into_owned();
     match (target, paths) {
@@ -60,10 +64,10 @@ pub fn decide(target: DropTarget, paths: &[PathBuf]) -> DropOutcome {
         (DropTarget::PathField(field), [first, ..]) => {
             DropOutcome::Fill(vec![(field, text(first))])
         }
-        (DropTarget::Window | DropTarget::HomeType(_), [_]) => DropOutcome::Message(DROP_ONE_MORE),
-        (DropTarget::Window | DropTarget::HomeType(_), [l, r]) => {
-            DropOutcome::Open([l.clone(), r.clone()])
-        }
+        (DropTarget::HomeType(kind), [one]) => DropOutcome::NewSession(kind, text(one)),
+        (DropTarget::HomeType(kind), [l, r]) => DropOutcome::OpenType(kind, [l.clone(), r.clone()]),
+        (DropTarget::Window, [_]) => DropOutcome::Message(DROP_ONE_MORE),
+        (DropTarget::Window, [l, r]) => DropOutcome::Open([l.clone(), r.clone()]),
         (DropTarget::Window | DropTarget::HomeType(_), _) => DropOutcome::Message(DROP_ONE_OR_TWO),
     }
 }
@@ -103,6 +107,19 @@ mod tests {
         );
         assert_eq!(
             decide(DropTarget::Window, &[p("/a"), p("/b"), p("/c")]),
+            DropOutcome::Message(DROP_ONE_OR_TWO)
+        );
+        let kind = SessionType::TextCompare;
+        assert_eq!(
+            decide(DropTarget::HomeType(kind), &[p("/a")]),
+            DropOutcome::NewSession(kind, "/a".into())
+        );
+        assert_eq!(
+            decide(DropTarget::HomeType(kind), &[p("/a"), p("/b")]),
+            DropOutcome::OpenType(kind, [p("/a"), p("/b")])
+        );
+        assert_eq!(
+            decide(DropTarget::HomeType(kind), &[p("/a"), p("/b"), p("/c")]),
             DropOutcome::Message(DROP_ONE_OR_TWO)
         );
     }

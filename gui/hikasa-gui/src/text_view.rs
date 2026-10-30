@@ -337,7 +337,6 @@ impl TextViewModel {
     }
 
     /// The current view options (filter, ignore-unimportant, expanded gaps).
-    #[cfg(test)]
     pub fn view_options(&self) -> &ViewOptions {
         &self.opts
     }

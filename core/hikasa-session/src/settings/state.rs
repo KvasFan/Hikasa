@@ -139,6 +139,15 @@ impl State {
         }
     }
 
+    /// Overlays a session's `[view]` keys on `[layout.<view>]` in this copy (the precedence of D-108: the
+    /// session wins over the layout of the view type; keys of the wrong type are simply read past later).
+    pub fn overlay_view(&mut self, view: &str, keys: &Table) {
+        let table = self.layout.entry(view.to_owned()).or_default();
+        for (key, value) in keys {
+            table.insert(key.clone(), value.clone());
+        }
+    }
+
     /// Sets `key` of `[layout.<view>]` (the table is created on demand; its other keys stay).
     pub fn set_layout_value(&mut self, view: &str, key: &str, value: LayoutValue) {
         let v = match value {

@@ -4,8 +4,11 @@
 use egui::{Align, Button, Layout, RichText, Ui};
 
 use crate::dialog::{AboutDialog, ButtonRole, DialogModel, Prompt};
+use crate::session_dialog::{NameDialog, SaveSessionDialog, SessionSettingsDialog};
 use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
+use crate::ui::{session_dialog, workspace};
+use crate::workspace::{ManageWorkspacesDialog, SaveWorkspaceDialog};
 
 /// What the user did in the dialog.
 pub enum DialogInput {
@@ -20,7 +23,7 @@ pub enum DialogInput {
 /// Draws `dialog` (the top of a window's stack) as a modal.
 pub fn show(
     ui: &mut Ui,
-    dialog: &dyn DialogModel,
+    dialog: &mut dyn DialogModel,
     depth: usize,
     pal: &Palette,
 ) -> Vec<DialogInput> {
@@ -55,6 +58,16 @@ pub fn show(
             }
         } else if let Some(about) = dialog.as_any().downcast_ref::<AboutDialog>() {
             ui.label(RichText::new(about.text()).color(pal.fg));
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveSessionDialog>() {
+            session_dialog::save_as(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<NameDialog>() {
+            session_dialog::name(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SessionSettingsDialog>() {
+            session_dialog::settings(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveWorkspaceDialog>() {
+            workspace::save_as(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ManageWorkspacesDialog>() {
+            workspace::manage(ui, d, pal);
         }
         ui.add_space(12.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

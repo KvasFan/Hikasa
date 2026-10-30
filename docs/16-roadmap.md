@@ -58,8 +58,9 @@ the session UI itself comes with W4); wave 3 (VFS mutations: single-item primiti
 capabilities, the generic plan/execute layer for copy, move, remove and trash, mkdir and touch with per-item
 results, `hikasa vfs cp|mv|rm|mkdir|touch`; the clipboard as `clipboard://` for the CLI and the window, D-92…D-103); wave 4a (GUI shell: several windows and tab moves, layout memory, menus, toolbars and keys from the core's
 effective command table, vector icons, dialogs, the theme from `theme.toml`, status bar with jobs, message panel,
-log book and panel, notices and polling of settings and input files, drops, D-104…D-119; W4b sessions and W4c
-settings dialogs follow).
+log book and panel, notices and polling of settings and input files, drops, D-104…D-119; W4b sessions in the
+window: save, lock, close prompts, auto-save, the Session Settings shell, Home with its tree and management panel,
+workspaces with lazy restore, the GUI's command line, D-120…D-127; W4c settings dialogs follows).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

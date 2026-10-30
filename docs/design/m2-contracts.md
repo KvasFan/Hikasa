@@ -69,7 +69,7 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-88 | **Command-line forms** (CLI-002, revises D-51 additively). One positional argument that is not an existing path is resolved as: a named session (exact reference, then case-insensitive) → `LoadSession`; else a workspace → `LoadWorkspace`; else the M1 error. An existing file whose name ends in `.hikasa-pkg` (case-insensitive) is a settings package: with `--silent` it is imported headless (D-86), without it the CLI asks the GUI to show the import wizard (W4; until then exit 100 `unsupported`). `@file` stays reserved for W8. | CLI-002 order; an existing path always wins over a name. | 12 §1 |
 | D-89 | **IPC** (ARCH-091, additive to protocol v1, D-46). `LoadSession{name, wait}` → `ViewOpened{view}` (and `ViewClosed` when waited); `LoadWorkspace{name}` → `Views{views}` (the views it opened). Unknown names → `Error{not_found}`; a type the GUI cannot render yet → `Error{unsupported_request}`. A GUI that answers `unsupported_request` to these requests is reported by the CLI as "the running GUI does not support sessions; restart it" (exit 100). | Forward compatibility per D-46. | 01 §6 |
 | D-90 | **Revises D-82 (how rules are written).** A save writes into `[rules]` and `[text_rules]` (of a named session, an auto-saved one and `_defaults/<type>.toml`) every key that differs from the defaults of the type **now**, plus **every key the file already held**, with its value now: an explicit choice stays written even when it equals the defaults (a later change of the defaults does not change it); a key the file did not hold is written only when it differs. `session edit --unset <key>` removes a key, so the session follows the defaults again. Unknown rule keys, nested ones included, are kept (D-70). The optional folder rules `criteria.timestamps.offset`, `filters.other.size` and `filters.other.date` are written whole, or `false` for "off" where the defaults set them; `false` (and JSON `null`) reads as off, in session files and in `--rules-file`; `true` is refused. Removing an entry of a map that the defaults hold (an `importance.elements` entry) is not representable in M2: deferred to W4 (the GUI's session settings). | Review of W2: an explicit choice must survive a change of the defaults, and "off" must be writable; maintainer, 2026-10-29 (the map entries). | 03 §1, 04 §3 |
-| D-91 | **Locked sessions and bulk commands** (SES-004). `settings import` does not replace a locked named session, nor delete one with `--delete-existing sessions`; `settings restore-defaults --delete-sessions` does not delete one. Each is planned as `skip_locked` (never executed, no result, not counted in the summary) with warning `session_locked`; `--force` on `settings import` / `restore-defaults` includes them. `session delete` and `session rename` of a locked session are `invalid_input` unless `--force`; auto-save never writes a locked file. The defaults files are never locked. | Maintainer, 2026-10-29: a lock protects a session from every command that would change it by accident. | 03 §1, §6, 12 |
+| D-91 | **Locked sessions and bulk commands** (SES-004). `settings import` does not replace a locked named session, nor delete one with `--delete-existing sessions`; `settings restore-defaults --delete-sessions` does not delete one. Each is planned as `skip_locked` (never executed, no result, not counted in the summary) with warning `session_locked`; `--force` on `settings import` / `restore-defaults` includes them. `session delete` and `session rename` of a locked session are `invalid_input` unless `--force`, and so are `session rmdir --recursive` and a folder rename (the Home tree) whose subtree holds locked sessions (the refusal names their count; the GUI's prompt names them, confirming is the force); auto-save never writes a locked file. The defaults files are never locked. | Maintainer, 2026-10-29: a lock protects a session from every command that would change it by accident. | 03 §1, §6, 12 |
 | D-92 | **Mutating VFS = single-item primitives + one generic layer** (VFS-001, ARCH-031). The `Vfs` trait gains `create_dir`, `remove` (file, link or empty folder), `rename` (one back-end), `set_times`, `set_attrs`, `create_symlink`, `move_to_trash` and the optional `copy_file_fast`, each with a default body returning `OperationUnsupported` and each behind a capability bit (seven new bits, `SET_TIMES` now used). Recursion, cross-back-end copy, move, plans and per-item results live once in `hikasa_vfs::ops` over the primitives. `MemoryVfs` implements every primitive with fault hooks (§1.3.8). | One owner of the algorithms (T11); `MemoryVfs` faults test them for every back-end; W5 archives only implement primitives. | 01 §3.2, 11 §1 |
 | D-93 | **Errors of mutations.** New `ErrorKind::NotEmpty` (`not_empty`); `VfsError::{NotEmpty, CrossDevice, OperationUnsupported, InvalidTarget, Unavailable}` with the kinds of §1.3.2 (`CrossDevice`, `OperationUnsupported`, `Unavailable` → `unsupported`; `InvalidTarget` → `invalid_input`); seven new `VfsOp` names. Exit codes unchanged: any `vfs` error or failed item is 100. | "Folder not empty" is a common, user-visible outcome that deserves its own kind; the rest maps onto existing kinds. | 11, 12 §2 |
 | D-94 | **Writes never follow the final link** (plan §5.1 "never follow a link being deleted"). `remove`, `rename`, `move_to_trash`, `set_times` act on a link itself; `set_attrs` on a link is unsupported; a copy or move onto a link replaces the link (`WriteOptions::replace_link`), never the file it points to; trees are never descended or written through links; links are copied **as links** (`LinkPolicy::Copy`, or `Skip`), root arguments are followed only with `--follow-symlinks`. `open_write` keeps the M1 follow-the-link save semantics by default. | A copied tree stays faithful, never pulls data from outside the tree and cannot loop; deleting through a link is the classic data-loss bug. | 11 §1 |
@@ -1856,7 +1856,7 @@ manually.
 // gui/hikasa-gui/src/view_session.rs
 pub enum ViewOrigin { Unnamed, AutoSaved(AutoId), Named(SessionRef) }
 pub struct ViewSession { pub origin: ViewOrigin, pub loaded: Option<Session>, pub locked: bool,
-                         pub explicit_save: bool, pub slot: Option<AutoId>, pub last_autosaved: Option<Session>,
+                         pub explicit_save: bool, pub last_autosaved: Option<Session>,
                          pub parent: Option<ParentLink>, pub next_autosave_at: f64 }
 ```
 
@@ -1912,16 +1912,16 @@ impl HomeModel { pub fn load(&mut self, list: &SessionListDto); pub fn set_searc
 | `TreeOpenAll` | folder | `session_view` for each named session directly in it |
 | `TreeNewSession`, `TreeNewFolder` | folder or root | name prompt → `session_new` / `session_mkdir` |
 | `TreeClear` | named (not locked) | `session_defaults` → `Session::clear` → `session_save` |
-| `TreeDelete` (Del) | named, folder, auto-saved | Prompt → `session_delete` / `session_rmdir(recursive)` (the prompt names the count) / `session_delete_autosaved` |
+| `TreeDelete` (Del) | named, folder, auto-saved | Prompt → `session_delete` / `session_rmdir(recursive)` (the prompt names the count and the locked sessions, confirming is the force, D-91) / `session_delete_autosaved` |
 | `TreeSaveAs` | named, auto-saved | Save Session As → `session_load` + `session_save` under the new reference |
-| `TreeRename` (F2) | named, folder | inline edit → `session_rename` / `session_rename_folder`; locked → Prompt, then `force` |
+| `TreeRename` (F2) | named, folder | inline edit → `session_rename` / `session_rename_folder`; locked (a folder: any session below it) → Prompt, then `force` |
 | `TreeEdit` | named, defaults | Session Settings dialog (§1.4.10) |
 | `TreeExpandAll`, `TreeCollapseAll` | tree | — |
 | `TreeFavorite` | named (not locked) | `session_edit` (`favorite = true/false`) |
 | drag a named session onto a folder | named | `session_rename` (move; locked → Prompt, then `force`) |
 
 The management panel shows the selection: a *New* type → an empty session of that type (Specs editor, Compare);
-a named session → description, Specs editor, Locked, buttons Save (`session_save`), Save As…, Factory Defaults
+a named session → description, Specs editor, Locked, buttons Save (`session_save`; on a locked session a plain refusal, the panel does not offer the force), Save As…, Factory Defaults
 (the panel's copy becomes `Session::clear`; written on Save), Cancel (revert), Open; an auto-saved one → read-only
 Specs, Open, Open as New, Delete. `HomeCompare` = Open of the selection with the panel's specs. The M1 refusals
 of `-` stay; `clipboard://` is accepted (D-101: the GUI reads its own clipboard when the view opens).
@@ -1935,7 +1935,7 @@ of `-` stay; `clipboard://` is accepted (D-101: the GUI reads its own clipboard 
   workspace's count close, `windows[i]` take the workspace's windows (geometry applied as allowed), tabs become
   `Pending` except each window's active tab, which starts. Warnings → notices and log.
 - **Manage Workspaces** (`WorkspaceManager`): list (name, windows, tabs, shortcut); Load, Rename
-  (`workspace_rename`), Delete (Prompt, `workspace_delete`), Shortcut (capture; `workspace_load` + modified
+  (`workspace_rename`), Delete (Prompt, `workspace_delete`), Shortcut (typed as text and checked with `Shortcut::parse`; `workspace_load` + modified
   `Workspace` + `workspace_save`); conflicts with the effective `global` shortcuts and other workspaces are shown,
   never blocking.
 - **Startup and exit** (OPT-001): as D-125; the startup load runs after the first frame (like D-21's deferred
@@ -2016,9 +2016,9 @@ operations, or GUI-only state). Pure functions the GUI calls directly are not li
 | GUI need | Call | Status |
 |---|---|---|
 | comparisons, IPC, M1 | `text_compare`, `folder_prepare`/`folder_run`, `spawn`, `open_view_request`, `resolve_open`, `forward_open`, `endpoint`, `read_clipboard`, `startup_warnings` | exists |
-| sessions of views | `session_view` (named, effective), `session_load(&SessionRef) -> Loaded<Session>`, `session_defaults(SessionType) -> Session`, `session_save(&SessionRef, &Session, force) -> SessionWriteDto`, `session_save_defaults(&Session)`, `session_autosave(Option<&AutoId>, &Session) -> Option<AutoId>` (clock, prune, `None` when off or the slot is locked), `session_delete_autosaved(&AutoId)`, `session_for_view(&ViewRequest, view: Table, display: Table, parent: Option<ParentLink>) -> (Session, Vec<Warning>)`, `session_view_of(&Session, title) -> SessionView`, `session_apply_scope(Scope, &SessionRules, &mut Session, parent: Option<&SessionRef>) -> ScopeWritesDto` | `session_view` exists; the others new (W4b) |
-| Home tree and management | `session_list(None, true, true)`, `session_new`, `session_edit` (favorite), `session_delete`, `session_rename`, `session_lock`, `session_mkdir`, `session_rmdir`, `format_list`; `session_rename_folder(from, to)` | exist; `session_rename_folder` new (W4b; `SessionStore::rename_folder`) |
-| workspaces | `workspace_list`, `workspace_save`, `workspace_delete`, `workspace_rename`, `classify_single_arg`; `workspace_load(&SessionName) -> WorkspaceLoadDto { workspace, windows: Vec<RestoredWindow>, warnings }`, `inline_table(&Session) -> Table` | first five exist; last two new (W4b; wrap `workspaces::restore` and `inline_table`) |
+| sessions of views | `session_view` (named, effective), `session_load(&SessionRef) -> Loaded<Session>`, `session_defaults(SessionType) -> Session`, `session_save(&SessionRef, &Session, force) -> SessionWriteDto`, `session_save_defaults(&Session)`, `session_autosave(Option<&AutoId>, &Session) -> Option<AutoId>` (clock, prune; `None` when off; a locked slot is returned unwritten, so the GUI job reads the slot first), `session_delete_autosaved(&AutoId)`, `session_for_view(&ViewRequest, view: Table, display: Table, parent: Option<ParentLink>) -> (Session, Vec<Warning>)`, `session_view_of(&Session, title) -> SessionView`, `session_apply_scope(Scope, &SessionRules, &mut Session, parent: Option<&SessionRef>) -> ScopeWritesDto` | `session_view` exists; the others new (W4b) |
+| Home tree and management | `session_list(None, true, true)`, `session_new`, `session_edit` (favorite), `session_delete`, `session_rename`, `session_lock`, `session_mkdir`, `session_rmdir(folder, recursive, force)`, `format_list`; `session_rename_folder(from, to, force)`, `session_folder_contents(folder)`, `session_prune_autosaved()` | exist; the last three new, `force` added to `session_rmdir` (W4b, D-91) |
+| workspaces | `workspace_list`, `workspace_save`, `workspace_delete`, `workspace_rename`, `classify_single_arg`; `workspace_load(&SessionName) -> WorkspaceLoadDto { workspace, windows: Vec<RestoredWindow>, warnings }`, `inline_table(&Session, previous: Option<&Table>) -> Table` | first five exist; last two new (W4b; wrap `workspaces::restore` and `inline_table`) |
 | settings for the window and the dialogs | `settings_snapshot() -> SettingsSnapshot` (lenient; a newer schema is an error), `settings_save(&SettingsSnapshot, &SettingsChanges, force) -> SettingsSaveDto`, `reload_settings() -> Vec<Warning>`, `key_infos` (pure), `settings_store().watch()` | `settings_store` exists; the others new (W4a) |
 | state and layout | `state_update(&mut dyn FnMut(&mut State)) -> Result<bool, ApiError>` | new (W4a) |
 | log and inputs | `log_append(&Path, &[String])` (append, create the parent folder; not atomic), `input_stamp(&str) -> InputState` | new (W4a) |
@@ -2057,7 +2057,7 @@ polling (bounded). Rules:
 | ARCH-GUI-003 (unchanged) | `scroll` (W4a, again at the end of W4c) | the M1 1M-line C pair, three scroll phases | first screen < 1 s; PSS < 381.5 MiB and peak RSS reported; UI frame work p95 < 8 ms, max < 16.7 ms |
 | two windows | `two_windows` (W4a) | the same comparison in window 1, then `WindowNew` (Home) as window 2; the three scroll phases in window 1 | PSS < 381.5 MiB; frame work as above |
 | Options open | `options` (W4c) | one window with Home; `ProgramOptions`, every page shown once, then 60 idle frames | PSS < 120 MiB |
-| G12 workspace | `workspace` (W4b) | a workspace of 10 tabs in one window: active tab the 1M-line session, then 5 text sessions of 10,000-line pairs and 4 folder sessions of 1,000-file trees; `hikasa-gui <workspace>` | first screen of the active tab < 1 s after the process start; no job started for the 9 pending tabs; PSS − PSS of `scroll` at its first screen < 9 × 20 MiB |
+| G12 workspace | `workspace` (W4b) | a workspace of 10 tabs in one window: active tab the 1M-line session, then 5 text sessions of 10,000-line pairs and 4 folder sessions of 1,000-file trees; `hikasa-gui <workspace>` | first screen of the active tab < 1 s after the process start; no job started for the 9 pending tabs; memory per pending tab < 20 MiB: the same workspace with a small active pair (1,000 lines) against one holding only that active tab, same files, both in `workspace` mode and sampled after the coloured screen with no job left and 60 idle frames: (PSS_10 − PSS_1) / 9, the anonymous figure beside it |
 
 Measurement: `env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate --
 --ignored --nocapture --test-threads 1` (new tests `two_windows`, `options_memory`, `workspace_restore`; the
@@ -2206,6 +2206,114 @@ linked from `index`/`main-window`; `CHANGELOG.md` per part.
   file); `from_scheme` takes the built-in's base, light for other names.
 - **Tests.** The M1 GUI tests run through a `TestApp` wrapper over the focused window; the W4a acceptance tests are
   `src/tests_shell.rs`, the goldens `gui/hikasa-gui/tests/golden/` (`HIKASA_BLESS=1`).
+
+**W4b**
+
+- **Store queue.** Every read or write of a session or workspace file is a *store job* (`app/flow.rs`): one at a
+  time, in order, beside the settings queue (which stays the only way to write settings files; MRU lists go through
+  `state_update` like the layout). So a Save never races an auto-save of the same view, and a read of the tree runs
+  last (`refresh_wanted`). A job's body receives the view's auto-saved slot **as it is when the job starts**
+  (`slots`, kept per view also after its tab closed): a timer job and a close job queued together write one file.
+- **`dirty` is cached.** `ViewSession::dirty` is `is_dirty(loaded, current)` computed on a job when specs or rules
+  change, which only the Session Settings dialog (and later rule editors) can do; a close therefore decides on the
+  UI thread with no disk access (D-105), and a description change counts as dirty too (`is_dirty` ignores it; the
+  close would otherwise lose it). `ViewSession` also has `decided` (the close action ran), `autosaving` (one job per
+  view) and `description`.
+- **Close flow.** Every question of a close is asked **before** anything is written or closed: a Cancel on the
+  third view of a workspace load leaves all three as they were, and the answers run together afterwards. A **Yes holds
+  the close**: the tabs stay until every save of the flow returned. When one fails the flow ends as a Cancel (no tab
+  closes, no exit, no workspace load, `decided` reset), the tab that failed is activated with the reason in its message
+  line, a notice and a prompt ("The changes could not be saved, so the tab stays open"). This is the choice for every
+  path, Exit included: an exit waits for the saves with the window alive (the 2 s of `flush` no longer matters to
+  them), so a failed save never quits. Auto-saves and view-state writes do not hold the close (no question was
+  answered). A shutdown that arrives during the wait (IPC, the end of a desktop session) still has only `flush`'s 2 s;
+  it answers no question and its failure reaches the log only. Only one flow runs at a time; a second close while one
+  asks or saves is ignored, and a workspace load says so in a notice. The OS close button of a window takes its top
+  dialog as a Cancel and the window stays (the next press closes it; a dialog under it is kept); a flow asking in that
+  window ends as a Cancel, one asking in another window is not touched. A prompt raises its window
+  (`Effect::Raise`). Non-interactive closes go through `close_model`, which takes the D-120 decision for
+  any view no flow decided, so no close path can skip it. An `on_exit_save_workspace_as` saved before a Cancel stays
+  saved (§1.4.2 puts it first); a later exit saves again. An exit refused because a flow runs saves nothing and
+  does not set `exit_saved`; a Cancel or a failed save of the exit clears it.
+- **One slot record.** `AppCore::slots` (view → `AutoId`) is the only record of a view's auto-saved file: §1.4.9's
+  `ViewSession::slot` is gone (`link_text` takes the slot). A view opened from an auto-saved file enters it at the open
+  and has `last_autosaved` = what the file holds (so an unchanged view is not rewritten, `same_autosaved`). Entries of
+  closed tabs go when the store queue is empty.
+- **Auto-save and the file's identity.** The job reads the slot file and keeps its `locked`, `favorite` and `overrides`
+  (`merged_with_file`): the view owns neither. Save Workspace As does the same for an inline tab with a slot. A locked
+  slot file (`slot_locked`) is not written: the job reports `blocked`, the view is dirty and its close asks "Save changes
+  to session?" (not in the D-84 table, which has no such row: `ViewSession::close_action` adds it before
+  `close_action`); Yes writes a new auto-saved file. `loaded` is set for such a view so that the dialog can compute
+  `dirty`.
+- **An auto-save that became moot.** When an auto-save starts, a view that is `Named` by then is skipped; if the Save As
+  landed after the tab closed the view is remembered in `named_after_close` for the same check. A failed delete of the
+  slot after a good Save As is a warning notice; the view is `Named` all the same.
+- **Views follow the store.** A rename or delete in the Home tree returns `StoreDone::Moved` / `Deleted` and every tab
+  of every window follows (case-folded, a folder command lists its sessions first): origin, title, caption, a child's
+  parent link, a pending tab's reference. A deleted session's view becomes `Unnamed` with `loaded = None`, so its D-84
+  row is `AutoSave`.
+- **A save never overwrites another session.** `ViewSession::seen` is the file as read at the load or as last saved.
+  `queue_save` compares it with the file (`same_session`: type, specs, description, parent, rules) and refuses on a
+  difference; a missing file is `not_found`. Lock, favorite, overrides, `view` and `display` may change under a view.
+  So an outside rename that left a new session under the old name is refused, and so is any outside change of what the
+  view owns; Save As remains the way. A change of the defaults under an open view counts as a difference too (rules
+  are read over the defaults): a refusal, never an overwrite. A view-state write skips a file that went or differs,
+  silently: a clean close of a stale view is no error.
+- **Timer without frames.** `AppCore::autosave_wake_in` gives the seconds to the earliest timer; `step` turns it into
+  `request_repaint_after`. eframe 0.37 calls `App::logic` (not `ui`) for a repaint of a hidden window, with its input,
+  and so egui's time, frozen: the timer runs on `timer_now`, a monotonic clock set each step, not on `i.time`. No
+  thread of its own was needed.
+- **`max_auto_saved_sessions = 0`** prunes once at startup (`after_first_frame`); any change of the option prunes
+  (`session_prune_autosaved`), as `autosave` itself no longer runs at 0.
+- **Settings OK.** `settings_ok` marks the view `settings_pending` and, with `loaded`, `dirty` on the UI thread, so a
+  close before the job's answer asks; after the answers the flow waits for the `Reopen` (the capture must hold the new
+  specs). `Reopen` applies the session's `display` like an open.
+- **A workspace tab's `view` table** overlays the session's before the model is built; the tab's own keys win (D-85).
+- **Inline tabs** keep the explicit and unknown keys of the table they were restored from: `inline_table(session,
+  previous)` (`PendingTab::inline`, `ViewSession::inline`).
+- **Startup.** A workspace that does not exist is `StoreDone::StartupMissing`, a warning notice; any other failure to
+  read it stays an error.
+- **Save As** resolves the spelling of an existing name first (`spelled`): Replace of a case variant works.
+- **`explicit_save`** is set by `SessionSave` on a locked view before its prompt and cleared by a successful save;
+  answering No leaves it set, so the row *locked, explicit save* of D-84 is reached at the close.
+- **Signatures.** `session_for_view(…) -> Result<(Session, Vec<Warning>), ApiError>`. `session_apply_scope(…, parent:
+  Option<&str>)` takes the link's text instead of `&SessionRef`: an auto-saved parent (`_autosaved/<id>`) has no
+  `SessionRef`, and D-82 allows one. New calls beyond §1.4.15: `session_load_autosaved`, `session_resolve_parent`
+  (a child's effective rules, for FC-062). `Service::workspace_views` is gone (`workspace_load` replaces it). The GUI
+  has no `toml` dependency, so `sessions::view_state` holds the conversions (`OpaqueTable`, `layout_table`,
+  `text_display_table`, `apply_text_display`, `folder_display_table`, `apply_folder_display`, `view_bool`) and
+  `State::overlay_view` the D-108 precedence.
+- **`display` of a session.** Tree, Home and workspace opens restore `display` (SES-010); IPC `LoadSession` clears it
+  as a script load does. `display` holds the serialized filter, `ignore_unimportant` and, for folders, the folder
+  mode and `suppress_filters`; gap bars are not kept.
+- **`TabDuplicate`** stays the W4a path (the same request, built at once) rather than `session_for_view` →
+  `session_view_of`: a duplicate opens synchronously and §1.4.2's origin `Unnamed` holds. The result is **not** the same
+  session: the comparison, display and layout are copied, the parent link, the description and the session reference
+  are not (a new view of the same inputs).
+- **`HomeModel`.** `left`/`right` moved to `panel`; `untouched()` replaces the comparison with `default()` (the tree
+  is filled in the model). Additive to the §1.4.11 struct: `error`, `rename`, `focus_search`, `dragging`;
+  `TreeNode::Heading` (*New*, *Auto-saved*) and `customized` on the *New* rows (a defaults file exists). A chosen type
+  with paths of another kind is the panel's error: the kind is inferred as without a type and compared
+  (`resolve_open` with a forced kind would open a failing view). Opens from Home target the Home **view**, not its
+  tab index: the user may switch tabs while the job runs.
+- **`SessionNewList`, `SessionOpen`.** Comparisons need specs, so New Session ▸ *type* opens a Home tab with that
+  type selected; Open Session opens Home.
+- **Catalogue.** `SessionHome` gains the caption "Go to Home" (an entry without one is invisible in menus), `Find` of
+  `home` the caption "Find..." and its own description. `Find` stays `planned` in the file views. `WorkspaceManager`
+  shows both in Load Workspace ▸ (§1.4.3) and as its own Session entry (catalogue).
+- **Pending tabs.** `Tab::scope` of a pending tab comes from its type; `model()` is `None`. A tab that cannot be shown
+  (a type the GUI lacks, an empty spec) is a Home tab with a warning at restore, not a pending tab; one that fails
+  when activated becomes Home with the reason in its message panel. `Tab::title` gives a session's tab its caption
+  (the reference) also once live.
+- **IPC.** `LoadWorkspace` registers the tabs on the handler thread and answers `Views` at once; the close actions
+  run in the window afterwards, so a Cancel there closes the registered views with `close_unopened`, and a workspace
+  load during a running close is refused the same way.
+- **Workspace shortcuts.** D-111 rule 3 is `AppCore::dispatch_workspace`; a focus-bound key (no Ctrl, Alt, Cmd) only
+  at the window root. Manage Workspaces takes the shortcut as text (`Shortcut::parse`), not by key capture
+  (§1.4.12).
+- **Gate G12.** The first PSS comparison (workspace against `scroll`, both at the first screen) sampled while the 1M-line
+  comparison ran, so its −123 MiB measured the job's progress and proved nothing: dropped. §1.4.17 now compares two
+  workspaces over the same files with a small active pair at a settled point; the figures are in docs/02.
 
 ### 1.5–1.14 W5–W14
 

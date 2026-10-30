@@ -139,8 +139,12 @@ pub fn run(ctx: &mut Ctx<'_>, cmd: &SessionCmd) -> u8 {
             let result = ctx.service.session_mkdir(folder);
             write_done(ctx, result)
         }
-        SessionCmd::Rmdir { folder, recursive } => {
-            let result = ctx.service.session_rmdir(folder, *recursive);
+        SessionCmd::Rmdir {
+            folder,
+            recursive,
+            force,
+        } => {
+            let result = ctx.service.session_rmdir(folder, *recursive, *force);
             write_done(ctx, result)
         }
         SessionCmd::Run(args) => run_session(ctx, args),

@@ -96,6 +96,13 @@
   fill both); a window opens two dropped paths like the command line and explains one or
   three.
 
+*M2 W4b (§1.4.9–§1.4.12):* the Session menu gains New Session ▸ (one item per type the GUI opens), Open Session, Load
+Workspace ▸ (saved workspaces, then Manage Workspaces…), Save Workspace As… and, in session views, Go to Home, Save
+Session, Save Session As…, Session Settings… and Locked; the toolbar gains the Sessions drop-down; Home's View menu
+shows or maximizes the management panel. The sessions tree is a focus area: Enter, Del and F2 work only there
+(`Area::SessionTree`). A workspace shortcut applies when no command took the key (D-111 rule 3), and a key without
+Ctrl, Alt or Cmd only at the window root.
+
 ## 2. Theming
 
 - **UI-020** (P0): Theme mode: Follow operating system / Light / Dark. Colour

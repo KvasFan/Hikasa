@@ -13,7 +13,8 @@ settings folder.
 | `hikasa workspace delete <name>` | deletes it |
 | `hikasa gui workspace <name>` | loads it in the window |
 
-Loading a workspace closes the open views and opens its tabs. A tab whose named session no longer exists opens
+Loading a workspace closes the open views and restores its windows; each tab starts when it is first selected
+(see [Workspaces](topic:dialog-workspaces)). A tab whose named session no longer exists opens
 the Home view instead, with the warning `session_missing` (`workspace show` reports it too).
 `hikasa gui open <name>` loads a workspace when no file and no session has that name.
 

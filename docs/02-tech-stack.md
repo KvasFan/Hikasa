@@ -338,6 +338,26 @@ the scenario are the gate's; the gate is therefore **reported as failing under l
 figure being the maintainer's run at the end of W4c (D-132). Forcing wgpu to GL only would drop the probed Vulkan
 driver (≈ 4.6 MiB) but would change the renderer real users get, so it was not done.
 
+### M2 W4b: gate G12 (D-132)
+
+`workspace_restore` (release, Xvfb, llvmpipe, 2026-10-30, load ≈ 4–8 on the shared machine): 10 tabs in one window
+through `hikasa-gui <workspace>` (5 sessions of 10,000-line pairs and 4 of 1,000-file trees behind the active tab).
+First screen: active tab the 1M-line pair. Memory: two workspaces over the same files with a 1,000-line active pair,
+one with the 9 pending tabs, one with the active tab alone, each sampled after the coloured screen with no job left
+and 60 idle frames, three rounds, the median taken.
+
+| Item | Gate | Measured |
+|---|---|---|
+| First screen of the active tab after the process start | < 1 s | 176 ms (268 ms in the previous run) |
+| Views built / tabs pending | 1 / 9 (no job for the pending tabs) | 1 / 9 |
+| (PSS_10 − PSS_1) / 9 | < 20 MiB | 0.05 MiB (rounds 0.10, 0.05, 0.00; PSS 138.2–138.5 vs 137.3–138.3 MiB) |
+| The same in anonymous memory | reported | 0.03 MiB (rounds 0.14, 0.01, 0.03; 54.1–54.2 vs 52.9–54.0 MiB) |
+
+Two whole runs gave the same median PSS. The run-to-run spread of one workspace is up to about 1 MiB, more than the
+difference measured, so the honest reading is "under about 0.1 MiB per pending tab", not 0.05 exactly; a pending tab
+holds one session value and starts no job. The earlier figure of this gate (first screen against `scroll`) sampled
+during the 1M-line comparison, so it measured that job's progress and was withdrawn.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |

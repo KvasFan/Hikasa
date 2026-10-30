@@ -1,0 +1,11 @@
+[
+  {
+    "type": "load_session",
+    "name": "work/api",
+    "wait": false
+  },
+  {
+    "type": "load_workspace",
+    "name": "w"
+  }
+]
