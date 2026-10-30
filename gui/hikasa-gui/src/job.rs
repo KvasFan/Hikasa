@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hikasa_core::JobKind;
+use hikasa_core::{JobKind, Phase, Progress};
 use hikasa_session::{ApiError, JobControl, JobHandle, Service};
 
 /// The UI's wake-up (posts to the mailbox).
@@ -19,6 +19,8 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 pub struct Job<T> {
     handle: JobHandle<T>,
     ended: Arc<AtomicBool>,
+    /// The last progress report seen (the job indicator, D-115).
+    last: parking_lot::Mutex<Option<Progress>>,
 }
 
 /// Marks the body's end and wakes the UI when dropped: after the body returned or while it unwinds.
@@ -52,7 +54,11 @@ impl<T: Send + 'static> Job<T> {
             let _guard = guard;
             body(svc, job)
         });
-        Job { handle, ended }
+        Job {
+            handle,
+            ended,
+            last: parking_lot::Mutex::new(None),
+        }
     }
 }
 
@@ -70,6 +76,28 @@ impl<T> Job<T> {
     /// The job's id.
     pub fn id(&self) -> hikasa_core::JobId {
         self.handle.id()
+    }
+
+    /// The job's title.
+    pub fn title(&self) -> &str {
+        self.handle.title()
+    }
+
+    /// The last phase reported and the fraction done when the total is known (drains the progress channel).
+    pub fn progress(&self) -> (Option<Phase>, Option<f32>) {
+        let mut last = self.last.lock();
+        if let Some(p) = self.handle.progress().try_iter().last() {
+            *last = Some(p);
+        }
+        match &*last {
+            Some(p) => (
+                Some(p.phase),
+                p.total
+                    .filter(|t| *t > 0)
+                    .map(|t| (p.done as f64 / t as f64).clamp(0.0, 1.0) as f32),
+            ),
+            None => (None, None),
+        }
     }
 
     /// True while the body has returned (and woken the UI) but the result is not published yet: the UI must

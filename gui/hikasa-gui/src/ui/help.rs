@@ -4,6 +4,7 @@
 use egui::{Button, RichText, ScrollArea, Ui};
 use hikasa_session::help::{self, Block, Inline};
 
+use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
 
 /// What the user asked for while the panel was drawn.
@@ -23,7 +24,7 @@ pub fn show(ui: &mut Ui, id: &str, pal: &Palette) -> Option<HelpAction> {
     ui.horizontal(|ui| {
         if ui
             .add(Button::new("Contents").frame(false))
-            .on_hover_text("The help contents")
+            .hint("The help contents")
             .clicked()
         {
             action = Some(HelpAction::Open(help::INDEX_TOPIC.to_owned()));
@@ -31,7 +32,7 @@ pub fn show(ui: &mut Ui, id: &str, pal: &Palette) -> Option<HelpAction> {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add(Button::new("×").frame(false))
-                .on_hover_text("Close the help (Esc)")
+                .hint("Close the help (Esc)")
                 .clicked()
             {
                 action = Some(HelpAction::Close);

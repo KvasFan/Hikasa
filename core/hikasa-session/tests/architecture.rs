@@ -24,7 +24,10 @@
 //!    `model/` folders and the files named `dto.rs`, `protocol.rs`, `rules.rs` and `model.rs` in `core/*/src`;
 //! 7. `cli/` and `gui/` sources contain no `impl FromStr` and no matching or comparing against string literals of
 //!    the core vocabularies (`--display`, `--folders`, `--criteria`, `--unimportant`, the legacy `gui open`
-//!    switches): those parsers live in core (T11).
+//!    switches): those parsers live in core (T11); and (M2 W4a, §1.4.16 rule 4) the GUI's model files —
+//!    `app.rs`, `window.rs`, `commands.rs`, `menus.rs`, `dialog.rs`, `status.rs`, `notify.rs`,
+//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs` and `options/*.rs` in
+//!    `gui/hikasa-gui/src` — name no `egui` or `eframe` in code.
 //!
 //! The checks look at code only: comments, string literals and char literals are blanked first, so prose that
 //! mentions a banned token never fails the build, and the patterns below can be written as plain strings
@@ -2424,8 +2427,56 @@ fn adapter_violations(rel: &str, raw: &str) -> Vec<String> {
     violations
 }
 
+/// The GUI's toolkit-free model files (§1.4.16 rule 4): `src/<name>` and every file below `src/options/`.
+const GUI_MODEL_FILES: &[&str] = &[
+    "app.rs",
+    "window.rs",
+    "commands.rs",
+    "menus.rs",
+    "dialog.rs",
+    "status.rs",
+    "notify.rs",
+    "view_session.rs",
+    "home.rs",
+    "workspace.rs",
+    "session_dialog.rs",
+    "wizards.rs",
+];
+
+/// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
+fn toolkit_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in ["egui", "eframe"] {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in a GUI model file (§1.4.16 rule 4: models hold no toolkit type)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
+}
+
+/// The GUI model files that exist.
+fn gui_model_files(root: &Path) -> Vec<PathBuf> {
+    let src = root.join("gui/hikasa-gui/src");
+    let mut files: Vec<PathBuf> = GUI_MODEL_FILES
+        .iter()
+        .map(|name| src.join(name))
+        .filter(|p| p.is_file())
+        .collect();
+    files.extend(rust_files(&src.join("options")));
+    files
+}
+
 fn check_adapters(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
+    for file in gui_model_files(root) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(toolkit_violations(&relative(root, &file), &raw));
+        }
+    }
     for top in ["cli", "gui"] {
         for file in rust_files(&root.join(top)) {
             let rel = relative(root, &file);
@@ -3248,6 +3299,21 @@ fn check_6_follows_aliases_and_looks_into_every_serialised_type() {
         "an unserialised struct is fine: {joined}"
     );
     assert!(joined.contains("manual.rs"), "{joined}");
+}
+
+#[test]
+fn check_7_finds_the_toolkit_in_gui_models() {
+    let bad = "use egui::Color32;\nfn f(c: &eframe::Frame) {}\n";
+    assert_eq!(
+        toolkit_violations("gui/hikasa-gui/src/app.rs", bad).len(),
+        2
+    );
+    let fine =
+        "//! The egui layer draws this model.\nconst NAME: &str = \"egui\";\nfn regui() {}\n";
+    assert!(toolkit_violations("gui/hikasa-gui/src/app.rs", fine).is_empty());
+    let root = workspace_root();
+    let models = gui_model_files(&root);
+    assert!(models.len() >= 7, "{models:?}");
 }
 
 #[test]

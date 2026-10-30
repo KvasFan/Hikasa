@@ -11,28 +11,41 @@
 //! first-run format files (`FormatStore::materialize`, D-21) are written on a background thread after the
 //! window's first frame ([`startup::Deferred`]): disk flushes never delay the endpoint or the window.
 //!
-//! `HIKASA_GUI_BENCH=scroll` or `folder` runs the scripted performance mode of ARCH-GUI-003 on the command
-//! line's view (always without IPC) and prints one JSON summary on stdout.
+//! `HIKASA_GUI_BENCH=scroll`, `folder` or `two_windows` (M2 W4a, D-132) runs the scripted performance mode of
+//! ARCH-GUI-003 on the command line's view (always without IPC) and prints one JSON summary on stdout.
+//!
+//! M2 W4a: the windows (D-106), the watch thread `hikasa-watch` (D-117) and the forwarding of `hikasa::*`
+//! debug events to the log book (D-116) start with the window.
 
 mod app;
 mod bench;
 mod commands;
+mod dialog;
+mod dnd;
 mod folder_view;
 mod home;
 mod ipc;
 mod job;
 mod mailbox;
+mod menus;
+mod notify;
 mod shared;
 mod startup;
+mod status;
 mod text_view;
 mod ui;
+mod watch;
+mod window;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_shell;
 
 use std::ffi::OsString;
 use std::io::Read;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::Context as _;
@@ -86,7 +99,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         print!("{}", open_usage());
         return Ok(0);
     }
-    init_logging(&open)?;
+    let mailbox: Mailbox<UiMsg> = Mailbox::new();
+    // `debug_messages`, kept current by the core: off until the settings are read.
+    let debug = Arc::new(AtomicBool::new(false));
+    init_logging(&open, &mailbox, &debug)?;
     for warning in &open.warnings {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
     }
@@ -94,7 +110,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         None => None,
         Some(v) if v == "scroll" => Some(BenchKind::Scroll),
         Some(v) if v == "folder" => Some(BenchKind::Folder),
-        Some(v) => anyhow::bail!("HIKASA_GUI_BENCH must be `scroll` or `folder`, not {v:?}"),
+        Some(v) if v == "two_windows" => Some(BenchKind::TwoWindows),
+        Some(v) => {
+            anyhow::bail!("HIKASA_GUI_BENCH must be `scroll`, `folder` or `two_windows`, not {v:?}")
+        }
     };
     let env = capture_env();
     // The GUI reads its own clipboard for `clipboard://` (D-100, D-101).
@@ -119,7 +138,6 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
     }
     let shared = Arc::new(Shared::new());
-    let mailbox: Mailbox<UiMsg> = Mailbox::new();
     let server = if open.solo || bench.is_some() {
         None
     } else {
@@ -179,7 +197,12 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     };
     // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
     let deferred = Deferred::materialize_formats(&service);
+    // The watch starts from the stamps of now (D-117); the bench runs without it.
+    let watch = bench
+        .is_none()
+        .then(|| crate::watch::Watcher::new(service.clone()));
     let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
+    app.set_debug_flag(debug);
     let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));
     if bench.is_some() && initial.is_none() {
         anyhow::bail!("the benchmark mode needs two specs");
@@ -198,18 +221,19 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
             display.filter = FolderDisplayFilter::All;
             folder.patch.content_method = Some(ContentMethod::Crc);
         }
+        let target = app.open_target();
         let view = app.open_local(
             resolved.kind,
             request,
             &resolved.options,
             resolved.specs,
-            None,
+            target,
         );
         if let Some(b) = bench_state.as_mut() {
             b.set_view(view);
         }
     }
-    launch(app, mailbox, bench_state, deferred)
+    launch(app, mailbox, bench_state, deferred, watch)
 }
 
 /// A second instance (ARCH-090): the request goes to the running GUI; exit 0 or the error's code. Without specs
@@ -241,8 +265,51 @@ fn read_stdin() -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Logging (`--log`, `--verbose`): warnings on stderr, the log file at INFO (DEBUG with `--verbose`).
-fn init_logging(open: &OpenArgs) -> anyhow::Result<()> {
+/// Forwards `hikasa::*` events at debug level and above to the log book (D-116), only while `[tweaks.log_panel]
+/// debug_messages` is on (the flag the core keeps current): otherwise nothing is formatted, posted or woken.
+struct LogForward {
+    mailbox: Mailbox<UiMsg>,
+    debug: Arc<AtomicBool>,
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogForward {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        if !self.debug.load(Ordering::Relaxed) {
+            return;
+        }
+        struct Text(String);
+        impl tracing::field::Visit for Text {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                } else {
+                    self.0.push_str(&format!(" {}={value:?}", field.name()));
+                }
+            }
+        }
+        let mut text = Text(String::new());
+        event.record(&mut text);
+        let meta = event.metadata();
+        self.mailbox.post(UiMsg::Debug(format!(
+            "{} {}: {}",
+            meta.level(),
+            meta.target(),
+            text.0
+        )));
+    }
+}
+
+/// Logging (`--log`, `--verbose`): warnings on stderr, the log file at INFO (DEBUG with `--verbose`), and the
+/// `hikasa::*` debug events to the log book.
+fn init_logging(
+    open: &OpenArgs,
+    mailbox: &Mailbox<UiMsg>,
+    debug: &Arc<AtomicBool>,
+) -> anyhow::Result<()> {
     use tracing_subscriber::Layer as _;
     use tracing_subscriber::filter::{LevelFilter, Targets};
     use tracing_subscriber::layer::SubscriberExt as _;
@@ -279,9 +346,19 @@ fn init_logging(open: &OpenArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
+    let book_layer = LogForward {
+        mailbox: mailbox.clone(),
+        debug: Arc::clone(debug),
+    }
+    .with_filter(
+        Targets::new()
+            .with_target("hikasa", LevelFilter::DEBUG)
+            .with_default(LevelFilter::OFF),
+    );
     tracing_subscriber::registry()
         .with(stderr_layer)
         .with(file_layer)
+        .with(book_layer)
         .try_init()
         .context("cannot install the logger")
 }
@@ -293,25 +370,33 @@ fn launch(
     mailbox: Mailbox<UiMsg>,
     bench: Option<BenchState>,
     deferred: Deferred,
+    watch: Option<(crate::watch::Watcher, crate::watch::WatchLink)>,
 ) -> anyhow::Result<u8> {
-    // The benchmark measures a large window (about a maximised full-HD laptop window).
+    // The benchmark measures a large window (about a maximised full-HD laptop window); otherwise the size of the
+    // last window closed (`state.toml [window]`, D-108).
+    let root = app.windows()[0].geometry.clone();
     let size = if bench.is_some() {
         [1920.0, 1200.0]
     } else {
-        [1280.0, 820.0]
+        [root.width as f32, root.height as f32]
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hikasa")
             .with_app_id("hikasa")
             .with_inner_size(size)
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            .with_maximized(bench.is_none() && root.maximized),
         ..eframe::NativeOptions::default()
     };
     eframe::run_native(
         "Hikasa",
         options,
-        Box::new(move |cc| Ok(Box::new(HikasaApp::new(cc, app, mailbox, bench, deferred)))),
+        Box::new(move |cc| {
+            Ok(Box::new(HikasaApp::new(
+                cc, app, mailbox, bench, deferred, watch,
+            )))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("cannot open the window: {e}"))?;
     Ok(0)

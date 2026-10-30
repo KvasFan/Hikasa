@@ -1,0 +1,34 @@
+Session
+  New Tab	Ctrl+T
+  New Window
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+Search
+  Next Difference Section	Ctrl+N
+  Previous Difference Section	Ctrl+P (disabled)
+View
+  ( ) Show None
+  ( ) Show Context
+  [x] Thumbnail
+  ---
+  Increase Display Font Size	Ctrl+Num +
+  Decrease Display Font Size	Ctrl+Num -
+  Reset Display Font Size	Ctrl+Num 0
+  ---
+  [ ] Ignore Unimportant Differences
+  [x] Toolbar
+  ---
+  > Display Filter
+    (*) Show All
+    ( ) Show Differences
+    ( ) Show Same
+    ---
+    [x] Same Lines
+    [x] Left Orphans
+    [x] Right Orphans
+    [x] Different Lines
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

@@ -42,11 +42,13 @@ pub mod help;
 pub mod host;
 pub mod ipc;
 pub mod jobs;
+pub mod log;
 pub mod options;
 pub mod package;
 pub mod paths;
 pub mod sessions;
 pub mod settings;
+pub mod watch;
 pub mod workspaces;
 
 pub use api::{ApiError, ApiOp, HIKASA_VERSION, Service, ServiceInit, StdinSource};

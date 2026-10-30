@@ -135,6 +135,16 @@ impl HomeModel {
         self.pending = Some(Pending(Arc::new(job)));
     }
 
+    /// A copy of the typed fields (`TabDuplicate` of a Home tab, D-107): no error, nothing running.
+    pub fn copy_fields(&self) -> HomeModel {
+        HomeModel {
+            left: self.left.clone(),
+            right: self.right.clone(),
+            error: None,
+            pending: None,
+        }
+    }
+
     /// Picks up the result of a running Compare: `Some` opens the view; an error is kept for display. The
     /// second value is true when the model changed.
     pub fn poll(&mut self) -> (Option<HomeOpen>, bool) {
@@ -152,8 +162,8 @@ impl HomeModel {
     }
 }
 
-/// `resolve_open` + `open_view_request` (on the job thread).
-fn resolve(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
+/// `resolve_open` + `open_view_request` (on the job thread; also the window's drops, UI-008).
+pub fn resolve(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
     let resolved = service.resolve_open(request)?;
     let view = service.open_view_request(resolved.kind, &resolved.specs, &resolved.options)?;
     Ok(HomeOpen {

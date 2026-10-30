@@ -392,7 +392,7 @@ impl Service {
         let rules_comparator = match &prepared.text_rules {
             Some(text_rules) => {
                 let comparator = RulesComparator::new(
-                    Arc::clone(self.registry()),
+                    self.registry(),
                     text_rules.clone(),
                     self.load_options(None)?,
                 )

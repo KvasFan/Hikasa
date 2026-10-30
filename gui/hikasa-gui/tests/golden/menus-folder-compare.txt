@@ -1,0 +1,54 @@
+Session
+  New Tab	Ctrl+T
+  New Window
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+Edit
+  Expand All
+  Collapse All
+  Full Refresh	Ctrl+F5
+Actions
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+Search
+  Next Difference	Ctrl+N
+  Previous Difference	Ctrl+P (disabled)
+View
+  ( ) Show None
+  ( ) Always Show Folders
+  (*) Compare Files and Folder Structure
+  ( ) Only Compare Files
+  ---
+  [ ] Suppress Filters
+  [ ] Log
+  ---
+  [ ] Ignore Unimportant Differences
+  [x] Toolbar
+  ---
+  > Display Filter
+    ( ) Show All
+    (*) Show Differences
+    ( ) Show Same
+    ( ) Show No Orphans
+    ( ) Show Differences but No Orphans
+    ( ) Show Orphans
+    ( ) Show Left Newer
+    ( ) Show Right Newer
+    ( ) Show Left Newer and Left Orphans
+    ( ) Show Right Newer and Right Orphans
+    ( ) Show Left Orphans
+    ( ) Show Right Orphans
+    ---
+    [ ] Same Items
+    [x] Left Orphans
+    [x] Right Orphans
+    [x] Left Newer
+    [x] Right Newer
+    [x] Different Items
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

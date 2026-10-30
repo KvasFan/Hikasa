@@ -16,6 +16,7 @@
 //! | [`openwith`] | [`OpenWith`], [`expand_command`] (OPT-012, D-76) |
 //! | [`archives`] | [`ArchiveTypes`] (OPT-010) |
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{CaseSensitivity, MaskList, MaskOptions, Warning, WarningCode};
@@ -277,6 +278,116 @@ impl SettingsStore {
         watch.track_folder(self.dir.join("formats"));
         watch
     }
+}
+
+/// Every settings file a window and the settings dialogs read, loaded leniently (M2 W4a, §1.4.13): the typed
+/// working copy of the Options dialog and the source of the window's options, commands and theme.
+#[derive(Debug, Clone)]
+pub struct SettingsSnapshot {
+    /// `options.toml`.
+    pub options: SettingsFile<Options>,
+    /// `commands.toml`.
+    pub commands: SettingsFile<CommandOverrides>,
+    /// `theme.toml` (as stored: a selected scheme that does not exist is kept; the window falls back).
+    pub theme: SettingsFile<ThemeSelection>,
+    /// `themes/<name>.toml` of every scheme name (the built-ins and the files), by name.
+    pub schemes: BTreeMap<String, SettingsFile<SchemeFile>>,
+    /// `filters.toml`.
+    pub filters: SettingsFile<FilterPresets>,
+    /// `openwith.toml`.
+    pub openwith: SettingsFile<OpenWith>,
+    /// `archives.toml`.
+    pub archives: SettingsFile<ArchiveTypes>,
+}
+
+impl SettingsSnapshot {
+    /// The resolved scheme of `mode` for an OS in dark mode or not (a selected scheme that does not exist is the
+    /// built-in of its mode).
+    pub fn scheme(&self, mode: ThemeMode, os_dark: bool) -> Scheme {
+        let name = self.theme.value().scheme_for(mode, os_dark);
+        match self.schemes.get(name) {
+            Some(file) => Scheme::resolve(name, Some(file.value())),
+            None => {
+                let dark = match mode {
+                    ThemeMode::FollowOs => os_dark,
+                    ThemeMode::Light => false,
+                    ThemeMode::Dark => true,
+                };
+                let builtin = if dark { "dark" } else { "light" };
+                Scheme::resolve(builtin, self.schemes.get(builtin).map(SettingsFile::value))
+            }
+        }
+    }
+
+    /// Every load warning of the snapshot's files.
+    pub fn warnings(&self) -> Vec<Warning> {
+        let mut out = self.options.loaded().warnings.clone();
+        out.extend(self.commands.loaded().warnings.iter().cloned());
+        out.extend(self.theme.loaded().warnings.iter().cloned());
+        for file in self.schemes.values() {
+            out.extend(file.loaded().warnings.iter().cloned());
+        }
+        out.extend(self.filters.loaded().warnings.iter().cloned());
+        out.extend(self.openwith.loaded().warnings.iter().cloned());
+        out.extend(self.archives.loaded().warnings.iter().cloned());
+        out
+    }
+}
+
+/// The new values of the files a settings dialog changed (M2 W4a, §1.4.13); `None`: not changed.
+#[derive(Debug, Clone, Default)]
+pub struct SettingsChanges {
+    /// `options.toml`.
+    pub options: Option<Options>,
+    /// `commands.toml`.
+    pub commands: Option<CommandOverrides>,
+    /// `theme.toml`.
+    pub theme: Option<ThemeSelection>,
+    /// Scheme files by name; `None` deletes `themes/<name>.toml`.
+    pub schemes: BTreeMap<String, Option<SchemeFile>>,
+    /// `filters.toml`.
+    pub filters: Option<FilterPresets>,
+    /// `openwith.toml`.
+    pub openwith: Option<OpenWith>,
+    /// `archives.toml`.
+    pub archives: Option<ArchiveTypes>,
+}
+
+/// What `Service::settings_save` did with one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileOutcome {
+    /// Written.
+    Written,
+    /// The value equals the snapshot's (or the bytes on disk): nothing written.
+    Unchanged,
+    /// The scheme file was deleted.
+    Deleted,
+    /// The file changed on disk since the snapshot (not written; save again with `force` to overwrite).
+    Conflict,
+    /// The value fails its schema's checks (not written).
+    Invalid(Vec<Problem>),
+    /// Writing failed.
+    Failed(String),
+}
+
+impl FileOutcome {
+    /// True for `Written`, `Unchanged` and `Deleted`.
+    pub fn succeeded(&self) -> bool {
+        matches!(
+            self,
+            FileOutcome::Written | FileOutcome::Unchanged | FileOutcome::Deleted
+        )
+    }
+}
+
+/// The result of `Service::settings_save`: one outcome per changed file (in `FileId::every` order) and the
+/// snapshot read after the writes.
+#[derive(Debug, Clone)]
+pub struct SettingsSaveDto {
+    /// `(file, path, outcome)` per file of the changes.
+    pub files: Vec<(FileId, PathBuf, FileOutcome)>,
+    /// The files as they are now.
+    pub snapshot: SettingsSnapshot,
 }
 
 /// The kind rules of a file.

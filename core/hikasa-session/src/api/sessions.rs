@@ -1087,7 +1087,8 @@ fn set_keys(
         .map_err(|e: toml::de::Error| ApiError::InvalidArgument(e.message().to_owned()))?;
     let edited =
         Session::from_doc(&doc, None).map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
-    let limits = service.registry().limits();
+    let registry = service.registry();
+    let limits = registry.limits();
     let check = |rules: &hikasa_text::TextRules| {
         rules
             .validate(limits)

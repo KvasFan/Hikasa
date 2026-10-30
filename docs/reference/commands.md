@@ -10,12 +10,16 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 |---|---|---|---|---|---|
 | `SessionNewList` | Session | New Session |  | Opens empty session of picked type in new view. | planned |
 | `TabNew` | Session | New Tab | Ctrl+T | Opens Home view in new tab. | implemented |
-| `WindowNew` | Session | New Window |  | Opens Home view in new window. | planned |
+| `WindowNew` | Session | New Window |  | Opens Home view in new window. | implemented |
 | `SessionOpen` | Session | Open Session | Shift+Ctrl+O | Opens Home in new view. | planned |
 | `WorkspaceLoadList` | Session | Load Workspace |  | Restores picked saved view configuration. | planned |
 | `WorkspaceManager` | Session | Manage Workspaces... |  | Manages the saved view configurations that can be restored. | planned |
 | `WorkspaceSaveAs` | Session | Save Workspace As... |  | Stores current view configuration. | planned |
 | `CloseTab` | Session | Close Tab | Ctrl+W | Closes active tab. | implemented |
+| `TabDuplicate` |  | Duplicate Tab |  | Opens current session again in new tab. | implemented |
+| `TabMoveToNewWindow` |  | Move Tab to New Window |  | Moves current tab into new window. | implemented |
+| `TabMoveToWindow` |  | Move Tab to Window |  | Moves current tab into picked window. | implemented |
+| `TabCloseOthers` |  | Close Other Tabs |  | Closes all other tabs of this window. | implemented |
 | `Exit` | Session | Exit | Ctrl+Q | Quits the application, prompts to save edits. | implemented |
 | `Undo` | Edit |  | Ctrl+Z | Undoes previous action. | planned |
 | `Redo` | Edit |  | Ctrl+Y | Redoes previously undone action. | planned |
@@ -179,7 +183,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `SuppressFilters` | View | Suppress Filters |  | Temporarily suppresses display and file filters. | implemented |
 | `ColList` | View | Columns |  | Shows or hides picked column. | planned |
 | `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | planned |
-| `ShowLog` | View | Log |  | Shows or hides log panel. | planned |
+| `ShowLog` | View | Log |  | Shows or hides log panel. | implemented |
 
 Enter, Right and Left (keys without Ctrl or Alt that focused controls use themselves) act on the folder tree
 only while the tree has the keyboard focus; on a focused button, list or check box they keep their usual
@@ -374,7 +378,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `MergeParents` | Session | Merge Parent Folders |  | Merges folders containing current items in new view. | planned |
 | `InsigIgnored` | View | Ignore Unimportant Differences |  | Treats unimportant differences as same. | implemented |
 | `SameModIgnored` | View | Ignore Same Changes |  | Treats same changes as same. | planned |
-| `ShowToolbar` | View | Toolbar |  | Shows or hides toolbar. | planned |
+| `ShowToolbar` | View | Toolbar |  | Shows or hides toolbar. | implemented |
 
 ## Table Compare
 

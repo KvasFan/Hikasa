@@ -18,8 +18,8 @@ use hikasa_session::{
 };
 use hikasa_text::TextDisplayFilter;
 
-use crate::app::{AppCore, Effect, UiMsg, ViewModel};
-use crate::commands::{CATALOGUE, CommandId, Scope};
+use crate::app::{AppCore, Effect, OpenTarget, UiMsg, ViewModel};
+use crate::commands::{CommandId, PRESENTATION, Scope};
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
@@ -53,23 +53,109 @@ fn help_commands_show_topics() {
     assert_eq!(app.help(), None);
 }
 
+/// The app core seen from its focused window, with the M1 test vocabulary (`execute(id)`, `tabs()`, …): the
+/// tests of the views and IPC predate the windows (M2 W4a) and run in one window.
+pub(crate) struct TestApp(pub(crate) AppCore);
+
+impl std::ops::Deref for TestApp {
+    type Target = AppCore;
+    fn deref(&self) -> &AppCore {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TestApp {
+    fn deref_mut(&mut self) -> &mut AppCore {
+        &mut self.0
+    }
+}
+
+#[allow(dead_code)]
+impl TestApp {
+    pub(crate) fn win(&self) -> crate::window::WindowId {
+        self.0.focused()
+    }
+    pub(crate) fn execute(&mut self, id: CommandId) -> Vec<Effect> {
+        let w = self.win();
+        self.0.execute(w, id)
+    }
+    pub(crate) fn tabs(&self) -> &[crate::window::Tab] {
+        &self.0.window(self.win()).expect("a window").tabs
+    }
+    pub(crate) fn active(&self) -> usize {
+        self.0.window(self.win()).map_or(0, |w| w.active)
+    }
+    pub(crate) fn active_tab(&self) -> Option<&crate::window::Tab> {
+        self.0.active_tab(self.win())
+    }
+    pub(crate) fn active_tab_mut(&mut self) -> Option<&mut crate::window::Tab> {
+        let w = self.win();
+        self.0.active_tab_mut(w)
+    }
+    pub(crate) fn activate(&mut self, index: usize) {
+        let w = self.win();
+        self.0.activate(w, index);
+    }
+    pub(crate) fn scope(&self) -> Scope {
+        self.0.scope(self.win())
+    }
+    pub(crate) fn ctx(&self) -> crate::commands::Ctx {
+        self.0.ctx(self.win())
+    }
+    pub(crate) fn enabled(&self, id: CommandId) -> bool {
+        self.0.enabled(self.win(), id)
+    }
+    pub(crate) fn checked(&self, id: CommandId) -> Option<bool> {
+        self.0.checked(self.win(), id)
+    }
+    pub(crate) fn help(&self) -> Option<&'static str> {
+        self.0.help(self.win())
+    }
+    pub(crate) fn show_help(&mut self, id: &str) {
+        let w = self.win();
+        self.0.show_help(w, id);
+    }
+    pub(crate) fn close_help(&mut self) {
+        let w = self.win();
+        self.0.close_help(w);
+    }
+    pub(crate) fn close_tab(&mut self, index: usize, reason: CloseReason) -> Vec<Effect> {
+        let w = self.win();
+        self.0.close_tab(w, index, reason)
+    }
+}
+
 /// A private test world: inputs, a configuration folder and an IPC endpoint inside one temporary folder.
-struct World {
-    dir: tempfile::TempDir,
-    service: Service,
-    shared: Arc<Shared>,
-    mailbox: Mailbox<UiMsg>,
+pub(crate) struct World {
+    pub(crate) dir: tempfile::TempDir,
+    pub(crate) service: Service,
+    pub(crate) shared: Arc<Shared>,
+    pub(crate) mailbox: Mailbox<UiMsg>,
 }
 
 impl World {
-    fn new() -> World {
+    pub(crate) fn new() -> World {
         World::with_init(|_| {})
     }
 
+    /// A world whose configuration folder holds `files` (relative path, content) before the service starts.
+    pub(crate) fn with_files(files: &[(&str, &str)]) -> World {
+        World::build(files, |_| {})
+    }
+
     /// A world whose service is built after `tune` adjusted its `ServiceInit`.
-    fn with_init(tune: impl FnOnce(&mut ServiceInit)) -> World {
+    pub(crate) fn with_init(tune: impl FnOnce(&mut ServiceInit)) -> World {
+        World::build(&[], tune)
+    }
+
+    fn build(files: &[(&str, &str)], tune: impl FnOnce(&mut ServiceInit)) -> World {
         let dir = tempfile::tempdir().expect("temp dir");
         let root = dir.path();
+        for (rel, text) in files {
+            let path = root.join("config").join(rel);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(path, text).expect("write");
+        }
         for sub in ["work", "home", "tmp", "ipc"] {
             std::fs::create_dir_all(root.join(sub)).expect("mkdir");
         }
@@ -103,11 +189,11 @@ impl World {
         }
     }
 
-    fn path(&self, rel: &str) -> PathBuf {
+    pub(crate) fn path(&self, rel: &str) -> PathBuf {
         self.dir.path().join(rel)
     }
 
-    fn write(&self, rel: &str, text: &str) -> PathBuf {
+    pub(crate) fn write(&self, rel: &str, text: &str) -> PathBuf {
         let path = self.path(rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("mkdir");
@@ -116,17 +202,17 @@ impl World {
         path
     }
 
-    fn app(&self, server: Option<hikasa_session::ipc::ServerHandle>) -> AppCore {
-        AppCore::new(
+    pub(crate) fn app(&self, server: Option<hikasa_session::ipc::ServerHandle>) -> TestApp {
+        TestApp(AppCore::new(
             self.service.clone(),
             Arc::clone(&self.shared),
             self.mailbox.clone(),
             server,
-        )
+        ))
     }
 
     /// Opens a view of two paths the way the command line does (`resolve_open` + `open_view_request`).
-    fn open(&self, app: &mut AppCore, left: &Path, right: &Path) -> ViewId {
+    pub(crate) fn open(&self, app: &mut AppCore, left: &Path, right: &Path) -> ViewId {
         let request = GuiOpenRequest {
             specs: vec![left.as_os_str().to_owned(), right.as_os_str().to_owned()],
             ..GuiOpenRequest::default()
@@ -136,11 +222,18 @@ impl World {
             .service
             .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
             .expect("view request");
-        app.open_local(resolved.kind, view, &resolved.options, resolved.specs, None)
+        let target = app.open_target();
+        app.open_local(
+            resolved.kind,
+            view,
+            &resolved.options,
+            resolved.specs,
+            target,
+        )
     }
 
     /// Handles queued messages and polls until no job runs.
-    fn settle(&self, app: &mut AppCore) -> Vec<Effect> {
+    pub(crate) fn settle(&self, app: &mut AppCore) -> Vec<Effect> {
         let began = Instant::now();
         let mut effects = Vec::new();
         loop {
@@ -160,7 +253,7 @@ impl World {
     }
 }
 
-fn endpoint_override(root: &Path) -> OsString {
+pub(crate) fn endpoint_override(root: &Path) -> OsString {
     #[cfg(unix)]
     {
         root.join("ipc").join("s.sock").into_os_string()
@@ -178,7 +271,7 @@ fn endpoint_override(root: &Path) -> OsString {
 }
 
 /// 40 lines; the right side changes line 10 importantly, line 20 only in whitespace and drops line 30.
-fn text_pair(world: &World) -> (PathBuf, PathBuf) {
+pub(crate) fn text_pair(world: &World) -> (PathBuf, PathBuf) {
     let mut left = String::new();
     let mut right = String::new();
     for i in 0..40 {
@@ -197,15 +290,18 @@ fn text_pair(world: &World) -> (PathBuf, PathBuf) {
     )
 }
 
-fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text_view::TextViewModel {
-    match &mut app.tab_mut(view).expect("tab").model {
+pub(crate) fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text_view::TextViewModel {
+    match app.tab_mut(view).expect("tab").model_mut().expect("live") {
         ViewModel::Text(m) => m,
         _ => panic!("not a text view"),
     }
 }
 
-fn folder_model(app: &mut AppCore, view: ViewId) -> &mut crate::folder_view::FolderViewModel {
-    match &mut app.tab_mut(view).expect("tab").model {
+pub(crate) fn folder_model(
+    app: &mut AppCore,
+    view: ViewId,
+) -> &mut crate::folder_view::FolderViewModel {
+    match app.tab_mut(view).expect("tab").model_mut().expect("live") {
         ViewModel::Folder(m) => m,
         _ => panic!("not a folder view"),
     }
@@ -397,7 +493,7 @@ fn text_view_shows_documents_before_the_alignment() {
     assert_eq!(text_model(&mut app, view).meta().len, 200_000);
 }
 
-fn folder_pair(world: &World) -> (PathBuf, PathBuf) {
+pub(crate) fn folder_pair(world: &World) -> (PathBuf, PathBuf) {
     for (side, files) in [
         (
             "a",
@@ -599,7 +695,7 @@ fn home_compare_resolves_paths_like_the_command_line() {
     assert_eq!(app.scope(), Scope::Home);
     assert!(!app.enabled(CommandId::HomeCompare), "empty fields");
     if let Some(tab) = app.active_tab_mut()
-        && let ViewModel::Home(home) = &mut tab.model
+        && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
         home.left = "left.c".into(); // relative to the GUI's current folder (`work`)
         home.right = right.display().to_string();
@@ -626,7 +722,7 @@ fn home_compare_resolves_paths_like_the_command_line() {
     app.execute(CommandId::TabNew);
     assert_eq!(app.scope(), Scope::Home);
     if let Some(tab) = app.active_tab_mut()
-        && let ViewModel::Home(home) = &mut tab.model
+        && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
         home.left = "missing-1.c".into();
         home.right = "missing-2.c".into();
@@ -634,17 +730,22 @@ fn home_compare_resolves_paths_like_the_command_line() {
     app.execute(CommandId::HomeCompare);
     world.settle(&mut app);
     assert_eq!(app.scope(), Scope::Home);
-    match &app.active_tab().expect("tab").model {
+    match app.active_tab().expect("tab").model().expect("live") {
         ViewModel::Home(home) => assert!(home.error.is_some()),
         _ => panic!("still Home"),
     }
-    // Closing the last comparison leaves a Home tab; About shows a message.
+    // Closing the last comparison leaves a Home tab; About shows a dialog (M2 W4a).
     app.execute(CommandId::CloseTab);
     app.execute(CommandId::CloseTab);
     assert_eq!(app.tabs().len(), 1);
     assert_eq!(app.scope(), Scope::Home);
     app.execute(CommandId::About);
-    assert!(app.message().is_some_and(|m| m.contains("Hikasa")));
+    let root = app.root();
+    let about = app
+        .window(root)
+        .and_then(|w| w.dialogs.top())
+        .map(|d| d.title());
+    assert_eq!(about.as_deref(), Some("About Hikasa"));
 }
 
 /// Every command, in typical states of every view type: the catalogue's predicate decides (docs/01 §7: every
@@ -655,8 +756,8 @@ fn every_command_has_an_enabled_state() {
     let (left, right) = text_pair(&world);
     let (a, b) = folder_pair(&world);
     let mut app = world.app(None);
-    let enabled_in = |app: &AppCore, scope: Scope| -> Vec<CommandId> {
-        CATALOGUE
+    let enabled_in = |app: &TestApp, scope: Scope| -> Vec<CommandId> {
+        PRESENTATION
             .iter()
             .filter(|c| c.scope == scope || c.scope == Scope::Global)
             .filter(|c| app.enabled(c.id))
@@ -669,6 +770,8 @@ fn every_command_has_an_enabled_state() {
         enabled_in(&app, Scope::Home),
         [
             C::TabNew,
+            C::WindowNew,
+            C::TabDuplicate,
             C::CloseTab,
             C::Exit,
             C::HelpContents,
@@ -725,8 +828,8 @@ fn every_command_has_an_enabled_state() {
     }
     assert!(!got.contains(&C::DiffSectionPrev));
     // Commands of another view type are never enabled here.
-    for c in CATALOGUE.iter().filter(|c| c.scope == Scope::Folder) {
-        if !CATALOGUE
+    for c in PRESENTATION.iter().filter(|c| c.scope == Scope::Folder) {
+        if !PRESENTATION
             .iter()
             .any(|t| t.scope == Scope::Text && t.id == c.id)
         {
@@ -934,7 +1037,7 @@ fn close_outcomes_follow_the_d23_rules() {
         view,
         request(&left, &missing),
         &OpenOptions::default(),
-        None,
+        OpenTarget::Window(crate::window::WindowId(1)),
     );
     world.settle(&mut app);
     let outcome = text_model(&mut app, view).outcome(&world.service);
@@ -952,7 +1055,12 @@ fn close_outcomes_follow_the_d23_rules() {
         .open_view_request(ViewKind::FolderCompare, &specs, &OpenOptions::default())
         .expect("request");
     let folder = world.shared.allocate();
-    app.open_view(folder, request, &OpenOptions::default(), None);
+    app.open_view(
+        folder,
+        request,
+        &OpenOptions::default(),
+        OpenTarget::Window(crate::window::WindowId(1)),
+    );
     if app.busy() {
         let m = folder_model(&mut app, folder);
         if m.busy() {
@@ -984,7 +1092,7 @@ fn close_outcomes_follow_the_d23_rules() {
         text,
         request_text(&world, &l, &r),
         &OpenOptions::default(),
-        None,
+        OpenTarget::Window(crate::window::WindowId(1)),
     );
     let m = text_model(&mut app, text);
     let outcome = m.outcome(&world.service);
@@ -1003,17 +1111,17 @@ fn request_text(world: &World, l: &Path, r: &Path) -> ViewRequest {
         .expect("request")
 }
 
-fn set_home(app: &mut AppCore, left: &str, right: &str) {
+fn set_home(app: &mut TestApp, left: &str, right: &str) {
     if let Some(tab) = app.active_tab_mut()
-        && let ViewModel::Home(home) = &mut tab.model
+        && let ViewModel::Home(home) = tab.model_mut().expect("live")
     {
         home.left = left.into();
         home.right = right.into();
     }
 }
 
-fn home_error(app: &AppCore) -> Option<String> {
-    match &app.active_tab().expect("tab").model {
+fn home_error(app: &TestApp) -> Option<String> {
+    match app.active_tab().expect("tab").model().expect("live") {
         ViewModel::Home(home) => home.error.clone(),
         _ => panic!("not Home"),
     }
@@ -1373,7 +1481,7 @@ fn closing_views_releases_their_data() {
     let br = world.write("work/big-right.txt", &big.replace("line 7", "LINE 7"));
     let running = world.open(&mut app, &bl, &br);
     let probe = Arc::downgrade(&text_model(&mut app, running).probe());
-    while app.tabs().len() > 1 || !matches!(app.tabs()[0].model, ViewModel::Home(_)) {
+    while app.tabs().len() > 1 || !matches!(app.tabs()[0].model(), Some(ViewModel::Home(_))) {
         app.close_tab(0, CloseReason::User);
     }
     let began = Instant::now();
@@ -1533,7 +1641,7 @@ fn ipc_handler_loads_sessions_and_workspaces() {
     world.settle(&mut app);
     let mut kinds = Vec::new();
     for tab in app.tabs() {
-        match &tab.model {
+        match tab.model().expect("live") {
             ViewModel::Text(m) => {
                 kinds.push("text");
                 let base = m.request().base_rules.as_ref().expect("session rules");
@@ -1578,7 +1686,7 @@ fn ipc_handler_loads_sessions_and_workspaces() {
     let ids: Vec<ViewId> = app
         .tabs()
         .iter()
-        .filter(|t| !matches!(t.model, ViewModel::Home(_)))
+        .filter(|t| !matches!(t.model(), Some(ViewModel::Home(_))))
         .map(|t| t.id)
         .collect();
     assert_eq!(ids, views.iter().map(|v| v.view).collect::<Vec<_>>());

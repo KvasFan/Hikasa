@@ -271,10 +271,26 @@ maximized = false
 first_run_done = false                   # set by the GUI's first start (the D-21 materialization)
 hints_seen = []                          # ids of the one-time hints already shown
 [dialogs]                                # free tables per dialog id ("remembers last choices"), kept as they are
+[layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
+font_size = 13.0                         # points; the text view's font commands
+thumbnail = true
+toolbar = true
+[layout.folder-compare]
+log_panel = false                        # View ▸ Log
+log_height = 160.0                       # points
+toolbar = true
 ```
 
 Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
 `[tweaks.metrics] max_mru_items` entries.
+
+*M2 W4a (D-108):* the GUI writes `[window]` (the geometry of the last window closed) and the `[layout.<view
+type>]` tables (the last closed view of a type wins) when a window closes and at exit; a view that opens takes
+its keys from the session's `[view]` (W4b), else `[layout.<view type>]`, else the defaults (the font size: the
+theme's editor size). Sizes are restored on every platform, positions where the platform allows. The GUI never
+saves `state.toml` blindly: `Service::state_update` loads it, applies the change and saves with the stamp check;
+a concurrent `hikasa settings set state.…` in between makes it reload and apply the change once more, so both
+edits stay. `hikasa settings get state.layout.text-compare` reads a table.
 
 **Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
 bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
@@ -419,3 +435,9 @@ files at their configuration-relative paths (§6).
   / Cancel).
 - **SES-093** (P0): "Home" command (Alt+Home) replaces the current view with the Home
   view; "Sessions" dropdown in the toolbar lists sessions openable in this view.
+
+*M2 W4a (D-106, D-107):* windows, the tab context menu (New Tab, Duplicate Tab, Move Tab to
+New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorder and — where
+the platform reports window positions — to move between windows or out into a new window,
+and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
+P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.

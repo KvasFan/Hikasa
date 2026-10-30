@@ -52,6 +52,50 @@
   default themes.
 - **UI-010** (P0): HiDPI per-monitor scaling; icon sets at 100/125/150/200%.
 
+*M2 W4a (contract §1.4.2–§1.4.5, D-106…D-111, D-114):*
+
+- **Windows (D-106).** One process owns every window; each window owns its tabs, and a view
+  lives in exactly one tab. The first window is drawn in the toolkit's root viewport, the
+  others as further viewports of the same frame; closing the first window while others are
+  open moves the next one into the root viewport, so the process ends only with its last
+  window. Opens from IPC and the command line go to the window focused last
+  (`[tabs] open_sessions_in = "window"`: a new window); FC-062 Open follows
+  `open_child_sessions_in`.
+- **Tabs (D-107).** Tab context menu: New Tab, Duplicate Tab (the same request in a new view
+  with its own job), Move Tab to New Window, Move Tab to Window ▸, Close Other Tabs, Close
+  Tab. Dragging a tab reorders it inside its bar; releasing it over another window's bar or
+  outside every window moves it only where the platform reports window positions (not on
+  Wayland). A window that loses its last tab by a move closes. `warn_when_closing_multiple_*`
+  prompts precede closing several tabs or windows and Exit.
+- **Layout memory (D-108).** `state.toml` keeps `[window]` (the last window closed) and
+  `[layout.<view type>]` (W4: `toolbar`, `log_panel`, `log_height`, `font_size`,
+  `thumbnail`), written when a window closes and at exit.
+- **Effective commands (D-109).** Captions, descriptions (hints), menus, toolbar flags and
+  shortcuts come from the core's effective command table (the catalogue with
+  `commands.toml` applied; a catalogue entry has an optional `toolbar` flag); the GUI keeps
+  per command only its icon, short label, group, availability and context-menu areas. Only
+  `implemented` commands appear.
+- **Menus (D-110).** Session, File, Edit, Actions, Search, View, Tools, Help; entries grouped
+  by catalogue section with separators; the Session menu puts the global entries before
+  Close Tab first, the view's entries next, Close Tab and Exit last; View ▸ Display Filter
+  lists the `DropDown`/`Favorites` presets and the `Toggles`. The toolbar shows the
+  `toolbar` entries as icons and the display-filter control of the view's mode (drop-down
+  with toggles, favourites, or toggles); its right-click menu is UI-004.
+- **Shortcut dispatch (D-111).** A shortcut with a context, of a command without a menu, or
+  without Ctrl/Alt/Cmd on an ordinary key is taken only by its focus area (the folder tree,
+  the text panes, a path field); the others by the window, the view's own section first. A
+  dialog takes the window's keys (the view under it does not scroll). The toolkit does not
+  tell the keypad apart: Ctrl with `=`, `-` or `0` runs a binding of `Ctrl+=`, `Ctrl+-` or
+  `Ctrl+0` when there is one, else the keypad's `Ctrl+Num +`, `Ctrl+Num -`, `Ctrl+Num 0`.
+- **Hints (UI-007).** Caption, the first shortcut (`show_shortcut_in_hints`) and the
+  description, after `hint_show_ms`, hidden after `hint_hide_ms` of hover; every hint of the
+  window (tabs, toolbar, panels, notices, dialogs) follows `show_hints` and these times.
+- **Icons (D-114).** In-house vector drawings on a 16 × 16 grid painted at the current scale
+  (no image files, no icon font).
+- **Drops (UI-008).** A Home path field takes the first dropped path (two on the left field
+  fill both); a window opens two dropped paths like the command line and explains one or
+  three.
+
 ## 2. Theming
 
 - **UI-020** (P0): Theme mode: Follow operating system / Light / Dark. Colour
@@ -129,6 +173,17 @@ and unimportant text and line backgrounds, `orphan`, `left_change`, `right_chang
 in both built-ins default text on each of them has a contrast ratio of at least 4.5:1
 (a unit test). The window starts using these files in M2 W4.
 
+*M2 W4a (D-113):* the window's colours come only from the resolved scheme of
+`theme.toml` for the theme mode (`follow_os` re-evaluates when the system theme changes),
+mapped to the painters through one table (folder elements → the tree, file elements → the
+text panes, `log_panel` → the log); the window chrome follows the scheme's base, and the
+selection is `[folder] selection` unless `use_system_selection`. The theme is re-applied at
+start, when the system theme changes and when a theme file changes on disk — never per
+frame. The editor font size sets the text panes (the font commands scale from it and are
+remembered per view type), the folder size the tree (`use_system`: the toolkit's default);
+listing and hex sizes wait for their views. A non-empty font family is not looked up in
+W4: the built-in font is used and one warning notice names the family.
+
 ## 3. Status bar, log, notifications
 
 - **UI-030** (P0): Status bar per view (left: context info; right: comparison state,
@@ -136,6 +191,23 @@ in both built-ins default text on each of them has a contrast ratio of at least 
   a message panel ("Difference not found." etc.) that can be suppressed.
 - **UI-031** (P0): Non-modal notifications for background events (file changed on
   disk, remote disconnected, update available).
+
+*M2 W4a (D-115…D-119):* each window's status bar shows the active view's context text and
+its state items (comparison state; format, encodings and line endings for file views) and a
+job indicator over the jobs of every view of the window (click: the list, Cancel per view);
+each view has a one-line message panel (info, warning, error; a close button; optional "Do
+not show again" bound to an option key). One log book per process (OPT-018 filter at
+insertion, errors always kept, `display_up_to` entries, optional `save_to_file`, appended in
+order; a file that cannot be written stops the saving with one notice) records
+finished jobs, warnings with their codes, errors, notices and settings reloads; the folder
+views show it in their Log panel (`ShowLog`). A watch thread polls the settings files every
+2 s and when a window gains focus (no file-system events): a changed `options.toml` or format
+file reloads the service's settings (later comparisons use them), `commands.toml` rebuilds
+the menus and keys, a theme file re-applies the theme, each with a notice; the GUI's own
+writes raise nothing. The inputs of open text views are watched by length and modification
+time: with `automatically_reload` the view reloads (info notice), else a warning notice
+offers Reload; a removed input gives a warning. Notices: at most three, newest on top,
+information ones hide after 8 s.
 
 ## 4. Dialog inventory (P0 unless noted)
 
@@ -150,6 +222,12 @@ manager, Session Save As, Export/Import/Restore wizards, Snapshot (P1), Support,
 About, Check for Updates (P1), Legend, Layout (hex), Archive password prompt (P1),
 SSH host key / TLS certificate validation prompts (P1), Confirm close multiple tabs/
 windows, "File changed on disk" prompts, Script status window.
+
+*M2 W4a (D-112):* dialogs are drawn inside their window, modal to it (a dimmed backdrop
+takes the window's input; never a separate native window), one stack per window; Esc is
+Cancel, Enter the default button, F1 the dialog's help topic. A prompt (message, buttons,
+default, optional "Do not ask again" bound to an option key) serves the close warnings and
+later waves' questions. About is a dialog.
 
 ## 5. Optional helpers
 

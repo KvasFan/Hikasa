@@ -1,0 +1,17 @@
+schema_version = 1
+
+[window]
+width = 1000
+height = 640
+x = 40
+y = 30
+
+[layout.folder-compare]
+log_height = 160.0
+log_panel = true
+toolbar = true
+
+[layout.text-compare]
+font_size = 15.0
+thumbnail = false
+toolbar = false

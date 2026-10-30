@@ -5,6 +5,38 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 4a — GUI shell
+- **Windows and tabs** (UI-001, SES-090, SES-091, D-106…D-108): several windows in one process (Session ▸ New
+  Window); the tab context menu (New Tab, Duplicate Tab, Move Tab to New Window, Move Tab to Window ▸, Close Other
+  Tabs, Close Tab); tabs drag to reorder and, where the system reports window positions, into another window or
+  out into a new one; the `[tabs]` options (where opens go, new tab placement, closing the last tab, hiding a single
+  tab's bar, the warnings before closing several tabs or windows). `state.toml` remembers the last window's size
+  and, per view type, `[layout.<view type>]` (toolbar, log panel and its height, font size, thumbnail).
+- **Commands from core** (UI-002…UI-007, D-109…D-111): `hikasa_session::commands::effective` merges the catalogue
+  with `commands.toml`; menus (grouped by section, View ▸ Display Filter), toolbars (in-house vector icons, large
+  buttons, the display filter as a drop-down, favourites or toggles; right-click menu), hints with the shortcut
+  and their timing options, and shortcut dispatch by focus area all follow it. New catalogue commands
+  `TabDuplicate`, `TabMoveToNewWindow`, `TabMoveToWindow`, `TabCloseOthers` and a `toolbar` flag; `WindowNew`,
+  `ShowToolbar` and `ShowLog` are implemented.
+- **Dialogs** (D-112): modal inside their window (Esc, Enter, F1); prompts with "Do not ask again"; About is a
+  dialog.
+- **Theme** (UI-020…022, FC-031, D-113): the colours come from the scheme of `theme.toml` (light/dark, following
+  the system), re-applied when a theme file changes; the editor and folder font sizes apply.
+- **Status bar, jobs, messages, log** (UI-030, FC-100, D-115, D-116): state items per view, a job indicator with
+  Cancel per view, a message line per view, and one log book per process (OPT-018 filter, capacity, optional
+  file) shown by the folder views' Log panel.
+- **Changes on disk** (UI-031, SES-053, D-117…D-119): a watch thread polls the settings files every 2 s and on
+  focus; changed options and format files reload the service's settings (`Service::reload_settings`; later
+  comparisons use them), `commands.toml` and theme files re-apply, each with a notice; the inputs of open text
+  views are watched (reload automatically or offer Reload; a removed input is reported).
+- **Drag and drop** (UI-008): files dropped on a Home path field fill it; two dropped on a window are compared.
+- Core: `Service::settings_snapshot`, `settings_save`, `reload_settings`, `state_update`, `log_append`,
+  `input_stamp`; `Service::options()` and `registry()` return snapshots (`Arc`); `State::layout`;
+  `hikasa_session::log` and `hikasa_session::watch`. Performance mode `HIKASA_GUI_BENCH=two_windows`.
+  `Service::loaded_settings()` (options, ignored keys and registry as one snapshot; reloads are serialized);
+  `Service::ignored_option_keys()` returns a `Vec<String>` refreshed by each reload; the spooled copy of standard
+  input is not watched; a refining catalogue entry without a shortcut takes the shared one.
+
 ### Wave 3 — VFS mutations, clipboard, generic copy
 - **Mutating VFS** (VFS-001, ARCH-030, D-92…D-99): every back-end gains single-item primitives — create a folder,
   remove, rename, set times, set attributes, create a symbolic link, move to the recycle bin, an optional fast

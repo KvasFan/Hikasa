@@ -289,6 +289,55 @@ not grow with more cycles (three rounds of five cycles: 349, 417, 388 MiB; with 
 heap (the heap shrinks only from its top), not live data; returning it would need `malloc_trim` (an `unsafe`
 FFI call or a crate that is not approved) or a different allocator, which is left to a later decision.
 
+### M2 W4a: the shell's gates (D-132)
+
+`env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1 text_scroll two_windows` (2026-10-30; the same desktop as above, the binary on Xvfb's default
+640 × 480 screen with Mesa llvmpipe, the only renderer the agents may use; the GPU figures are the maintainer's run
+at W14). The runs require `DISPLAY` and a software renderer. `two_windows` (`HIKASA_GUI_BENCH=two_windows`) opens a
+second window with Home at the first screen (`WindowNew`), lets 240 frames pass and runs the three scroll phases in
+the first window; every frame then also paints the second window (an immediate viewport).
+
+| Gate | Run at load ≈ 9 (final) | Earlier runs | Threshold |
+|---|---|---|---|
+| `text_scroll` first screen | 0.16 s (coloured 0.45 s) | 0.31 s at load ≈ 300 | < 1 s: **met** |
+| `text_scroll` memory | PSS 368 MiB (anon 315), RSS 417 MiB, peak 423 MiB | PSS 363 MiB | PSS < 381.5 MiB: **met** |
+| `text_scroll` UI frame work | p95 0.44 / 1.0 / 1.13 ms, max ≤ 1.9 ms per phase | max 6.1 ms | p95 < 8, max < 16.7 ms: **met** |
+| `two_windows` memory | PSS 375 MiB (anon 318), RSS 424 MiB, peak 429 MiB | 380 MiB; 404 MiB in a run that opened the second window after the coloured screen with a 30-frame warm-up, at load ≈ 300 | PSS < 381.5 MiB: **met** (narrowly) |
+| `two_windows` UI frame work | p95 3.1 / 3.7 / 3.8 ms, max ≤ 6.9 ms per phase | max 14.9 ms; p95 20 ms in the 30-frame warm-up run (the second window's surface was being created during the first phase) | **met** |
+
+Under llvmpipe the renderer's buffers live in the process: the single-window PSS is 363–368 MiB here against
+275 MiB on the GPU (M1, above), and a second window adds 7–40 MiB of anonymous memory for its surface and its
+copy of the font atlas, while its model (one Home tab) is a few kilobytes. The frame work of `two_windows`
+includes the software rasterisation of the second window inside the root frame (immediate viewport), which a GPU
+does asynchronously. The memory margin under llvmpipe is small (≈ 6 MiB); the maintainer's GPU run at the end of
+W4c re-measures it.
+
+**Re-run after the W4a review fixes (2026-10-30, load ≈ 250, same machine, llvmpipe over GL).** Both variants of
+the gate were run: `two_windows` (second window at the first screen) and the new `two_windows_late`
+(`HIKASA_PERF_SECOND_WINDOW=coloured`: second window once the coloured screen is up, the variant that measured
+404 MiB before), with `text_scroll` as the single-window baseline in the same conditions. The bench was not
+changed apart from that switch.
+
+| Run | PSS (anon) | RSS / peak | UI frame work | Gate |
+|---|---|---|---|---|
+| `text_scroll` (one window) | 396.9 MiB (315.1) | 417.3 MiB | p95 ≤ 3.8 ms | PSS **not met** |
+| `two_windows` (first screen) | 402.3 MiB (316.8) | 422.1 / 422.1 MiB | p95 4.68, max 9.99 ms | PSS **not met**; frames met |
+| `two_windows_late` (coloured screen) | 401.4 MiB (315.5); again 401.5 (316.0) | 421.5 / 423.1 MiB | p95 4.7, max 8.9 (15.3) ms | PSS **not met**; frames met |
+
+What the figures say (`/proc/<pid>/smaps` sampled during the runs): the anonymous memory is the same as in the
+earlier passing runs (315–318 MiB) and the second window adds only ≈ 1–2 MiB of it at the report, plus ≈ 13 MiB of
+llvmpipe colour buffers and a 3.7 MiB X shared-memory present image (1200 × 800 × 4) while it is shown — the
+software renderer's per-surface buffers, which live in video memory on a GPU. The rise against the earlier runs
+(PSS 368/375 MiB) is file-backed: the process's share of Mesa's `libLLVM` (39.8 MiB PSS), `libgallium` (12.0 MiB),
+the probed Vulkan driver (3.9 MiB) and the binary (19.5 MiB) — about 82 MiB now against about 53 MiB then. PSS
+divides a shared library's pages among the processes that map it, so the same program measures 25–30 MiB more
+when fewer other processes on the machine map Mesa's libraries; the single-window `text_scroll` fails the limit in
+this run too. No change in the GUI reduces those mappings (they are the software renderer), and the window size and
+the scenario are the gate's; the gate is therefore **reported as failing under llvmpipe in this run**, the GPU
+figure being the maintainer's run at the end of W4c (D-132). Forcing wgpu to GL only would drop the probed Vulkan
+driver (≈ 4.6 MiB) but would change the renderer real users get, so it was not done.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |

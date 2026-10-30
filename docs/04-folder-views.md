@@ -477,3 +477,15 @@ Backups). Confirmation dialogs can be disabled per operation.
 - **FC-100** (P0): View ▸ Log toggles a panel listing operation summaries, details,
   warnings/errors, remote protocol traces and debug messages according to the Log
   options; capped at N messages; optional auto-save to a file.
+  *M2 W4a (D-116):* one log book per GUI process (`hikasa_session::log::LogBook`), shared by
+  every window: entries have a time (the injected clock), a kind (summary, detail, warning,
+  error, debug), a source (a tab caption, `settings`, `files`) and a text; warnings keep
+  their stable code (`[entry_error] …`). The OPT-018 filter applies when an entry is added
+  (errors are always kept), `display_up_to` is the capacity (oldest dropped), and with
+  `save_to_file` new lines (`2026-10-30 14:03:07  warning  <source>: <text>`) are appended to
+  that file off the UI thread, one append at a time and in order; when the file cannot be
+  written, saving stops with one warning notice until the settings change. W4 sources: finished comparisons, warnings and errors of the
+  GUI's service results, notices, settings reloads, and `hikasa::*` debug events with
+  `debug_messages`; later waves add file operations and scripts. The panel (`ShowLog`) is
+  resizable, follows the end, has Clear, and remembers `log_panel` and `log_height` per view
+  type.

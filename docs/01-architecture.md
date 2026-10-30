@@ -241,6 +241,15 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   `docs/reference/commands.md` is generated from it (`cargo xtask commands-doc`). The GUI
   keeps toolbar labels, radio groups and availability predicates next to its view
   models; its tests check that it executes exactly the `implemented` entries.
+  *M2 W4a (D-109, D-119):* `hikasa_session::commands::effective(view, overrides)` merges the
+  catalogue entries of a view's sections with `commands.toml` (shortcuts, menu and toolbar
+  flags; an entry has an optional `toolbar` flag) into the view's effective table; the GUI
+  reads captions, hints, menus and shortcuts from it and keeps only icons, short labels,
+  groups, availability and context-menu areas. `Service::options()` and `registry()` return
+  snapshots, and `Service::reload_settings()` swaps new ones in (later calls and jobs use them,
+  running jobs keep theirs); the GUI's other settings calls are `settings_snapshot`,
+  `settings_save`, `state_update`, `log_append` and `input_stamp` (typed forms of the
+  `settings` commands or GUI-only state; no new `hikasa` subcommand).
 
 ## 4. Threading and runtime
 

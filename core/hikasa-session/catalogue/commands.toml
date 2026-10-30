@@ -37,7 +37,7 @@ id = "WindowNew"
 menu = "Session"
 caption = "New Window"
 description = "Opens Home view in new window."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SessionOpen"
@@ -74,6 +74,30 @@ menu = "Session"
 caption = "Close Tab"
 shortcut = "Ctrl+W"
 description = "Closes active tab."
+status = "implemented"
+
+[[section.command]]
+id = "TabDuplicate"
+caption = "Duplicate Tab"
+description = "Opens current session again in new tab."
+status = "implemented"
+
+[[section.command]]
+id = "TabMoveToNewWindow"
+caption = "Move Tab to New Window"
+description = "Moves current tab into new window."
+status = "implemented"
+
+[[section.command]]
+id = "TabMoveToWindow"
+caption = "Move Tab to Window"
+description = "Moves current tab into picked window."
+status = "implemented"
+
+[[section.command]]
+id = "TabCloseOthers"
+caption = "Close Other Tabs"
+description = "Closes all other tabs of this window."
 status = "implemented"
 
 [[section.command]]
@@ -632,6 +656,7 @@ caption = "Next Difference"
 shortcut = "Ctrl+N"
 description = "Positions at next difference."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "DiffPrev"
@@ -640,6 +665,7 @@ caption = "Previous Difference"
 shortcut = "Ctrl+P"
 description = "Positions at previous difference."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "FavCompareAll"
@@ -974,6 +1000,7 @@ id = "Stop"
 menu = "Session"
 description = "Terminates comparison."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "Expand"
@@ -1024,6 +1051,7 @@ menu = "Actions"
 shortcut = "Enter"
 description = "Opens selected items in new view."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "OpenWithList"
@@ -1074,6 +1102,7 @@ menu = "Edit"
 caption = "Expand All"
 description = "Opens all folders."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "CollapseAll"
@@ -1081,6 +1110,7 @@ menu = "Edit"
 caption = "Collapse All"
 description = "Closes all folders."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "SelectInvert"
@@ -1104,6 +1134,7 @@ caption = "Full Refresh"
 shortcut = "Ctrl+F5"
 description = "Refreshes entire comparison."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "ExistsNext"
@@ -1170,7 +1201,7 @@ id = "ShowLog"
 menu = "View"
 caption = "Log"
 description = "Shows or hides log panel."
-status = "planned"
+status = "implemented"
 
 [[section]]
 key = "folder-sync"
@@ -1259,6 +1290,7 @@ caption = "Reload Files"
 shortcut = "F5"
 description = "Reloads displayed files."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "Recompare"
@@ -2253,6 +2285,7 @@ menu = "View"
 caption = "Ignore Unimportant Differences"
 description = "Treats unimportant differences as same."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "SameModIgnored"
@@ -2266,7 +2299,7 @@ id = "ShowToolbar"
 menu = "View"
 caption = "Toolbar"
 description = "Shows or hides toolbar."
-status = "planned"
+status = "implemented"
 
 [[section]]
 key = "table-compare"
@@ -2929,6 +2962,7 @@ caption = "Next Difference Section"
 shortcut = "Ctrl+N"
 description = "Positions at next unignored difference section."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "DiffSectionPrev"
@@ -2937,6 +2971,7 @@ caption = "Previous Difference Section"
 shortcut = "Ctrl+P"
 description = "Positions at previous unignored difference section."
 status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "DiffReplacedNext"

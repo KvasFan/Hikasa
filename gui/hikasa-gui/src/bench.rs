@@ -1,4 +1,5 @@
-//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder`, see `main`): the window
+//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder|two_windows`, see `main`;
+//! `two_windows` is the M2 W4a gate of §1.4.17: the text scroll with a second window holding Home): the window
 //! opens the command line's view and drives it frame by frame — scrolling the text panes through the whole
 //! comparison, or scrolling the folder tree while the scan runs — records the first-screen marks, the frame
 //! times (the UI thread's work per frame, the frame intervals and eframe's CPU time per frame) and the memory
@@ -21,6 +22,8 @@ pub enum BenchKind {
     Scroll,
     /// Folder Compare: incremental rendering while scanning (acceptance (b)).
     Folder,
+    /// The text scroll with a second window (Home) open (M2 W4a, D-132).
+    TwoWindows,
 }
 
 /// One scroll phase of the text benchmark.
@@ -65,6 +68,8 @@ const PHASES: &[PhaseSpec] = &[
 
 /// Frames to let pass after the coloured screen before the first phase.
 const WARM_UP_FRAMES: u32 = 30;
+/// The same for `two_windows`, whose second window opens at the first screen.
+const TWO_WINDOWS_WARM_UP_FRAMES: u32 = 240;
 /// Folder benchmark: rows the tree scrolls per frame.
 const FOLDER_ROWS_PER_FRAME: f64 = 2.0;
 /// Folder benchmark: how long frames keep being drawn after the scan.
@@ -131,6 +136,11 @@ pub struct BenchState {
     reported: bool,
     frames: u64,
     first_frame_work: Option<f64>,
+    /// `two_windows`: the second window was asked for.
+    second_window: bool,
+    /// `two_windows`: the second window opens at the coloured screen instead of the first screen
+    /// (`HIKASA_PERF_SECOND_WINDOW=coloured`; the late variant of the gate).
+    second_after_coloured: bool,
 }
 
 impl BenchState {
@@ -157,6 +167,9 @@ impl BenchState {
             reported: false,
             frames: 0,
             first_frame_work: None,
+            second_window: false,
+            second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
+                .is_some_and(|v| v == "coloured"),
         }
     }
 
@@ -164,6 +177,22 @@ impl BenchState {
     pub fn set_view(&mut self, view: ViewId) {
         self.view = Some(view);
         self.view_opened = Some(Instant::now());
+    }
+
+    /// `two_windows`: true once, when the first screen is up (or the coloured screen with
+    /// `HIKASA_PERF_SECOND_WINDOW=coloured`) — the window then runs `WindowNew`.
+    pub fn take_second_window(&mut self) -> bool {
+        let due = if self.second_after_coloured {
+            self.ready_screen.is_some()
+        } else {
+            self.first_screen.is_some()
+        };
+        if self.kind == BenchKind::TwoWindows && !self.second_window && due {
+            self.second_window = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// Records the renderer (adapter) the window runs on.
@@ -205,11 +234,11 @@ impl BenchState {
             return;
         };
         match self.kind {
-            BenchKind::Scroll => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Scroll | BenchKind::TwoWindows => self.drive_text(texts.get_mut(&view)),
             BenchKind::Folder => {
                 let busy = core
                     .tab(view)
-                    .is_some_and(|t| matches!(&t.model, ViewModel::Folder(m) if m.busy()));
+                    .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
                 if matches!(self.script, Script::Waiting(_)) {
                     self.script = Script::Folder;
                 }
@@ -234,7 +263,14 @@ impl BenchState {
             Script::Waiting(n) => {
                 if self.ready_screen.is_some() {
                     *n += 1;
-                    if *n >= WARM_UP_FRAMES {
+                    // `two_windows`: the second window's viewport (its surface and its copy of the font atlas)
+                    // is created during the warm-up, which is longer, so the phases measure two open windows.
+                    let warm_up = if self.kind == BenchKind::TwoWindows {
+                        TWO_WINDOWS_WARM_UP_FRAMES
+                    } else {
+                        WARM_UP_FRAMES
+                    };
+                    if *n >= warm_up {
                         self.start_phase(0, st);
                     }
                 }
@@ -399,7 +435,15 @@ impl BenchState {
         }
         self.reported = true;
         let mut report = json!({
-            "bench": match self.kind { BenchKind::Scroll => "text_scroll", BenchKind::Folder => "folder_scan" },
+            "bench": match self.kind {
+                BenchKind::Scroll => "text_scroll",
+                BenchKind::Folder => "folder_scan",
+                BenchKind::TwoWindows => "two_windows",
+            },
+            "windows": core.windows().len(),
+            "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
+                if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
+            ),
             "memory": memory(),
             "renderer": self.renderer.clone(),
             "window": self.window.clone(),
@@ -410,7 +454,7 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
-                BenchKind::Scroll => {
+                BenchKind::Scroll | BenchKind::TwoWindows => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({
@@ -477,7 +521,7 @@ pub fn stats(samples: &[f64]) -> Value {
 /// Facts about the view under test (rows, timings, rebuilds).
 fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
     let tab = core.tab(view)?;
-    Some(match &tab.model {
+    Some(match tab.model()? {
         ViewModel::Text(m) => {
             let (loaded, ready) = m.timings();
             let rows = m.response().map_or(0, |r| r.comparison.row_count());

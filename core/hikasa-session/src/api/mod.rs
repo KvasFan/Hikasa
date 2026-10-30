@@ -21,6 +21,7 @@
 //! | `session list/show/new/edit/delete/rename/lock/unlock/mkdir/rmdir/run` | [`Service::session_list`], [`Service::session_show`], [`Service::session_new`], [`Service::session_edit`], [`Service::session_delete`], [`Service::session_rename`], [`Service::session_lock`], [`Service::session_mkdir`], [`Service::session_rmdir`], [`Service::session_run_request`] |
 //! | `workspace list/show/delete/rename` | [`Service::workspace_list`], [`Service::workspace_show`], [`Service::workspace_delete`], [`Service::workspace_rename`] |
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
+//! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -236,9 +237,11 @@ pub struct Service {
 struct Inner {
     env: EnvFacts,
     config: ConfigLocation,
-    options: ProgramOptions,
-    ignored_keys: Vec<String>,
-    registry: Arc<FormatRegistry>,
+    /// The options of `options.toml`, their ignored keys and the format registry, behind one lock: replaced
+    /// together by [`Service::reload_settings`] (D-119), so a reader never sees half a reload.
+    loaded: RwLock<Arc<LoadedSettings>>,
+    /// Held across the whole of a reload (load and swap): reloads never interleave or finish out of order.
+    reload: Mutex<()>,
     /// The router: local files, plus standard input and the clipboard once captured (replaced on capture).
     router: RwLock<Arc<VfsRouter>>,
     pool: Arc<rayon::ThreadPool>,
@@ -255,6 +258,18 @@ struct Inner {
     clipboard: Arc<dyn ClipboardProvider>,
     /// The clipboard snapshot: `None` until the first `clipboard://` spec (or `read_clipboard`).
     clipboard_state: Mutex<Option<Result<Blob, BlobFailure>>>,
+}
+
+/// The settings a [`Service`] holds in memory (D-119): one consistent view, taken with
+/// [`Service::loaded_settings`] and replaced as a whole by [`Service::reload_settings`].
+#[derive(Debug)]
+pub struct LoadedSettings {
+    /// `options.toml`.
+    pub options: Arc<ProgramOptions>,
+    /// The keys of `options.toml` that were ignored while loading it.
+    pub ignored_keys: Vec<String>,
+    /// The format registry.
+    pub registry: Arc<FormatRegistry>,
 }
 
 /// Why standard input is unavailable.
@@ -286,7 +301,7 @@ impl std::fmt::Debug for Service {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Service")
             .field("config", &self.inner.config)
-            .field("options", &self.inner.options)
+            .field("options", &*self.inner.loaded.read().options)
             .field("threads", &self.inner.pool.current_num_threads())
             .finish_non_exhaustive()
     }
@@ -370,9 +385,12 @@ impl Service {
             inner: Arc::new(Inner {
                 env,
                 config,
-                options: options_load.options,
-                ignored_keys: options_load.ignored_keys,
-                registry: Arc::new(registry),
+                loaded: RwLock::new(Arc::new(LoadedSettings {
+                    options: Arc::new(options_load.options),
+                    ignored_keys: options_load.ignored_keys,
+                    registry: Arc::new(registry),
+                })),
+                reload: Mutex::new(()),
                 router: RwLock::new(Arc::new(router)),
                 pool: Arc::new(pool),
                 clock,
@@ -393,14 +411,65 @@ impl Service {
         &self.inner.config
     }
 
-    /// Program options.
-    pub fn options(&self) -> &ProgramOptions {
-        &self.inner.options
+    /// Program options: a snapshot (M2 W4a, D-119: was `&ProgramOptions`). Calls and jobs started after a
+    /// [`Service::reload_settings`] see the new values; a running job keeps the snapshot it took.
+    pub fn options(&self) -> Arc<ProgramOptions> {
+        Arc::clone(&self.inner.loaded.read().options)
     }
 
-    /// Format registry.
-    pub fn registry(&self) -> &Arc<FormatRegistry> {
-        &self.inner.registry
+    /// Format registry: a snapshot (M2 W4a, D-119: was `&Arc<FormatRegistry>`), like [`Service::options`].
+    pub fn registry(&self) -> Arc<FormatRegistry> {
+        Arc::clone(&self.inner.loaded.read().registry)
+    }
+
+    /// The options, their ignored keys and the registry as one consistent snapshot (D-119): never half of a
+    /// [`Service::reload_settings`].
+    pub fn loaded_settings(&self) -> Arc<LoadedSettings> {
+        Arc::clone(&self.inner.loaded.read())
+    }
+
+    /// Re-reads `options.toml` (leniently: a bad value is its default, with warning `invalid_config_value`) and
+    /// the format registry, and swaps them atomically (M2 W4a, D-119): later calls and jobs use the new values,
+    /// running jobs keep theirs. Options, their ignored keys and the registry are replaced together under one
+    /// lock, and reloads are serialized (a reload holds a mutex from its first read to its swap), so concurrent
+    /// reloads never finish out of order. A file that cannot be read at all (a newer `schema_version`, a broken
+    /// `order.toml`) keeps the previous value and is reported as a warning. Returns the warnings of both loads.
+    pub fn reload_settings(&self) -> Vec<Warning> {
+        let _serial = self.inner.reload.lock();
+        let current = self.loaded_settings();
+        let mut warnings = Vec::new();
+        let kept = |what: &str, e: &dyn std::fmt::Display| Warning {
+            code: hikasa_core::WarningCode::InvalidConfigValue,
+            message: format!("{what}: {e} (the previous settings stay in use)"),
+            spec: None,
+        };
+        let (options, ignored_keys) = match load_options_with(&self.inner.config, LoadMode::Lenient)
+        {
+            Ok(load) => {
+                warnings.extend(load.warnings);
+                (Arc::new(load.options), load.ignored_keys)
+            }
+            Err(e) => {
+                warnings.push(kept(crate::options::OPTIONS_FILE, &e));
+                (Arc::clone(&current.options), current.ignored_keys.clone())
+            }
+        };
+        let registry = match FormatStore::new(&self.inner.config).load(RegexLimits::default()) {
+            Ok((registry, format_warnings)) => {
+                warnings.extend(format_warnings);
+                Arc::new(registry)
+            }
+            Err(e) => {
+                warnings.push(kept("formats", &e));
+                Arc::clone(&current.registry)
+            }
+        };
+        *self.inner.loaded.write() = Arc::new(LoadedSettings {
+            options,
+            ignored_keys,
+            registry,
+        });
+        warnings
     }
 
     /// Warnings collected during construction (unknown config sections, skipped user formats).
@@ -408,9 +477,10 @@ impl Service {
         &self.inner.startup_warnings
     }
 
-    /// Option keys ignored while loading `options.toml` (logged with `--verbose`, D-31).
-    pub fn ignored_option_keys(&self) -> &[String] {
-        &self.inner.ignored_keys
+    /// Option keys ignored while loading `options.toml` (logged with `--verbose`, D-31); refreshed by
+    /// [`Service::reload_settings`] (M2 W4a: was `&[String]`).
+    pub fn ignored_option_keys(&self) -> Vec<String> {
+        self.inner.loaded.read().ignored_keys.clone()
     }
 
     /// The captured host facts (additive).
@@ -445,7 +515,7 @@ impl Service {
             .pool
             .current_num_threads()
             .clamp(1, MAX_STREAM_THREADS);
-        self.inner.options.stream_options(threads)
+        self.options().stream_options(threads)
     }
 
     /// `"hikasa <version>"`: the report generator and IPC client name (additive).

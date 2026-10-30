@@ -11,6 +11,8 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
+use crate::settings::{CommandOverrides, Shortcut, ShortcutConflict, ViewCustomization};
+
 /// The embedded catalogue.
 const SOURCE: &str = include_str!("../catalogue/commands.toml");
 
@@ -57,6 +59,9 @@ pub struct CommandEntry {
     pub description: String,
     /// Implemented or planned.
     pub status: CommandStatus,
+    /// On the view's default toolbar (M2 W4a, D-109; absent: `false`). Not a column of the reference.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub toolbar: bool,
 }
 
 /// One section: the commands of a view type or of a group of view types.
@@ -282,6 +287,177 @@ impl Catalogue {
     }
 }
 
+/// One command of a view's effective table (M2 W4a, D-109): the catalogue entry with the overrides of
+/// `commands.toml` applied.
+///
+/// *W4 note:* the text and caption fields are merged over the view's sections: an entry that only refines
+/// another section's entry of the same id (the `text-compare` display filters over `file-shared`) has no menu
+/// and no caption of its own, so `menu` and `caption` are the first non-empty ones in `view_sections` order
+/// (`description` likewise). `entry` stays the first entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveCommand<'a> {
+    /// The section of `entry`.
+    pub section: &'a str,
+    /// The first catalogue entry of the id in the view's sections.
+    pub entry: &'a CommandEntry,
+    /// The menu (first non-empty over the sections).
+    pub menu: &'a str,
+    /// The caption (first non-empty over the sections).
+    pub caption: &'a str,
+    /// The description, the hint (first non-empty over the sections).
+    pub description: &'a str,
+    /// The effective shortcuts: the override's, else the parsed default (empty when none).
+    pub shortcuts: Vec<Shortcut>,
+    /// The catalogue default, parsed (first non-empty over the sections, like `menu`).
+    pub default_shortcuts: Vec<Shortcut>,
+    /// Shown in its menu (default: a menu and a caption; an override replaces it).
+    pub in_menu: bool,
+    /// Shown on the toolbar (default: the catalogue's `toolbar` of `entry`; an override replaces it).
+    pub on_toolbar: bool,
+    /// `commands.toml` changes something of this command.
+    pub customized: bool,
+}
+
+impl EffectiveCommand<'_> {
+    /// The command id.
+    pub fn id(&self) -> &str {
+        &self.entry.id
+    }
+
+    /// True for an `implemented` command (the only ones a GUI shows).
+    pub fn implemented(&self) -> bool {
+        self.entry.status == CommandStatus::Implemented
+    }
+}
+
+/// The effective command table of one view type (M2 W4a, D-109).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewCommands<'a> {
+    /// The view type (`home`, `folder-compare`, …).
+    pub view: &'a str,
+    /// The view's customization (defaults when `commands.toml` has none).
+    pub custom: ViewCustomization,
+    /// Every command of the view's sections, one per id, in `view_sections` order then catalogue order.
+    pub entries: Vec<EffectiveCommand<'a>>,
+}
+
+/// The effective table of `view`: the catalogue entries of its sections ([`view_sections`]; an id listed in two
+/// sections takes the first) with the shortcut, menu and toolbar overrides of `overrides` (`[]` removes the
+/// shortcuts). `show_all_in_menu` / `show_all_on_toolbar` are not applied here: they force entries on for
+/// display only. `planned` entries are present (for `settings`); a GUI filters them out.
+pub fn effective<'a>(
+    catalogue: &'a Catalogue,
+    view: &'a str,
+    overrides: &CommandOverrides,
+) -> ViewCommands<'a> {
+    let custom = overrides.view.get(view).cloned().unwrap_or_default();
+    let sections: Vec<&CatalogueSection> = view_sections(view)
+        .iter()
+        .filter_map(|k| catalogue.section(k))
+        .collect();
+    let mut entries: Vec<EffectiveCommand<'a>> = Vec::new();
+    for section in &sections {
+        for entry in &section.commands {
+            if entries.iter().any(|e| e.entry.id == entry.id) {
+                continue;
+            }
+            let same: Vec<&'a CommandEntry> = sections
+                .iter()
+                .filter_map(|s| s.command(&entry.id))
+                .collect();
+            let first = |field: fn(&'a CommandEntry) -> &'a str| {
+                same.iter()
+                    .map(|e| field(e))
+                    .find(|t| !t.is_empty())
+                    .unwrap_or("")
+            };
+            let menu = first(|e| e.menu.as_str());
+            let caption = first(|e| e.caption.as_str());
+            let description = first(|e| e.description.as_str());
+            // The shortcut is inherited like the texts: a refining entry without one takes the shared one.
+            let shortcut = first(|e| e.shortcut.as_str());
+            let default_shortcuts: Vec<Shortcut> = if shortcut.is_empty() {
+                Vec::new()
+            } else {
+                Shortcut::parse(shortcut).into_iter().collect()
+            };
+            let over = custom.command.get(&entry.id);
+            let shortcuts = match over.and_then(|o| o.shortcuts.as_ref()) {
+                Some(texts) => texts
+                    .iter()
+                    .filter_map(|t| Shortcut::parse(t).ok())
+                    .collect(),
+                None => default_shortcuts.clone(),
+            };
+            let in_menu = over
+                .and_then(|o| o.menu)
+                .unwrap_or(!menu.is_empty() && !caption.is_empty());
+            let on_toolbar = over.and_then(|o| o.toolbar).unwrap_or(entry.toolbar);
+            entries.push(EffectiveCommand {
+                section: &section.key,
+                entry,
+                menu,
+                caption,
+                description,
+                shortcuts,
+                default_shortcuts,
+                in_menu,
+                on_toolbar,
+                customized: over.is_some_and(|o| *o != crate::settings::CommandOverride::default()),
+            });
+        }
+    }
+    ViewCommands {
+        view,
+        custom,
+        entries,
+    }
+}
+
+impl<'a> ViewCommands<'a> {
+    /// The command `id` (the first in `view_sections` order).
+    pub fn get(&self, id: &str) -> Option<&EffectiveCommand<'a>> {
+        self.entries.iter().find(|e| e.entry.id == id)
+    }
+
+    /// The commands whose effective shortcuts contain `shortcut`, compared without contexts, in table order.
+    pub fn with_shortcut(&self, shortcut: &Shortcut) -> Vec<&EffectiveCommand<'a>> {
+        let bare = |s: &Shortcut| Shortcut {
+            context: None,
+            ..s.clone()
+        };
+        let wanted = bare(shortcut);
+        self.entries
+            .iter()
+            .filter(|e| e.shortcuts.iter().any(|s| bare(s) == wanted))
+            .collect()
+    }
+
+    /// Commands sharing a shortcut without a context, sorted by shortcut (the same as
+    /// [`CommandOverrides::conflicts`] for this view's overrides).
+    pub fn conflicts(&self) -> Vec<ShortcutConflict> {
+        let mut by_key: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for entry in &self.entries {
+            for shortcut in entry.shortcuts.iter().filter(|s| s.context.is_none()) {
+                let ids = by_key.entry(shortcut.to_string()).or_default();
+                if !ids.contains(&entry.entry.id) {
+                    ids.push(entry.entry.id.clone());
+                }
+            }
+        }
+        by_key
+            .into_iter()
+            .filter(|(_, ids)| ids.len() > 1)
+            .map(|(shortcut, commands)| ShortcutConflict {
+                view: self.view.to_owned(),
+                shortcut,
+                commands,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +551,140 @@ status = "implemented"
         let with = catalogue.render_markdown(true);
         assert!(with.contains("| `ContextHelp` | Help | Context Sensitive Help | F1 | "));
         assert!(with.contains(" | implemented |\n") && with.contains(" | planned |\n"));
+    }
+
+    /// M2 W4a (A4.3): the effective table of a view: defaults, overrides replacing, removing and adding
+    /// shortcuts, menu and toolbar overrides, the merged captions, `planned` entries present.
+    #[test]
+    fn effective_tables_apply_the_overrides() {
+        use crate::settings::{CommandOverride, CommandOverrides};
+        let cat = catalogue();
+        let none = CommandOverrides::default();
+        let text = effective(cat, "text-compare", &none);
+        assert_eq!(text.view, "text-compare");
+        let reload = text.get("Reload").expect("Reload");
+        assert_eq!(reload.section, "file-shared");
+        assert_eq!(reload.shortcuts, vec![Shortcut::parse("F5").unwrap()]);
+        assert_eq!(reload.shortcuts, reload.default_shortcuts);
+        assert!(reload.in_menu && reload.on_toolbar && !reload.customized);
+        // The text view's display filters refine the shared entries: own description, shared menu and caption.
+        let all = text.get("FavCompareAll").expect("FavCompareAll");
+        assert_eq!(all.section, "text-compare");
+        assert_eq!(all.caption, "Show All");
+        assert_eq!(all.menu, "Favorites");
+        assert_eq!(all.description, all.entry.description);
+        // … and the shared shortcut when they have none; the status is the view's own entry's.
+        let exists = text.get("ExistsNext").expect("ExistsNext");
+        assert_eq!(exists.section, "text-compare");
+        assert!(exists.entry.shortcut.is_empty());
+        assert_eq!(
+            exists.default_shortcuts,
+            vec![Shortcut::parse("Alt+Down").unwrap()]
+        );
+        assert_eq!(exists.shortcuts, exists.default_shortcuts);
+        assert!(
+            all.implemented(),
+            "the text view's own entry is implemented"
+        );
+        // Planned entries are in the table, marked.
+        let save = text.get("SessionSave").expect("SessionSave");
+        assert!(!save.implemented());
+        // Ids are unique; the order is view_sections then catalogue order.
+        let ids: Vec<&str> = text.entries.iter().map(|e| e.id()).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len());
+        assert_eq!(text.entries[0].section, "text-compare");
+        assert_eq!(text.entries.last().map(|e| e.section), Some("global"));
+        // Overrides: replace, remove, add; menu and toolbar flags.
+        let mut overrides = CommandOverrides::default();
+        let custom = overrides.view.entry("text-compare".into()).or_default();
+        custom.command.insert(
+            "Reload".into(),
+            CommandOverride {
+                shortcuts: Some(vec!["Ctrl+R".into(), "Shift+F5".into()]),
+                menu: Some(false),
+                toolbar: Some(false),
+            },
+        );
+        custom.command.insert(
+            "DiffSectionNext".into(),
+            CommandOverride {
+                shortcuts: Some(Vec::new()),
+                ..CommandOverride::default()
+            },
+        );
+        custom.command.insert(
+            "About".into(),
+            CommandOverride {
+                shortcuts: Some(vec!["Ctrl+F1".into()]),
+                toolbar: Some(true),
+                ..CommandOverride::default()
+            },
+        );
+        custom.show_all_in_menu = true;
+        let text = effective(cat, "text-compare", &overrides);
+        assert!(text.custom.show_all_in_menu);
+        let reload = text.get("Reload").unwrap();
+        assert_eq!(
+            reload.shortcuts,
+            vec![
+                Shortcut::parse("Ctrl+R").unwrap(),
+                Shortcut::parse("Shift+F5").unwrap()
+            ]
+        );
+        assert_eq!(
+            reload.default_shortcuts,
+            vec![Shortcut::parse("F5").unwrap()]
+        );
+        assert!(!reload.in_menu && !reload.on_toolbar && reload.customized);
+        assert!(text.get("DiffSectionNext").unwrap().shortcuts.is_empty());
+        let about = text.get("About").unwrap();
+        assert!(about.on_toolbar && about.in_menu);
+        assert_eq!(
+            text.with_shortcut(&Shortcut::parse("Ctrl+F1").unwrap())
+                .iter()
+                .map(|e| e.id())
+                .collect::<Vec<_>>(),
+            vec!["About"]
+        );
+        assert!(
+            text.with_shortcut(&Shortcut::parse("F5").unwrap())
+                .is_empty()
+        );
+        // Another view is untouched by the text view's overrides.
+        let folder = effective(cat, "folder-compare", &overrides);
+        assert_eq!(
+            folder.get("About").unwrap().shortcuts,
+            Vec::<Shortcut>::new()
+        );
+        assert!(!folder.custom.show_all_in_menu);
+        // The conflicts are those of `CommandOverrides::conflicts`.
+        assert_eq!(text.conflicts(), overrides.conflicts("text-compare"));
+        assert_eq!(folder.conflicts(), overrides.conflicts("folder-compare"));
+        // A context is kept but not part of the match.
+        let home = effective(cat, "home", &none);
+        let enter = home.with_shortcut(&Shortcut::parse("Enter").unwrap());
+        assert_eq!(
+            enter.iter().map(|e| e.id()).collect::<Vec<_>>(),
+            vec!["HomeCompare"]
+        );
+        assert!(effective(cat, "nowhere", &none).entries.is_empty());
+    }
+
+    /// M2 W4a: the `toolbar` field parses, absent is `false`, and the reference layout does not change.
+    #[test]
+    fn the_toolbar_field_is_optional() {
+        let text = "schema_version = 1\ntitle = \"T\"\nintro = \"I\"\n[[section]]\nkey = \"global\"\n\
+                    title = \"G\"\nhelp = \"main-window\"\n[[section.command]]\nid = \"A\"\nstatus = \"planned\"\n\
+                    [[section.command]]\nid = \"B\"\nstatus = \"planned\"\ntoolbar = true\n";
+        let parsed = parse_catalogue(text).expect("parses");
+        let section = parsed.section("global").unwrap();
+        assert!(!section.command("A").unwrap().toolbar);
+        assert!(section.command("B").unwrap().toolbar);
+        let md = parsed.render_markdown(true);
+        assert!(md.contains("| `B` |  |  |  |  | planned |"), "{md}");
+        assert!(catalogue().entries().any(|(_, e)| e.toolbar));
     }
 }

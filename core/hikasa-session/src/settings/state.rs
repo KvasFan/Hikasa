@@ -1,5 +1,7 @@
 //! `state.toml` (SES-051; docs/03 §5.2): the last session, the most-recently-used lists, the last main window,
-//! first-run and hint flags, and the free per-dialog tables.
+//! first-run and hint flags, the free per-dialog tables and the per-view-type layout tables (M2 W4a, D-108).
+
+use std::collections::BTreeMap;
 
 use toml::Table;
 
@@ -19,6 +21,9 @@ settings_section! {
         flags: Flags = Flags::default(),
         /// `[dialogs]`: free tables per dialog id, kept as they are (RPT-003).
         dialogs: Table = Table::new(),
+        /// `[layout.<view type>]` (M2 W4a, D-108): an opaque table per view type (`text-compare`, …) whose keys
+        /// the views own (W4: `toolbar`, `log_panel`, `log_height`, `font_size`, `thumbnail`), kept as they are.
+        layout: BTreeMap<String, Table> = BTreeMap::new(),
     }
 }
 
@@ -95,7 +100,57 @@ pub enum MruList {
     Workspaces,
 }
 
+/// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LayoutValue {
+    /// A flag (`toolbar`, `log_panel`, `thumbnail`).
+    Bool(bool),
+    /// A size in points (`log_height`, `font_size`).
+    Float(f64),
+}
+
+impl LayoutValue {
+    /// The flag, if this is one.
+    pub fn as_bool(self) -> Option<bool> {
+        match self {
+            LayoutValue::Bool(b) => Some(b),
+            LayoutValue::Float(_) => None,
+        }
+    }
+
+    /// The size, if this is one.
+    pub fn as_float(self) -> Option<f64> {
+        match self {
+            LayoutValue::Float(f) => Some(f),
+            LayoutValue::Bool(_) => None,
+        }
+    }
+}
+
 impl State {
+    /// The value of `key` in `[layout.<view>]`: a boolean, or a finite number (an integer counts); anything else
+    /// is `None` (the view's default applies).
+    pub fn layout_value(&self, view: &str, key: &str) -> Option<LayoutValue> {
+        match self.layout.get(view)?.get(key)? {
+            toml::Value::Boolean(b) => Some(LayoutValue::Bool(*b)),
+            toml::Value::Float(f) if f.is_finite() => Some(LayoutValue::Float(*f)),
+            toml::Value::Integer(i) => Some(LayoutValue::Float(*i as f64)),
+            _ => None,
+        }
+    }
+
+    /// Sets `key` of `[layout.<view>]` (the table is created on demand; its other keys stay).
+    pub fn set_layout_value(&mut self, view: &str, key: &str, value: LayoutValue) {
+        let v = match value {
+            LayoutValue::Bool(b) => toml::Value::Boolean(b),
+            LayoutValue::Float(f) => toml::Value::Float(f),
+        };
+        self.layout
+            .entry(view.to_owned())
+            .or_default()
+            .insert(key.to_owned(), v);
+    }
+
     /// The list `list`.
     pub fn mru(&self, list: MruList) -> &[String] {
         let m = &self.mru;
@@ -199,6 +254,34 @@ mod tests {
         state.push_mru(MruList::Left, "d", 2);
         assert_eq!(state.mru(MruList::Left), ["d", "a"]);
         assert!(state.mru(MruList::Right).is_empty());
+    }
+
+    #[test]
+    fn layout_values_read_and_write() {
+        let mut state = State::default();
+        assert_eq!(state.layout_value("text-compare", "font_size"), None);
+        state.set_layout_value("text-compare", "font_size", LayoutValue::Float(15.0));
+        state.set_layout_value("text-compare", "thumbnail", LayoutValue::Bool(false));
+        assert_eq!(
+            state.layout_value("text-compare", "font_size"),
+            Some(LayoutValue::Float(15.0))
+        );
+        assert_eq!(
+            state
+                .layout_value("text-compare", "thumbnail")
+                .and_then(LayoutValue::as_bool),
+            Some(false)
+        );
+        let table = state.layout.get_mut("text-compare").unwrap();
+        table.insert("font_size".into(), toml::Value::Integer(12));
+        table.insert("other".into(), toml::Value::String("kept".into()));
+        assert_eq!(
+            state.layout_value("text-compare", "font_size"),
+            Some(LayoutValue::Float(12.0))
+        );
+        assert_eq!(state.layout_value("text-compare", "other"), None);
+        state.set_layout_value("text-compare", "font_size", LayoutValue::Float(9.0));
+        assert!(state.layout["text-compare"].contains_key("other"));
     }
 
     #[test]

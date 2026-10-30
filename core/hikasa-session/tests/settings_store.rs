@@ -218,6 +218,20 @@ fn random_tree(file: &FileId, rng: &mut Rng) -> Table {
             let mut dialogs = Table::new();
             dialogs.insert("report".into(), Value::Table(dialog));
             root.insert("dialogs".into(), Value::Table(dialogs));
+            // M2 W4a (D-108): `[layout.<view type>]` tables are kept as they are.
+            let mut text = Table::new();
+            text.insert("font_size".into(), Value::Float(9.5 + rng.below(20) as f64));
+            text.insert("thumbnail".into(), Value::Boolean(rng.below(2) == 0));
+            text.insert("future".into(), Value::String(rng.text()));
+            let mut folder = Table::new();
+            folder.insert("log_panel".into(), Value::Boolean(rng.below(2) == 0));
+            folder.insert("log_height".into(), Value::Float(160.0));
+            let mut layout = Table::new();
+            layout.insert("text-compare".into(), Value::Table(text));
+            if rng.chance() {
+                layout.insert("folder-compare".into(), Value::Table(folder));
+            }
+            root.insert("layout".into(), Value::Table(layout));
         }
         FileId::Themes(_) if rng.below(2) == 0 => {
             let mut style = Table::new();

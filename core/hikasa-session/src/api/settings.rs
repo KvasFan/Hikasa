@@ -31,11 +31,12 @@ use crate::settings::file::full_table;
 use crate::settings::keys::{info_for, parse_path, rule_for};
 use crate::settings::theme::SchemeBase;
 use crate::settings::{
-    ArchiveTypes, CommandOverrides, FileId, FilterPresets, KeySegment, LoadMode, OpenWith, Options,
-    Overwrite, SchemeFile, SettingsFile, SettingsKey, SettingsSchema, SettingsStore,
-    ShortcutConflict, State, ThemeSelection, ValueKind, defaults_tree, key_infos, template_default,
-    tree,
+    ArchiveTypes, CommandOverrides, FileId, FileOutcome, FilterPresets, KeySegment, LoadMode,
+    OpenWith, Options, Overwrite, SchemeFile, SettingsChanges, SettingsFile, SettingsKey,
+    SettingsSaveDto, SettingsSchema, SettingsSnapshot, SettingsStore, ShortcutConflict, State,
+    ThemeSelection, ValueKind, defaults_tree, key_infos, template_default, tree,
 };
+use crate::watch::{InputStamp, InputState};
 
 /// `hikasa.settings_get.v1`: one key.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1198,6 +1199,212 @@ fn write_dto(
         id: id.to_owned(),
         written: text(written),
         removed: text(removed),
+    }
+}
+
+// ---- M2 W4a: the GUI's settings calls (§1.4.15, D-105, D-108) ------------------------------------------------
+
+/// Saves one file of a [`crate::settings::SettingsChanges`]: equal to the snapshot → `Unchanged`; checks fail →
+/// `Invalid`; else the snapshot's file with the new value, saved sparsely (`IfUnchanged` unless `force`).
+fn save_one<T: SettingsSchema + Clone + PartialEq>(
+    file: &SettingsFile<T>,
+    id: FileId,
+    value: &T,
+    overwrite: Overwrite,
+) -> (FileId, PathBuf, FileOutcome) {
+    let path = file.path().to_path_buf();
+    if file.value() == value && file.loaded().migrated_from.is_none() {
+        return (id, path, FileOutcome::Unchanged);
+    }
+    let problems = value.validate();
+    if !problems.is_empty() {
+        return (id, path, FileOutcome::Invalid(problems));
+    }
+    let mut copy = file.clone();
+    *copy.value_mut() = value.clone();
+    let outcome = match copy.save(overwrite) {
+        Ok(true) => FileOutcome::Written,
+        Ok(false) => FileOutcome::Unchanged,
+        Err(SessionError::Conflict { .. }) => FileOutcome::Conflict,
+        Err(e) => FileOutcome::Failed(e.to_string()),
+    };
+    (id, path, outcome)
+}
+
+impl Service {
+    /// Every settings file the window and the settings dialogs read, loaded leniently (bad values are their
+    /// defaults with warnings). A file of a newer `schema_version` is an error (SES-052).
+    pub fn settings_snapshot(&self) -> Result<SettingsSnapshot, ApiError> {
+        run_guarded(|| {
+            let store = self.settings_store();
+            let mode = LoadMode::Lenient;
+            let mut schemes = BTreeMap::new();
+            for name in store.scheme_names() {
+                let file = store.scheme_file(&name, mode)?;
+                schemes.insert(name, file);
+            }
+            Ok(SettingsSnapshot {
+                options: store.file::<Options>(mode)?,
+                commands: store.file::<CommandOverrides>(mode)?,
+                theme: store.file::<ThemeSelection>(mode)?,
+                schemes,
+                filters: store.file::<FilterPresets>(mode)?,
+                openwith: store.file::<OpenWith>(mode)?,
+                archives: store.file::<ArchiveTypes>(mode)?,
+            })
+        })
+    }
+
+    /// Writes the changed files of a settings dialog (D-128): in `FileId::every` order, each independently — a
+    /// value equal to its snapshot is `Unchanged`, a value that fails its checks `Invalid` (not written), else
+    /// the snapshot's `SettingsFile` saves it sparsely with `IfUnchanged` (`Force` with `force`): `Written` or
+    /// `Conflict`. A scheme change of `None` deletes `themes/<name>.toml` (`Deleted`). The same `SettingsFile`
+    /// path as `settings set`. Returns the outcomes and a fresh snapshot.
+    pub fn settings_save(
+        &self,
+        snapshot: &SettingsSnapshot,
+        changes: &SettingsChanges,
+        force: bool,
+    ) -> Result<SettingsSaveDto, ApiError> {
+        run_guarded(|| {
+            let store = self.settings_store();
+            let overwrite = if force {
+                Overwrite::Force
+            } else {
+                Overwrite::IfUnchanged
+            };
+            let mut files = Vec::new();
+            if let Some(v) = &changes.options {
+                files.push(save_one(&snapshot.options, FileId::Options, v, overwrite));
+            }
+            if let Some(v) = &changes.commands {
+                files.push(save_one(&snapshot.commands, FileId::Commands, v, overwrite));
+            }
+            if let Some(v) = &changes.theme {
+                files.push(save_one(&snapshot.theme, FileId::Theme, v, overwrite));
+            }
+            for (name, change) in &changes.schemes {
+                let id = FileId::Themes(name.clone());
+                let file = match snapshot.schemes.get(name) {
+                    Some(file) => file.clone(),
+                    None => SettingsFile::<SchemeFile>::new_default(&store.path(id.clone())),
+                };
+                match change {
+                    Some(v) => files.push(save_one(&file, id, v, overwrite)),
+                    None => {
+                        let path = file.path().to_path_buf();
+                        let outcome = if !path.exists() {
+                            FileOutcome::Unchanged
+                        } else if !force && file.changed_on_disk()? {
+                            FileOutcome::Conflict
+                        } else {
+                            match std::fs::remove_file(&path) {
+                                Ok(()) => FileOutcome::Deleted,
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                    FileOutcome::Unchanged
+                                }
+                                Err(e) => {
+                                    FileOutcome::Failed(SessionError::io(&path, e).to_string())
+                                }
+                            }
+                        };
+                        files.push((id, path, outcome));
+                    }
+                }
+            }
+            if let Some(v) = &changes.filters {
+                files.push(save_one(&snapshot.filters, FileId::Filters, v, overwrite));
+            }
+            if let Some(v) = &changes.openwith {
+                files.push(save_one(&snapshot.openwith, FileId::OpenWith, v, overwrite));
+            }
+            if let Some(v) = &changes.archives {
+                files.push(save_one(&snapshot.archives, FileId::Archives, v, overwrite));
+            }
+            let snapshot = self.settings_snapshot()?;
+            Ok(SettingsSaveDto { files, snapshot })
+        })
+    }
+
+    /// Changes `state.toml` (D-108): loads it leniently, applies `change`, saves it with `IfUnchanged`; when the
+    /// file changed on disk in between (a concurrent `hikasa settings set state…`), reloads it and applies
+    /// `change` once more. `Ok(false)`: nothing to write (the change left the value as it was).
+    pub fn state_update(&self, change: &mut dyn FnMut(&mut State)) -> Result<bool, ApiError> {
+        run_guarded(|| {
+            let store = self.settings_store();
+            let mut attempt = 0;
+            loop {
+                attempt += 1;
+                let mut file = store.file::<State>(LoadMode::Lenient)?;
+                let before = file.value().clone();
+                change(file.value_mut());
+                if *file.value() == before && file.loaded().migrated_from.is_none() {
+                    return Ok(false);
+                }
+                match file.save(Overwrite::IfUnchanged) {
+                    Ok(written) => return Ok(written),
+                    Err(SessionError::Conflict { .. }) if attempt < 2 => {}
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        })
+    }
+
+    /// Appends `lines` (each ended by a line break) to the log file `path` of `[tweaks.log_panel] save_to_file`
+    /// (D-116), creating it and its folder. Not atomic: an append.
+    pub fn log_append(&self, path: &Path, lines: &[String]) -> Result<(), ApiError> {
+        use std::io::Write as _;
+        run_guarded(|| {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).map_err(|e| SessionError::io(parent, e))?;
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| SessionError::io(path, e))?;
+            let mut text = String::new();
+            for line in lines {
+                text.push_str(line);
+                text.push('\n');
+            }
+            file.write_all(text.as_bytes())
+                .map_err(|e| SessionError::io(path, e))?;
+            Ok(())
+        })
+    }
+
+    /// The stamp of an input of a file view (D-118): length and modification time from the VFS `stat`, never
+    /// the content. `-`, `clipboard://`, the spooled copy of standard input (`<cache>/stdin/…`) and specs that do
+    /// not name a file system path are `Unwatched` (a spec that does not parse too); a missing input is `Missing` (any other `stat` failure as well: it cannot be
+    /// read now).
+    pub fn input_stamp(&self, spec: &str) -> InputState {
+        use hikasa_vfs::{FollowLinks, Vfs as _};
+        // `Spec::parse_os`, not `parse_spec`: a stamp never reads standard input or the clipboard.
+        let Ok(parsed) =
+            hikasa_core::Spec::parse_os(std::ffi::OsStr::new(spec), &self.spec_context())
+        else {
+            return InputState::Unwatched;
+        };
+        let hikasa_core::Spec::Local(path) = &parsed else {
+            return InputState::Unwatched;
+        };
+        // Standard input given to the GUI is spooled to `<cache>/stdin/<n>/…` (a blob that never changes).
+        if path
+            .as_path()
+            .starts_with(self.config().cache_dir.join("stdin"))
+        {
+            return InputState::Unwatched;
+        }
+        match self.vfs().stat(&parsed, FollowLinks::Yes) {
+            Ok(entry) => InputState::Present(InputStamp {
+                len: entry.size,
+                modified_ns: entry.mtime.map(|t| {
+                    i128::from(t.unix_seconds()) * 1_000_000_000 + i128::from(t.subsec_nanos())
+                }),
+            }),
+            Err(_) => InputState::Missing,
+        }
     }
 }
 

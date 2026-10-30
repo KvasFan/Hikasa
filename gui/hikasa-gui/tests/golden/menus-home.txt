@@ -1,0 +1,12 @@
+Session
+  New Tab	Ctrl+T
+  New Window
+  ---
+  Compare	Enter (in a path field) (disabled)
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

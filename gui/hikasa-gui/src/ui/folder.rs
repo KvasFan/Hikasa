@@ -9,12 +9,14 @@ use egui::{
 };
 use hikasa_session::ipc::ViewId;
 
-use crate::commands::{self, CommandId, KeyOrigin, Scope};
+use crate::commands::CommandId;
 use crate::folder_view::{Cell, FolderStatus, FolderViewModel, ROW_HEIGHT, RowView};
-use crate::ui::keys::shortcut_of;
+use crate::ui::hint::Hint as _;
+use crate::ui::keys::shortcuts_of;
 use crate::ui::scroll;
 use crate::ui::text::{hatch, triangle};
 use crate::ui::theme::Palette;
+use hikasa_session::settings::Shortcut;
 
 /// Height of the base-folder strip and of the column header.
 const STRIP_H: f32 = 24.0;
@@ -59,6 +61,7 @@ pub fn tree_id(view: ViewId) -> Id {
     Id::unique(("hikasa-tree", view.0))
 }
 
+#[allow(clippy::too_many_arguments)] // the view, its state, its texts, its keys and its look
 /// Draws the folder view of `view`; returns the commands its tree ran (Enter, Left, Right with the focus,
 /// double-clicks), for the window to execute through the catalogue.
 pub fn show(
@@ -67,15 +70,19 @@ pub fn show(
     m: &mut FolderViewModel,
     st: &mut FolderUi,
     status: &FolderStatus,
-    enabled: &dyn Fn(CommandId) -> bool,
+    dispatch: &dyn Fn(&Shortcut) -> Option<CommandId>,
     pal: &Palette,
+    tree_font: f32,
+    keys: bool,
 ) -> Vec<CommandId> {
     let mut run = Vec::new();
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
-    let body_font = FontId::proportional(13.0);
-    let small = FontId::proportional(12.0);
+    // The tree's font (`theme.toml [fonts.folder]`, D-113), kept within the fixed row height.
+    let tree_font = tree_font.clamp(8.0, 17.0);
+    let body_font = FontId::proportional(tree_font);
+    let small = FontId::proportional((tree_font - 1.0).max(7.0));
     let mono_small = FontId::monospace(12.0);
     let content_right = full.right() - BAR_W;
     let side_w = ((content_right - full.left() - MARK_W) / 2.0)
@@ -151,7 +158,7 @@ pub fn show(
     }
     let body = Rect::from_min_max(pos2(full.left(), body_top), full.max);
     let tree = Rect::from_min_max(body.min, pos2(content_right, body.bottom()));
-    painter.rect_filled(body, CornerRadius::ZERO, pal.bg);
+    painter.rect_filled(body, CornerRadius::ZERO, pal.f_bg);
 
     let rh = ROW_HEIGHT as f32;
     let page = f64::from((tree.height() / rh).floor().max(1.0));
@@ -173,7 +180,8 @@ pub fn show(
 
     // Keyboard with the tree focused: arrows and pages move the selection; Enter, Left and Right run their
     // catalogue commands (focus-bound shortcuts, UI-003).
-    if response.has_focus() {
+    // `keys` is false while a dialog is open: the dialog has the keyboard.
+    if keys && response.has_focus() {
         ui.memory_mut(|mem| {
             mem.set_focus_lock_filter(
                 id,
@@ -198,6 +206,11 @@ pub fn show(
                 else {
                     return true;
                 };
+                // A binding of the key in the tree wins (D-111: overrides of focus-bound keys too).
+                if let Some(cmd) = shortcuts_of(*key, *modifiers).iter().find_map(dispatch) {
+                    run.push(cmd);
+                    return false;
+                }
                 if *modifiers == Modifiers::NONE {
                     let delta = match key {
                         Key::ArrowDown => 1,
@@ -213,16 +226,7 @@ pub fn show(
                         return false;
                     }
                 }
-                let Some(shortcut) = shortcut_of(*key, *modifiers) else {
-                    return true;
-                };
-                match commands::shortcut_command(Scope::Folder, shortcut, KeyOrigin::View) {
-                    Some(c) if enabled(c.id) => {
-                        run.push(c.id);
-                        false
-                    }
-                    _ => true,
-                }
+                true
             });
         });
         for delta in moves {
@@ -363,7 +367,7 @@ pub fn show(
         } else {
             format!("{}\n{}", row.mark_title, row.errors)
         };
-        response.on_hover_text_at_pointer(tip);
+        response.hint_at_pointer(tip);
     }
     run
 }
@@ -388,7 +392,7 @@ fn draw_side(
     if row.folder {
         triangle(painter, pos2(indent + 7.0, y), 8.0, row.open, pal.muted);
     }
-    let colour = pal.folder(cell.colour).unwrap_or(pal.fg);
+    let colour = pal.folder(cell.colour, row.category).unwrap_or(pal.f_text);
     let spot_colour = if cell.colour == hikasa_folder::ColourClass::Same {
         colour.gamma_multiply(0.35)
     } else {
