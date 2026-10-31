@@ -258,12 +258,13 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         }
         None => None,
     };
-    // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
-    let deferred = Deferred::materialize_formats(&service);
     // The watch starts from the stamps of now (D-117); the bench runs without it.
     let watch = bench
         .is_none()
         .then(|| crate::watch::Watcher::new(service.clone()));
+    // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
+    let deferred =
+        Deferred::materialize_formats(&service, watch.as_ref().map(|(_, link)| link.clone()));
     let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
     app.set_debug_flag(debug);
     let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));

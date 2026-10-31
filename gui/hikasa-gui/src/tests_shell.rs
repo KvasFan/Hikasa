@@ -1570,3 +1570,45 @@ fn drop_errors_reach_the_log() {
             .collect::<Vec<_>>()
     );
 }
+
+/// D-117: the first-run format files are the program's own writes: no poll reports them, however the writes and the
+/// polls interleave (they run on one thread); a file someone else adds afterwards is reported as usual.
+#[test]
+fn the_first_run_format_files_raise_no_notice() {
+    use crate::startup::Deferred;
+    use crate::watch::WatchEvent;
+    // The cause: written behind the watch's back, each file is a change on disk.
+    let world = World::new();
+    let (mut watcher, _link) = Watcher::new(world.service.clone());
+    hikasa_session::FormatStore::new(world.service.config())
+        .materialize()
+        .expect("materialize");
+    let events = watcher.poll_once().expect("polled");
+    assert!(
+        matches!(events.as_slice(), [WatchEvent::Config(c)] if c.len() > 1),
+        "{events:?}"
+    );
+
+    let world = World::new();
+    let (mut watcher, link) = Watcher::new(world.service.clone());
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let mut deferred = Deferred::materialize_formats(&world.service, Some(link));
+    deferred.start().expect("started").join().expect("sent");
+    let events = watcher.poll_once().expect("polled");
+    assert_eq!(events, [], "the program's own files");
+    assert!(world.path("config/formats/order.toml").is_file());
+    assert_eq!(app.on_watch(events), []);
+    world.settle(&mut app);
+    let root = app.root();
+    let now = app.window_mut(root).map(|w| w.notices.visible(0.0).len());
+    assert_eq!(now, Some(0), "no notice");
+    assert!(watcher.poll_once().expect("polled").is_empty(), "nor later");
+
+    world.write("config/formats/mine.toml", "x = 1\n");
+    let events = watcher.poll_once().expect("polled");
+    assert!(
+        matches!(events.as_slice(), [WatchEvent::Config(_)]),
+        "{events:?}"
+    );
+}

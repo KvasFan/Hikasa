@@ -2624,3 +2624,33 @@ mod regressions {
         }
     }
 }
+
+/// D-124: Home follows the watch poll: a session another process deleted leaves the tree without a focus change.
+#[test]
+fn home_follows_a_cli_delete_at_the_next_poll() {
+    use crate::watch::{WatchEvent, Watcher};
+    let world = World::new();
+    tree_fixture(&world);
+    let mut app = started(&world);
+    assert!(home(&app).render_tree().contains("alpha"));
+    let (mut watcher, _link) = Watcher::new(world.service.clone());
+    assert_eq!(watcher.poll_once().expect("polled"), [], "nothing changed");
+
+    world
+        .service
+        .session_delete(&r("alpha"), true)
+        .expect("delete");
+    let events = watcher.poll_once().expect("polled");
+    assert_eq!(events, [WatchEvent::Sessions]);
+    assert!(
+        home(&app).render_tree().contains("alpha"),
+        "before the poll's news"
+    );
+    app.on_watch(events);
+    world.settle(&mut app);
+    assert!(
+        !home(&app).render_tree().contains("alpha"),
+        "gone from the tree"
+    );
+    assert_eq!(watcher.poll_once().expect("polled"), [], "reported once");
+}

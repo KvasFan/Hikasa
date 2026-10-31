@@ -1568,7 +1568,7 @@ fn startup_path_leaves_the_format_files_to_the_deferred_work() {
         world.mailbox.clone(),
     );
     let handle = server.spawn(Arc::new(handler)).expect("spawn");
-    let mut deferred = crate::startup::Deferred::materialize_formats(&world.service);
+    let mut deferred = crate::startup::Deferred::materialize_formats(&world.service, None);
     let mut app = world.app(Some(handle));
     let (left, right) = text_pair(&world);
     world.open(&mut app, &left, &right);

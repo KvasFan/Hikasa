@@ -1,8 +1,10 @@
 //! The `hikasa-watch` thread (M2 W4a, D-117, D-118): it polls the settings files (`ConfigWatch` over every
-//! settings file, `themes/` and `formats/`) and the inputs of the open file views (`InputWatch`) every 2 s and at
-//! once when a window gains focus, and posts what changed to the UI thread. The UI sends it [`WatchCmd`]s:
-//! `Poll` (focus), `Track`/`Untrack` (file views opening and closing), `Acknowledge` (after each of the GUI's own
-//! writes, before the write's job returns, so the GUI's writes raise nothing) and `Stop`.
+//! settings file, `themes/` and `formats/`), the inputs of the open file views (`InputWatch`) and the session store
+//! (D-124) every 2 s and at once when a window gains focus, and posts what changed to the UI thread. The UI sends it
+//! [`WatchCmd`]s: `Poll` (focus), `Track`/`Untrack` (file views opening and closing), `Acknowledge` (after each of the
+//! GUI's own writes, before the write's job returns, so the GUI's writes raise nothing), `MaterializeFormats` (the
+//! first-run format files, written here so that no poll can run between the writes and their acknowledgement) and
+//! `Stop`.
 //!
 //! Tests drive [`Watcher::poll_once`] directly (no thread, no timer).
 
@@ -11,9 +13,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use hikasa_session::Service;
 use hikasa_session::settings::{ChangeKind, ConfigChange, ConfigWatch};
 use hikasa_session::watch::InputWatch;
+use hikasa_session::{FormatStore, Service};
 
 /// The polling period.
 pub const PERIOD: Duration = Duration::from_secs(2);
@@ -30,6 +32,8 @@ pub enum WatchCmd {
     Untrack(String),
     /// The GUI wrote these files itself: take their stamps without reporting them.
     Acknowledge(Vec<PathBuf>),
+    /// Writes the first-run format files (D-21) and acknowledges them, between two polls.
+    MaterializeFormats,
     /// End the thread.
     Stop,
 }
@@ -41,6 +45,8 @@ pub enum WatchEvent {
     Config(Vec<ConfigChange>),
     /// Inputs of file views changed (spec, kind).
     Inputs(Vec<(String, ChangeKind)>),
+    /// The session store changed, by this process or another one (D-124).
+    Sessions,
 }
 
 /// The UI's end of the watch: commands go to the thread (or to a test's [`Watcher`]).
@@ -61,6 +67,8 @@ pub struct Watcher {
     service: Service,
     config: ConfigWatch,
     inputs: InputWatch,
+    /// [`Service::sessions_stamp`] at the last poll.
+    sessions: u64,
     rx: Receiver<WatchCmd>,
 }
 
@@ -69,11 +77,13 @@ impl Watcher {
     pub fn new(service: Service) -> (Watcher, WatchLink) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let config = service.settings_store().watch();
+        let sessions = service.sessions_stamp();
         (
             Watcher {
                 service,
                 config,
                 inputs: InputWatch::new(),
+                sessions,
                 rx,
             },
             WatchLink { tx },
@@ -95,6 +105,18 @@ impl Watcher {
             WatchCmd::Acknowledge(paths) => {
                 for path in paths {
                     self.config.acknowledge(&path);
+                }
+            }
+            WatchCmd::MaterializeFormats => {
+                match FormatStore::new(self.service.config()).materialize() {
+                    Ok(written) => {
+                        for path in written {
+                            self.config.acknowledge(&path);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(target: "hikasa::gui", "cannot write the format files: {e}");
+                    }
                 }
             }
             WatchCmd::Stop => return false,
@@ -123,6 +145,11 @@ impl Watcher {
         let inputs = self.inputs.poll(&self.service);
         if !inputs.is_empty() {
             events.push(WatchEvent::Inputs(inputs));
+        }
+        let sessions = self.service.sessions_stamp();
+        if sessions != self.sessions {
+            self.sessions = sessions;
+            events.push(WatchEvent::Sessions);
         }
         Some(events)
     }

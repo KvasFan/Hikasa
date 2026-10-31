@@ -1401,8 +1401,11 @@ fn the_restore_wizard_equals_restore_defaults_by_category() {
     let names = |w: &World| -> Vec<String> { files(w).into_keys().collect() };
     assert_eq!(names(&world), names(&twin));
     assert_eq!(names(&world), ["options.toml", "sessions/keep.toml"]);
-    // The settings reload with no notice for the GUI's own writes.
-    assert_eq!(watcher.poll_once().expect("alive"), Vec::new());
+    // The settings reload with no notice for the GUI's own writes (the deleted sessions refresh Home, as any change
+    // of the store does).
+    let mut events = watcher.poll_once().expect("alive");
+    events.retain(|e| *e != crate::watch::WatchEvent::Sessions);
+    assert_eq!(events, Vec::new());
     assert!(!app.tables().view(Scope::Home).custom.large_buttons);
     assert_eq!(app.theme().light_scheme, "light");
     assert!(app.options().tabs.hide_tab_bar_if_single_tab, "not chosen");

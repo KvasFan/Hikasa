@@ -21,7 +21,7 @@
 //! | `session list/show/new/edit/delete/rename/lock/unlock/mkdir/rmdir/run` | [`Service::session_list`], [`Service::session_show`], [`Service::session_new`], [`Service::session_edit`], [`Service::session_delete`], [`Service::session_rename`], [`Service::session_lock`], [`Service::session_mkdir`], [`Service::session_rmdir`], [`Service::session_run_request`] |
 //! | `workspace list/show/delete/rename` | [`Service::workspace_list`], [`Service::workspace_show`], [`Service::workspace_delete`], [`Service::workspace_rename`] |
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
-//! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`] |
+//! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_snapshot_partial`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`], [`Service::sessions_stamp`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;

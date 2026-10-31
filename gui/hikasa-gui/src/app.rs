@@ -2822,6 +2822,8 @@ impl AppCore {
             match event {
                 WatchEvent::Config(changes) => self.on_config(changes),
                 WatchEvent::Inputs(changes) => effects.extend(self.on_inputs(changes)),
+                // D-124: another process changed the sessions; the tree reads them on a job.
+                WatchEvent::Sessions => self.refresh_sessions(),
             }
         }
         effects

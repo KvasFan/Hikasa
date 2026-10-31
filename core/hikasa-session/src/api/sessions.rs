@@ -280,6 +280,12 @@ impl Service {
         SessionStore::new(self.config(), &self.fresh_options())
     }
 
+    /// A stamp of the session store (paths, lengths, times): another value means the store changed (D-124). Reads no
+    /// session and no option, so it is cheap to poll.
+    pub fn sessions_stamp(&self) -> u64 {
+        crate::sessions::store::store_stamp(self.config())
+    }
+
     /// The workspace store of this configuration.
     pub fn workspace_store(&self) -> WorkspaceStore {
         WorkspaceStore::new(self.config())
