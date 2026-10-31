@@ -64,7 +64,8 @@ window: save, lock, close prompts, auto-save, the Session Settings shell, Home w
 workspaces with lazy restore, the GUI's command line, D-120…D-127; W4c settings dialogs: the Options dialog with the
 Toolbars/Shortcuts/Menus page and the theme editor with live preview, the Export, Import and Restore wizards, IPC
 `ImportPackage`, D-128…D-134; wave 4 complete; settled memory gates met on glibc, peak RSS 419–429 MiB and the ≥ 60 fps
-GPU run still open, docs/02).
+GPU run still open, docs/02); wave 5a (archives, read: zip, tar, compressed tar and single streams through
+`ArchiveVfs`, nesting, the temp cache, FC-015 and FC-025 over archive sides, D-135…D-155; W5b, writes, is next).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

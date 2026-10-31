@@ -239,7 +239,15 @@ per archive type (empty = disabled): `zip` = `*.zip;*.jar;*.war;*.ear;*.apk`,
 `tar_xz` = `*.tar.xz;*.txz`, `tar_zst` = `*.tar.zst;*.tzst`, `gz` = `*.gz`,
 `bz2` = `*.bz2`, `xz` = `*.xz`, `zst` = `*.zst`. A tar family type is tried before its
 single-stream type (`x.tar.gz` is `tar_gz`, not `gz`). Restart note: masks apply to
-comparisons started after the change.
+comparisons started after the change. `[limits]` (M2 W5, D-143), each a key of `hikasa settings`:
+
+| Key | Type | Default |
+|---|---|---|
+| `limits.entries_max` | int 1000..100000000 | 1000000 |
+| `limits.stream_max_gib` | int 1..4096 | 64 |
+| `limits.cache_max_gib` | int 1..1024 | 8 |
+| `limits.ratio_max` | int 0..1000000 (0 = off) | 2000 |
+| `limits.nesting_max` | int 1..32 | 8 |
 
 **`commands.toml` (OPT-011, UI-003).** `schema_version = 1`, then one table per view
 type `[view.<view>]` (`home`, `folder-compare`, `folder-sync`, `text-compare`,

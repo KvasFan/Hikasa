@@ -113,7 +113,24 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 |---|---|---|---|
 | `trash` 5 (MIT) | W3 | `default-features = false`, `chrono`, `coinit_apartmentthreaded` (`chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows). New transitive crates: `chrono`, `iana-time-zone`, `urlencoding` (Linux and the BSDs), `windows` (Windows), `objc2-foundation` (macOS) | the recycle bin of `LocalVfs` (`rm --trash`, FC-073, D-98) in `hikasa-vfs`, called only from `local/trash.rs`; it reads the home and data folders and the clock inside the call (an OS side effect, not a result input, T1) and never falls back to a permanent delete |
 | `arboard` 3 (MIT OR Apache-2.0) | W3 | `default-features = false`, `image-data`, `wayland-data-control` (the set `Cargo.lock` already compiled through `egui-winit`; no new crate) | the system clipboard behind `clipboard://` (D-100) in `hikasa-session`, named only in `host.rs` (`SystemClipboard`, adapter-only); images become an in-house uncompressed PNG until W12 |
-| `zip` 9 (MIT) | W2 | `default-features = false`, `deflate` (the pure-Rust back-ends `zlib-rs` via `flate2`, and `zopfli`; no AES, no bzip2/lzma/zstd/time) | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`; W5 adds the archive features it needs |
+| `zip` 9.2.0 (MIT) | W2, W5 | `default-features = false`, `deflate`, `deflate64`, `bzip2`, `zstd`, `lzma`, `xz` (W2: `deflate` only). No `aes-crypto`, `time`, `ppmd`, `rayon`, `legacy-zip`: encryption is reported, not implemented | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`, whose import still takes stored and deflate only; zip archives in `hikasa-vfs`, named only under `archive/` |
+| `tar` 0.4.46 (MIT OR Apache-2.0) | W5 | `default-features = false` (no `xattr`) | `Header` (W5b also `Builder`); reading is the in-house `archive/tar_walk.rs`, because `Entries` buffers extension headers without a limit |
+| `flate2` 1.1.10 (MIT OR Apache-2.0) | W5 | `default-features = false`, `zlib-rs` | gzip streams; the pure-Rust back-end `zip` already enables, the features unify |
+| `bzip2` 0.6.1 (MIT OR Apache-2.0) | W5 | default (`libbz2-rs-sys`, a Rust port; no C) | bzip2 streams |
+| `lzma-rust2` **0.23.0** (Apache-2.0) | W5 | `default-features = false`, `std`, `encoder`, `optimization`, `xz` | xz streams. Not the newest 0.24.0: `zip` 9.2 needs `^0.23`, and one LZMA codec in the tree is the point. Moves when `zip` moves |
+| `zstd` **0.14.3** (BSD-3-Clause) | W5 | `default-features = false` | zstd streams. Not the 0.13 of the plan: `zip` 9.2 needs `^0.14.2`. `zstd-safe` 8.2.0, `zstd-sys` 2.1.2 (BSD-3-Clause), libzstd 1.5.7 |
+
+New crates in `Cargo.lock` with W5 besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`,
+`hybrid-array`, `typenum`, `const-oid`, `crypto-common`, `zstd-safe`, `zstd-sys`, and the build-time `cc`.
+
+**C code.** `zstd-sys` compiles libzstd with the `cc` crate at build time: no cmake, no bindgen (pregenerated bindings),
+no nasm; each build needs a C compiler for the target, nothing else. It is the only C in Hikasa's binaries, and no Hikasa
+source is `unsafe` for it. `packaging/build-linux.sh` pins `CFLAGS_x86_64_unknown_linux_gnu`, which `RUSTFLAGS` does not
+govern. Do not set `CC` to `zig cc` for Linux: the `cc` crate passes a target zig refuses.
+
+**A licence exception, provisional.** `libbz2-rs-sys` is under `bzip2-1.0.6`, a permissive BSD-style licence `deny.toml`
+did not list; no bzip2 back-end avoids it (the C original has the same licence). `deny.toml` holds a crate-scoped
+exception for that crate alone, pending the maintainer's objection (D-154, as for `epaint_default_fonts`).
 
 **mmap residual risk.** Mapping a file with `memmap2` is `unsafe`, because another process may modify or
 truncate a file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs

@@ -88,6 +88,7 @@ priority = 4
   format. Exclude items (`-test_*`) skip the format for matching names. Detection takes
   the first enabled format whose mask has a matching include item and no matching
   exclude item; no match gives "Everything Else".
+- **Archive members (M2 W5).** A member is detected by its own name (`a.zip/src/x.c` is C).
 - **Standard input and the clipboard (D-15, D-100).** `-` is detected by its `--stdin-name`
   when given, else by content. `clipboard://` text has no name and is detected by content
   (usually "Everything Else" text); a clipboard image is a PNG named `clipboard.png`, so it is

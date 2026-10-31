@@ -9,7 +9,8 @@ replaces free-form actions with a planned operation per item.
 - **FC-001** (P0): Two base-folder specs (left, right); Folder Merge adds Center
   (optional ancestor) and **Merge to** (output: Left, Right or Other path); Folder Sync
   has left and right. Any side may be local, archive, snapshot or remote
-  (`11-vfs-remote-archives.md`).
+  (`11-vfs-remote-archives.md`). *M2 W5 (D-151):* an archive, or a folder inside one, is a base in every archive
+  handling mode (`folder compare a.zip b/`); a base that cannot be read is exit 107.
 - **FC-002** (P0): Path edits above each pane accept typed paths with completion and
   an MRU dropdown; a Browse button opens the folder picker (local or "Browse Using
   Profile"); Enter accepts. Typing a non-existent folder offers to create it.
@@ -44,7 +45,12 @@ replaces free-form actions with a planned operation per item.
   one folder (aligned by file name only, path shown in a Path column).
 - **FC-015** (P0): Archive handling: *As files always* / *As folders once opened*
   (default) / *As folders always*. Archives show a zipper icon and expand on
-  double-click; nested archives are supported.
+  double-click; nested archives are supported. *M2 W5 (D-151):* `handling.archives` = `as_files`, `once_opened`,
+  `always` (`--archives files|opened|folders`) and `open_archives`, paths relative to the bases, `/`-separated, also
+  through an archive (`--open-archive <PATH>`). The scan turns a matching file into a folder pair right after
+  listing, so alignment, filters and flatten need no change; `NodeFlags::ARCHIVE` marks the row, whichever side has
+  it. Headless default results equal M1. An archive that cannot be read is an error row and the scan goes on. After
+  5,000,000 entries listed inside archives a scan opens no further one (`archive_scan_limit`).
 - **FC-016** (P0): Scanning is cancellable (Stop button), incremental, and
   parallel across sides and subfolders with a bounded worker count per back-end
   (remote back-ends use their profile's connection limit).
@@ -115,7 +121,8 @@ Quick tests (no file content needed):
 Tests that require reading files:
 
 - **FC-025** (P0): Compare contents by **CRC** (CRC32; archive-provided values are
-  used as-is), **binary** (byte-by-byte, configurable buffer size, memory-mapped
+  used as-is: a zip's central value needs no decoding, and a damaged member with a good central CRC is therefore
+  "same" for this test; the tar family and streams get theirs from the index pass), **binary** (byte-by-byte, configurable buffer size, memory-mapped
   where possible) or **rules-based** (through the file format engine: ignores
   unimportant differences, line endings, encoding; result is one of *binary same*,
   *rules-based same*, *unimportant differences*, *important differences*).
@@ -402,7 +409,8 @@ Backups). Confirmation dialogs can be disabled per operation.
 - **FC-076** (P0): **Touch…**: copy timestamps from other side, or set to a chosen
   date/time (default: current time or last touch); folders where the OS allows.
 - **FC-077** (P0): **New Folder…** (Ins) on one or both sides; a name ending in an
-  archive extension creates an archive.
+  archive extension creates an archive. *M2 W5:* the read part of W5a keeps `mkdir` literal; empty archives come with
+  W5b (D-150).
 - **FC-078** (P0): **Synchronize ▸ Update Right / Update Left / Update Both / Mirror
   to Right / Mirror to Left** on the current selection (or all when nothing is selected)
   with a preview dialog listing planned copies/deletes; "Just selection"; recycle bin

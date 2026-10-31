@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+- **Archives, read-only.** zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams work
+  wherever a file does: `hikasa vfs ls a.zip`, `vfs cat a.zip/inner/x.txt`, `quick a.zip/x b/x`, `text compare`,
+  `folder compare a.zip b/`, nested as `a.zip/b.tar.gz/c.txt`, and copies out with `vfs cp -r a.zip/ out/`. Masks and limits
+  are in `archives.toml` (`hikasa help archives`).
+- **Archives inside folder comparisons.** `--archives files|opened|folders` and `--open-archive <PATH>`; the default
+  leaves results as they were. `--content crc` uses a zip's stored CRC without decoding.
+- The window shows a zipper icon on archive rows; Open on a closed one opens it as a folder; two archives open a Folder
+  Compare.
+
+### Safety
+- Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,
+  damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits.
+
 ### Data safety
 - **A settings file this version cannot read is never overwritten from the Options dialog.** A newer `schema_version` or
   broken TOML used to show defaults, and Overwrite replaced the file with them. The page now says why, the prompt holds

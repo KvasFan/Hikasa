@@ -96,6 +96,11 @@
   fill both); a window opens two dropped paths like the command line and explains one or
   three.
 
+*M2 W5a (§1.5.14, D-153):* a row of the folder tree whose name is an archive shows the in-house zipper icon in the
+place of its colour spot, on closed and opened rows. With *As folders once opened*, Open (double-click, Enter) on a
+closed archive row adds its path to the view's `open_archives` and runs the comparison again; the new folder row is shown
+expanded. Two archives, or an archive and a folder, open a Folder Compare. Members open in a read-only Text Compare.
+
 *M2 W4b (§1.4.9–§1.4.12):* the Session menu gains New Session ▸ (one item per type the GUI opens), Open Session, Load
 Workspace ▸ (saved workspaces, then Manage Workspaces…), Save Workspace As… and, in session views, Go to Home, Save
 Session, Save Session As…, Session Settings… and Locked; the toolbar gains the Sessions drop-down; Home's View menu

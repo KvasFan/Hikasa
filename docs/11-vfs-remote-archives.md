@@ -30,7 +30,40 @@ scripts, command line, Copy to Folder targets, reports).
   cache on demand (streaming for tar/gz); writes rebuild the archive atomically
   (temp + rename) and update CRCs. "New Folder" with an archive extension creates an
   empty archive. Archive **type masks** are configurable in options (Archive Types page;
-  empty mask disables a type).
+  empty mask disables a type). *M2 W5a (read; contract §1.5):* `ArchiveVfs` is stacked on a base `Vfs` and serves
+  zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst`, and the single streams gz, bz2, xz and zst (one member named
+  after the file without its last extension). A format is chosen by mask, never by content. Listing and CRC tests
+  never write to disk; a zip member up to 1 MiB decodes to memory, a larger one to a cache file; a plain tar member is
+  a range of the file; the first read of a compressed tar spools its member and a second distinct read writes the
+  whole stream to the cache once. Until W5b every primitive on a member is `unsupported` and no write bit is reported.
+
+**Archives in user terms (M2 W5a).**
+
+| Format | Reported besides read, list, seek, modification time, case-sensitive names |
+|---|---|
+| zip | stored CRC, DOS attributes, Unix mode, symbolic links |
+| tar family | Unix mode and owner, symbolic links |
+| single streams | nothing more |
+
+- *Names.* Members are checked on their raw bytes: NUL, absolute names, drive letters, `..` and names over 4,096 bytes
+  are refused, left out of the tree and shown as `<refused-N>` rows (at most 1,000), kept by a rebuild. A zip reads
+  `\` as `/`; a tar refuses it. A file that is also a parent, and anything below a link member, is refused whatever
+  the order. The last of two equal paths wins; `A.txt` and `a.txt` are two members.
+- *Kinds.* A link member is listed and never followed or materialized: a copy out of an archive skips it, whatever the
+  link policy. A hard link becomes the earlier regular member it names, else it is refused. Devices and FIFOs are
+  `other`; sparse members are listed and not read.
+- *Damage.* A tar or stream keeps what lies before the damage and adds a `<damaged>` row. A zip without a central
+  directory, or a mask match with other content, is `invalid_data` when entered; the file stays a normal file. A
+  decoder panic is `invalid_data` too.
+- *Limits* (`archives.limits.*`, OPT-010): 1,000,000 entries; 64 GiB per pass and per archive's reads; 8 GiB of cache;
+  ratio 2,000:1 past 64 MiB; nesting 8; xz and zstd windows of 1 GiB. Listing needs no declared-size limit: limits bind
+  what is decoded.
+- *Encrypted members* are listed, without a CRC; reading one is `unsupported`. No password is asked or tried.
+- *Times.* Zip: the NTFS field, then 0x5455, then the DOS wall time in the injected zone (a time in a gap moves forward,
+  a fold takes the earlier instant). Tar: PAX `mtime`, then the header. Streams: gzip `MTIME` when set, else the file.
+- *Cache.* `<cache>/archives/s<n>/`, numeric names only, `0700`; `cache_max` evicts the least recently used files no
+  reader holds; a new stamp of the archive drops its files. Created by the first spool, removed at exit; a held lock
+  marks a live session, so a later session sweeps what a crash left, without process ids or clocks.
 - **VFS-003** (P1): Remote listings are cached per session; "Refresh" invalidates.
   Transfers show per-file progress and throughput; connection limits and bandwidth
   limits come from the profile.
@@ -101,6 +134,14 @@ profile:MyProfile              profile:MyProfile?folder/file.ext
 http://www.example.com/page.html
 clipboard://        -            mtp://MyPhone/DCIM
 ```
+
+**Archive specs (M2 W5a, D-137, D-138).** `Spec::parse` is unchanged; resolution then maps the path to the item, using
+only the `Vfs`: a real item wins, the deepest existing prefix decides, and only a regular file whose name matches a
+mask opens a way in. `/x/a.zip/inner/x` is a member, `/x/a.zip/` (canonical, with the trailing `/`) the archive as a
+folder, `/x/a.zip` the file; nesting wraps (`a.zip/b.tar.gz/c.txt`). A command that wants a folder (`vfs ls`, `folder
+compare`, an input ending in a separator) gets the root. Masks ignore case, members never do; the prefix on disk
+follows the file system; `..` never enters. On Windows the canonical form is `C:\x\a.zip/inner/x`, which parses back
+to the local path and resolves to the same spec.
 
 - **VFS-010** (P0): Spec parsing is platform-aware (drive letters, UNC, `~`), supports
   relative paths resolved against the current directory on the command line, and

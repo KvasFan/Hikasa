@@ -3271,8 +3271,52 @@ part. `docs/reference/commands.md` is unchanged.
 
 #### 1.5.19 W5 notes (implementation)
 
-*Empty until the wave runs: the implementers record here where the implementation had to interpret or extend the text
-above.*
+**W5a.** Where the implementation interpreted or extended the text above:
+
+1. **`SharedReader` holds no file between calls.** It is `Arc<Mutex<Option<Box<dyn ReadSeek>>>>` plus a position, and a
+   `ReaderLease` opens it for one call: an index kept for a session must not keep the container open (Windows: the
+   file could not be removed or replaced). Not the `Arc<Mutex<Box<…>>>` of §1.5.5.
+2. **PAX records are parsed in-house** (`tar_walk::pax_records`), not by `tar::PaxExtensions`, which splits on newlines,
+   so a `path` holding one would fall back to the truncated header name and two readers could disagree. `tar::Header`
+   is still the only use of the crate when reading.
+3. **Rule 8 against rule 9.** A stream or tar that fails at offset 0 with no member is `ArchiveCorrupt` (rule 8), also
+   when it is a real gzip cut inside its header: the two cannot be told apart. A damaged **single stream** has no
+   complete member, so its tree is empty and the root shows `<damaged>`. A5.10's cuts accept either answer below the first
+   decoded byte.
+4. **Before `ZipArchive::new`** the end records in the tail of the file are read (`stated_entries`): rule 13 says memory
+   stops at `entries_max`, and the crate would read a central directory as large as the file.
+5. **Zip fields read by `central_times`** also include the flags, the method and the DOS date and time: the crate's
+   `DateTime` loses invalid fields' meaning, the method tells AES (99) without an AES extra field, and the UTF-8 flag
+   decides the text of rule 1.
+6. **Rule 15 covers streams.** LZMA and xz **zip members** go through the crate's decoder, whose dictionary grows with
+   the output through `try_reserve`, so memory is bounded by the guards and a failed reservation is an error; zstd
+   members keep libzstd's default limit of 128 MiB.
+7. **Raw names stay in the container**, not in the tree: a rebuild copies raw records, and `Tree::records` lists every
+   record of the archive in order with its state (live, refused, shadowed), the seam of W5b. New reason `backslash`.
+8. **Internal node bits.** `NodeFlags::LEFT_ARCHIVE_ROOT`, `RIGHT_ARCHIVE_ROOT` (1024, 2048; not in `FLAG_NAMES`) say which
+   side of a folder pair is an opened archive: `TreeRead::spec` needs it to build a member's spec, and an archive against
+   a real folder of the same name has one on one side only. `spec` now serves archive bases and flatten folders.
+9. **`FolderEnv::archive_entries_max`** injects the budget of step 5; the session passes `SCAN_ARCHIVE_ENTRIES_MAX`.
+10. **Resolution stops at `..`.** `parent_in` of `/a/..` is `/a/../..` (D-06), so step 3 returns the spec as soon as the name
+    in front of `rest` is `..`; every path through step 4 would have given that answer. New `LocalPath::parent_in`,
+    `file_name_in` (explicit style).
+11. **Jobs.** `Service::parse_spec_in` passes the job's token in `vfs ls`, `vfs cat`, `quick` and `text compare`, as §1.5.4
+    asks. `Service::take_warnings` drains the back-end; the CLI's `Ctx` adds them to every envelope and to stderr.
+12. **`stored_spec`** resolves too (without reading stdin or the clipboard), so `a.zip/` is stored as the root.
+13. **`./` gives the root its attributes** only; §1.5.5 says the root's time is the container's.
+14. **0x5455 reads as `u32`**, the range §1.5.8 gives the written field.
+15. **Unknown tar type flags** are `Other`; `X` is read as `x`; PAX `GNU.sparse.*` records make a member sparse, with the
+    name and the size they state, so a PAX sparse member is not read as its packed map.
+16. **The index budget** of 512 bytes per member counts the tree (`ArchiveVfs::index_memory`); the crate's own metadata of
+    a zip comes on top and is bounded by the RSS budget of G6.
+17. **Additive API** beyond the text: `ArchiveVfs::{counters, cache_used, cache_dir, index_memory, inject_decoder_panic}`,
+    `ArchiveCounters`, `VfsRouter::archives`, `hikasa_vfs::archive::{name, time, zip_read}` (public for the tests:
+    `windows_name_problem`, `central_times`). Tests: `tests/archive_memory.rs` holds the counting allocator of A5.8.
+18. **Open** counts a closed archive row as `ctx.pair_selected`, so an orphan archive can be opened too.
+
+*Seams for W5b.* `ArchiveVfs::on_base` is the one place a primitive or `open_write` on a member is refused; capabilities
+come from `ArchiveFormat::capabilities`; `Tree::records` and `DataRef` give each record's range or zip index; `check_item`
+already refuses roots; `plan_copy` keeps links between archives; `Cache::writer` can stage files.
 
 ### 1.6–1.14 W6–W14
 
