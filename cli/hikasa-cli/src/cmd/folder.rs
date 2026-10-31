@@ -46,13 +46,20 @@ pub fn run(ctx: &mut Ctx<'_>, args: &FolderCompareArgs) -> u8 {
         let open = GuiOpenRequest::for_folder(&request, &words, args.wait);
         return gui::open_view(ctx, &open, args.no_launch, &[]);
     }
+    execute(ctx, args, &request)
+}
+
+/// Compares and prints (`folder compare` without `--gui`, and `session run` of a Folder Compare session, T11):
+/// `args` gives the presentation words, `request` the comparison.
+pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderCompareRequest) -> u8 {
+    let op = ApiOp::FolderCompare;
     // The words are checked before the scan; an unsupported layout/format combination (`--report list --html`)
     // is refused by the renderer afterwards (§1.9.3 item 10a).
     let plan = match Plan::new(args) {
         Ok(plan) => plan,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
-    let prepared = match ctx.service.folder_prepare(&request) {
+    let prepared = match ctx.service.folder_prepare(request) {
         Ok(prepared) => prepared,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
@@ -161,6 +168,8 @@ fn request(ctx: &Ctx<'_>, args: &FolderCompareArgs) -> Result<FolderCompareReque
         text_rules_file: args.text_rules_file.clone(),
         text_patch: importance_patch(&args.importance, ctx.matches)?,
         ignore_unimportant: args.ignore_unimportant,
+        base_rules: None,
+        base_text_rules: None,
     })
 }
 

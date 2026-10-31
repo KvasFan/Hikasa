@@ -158,6 +158,7 @@ impl Service {
             let options = WriteOptions {
                 create_parents: false,
                 overwrite: true,
+                replace_link: false,
             };
             let mut writer = self
                 .vfs()

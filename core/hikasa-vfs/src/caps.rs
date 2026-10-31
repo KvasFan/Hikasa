@@ -16,7 +16,7 @@ bitflags::bitflags! {
         const MTIME = 1 << 4;
         /// `Entry::ctime` is provided.
         const CTIME = 1 << 5;
-        /// Timestamps can be set (not used in M1).
+        /// `set_times` with a modification time works (M2 W3).
         const SET_TIMES = 1 << 6;
         /// `Attrs::Dos`.
         const DOS_ATTRS = 1 << 7;
@@ -32,11 +32,25 @@ bitflags::bitflags! {
         const LOCAL_PATH = 1 << 12;
         /// Names are case-sensitive.
         const CASE_SENSITIVE = 1 << 13;
+        /// `create_dir` (M2 W3).
+        const MKDIR = 1 << 14;
+        /// `remove` (M2 W3).
+        const REMOVE = 1 << 15;
+        /// `rename` (M2 W3).
+        const RENAME = 1 << 16;
+        /// `set_attrs` for the family the back-end reports (`DOS_ATTRS` or `UNIX_MODE`; M2 W3).
+        const SET_ATTRS = 1 << 17;
+        /// `move_to_trash` (M2 W3).
+        const TRASH = 1 << 18;
+        /// `create_symlink` (M2 W3).
+        const CREATE_SYMLINKS = 1 << 19;
+        /// `set_times` with a creation time (M2 W3).
+        const SET_CREATED = 1 << 20;
     }
 }
 
 /// snake_case names in canonical bit order.
-const NAMES: [(Capabilities, &str); 14] = [
+const NAMES: [(Capabilities, &str); 21] = [
     (Capabilities::READ, "read"),
     (Capabilities::WRITE, "write"),
     (Capabilities::LIST, "list"),
@@ -51,6 +65,13 @@ const NAMES: [(Capabilities, &str); 14] = [
     (Capabilities::CRC_PROVIDED, "crc_provided"),
     (Capabilities::LOCAL_PATH, "local_path"),
     (Capabilities::CASE_SENSITIVE, "case_sensitive"),
+    (Capabilities::MKDIR, "mkdir"),
+    (Capabilities::REMOVE, "remove"),
+    (Capabilities::RENAME, "rename"),
+    (Capabilities::SET_ATTRS, "set_attrs"),
+    (Capabilities::TRASH, "trash"),
+    (Capabilities::CREATE_SYMLINKS, "create_symlinks"),
+    (Capabilities::SET_CREATED, "set_created"),
 ];
 
 impl Capabilities {
@@ -79,7 +100,7 @@ mod tests {
 
     #[test]
     fn names_follow_bit_order() {
-        assert_eq!(Capabilities::all().names().len(), 14);
+        assert_eq!(Capabilities::all().names().len(), 21);
         assert_eq!(
             (Capabilities::LIST | Capabilities::READ | Capabilities::CASE_SENSITIVE).names(),
             ["read", "list", "case_sensitive"]

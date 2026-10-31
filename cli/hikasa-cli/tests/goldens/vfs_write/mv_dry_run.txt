@@ -1,0 +1,2 @@
+rename <TMP>/src -> <TMP>/moved
+would move 1 items

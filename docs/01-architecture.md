@@ -151,8 +151,17 @@ trait Vfs {
     fn list(&self, dir:&Spec, cancel:&Cancel) -> Result<Box<dyn Iterator<Item=Result<Entry>>>>;
     fn open_read(&self, spec:&Spec) -> Result<Box<dyn ReadSeek>>;   // streaming
     fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn Write>>;
-    fn mkdir / remove / rename / copy_within / set_times / set_attrs / set_mode ...
     fn capabilities(&self) -> Caps; // timestamps writable? attrs? unix mode? recycle bin? locks? crc provided?
+    // M2 W3 (D-92): single-item mutating primitives, each behind a capability, default "unsupported";
+    // they never follow the final link (D-94)
+    fn create_dir(&self, spec:&Spec, parents:bool) -> Result<bool>;
+    fn remove(&self, spec:&Spec) -> Result<()>;                 // file, link or empty folder
+    fn rename(&self, from:&Spec, to:&Spec, replace:bool) -> Result<()>;
+    fn set_times(&self, spec:&Spec, times:&SetTimes) -> Result<()>;
+    fn set_attrs(&self, spec:&Spec, change:&AttrChange) -> Result<()>;
+    fn create_symlink(&self, spec:&Spec, target:&OsStr, target_is_dir:bool) -> Result<()>;
+    fn move_to_trash(&self, spec:&Spec) -> Result<()>;           // never a permanent delete
+    fn copy_file_fast(&self, from:&Spec, to:&Spec, ..) -> Result<Option<u64>>;  // optional fast path
 }
 struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttrs|UnixMode, owner, group, link_target, crc32: Option<u32>, version: Option<VersionInfo> }
 ```
@@ -161,7 +170,8 @@ struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttr
   gracefully (e.g. "touch" greyed out when timestamps are read-only).
 - **ARCH-031** (P0): Copy between back-ends is implemented generically (stream from
   source `open_read` to target `open_write`, then apply times/attrs if supported),
-  with a fast path for local→local.
+  with a fast path for local→local. *M2 W3:* implemented once in `hikasa_vfs::ops` over the
+  primitives (plan, then execute with per-item results; copy, move, remove/trash, mkdir, touch).
 
 ### 3.3 Session model (hikasa-session)
 
@@ -177,6 +187,18 @@ struct Session<T: SessionKind> { id, name: Option<String>, folder: Option<String
 - **ARCH-041** (P0): Session settings changes have a *scope*: this view only /
   update defaults / (for child sessions) these files within parent / all files within
   parent.
+
+**M2 implementation (binding interpretation; `design/m2-contracts.md` §1.2, D-80…D-85).** The generic
+`Session<T>` above is one `hikasa_session::sessions::Session` with a type (`folder-compare`, `folder-sync`,
+`text-compare`, `text-edit`, `table-compare`, `hex-compare`, `picture-compare`), its specs, its full rules
+(typed `FolderRules`/`TextRules` for Folder and Text Compare and Text Edit, an opaque table for the other types
+until their engine waves), the text rules of rules-based content tests (folder types), opaque `display` and
+`view` tables, an optional parent link and, for folder types, per-pair and per-type overrides of children. The
+file stores only what differs from the type's defaults. The effective rules (ARCH-040/041) are, in order: the
+defaults of the type → the parent's `type` overrides for the child's type → the parent's `pair` override
+matching the child's relative paths → the child's own changes (`effective_rules`). The scopes are
+`apply_scope(View | Defaults | Pair | Type)`: `Defaults` writes `_defaults/<type>.toml` (rules only), `Pair` and
+`Type` store an override in the parent (named or auto-saved), which a locked parent keeps in memory only.
 
 ### 3.4 Comparison result models
 
@@ -213,6 +235,21 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   registered in a per-view-type catalogue (`reference/commands.md`). Menus, toolbars,
   context menus and the "Toolbars, Shortcuts, Menus" options page are all generated
   from this catalogue; shortcuts are user-configurable per view type.
+  *M2 (D-65):* the catalogue data (id, menu, caption, default shortcut, description,
+  help topic, status `implemented`/`planned`) lives in core,
+  `core/hikasa-session/catalogue/commands.toml` (`hikasa_session::commands`), and
+  `docs/reference/commands.md` is generated from it (`cargo xtask commands-doc`). The GUI
+  keeps toolbar labels, radio groups and availability predicates next to its view
+  models; its tests check that it executes exactly the `implemented` entries.
+  *M2 W4a (D-109, D-119):* `hikasa_session::commands::effective(view, overrides)` merges the
+  catalogue entries of a view's sections with `commands.toml` (shortcuts, menu and toolbar
+  flags; an entry has an optional `toolbar` flag) into the view's effective table; the GUI
+  reads captions, hints, menus and shortcuts from it and keeps only icons, short labels,
+  groups, availability and context-menu areas. `Service::options()` and `registry()` return
+  snapshots, and `Service::reload_settings()` swaps new ones in (later calls and jobs use them,
+  running jobs keep theirs); the GUI's other settings calls are `settings_snapshot`,
+  `settings_save`, `state_update`, `log_append` and `input_stamp` (typed forms of the
+  `settings` commands or GUI-only state; no new `hikasa` subcommand).
 
 ## 4. Threading and runtime
 
@@ -237,7 +274,7 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
 - **ARCH-091** (P0): IPC protocol (`hikasa_session::ipc`): JSON messages, length-
   prefixed, over a per-user local socket (`$XDG_RUNTIME_DIR/hikasa.sock`,
   `\\.\pipe\hikasa-<user>`). Requests: `Hello{version}`, `OpenView{kind, specs,
-  options, wait}`, `LoadSession{name}`, `LoadWorkspace{name}`, `RunScript{path,args}`,
+  options, wait}`, `LoadSession{name}`, `LoadWorkspace{name}`, `ImportPackage{path}`, `RunScript{path,args}`,
   `ListViews`, `CloseView{id}`, `Ping`, `Shutdown`. Responses carry a view id, and
   when `wait` was requested a final `ViewClosed{id, result, exit_code}`. Unknown
   fields are ignored; the version is negotiated in `Hello`.
@@ -313,12 +350,25 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   the per-user pipe name in M1; an owner-only DACL is a P1 item. `ServerHandle::shutdown`
   wakes the blocked accept by connecting to its own endpoint once, notifies the
   outstanding waiters, closes the connections and returns within about 2 s.
-- **M1 requests.** The server itself answers `LoadSession`, `LoadWorkspace` and
-  `RunScript` with `unsupported_request` and `OpenView` of kinds other than
-  `folder_compare` and `text_compare` with `unsupported_view`; everything else goes to
-  the GUI's handler. A second `hikasa-gui` launch that cannot take the lock forwards its
+- **M1 requests.** The server itself answers `RunScript` with `unsupported_request` and
+  `OpenView` of kinds other than `folder_compare` and `text_compare` with
+  `unsupported_view`; everything else goes to the GUI's handler. (In M1 the server also
+  answered `LoadSession` and `LoadWorkspace` itself; see the M2 additions below.) A second `hikasa-gui` launch that cannot take the lock forwards its
   command line as `OpenView` without waiting (`Service::forward_open`: specs made absolute
   against its own current directory, standard input spooled) and exits with 0.
+- **M2 additions (D-89, additive to protocol v1).** `LoadSession{name, wait}` and
+  `LoadWorkspace{name}` and (M2 W4c, D-127) `ImportPackage{path}` reach the GUI's handler. `ImportPackage` (an absolute
+  path) answers `Ok` once the import wizard is shown in the window focused last; a GUI that answers
+  `unsupported_request` is reported as for D-89. `LoadSession` answers `ViewOpened{view}`
+  (and `ViewClosed` when waited; the server gives it a waiter like `OpenView`);
+  `LoadWorkspace` answers `Views{views}` with the views it opened, after closing the open
+  ones (SES-040). An unknown name is `Error{not_found}`, a session type the GUI cannot
+  show `Error{unsupported_request}`. The CLI (`hikasa gui session`, `gui workspace`,
+  `gui open <name>`) finds and checks the session or workspace locally first, and reports
+  a GUI that answers `unsupported_request` (a 0.1 GUI) as "the running GUI does not
+  support sessions; restart it" (exit 100). The GUI opens sessions through
+  `Service::session_view` / `Service::workspace_views`: the session's specs and its
+  effective rules as the `base_rules` of the view's request.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

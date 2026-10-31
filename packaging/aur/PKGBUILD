@@ -1,0 +1,54 @@
+# Maintainer: Hikasa contributors <https://github.com/KvasFan/Hikasa/issues>
+#
+# The recipe published on the AUR. packaging/package-arch.sh tests it against the working tree, and keeps pkgver in
+# step with Cargo.toml in its copy; the release steps in packaging/README.md update this file and the checksum. The
+# tree of a tag must contain packaging/, so the first tag this recipe can build is the one after 0.1.0.
+pkgname=hikasa
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Compare folders and files: desktop application and command line'
+arch=('x86_64')
+url='https://github.com/KvasFan/Hikasa'
+license=('MIT OR Apache-2.0')
+# Past glibc and gcc-libs these are loaded at run time, so they are invisible to namcap.
+depends=(
+  'fontconfig'
+  'gcc-libs'
+  'glibc'
+  'hicolor-icon-theme'
+  'libglvnd'
+  'libx11'
+  'libxcursor'
+  'libxi'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'wayland'
+)
+makedepends=('cargo' 'python')
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "Hikasa-$pkgver"
+  cargo fetch --locked
+}
+
+build() {
+  cd "Hikasa-$pkgver"
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p hikasa-cli -p hikasa-gui
+  python -I packaging/third-party-licenses.py --manifest-path Cargo.toml --output THIRD_PARTY_LICENSES.txt \
+    x86_64-unknown-linux-gnu
+}
+
+check() {
+  cd "Hikasa-$pkgver"
+  target/release/hikasa version
+}
+
+package() {
+  cd "Hikasa-$pkgver"
+  packaging/install-tree.sh "$pkgdir" target/release
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.txt
+}

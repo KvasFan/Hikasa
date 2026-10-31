@@ -1,0 +1,36 @@
+{
+  "schema": "hikasa.settings_import.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": true,
+    "plan": {
+      "items": [
+        {
+          "category": "sessions",
+          "name": "t",
+          "path": "<TMP>/cfg/sessions/t.toml",
+          "action": "skip_locked"
+        }
+      ],
+      "deletes": [],
+      "summary": {
+        "sessions": {
+          "added": 0,
+          "replaced": 0,
+          "deleted": 0
+        }
+      }
+    },
+    "results": []
+  },
+  "warnings": [
+    {
+      "code": "session_locked",
+      "message": "the session `t` is locked and is not replaced (unlock it, or import with --force)",
+      "spec": null
+    }
+  ],
+  "error": null
+}

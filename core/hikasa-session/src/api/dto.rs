@@ -59,9 +59,45 @@ pub const COMPLETIONS_SCHEMA: &str = "hikasa.completions.v1";
 /// A command line that does not parse, with `--json` anywhere in it (`result` is `null`, `error.kind` is
 /// `invalid_input`, exit 100, D-35). Added in the wave-4 review.
 pub const USAGE_ERROR_SCHEMA: &str = "hikasa.usage_error.v1";
+/// `hikasa help [topic] --json` and `hikasa help --list --json` (M2 W0).
+pub const HELP_SCHEMA: &str = "hikasa.help.v1";
+/// `hikasa settings get --json` (M2 W1).
+pub const SETTINGS_GET_SCHEMA: &str = "hikasa.settings_get.v1";
+/// `hikasa settings set|unset --json` (M2 W1).
+pub const SETTINGS_SET_SCHEMA: &str = "hikasa.settings_set.v1";
+/// `hikasa settings list --json` (M2 W1).
+pub const SETTINGS_LIST_SCHEMA: &str = "hikasa.settings_list.v1";
+/// `hikasa settings restore-defaults --json` (M2 W1, D-77).
+pub const SETTINGS_RESTORE_SCHEMA: &str = "hikasa.settings_restore.v1";
+/// `hikasa format new|edit|delete|import|enable|disable|move --json` (M2 W1, D-75).
+pub const FORMAT_WRITE_SCHEMA: &str = "hikasa.format_write.v1";
+/// `hikasa format export --json` (M2 W1).
+pub const FORMAT_EXPORT_SCHEMA: &str = "hikasa.format_export.v1";
+/// `hikasa format restore --json` (M2 W1).
+pub const FORMAT_RESTORE_SCHEMA: &str = "hikasa.format_restore.v1";
 
-/// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`).
-pub const SCHEMAS: [&str; 18] = [
+/// `hikasa session list` (M2 W2).
+pub const SESSION_LIST_SCHEMA: &str = "hikasa.session_list.v1";
+/// `hikasa session show` (M2 W2).
+pub const SESSION_SHOW_SCHEMA: &str = "hikasa.session_show.v1";
+/// The `hikasa session` writes (M2 W2).
+pub const SESSION_WRITE_SCHEMA: &str = "hikasa.session_write.v1";
+/// `hikasa workspace list` (M2 W2).
+pub const WORKSPACE_LIST_SCHEMA: &str = "hikasa.workspace_list.v1";
+/// `hikasa workspace show` (M2 W2).
+pub const WORKSPACE_SHOW_SCHEMA: &str = "hikasa.workspace_show.v1";
+/// The `hikasa workspace` writes (M2 W2).
+pub const WORKSPACE_WRITE_SCHEMA: &str = "hikasa.workspace_write.v1";
+/// `hikasa settings export` (M2 W2).
+pub const SETTINGS_EXPORT_SCHEMA: &str = "hikasa.settings_export.v1";
+/// `hikasa settings import` (M2 W2).
+pub const SETTINGS_IMPORT_SCHEMA: &str = "hikasa.settings_import.v1";
+
+/// `hikasa vfs cp|mv|rm|mkdir|touch` (M2 W3, D-102).
+pub const VFS_OP_SCHEMA: &str = "hikasa.vfs_op.v1";
+
+/// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
+pub const SCHEMAS: [&str; 35] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -80,6 +116,23 @@ pub const SCHEMAS: [&str; 18] = [
     VERSION_SCHEMA,
     COMPLETIONS_SCHEMA,
     USAGE_ERROR_SCHEMA,
+    HELP_SCHEMA,
+    SETTINGS_GET_SCHEMA,
+    SETTINGS_SET_SCHEMA,
+    SETTINGS_LIST_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA,
+    FORMAT_WRITE_SCHEMA,
+    FORMAT_EXPORT_SCHEMA,
+    FORMAT_RESTORE_SCHEMA,
+    SESSION_LIST_SCHEMA,
+    SESSION_SHOW_SCHEMA,
+    SESSION_WRITE_SCHEMA,
+    WORKSPACE_LIST_SCHEMA,
+    WORKSPACE_SHOW_SCHEMA,
+    WORKSPACE_WRITE_SCHEMA,
+    SETTINGS_EXPORT_SCHEMA,
+    SETTINGS_IMPORT_SCHEMA,
+    VFS_OP_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -193,6 +246,67 @@ pub struct CompletionsDto {
     pub shell: String,
     /// The script.
     pub script: String,
+}
+
+/// `hikasa.help.v1`: one topic (`hikasa help [topic]`) or the topic list (`hikasa help --list`); the other part
+/// is `null` / empty (§4.1 rule 3: arrays are never `null`). M2 W0.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpDto {
+    /// The topic shown (`null` with `--list`).
+    pub topic: Option<HelpTopicDto>,
+    /// Every topic, in contents order (empty unless `--list`).
+    pub topics: Vec<HelpListItemDto>,
+}
+
+/// One topic of `hikasa.help.v1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpTopicDto {
+    /// Id (`text-compare`).
+    pub id: String,
+    /// Title (the `#` heading).
+    pub title: String,
+    /// The Markdown source.
+    pub markdown: String,
+    /// The topics it links to.
+    pub links: Vec<String>,
+}
+
+/// One entry of `hikasa help --list --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HelpListItemDto {
+    /// Id.
+    pub id: String,
+    /// Title.
+    pub title: String,
+}
+
+impl HelpDto {
+    /// The document of one topic.
+    pub fn topic(topic: &crate::help::HelpTopic) -> HelpDto {
+        HelpDto {
+            topic: Some(HelpTopicDto {
+                id: topic.id.to_owned(),
+                title: topic.title(),
+                markdown: topic.source.to_owned(),
+                links: topic.links(),
+            }),
+            topics: Vec::new(),
+        }
+    }
+
+    /// The document of `--list`.
+    pub fn list() -> HelpDto {
+        HelpDto {
+            topic: None,
+            topics: crate::help::topics()
+                .iter()
+                .map(|t| HelpListItemDto {
+                    id: t.id.to_owned(),
+                    title: t.title(),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Writes `value` as pretty JSON (2-space indentation) followed by `\n` (§4.1 rule 1).
@@ -920,6 +1034,10 @@ pub struct GuiOpenDto {
     pub view_exit_code: Option<u8>,
     /// The file stdin was spooled to (`gui open -`, D-49).
     pub spooled_stdin: Option<String>,
+    /// `gui workspace` (and `gui open <workspace>`, D-88): every view the workspace opened (`view` is the
+    /// first, 0 when none); absent for one view. Additive (M2 W2).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<u64>,
 }
 
 /// `hikasa.gui_ping.v1`.

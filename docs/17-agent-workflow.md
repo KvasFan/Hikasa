@@ -34,9 +34,11 @@ These rules are binding for any agent (or human) implementing Hikasa.
    (`proptest`) and golden fixtures under `tests/fixtures/`.
 2. Every bug fix adds a regression test.
 3. Benchmarks for performance-sensitive paths (`criterion`), compared against the
-   previous run (no more than 10 % regression without justification). In M1 the
-   benchmarks and the performance gates are run by hand and their numbers recorded in
-   the docs; a CI bench job on a fixed runner is an M2 item (docs/16).
+   previous run (no more than 10 % regression without justification on a fixed machine).
+   The reference figures are measured by hand and recorded in the docs; the manual
+   `bench.yml` workflow compares a GitHub-hosted run against a baseline with a 25 %
+   tolerance (D-69). Tests run with `cargo nextest run --workspace` (doc tests with
+   `cargo test --doc`).
 4. GUI logic is tested through the command catalogue and view-model layer, not by
    screenshot.
 5. Tests that open a window (the ignored `gui/hikasa-gui/tests/cli_gui.rs` and
@@ -52,12 +54,15 @@ These rules are binding for any agent (or human) implementing Hikasa.
 ## 4. Documentation
 1. Update the relevant `docs/*.md` when behaviour changes; add new requirement IDs
    rather than renumbering existing ones.
-2. Keep `docs/reference/commands.md` in sync with the command catalogue. In M1 the
-   file is maintained by hand; generating it with `cargo xtask commands-doc` and a CI
-   check that fails when it is stale are M2 items (docs/16).
-3. Write the user manual topics (`help/`) in parallel with features; the F1 context
-   help maps command ids to topics. (M1 has no help topics yet; this is an open item
-   recorded in docs/16.)
+2. Commands are added or changed in `core/hikasa-session/catalogue/commands.toml`;
+   `docs/reference/commands.md` is generated from it with `cargo xtask commands-doc` and
+   never edited by hand (CI fails when it is stale). A command the GUI starts to execute
+   changes its status to `implemented` in the same change.
+3. Write the help topics (`help/<id>.md`) in parallel with features: one per CLI
+   subcommand, view and dialog, linked from another topic; `cargo xtask help-check`
+   checks titles and links. A new topic is also added to the list in
+   `core/hikasa-session/src/help.rs`. F1 opens the topic of the active view type (the
+   `help` of its catalogue section).
 
 ## 5. Independence and naming
 1. This project is an original work. Do not copy code, assets, icons, help text,

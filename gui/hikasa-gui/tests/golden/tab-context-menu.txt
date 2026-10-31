@@ -1,0 +1,9 @@
+Session
+  New Tab	Ctrl+T
+  Duplicate Tab
+  Move Tab to New Window
+  > Move Tab to Window
+    Home
+  Close Other Tabs
+  ---
+  Close Tab	Ctrl+W

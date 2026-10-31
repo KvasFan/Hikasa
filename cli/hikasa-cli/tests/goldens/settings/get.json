@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.settings_get.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "key": "options.appearance.theme_mode",
+    "file": "options",
+    "path": "appearance.theme_mode",
+    "value": "follow_os",
+    "default": "follow_os",
+    "is_default": true,
+    "kind": "enum follow_os|light|dark",
+    "opt": "OPT-005"
+  },
+  "warnings": [],
+  "error": null
+}

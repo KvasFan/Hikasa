@@ -92,6 +92,7 @@ fn error_and_warning_shapes() {
             ErrorKind::TooLarge,
             ErrorKind::Protocol,
             ErrorKind::Internal,
+            ErrorKind::NotEmpty,
         ],
         report: ErrorReport {
             kind: ErrorKind::Internal,
@@ -118,6 +119,10 @@ fn error_and_warning_shapes() {
             WarningCode::SwitchIgnored,
             WarningCode::AlignmentDegraded,
             WarningCode::PatchEncoding,
+            WarningCode::InvalidConfigValue,
+            WarningCode::SpecNotSaved,
+            WarningCode::SessionMissing,
+            WarningCode::SessionLocked,
         ],
         warnings: vec![
             Warning {
@@ -208,6 +213,7 @@ fn progress_and_job_shapes() {
             Phase::ComparingContent,
             Phase::Hashing,
             Phase::Reporting,
+            Phase::Writing,
         ],
         units: vec![Unit::Items, Unit::Bytes, Unit::Lines, Unit::Folders],
         reports: vec![
@@ -235,6 +241,7 @@ fn progress_and_job_shapes() {
             JobKind::FormatTokens,
             JobKind::VfsList,
             JobKind::VfsRead,
+            JobKind::VfsWrite,
         ],
         sides: vec![Side::Left, Side::Right, Side::Center, Side::Output],
         pair: Pair::new(1, 2),

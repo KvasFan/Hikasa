@@ -1,0 +1,38 @@
+{
+  "schema": "hikasa.session_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "folders": [
+      "work"
+    ],
+    "sessions": [
+      {
+        "ref": "piped",
+        "type": "text-edit",
+        "description": "",
+        "locked": false,
+        "favorite": false
+      },
+      {
+        "ref": "t",
+        "type": "text-compare",
+        "description": "",
+        "locked": false,
+        "favorite": false
+      },
+      {
+        "ref": "work/api",
+        "type": "folder-compare",
+        "description": "The API",
+        "locked": false,
+        "favorite": false
+      }
+    ],
+    "defaults": [],
+    "autosaved": []
+  },
+  "warnings": [],
+  "error": null
+}

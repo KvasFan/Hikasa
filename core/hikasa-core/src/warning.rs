@@ -56,6 +56,17 @@ pub enum WarningCode {
     AlignmentDegraded,
     /// A patch was written in UTF-8 for a file stored in another encoding, so it may not apply to the file's bytes.
     PatchEncoding,
+    /// A configuration value of the wrong type or out of range was replaced by its default (D-71; only the
+    /// `settings` commands load leniently, every other command fails).
+    InvalidConfigValue,
+    /// A spec that a session cannot store (`-`, `clipboard://`) was left empty in the saved session (M2 W2,
+    /// §1.2.1).
+    SpecNotSaved,
+    /// A workspace tab names a session that no longer exists; a Home tab takes its place (M2 W2, D-85).
+    SessionMissing,
+    /// A settings import kept a locked session instead of replacing or deleting it (M2 W2, D-90; `--force`
+    /// replaces it).
+    SessionLocked,
 }
 
 impl WarningCode {
@@ -80,6 +91,10 @@ impl WarningCode {
             WarningCode::SwitchIgnored => "switch_ignored",
             WarningCode::AlignmentDegraded => "alignment_degraded",
             WarningCode::PatchEncoding => "patch_encoding",
+            WarningCode::InvalidConfigValue => "invalid_config_value",
+            WarningCode::SpecNotSaved => "spec_not_saved",
+            WarningCode::SessionMissing => "session_missing",
+            WarningCode::SessionLocked => "session_locked",
         }
     }
 }
@@ -116,6 +131,10 @@ mod tests {
             WarningCode::SwitchIgnored,
             WarningCode::AlignmentDegraded,
             WarningCode::PatchEncoding,
+            WarningCode::InvalidConfigValue,
+            WarningCode::SpecNotSaved,
+            WarningCode::SessionMissing,
+            WarningCode::SessionLocked,
         ];
         for code in all {
             assert_eq!(

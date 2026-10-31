@@ -1,0 +1,16 @@
+{
+  "schema": "hikasa.settings_set.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "key": "options.appearance.theme_mode",
+    "file": "options",
+    "path": "appearance.theme_mode",
+    "old": "dark",
+    "new": "dark",
+    "written": false
+  },
+  "warnings": [],
+  "error": null
+}

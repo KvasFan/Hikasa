@@ -1,0 +1,21 @@
+schema_version = 1
+type = "hex-compare"
+description = "A hex-compare session"
+favorite = true
+
+[specs]
+left = "/data/left"
+right = "/data/right"
+
+[rules]
+mode = "mirror"
+
+[rules.filters]
+names = "*.c"
+
+[display]
+filter = "differences"
+
+[view]
+split = 0.5
+width_left = 300

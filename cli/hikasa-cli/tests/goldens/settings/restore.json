@@ -1,0 +1,25 @@
+{
+  "schema": "hikasa.settings_restore.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": false,
+    "files": [
+      {
+        "file": "options",
+        "path": "<TMP>/cfg/options.toml",
+        "existed": true,
+        "deleted": true
+      },
+      {
+        "file": "themes.mine",
+        "path": "<TMP>/cfg/themes/mine.toml",
+        "existed": true,
+        "deleted": true
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

@@ -12,7 +12,8 @@
     "io",
     "too_large",
     "protocol",
-    "internal"
+    "internal",
+    "not_empty"
   ],
   "report": {
     "kind": "internal",
@@ -38,7 +39,11 @@
     "entry_error",
     "switch_ignored",
     "alignment_degraded",
-    "patch_encoding"
+    "patch_encoding",
+    "invalid_config_value",
+    "spec_not_saved",
+    "session_missing",
+    "session_locked"
   ],
   "warnings": [
     {

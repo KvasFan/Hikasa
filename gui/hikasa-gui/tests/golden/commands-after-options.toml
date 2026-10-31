@@ -1,0 +1,25 @@
+schema_version = 1
+
+[view.home]
+display_filter_mode = "favorites"
+large_buttons = true
+
+[view.home.command.About]
+shortcuts = ["Ctrl+F12"]
+
+[view.home.command.Exit]
+menu = false
+
+[view.home.command.FileFormatManager]
+shortcuts = ["Ctrl+F2"]
+menu = true
+
+[view.home.command.TabNew]
+shortcuts = []
+
+[view.text-compare]
+show_all_in_menu = true
+show_all_on_toolbar = true
+
+[view.text-compare.command.Reload]
+toolbar = false

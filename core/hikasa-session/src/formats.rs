@@ -123,6 +123,79 @@ impl FormatStore {
         Ok(())
     }
 
+    /// `formats/<id>.toml` (it may not exist). Additive (M2 W1, D-75).
+    pub fn user_path(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{id}.toml"))
+    }
+
+    /// `formats/order.toml` (it may not exist). Additive (M2 W1).
+    pub fn order_path(&self) -> PathBuf {
+        self.dir.join(ORDER_FILE)
+    }
+
+    /// The order to change (D-75): `order.toml` when it exists, without the ids the registry does not know and
+    /// with the unlisted formats appended in registry order (so the effective order is unchanged); else the
+    /// registry's order and flags. Additive (M2 W1).
+    pub fn editable_order(&self, registry: &FormatRegistry) -> Result<FormatOrder, SessionError> {
+        let Some(mut order) = self.read_order()? else {
+            return Ok(FormatOrder::from_registry(registry));
+        };
+        order
+            .formats
+            .retain(|item| registry.get(&item.id).is_some());
+        for entry in registry.entries() {
+            if order.position(entry.id()).is_none() {
+                order.formats.push(hikasa_formats::OrderItem {
+                    id: entry.id().clone(),
+                    enabled: None,
+                });
+            }
+        }
+        Ok(order)
+    }
+
+    /// `order.toml` as it is (`None` when it does not exist). Additive (M2 W1).
+    pub fn read_order(&self) -> Result<Option<FormatOrder>, SessionError> {
+        let path = self.order_path();
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let origin = path.display().to_string();
+                let text = String::from_utf8(bytes).map_err(|_| SessionError::Config {
+                    path: origin.clone(),
+                    message: "the file is not valid UTF-8".into(),
+                })?;
+                Ok(Some(FormatOrder::parse(&text, &origin)?.0))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(SessionError::io(&path, e)),
+        }
+    }
+
+    /// Writes `order.toml` (creating the folder). Additive (M2 W1).
+    pub fn write_order(&self, order: &FormatOrder) -> Result<PathBuf, SessionError> {
+        let path = self.order_path();
+        self.write(&path, order.to_toml().as_bytes())?;
+        Ok(path)
+    }
+
+    /// Writes `formats/<id>.toml` with `bytes` (creating the folder). Additive (M2 W1).
+    pub fn write_user_file(&self, id: &str, bytes: &[u8]) -> Result<PathBuf, SessionError> {
+        let path = self.user_path(id);
+        self.write(&path, bytes)?;
+        Ok(path)
+    }
+
+    /// Creates the folder and writes `path` atomically.
+    fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), SessionError> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| SessionError::io(&self.dir, e))?;
+        write_atomic(path, bytes).map_err(|e| SessionError::io(path, e))
+    }
+
+    /// Every user file: `formats/*.toml` except `order.toml`, sorted (unreadable folders: none). Additive (M2 W1).
+    pub fn user_file_paths(&self) -> Vec<PathBuf> {
+        self.user_files(&mut Vec::new())
+    }
+
     /// `formats/*.toml` except `order.toml`, sorted by file name. A folder that cannot be read (other than a
     /// missing one) adds one `user_format_skipped` warning: the built-ins stay usable.
     fn user_files(&self, warnings: &mut Vec<Warning>) -> Vec<PathBuf> {

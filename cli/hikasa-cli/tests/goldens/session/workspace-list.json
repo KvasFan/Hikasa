@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.workspace_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "workspaces": [
+      {
+        "name": "last",
+        "shortcut": "F9",
+        "windows": 1,
+        "tabs": 2
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

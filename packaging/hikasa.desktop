@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Hikasa
+GenericName=Folder and File Compare
+Comment=Compare folders and files
+Exec=hikasa-gui %F
+Icon=hikasa
+Terminal=false
+Categories=Development;Utility;
+Keywords=diff;compare;merge;folder;
+MimeType=application/x-hikasa-pkg;
+StartupNotify=true
+StartupWMClass=hikasa

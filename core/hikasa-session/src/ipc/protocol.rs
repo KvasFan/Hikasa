@@ -45,7 +45,8 @@ pub enum Request {
     OpenView {
         /// View type.
         kind: ViewKind,
-        /// Canonical, absolute spec strings (`-` and `clipboard://` never appear, D-49).
+        /// Canonical, absolute spec strings, or `clipboard://` (read by the GUI from its own clipboard, D-101); `-`
+        /// never appears (D-49: it is spooled to a file first).
         specs: Vec<String>,
         /// View options.
         #[serde(default)]
@@ -54,18 +55,27 @@ pub enum Request {
         #[serde(default)]
         wait: bool,
     },
-    /// Loads a named session (M1: `Error{unsupported_request}`).
+    /// Loads a named session (D-89): `ViewOpened{view}` (and `ViewClosed` when waited); an unknown name is
+    /// `Error{not_found}`, a type the GUI cannot show `Error{unsupported_request}`. M1 GUIs answer
+    /// `Error{unsupported_request}`.
     LoadSession {
-        /// Session name.
+        /// Session reference (`work/api-v2`).
         name: String,
         /// Wait for the session's view to close.
         #[serde(default)]
         wait: bool,
     },
-    /// Loads a named workspace (M1: `Error{unsupported_request}`).
+    /// Loads a named workspace (D-89): `Views{views}` (the views it opened); unknown → `Error{not_found}`. M1
+    /// GUIs answer `Error{unsupported_request}`.
     LoadWorkspace {
         /// Workspace name.
         name: String,
+    },
+    /// Shows the import wizard for a settings package (D-127): `Ok` once it is shown in the window focused last.
+    /// GUIs before M2 W4c answer `Error{unsupported_request}`.
+    ImportPackage {
+        /// Absolute path of the `.hikasa-pkg`.
+        path: String,
     },
     /// Runs a script (M1: `Error{unsupported_request}`).
     RunScript {
@@ -99,6 +109,7 @@ impl Request {
             Request::OpenView { .. } => "open_view",
             Request::LoadSession { .. } => "load_session",
             Request::LoadWorkspace { .. } => "load_workspace",
+            Request::ImportPackage { .. } => "import_package",
             Request::RunScript { .. } => "run_script",
             Request::ListViews => "list_views",
             Request::CloseView { .. } => "close_view",

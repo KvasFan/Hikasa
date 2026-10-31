@@ -4,7 +4,7 @@
 //! `hikasa gui open` and `hikasa-gui` accept the same arguments (D-51): [`normalize_legacy_args`] rewrites the
 //! legacy spellings (`-name`, `/name` on Windows, aliases) to `--name[=value]`, and [`parse_open_args`] turns the
 //! result into [`OpenArgs`]. [`Service::resolve_open`] resolves the specs (absolute canonical strings; `-` spooled
-//! to the cache folder; `clipboard://` rejected), infers the view kind and makes the rules files absolute;
+//! to the cache folder; `clipboard://` sent verbatim, D-101), infers the view kind and makes the rules files absolute;
 //! [`Service::gui_open`] then validates the request ([`Service::check_open`]), connects to (or launches,
 //! [`Service::gui_launch`]) the GUI and sends `OpenView`. The GUI turns an `OpenView` back into service requests
 //! with [`Service::open_view_request`] and reports a closing view's exit code with [`ViewOutcome::close`] (D-23).
@@ -268,7 +268,7 @@ fn strip_quotes(part: OsString) -> OsString {
 #[derive(Debug, Clone, Default)]
 pub struct GuiOpenRequest {
     /// Raw specs (resolved to absolute canonical specs before sending: the GUI has another cwd; "-" is spooled,
-    /// `clipboard://` is rejected, D-49).
+    /// D-49; `clipboard://` is sent verbatim and read by the GUI, D-101).
     pub specs: Vec<OsString>,
     /// Forced view kind (`--fv`); None → inferred (CLI-002).
     pub kind: Option<ViewKind>,
@@ -412,6 +412,7 @@ impl GuiOpenReport {
                 result: None,
                 view_exit_code: None,
                 spooled_stdin,
+                views: Vec::new(),
             },
             GuiOpenOutcome::Closed {
                 view,
@@ -423,6 +424,7 @@ impl GuiOpenReport {
                 result: Some(result.clone()),
                 view_exit_code: Some(*exit_code),
                 spooled_stdin,
+                views: Vec::new(),
             },
         }
     }
@@ -449,6 +451,8 @@ pub struct ResolvedOpen {
 
 /// The service requests of an `OpenView` ([`Service::open_view_request`]): what the GUI runs for a view.
 /// Additive (wave-4 review).
+// One request per view, built once and moved into the view: the size difference does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ViewRequest {
     /// A Text Compare view.
@@ -1144,12 +1148,19 @@ pub fn infer_view_kind(
     }
     let [left, right] = specs else {
         return Err(ApiError::InvalidArgument(format!(
-            "gui open needs two specs to infer the view (got {}); sessions, workspaces, merges, patches and \
-             snapshots come in a later version",
+            "gui open needs two specs to infer the view, or one name of a saved session or workspace (got {} \
+             specs); merges, patches and snapshots come in a later version",
             specs.len()
         )));
     };
-    let stat = |spec: &Spec| service.vfs().stat(spec, FollowLinks::Yes);
+    // `clipboard://` is a file (text or a PNG) the GUI reads itself (D-101): never stat'ed here.
+    let stat = |spec: &Spec| match spec {
+        Spec::Clipboard => Ok(hikasa_vfs::Entry::new(
+            hikasa_vfs::FileName::from_os(std::ffi::OsStr::new("clipboard://")),
+            EntryKind::File,
+        )),
+        _ => service.vfs().stat(spec, FollowLinks::Yes),
+    };
     let kinds = match (stat(left), stat(right)) {
         (Ok(l), Ok(r)) => (l.kind, r.kind),
         (Ok(l), Err(_)) => (l.kind, l.kind),
@@ -1225,8 +1236,8 @@ impl Service {
     /// [`Service::gui_open`] with an explicit retry policy, returning what was sent and the spool file
     /// (additive; `hikasa.gui_open.v1` needs `spooled_stdin`).
     ///
-    /// Steps (§3.6): [`Service::resolve_open`] (specs → canonical absolute strings; `-` → the stdin spool file;
-    /// `clipboard://` → `InvalidArgument`, D-49; rules files absolute; kind ← `req.kind` or
+    /// Steps (§3.6): [`Service::resolve_open`] (specs → canonical absolute strings; `-` → the stdin spool file, D-49;
+    /// `clipboard://` sent verbatim, D-101; rules files absolute; kind ← `req.kind` or
     /// [`infer_view_kind`]); [`Service::check_open`] (vocabulary, formats, encodings and rules are validated
     /// locally, so a typo exits 100 before the GUI is contacted); connect (or launch with
     /// [`Service::gui_launch`] and retry, [`connect_or_launch`]); `OpenView`; with `wait`, block until
@@ -1268,8 +1279,8 @@ impl Service {
     }
 
     /// Resolves a `gui open` request for sending, or for the GUI's own command line (additive): specs →
-    /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://` and
-    /// paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
+    /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://`
+    /// verbatim, D-101; paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
     /// and `folder_rules_file`, else the strings already in the options) made absolute (`-`, `clipboard://` and
     /// non-UTF-8 paths → `InvalidArgument`); kind ← `req.kind` or [`infer_view_kind`]. On error nothing is left
     /// behind (a spool file is removed).
@@ -1293,7 +1304,12 @@ impl Service {
     ) -> Result<ResolvedOpen, ApiError> {
         let mut specs = Vec::with_capacity(req.specs.len());
         for raw in &req.specs {
-            let spec = match self.parse_spec(raw)? {
+            // `clipboard://` travels verbatim (D-101): the GUI reads its own clipboard; the CLI never reads it.
+            let spec = match Spec::parse_os(raw, &self.spec_context())? {
+                Spec::Clipboard => Spec::Clipboard,
+                _ => self.parse_spec(raw)?,
+            };
+            let spec = match spec {
                 Spec::Stdin => {
                     if spool.is_some() {
                         return Err(ApiError::InvalidArgument(
@@ -1303,11 +1319,6 @@ impl Service {
                     let file = self.spool_stdin()?;
                     *spool = Some(file.clone());
                     self.parse_spec(file.as_os_str())?
-                }
-                Spec::Clipboard => {
-                    return Err(ApiError::InvalidArgument(
-                        "clipboard:// cannot be opened in the GUI in this version".into(),
-                    ));
                 }
                 spec => spec,
             };
@@ -1367,10 +1378,30 @@ impl Service {
         Ok(())
     }
 
+    /// The IPC handler's path of an `OpenView` (D-101; additive): when a spec is `clipboard://`, the clipboard
+    /// is read **again** ([`Service::read_clipboard`], the GUI's own clipboard) and a failure is the error;
+    /// then [`Service::open_view_request`]. The handler answers an error `invalid_request`.
+    pub fn open_view_from_ipc(
+        &self,
+        kind: ViewKind,
+        specs: &[String],
+        options: &OpenOptions,
+    ) -> Result<ViewRequest, ApiError> {
+        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
+        if specs
+            .iter()
+            .any(|spec| Spec::parse(spec, &absolute).is_ok_and(|s| s == Spec::Clipboard))
+        {
+            self.read_clipboard()?;
+        }
+        self.open_view_request(kind, specs, options)
+    }
+
     /// Turns an `OpenView` into the service request of its view (additive; the GUI's inverse of
     /// [`GuiOpenRequest::for_text`] / [`GuiOpenRequest::for_folder`], D-50). The specs must be exactly two
-    /// canonical absolute specs (§4.4.3 rule 4: relative specs, `-` and `clipboard://` are `InvalidArgument`;
-    /// they are never resolved against the GUI's cwd). Text: format, encodings, rules file and patch,
+    /// canonical absolute specs or `clipboard://` (§4.4.3 rule 4: relative specs and `-` are `InvalidArgument`;
+    /// they are never resolved against the GUI's cwd; `clipboard://` is read by the caller through
+    /// [`Service::read_clipboard`] first, D-101). Text: format, encodings, rules file and patch,
     /// ignore-unimportant; the view options from `display`/`context_lines` (default: all). Folders: rules file,
     /// criteria, patch (the legacy `filters` switch, when given, replaces the patch's `name_filter`), text rules
     /// file and patch, ignore-unimportant; the display options from `display`/`folders`/`suppress_filters`
@@ -1390,13 +1421,11 @@ impl Service {
         };
         let absolute = SpecContext::absolute_only(self.env().platform.path_style());
         for spec in [left, right] {
-            match Spec::parse(spec, &absolute)? {
-                Spec::Stdin | Spec::Clipboard => {
-                    return Err(ApiError::InvalidArgument(format!(
-                        "`{spec}` cannot be opened over IPC"
-                    )));
-                }
-                _ => {}
+            // `clipboard://` is allowed (D-101): the GUI reads its own clipboard before it opens the view.
+            if Spec::parse(spec, &absolute)? == Spec::Stdin {
+                return Err(ApiError::InvalidArgument(format!(
+                    "`{spec}` cannot be opened over IPC"
+                )));
             }
         }
         let pair = Pair::new(OsString::from(left), OsString::from(right));
@@ -1420,6 +1449,7 @@ impl Service {
                         rules_file: options.text_rules_file.clone().map(OsString::from),
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
+                        base_rules: None,
                     },
                     view: ViewOptions {
                         filter: mode.text_filter(),
@@ -1449,6 +1479,8 @@ impl Service {
                         text_rules_file: options.text_rules_file.clone().map(OsString::from),
                         text_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
+                        base_rules: None,
+                        base_text_rules: None,
                     },
                     display,
                     expand_all: options.expand_all,
@@ -1509,6 +1541,128 @@ impl Service {
             specs: resolved.specs,
             spooled_stdin: spool.clone(),
         })
+    }
+
+    /// `gui session <REF> [--wait]` and `gui open <session>` (D-88, D-89): the session is found and checked
+    /// locally (`not_found`, `unsupported` for a type the GUI cannot show yet), then `LoadSession` is sent
+    /// (launching the GUI unless `launcher` is `None`). A GUI that answers `unsupported_request` is an older
+    /// one: `unsupported`, "the running GUI does not support sessions; restart it" (exit 100).
+    pub fn gui_load_session(
+        &self,
+        reference: &str,
+        wait: bool,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<GuiOpenReport, ApiError> {
+        run_guarded(|| {
+            let wanted = crate::sessions::SessionRef::parse(reference)?;
+            let actual = self
+                .session_store()
+                .find(&wanted.to_string())
+                .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
+            let view = self.session_view(&actual)?;
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::LoadSession {
+                name: actual.to_string(),
+                wait,
+            };
+            let (id, response) = client.request(request).map_err(sessions_error)?;
+            let opened = match response {
+                Response::ViewOpened { view } => view,
+                other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            };
+            let outcome = if wait {
+                let (view, result, exit_code) = client.wait_view_closed(id)?;
+                GuiOpenOutcome::Closed {
+                    view,
+                    result,
+                    exit_code,
+                }
+            } else {
+                GuiOpenOutcome::Opened { view: opened }
+            };
+            Ok(GuiOpenReport {
+                outcome,
+                kind: view.kind,
+                specs: view.specs,
+                spooled_stdin: None,
+            })
+        })
+    }
+
+    /// `gui workspace <NAME>` and `gui open <workspace>` (D-85, D-88, D-89): the workspace is found locally
+    /// (`not_found`), then `LoadWorkspace` is sent; the result is the views it opened. An older GUI is reported
+    /// as for [`Service::gui_load_session`].
+    pub fn gui_load_workspace(
+        &self,
+        name: &str,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<Vec<ViewInfo>, ApiError> {
+        run_guarded(|| {
+            let actual = self
+                .workspace_store()
+                .find(name)
+                .ok_or_else(|| ApiError::NotFound(format!("no workspace `{name}`")))?;
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::LoadWorkspace {
+                name: actual.to_string(),
+            };
+            match client.request(request).map_err(sessions_error)?.1 {
+                Response::Views { views } => Ok(views),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        })
+    }
+
+    /// `gui open <file.hikasa-pkg>` without `--silent` and `hikasa-gui <file.hikasa-pkg>` with a GUI running
+    /// (D-127): `ImportPackage` with the absolute path (`classify_single_arg` gives one); `Ok` once the import wizard
+    /// is shown. An older GUI is
+    /// reported as for [`Service::gui_load_session`].
+    pub fn gui_import_package(
+        &self,
+        path: &Path,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<(), ApiError> {
+        run_guarded(|| {
+            if !path.is_absolute() {
+                return Err(ApiError::InvalidArgument(format!(
+                    "{}: the GUI needs an absolute path",
+                    path.display()
+                )));
+            }
+            let Some(text) = path.to_str() else {
+                return Err(ApiError::InvalidArgument(format!(
+                    "{}: paths that are not valid UTF-8 cannot be sent to the GUI",
+                    path.display()
+                )));
+            };
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::ImportPackage {
+                path: text.to_owned(),
+            };
+            match client.request(request).map_err(sessions_error)?.1 {
+                Response::Ok => Ok(()),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        })
+    }
+
+    /// A connection to the GUI, launching it when `launcher` is given.
+    fn connect_for_sessions(
+        &self,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<IpcClient, ApiError> {
+        connect_or_launch(
+            &self.endpoint()?,
+            &self.generator(),
+            launcher,
+            &self.gui_launch(),
+            policy,
+            REQUEST_TIMEOUT,
+        )
     }
 
     /// `gui ping` (never launches, D-22).
@@ -1637,6 +1791,19 @@ impl Service {
             )));
         }
         Ok(Some(spec.canonical()))
+    }
+}
+
+/// D-89: a GUI that answers `unsupported_request` to `LoadSession`/`LoadWorkspace`/`ImportPackage` is older than
+/// this build.
+fn sessions_error(error: crate::ipc::IpcError) -> ApiError {
+    match &error {
+        crate::ipc::IpcError::Remote { code, .. }
+            if code == crate::ipc::IpcErrorCode::UnsupportedRequest.as_str() =>
+        {
+            ApiError::Unsupported("the running GUI does not support sessions; restart it".into())
+        }
+        _ => ApiError::Ipc(error),
     }
 }
 

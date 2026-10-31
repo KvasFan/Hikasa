@@ -1,0 +1,3 @@
+The AppImage starts through the AppImage type 2 runtime (https://github.com/AppImage/type2-runtime), which is
+MIT-licensed and statically links libfuse (LGPL-2.1), squashfuse (BSD-2-Clause), zstd and zlib. Its source is at that
+address; the exact release is named in packaging/package-appimage.sh of the Hikasa source.

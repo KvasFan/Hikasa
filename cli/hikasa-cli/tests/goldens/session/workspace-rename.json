@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.workspace_write.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "action": "rename",
+    "name": "previous",
+    "written": [
+      "<TMP>/cfg/workspaces/previous.toml"
+    ],
+    "removed": [
+      "<TMP>/cfg/workspaces/last.toml"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

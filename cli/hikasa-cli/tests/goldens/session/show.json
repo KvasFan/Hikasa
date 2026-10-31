@@ -1,0 +1,21 @@
+{
+  "schema": "hikasa.session_show.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "ref": "work/api",
+    "path": "<TMP>/cfg/sessions/work/api.toml",
+    "session": {
+      "description": "The API",
+      "schema_version": 1,
+      "specs": {
+        "left": "<TMP>/l",
+        "right": "<TMP>/r"
+      },
+      "type": "folder-compare"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

@@ -1,0 +1,5 @@
+mkdir <TMP>/dst
+copy <TMP>/src/a.txt -> <TMP>/dst/a.txt
+mkdir <TMP>/dst/sub
+copy <TMP>/src/sub/b.txt -> <TMP>/dst/sub/b.txt
+copied 4 of 4 items (0 skipped, 0 failed)

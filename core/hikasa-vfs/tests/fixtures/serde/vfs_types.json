@@ -16,7 +16,14 @@
     "read",
     "write",
     "commit",
-    "map"
+    "map",
+    "mkdir",
+    "remove",
+    "rename",
+    "set_times",
+    "set_attrs",
+    "symlink",
+    "trash"
   ],
   "outcomes": [
     {

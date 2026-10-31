@@ -37,6 +37,19 @@
 //! | `Write` | `open_write(path)` fails |
 //! | `Commit` | `commit` of a writer for `path` fails; nothing is written |
 //! | `Map` | no effect: `MemoryVfs` has no local paths, so nothing is ever mapped |
+//! | `Mkdir`, `Remove`, `Rename`, `SetTimes`, `SetAttrs`, `Symlink`, `Trash` | the primitive on that path fails with the kind (`Rename` matches the `from` path); nothing changes (M2 W3) |
+//!
+//! # Mutations (M2 W3, contract M2 §1.3.8)
+//!
+//! Every mutating primitive of [`Vfs`] is implemented with POSIX semantics and honours
+//! [`MemoryVfs::set_capabilities`] (a primitive whose bit is removed returns `OperationUnsupported`). Test hooks:
+//! [`MemoryVfs::inject_read_error_after`] and [`MemoryVfs::inject_write_error_after`] (a stream that fails after
+//! N bytes), [`MemoryVfs::set_device`] (`FileId::dev` of a subtree; `rename` across devices is `CrossDevice`),
+//! [`MemoryVfs::set_journal`]/[`MemoryVfs::journal`] (every successful mutating call in order, `commit` as
+//! `Commit`), [`MemoryVfs::trashed`] (what `move_to_trash` took, in order) and [`MemoryVfs::dump`] (a
+//! deterministic snapshot of the tree). A write without `replace_link` onto a symbolic link replaces the file the
+//! link points to (a dangling link: the file it names is created, as `LocalVfs` does); with `replace_link` the
+//! link is replaced.
 //!
 //! Errors of kind not found, permission denied, not a folder, is a folder and already exists use the
 //! dedicated [`VfsError`] variants; cancelled is [`VfsError::Cancelled`]; every other kind is
@@ -56,11 +69,11 @@ use hikasa_core::{
 };
 
 use crate::caps::Capabilities;
-use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName};
+use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek, Vfs,
-    WriteOptions,
+    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
+    SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// Most symlinks followed in one resolution (Linux `MAXSYMLINKS`).
@@ -148,6 +161,7 @@ fn fault_io(kind: ErrorKind) -> io::Error {
         ErrorKind::InvalidData => io::ErrorKind::InvalidData,
         ErrorKind::Unsupported => io::ErrorKind::Unsupported,
         ErrorKind::TooLarge => io::ErrorKind::FileTooLarge,
+        ErrorKind::NotEmpty => io::ErrorKind::DirectoryNotEmpty,
         ErrorKind::Cancelled => return io::Error::other(Cancelled),
         // Io, and kinds no file system error carries (protocol, internal).
         _ => io::ErrorKind::Other,
@@ -337,6 +351,37 @@ struct Tree {
     faults: Vec<(Fault, Option<String>)>,
     /// Nodes whose directory record states no kind (`MemoryVfs::set_kind_unknown`).
     kind_unknown: BTreeSet<usize>,
+    /// Streams that fail after a number of bytes: (path key, bytes, kind).
+    read_errors: Vec<(String, u64, ErrorKind)>,
+    /// Writers that fail after a number of bytes: (path key, bytes, kind).
+    write_errors: Vec<(String, u64, ErrorKind)>,
+    /// Device numbers of subtrees: (path key of the prefix, dev).
+    devices: Vec<(String, u64)>,
+    /// `Some` while the journal records.
+    journal: Option<Vec<(VfsOp, String)>>,
+    /// Original paths moved to the trash, in order.
+    trashed: Vec<String>,
+}
+
+/// One item of [`MemoryVfs::dump`]: everything a "target untouched" assertion compares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemDump {
+    /// The path (host syntax), with the kept spelling.
+    pub path: String,
+    /// The kind (a link is `Symlink`).
+    pub kind: EntryKind,
+    /// Content length (files), target length (links), 0 (folders).
+    pub len: u64,
+    /// CRC-32 of the content (files only).
+    pub crc32: Option<u32>,
+    /// Modification time.
+    pub mtime: Option<FileTime>,
+    /// Creation time.
+    pub ctime: Option<FileTime>,
+    /// Attributes.
+    pub attrs: Attrs,
+    /// Link target (links only).
+    pub link_target: Option<String>,
 }
 
 impl Tree {
@@ -437,6 +482,53 @@ impl Tree {
         self.walk(root, &parsed.comps, follow_final, &mut 0)
     }
 
+    /// Where a write through the link `link` lands when the chain of links ends at a missing item (a dangling
+    /// link names the file to create, as `LocalVfs` resolves it): the parent folder and the name of the first
+    /// path of the chain that is not a link. `Miss::NotFound` when that parent is missing.
+    fn dangling_end(&self, link: usize) -> Result<(Parsed, String), Miss> {
+        let mut cur = link;
+        for _ in 0..MAX_LINK_HOPS {
+            let node = self.node(cur).ok_or(Miss::NotFound)?;
+            let NodeKind::Symlink(target) = &node.kind else {
+                return Err(Miss::NotFound);
+            };
+            if target.is_empty() {
+                return Err(Miss::NotFound);
+            }
+            let (root, comps) = parse_target(target);
+            let mut base = match root {
+                Some(root) => Parsed {
+                    root,
+                    comps: Vec::new(),
+                },
+                None => {
+                    let dir = node.parent.ok_or(Miss::NotFound)?;
+                    parse_path(&self.node_path(dir)).ok_or(Miss::NotFound)?
+                }
+            };
+            base.comps.extend(comps);
+            let Some(Comp::Name(name)) = base.comps.pop() else {
+                return Err(Miss::NotFound);
+            };
+            let dir = self.resolve(&base, true)?;
+            if !self.is_dir(dir) {
+                return Err(Miss::NotADirectory);
+            }
+            match self
+                .node(dir)
+                .and_then(|n| n.children.get(&self.key(&name)).copied())
+            {
+                Some(next)
+                    if matches!(self.node(next).map(|n| &n.kind), Some(NodeKind::Symlink(_))) =>
+                {
+                    cur = next;
+                }
+                _ => return Ok((base, name)),
+            }
+        }
+        Err(Miss::Loop)
+    }
+
     /// The node a symlink node points to (fully followed).
     fn follow_link(&self, link: usize) -> Result<usize, Miss> {
         let node = self.node(link).ok_or(Miss::NotFound)?;
@@ -480,7 +572,7 @@ impl Tree {
             followed,
             crc32: node.meta.crc32,
             file_id: Some(FileId {
-                dev: 0,
+                dev: self.dev_of(idx),
                 ino: idx as u64 + 1,
             }),
         }
@@ -627,6 +719,125 @@ impl Tree {
     }
 }
 
+impl Tree {
+    /// The path key of node `idx` (the same key `path_key` builds for its path).
+    fn node_key(&self, idx: usize) -> String {
+        let mut names = Vec::new();
+        let mut cur = Some(idx);
+        while let Some(i) = cur {
+            let Some(node) = self.node(i) else { break };
+            names.push(node.name.as_str());
+            cur = node.parent;
+        }
+        let mut key = String::new();
+        for (n, name) in names.iter().rev().enumerate() {
+            if n > 0 {
+                key.push('\0');
+            }
+            key.push_str(&self.key(name));
+        }
+        key
+    }
+
+    /// The host path of node `idx` (its kept spelling).
+    fn node_path(&self, idx: usize) -> PathBuf {
+        let mut names = Vec::new();
+        let mut cur = Some(idx);
+        while let Some(i) = cur {
+            let Some(node) = self.node(i) else { break };
+            names.push(node.name.clone());
+            cur = node.parent;
+        }
+        let mut path = PathBuf::new();
+        for name in names.iter().rev() {
+            path.push(name);
+        }
+        path
+    }
+
+    /// The device of node `idx` (`set_device`; the longest matching prefix, else 0).
+    fn dev_of(&self, idx: usize) -> u64 {
+        if self.devices.is_empty() {
+            return 0;
+        }
+        let key = self.node_key(idx);
+        self.devices
+            .iter()
+            .filter(|(prefix, _)| {
+                key == *prefix
+                    || (key.starts_with(prefix.as_str())
+                        && key.as_bytes().get(prefix.len()) == Some(&0))
+            })
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map_or(0, |(_, dev)| *dev)
+    }
+
+    /// The first stream fault of `list` at `key`.
+    fn after_fault(list: &[(String, u64, ErrorKind)], key: &str) -> Option<(u64, ErrorKind)> {
+        list.iter()
+            .find(|(k, _, _)| k == key)
+            .map(|(_, bytes, kind)| (*bytes, *kind))
+    }
+
+    /// Records a successful mutating call.
+    fn record(&mut self, op: VfsOp, spec: &str) {
+        if let Some(journal) = &mut self.journal {
+            journal.push((op, spec.to_owned()));
+        }
+    }
+
+    /// Detaches node `idx` from its parent (the node stays in `nodes`, unreachable).
+    fn detach(&mut self, idx: usize) {
+        let Some(node) = self.node(idx) else { return };
+        let key = self.key(&node.name);
+        let Some(parent) = node.parent else { return };
+        if let Some(p) = self.nodes.get_mut(parent)
+            && p.children.get(&key) == Some(&idx)
+        {
+            p.children.remove(&key);
+        }
+        if let Some(node) = self.nodes.get_mut(idx) {
+            node.parent = None;
+        }
+    }
+
+    /// True when `idx` is `ancestor` or below it.
+    fn is_within(&self, mut idx: usize, ancestor: usize) -> bool {
+        loop {
+            if idx == ancestor {
+                return true;
+            }
+            match self.node(idx).and_then(|n| n.parent) {
+                Some(parent) => idx = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// The folder that holds the final component of `parsed` (followed) and that component's name: `NotFound` /
+    /// `NotADirectory` when the parent does not resolve to a folder, `None` for a root.
+    fn parent_of(&self, parsed: &Parsed) -> Result<Option<(usize, String)>, Miss> {
+        let Some((last, parents)) = parsed.comps.split_last() else {
+            return Ok(None);
+        };
+        let Comp::Name(name) = last else {
+            return Err(Miss::NotFound);
+        };
+        let root = self.root(&parsed.root)?;
+        let dir = self.walk(root, parents, true, &mut 0)?;
+        if !self.is_dir(dir) {
+            return Err(Miss::NotADirectory);
+        }
+        Ok(Some((dir, name.clone())))
+    }
+
+    /// The child of `dir` named `name` (not followed).
+    fn child_of(&self, dir: usize, name: &str) -> Option<usize> {
+        self.node(dir)
+            .and_then(|n| n.children.get(&self.key(name)).copied())
+    }
+}
+
 impl Shared {
     fn read(&self) -> RwLockReadGuard<'_, Tree> {
         // The tree is consistent after every completed mutation; a panic elsewhere cannot corrupt it.
@@ -674,6 +885,14 @@ fn insert_path(path: &str) -> Result<Parsed, VfsError> {
     parse_path(local.as_path()).ok_or_else(invalid)
 }
 
+/// The lexical fault key of `path` (`None` when it is not an absolute path).
+fn lexical_key(tree: &Tree, path: &str) -> Option<String> {
+    LocalPath::new(PathBuf::from(path))
+        .ok()
+        .and_then(|p| parse_path(p.as_path()))
+        .map(|p| tree.path_key(&p))
+}
+
 impl MemoryVfs {
     /// Empty file system with the given name case sensitivity.
     pub fn new(case: CaseSensitivity) -> MemoryVfs {
@@ -687,7 +906,15 @@ impl MemoryVfs {
             | Capabilities::UNIX_MODE
             | Capabilities::UNIX_OWNER
             | Capabilities::SYMLINKS
-            | Capabilities::CRC_PROVIDED;
+            | Capabilities::CRC_PROVIDED
+            | Capabilities::SET_TIMES
+            | Capabilities::MKDIR
+            | Capabilities::REMOVE
+            | Capabilities::RENAME
+            | Capabilities::SET_ATTRS
+            | Capabilities::TRASH
+            | Capabilities::CREATE_SYMLINKS
+            | Capabilities::SET_CREATED;
         caps.set(
             Capabilities::CASE_SENSITIVE,
             case == CaseSensitivity::Sensitive,
@@ -702,6 +929,11 @@ impl MemoryVfs {
                     nodes: Vec::new(),
                     faults: Vec::new(),
                     kind_unknown: BTreeSet::new(),
+                    read_errors: Vec::new(),
+                    write_errors: Vec::new(),
+                    devices: Vec::new(),
+                    journal: None,
+                    trashed: Vec::new(),
                 }),
                 stat_calls: AtomicU64::new(0),
             }),
@@ -743,9 +975,10 @@ impl MemoryVfs {
         self.shared.write().order = order;
     }
 
-    /// Replaces the capabilities reported for every local spec. The default is read, write, list, seek,
-    /// mtime, ctime, DOS attributes, Unix mode and owner, symlinks, CRC provided, plus case-sensitive when
-    /// the file system is.
+    /// Replaces the capabilities reported for every local spec. The default is every capability (all 21 bits:
+    /// read, write, list, seek, mtime, ctime, DOS attributes, Unix mode and owner, symlinks, CRC provided, the
+    /// seven mutation bits of M2 W3 and set times), case-sensitive only when the file system is. A mutating
+    /// primitive whose bit is removed returns `OperationUnsupported`.
     pub fn set_capabilities(&self, caps: Capabilities) {
         self.shared.write().caps = caps;
     }
@@ -788,6 +1021,104 @@ impl MemoryVfs {
             NodeKind::File(content) => Some(Arc::clone(content)),
             NodeKind::Dir | NodeKind::Symlink(_) => None,
         }
+    }
+
+    /// `open_read(path)` succeeds; its reads return the first `bytes` bytes, then fail with `kind` (M2 W3).
+    pub fn inject_read_error_after(&self, path: &str, bytes: u64, kind: ErrorKind) {
+        let mut tree = self.shared.write();
+        if let Some(key) = lexical_key(&tree, path) {
+            tree.read_errors.push((key, bytes, kind));
+        }
+    }
+
+    /// `open_write(path)` succeeds; its `write` fails with `kind` once `bytes` bytes were accepted (the caller
+    /// then drops the writer: nothing becomes visible; M2 W3).
+    pub fn inject_write_error_after(&self, path: &str, bytes: u64, kind: ErrorKind) {
+        let mut tree = self.shared.write();
+        if let Some(key) = lexical_key(&tree, path) {
+            tree.write_errors.push((key, bytes, kind));
+        }
+    }
+
+    /// Items at and below `prefix` report `FileId { dev, .. }`; `rename` between different devices is
+    /// `CrossDevice` (M2 W3). The longest matching prefix wins; everything else is device 0.
+    pub fn set_device(&self, prefix: &str, dev: u64) {
+        let mut tree = self.shared.write();
+        if let Some(key) = lexical_key(&tree, prefix) {
+            tree.devices.retain(|(k, _)| *k != key);
+            tree.devices.push((key, dev));
+        }
+    }
+
+    /// Starts (`true`, clearing it) or stops (`false`) the journal of mutating calls (M2 W3).
+    pub fn set_journal(&self, on: bool) {
+        self.shared.write().journal = on.then(Vec::new);
+    }
+
+    /// Every successful mutating call since `set_journal(true)`, in order: the primitive and the canonical spec
+    /// (`rename`: the `from` spec; a committed write: `Commit` and the target spec).
+    pub fn journal(&self) -> Vec<(VfsOp, String)> {
+        self.shared.read().journal.clone().unwrap_or_default()
+    }
+
+    /// The original paths moved to the trash, in order (the items left the tree).
+    pub fn trashed(&self) -> Vec<String> {
+        self.shared.read().trashed.clone()
+    }
+
+    /// A deterministic snapshot of the reachable tree, sorted by path: kind, length and CRC-32 of the content,
+    /// times, attributes and link targets.
+    pub fn dump(&self) -> Vec<MemDump> {
+        let tree = self.shared.read();
+        let mut out = Vec::new();
+        let mut pending: Vec<usize> = tree.roots.values().copied().collect();
+        while let Some(idx) = pending.pop() {
+            let Some(node) = tree.node(idx) else { continue };
+            pending.extend(node.children.values().copied());
+            let (kind, len, crc32, link_target) = match &node.kind {
+                NodeKind::Dir => (EntryKind::Dir, 0, None, None),
+                NodeKind::File(content) => (
+                    EntryKind::File,
+                    content.len() as u64,
+                    Some(crc32fast::hash(content)),
+                    None,
+                ),
+                NodeKind::Symlink(target) => (
+                    EntryKind::Symlink,
+                    target.len() as u64,
+                    None,
+                    Some(target.clone()),
+                ),
+            };
+            out.push(MemDump {
+                path: tree.node_path(idx).to_string_lossy().into_owned(),
+                kind,
+                len,
+                crc32,
+                mtime: node.meta.mtime,
+                ctime: node.meta.ctime,
+                attrs: node.meta.attrs.unwrap_or(Attrs::None),
+                link_target,
+            });
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        out
+    }
+
+    /// The parsed path and canonical text of a mutation's spec; `OperationUnsupported` when `cap` was removed.
+    fn mutation(
+        &self,
+        spec: &Spec,
+        op: VfsOp,
+        cap: Capabilities,
+    ) -> Result<(Parsed, String), VfsError> {
+        let path = local(spec)?;
+        if !self.shared.read().caps.contains(cap) {
+            return Err(op_unsupported(spec, op));
+        }
+        let spec_text = spec.canonical();
+        let parsed = parsed(path, &spec_text)?;
+        Ok((parsed, spec_text))
     }
 
     /// Number of metadata reads so far: `stat` calls plus the per-entry reads of `list` (entries the
@@ -955,6 +1286,13 @@ impl Vfs for MemoryVfs {
         if let Some(kind) = tree.fault(&parsed, VfsOp::Read) {
             return Ok(Box::new(FaultReader { kind }));
         }
+        if let Some((bytes, kind)) = Tree::after_fault(&tree.read_errors, &tree.path_key(&parsed)) {
+            return Ok(Box::new(LimitedReader {
+                inner: Cursor::new(content),
+                limit: bytes,
+                kind,
+            }));
+        }
         Ok(Box::new(Cursor::new(content)))
     }
 
@@ -986,6 +1324,7 @@ impl Vfs for MemoryVfs {
             Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
         };
         let key = tree.key(&name);
+        let (mut write_parent, mut write_name) = (parent, name);
         if let Some(existing) = tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
             if tree.is_dir(existing) {
                 return Err(VfsError::IsADirectory { spec: spec_text });
@@ -993,15 +1332,48 @@ impl Vfs for MemoryVfs {
             if !opts.overwrite {
                 return Err(VfsError::AlreadyExists { spec: spec_text });
             }
+            // Without `replace_link` a link is followed: the file it points to is replaced (M1 save semantics).
+            let is_link = matches!(
+                tree.node(existing).map(|n| &n.kind),
+                Some(NodeKind::Symlink(_))
+            );
+            if is_link && !opts.replace_link {
+                match tree.follow_link(existing) {
+                    Ok(resolved) => {
+                        if tree.is_dir(resolved) {
+                            return Err(VfsError::IsADirectory { spec: spec_text });
+                        }
+                        let resolved_path = tree.node_path(resolved);
+                        if let (Some(dir_path), Some(file_name)) =
+                            (resolved_path.parent(), resolved_path.file_name())
+                            && let Some(dir_parsed) = parse_path(dir_path)
+                        {
+                            write_parent = dir_parsed;
+                            write_name = file_name.to_string_lossy().into_owned();
+                        }
+                    }
+                    // A dangling link: the file it names is created (as `LocalVfs`), the link stays.
+                    Err(Miss::NotFound) => match tree.dangling_end(existing) {
+                        Ok((dir, name)) => {
+                            write_parent = dir;
+                            write_name = name;
+                        }
+                        Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
+                    },
+                    Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
+                }
+            }
         }
+        let fail_after = Tree::after_fault(&tree.write_errors, &tree.path_key(&target));
         Ok(Box::new(MemWriter {
             shared: Arc::clone(&self.shared),
             target,
-            parent,
-            name,
+            parent: write_parent,
+            name: write_name,
             spec: spec_text,
             overwrite: opts.overwrite,
             buf: Vec::new(),
+            fail_after,
         }))
     }
 
@@ -1012,6 +1384,276 @@ impl Vfs for MemoryVfs {
             .map_err(|_| VfsError::InvalidName {
                 name: name.as_str().to_owned(),
             })
+    }
+
+    fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
+        let (parsed, spec_text) = self.mutation(spec, VfsOp::Mkdir, Capabilities::MKDIR)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&parsed, VfsOp::Mkdir) {
+            return Err(fault_error(&spec_text, VfsOp::Mkdir, kind));
+        }
+        let miss = |miss: Miss| miss_error(miss, spec_text.clone(), VfsOp::Mkdir);
+        if parents {
+            match tree.resolve(&parsed, true) {
+                Ok(idx) if tree.is_dir(idx) => return Ok(false),
+                Ok(_) => return Err(VfsError::NotADirectory { spec: spec_text }),
+                Err(Miss::NotFound) => {}
+                Err(other) => return Err(miss(other)),
+            }
+            let root = tree.root_or_create(&parsed.root);
+            // `make_dirs` meets a missing item only through a broken link (missing folders are created): an
+            // existing non-folder, like a file at `spec` or an ancestor.
+            tree.make_dirs(root, &parsed.comps).map_err(|m| match m {
+                Miss::NotFound => VfsError::NotADirectory {
+                    spec: spec_text.clone(),
+                },
+                other => miss(other),
+            })?;
+            tree.record(VfsOp::Mkdir, &spec_text);
+            return Ok(true);
+        }
+        let Some((dir, name)) = tree.parent_of(&parsed).map_err(miss)? else {
+            return match tree.root(&parsed.root) {
+                Ok(_) => Err(VfsError::AlreadyExists { spec: spec_text }),
+                Err(_) => {
+                    tree.root_or_create(&parsed.root);
+                    tree.record(VfsOp::Mkdir, &spec_text);
+                    Ok(true)
+                }
+            };
+        };
+        if tree.child_of(dir, &name).is_some() {
+            return Err(VfsError::AlreadyExists { spec: spec_text });
+        }
+        tree.push_node(&name, Some(dir), NodeKind::Dir, MemMeta::default());
+        tree.record(VfsOp::Mkdir, &spec_text);
+        Ok(true)
+    }
+
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        let (parsed, spec_text) = self.mutation(spec, VfsOp::Remove, Capabilities::REMOVE)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&parsed, VfsOp::Remove) {
+            return Err(fault_error(&spec_text, VfsOp::Remove, kind));
+        }
+        let idx = tree
+            .resolve(&parsed, false)
+            .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::Remove))?;
+        let Some(node) = tree.node(idx) else {
+            return Err(VfsError::NotFound { spec: spec_text });
+        };
+        if node.parent.is_none() {
+            return Err(VfsError::InvalidTarget {
+                spec: spec_text,
+                reason: "is a root folder",
+            });
+        }
+        if matches!(node.kind, NodeKind::Dir) && !node.children.is_empty() {
+            return Err(VfsError::NotEmpty { spec: spec_text });
+        }
+        tree.detach(idx);
+        tree.record(VfsOp::Remove, &spec_text);
+        Ok(())
+    }
+
+    fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
+        let (from_parsed, from_text) = self.mutation(from, VfsOp::Rename, Capabilities::RENAME)?;
+        let to_path = local(to)?;
+        let to_text = to.canonical();
+        let to_parsed = parsed(to_path, &to_text)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&from_parsed, VfsOp::Rename) {
+            return Err(fault_error(&from_text, VfsOp::Rename, kind));
+        }
+        let idx = tree
+            .resolve(&from_parsed, false)
+            .map_err(|miss| miss_error(miss, from_text.clone(), VfsOp::Rename))?;
+        if tree.node(idx).is_none_or(|n| n.parent.is_none()) {
+            return Err(VfsError::InvalidTarget {
+                spec: from_text,
+                reason: "is a root folder",
+            });
+        }
+        let Some((dir, name)) = tree
+            .parent_of(&to_parsed)
+            .map_err(|miss| miss_error(miss, to_text.clone(), VfsOp::Rename))?
+        else {
+            return Err(VfsError::AlreadyExists { spec: to_text });
+        };
+        if tree.dev_of(idx) != tree.dev_of(dir) {
+            return Err(VfsError::CrossDevice {
+                from: from_text,
+                to: to_text,
+            });
+        }
+        let from_is_dir = tree.is_dir(idx);
+        if from_is_dir && tree.is_within(dir, idx) {
+            return Err(VfsError::from_io(
+                from_text,
+                VfsOp::Rename,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "cannot move a folder into itself",
+                ),
+            ));
+        }
+        match tree.child_of(dir, &name) {
+            Some(existing) if existing == idx => {}
+            Some(existing) => {
+                if !replace {
+                    return Err(VfsError::AlreadyExists { spec: to_text });
+                }
+                let existing_is_dir = tree.is_dir(existing);
+                match (from_is_dir, existing_is_dir) {
+                    (true, false) => return Err(VfsError::NotADirectory { spec: to_text }),
+                    (false, true) => return Err(VfsError::IsADirectory { spec: to_text }),
+                    (true, true) if tree.node(existing).is_some_and(|n| !n.children.is_empty()) => {
+                        return Err(VfsError::NotEmpty { spec: to_text });
+                    }
+                    _ => {}
+                }
+                tree.detach(existing);
+            }
+            None => {}
+        }
+        tree.detach(idx);
+        let key = tree.key(&name);
+        if let Some(node) = tree.nodes.get_mut(idx) {
+            node.name = name;
+            node.parent = Some(dir);
+        }
+        if let Some(parent) = tree.nodes.get_mut(dir) {
+            parent.children.insert(key, idx);
+        }
+        tree.record(VfsOp::Rename, &from_text);
+        Ok(())
+    }
+
+    fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
+        let (parsed, spec_text) = self.mutation(spec, VfsOp::SetTimes, Capabilities::SET_TIMES)?;
+        let mut tree = self.shared.write();
+        if times.created.is_some() && !tree.caps.contains(Capabilities::SET_CREATED) {
+            return Err(op_unsupported(spec, VfsOp::SetTimes));
+        }
+        if let Some(kind) = tree.fault(&parsed, VfsOp::SetTimes) {
+            return Err(fault_error(&spec_text, VfsOp::SetTimes, kind));
+        }
+        let idx = tree
+            .resolve(&parsed, false)
+            .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::SetTimes))?;
+        if let Some(node) = tree.nodes.get_mut(idx) {
+            if let Some(modified) = times.modified {
+                node.meta.mtime = Some(modified);
+            }
+            if let Some(created) = times.created {
+                node.meta.ctime = Some(created);
+            }
+        }
+        tree.record(VfsOp::SetTimes, &spec_text);
+        Ok(())
+    }
+
+    fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
+        let (parsed, spec_text) = self.mutation(spec, VfsOp::SetAttrs, Capabilities::SET_ATTRS)?;
+        change.validate()?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&parsed, VfsOp::SetAttrs) {
+            return Err(fault_error(&spec_text, VfsOp::SetAttrs, kind));
+        }
+        let idx = tree
+            .resolve(&parsed, false)
+            .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::SetAttrs))?;
+        let caps = tree.caps;
+        let Some(node) = tree.nodes.get_mut(idx) else {
+            return Err(VfsError::NotFound { spec: spec_text });
+        };
+        if matches!(node.kind, NodeKind::Symlink(_)) {
+            return Err(op_unsupported(spec, VfsOp::SetAttrs));
+        }
+        let current = node.meta.attrs.unwrap_or(Attrs::None);
+        let new = match (*change, current) {
+            (AttrChange::Mode(mode), Attrs::Unix { meta }) => Attrs::Unix {
+                meta: UnixMeta {
+                    mode: mode & 0o7777,
+                    ..meta
+                },
+            },
+            (AttrChange::Mode(mode), Attrs::None) if caps.contains(Capabilities::UNIX_MODE) => {
+                Attrs::Unix {
+                    meta: UnixMeta {
+                        mode: mode & 0o7777,
+                        uid: 0,
+                        gid: 0,
+                    },
+                }
+            }
+            (AttrChange::Dos { set, clear }, Attrs::Dos { attrs }) => Attrs::Dos {
+                attrs: (attrs | set).difference(clear),
+            },
+            (AttrChange::Dos { set, .. }, Attrs::None)
+                if caps.contains(Capabilities::DOS_ATTRS) =>
+            {
+                Attrs::Dos { attrs: set }
+            }
+            _ => return Err(op_unsupported(spec, VfsOp::SetAttrs)),
+        };
+        node.meta.attrs = Some(new);
+        tree.record(VfsOp::SetAttrs, &spec_text);
+        Ok(())
+    }
+
+    fn create_symlink(
+        &self,
+        spec: &Spec,
+        target: &OsStr,
+        _target_is_dir: bool,
+    ) -> Result<(), VfsError> {
+        let (parsed, spec_text) =
+            self.mutation(spec, VfsOp::Symlink, Capabilities::CREATE_SYMLINKS)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&parsed, VfsOp::Symlink) {
+            return Err(fault_error(&spec_text, VfsOp::Symlink, kind));
+        }
+        let Some((dir, name)) = tree
+            .parent_of(&parsed)
+            .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::Symlink))?
+        else {
+            return Err(VfsError::AlreadyExists { spec: spec_text });
+        };
+        if tree.child_of(dir, &name).is_some() {
+            return Err(VfsError::AlreadyExists { spec: spec_text });
+        }
+        let target = target.to_string_lossy().into_owned();
+        tree.push_node(
+            &name,
+            Some(dir),
+            NodeKind::Symlink(target),
+            MemMeta::default(),
+        );
+        tree.record(VfsOp::Symlink, &spec_text);
+        Ok(())
+    }
+
+    fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
+        let (parsed, spec_text) = self.mutation(spec, VfsOp::Trash, Capabilities::TRASH)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&parsed, VfsOp::Trash) {
+            return Err(fault_error(&spec_text, VfsOp::Trash, kind));
+        }
+        let idx = tree
+            .resolve(&parsed, false)
+            .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::Trash))?;
+        if tree.node(idx).is_none_or(|n| n.parent.is_none()) {
+            return Err(VfsError::InvalidTarget {
+                spec: spec_text,
+                reason: "is a root folder",
+            });
+        }
+        let path = tree.node_path(idx).to_string_lossy().into_owned();
+        tree.detach(idx);
+        tree.trashed.push(path);
+        tree.record(VfsOp::Trash, &spec_text);
+        Ok(())
     }
 }
 
@@ -1033,6 +1675,32 @@ impl Seek for FaultReader {
     }
 }
 
+/// A reader that returns the first `limit` bytes of `inner`, then fails with `kind`.
+#[derive(Debug)]
+struct LimitedReader {
+    inner: Cursor<Arc<[u8]>>,
+    limit: u64,
+    kind: ErrorKind,
+}
+
+impl Read for LimitedReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let room = self.limit.saturating_sub(self.inner.position());
+        if room == 0 && !buf.is_empty() {
+            return Err(fault_io(self.kind));
+        }
+        let take = buf.len().min(usize::try_from(room).unwrap_or(usize::MAX));
+        let slice = buf.get_mut(..take).unwrap_or_default();
+        self.inner.read(slice)
+    }
+}
+
+impl Seek for LimitedReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 /// The atomic writer of `MemoryVfs`: the content is buffered and inserted by `commit`.
 struct MemWriter {
     shared: Arc<Shared>,
@@ -1042,12 +1710,24 @@ struct MemWriter {
     spec: String,
     overwrite: bool,
     buf: Vec<u8>,
+    /// `inject_write_error_after`: the bytes accepted before writes fail, and the kind.
+    fail_after: Option<(u64, ErrorKind)>,
 }
 
 impl Write for MemWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buf.extend_from_slice(buf);
-        Ok(buf.len())
+        let take = match self.fail_after {
+            Some((limit, kind)) => {
+                let room = limit.saturating_sub(self.buf.len() as u64);
+                if room == 0 && !buf.is_empty() {
+                    return Err(fault_io(kind));
+                }
+                buf.len().min(usize::try_from(room).unwrap_or(usize::MAX))
+            }
+            None => buf.len(),
+        };
+        self.buf.extend_from_slice(buf.get(..take).unwrap_or(buf));
+        Ok(take)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -1081,6 +1761,7 @@ impl AtomicWrite for MemWriter {
                     node.meta.crc32 = None;
                     node.name = writer.name;
                 }
+                tree.record(VfsOp::Commit, &writer.spec);
                 Ok(())
             }
             None => {
@@ -1090,6 +1771,7 @@ impl AtomicWrite for MemWriter {
                     NodeKind::File(content),
                     MemMeta::default(),
                 );
+                tree.record(VfsOp::Commit, &writer.spec);
                 Ok(())
             }
         }

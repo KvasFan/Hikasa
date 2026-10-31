@@ -1,0 +1,31 @@
+{
+  "schema": "hikasa.settings_restore.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": false,
+    "files": [
+      {
+        "file": "sessions",
+        "path": "<TMP>/cfg/sessions/_defaults/folder-compare.toml",
+        "existed": true,
+        "deleted": true
+      },
+      {
+        "file": "sessions",
+        "path": "<TMP>/cfg/sessions/mine.toml",
+        "existed": true,
+        "deleted": true
+      },
+      {
+        "file": "sessions",
+        "path": "<TMP>/cfg/sessions/work/t.toml",
+        "existed": true,
+        "deleted": true
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

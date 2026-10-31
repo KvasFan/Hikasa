@@ -113,13 +113,17 @@ fn handshake_requests_and_views() {
         .call(Request::CloseView { view: ViewId(999) })
         .unwrap_err();
     assert!(matches!(unknown, IpcError::Protocol(_)), "{unknown:?}");
-    // M1 answers of the server itself (rule 5).
+    // `RunScript` is answered by the server itself (rule 5); `LoadSession`/`LoadWorkspace` reach the handler
+    // (D-89), and this fake answers like an M1 GUI.
     for request in [
         Request::LoadSession {
             name: "s".into(),
             wait: false,
         },
         Request::LoadWorkspace { name: "w".into() },
+        Request::ImportPackage {
+            path: "/p.hikasa-pkg".into(),
+        },
         Request::RunScript {
             path: "/x".into(),
             args: vec![],
@@ -156,12 +160,16 @@ fn handshake_requests_and_views() {
     assert_eq!(client.call(Request::Shutdown).unwrap().1, Response::Ok);
     drop(client);
     server.shutdown().unwrap();
-    // Unknown and unsupported requests never reached the handler.
+    // Unknown requests, `RunScript` and a second `Hello` never reached the handler; `LoadSession` did (D-89).
     let seen = gui.requests.lock();
     assert!(seen.iter().all(|r| !matches!(
         r,
-        Request::LoadSession { .. } | Request::Unknown | Request::Hello { .. }
+        Request::RunScript { .. } | Request::Unknown | Request::Hello { .. }
     )));
+    assert!(
+        seen.iter()
+            .any(|r| matches!(r, Request::LoadSession { .. }))
+    );
 }
 
 #[test]

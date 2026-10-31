@@ -518,6 +518,7 @@ fn atomic_writes() {
     let create = WriteOptions {
         create_parents: true,
         overwrite: false,
+        replace_link: false,
     };
     let mut w = vfs.open_write(&target, &create).unwrap();
     w.write_all(b"hello ").unwrap();
@@ -572,6 +573,7 @@ fn atomic_writes() {
     let overwrite = WriteOptions {
         create_parents: false,
         overwrite: true,
+        replace_link: false,
     };
     let mut w = vfs.open_write(&mspec("/out/keep.txt"), &overwrite).unwrap();
     w.write_all(b"new!").unwrap();
@@ -706,6 +708,7 @@ fn fault_injection_matrix() {
                     let opts = WriteOptions {
                         create_parents: false,
                         overwrite: true,
+                        replace_link: false,
                     };
                     let err = vfs.open_write(&mspec(file), &opts).map(|_| ()).unwrap_err();
                     assert_eq!(err.kind(), want, "{context}");
@@ -714,6 +717,7 @@ fn fault_injection_matrix() {
                     let opts = WriteOptions {
                         create_parents: false,
                         overwrite: true,
+                        replace_link: false,
                     };
                     let mut w = vfs.open_write(&mspec(file), &opts).unwrap();
                     w.write_all(b"new").unwrap();
@@ -725,6 +729,45 @@ fn fault_injection_matrix() {
                         "nothing written ({context})"
                     );
                 }
+                VfsOp::Mkdir => {
+                    let err = vfs.create_dir(&mspec(file), false).unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::Remove => {
+                    let err = vfs.remove(&mspec(file)).unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::Rename => {
+                    let err = vfs
+                        .rename(&mspec(file), &mspec("/data/g.txt"), false)
+                        .unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::SetTimes => {
+                    let times = hikasa_vfs::SetTimes {
+                        modified: t(5),
+                        created: None,
+                    };
+                    let err = vfs.set_times(&mspec(file), &times).unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::SetAttrs => {
+                    let err = vfs
+                        .set_attrs(&mspec(file), &hikasa_vfs::AttrChange::Mode(0o600))
+                        .unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::Symlink => {
+                    let err = vfs
+                        .create_symlink(&mspec(file), std::ffi::OsStr::new("x"), false)
+                        .unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                }
+                VfsOp::Trash => {
+                    let err = vfs.move_to_trash(&mspec(file)).unwrap_err();
+                    assert_eq!(err.kind(), want, "{context}");
+                    assert!(vfs.trashed().is_empty(), "{context}");
+                }
                 VfsOp::Map => {
                     // MemoryVfs never maps: the fault has no effect anywhere.
                     assert_eq!(vfs.stat(&mspec(file), FollowLinks::No).unwrap().size, 7);
@@ -733,6 +776,17 @@ fn fault_injection_matrix() {
                         b"content"
                     );
                 }
+            }
+            if !matches!(
+                op,
+                VfsOp::Stat | VfsOp::List | VfsOp::Open | VfsOp::Read | VfsOp::Map
+            ) {
+                // A failed primitive or write changes nothing.
+                assert_eq!(
+                    vfs.read_back(&host(file)).as_deref(),
+                    Some(&b"content"[..]),
+                    "{context}"
+                );
             }
             // Dedicated variants for the file-system kinds, `Cancelled` for cancellation.
             if op == VfsOp::Open {

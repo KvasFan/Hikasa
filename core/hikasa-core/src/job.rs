@@ -36,6 +36,8 @@ pub enum JobKind {
     VfsList,
     /// `vfs cat` / `vfs stat`.
     VfsRead,
+    /// `vfs cp|mv|rm|mkdir|touch` and their dry runs (M2 W3; additive).
+    VfsWrite,
 }
 
 impl JobKind {
@@ -49,6 +51,7 @@ impl JobKind {
             JobKind::FormatTokens => "format_tokens",
             JobKind::VfsList => "vfs_list",
             JobKind::VfsRead => "vfs_read",
+            JobKind::VfsWrite => "vfs_write",
         }
     }
 }

@@ -1,0 +1,2 @@
+delete <TMP>/cfg/formats/python.toml
+absent <TMP>/cfg/formats/c-cpp.toml

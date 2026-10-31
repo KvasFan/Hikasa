@@ -1,0 +1,2 @@
+wrote <TMP>/cfg/formats/notes.toml
+wrote <TMP>/cfg/formats/order.toml

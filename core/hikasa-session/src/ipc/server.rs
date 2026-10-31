@@ -61,10 +61,12 @@ pub trait IpcHandler: Send + Sync + 'static {
     /// later calls `ViewWaiter::view_closed`. The return value is the immediate response. Must not block: the
     /// GUI posts to its event loop and returns.
     ///
-    /// In M1 the server also answers `Hello` after the handshake (protocol error), `LoadSession`,
-    /// `LoadWorkspace` and `RunScript` (`unsupported_request`) and `OpenView` of a kind other than
-    /// `folder_compare`/`text_compare` (`unsupported_view`) itself (§4.4.3 rule 5). A handler panic is answered
-    /// with `Error{internal}`.
+    /// The server also answers `Hello` after the handshake (protocol error), `RunScript`
+    /// (`unsupported_request`) and `OpenView` of a kind other than
+    /// `folder_compare`/`text_compare` (`unsupported_view`) itself (§4.4.3 rule 5). `LoadSession` and
+    /// `LoadWorkspace` reach the handler (M2 W2, D-89: `ViewOpened` / `Views`, `Error{not_found}` for an unknown
+    /// name, `Error{unsupported_request}` from a handler that does not serve them); `LoadSession { wait: true }`
+    /// gets a waiter like `OpenView`. A handler panic is answered with `Error{internal}`.
     fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response;
 }
 
@@ -810,9 +812,7 @@ fn dispatch(
             IpcErrorCode::Protocol,
             "the handshake was already done on this connection",
         ),
-        request @ (Request::LoadSession { .. }
-        | Request::LoadWorkspace { .. }
-        | Request::RunScript { .. }) => Response::error(
+        request @ Request::RunScript { .. } => Response::error(
             IpcErrorCode::UnsupportedRequest,
             format!("`{}` is not supported in this version", request.type_name()),
         ),
@@ -823,7 +823,8 @@ fn dispatch(
                 kind.as_str()
             ),
         ),
-        request @ Request::OpenView { wait: true, .. } => {
+        request @ (Request::OpenView { wait: true, .. }
+        | Request::LoadSession { wait: true, .. }) => {
             let shared = Arc::new(Gate {
                 id,
                 state: Mutex::new(GateState::Pending(None)),
@@ -839,6 +840,9 @@ fn dispatch(
             call_handler(handler, request, Some(waiter))
         }
         request @ (Request::OpenView { .. }
+        | Request::LoadSession { .. }
+        | Request::LoadWorkspace { .. }
+        | Request::ImportPackage { .. }
         | Request::ListViews
         | Request::CloseView { .. }
         | Request::Ping

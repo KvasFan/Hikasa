@@ -218,6 +218,7 @@ fn atomic_writes() {
     let replace = WriteOptions {
         create_parents: false,
         overwrite: true,
+        replace_link: false,
     };
     let mut w = vfs.open_write(&spec, &replace).unwrap();
     w.write_all(b"final").unwrap();
@@ -249,6 +250,7 @@ fn atomic_writes() {
             &WriteOptions {
                 create_parents: true,
                 overwrite: false,
+                replace_link: false,
             },
         )
         .unwrap();
@@ -520,6 +522,7 @@ mod unix {
                 &WriteOptions {
                     create_parents: false,
                     overwrite: true,
+                    replace_link: false,
                 },
             )
             .unwrap();
@@ -532,6 +535,7 @@ mod unix {
     const REPLACE: WriteOptions = WriteOptions {
         create_parents: false,
         overwrite: true,
+        replace_link: false,
     };
 
     /// Writes `bytes` to `spec` with overwrite and commits.

@@ -9,12 +9,20 @@
       "seek",
       "mtime",
       "ctime",
+      "set_times",
       "dos_attrs",
       "unix_mode",
       "unix_owner",
       "symlinks",
       "crc_provided",
-      "case_sensitive"
+      "case_sensitive",
+      "mkdir",
+      "remove",
+      "rename",
+      "set_attrs",
+      "trash",
+      "create_symlinks",
+      "set_created"
     ]
   },
   "right": {
@@ -26,12 +34,20 @@
       "seek",
       "mtime",
       "ctime",
+      "set_times",
       "dos_attrs",
       "unix_mode",
       "unix_owner",
       "symlinks",
       "crc_provided",
-      "case_sensitive"
+      "case_sensitive",
+      "mkdir",
+      "remove",
+      "rename",
+      "set_attrs",
+      "trash",
+      "create_symlinks",
+      "set_created"
     ]
   },
   "rules": {

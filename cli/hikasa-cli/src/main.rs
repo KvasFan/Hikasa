@@ -30,9 +30,10 @@ use hikasa_core::ExitCode;
 use hikasa_formats::StdProcessRunner;
 use hikasa_session::api::dto::JsonEnvelope;
 use hikasa_session::api::{OpenArgs, normalize_legacy_args, open_usage, parse_open_args};
+use hikasa_session::settings::LoadMode;
 use hikasa_session::{
     ApiError, ApiOp, EnvFacts, Platform, Service, ServiceInit, StdinSource, SystemClock,
-    capture_env, run_guarded,
+    capture_env, clipboard_provider, run_guarded,
 };
 use hikasa_vfs::{VfsError, VfsOp};
 
@@ -161,6 +162,8 @@ fn execute(
     let code = match cmd::run_without_service(out, command) {
         Some(code) => code,
         None => {
+            // The clipboard is read only when a `clipboard://` spec is parsed (D-100).
+            let clipboard = clipboard_provider(&env);
             let init = ServiceInit {
                 env,
                 config_dir: globals.config_dir.clone(),
@@ -168,6 +171,13 @@ fn execute(
                 stdin: Some(StdinSource::new(stdin_name, read_stdin)),
                 clock: Arc::new(SystemClock),
                 runner: Arc::new(StdProcessRunner),
+                // The settings commands read `options.toml` leniently so that `settings set` can repair it (D-71).
+                options_mode: if matches!(command, Command::Settings { .. }) {
+                    LoadMode::Lenient
+                } else {
+                    LoadMode::Strict
+                },
+                clipboard,
             };
             match Service::new(init) {
                 Ok(service) => {
@@ -363,8 +373,12 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }
+        | Command::Settings { .. }
+        | Command::Session { .. }
+        | Command::Workspace { .. }
         | Command::Completions { .. }
-        | Command::Version => None,
+        | Command::Version
+        | Command::Help(_) => None,
     }
 }
 

@@ -1,0 +1,19 @@
+{
+  "schema": "hikasa.gui_open.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "view": 8,
+    "waited": false,
+    "result": null,
+    "view_exit_code": null,
+    "spooled_stdin": null,
+    "views": [
+      8,
+      9
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

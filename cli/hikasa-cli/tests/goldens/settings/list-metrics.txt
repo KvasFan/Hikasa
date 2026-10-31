@@ -1,0 +1,5 @@
+options.tweaks.metrics.hint_hide_ms = 5000
+options.tweaks.metrics.hint_show_ms = 500
+options.tweaks.metrics.incremental_search_reset_ms = 1000
+options.tweaks.metrics.max_auto_saved_sessions = 200
+options.tweaks.metrics.max_mru_items = 20

@@ -218,7 +218,7 @@ fn version_goldens() {
     let doc = s.cmd().args(["version", "--json"]).output().unwrap();
     assert_eq!(
         json(&doc)["result"]["schemas"].as_array().unwrap().len(),
-        18
+        hikasa_session::api::dto::SCHEMAS.len()
     );
     assert_golden("global/version.json", &s.normalise(&stdout(&doc)));
 }

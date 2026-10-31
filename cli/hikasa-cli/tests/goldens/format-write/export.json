@@ -1,0 +1,13 @@
+{
+  "schema": "hikasa.format_export.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "id": "notes",
+    "path": "<TMP>/exported.toml",
+    "toml": "schema_version = 1\nid = \"notes\"\nname = \"From a file\"\ndescription = \"\"\nkind = \"text\"\nmask = \"\"\n\n[conversion]\nmethod = \"none\"\n\n[encoding]\nmode = \"auto\"\n\n[text]\ntab_size = 4\ntab_as_spaces = false\nlines_independent = false\ncolumn_based = false\nctrl_z_eof = false\nsave_trim_trailing_ws = false\nsave_leading_spaces_to_tabs = false\nword_chars = \"\"\n"
+  },
+  "warnings": [],
+  "error": null
+}

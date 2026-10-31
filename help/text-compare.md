@@ -1,0 +1,27 @@
+# hikasa text compare
+
+`hikasa text compare <left> <right>` compares two text files and prints a report. The default report is a
+unified diff with importance markers and three lines of context; the [exit code](topic:exit-codes) is the
+verdict.
+
+## Rules
+
+- `--format <id|name>` forces a file format ([hikasa format](topic:format)); `--encoding`, `--left-encoding`,
+  `--right-encoding` force encodings.
+- `--rules-file <toml>` (`--rules`) loads text rules; `--unimportant`, `--unimportant-text`,
+  `--unimportant-regex`, `--compare-line-endings` and `--orphans-unimportant` adjust them.
+- `--algorithm auto|unaligned|standard|myers|patience|histogram`, `--skew <n>`, `--closeness`,
+  `--no-closeness`, `--closeness-threshold <‰>`, `--never-align` tune the alignment.
+- `--ignore-unimportant` (`--iu`) treats unimportant differences as same.
+
+## Reports
+
+- `--display all|mismatches|context|matches` and `--context <n>` choose the lines shown.
+- `--report unified|side-by-side|summary|patch|statistics`; `--patch-style normal|context|unified`.
+- `--html`, `--html-mono`, `--line-numbers`, `--width <n>`, `--wrap none|character|word`, `--title <text>`.
+- `--output <file>` writes the report atomically.
+
+## In the window
+
+`--gui` opens the comparison in the window instead ([hikasa gui](topic:gui)); `--wait` waits for the view to
+close and `--no-launch` never starts the window. See [The Text Compare view](topic:view-text-compare).

@@ -1,0 +1,6 @@
+delete <TMP>/cfg/sessions/mine.toml
+replace <TMP>/cfg/options.toml
+add <TMP>/cfg/sessions/_defaults/folder-compare.toml
+add <TMP>/cfg/sessions/work/t.toml
+options: 0 added, 1 replaced, 0 deleted
+sessions: 2 added, 0 replaced, 1 deleted

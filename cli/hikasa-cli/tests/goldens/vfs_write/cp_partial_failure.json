@@ -1,0 +1,49 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 100,
+  "result": {
+    "op": "copy",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/src/a.txt",
+        "target": "<TMP>/dst/a.txt",
+        "size": 6,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/other.txt",
+        "target": "<TMP>/dst/other.txt",
+        "size": null,
+        "replaces": false,
+        "status": "failed",
+        "reason": null,
+        "error": {
+          "kind": "already_exists",
+          "message": "<TMP>/dst/other.txt: already exists",
+          "spec": "<TMP>/dst/other.txt",
+          "causes": []
+        }
+      }
+    ],
+    "summary": {
+      "planned": 2,
+      "done": 1,
+      "skipped": 0,
+      "failed": 1,
+      "bytes": 6
+    }
+  },
+  "warnings": [],
+  "error": null
+}

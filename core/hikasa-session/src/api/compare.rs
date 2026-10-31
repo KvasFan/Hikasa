@@ -78,7 +78,8 @@ impl Service {
             ));
         }
         let ctl = job.ctl();
-        let vfs: &dyn Vfs = &**self.router();
+        let router = self.router();
+        let vfs: &dyn Vfs = &*router;
         let stream = self.stream_options();
         let (format, outcome) = match req.method {
             QuickMethod::Size => {
@@ -209,7 +210,12 @@ impl Service {
         let left = self.parse_spec(&req.left)?;
         let right = self.parse_spec(&req.right)?;
         let mut warnings = Vec::new();
-        let rules = self.text_rules(req.rules_file.as_deref(), &req.rules_patch, &mut warnings)?;
+        let rules = self.text_rules_from(
+            req.base_rules.as_ref(),
+            req.rules_file.as_deref(),
+            &req.rules_patch,
+            &mut warnings,
+        )?;
         let names = Pair::new(self.detection_name(&left), self.detection_name(&right));
         let chosen =
             self.choose_format(req.format.as_deref(), names.as_ref().map(Option::as_deref))?;
@@ -219,7 +225,8 @@ impl Service {
             self.load_options(req.encodings.right.as_deref())?,
         );
         let ctl = job.ctl();
-        let vfs: &dyn Vfs = &**self.router();
+        let router = self.router();
+        let vfs: &dyn Vfs = &*router;
         let external = Some(self.external());
         let format = &chosen.format;
         let (left_loaded, right_loaded) = self.pool().join(
@@ -321,7 +328,7 @@ impl Service {
                 warnings.append(&mut file_warnings);
                 rules
             }
-            None => FolderRules::default(),
+            None => req.base_rules.clone().unwrap_or_default(),
         };
         let mut ignore_unimportant = req.ignore_unimportant;
         if let Some(criteria) = req.criteria.as_deref() {
@@ -331,7 +338,12 @@ impl Service {
         }
         rules.apply(&req.patch).map_err(ApiError::from_folder)?;
         let text_rules = if rules.criteria.content.method == ContentMethod::Rules {
-            Some(self.text_rules(req.text_rules_file.as_deref(), &req.text_patch, warnings)?)
+            Some(self.text_rules_from(
+                req.base_text_rules.as_ref(),
+                req.text_rules_file.as_deref(),
+                &req.text_patch,
+                warnings,
+            )?)
         } else {
             if req.text_rules_file.is_some() || req.text_patch != TextRulesPatch::default() {
                 warnings.push(Warning {
@@ -380,7 +392,7 @@ impl Service {
         let rules_comparator = match &prepared.text_rules {
             Some(text_rules) => {
                 let comparator = RulesComparator::new(
-                    Arc::clone(self.registry()),
+                    self.registry(),
                     text_rules.clone(),
                     self.load_options(None)?,
                 )
@@ -394,8 +406,9 @@ impl Service {
         };
         let engines = ContentEngines::with_stream_options(stream, rules_comparator);
         let now = self.clock().now();
+        let router = self.router();
         let env = FolderEnv {
-            vfs: &**self.router(),
+            vfs: &*router,
             content: &engines,
             pool: Some(self.pool()),
             ctl: job.ctl(),
@@ -550,6 +563,17 @@ impl Service {
         patch: &TextRulesPatch,
         warnings: &mut Vec<Warning>,
     ) -> Result<TextRules, ApiError> {
+        self.text_rules_from(None, file, patch, warnings)
+    }
+
+    /// [`Service::text_rules`] with the rules a missing file means (`None`: the defaults; M2 W2).
+    pub(crate) fn text_rules_from(
+        &self,
+        base: Option<&TextRules>,
+        file: Option<&OsStr>,
+        patch: &TextRulesPatch,
+        warnings: &mut Vec<Warning>,
+    ) -> Result<TextRules, ApiError> {
         let mut rules = match file {
             Some(file) => {
                 let (spec, text) = self.read_text_file(file)?;
@@ -562,7 +586,7 @@ impl Service {
                 warnings.append(&mut file_warnings);
                 rules
             }
-            None => TextRules::default(),
+            None => base.cloned().unwrap_or_default(),
         };
         rules.apply(patch);
         rules

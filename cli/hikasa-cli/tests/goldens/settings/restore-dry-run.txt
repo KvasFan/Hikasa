@@ -1,0 +1,8 @@
+delete <TMP>/cfg/options.toml
+absent <TMP>/cfg/state.toml
+absent <TMP>/cfg/commands.toml
+absent <TMP>/cfg/theme.toml
+delete <TMP>/cfg/themes/mine.toml
+absent <TMP>/cfg/filters.toml
+absent <TMP>/cfg/openwith.toml
+absent <TMP>/cfg/archives.toml

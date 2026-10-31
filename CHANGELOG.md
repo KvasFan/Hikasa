@@ -1,5 +1,217 @@
 # Changelog
 
+## Unreleased (M2, branch `feat/m2`)
+
+M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
+`docs/design/m2-contracts.md`. Entries per wave, newest first.
+
+### Brand and packaging
+- **Brand:** a logo for light and dark backgrounds (`assets/brand/`), with generated icons; the window now shows it.
+- **Packages** (`packaging/`, local scripts, `packaging/README.md`): Linux `.tar.gz`, `.deb`, AppImage and an Arch
+  `PKGBUILD`, Windows portable zips and MSI installers for x64 and x86, with `SHA256SUMS` and smoke tests. Every package
+  carries `THIRD_PARTY_LICENSES.txt`, generated from the crates compiled into it. Desktop entry, AppStream metainfo and
+  the `application/x-hikasa-pkg` MIME type for `.hikasa-pkg` files.
+- **Windows:** `hikasa-gui.exe` is a windows-subsystem program in release builds and no longer opens a console;
+  external conversions started by the GUI do not open console windows either.
+
+### Wave 4c — Settings dialogs
+- **Options dialog** (OPT pages, D-128): Tools ▸ Options…: a searchable page tree (title, label, key path, OPT id),
+  every P0 key of `options.toml` on exactly one page, Archive Types, Open With and Name Filter Presets; live checks with
+  each file's schema, Apply / OK / Cancel; only changed files are written, sparsely, as `hikasa settings set` writes
+  them, keeping unknown and hidden keys. A file changed on disk meanwhile asks Overwrite / Reload / Cancel, and a notice
+  offers Reload or Keep my edits as soon as it is seen.
+- **Toolbars, Shortcuts, Menus** (UI-003, OPT-011, D-129): per view type: Menu and Toolbar check boxes, shortcuts by
+  capture (Add, Remove, Default), display filter mode, large buttons, show-all flags, Reset View; conflicts shown live,
+  never blocking; overrides of commands not implemented yet are kept. "Toolbar Options…" opens it from the toolbar's
+  right-click menu.
+- **Theme editor** (UI-020…023, FC-031, D-130): theme mode, the light and dark scheme, every element of `[folder]`,
+  `[file]` (syntax elements and the fallback cycle) and `[picture]`, the flags and the four fonts, with Reset, New, Clone,
+  Delete and Reset All; every change shows at once in every window, Cancel restores; contrast warnings below 4.5:1.
+- **Wizards** (SES-060…062, D-131): Export, Import (per-item actions, locked sessions, delete choices, a summary of the
+  exact choices) and Restore Factory Defaults, over the same calls as `hikasa settings`.
+- **Packages on the command line** (D-127): `hikasa-gui x.hikasa-pkg` and `hikasa gui open x.hikasa-pkg` show the import
+  wizard (new IPC request `ImportPackage`; forwarded to a running GUI; exit 0); `--silent` still imports without a window.
+- **Core:** `CommandOverrides::{set_shortcuts, set_in_menu, set_on_toolbar, view_mut, reset_view, prune_view}`,
+  `settings::form` (one key of a typed schema as a form field), scheme elements by name, `theme::selected_scheme`,
+  `State::{dialog_text, set_dialog_text}`, `Service::gui_import_package`. `ProgramOptions`, `Export`, `Import` and
+  `Restore` are implemented.
+- **Dialogs:** a drop while a dialog is open no longer reaches the view under it; text fields stand out from the
+  dialog's background.
+- **Review fixes.** `commands.toml`: a view or command id this build does not know, and the override of a planned
+  command with an unreadable shortcut, are kept in the file with a warning, in every load mode and through `settings
+  set` (they used to be errors or dropped). The Options dialog checks only the files it would write; OK closes only when
+  every file of the run succeeded; a failed read-back after the writes no longer reads as a failed save
+  (`SettingsSaveDto::reread_error`); resetting the last element of a built-in keeps a file with unknown keys; Esc leaves
+  open popups first and asks before discarding; Apply takes or refuses an open Open With item, whose shortcut is a capture
+  field. The Import wizard shows its package on every step and never ignores a second one; wizard paths must be
+  absolute. The OS close button and Exit wait for a running import, restore or Apply, and an exit nobody can refuse
+  waits for the write. `text_scroll` and `two_windows` report the median of three runs after idle frames.
+
+### Wave 4b — Sessions in the window
+- **Sessions of views** (SES-001…006, D-120, D-121): every comparison view has a session: Save, Save As, Locked,
+  close prompts ("Save changes to session?", "Save changes to locked session?") on every close path (tab, window,
+  exit, Go to Home, the Sessions drop-down, Load Workspace; Cancel stops them), auto-save on close, at exit and every
+  300 s while the view changes. `hikasa gui close` and `gui quit` never ask. A pair opened from a saved folder session
+  is its child (TC-052).
+- **Session Settings dialog** (SES-020…022, D-122): the Specs tab (inputs with recent paths, description, format,
+  encodings), the scope selector and the tab registry the rule tabs of later waves join.
+- **Home view** (SES-030, SES-031, SES-093, D-124): type buttons as drop targets, search, the sessions tree (New,
+  folders, favorites, four auto-saved groups) with its context menu (13 new `Tree*` catalogue commands) and the
+  management panel. `HomeCompare` accepts `clipboard://`.
+- **Workspaces** (SES-040…042, D-125, D-126): Save Workspace As, Load Workspace, Manage Workspaces (rename, delete,
+  shortcuts with conflicts shown), `[startup] load_workspace` and `on_exit_save_workspace_as`, lazy restore: a tab
+  starts when first activated, and `gui list` shows the pending ones.
+- **Command line** (CLI-002, SES-042, D-127): `hikasa-gui <session>` and `hikasa-gui <workspace>`, forwarded as
+  `LoadSession`/`LoadWorkspace` to a running GUI.
+- **Keeping changes safe:** Yes at a close holds the tab until the save returned; a failed save keeps it open with the
+  reason and stops the close, Exit included. Renames, moves and deletes in Home reach open views and pending tabs; a
+  Save refuses a file that is no longer the session the view loaded. Auto-save keeps a parent's overrides, works in an
+  idle or minimized window, and asks at the close when its file is locked.
+- **Locked sessions in folders** (D-91): `hikasa session rmdir --recursive` takes `--force`, and refuses a folder
+  holding locked sessions without it; deleting or renaming such a folder in Home names them first.
+- **Service calls** (§1.4.15): `session_load`, `session_load_autosaved`, `session_defaults`, `session_save`,
+  `session_save_defaults`, `session_autosave`, `session_delete_autosaved`, `session_for_view`, `session_view_of`,
+  `session_resolve_parent`, `session_apply_scope`, `session_rename_folder`, `session_folder_contents`, `session_prune_autosaved`, `workspace_load`, `inline_table`.
+
+### Wave 4a — GUI shell
+- **Windows and tabs** (UI-001, SES-090, SES-091, D-106…D-108): several windows in one process (Session ▸ New
+  Window); the tab context menu (New Tab, Duplicate Tab, Move Tab to New Window, Move Tab to Window ▸, Close Other
+  Tabs, Close Tab); tabs drag to reorder and, where the system reports window positions, into another window or
+  out into a new one; the `[tabs]` options (where opens go, new tab placement, closing the last tab, hiding a single
+  tab's bar, the warnings before closing several tabs or windows). `state.toml` remembers the last window's size
+  and, per view type, `[layout.<view type>]` (toolbar, log panel and its height, font size, thumbnail).
+- **Commands from core** (UI-002…UI-007, D-109…D-111): `hikasa_session::commands::effective` merges the catalogue
+  with `commands.toml`; menus (grouped by section, View ▸ Display Filter), toolbars (in-house vector icons, large
+  buttons, the display filter as a drop-down, favourites or toggles; right-click menu), hints with the shortcut
+  and their timing options, and shortcut dispatch by focus area all follow it. New catalogue commands
+  `TabDuplicate`, `TabMoveToNewWindow`, `TabMoveToWindow`, `TabCloseOthers` and a `toolbar` flag; `WindowNew`,
+  `ShowToolbar` and `ShowLog` are implemented.
+- **Dialogs** (D-112): modal inside their window (Esc, Enter, F1); prompts with "Do not ask again"; About is a
+  dialog.
+- **Theme** (UI-020…022, FC-031, D-113): the colours come from the scheme of `theme.toml` (light/dark, following
+  the system), re-applied when a theme file changes; the editor and folder font sizes apply.
+- **Status bar, jobs, messages, log** (UI-030, FC-100, D-115, D-116): state items per view, a job indicator with
+  Cancel per view, a message line per view, and one log book per process (OPT-018 filter, capacity, optional
+  file) shown by the folder views' Log panel.
+- **Changes on disk** (UI-031, SES-053, D-117…D-119): a watch thread polls the settings files every 2 s and on
+  focus; changed options and format files reload the service's settings (`Service::reload_settings`; later
+  comparisons use them), `commands.toml` and theme files re-apply, each with a notice; the inputs of open text
+  views are watched (reload automatically or offer Reload; a removed input is reported).
+- **Drag and drop** (UI-008): files dropped on a Home path field fill it; two dropped on a window are compared.
+- Core: `Service::settings_snapshot`, `settings_save`, `reload_settings`, `state_update`, `log_append`,
+  `input_stamp`; `Service::options()` and `registry()` return snapshots (`Arc`); `State::layout`;
+  `hikasa_session::log` and `hikasa_session::watch`. Performance mode `HIKASA_GUI_BENCH=two_windows`.
+  `Service::loaded_settings()` (options, ignored keys and registry as one snapshot; reloads are serialized);
+  `Service::ignored_option_keys()` returns a `Vec<String>` refreshed by each reload; the spooled copy of standard
+  input is not watched; a refining catalogue entry without a shortcut takes the shared one.
+
+### Wave 3 — VFS mutations, clipboard, generic copy
+- **Mutating VFS** (VFS-001, ARCH-030, D-92…D-99): every back-end gains single-item primitives — create a folder,
+  remove, rename, set times, set attributes, create a symbolic link, move to the recycle bin, an optional fast
+  copy — each behind a new capability (`mkdir`, `remove`, `rename`, `set_attrs`, `trash`, `create_symlinks`,
+  `set_created`; `set_times` is now used). Writes never follow the final symbolic link; new error kind
+  `not_empty`.
+- **Generic copy, move, remove** (ARCH-031, D-95…D-98, D-103): `hikasa_vfs::ops` plans every operation completely
+  (whole trees, in execution order) before the first write, then executes it item by item with per-item results
+  (`planned`, `done`, `skipped`, `failed`, `not_run`), re-checking each target. Copies are atomic per file (local
+  files up to 64 MiB in one call, `copy_file_range` on Linux), keep times and permissions, copy links as links and follow overwrite
+  policies `fail` (default), `skip`, `always`, `newer`; moves rename where they can, else copy and remove per item
+  with rollback; the recycle bin never falls back to a permanent delete. Review fixes: `.`/`..` names and roots
+  (also through `..`) are never operated on; a failed replacement (a link or folder over a file) leaves the old
+  item; nothing runs below a folder that failed or was swapped for a link after planning (`not_run`), and
+  removals re-check folder identity; `newer` is re-checked at execution; a move keeps its copy when the source
+  vanished; case-only `mv` renames; local copies of read-only files work; planning reports `scanning` progress
+  and can be cancelled; a link on another file system than the recycle bin is refused.
+- **`hikasa vfs cp|mv|rm|mkdir|touch`** (D-102): `--dry-run` prints the plan; `rm` needs `--yes`; schema
+  `hikasa.vfs_op.v1` (35 schemas); failed items keep `ok: true` and exit 100.
+- **Clipboard** (TC-002, TC-065 data, D-100, D-101): `clipboard://` reads the clipboard's text, or an image as an
+  in-house PNG named `clipboard.png`, once per command and only when given; `HIKASA_CLIPBOARD_FILE` stands in for
+  it (empty → `not_found`, above 1 GiB → `too_large`). `gui open clipboard://` and `--gui` now send it to the
+  window, which reads its own clipboard. Writing to `-` or `clipboard://` is `unsupported`.
+- New dependencies `trash` (recycle bin, `hikasa-vfs`) and `arboard` (clipboard, `hikasa-session`), each confined
+  to one file by the architecture test.
+
+### Wave 2 — sessions, workspaces, settings packages
+- **Sessions** (SES-001…006, SES-008, SES-010, D-80…D-84): one TOML file per session (`sessions/<folder>/<name>.toml`,
+  defaults per type in `sessions/_defaults/`, auto-saved views in `sessions/_autosaved/`), read and written by the
+  settings engine. Rules are stored sparse against the type's defaults, so a later change of the defaults reaches
+  every session that did not change that rule; Folder and Text Compare rules are typed (the TOML of
+  `--rules-file`), the other types keep theirs as they are until their waves. Names are portable (D-80) and unique
+  per folder in any case; `-` and `clipboard://` are never stored (warning `spec_not_saved`, a new code).
+  Auto-save rotation with day groups and the `max_auto_saved_sessions` limit, the scope table of the session
+  settings dialog (view, defaults, these files / all files within the parent) and the close-prompt table are pure
+  core functions with table tests.
+- **`hikasa session list|show|new|edit|delete|rename|lock|unlock|mkdir|rmdir|run`**: `session run` runs a Folder or
+  Text Compare session through the same service call and output as `folder compare` / `text compare` (same JSON,
+  same exit codes); schemas `hikasa.session_list.v1`, `hikasa.session_show.v1`, `hikasa.session_write.v1`.
+- **Workspaces** (SES-040…042, D-85): `workspaces/<name>.toml` with windows, tabs (a named session or an inline
+  one) and layouts; `hikasa workspace list|show|delete|rename` (`hikasa.workspace_list.v1`,
+  `hikasa.workspace_show.v1`, `hikasa.workspace_write.v1`); a tab whose session is gone opens Home with warning
+  `session_missing` (a new code).
+- **Settings packages** (SES-060…062, D-86, D-87): `hikasa settings export` writes a `.hikasa-pkg` (a zip with
+  `manifest.toml`; deterministic: same configuration and time, same bytes); `hikasa settings import` validates
+  every entry (paths, sizes, schemas) before writing anything, then prints or executes the plan (`--dry-run`,
+  `--yes`, `--silent`, `--delete-existing`); `settings restore-defaults --category` restores factory defaults by
+  category. Schemas `hikasa.settings_export.v1`, `hikasa.settings_import.v1`. New dependency `zip` (pure-Rust
+  deflate only).
+- **The window opens sessions and workspaces over IPC** (ARCH-091, D-89): `LoadSession` and `LoadWorkspace` are
+  answered by the window; `hikasa gui session <ref> [--wait]`, `hikasa gui workspace <name>`, and `hikasa gui
+  open <name>` resolves one argument that is not an existing path as a session, then a workspace (CLI-002, D-88); a
+  `.hikasa-pkg` with `--silent` is imported. A window of 0.1 is reported as "does not support sessions; restart it".
+- **Explicit rules stay written** (D-90): a session file keeps every rule it already held, even one that now
+  equals the defaults, so a later change of the defaults does not change an explicit choice; `hikasa session edit
+  --unset <key>` removes a rule (also with `--defaults`). Unknown rule keys are kept. The folder size and date
+  filters and the time offset can be written `false` ("off") in a session or a `--rules-file`.
+- **Locked sessions are protected** (SES-004, D-91): `session delete` and `session rename` need `--force`;
+  `settings import` does not replace or delete a locked session and `settings restore-defaults
+  --delete-sessions` does not delete one unless `--force` (new flag on both; plan action `skip_locked`, new
+  warning code `session_locked`); auto-save never writes a locked file.
+- **Stricter package import**: every session's rules and text rules are built and their regular expressions
+  compiled before anything is written; names are matched without regard to case (two entries differing only by
+  case are refused; an existing file keeps its spelling); an unknown category in the manifest is refused.
+- Help topics `hikasa session` and `hikasa workspace`; `hikasa settings` and `hikasa gui` extended.
+
+### Wave 1 — settings store
+- **One engine for every settings file** (D-70, T13): `options.toml`, `state.toml`, `commands.toml`,
+  `theme.toml`, `themes/<name>.toml`, `filters.toml`, `openwith.toml` and `archives.toml` are typed
+  (`hikasa_session::settings`), carry `schema_version` with a migration chain (older files are written back on
+  the next save, newer ones refused), keep unknown keys, are written sparsely (only values that differ from the
+  defaults) and atomically, and refuse to overwrite a file changed on disk since it was read (`--force`).
+- **Every option of `docs/15`** (OPT-001…OPT-022, D-71): `options.toml` is read completely; a wrong type or a
+  value out of range is an error naming the file and the key for every command except `hikasa settings`, which
+  warns `invalid_config_value` (a new warning code) and uses the default so that `settings set` repairs the file.
+  Entries of `[[app]]` and `[[preset]]` are never dropped or reordered by that repair.
+- **`hikasa settings get|set|unset|list|restore-defaults`** (D-73, D-77) with keys `<file>.<path>`, suggestions
+  for unknown keys, shortcut-conflict warnings, a `--dry-run` plan and `--yes` for deleting files; schemas
+  `hikasa.settings_get.v1`, `hikasa.settings_set.v1`, `hikasa.settings_list.v1`, `hikasa.settings_restore.v1`.
+- **`hikasa format new|edit|delete|import|export|enable|disable|move|restore`** (D-75): they write only the files
+  they change; a built-in can be disabled or restored, not deleted; the id `order` is reserved; schemas `hikasa.format_write.v1`,
+  `hikasa.format_export.v1`, `hikasa.format_restore.v1`.
+- **Change detection** (D-74): `ConfigWatch` polls length, time and CRC-32 of every settings and format file.
+- **Themes** (D-78): built-in `light` and `dark` schemes (the M1 palettes) with every element of UI-021…023,
+  editable by override files, custom schemes with a `base`; contrast of default text ≥ 4.5:1 is tested.
+- **Shortcuts, Open With, archive types, filter presets** in core: the shortcut spelling of the command
+  reference (every catalogue shortcut parses), per-view customization and conflicts (UI-003); pure Open With
+  command expansion with quoting (D-76); archive type masks (OPT-010); name filter presets (OPT-020).
+- Help topic `hikasa settings`; `hikasa format` extended. The window takes the sections of its view types from
+  `hikasa_session::commands::view_sections`.
+
+### Wave 0 — infrastructure
+- **Command catalogue in core** (D-65): every command of the reference (458 in 14 sections) is data in
+  `core/hikasa-session/catalogue/commands.toml`, read by `hikasa_session::commands`, with a status
+  `implemented` (the 60 the window executes) or `planned`. `docs/reference/commands.md` is generated from it by
+  `cargo xtask commands-doc` and gains a Status column; without it the file is the M1 one (D-66).
+- **Help topics** (D-67): 17 Markdown topics in `help/` (contents, command-line basics, exit codes, JSON output,
+  one per subcommand, the main window and the three views). `hikasa help [topic…]`, `hikasa help --list`, schema
+  `hikasa.help.v1` (appended to `hikasa version --json`); an unknown topic exits 100 with suggestions.
+- **The window**: Help ▸ Contents and Help ▸ Context Sensitive Help (F1) open the topics in a resizable panel on
+  the right; links open other topics; Esc closes it. Tests check that the window executes exactly the
+  `implemented` catalogue entries, with the catalogue's shortcuts.
+- **Tooling** (D-68, D-69): the `xtask` workspace member (`cargo xtask commands-doc [--check]`, `cargo xtask
+  help-check`); CI runs `cargo nextest run` (latency tests one at a time, retried on CI) plus doc tests, and a
+  `docs` job runs the two xtask checks; `bench.yml` runs the benches and the G1/G2 gates by hand.
+- Decisions D-59…D-69 record the maintainer's answers (xz through the pure-Rust `lzma-rust2`; no `uzers`).
+
 ## 0.1.0 — 2026-10-26 (M1)
 
 M1: the core engines, the `hikasa` command line and the GUI prototype (`docs/16-roadmap.md`). Entries per wave,

@@ -1,0 +1,5 @@
+schema_version = 1
+base = "dark"
+
+[folder]
+orphan = "#ff0000"

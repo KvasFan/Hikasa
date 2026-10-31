@@ -88,6 +88,10 @@ priority = 4
   format. Exclude items (`-test_*`) skip the format for matching names. Detection takes
   the first enabled format whose mask has a matching include item and no matching
   exclude item; no match gives "Everything Else".
+- **Standard input and the clipboard (D-15, D-100).** `-` is detected by its `--stdin-name`
+  when given, else by content. `clipboard://` text has no name and is detected by content
+  (usually "Everything Else" text); a clipboard image is a PNG named `clipboard.png`, so it is
+  detected by that name (the picture formats of W12).
 - **Shadowing (FF-001).** A format is reported as shadowed (red) only when every include
   item of its mask is provably covered by an include item of an earlier enabled format
   that has no exclude items (`*` and `*.*` cover everything, `*.c` covers `test*.c`,
@@ -120,6 +124,39 @@ priority = 4
   (`user_format_skipped`): a file that does not parse, whose id is not its file name, or
   whose mask is invalid never costs the built-ins or the other formats. A broken format
   that is selected reports its error instead of being silently replaced.
+- **Changing formats from the command line (M2, FF-001; D-75 revises D-21).** The
+  `hikasa format` write commands touch only the files they change, `formats/<id>.toml`
+  and/or `formats/order.toml`, and never copy the other built-ins into the folder
+  (the GUI's first start still materializes them, D-21):
+  - `new <id> [--from <id|name>] [--name] [--mask] [--kind]` writes a new user format,
+    a copy of `--from` (named `<name> (copy)` unless `--name` is given) or an empty
+    format of `--kind` (default `text`), and appends it to `order.toml` as enabled
+    (`order.toml` is first created from the current order). An id that a built-in or a
+    user format already has, or whose file `formats/<id>.toml` exists although it could
+    not be loaded, is `already_exists`; when `order.toml` cannot be written the new file
+    is removed again. The id `order` (in any case) is reserved for `formats/order.toml`:
+    `new`, `import` and `edit` refuse it (`invalid_input`).
+  - `edit <id> (--from-file <path> | --set <key=value>…)`: `--from-file` copies the file
+    (its `id` must be `<id>`); `--set` applies TOML key paths to the canonical TOML of
+    the format (a value that is not TOML is a string: `mask=*.x;*.y`) and writes the
+    canonical TOML. An unknown key, a result that does not parse or does not compile is
+    refused (`invalid_input`) and nothing is written. Editing a built-in writes its
+    override file.
+  - `delete <id>` removes a user format's file and its `order.toml` entry. A built-in,
+    or a user file overriding one, cannot be deleted: disable it, or `restore` it.
+  - `import <path> [--replace]` validates a format file and copies it to
+    `formats/<id>.toml`; an id that exists (or a file `formats/<id>.toml` that could not
+    be loaded) needs `--replace`.
+  - `export <id|name> [-o <path>]` prints the canonical TOML or writes it atomically.
+  - `enable`, `disable` and `move (--up|--down|--top|--bottom|--before <id>|--after <id>)`
+    write `order.toml` only. When it does not exist it is created from the current
+    order; when it exists, ids it lists that no format has are dropped and the formats
+    it does not list are appended in their current order, so the effective order does
+    not change except for the move (*interpretation*).
+  - `restore (<id>… | --all)` removes the user files that override the named built-ins
+    (each id must be a built-in), or with `--all` every user format file and
+    `order.toml`. Like `settings restore-defaults` it is a plan: `--dry-run` prints it,
+    otherwise `--yes` is required.
 
 ## 2. Format kinds and tabs
 

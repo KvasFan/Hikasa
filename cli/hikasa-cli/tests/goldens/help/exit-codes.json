@@ -1,0 +1,22 @@
+{
+  "schema": "hikasa.help.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "topic": {
+      "id": "exit-codes",
+      "title": "Exit codes",
+      "markdown": "# Exit codes\n\nEvery subcommand ends with one of these codes:\n\n| Code | Meaning |\n|---|---|\n| 0 | success (commands without a verdict) |\n| 1 | binary same |\n| 2 | rules-based same |\n| 11 | binary differences |\n| 12 | similar: only unimportant differences |\n| 13 | rules-based differences |\n| 100 | error (also a command line that does not parse, and a crash) |\n| 102 | the command line cannot wait for the window |\n| 103 | the window executable cannot be found or started |\n| 107 | a base folder cannot be loaded |\n\n## Rules\n\n- `quick` and `text compare`: 1, 2, 11, 12 or 13; any error, including an input that cannot be read, is 100.\n- `folder compare`: 13 when any important difference exists; else 100 when the result is incomplete or an item\n  could not be compared; else 12 when only unimportant differences remain; else 2. A base folder that cannot\n  be loaded is 107.\n- Display filters never change the exit code; `--ignore-unimportant` does (12 becomes 2).\n- A broken pipe on stdout stops the output and keeps the computed code.\n- `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).\n\nSee [hikasa quick](topic:quick), [hikasa folder compare](topic:folder-compare) and [Contents](topic:index).\n",
+      "links": [
+        "gui",
+        "quick",
+        "folder-compare",
+        "index"
+      ]
+    },
+    "topics": []
+  },
+  "warnings": [],
+  "error": null
+}

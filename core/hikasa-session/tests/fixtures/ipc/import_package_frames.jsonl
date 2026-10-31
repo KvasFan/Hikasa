@@ -1,0 +1,4 @@
+{"id":9,"type":"import_package","path":"/home/me/all.hikasa-pkg"}
+{"id":9,"type":"ok"}
+{"id":10,"type":"import_package","path":"/home/me/all.hikasa-pkg"}
+{"id":10,"type":"error","code":"unsupported_request","message":"`import_package` is not supported in this version"}

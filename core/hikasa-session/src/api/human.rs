@@ -10,12 +10,32 @@
 //! | `gui list` | `<view>\t<kind>\t<escaped title>\t<escaped spec>…` ([`gui_list_line`]) |
 //! | `format list` | `<position>\t<id>\t<status>\t<name>\t<mask>` ([`format_list_line`]) |
 //! | `format detect` | `<id or ->\t<name>` ([`format_detect_line`]) |
+//! | `settings get` | the TOML value; a subtree as a TOML document ([`settings_get_text`]) |
+//! | `settings set/unset` | `<key> = <value>`, then `(file unchanged)` when nothing was written ([`settings_set_lines`]) |
+//! | `settings list` | `<key> = <value>`, with `  # default: <value>` when changed ([`settings_list_lines`]) |
+//! | `settings restore-defaults` | `delete <path>` or `absent <path>` per file ([`settings_restore_lines`]) |
+//! | `format` writes | `wrote <path>`, `removed <path>` ([`format_write_lines`]); `format restore`: `delete`/`absent` |
+//! | `session list` | `folder <ref>/`, `<ref>\t<type>\t<flags>\t<description>`, `defaults <type>`, `autosaved <id>\t<type>\t<group>\t<label>` ([`session_list_lines`]) |
+//! | `session`/`workspace` writes | `wrote <path>`, `removed <path>` ([`session_write_lines`], [`workspace_write_lines`]) |
+//! | `workspace list` | `<name>\t<windows> windows\t<tabs> tabs\t<shortcut>` ([`workspace_list_lines`]) |
+//! | `settings export` | `<category>\t<path>` per item, then `wrote <package>` ([`settings_export_lines`]) |
+//! | `settings import` | `add`/`replace <path>`, `delete <path>`, one summary line per category, failures ([`settings_import_lines`]) |
 
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
+use hikasa_vfs::ops::ItemStatus;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
+use super::package::SettingsImportDto;
+use super::sessions::{SessionListDto, SessionWriteDto, WorkspaceListDto, WorkspaceWriteDto};
+use super::settings::{
+    FormatRestoreDto, FormatWriteDto, SettingsListDto, SettingsRestoreDto, SettingsSetDto,
+    SettingsValueDto,
+};
+use super::vfs_ops::{VfsOpDto, VfsOpItemDto};
 use crate::ipc::ViewInfo;
+use crate::settings::ShortcutConflict;
+use crate::settings::tree::inline;
 
 /// The `format tokens` lines: one per token, `L<line>:<start>-<end>\t<element>\t<escaped text>` (byte offsets,
 /// end exclusive).
@@ -115,6 +135,285 @@ pub fn format_detect_line(dto: &FormatDetectDto) -> String {
         dto.format.id.as_deref().unwrap_or("-"),
         escape_controls(&dto.format.name)
     )
+}
+
+/// The value of `settings get`: a leaf as its TOML value on one line, a subtree as a TOML document, `(not set)`
+/// for an optional key without a value.
+pub fn settings_get_text(dto: &SettingsValueDto) -> String {
+    match &dto.toml {
+        None => "(not set)\n".to_owned(),
+        Some(toml::Value::Table(table)) => toml::to_string(table).unwrap_or_default(),
+        Some(value) => format!("{}\n", inline(value)),
+    }
+}
+
+/// The lines of `settings set` and `settings unset`.
+pub fn settings_set_lines(dto: &SettingsSetDto) -> Vec<String> {
+    let value = dto
+        .toml
+        .as_ref()
+        .map_or_else(|| "(not set)".to_owned(), inline);
+    let mut lines = vec![format!("{} = {value}", dto.key)];
+    if !dto.written {
+        lines.push("(file unchanged)".to_owned());
+    }
+    lines
+}
+
+/// The lines of `settings list`: `<key> = <value>`, then `  # default: <value>` for a changed key or
+/// `  # unknown key (kept)` for a key this version does not know.
+pub fn settings_list_lines(dto: &SettingsListDto) -> Vec<String> {
+    dto.entries
+        .iter()
+        .map(|e| {
+            let mut line = format!("{} = {}", e.key, inline(&e.toml));
+            if e.unknown {
+                line.push_str("  # unknown key (kept)");
+            } else if !e.is_default
+                && let Some(default) = &e.default_toml
+            {
+                line.push_str(&format!("  # default: {}", inline(default)));
+            }
+            line
+        })
+        .collect()
+}
+
+/// A shortcut conflict as a warning text: `shortcut conflict in <view>: <shortcut> is bound to A, B`.
+pub fn shortcut_conflict_text(conflict: &ShortcutConflict) -> String {
+    format!(
+        "shortcut conflict in {}: {} is bound to {}",
+        conflict.view,
+        conflict.shortcut,
+        conflict.commands.join(", ")
+    )
+}
+
+/// The lines of `settings restore-defaults`: `delete <path>` for a file that exists, `absent <path>` for one
+/// that does not.
+pub fn settings_restore_lines(dto: &SettingsRestoreDto) -> Vec<String> {
+    dto.files
+        .iter()
+        .map(|f| {
+            let word = if f.existed { "delete" } else { "absent" };
+            format!("{word} {}", escape_controls(&f.path))
+        })
+        .collect()
+}
+
+/// The lines of a `format` write: `wrote <path>` and `removed <path>`.
+pub fn format_write_lines(dto: &FormatWriteDto) -> Vec<String> {
+    dto.written
+        .iter()
+        .map(|p| format!("wrote {}", escape_controls(p)))
+        .chain(
+            dto.removed
+                .iter()
+                .map(|p| format!("removed {}", escape_controls(p))),
+        )
+        .collect()
+}
+
+/// The lines of `format restore`: `delete <path>` per removed file, `absent <path>` per named id without one.
+pub fn format_restore_lines(dto: &FormatRestoreDto) -> Vec<String> {
+    dto.removed
+        .iter()
+        .map(|p| format!("delete {}", escape_controls(p)))
+        .chain(
+            dto.absent
+                .iter()
+                .map(|p| format!("absent {}", escape_controls(p))),
+        )
+        .collect()
+}
+
+/// Written and removed paths.
+fn write_lines(written: &[String], removed: &[String]) -> Vec<String> {
+    written
+        .iter()
+        .map(|p| format!("wrote {}", escape_controls(p)))
+        .chain(
+            removed
+                .iter()
+                .map(|p| format!("removed {}", escape_controls(p))),
+        )
+        .collect()
+}
+
+/// The lines of `session list`: folders (`folder <ref>/`), named sessions (`<ref>\t<type>\t<flags>\t<description>`,
+/// flags `L` locked and `F` favorite or `-`), then `defaults <type>` and `autosaved <id>\t<type>\t<group>\t<label>`.
+pub fn session_list_lines(dto: &SessionListDto) -> Vec<String> {
+    let mut lines: Vec<String> = dto
+        .folders
+        .iter()
+        .map(|f| format!("folder {}/", escape_controls(f)))
+        .collect();
+    for s in &dto.sessions {
+        let mut flags = String::new();
+        if s.locked {
+            flags.push('L');
+        }
+        if s.favorite {
+            flags.push('F');
+        }
+        if flags.is_empty() {
+            flags.push('-');
+        }
+        lines.push(format!(
+            "{}\t{}\t{flags}\t{}",
+            escape_controls(&s.reference),
+            s.kind,
+            escape_controls(&s.description)
+        ));
+    }
+    lines.extend(dto.defaults.iter().map(|d| format!("defaults {d}")));
+    lines.extend(dto.autosaved.iter().map(|a| {
+        format!(
+            "autosaved {}\t{}\t{}\t{}",
+            a.id,
+            a.kind,
+            a.group,
+            escape_controls(&a.label)
+        )
+    }));
+    lines
+}
+
+/// The lines of a `session` write.
+pub fn session_write_lines(dto: &SessionWriteDto) -> Vec<String> {
+    write_lines(&dto.written, &dto.removed)
+}
+
+/// The lines of a `workspace` write.
+pub fn workspace_write_lines(dto: &WorkspaceWriteDto) -> Vec<String> {
+    write_lines(&dto.written, &dto.removed)
+}
+
+/// The lines of `workspace list`.
+pub fn workspace_list_lines(dto: &WorkspaceListDto) -> Vec<String> {
+    dto.workspaces
+        .iter()
+        .map(|w| {
+            format!(
+                "{}\t{} windows\t{} tabs\t{}",
+                escape_controls(&w.name),
+                w.windows,
+                w.tabs,
+                escape_controls(&w.shortcut)
+            )
+        })
+        .collect()
+}
+
+/// The lines of `settings export`.
+pub fn settings_export_lines(dto: &crate::package::ExportDto) -> Vec<String> {
+    dto.items
+        .iter()
+        .map(|i| format!("{}\t{}", i.category, escape_controls(&i.path)))
+        .chain(std::iter::once(format!(
+            "wrote {}",
+            escape_controls(&dto.path)
+        )))
+        .collect()
+}
+
+/// The lines of `settings import`: the deletes, the items (`add`/`replace <path>`), one summary line per
+/// category (`<category>: <n> added, <n> replaced, <n> deleted`), then `failed <name>: <error>` per failure.
+pub fn settings_import_lines(dto: &SettingsImportDto) -> Vec<String> {
+    let plan = &dto.plan;
+    let mut lines: Vec<String> = plan
+        .deletes
+        .iter()
+        .map(|p| format!("delete {}", escape_controls(p)))
+        .collect();
+    for item in &plan.items {
+        let word = match item.action {
+            crate::package::PlanAction::Add => "add",
+            crate::package::PlanAction::Replace => "replace",
+            crate::package::PlanAction::SkipLocked => "skip (locked)",
+        };
+        lines.push(format!("{word} {}", escape_controls(&item.path)));
+    }
+    for (category, c) in &plan.summary {
+        lines.push(format!(
+            "{category}: {} added, {} replaced, {} deleted",
+            c.added, c.replaced, c.deleted
+        ));
+    }
+    for r in dto.results.iter().filter(|r| !r.ok) {
+        lines.push(format!(
+            "failed {}: {}",
+            escape_controls(&r.name),
+            escape_controls(r.error.as_deref().unwrap_or(""))
+        ));
+    }
+    lines
+}
+
+/// The word of a `vfs` write item (§1.3.7): `mkdir`, `exists`, `copy`, `replace`, `link`, `rename`, `move`,
+/// `remove`, `rmdir`, `trash`, `touch`, `create`, `skip`.
+fn vfs_op_word(item: &VfsOpItemDto) -> &'static str {
+    match item.action {
+        "create_dir" => "mkdir",
+        "keep_dir" => "exists",
+        "copy" if item.replaces => "replace",
+        "remove_dir" => "rmdir",
+        other => other,
+    }
+}
+
+/// The subject of an item line: `<source> -> <target>` for copies, links, renames and moves, else `<target>`.
+fn vfs_op_subject(item: &VfsOpItemDto) -> String {
+    let target = escape_controls(&item.target);
+    match (&item.source, item.action) {
+        (Some(source), "copy" | "link" | "rename" | "move") => {
+            format!("{} -> {target}", escape_controls(source))
+        }
+        _ => target.into_owned(),
+    }
+}
+
+/// `hikasa vfs cp|mv|rm|mkdir|touch` (§1.3.7, ARCH-101): one line per plan item in plan order, then the summary
+/// (`<verb> <done> of <planned> items (<skipped> skipped, <failed> failed)`; a dry run ends with `would <base
+/// verb> <planned> items` — `would copy 4 items` —, a cancelled run with `cancelled`).
+pub fn vfs_op_lines(dto: &VfsOpDto) -> Vec<String> {
+    let mut lines = Vec::with_capacity(dto.items.len() + 2);
+    for item in &dto.items {
+        let word = vfs_op_word(item);
+        let target = escape_controls(&item.target);
+        let line = match item.status {
+            ItemStatus::Failed => {
+                let message = item.error.as_ref().map_or("", |e| e.message.as_str());
+                format!("failed {word} {target}: {}", escape_controls(message))
+            }
+            ItemStatus::NotRun => format!("not run {word} {target}"),
+            _ => match item.reason {
+                Some(reason) => format!("skip ({}) {target}", reason.as_str()),
+                None => format!("{word} {}", vfs_op_subject(item)),
+            },
+        };
+        lines.push(line);
+    }
+    let (verb, base) = match dto.op {
+        "copy" => ("copied", "copy"),
+        "move" => ("moved", "move"),
+        "remove" => ("removed", "remove"),
+        "mkdir" => ("created", "create"),
+        _ => ("touched", "touch"),
+    };
+    let s = &dto.summary;
+    if dto.dry_run {
+        lines.push(format!("would {base} {} items", s.planned));
+    } else {
+        lines.push(format!(
+            "{verb} {} of {} items ({} skipped, {} failed)",
+            s.done, s.planned, s.skipped, s.failed
+        ));
+        if dto.cancelled {
+            lines.push("cancelled".to_owned());
+        }
+    }
+    lines
 }
 
 #[cfg(test)]

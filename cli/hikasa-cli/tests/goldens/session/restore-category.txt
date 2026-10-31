@@ -1,0 +1,2 @@
+delete <TMP>/cfg/options.toml
+delete <TMP>/cfg/sessions/_defaults/folder-compare.toml

@@ -147,6 +147,11 @@ impl Output {
         self.json
     }
 
+    /// `--quiet` was given (no non-error stderr output).
+    pub fn quiet(&self) -> bool {
+        self.quiet
+    }
+
     /// ANSI colours are allowed on stdout.
     pub fn colour(&self) -> bool {
         self.colour

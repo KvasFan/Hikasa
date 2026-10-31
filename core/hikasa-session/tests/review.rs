@@ -574,6 +574,7 @@ fn gui_requests_and_open_views_map_both_ways() {
             ..TextRulesPatch::default()
         },
         ignore_unimportant: true,
+        base_rules: None,
     };
     let words = ViewWords {
         display: Some("context".into()),

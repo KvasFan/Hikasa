@@ -49,7 +49,7 @@ pub struct GlobalArgs {
     pub no_color: bool,
 }
 
-/// The subcommands of M1.
+/// The subcommands.
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
     /// Quick compare two files; exit code only (1/2/11/12/13/100).
@@ -84,6 +84,24 @@ pub enum Command {
         #[command(subcommand)]
         cmd: GuiCmd,
     },
+    /// Read and change the settings files.
+    Settings {
+        /// The settings subcommand.
+        #[command(subcommand)]
+        cmd: SettingsCmd,
+    },
+    /// Named sessions, session folders, defaults and auto-saved sessions.
+    Session {
+        /// The session subcommand.
+        #[command(subcommand)]
+        cmd: SessionCmd,
+    },
+    /// Saved workspaces.
+    Workspace {
+        /// The workspace subcommand.
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
+    },
     /// Print shell completions.
     Completions {
         /// The shell.
@@ -91,6 +109,19 @@ pub enum Command {
     },
     /// Print version information.
     Version,
+    /// Print a help topic (`hikasa help text compare`), or the contents.
+    Help(HelpArgs),
+}
+
+/// `hikasa help [topic…]`.
+#[derive(Debug, clap::Args)]
+pub struct HelpArgs {
+    /// The topic: words such as `text compare`, or an id such as `exit-codes`.
+    #[arg(value_name = "TOPIC")]
+    pub topic: Vec<String>,
+    /// List every topic (id and title).
+    #[arg(long, conflicts_with = "topic")]
+    pub list: bool,
 }
 
 /// Importance overrides shared by `quick`, `text compare` and `folder compare --content rules`.
@@ -427,6 +458,447 @@ pub enum FormatCmd {
     Detect(DetectArgs),
     /// Dump the grammar tokens of a file.
     Tokens(TokensArgs),
+    /// Create a user format (empty, or a copy of another one).
+    New(FormatNewArgs),
+    /// Change a format (a built-in gets an override file).
+    Edit(FormatEditArgs),
+    /// Delete a user format.
+    Delete {
+        /// The format id.
+        id: String,
+    },
+    /// Copy a format file into the formats folder.
+    Import {
+        /// The format file.
+        path: PathBuf,
+        /// Replace a format with the same id.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Print a format as TOML or write it to a file.
+    Export {
+        /// Format id or name.
+        name: String,
+        /// Write to PATH instead of stdout.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+    /// Enable a format (detection uses it).
+    Enable {
+        /// The format id.
+        id: String,
+    },
+    /// Disable a format (detection skips it).
+    Disable {
+        /// The format id.
+        id: String,
+    },
+    /// Move a format in the detection order.
+    Move(FormatMoveArgs),
+    /// Remove user files that override built-in formats.
+    Restore(FormatRestoreArgs),
+}
+
+/// `hikasa format new <id>`.
+#[derive(Debug, clap::Args)]
+pub struct FormatNewArgs {
+    /// The new format id (a-z, 0-9 and `-`).
+    pub id: String,
+    /// Copy this format (id or name).
+    #[arg(long, value_name = "ID")]
+    pub from: Option<String>,
+    /// The display name.
+    #[arg(long, value_name = "TEXT")]
+    pub name: Option<String>,
+    /// The file name mask (`*.ext;*.other`).
+    #[arg(long, value_name = "MASK")]
+    pub mask: Option<String>,
+    /// The kind: text, table, hex, picture, media, version, registry, external.
+    #[arg(long, value_name = "KIND")]
+    pub kind: Option<String>,
+}
+
+/// `hikasa format edit <id>`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("edit").required(true).args(["from_file", "set"])))]
+pub struct FormatEditArgs {
+    /// The format id.
+    pub id: String,
+    /// Replace the format with this file (its id must match).
+    #[arg(long, value_name = "PATH", conflicts_with = "set")]
+    pub from_file: Option<PathBuf>,
+    /// Set one key of the format's TOML (`mask=*.x`, `text.tab_size=8`; repeatable).
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub set: Vec<String>,
+}
+
+/// `hikasa format move <id>`.
+#[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("to")
+        .required(true)
+        .args(["up", "down", "top", "bottom", "before", "after"])
+))]
+pub struct FormatMoveArgs {
+    /// The format id.
+    pub id: String,
+    /// One place up.
+    #[arg(long)]
+    pub up: bool,
+    /// One place down.
+    #[arg(long)]
+    pub down: bool,
+    /// First.
+    #[arg(long)]
+    pub top: bool,
+    /// Last.
+    #[arg(long)]
+    pub bottom: bool,
+    /// Right before this format.
+    #[arg(long, value_name = "ID")]
+    pub before: Option<String>,
+    /// Right after this format.
+    #[arg(long, value_name = "ID")]
+    pub after: Option<String>,
+}
+
+/// `hikasa format restore`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).arg("ids").arg("all")))]
+pub struct FormatRestoreArgs {
+    /// Built-in format ids whose override files are removed.
+    #[arg(value_name = "ID")]
+    pub ids: Vec<String>,
+    /// Remove every user format file and `order.toml`.
+    #[arg(long)]
+    pub all: bool,
+    /// Print the plan only.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Delete without asking (required unless `--dry-run`).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// `hikasa settings …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum SettingsCmd {
+    /// Print the value of a key (a table as TOML).
+    Get {
+        /// The key: `<file>.<path>`, such as `options.text_editing.auto_indent`.
+        key: String,
+    },
+    /// Set a key (a value equal to the default removes it from the file).
+    Set {
+        /// The key.
+        key: String,
+        /// The value: TOML (`true`, `5`, `"text"`, `["a", "b"]`) or plain text for text keys.
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+        /// Overwrite a file changed on disk since it was read.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Put a key back to its default.
+    Unset {
+        /// The key.
+        key: String,
+    },
+    /// List keys with their values.
+    List {
+        /// Only the keys under this key or file.
+        prefix: Option<String>,
+        /// Only the keys that differ from their defaults.
+        #[arg(long)]
+        changed: bool,
+    },
+    /// Delete settings files so that their defaults apply.
+    RestoreDefaults(RestoreDefaultsArgs),
+    /// Write a settings package (`.hikasa-pkg`).
+    Export(SettingsExportArgs),
+    /// Import a settings package.
+    Import(SettingsImportArgs),
+}
+
+/// `hikasa settings export`.
+#[derive(Debug, clap::Args)]
+pub struct SettingsExportArgs {
+    /// The package to write.
+    #[arg(long, short = 'o', value_name = "FILE.hikasa-pkg")]
+    pub output: PathBuf,
+    /// A category: options, theme, commands, state, sessions, formats, workspaces, system_info (repeatable;
+    /// default: all but system_info).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// One item: `<CAT>:<NAME>` such as `sessions:work/api` (repeatable).
+    #[arg(long, value_name = "CAT:NAME")]
+    pub item: Vec<String>,
+}
+
+/// `hikasa settings import`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("mode").required(true).arg("dry_run").arg("yes").arg("silent")))]
+pub struct SettingsImportArgs {
+    /// The package.
+    pub path: PathBuf,
+    /// A category to import (repeatable; default: every category of the package).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// One item: `<CAT>:<NAME>` (repeatable).
+    #[arg(long, value_name = "CAT:NAME")]
+    pub item: Vec<String>,
+    /// Delete every existing item of a category first: sessions, formats or workspaces (repeatable).
+    #[arg(long, value_name = "CAT")]
+    pub delete_existing: Vec<String>,
+    /// Print the plan only.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Import without asking.
+    #[arg(long)]
+    pub yes: bool,
+    /// Import every category and item, no deletes, no prompt.
+    #[arg(long, conflicts_with_all = ["category", "item", "delete_existing"])]
+    pub silent: bool,
+    /// Also replace (or delete with --delete-existing) locked sessions.
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// `hikasa session …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum SessionCmd {
+    /// List folders and named sessions (and defaults, auto-saved sessions).
+    List {
+        /// Only this folder.
+        #[arg(long, value_name = "REF")]
+        folder: Option<String>,
+        /// Also the auto-saved sessions.
+        #[arg(long)]
+        autosaved: bool,
+        /// Also the types with saved defaults.
+        #[arg(long)]
+        defaults: bool,
+    },
+    /// Print a session file.
+    #[command(group(clap::ArgGroup::new("which").required(true).args(["reference", "defaults"])))]
+    Show {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+        /// The defaults of a type instead.
+        #[arg(long, value_name = "TYPE")]
+        defaults: Option<String>,
+    },
+    /// Create a named session from the type's defaults.
+    New {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// folder-compare, folder-sync, text-compare, text-edit, table-compare, hex-compare, picture-compare.
+        #[arg(long = "type", value_name = "TYPE")]
+        kind: String,
+        /// Left spec.
+        #[arg(long, value_name = "SPEC")]
+        left: Option<String>,
+        /// Right spec.
+        #[arg(long, value_name = "SPEC")]
+        right: Option<String>,
+        /// Description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+    },
+    /// Change a session, or the defaults of a type.
+    #[command(group(clap::ArgGroup::new("which").required(true).args(["reference", "defaults"])))]
+    #[command(group(clap::ArgGroup::new("change").required(true).multiple(true)
+        .args(["set", "unset", "left", "right", "description"])))]
+    Edit {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+        /// The defaults of a type instead (`--set` and `--unset` only).
+        #[arg(long, value_name = "TYPE")]
+        defaults: Option<String>,
+        /// Set a key of the session file (`rules.criteria.size=false`; repeatable).
+        #[arg(long, value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Remove a key of `rules`, `text_rules`, `display` or `view` (back to following the defaults;
+        /// repeatable).
+        #[arg(long, value_name = "KEY")]
+        unset: Vec<String>,
+        /// Left spec.
+        #[arg(long, value_name = "SPEC", conflicts_with = "defaults")]
+        left: Option<String>,
+        /// Right spec.
+        #[arg(long, value_name = "SPEC", conflicts_with = "defaults")]
+        right: Option<String>,
+        /// Description.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+        /// Change a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Delete a named session.
+    Delete {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Delete a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Rename or move a named session.
+    Rename {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Its new reference.
+        #[arg(value_name = "NEW_REF")]
+        new: String,
+        /// Rename a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Lock a session (changes are not saved).
+    Lock {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
+    /// Unlock a session.
+    Unlock {
+        /// The session.
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
+    /// Create a session folder.
+    Mkdir {
+        /// The folder: `a/b`.
+        folder: String,
+    },
+    /// Delete a session folder.
+    Rmdir {
+        /// The folder.
+        folder: String,
+        /// Also delete the sessions and folders inside.
+        #[arg(long)]
+        recursive: bool,
+        /// Also delete locked sessions inside.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run a saved Folder Compare or Text Compare session headless.
+    Run(Box<SessionRunArgs>),
+}
+
+/// `hikasa session run <ref>`: the output flags of `folder compare` and `text compare`.
+#[derive(Debug, clap::Args)]
+pub struct SessionRunArgs {
+    /// The session.
+    #[arg(value_name = "REF")]
+    pub reference: String,
+    /// Treat unimportant differences as same (verdict, exit code, report).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// Display filter (text: all, mismatches, context, matches; folders: a display filter).
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// Text: context lines (default from the options, 3).
+    #[arg(long, value_name = "N")]
+    pub context: Option<u32>,
+    /// Folders: folder mode of the display (always, structure, files-only).
+    #[arg(long, value_name = "MODE")]
+    pub folders: Option<String>,
+    /// Folders: show the items hidden by file filters.
+    #[arg(long)]
+    pub suppress_filters: bool,
+    /// Report layout (text: unified, side-by-side, summary, patch, statistics; folders: list, side-by-side,
+    /// summary, json).
+    #[arg(long, value_name = "LAYOUT")]
+    pub report: Option<String>,
+    /// Text: patch style of `--report patch` (normal, context, unified).
+    #[arg(long, value_name = "STYLE", default_value = "unified")]
+    pub patch_style: String,
+    /// Folders: columns of the side-by-side report.
+    #[arg(long, value_name = "LIST")]
+    pub columns: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Text: hide line numbers (side-by-side).
+    #[arg(long)]
+    pub no_line_numbers: bool,
+    /// Text: total width of side-by-side text.
+    #[arg(long, value_name = "N", default_value_t = 160)]
+    pub width: u16,
+    /// Text: line wrapping of side-by-side text (none, character, word).
+    #[arg(long, value_name = "MODE", default_value = "character")]
+    pub wrap: String,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+}
+
+/// `hikasa workspace …`.
+#[derive(Debug, clap::Subcommand)]
+pub enum WorkspaceCmd {
+    /// List the workspaces.
+    List,
+    /// Print a workspace file.
+    Show {
+        /// The workspace.
+        name: String,
+    },
+    /// Delete a workspace.
+    Delete {
+        /// The workspace.
+        name: String,
+    },
+    /// Rename a workspace.
+    Rename {
+        /// The workspace.
+        name: String,
+        /// Its new name.
+        new: String,
+    },
+}
+
+/// `hikasa settings restore-defaults`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).arg("all").arg("file").arg("category")))]
+pub struct RestoreDefaultsArgs {
+    /// Every settings file (not sessions, workspaces or formats).
+    #[arg(long)]
+    pub all: bool,
+    /// A category of the factory-defaults plan: options, theme, commands, state, sessions (the defaults files),
+    /// formats, workspaces (repeatable).
+    #[arg(long, value_name = "CAT")]
+    pub category: Vec<String>,
+    /// With `--category`: also delete every named session.
+    #[arg(long, requires = "category")]
+    pub delete_sessions: bool,
+    /// With `--category`: also delete every workspace.
+    #[arg(long, requires = "category")]
+    pub delete_workspaces: bool,
+    /// With `--delete-sessions`: also delete locked sessions.
+    #[arg(long, requires = "delete_sessions")]
+    pub force: bool,
+    /// One file: `options`, `state`, `commands`, `theme`, `themes`, `themes.<scheme>`, `filters`, `openwith`,
+    /// `archives` (repeatable).
+    #[arg(long, value_name = "FILE")]
+    pub file: Vec<String>,
+    /// Print the plan only.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Delete without asking (required unless `--dry-run`).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// `hikasa format detect <file>`.
@@ -470,6 +942,122 @@ pub enum VfsCmd {
         /// The file.
         spec: OsString,
     },
+    /// Copy files and folders (`--dry-run` prints the plan).
+    Cp(VfsCpArgs),
+    /// Move or rename files and folders.
+    Mv(VfsMvArgs),
+    /// Remove files, links and folders (needs --yes, or --dry-run).
+    Rm(VfsRmArgs),
+    /// Create folders.
+    Mkdir(VfsMkdirArgs),
+    /// Set the modification (and creation) time of items.
+    Touch(VfsTouchArgs),
+}
+
+/// `vfs cp`.
+#[derive(Debug, clap::Args)]
+pub struct VfsCpArgs {
+    /// The sources, then the target (an existing folder receives them; a trailing separator means a folder).
+    #[arg(required = true, num_args = 2.., value_name = "SRC… DST")]
+    pub paths: Vec<OsString>,
+    /// Copy folders with their contents.
+    #[arg(short, long)]
+    pub recursive: bool,
+    /// What an existing target means: fail (default), skip, always, newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+    /// How symbolic links are copied: copy (as links, default), skip.
+    #[arg(long, value_name = "POLICY")]
+    pub symlinks: Option<String>,
+    /// Follow root arguments that are symbolic links (never links inside trees).
+    #[arg(long)]
+    pub follow_symlinks: bool,
+    /// Copy no times or attributes.
+    #[arg(long, conflicts_with = "preserve_created")]
+    pub no_preserve: bool,
+    /// Also copy the creation time (where the target supports it).
+    #[arg(long)]
+    pub preserve_created: bool,
+    /// Create missing parent folders of the target.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs mv`.
+#[derive(Debug, clap::Args)]
+pub struct VfsMvArgs {
+    /// The sources, then the target.
+    #[arg(required = true, num_args = 2.., value_name = "SRC… DST")]
+    pub paths: Vec<OsString>,
+    /// What an existing target means: fail (default), skip, always, newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+    /// Create missing parent folders of the target.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs rm`.
+#[derive(Debug, clap::Args)]
+pub struct VfsRmArgs {
+    /// The items.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// Remove folders with their contents.
+    #[arg(short, long)]
+    pub recursive: bool,
+    /// Move each item to the recycle bin instead (never a permanent delete).
+    #[arg(long)]
+    pub trash: bool,
+    /// Print the plan; remove nothing.
+    #[arg(long, conflicts_with = "yes")]
+    pub dry_run: bool,
+    /// Confirm the removal.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// `vfs mkdir`.
+#[derive(Debug, clap::Args)]
+pub struct VfsMkdirArgs {
+    /// The folders.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// Create missing parents; an existing folder is no error.
+    #[arg(short, long)]
+    pub parents: bool,
+    /// Print the plan; create nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `vfs touch`.
+#[derive(Debug, clap::Args)]
+pub struct VfsTouchArgs {
+    /// The items.
+    #[arg(required = true, value_name = "SPEC")]
+    pub specs: Vec<OsString>,
+    /// The modification time (RFC 3339); default: now.
+    #[arg(long, value_name = "RFC3339", conflicts_with = "reference")]
+    pub time: Option<String>,
+    /// Use the modification time of this item.
+    #[arg(long, value_name = "SPEC")]
+    pub reference: Option<OsString>,
+    /// Also set the creation time (RFC 3339; where supported).
+    #[arg(long, value_name = "RFC3339")]
+    pub created: Option<String>,
+    /// Create missing items as empty files.
+    #[arg(long)]
+    pub create: bool,
+    /// Print the plan; change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// The spec and link handling of `vfs ls` and `vfs stat`.
@@ -499,6 +1087,26 @@ pub enum GuiCmd {
     },
     /// Quit the GUI.
     Quit,
+    /// Open a named session in the GUI.
+    Session {
+        /// The session: `folder/name`.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Wait until the view closes and exit with its code.
+        #[arg(long)]
+        wait: bool,
+        /// Do not start the GUI when it is not running.
+        #[arg(long)]
+        no_launch: bool,
+    },
+    /// Load a workspace in the GUI.
+    Workspace {
+        /// The workspace.
+        name: String,
+        /// Do not start the GUI when it is not running.
+        #[arg(long)]
+        no_launch: bool,
+    },
 }
 
 /// `gui open`: every argument after `open` (except the global flags clap sees directly after it) is passed raw to

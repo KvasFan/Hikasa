@@ -71,15 +71,8 @@ fn unknown_keys_inside_known_sections_are_silent_but_listed() {
     .unwrap();
     assert_eq!(load.options.context_lines, 2);
     assert!(load.warnings.is_empty(), "{:?}", load.warnings);
-    assert_eq!(
-        load.ignored_keys,
-        vec![
-            "backups.mode",
-            "text_editing.auto_indent",
-            "tweaks.beep",
-            "tweaks.file_operations.comparison_priority",
-        ]
-    );
+    // `auto_indent` and `comparison_priority` are typed keys since M2 W1 (D-71): only the unknown ones are listed.
+    assert_eq!(load.ignored_keys, vec!["backups.mode", "tweaks.beep"]);
 }
 
 #[test]

@@ -28,11 +28,25 @@ pub enum VfsOp {
     Commit,
     /// Memory-mapping a file.
     Map,
+    /// Creating a folder (M2 W3).
+    Mkdir,
+    /// Removing an item (M2 W3).
+    Remove,
+    /// Renaming an item (M2 W3).
+    Rename,
+    /// Setting times (M2 W3).
+    SetTimes,
+    /// Setting attributes (M2 W3).
+    SetAttrs,
+    /// Creating a symbolic link (M2 W3).
+    Symlink,
+    /// Moving an item to the recycle bin (M2 W3).
+    Trash,
 }
 
 impl VfsOp {
     /// Every operation, in declaration order.
-    pub const ALL: [VfsOp; 7] = [
+    pub const ALL: [VfsOp; 14] = [
         VfsOp::Stat,
         VfsOp::List,
         VfsOp::Open,
@@ -40,6 +54,13 @@ impl VfsOp {
         VfsOp::Write,
         VfsOp::Commit,
         VfsOp::Map,
+        VfsOp::Mkdir,
+        VfsOp::Remove,
+        VfsOp::Rename,
+        VfsOp::SetTimes,
+        VfsOp::SetAttrs,
+        VfsOp::Symlink,
+        VfsOp::Trash,
     ];
 
     /// Stable snake_case name, identical to the serde form (`"stat"`, …).
@@ -52,6 +73,13 @@ impl VfsOp {
             VfsOp::Write => "write",
             VfsOp::Commit => "commit",
             VfsOp::Map => "map",
+            VfsOp::Mkdir => "mkdir",
+            VfsOp::Remove => "remove",
+            VfsOp::Rename => "rename",
+            VfsOp::SetTimes => "set_times",
+            VfsOp::SetAttrs => "set_attrs",
+            VfsOp::Symlink => "symlink",
+            VfsOp::Trash => "trash",
         }
     }
 }
@@ -133,6 +161,46 @@ pub enum VfsError {
         /// The rejected text.
         input: String,
     },
+    /// A folder that must be empty is not (M2 W3, D-93).
+    #[error("{spec}: folder is not empty")]
+    NotEmpty {
+        /// Canonical spec.
+        spec: String,
+    },
+    /// A rename between two file systems (M2 W3, D-93); callers fall back to copy + remove (D-97).
+    #[error("{from} -> {to}: cannot rename across file systems")]
+    CrossDevice {
+        /// Canonical spec of the source.
+        from: String,
+        /// Canonical spec of the target.
+        to: String,
+    },
+    /// A mutating primitive this back-end (or this item) does not support (M2 W3, D-93).
+    #[error("{spec}: {} is not supported here", op.as_str())]
+    OperationUnsupported {
+        /// Canonical spec.
+        spec: String,
+        /// The primitive.
+        op: VfsOp,
+    },
+    /// A target an operation refuses (M2 W3, D-93). Reasons (stable text): `"is the source itself"`, `"is
+    /// inside the source folder"`, `"is not an existing folder"`, `"needs a file name"`, `"is a root folder"`,
+    /// `"changed since the plan was made"`.
+    #[error("{spec}: {reason}")]
+    InvalidTarget {
+        /// Canonical spec.
+        spec: String,
+        /// Stable reason text.
+        reason: &'static str,
+    },
+    /// A source that exists in principle but cannot be reached now, such as "no clipboard" (M2 W3, D-93).
+    #[error("{spec}: {reason}")]
+    Unavailable {
+        /// Canonical spec.
+        spec: String,
+        /// Why.
+        reason: String,
+    },
 }
 
 impl VfsError {
@@ -155,6 +223,11 @@ impl VfsError {
             io::ErrorKind::NotADirectory => VfsError::NotADirectory { spec },
             io::ErrorKind::IsADirectory => VfsError::IsADirectory { spec },
             io::ErrorKind::AlreadyExists => VfsError::AlreadyExists { spec },
+            io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty { spec },
+            io::ErrorKind::CrossesDevices => VfsError::CrossDevice {
+                from: spec.clone(),
+                to: spec,
+            },
             _ => VfsError::Io {
                 spec,
                 op,
@@ -163,7 +236,8 @@ impl VfsError {
         }
     }
 
-    /// The spec the error is about (`None` for `InvalidName`, `InvalidAttributes` and `Cancelled`).
+    /// The spec the error is about (`None` for `InvalidName`, `InvalidAttributes` and `Cancelled`; `from` for
+    /// `CrossDevice`).
     pub fn spec(&self) -> Option<&str> {
         match self {
             VfsError::NotFound { spec }
@@ -173,7 +247,12 @@ impl VfsError {
             | VfsError::AlreadyExists { spec }
             | VfsError::Unsupported { spec, .. }
             | VfsError::TooLarge { spec, .. }
-            | VfsError::Io { spec, .. } => Some(spec),
+            | VfsError::Io { spec, .. }
+            | VfsError::NotEmpty { spec }
+            | VfsError::OperationUnsupported { spec, .. }
+            | VfsError::InvalidTarget { spec, .. }
+            | VfsError::Unavailable { spec, .. } => Some(spec),
+            VfsError::CrossDevice { from, .. } => Some(from),
             VfsError::InvalidName { .. }
             | VfsError::InvalidAttributes { .. }
             | VfsError::Cancelled => None,
@@ -208,6 +287,11 @@ impl Classify for VfsError {
             }
             VfsError::Io { source, .. } => io_error_kind(source),
             VfsError::Cancelled => ErrorKind::Cancelled,
+            VfsError::NotEmpty { .. } => ErrorKind::NotEmpty,
+            VfsError::CrossDevice { .. }
+            | VfsError::OperationUnsupported { .. }
+            | VfsError::Unavailable { .. } => ErrorKind::Unsupported,
+            VfsError::InvalidTarget { .. } => ErrorKind::InvalidInput,
         }
     }
 }
@@ -225,8 +309,13 @@ impl From<VfsError> for io::Error {
             VfsError::AlreadyExists { .. } => io::ErrorKind::AlreadyExists,
             VfsError::Unsupported { .. } => io::ErrorKind::Unsupported,
             VfsError::TooLarge { .. } => io::ErrorKind::FileTooLarge,
-            VfsError::InvalidName { .. } | VfsError::InvalidAttributes { .. } => {
-                io::ErrorKind::InvalidInput
+            VfsError::InvalidName { .. }
+            | VfsError::InvalidAttributes { .. }
+            | VfsError::InvalidTarget { .. } => io::ErrorKind::InvalidInput,
+            VfsError::NotEmpty { .. } => io::ErrorKind::DirectoryNotEmpty,
+            VfsError::CrossDevice { .. } => io::ErrorKind::CrossesDevices,
+            VfsError::OperationUnsupported { .. } | VfsError::Unavailable { .. } => {
+                io::ErrorKind::Unsupported
             }
             VfsError::Io { source, .. } => {
                 if source

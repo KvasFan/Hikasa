@@ -90,8 +90,8 @@ impl Service {
 
     /// The canonical TOML of a format (the human output of `format show`; additive).
     pub fn format_toml(&self, id_or_name: &str) -> Result<String, ApiError> {
-        let entry = self
-            .registry()
+        let registry = self.registry();
+        let entry = registry
             .find(id_or_name)
             .ok_or_else(|| FormatError::UnknownFormat {
                 name: id_or_name.to_owned(),
@@ -144,7 +144,7 @@ impl Service {
         let load = self.load_options(req.encoding.as_deref())?;
         let ctl = job.ctl();
         let (doc, raw) = load_document(
-            &**self.router(),
+            &*self.router(),
             &spec,
             &detection.format,
             &load,

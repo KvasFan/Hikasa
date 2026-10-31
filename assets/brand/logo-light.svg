@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hikasa logo, for light backgrounds. Two offset panes; what they share is the dark band.
+     Every coordinate is a multiple of 8, so the edges land on whole pixels at 16, 32, 64 px. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Hikasa">
+  <title>Hikasa</title>
+  <clipPath id="left"><rect x="8" y="8" width="72" height="96" rx="12"/></clipPath>
+  <rect x="8" y="8" width="72" height="96" rx="12" fill="#1769d6"/>
+  <rect x="48" y="24" width="72" height="96" rx="12" fill="#f26b1d"/>
+  <rect x="48" y="24" width="72" height="96" rx="12" fill="#14213d" clip-path="url(#left)"/>
+</svg>

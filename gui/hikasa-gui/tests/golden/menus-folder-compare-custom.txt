@@ -1,0 +1,72 @@
+Session
+  > New Session
+    Folder Compare
+    Text Compare
+  New Tab	Ctrl+T
+  New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
+  ---
+  Go to Home	Alt+Home
+  Save Session	Shift+Ctrl+S
+  Save Session As...
+  Session Settings...
+  [ ] Locked (disabled)
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+Edit
+  Collapse All
+  Full Refresh	Ctrl+F5
+Actions
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+Search
+  Next Difference	Ctrl+N
+  Previous Difference	Ctrl+P (disabled)
+View
+  ( ) Show None
+  ( ) Always Show Folders
+  (*) Compare Files and Folder Structure
+  ( ) Only Compare Files
+  ---
+  [ ] Suppress Filters	Alt+S
+  [ ] Log
+  ---
+  [ ] Ignore Unimportant Differences
+  [x] Toolbar
+  ---
+  > Display Filter
+    ( ) Show All
+    (*) Show Differences
+    ( ) Show Same
+    ( ) Show No Orphans
+    ( ) Show Differences but No Orphans
+    ( ) Show Orphans
+    ( ) Show Left Newer
+    ( ) Show Right Newer
+    ( ) Show Left Newer and Left Orphans
+    ( ) Show Right Newer and Right Orphans
+    ( ) Show Left Orphans
+    ( ) Show Right Orphans
+    ---
+    [ ] Same Items
+    [x] Left Orphans
+    [x] Right Orphans
+    [x] Left Newer
+    [x] Right Newer
+    [x] Different Items
+Tools
+  Options...
+  Export Settings...
+  Import Settings...
+  Restore Factory Defaults...
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

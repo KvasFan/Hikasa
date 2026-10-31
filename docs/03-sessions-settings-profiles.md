@@ -29,6 +29,57 @@
 - **SES-010** (P0): Session display filter state is saved with the session except
   when loading a session from a script (script loads use the script's filter state).
 
+*M2 interpretation (contract `docs/design/m2-contracts.md` §1.2, D-80…D-84, D-90, D-91):*
+
+- **Types and files (D-80, D-81).** The session types of M2 are `folder-compare`, `folder-sync`,
+  `text-compare`, `text-edit`, `table-compare`, `hex-compare` and `picture-compare`; the P1 types (`text-merge`,
+  `folder-merge`, `media`, `version`, `registry`, …) are refused as `unsupported`. A session is one TOML file
+  (§5.3). A session is named by its folders and name joined by `/` (`work/api-v2`); names and folder names
+  have 1–100 characters, none of `/ \ : * ? " < > |` or control characters, no leading or trailing space or
+  dot, do not start with `_`, are not a Windows device name, and are unique per folder whatever their case
+  (SES-003, SES-006: a save or rename onto another case of an existing name is `already_exists`).
+- **New and clear (SES-001, SES-008).** A new session copies the defaults of its type (`_defaults/<type>.toml`,
+  else the built-in defaults) without lock, favorite, parent or overrides; Clear Session is a new session of the
+  same type; Swap Sides exchanges specs, encodings, the parent's relative paths, pair overrides and every `view`
+  key ending in `_left`/`_right`.
+- **Auto-save (SES-002, D-83).** One file per open view: the first save creates
+  `_autosaved/<YYYYMMDD-HHMMSS>-<n>.toml` (local time, `n` the first free counter), later saves of the view
+  overwrite it; `saved_at` is RFC 3339 with the local offset. Groups (Today, Yesterday, 2–6 days ago, More than
+  6 days ago; a future date counts as Today) come from `saved_at` against the local date of the injected clock.
+  After each auto-save the newest `max_auto_saved_sessions` (OPT-019) are kept by `saved_at`, then by name; 0
+  saves nothing and removes every auto-saved file. Named sessions are never removed.
+- **Lock and close prompts (SES-004, SES-005, D-84).** `dirty` means that specs or rules differ from the loaded
+  file (`view` and `display` do not count). Closing an unnamed or auto-saved view auto-saves it (nothing when
+  auto-save is off); closing a named one writes its view state silently when it is not dirty, asks "Save changes
+  to session?" when it is, and for a locked session writes nothing unless the user chose Save, which asks "Save
+  changes to locked session?". A locked session file is never written by auto-save or by close.
+- **Locked sessions and other commands (SES-004, D-91).** `hikasa session edit`, `delete` and `rename` refuse a
+  locked session unless `--force`; `hikasa session rmdir --recursive` and renaming a folder in Home refuse a folder
+  holding locked sessions unless forced (`--force`; in Home the prompt names them); `settings import` does not replace or delete one, and `settings
+  restore-defaults --delete-sessions` does not delete one, unless `--force` (the plan shows `skip_locked` and
+  the warning `session_locked` names the session).
+- **Stored rules (D-82, D-90).** A session file holds the rules that differ from the defaults of its type, plus
+  every rule it already held: a value chosen explicitly stays written even when it equals the defaults, so a
+  later change of the defaults does not change it. `hikasa session edit --unset <key>` removes a rule, and the
+  session follows the defaults for it again. The optional folder rules (time offset, size and date filters) are
+  written `false` to mean "off" where the defaults set them. Removing an entry of a map that the defaults hold
+  (such as one grammar element's importance) comes with the session settings dialog (W4).
+- **Display filter (SES-010).** `[display]` is stored with the session; a session loaded by a script (or opened
+  over IPC) has it cleared, so the script's filter state applies.
+- **Specs that cannot be stored.** `-` (standard input) and `clipboard://` are never stored; the side stays
+  empty, with the warning `spec_not_saved`.
+
+*M2 W4b (D-120, D-121):* every comparison view of the GUI owns a session: origin (unnamed, auto-saved, named), the
+session as loaded, the lock, its auto-saved slot. All close paths (tab, window, exit, Home, the Sessions drop-down,
+Load Workspace) run the D-84 table; a Cancel stops the whole close, and all questions are asked before anything is
+closed or written. Closes that cannot ask (`gui close`, `gui quit`, the end of a desktop session) answer No: a named
+file stays as it is, unnamed and auto-saved views are auto-saved. A view of origin unnamed or auto-saved is also
+auto-saved every 300 s while its session (`view` and `display` included) differs from the last auto-saved one, also in
+a minimized window. Yes at a close keeps the tab until the save returned: a failed save leaves it open with the reason
+and stops the whole close, Exit included. Renaming, moving or deleting a session in Home reaches its open views; a Save
+is refused when the file is no longer the session the view loaded. A view whose auto-saved file is locked asks at its
+close, and Yes writes a new auto-saved file.
+
 ## 2. Session settings dialog (common contract)
 
 - **SES-020** (P0): Every session type has a Session Settings dialog organised in
@@ -41,9 +92,19 @@
   - for child sessions additionally: *Use for these files within parent session* and
     *Use for all files within parent session* (stored in the parent folder session as
     per-pair or per-type overrides).
+- *M2 interpretation of SES-021 (D-82):* the effective rules of a session are the defaults of its type → for a
+  child session, the parent's `type` overrides for the child's type → the parent's `pair` override matching the
+  child's relative paths → the child's own changes. "Update session defaults" writes the rules (never the specs)
+  to `_defaults/<type>.toml`; the two parent scopes store an override in the parent (a named or auto-saved folder
+  session), sparse against the defaults of the child's type; a locked parent keeps the override in memory only.
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.
+- *M2 W4b (D-122, D-123):* the dialog is a shell with a tab registry per session type: W4 provides Specs and the
+  scope selector; the rule tabs arrive with W9, W11 and W13, and `Rules` stays `planned` until then. The default
+  scope is *this view only*; every other scope needs a change in a rule tab, and the two parent scopes a named or
+  auto-saved folder parent. Removing an inherited map entry (`false` in a session or override) comes with the
+  importance tab (W11).
 
 ## 3. Home view and session management
 
@@ -62,6 +123,12 @@
 - **SES-033** (P1): Incremental search in trees and lists (type-ahead) with a
   configurable reset delay.
 
+*M2 W4b (D-124):* the tree shows *New* (one entry per type the GUI opens), the named sessions (folders first, then
+favorites, then the rest, each sorted case-insensitively) and *Auto-saved* in the four D-83 groups, newest first.
+Search is a case-insensitive substring of the name, folder path or description; matches show with their ancestors.
+The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. The Web
+Resources panel stays `planned` (D-133).
+
 ## 4. Workspaces
 
 - **SES-040** (P0): A workspace = all open windows and tabs with their sessions,
@@ -71,6 +138,19 @@
 - **SES-041** (P0): Startup options "Load workspace" and "On exit, save workspace as"
   (typically the same name, e.g. `last`) implement "reopen what I had".
 - **SES-042** (P0): A workspace name can be given on the command line.
+- *M2 interpretation (D-85, D-88):* a workspace stores, per window, its geometry (as `state.toml` `[window]`)
+  and active tab, and per tab either a named session reference or an inline session table (an unsaved or
+  auto-saved view) plus its view layout; an optional `shortcut`. Loading closes the open views and opens the
+  tabs (lazily); a tab whose session no longer exists opens Home, with the warning `session_missing`. On the
+  command line, `hikasa gui workspace <name>` and `hikasa gui open <name>` (one argument that is neither an
+  existing path nor a session) load a workspace (`12-cli-and-scripting.md` §1).
+
+*M2 W4b (D-125, D-126):* Save Workspace As captures every window (root first): named views by reference, others as
+inline sessions, pending tabs as they are, Home tabs not at all. Load Workspace runs every view's close action (a
+Cancel aborts with nothing closed), closes the windows beyond the workspace's count, then restores lazily: only each
+window's active tab starts; the others are pending (listed by `gui list`, closed with `close_unopened`) until first
+activated. A pending tab's caption is the reference, else the description, else the input names. IPC `LoadWorkspace`
+restores the same way.
 
 ## 5. Settings storage
 
@@ -136,7 +216,7 @@ directory into the configuration folder).
 
 **Read-only commands never create either folder.** Missing files mean defaults.
 
-**`options.toml` (D-31).** A missing file means defaults. A `schema_version` newer than
+**`options.toml` (D-31; revised by D-71 in M2, see §5.2).** A missing file means defaults. A `schema_version` newer than
 this build supports is an error (SES-052); an older one is read as it is. Unknown keys
 inside the top-level sections of `15-options-reference.md` (`startup`, `tabs`,
 `appearance`, `text_editing`, `next_difference`, `backups`, `file_operations`,
@@ -169,6 +249,145 @@ and with the `format` write commands of M2, and never overwrites an existing fil
 temporary file in the same folder (created exclusively), flushed to disk and renamed over
 the target; on any failure the target is untouched and the temporary file is removed.
 
+### 5.2 The settings store (M2; contract `docs/design/m2-contracts.md` §1.1; D-70…D-78)
+
+**One engine (D-70).** Every program-owned settings file — `options.toml`, `state.toml`, `commands.toml`,
+`theme.toml`, `themes/<name>.toml`, `filters.toml`, `openwith.toml`, `archives.toml` — is read and written by
+the same engine (`hikasa_session::settings::SettingsFile`):
+
+- **Versions (SES-052).** `schema_version` absent means the current version (1); a negative or non-integer
+  value is an error; a newer value is an error for every command. An older file is migrated in memory, step by
+  step, and written back in the current version on its next save (never at load). `schema_version = 0` reads as
+  version 1.
+- **Unknown keys (Q11).** Keys this version does not know are kept and written back with their values (comments
+  and layout are not kept). An unknown top-level section warns `unknown_config_key`; unknown keys inside known
+  tables are silent (`--verbose` logs them). Unknown keys inside `[[app]]` and `[[preset]]` entries stay with
+  their entry. *Interpretation:* `toml` is used without its order-preserving feature, so kept unknown keys are
+  written in sorted order after the known keys of their table, and unknown sections after the known ones.
+- **Sparse writes.** A key equal to its default is not written, so a later change of a default reaches every
+  user; an empty table is not written; a file that would hold only `schema_version` is not created. Known keys
+  are written in the order of the schema. Entries of maps and arrays of tables (`[view.<v>.command.<id>]`,
+  `[[app]]`, `[[preset]]`) are written sparsely against the defaults of a new entry. Writes are atomic (SES-053).
+- **Strict and lenient reading (D-71, revises D-31).** `options.toml` is read completely through the typed model
+  of `15-options-reference.md` ("Keys"). A value of the wrong type or out of range is an error that names the
+  file and the key, for every command except `hikasa settings`, which reads leniently: the bad value is reported
+  as warning `invalid_config_value` and replaced by its default, so `hikasa settings set` repairs the file (any
+  save writes the repaired values). The entries of `[[app]]` and `[[preset]]` are never dropped or reordered: a
+  bad value inside one is replaced by its default, and an entry that fails a check as a whole (an empty command)
+  is kept as it is, with the warning.
+
+**`state.toml` (SES-051).** The program's own memory, not options:
+
+```toml
+schema_version = 1
+last_session = ""                        # name of the session last used (W2)
+[mru]                                    # each list newest first, capped at max_mru_items on push
+left = []
+right = []
+center = []
+folders = []
+files = []
+find = []
+replace = []
+name_filters = []
+workspaces = []
+[window]                                 # the last main window (a workspace stores its own)
+width = 1200                             # 200..=32767
+height = 800                             # 200..=32767
+x = -1                                   # -1..=32767; -1: the platform places the window
+y = -1
+maximized = false
+[flags]
+first_run_done = false                   # set by the GUI's first start (the D-21 materialization)
+hints_seen = []                          # ids of the one-time hints already shown
+[dialogs]                                # free tables per dialog id ("remembers last choices"), kept as they are
+[layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
+font_size = 13.0                         # points; the text view's font commands
+thumbnail = true
+toolbar = true
+[layout.folder-compare]
+log_panel = false                        # View ▸ Log
+log_height = 160.0                       # points
+toolbar = true
+```
+
+Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
+`[tweaks.metrics] max_mru_items` entries.
+
+*M2 W4a (D-108):* the GUI writes `[window]` (the geometry of the last window closed) and the `[layout.<view
+type>]` tables (the last closed view of a type wins) when a window closes and at exit; a view that opens takes
+its keys from the session's `[view]` (W4b), else `[layout.<view type>]`, else the defaults (the font size: the
+theme's editor size). Sizes are restored on every platform, positions where the platform allows. The GUI never
+saves `state.toml` blindly: `Service::state_update` loads it, applies the change and saves with the stamp check;
+a concurrent `hikasa settings set state.…` in between makes it reload and apply the change once more, so both
+edits stay. `hikasa settings get state.layout.text-compare` reads a table.
+
+**Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
+bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
+(every settings file, every scheme file and every `formats/*.toml`) and reports created, changed and removed
+files; it holds no timer: the window polls on focus and every 2 s. *Interpretation:* core code does not read
+the clock, so the CRC is computed at every poll that finds an unchanged length and time (the files are small);
+an edit that keeps the length and the time is still found. A save first compares the stamp on disk with the
+stamp of the load: a file changed in between is not overwritten (error, exit 100) unless
+`hikasa settings set --force`.
+
+**Keys and the `settings` command (D-73).** `hikasa settings get|set|unset|list` address every value as
+`<file>.<path>` (`options.text_editing.auto_indent`, `openwith.app.0.command`, `themes.dark.folder.background`);
+see `12-cli-and-scripting.md` §4. `set` refuses a value of the wrong type, out of range or failing a check
+(a command id or view in `commands.toml` that this build does not know, a shortcut that does not parse, a duplicate
+preset name, an Open With command that does not split) and leaves the file as it was. Such an id already in the file is
+kept as it is, with a warning (T13, §1.4.20 W4c of the M2 contract). Setting a value equal to its default removes the
+key.
+
+**Restore defaults (D-77; the single-file part of SES-062).** `hikasa settings restore-defaults (--all |
+--file <file>…)` deletes settings files so that the next load sees defaults. It is a plan: `--dry-run` prints
+it (`delete <path>` / `absent <path>` per file); without `--dry-run` it needs `--yes`. `--file themes` means every
+scheme file. Sessions, workspaces and file formats are not touched (`hikasa format restore` restores formats).
+
+### 5.3 Session, workspace and package files (M2; contract §1.2; D-80…D-87)
+
+All three are read and written by the D-70 engine of §5.2 (versions, unknown keys kept, sparse atomic writes).
+
+**Sessions.** `sessions/<folder path>/<name>.toml` (named), `sessions/_defaults/<type>.toml` (one per type),
+`sessions/_autosaved/<id>.toml`:
+
+```toml
+schema_version = 1
+type = "folder-compare"        # always written
+description = ""
+locked = false
+favorite = false               # SES-031 Favorite
+saved_at = ""                  # RFC 3339; auto-saved files only
+[parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
+[specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding
+[rules]                        # folder-compare: the TOML of --rules-file; text types: TextRules; others: kept as is
+[text_rules]                   # folder types: rules of rules-based content tests
+[display]                      # display filter state (SES-010)
+[view]                         # view layout and state
+[[override]]                   # folder types: scope = "pair" | "type", left, right, type, [override.rules]
+```
+
+`[rules]`, `[text_rules]` and `[override.rules]` hold only what differs from the defaults of the type **at save
+time**, so a later change of the defaults reaches every session that did not change that rule. `hikasa session
+edit --set` addresses keys of this file (`rules.criteria.size=false`); `type`, `locked`, `saved_at` and
+`override` are not set that way.
+
+**Workspaces.** `workspaces/<name>.toml` (names as session names, no folders):
+
+```toml
+schema_version = 1
+shortcut = ""
+[[window]]                     # width, height, x, y, maximized, active_tab
+[[window.tab]]                 # session = "<ref>"  or  [window.tab.inline] (a session table without schema_version)
+[window.tab.view]              # the tab's layout
+```
+
+A tab has exactly one of `session` and `inline`, and `active_tab` names one of the tabs (lenient loading resets
+it to 0).
+
+**Settings packages.** A `.hikasa-pkg` is a zip (stored or deflate, no encryption) with `manifest.toml` and the
+files at their configuration-relative paths (§6).
+
 ## 6. Import, export, restore defaults, support package
 
 - **SES-060** (P0): **Export Settings** wizard: choose categories — Program Options;
@@ -184,6 +403,39 @@ the target; on any failure the target is untouched and the temporary file is rem
   everything.
 - **SES-062** (P0): **Restore Factory Defaults** reuses the same wizard against the
   built-in defaults.
+- *M2 W4c (D-131):* the three wizards are step dialogs (Back, Next, Finish, Cancel) over the CLI's calls. Export:
+  categories and items, then the target (default `~/hikasa-settings-<YYYY-MM-DD>.hikasa-pkg`, an existing file is
+  replaced after a question). Import: the package (validated; a bad one stops here with nothing written), then the
+  categories and items with their planned action (Add, Replace in red, Kept for a locked session), "Include locked
+  sessions" and the delete choices, then the summary (the dry run of exactly these choices). Restore: categories and
+  the delete choices, then the files to delete. Finish plans again in core; when what ran differs from what was shown,
+  the result says so. Written and deleted paths are acknowledged first, so the window's own import raises no notice;
+  the settings reload and open views keep running.
+- *M2 interpretation (D-86, D-87):* the categories of a package are `options` (`options.toml`, `filters.toml`,
+  `openwith.toml`, `archives.toml`), `theme` (`theme.toml`, `themes/*.toml`), `commands`, `state`, `sessions`
+  (named sessions and `_defaults`, per item; never `_autosaved`), `formats` (per item, and `order.toml`),
+  `workspaces` (per item) and `system_info` (`system-info.txt`: version, platform, configuration mode and folder
+  with the home folder written `~`, item counts; exported only when asked, never imported); `profiles` is
+  reserved (P1). `manifest.toml` holds `schema_version`, `format = "hikasa-pkg"`, `hikasa_version`, `created`
+  (the injected clock, RFC 3339) and one `[[item]]` (`category`, `name`, `path`) per file. Export writes the
+  zip atomically with entries sorted by path and the `created` time, so the same configuration exported at the
+  same instant gives the same bytes. Import is a plan (T12): every entry is validated first — manifest and
+  entries agree, each path is allowed for its category, no `..`, absolute or backslash paths, at most 10,000
+  entries, 16 MiB per entry and 64 MiB in total uncompressed, each file parses with its schema and none is newer
+  than this version (`unsupported`; anything else `invalid_data` naming the entry), session rules and text rules
+  (also of overrides and of inline workspace tabs) build and their regular expressions compile, no two entries
+  differ only by case, and every manifest category is known — and nothing is written when anything fails. Then the deletes ("delete all existing sessions / file formats / workspaces") run, and the
+  items are written one by one with a result each (a failure is recorded and the others continue; exit 100).
+  A collision is an item whose target exists, compared without regard to case (the existing spelling is kept):
+  it is replaced — except a locked named session, which is kept (`skip_locked`, warning `session_locked`, not
+  counted) unless `--force`; `--delete-existing sessions` does not delete locked sessions either (D-91). The summary counts added, replaced and deleted
+  per category. `--silent` imports every category and item without deletes (`hikasa settings import --silent`,
+  `hikasa gui open <file.hikasa-pkg> --silent`).
+- *M2 interpretation of SES-062 (D-87):* restoring factory defaults is the same plan with deletes only: per
+  chosen category the user files are deleted (the settings files, the scheme files, `sessions/_defaults/*.toml`,
+  every format file and `order.toml`); named sessions and workspaces only with the explicit
+  `--delete-sessions` / `--delete-workspaces` choices (`hikasa settings restore-defaults --category …`); a
+  locked named session is kept with the warning `session_locked` unless `--force` (D-91).
 - **SES-063** (P1): **Support** dialog builds a support package (settings + system
   info + logs) and offers "Explore settings folder".
 
@@ -222,3 +474,12 @@ the target; on any failure the target is untouched and the temporary file is rem
   / Cancel).
 - **SES-093** (P0): "Home" command (Alt+Home) replaces the current view with the Home
   view; "Sessions" dropdown in the toolbar lists sessions openable in this view.
+
+*M2 W4a (D-106, D-107):* windows, the tab context menu (New Tab, Duplicate Tab, Move Tab to
+New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorder and — where
+the platform reports window positions — to move between windows or out into a new window,
+and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
+P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.
+
+*M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
+the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.

@@ -23,6 +23,10 @@ use serde::Serialize;
 
 use crate::commands::{CommandId, Ctx};
 use crate::job::Job;
+use crate::status::{JobStatus, LogNote, StatusItems};
+use hikasa_session::log::LogKind;
+use hikasa_session::settings::State;
+use hikasa_session::settings::state::LayoutValue;
 
 /// Default font size of the panes (px).
 pub const DEFAULT_FONT_PX: u32 = 13;
@@ -214,7 +218,11 @@ pub struct TextViewModel {
     scroll: Option<u32>,
     show_thumbnail: bool,
     font_px: u32,
+    /// The theme's editor size (`DisplayFontReset`, D-113).
+    default_font_px: u32,
     context_lines: u32,
+    /// What the log learns when a comparison ends (D-116), taken by the app.
+    notes: Vec<LogNote>,
     started: Instant,
     loaded_after: Option<Duration>,
     ready_after: Option<Duration>,
@@ -263,7 +271,9 @@ impl TextViewModel {
             scroll: None,
             show_thumbnail: true,
             font_px: DEFAULT_FONT_PX,
+            default_font_px: DEFAULT_FONT_PX,
             context_lines: service.options().context_lines,
+            notes: Vec::new(),
             started: Instant::now(),
             loaded_after: None,
             ready_after: None,
@@ -327,7 +337,6 @@ impl TextViewModel {
     }
 
     /// The current view options (filter, ignore-unimportant, expanded gaps).
-    #[cfg(test)]
     pub fn view_options(&self) -> &ViewOptions {
         &self.opts
     }
@@ -399,12 +408,25 @@ impl TextViewModel {
             self.job = None;
             changed = true;
             match result {
-                Ok(response) => self.finish(service, response),
+                Ok(response) => {
+                    self.finish(service, response);
+                    if let Some(note) = self.summary_note() {
+                        self.notes.push(note);
+                    }
+                }
                 Err(ApiError::Cancelled) => {
                     self.cancelled = true;
+                    self.notes.push(LogNote {
+                        kind: LogKind::Summary,
+                        text: "Comparison cancelled.".to_owned(),
+                    });
                     self.bump();
                 }
                 Err(e) => {
+                    self.notes.push(LogNote {
+                        kind: LogKind::Error,
+                        text: e.to_string(),
+                    });
                     self.error = Some(e.to_string());
                     self.bump();
                 }
@@ -853,10 +875,131 @@ impl TextViewModel {
             }
             CommandId::DisplayFontIncrease => self.set_font(self.font_px + 1),
             CommandId::DisplayFontDecrease => self.set_font(self.font_px.saturating_sub(1)),
-            CommandId::DisplayFontReset => self.set_font(DEFAULT_FONT_PX),
+            CommandId::DisplayFontReset => self.set_font(self.default_font_px),
             _ => return false,
         }
         true
+    }
+
+    /// The current font size of the panes (px).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn font_px(&self) -> u32 {
+        self.font_px
+    }
+
+    /// The thumbnail is shown.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn show_thumbnail(&self) -> bool {
+        self.show_thumbnail
+    }
+
+    /// Applies the layout of the view type (D-108): `font_size` (else the theme's editor size `default_px`) and
+    /// `thumbnail`. A value of the wrong type is ignored.
+    pub fn apply_layout(&mut self, layout: &State, default_px: u32) {
+        let view = crate::commands::Scope::Text.view_name().unwrap_or_default();
+        self.default_font_px = default_px.clamp(FONT_RANGE.0, FONT_RANGE.1);
+        let size = layout
+            .layout_value(view, "font_size")
+            .and_then(LayoutValue::as_float)
+            .map_or(self.default_font_px, |f| {
+                f.round().clamp(1.0, 1000.0) as u32
+            });
+        self.set_font(size);
+        if let Some(on) = layout
+            .layout_value(view, "thumbnail")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_thumbnail = on;
+        }
+    }
+
+    /// The layout keys this view owns (D-108): `font_size`, `thumbnail`.
+    pub fn layout_keys(&self) -> Vec<(&'static str, LayoutValue)> {
+        vec![
+            ("font_size", LayoutValue::Float(f64::from(self.font_px))),
+            ("thumbnail", LayoutValue::Bool(self.show_thumbnail)),
+        ]
+    }
+
+    /// The inputs watched for changes on disk (D-118): the two specs as given.
+    pub fn inputs(&self) -> [String; 2] {
+        [lossy(&self.request.left), lossy(&self.request.right)]
+    }
+
+    /// The request that opens the same comparison again (`TabDuplicate`, D-107).
+    pub fn duplicate(&self) -> (hikasa_session::api::ViewRequest, [Option<String>; 2]) {
+        (
+            hikasa_session::api::ViewRequest::Text {
+                request: self.request.clone(),
+                view: self.opts.clone(),
+            },
+            self.titles.clone(),
+        )
+    }
+
+    /// The running jobs (the job indicator, D-115).
+    pub fn jobs(&self, view: hikasa_session::ipc::ViewId) -> Vec<JobStatus> {
+        let mut out = Vec::new();
+        if let Some(job) = &self.job {
+            let (phase, fraction) = job.progress();
+            out.push(JobStatus {
+                view,
+                title: job.title().to_owned(),
+                phase: phase.or_else(|| *self.probe.phase.lock()),
+                fraction,
+            });
+        }
+        if let SpanState::Preparing(job) = &self.spans {
+            out.push(JobStatus {
+                view,
+                title: job.title().to_owned(),
+                phase: None,
+                fraction: None,
+            });
+        }
+        out
+    }
+
+    /// The notes for the log since the last call.
+    pub fn take_notes(&mut self) -> Vec<LogNote> {
+        std::mem::take(&mut self.notes)
+    }
+
+    /// The summary of a finished comparison for the log: the verdict, the sections and the duration.
+    fn summary_note(&self) -> Option<LogNote> {
+        let r = self.response.as_ref()?;
+        let stats = r.comparison.stats();
+        let verdict = r.comparison.verdict(self.opts.ignore_unimportant).kind();
+        Some(LogNote {
+            kind: LogKind::Summary,
+            text: format!(
+                "{}: {} important and {} unimportant of {} sections, compared in {} ms.",
+                verdict_text(verdict),
+                stats.important_sections,
+                stats.sections - stats.important_sections,
+                stats.sections,
+                self.ready_after.map_or(0, |d| d.as_millis()),
+            ),
+        })
+    }
+
+    /// The status bar (D-115): the comparison state on the left; the format, then each side's encoding and line
+    /// endings on the right.
+    pub fn status_items(&self) -> StatusItems {
+        let status = self.status();
+        let mut right = Vec::new();
+        if let Some(r) = &self.response {
+            right.push(r.format.name.clone());
+        }
+        for pane in &status.panes {
+            if !pane.detail.is_empty() {
+                right.push(pane.detail.clone());
+            }
+        }
+        StatusItems {
+            left: status.state,
+            right,
+        }
     }
 
     fn set_font(&mut self, px: u32) {

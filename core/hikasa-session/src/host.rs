@@ -1,15 +1,22 @@
-//! Host facts and clocks (T1): [`EnvFacts`], [`Platform`], [`Clock`], [`FixedClock`], [`SystemClock`] and
-//! [`capture_env`].
+//! Host facts, clocks and the clipboard (T1): [`EnvFacts`], [`Platform`], [`Clock`], [`FixedClock`],
+//! [`SystemClock`], [`capture_env`], and the clipboard providers [`SystemClipboard`], [`FileClipboard`] and
+//! [`clipboard_provider`] (M2 W3, D-100).
 //!
 //! This module is the **only** place in the core crates that reads the process environment, the current and
 //! home directories, the executable location and the system clock and time zone. Architecture check 2
 //! (§6.1) names this file as the allow-point of `std::env`, the system clock and `directories`; nothing else
 //! under `core/` may do so. [`capture_env`] and [`SystemClock`] are **adapter-only**: only `cli/` and `gui/`
-//! (and this crate's own tests) reference them. Every other function receives the captured [`EnvFacts`] and an
+//! (and this crate's own tests) reference them; so are [`SystemClipboard`] and [`clipboard_provider`], and this file is
+//! the only one under `core/` that names the `arboard` crate (architecture check 2, contract M2 §1.3.9). Every other function receives the captured [`EnvFacts`] and an
 //! injected [`Clock`] as values, so results never depend on ambient state.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::clipboard::{
+    ClipboardContent, ClipboardError, ClipboardProvider, MAX_IMAGE_BYTES, MAX_TEXT_BYTES,
+};
 
 use hikasa_core::PathStyle;
 use serde::{Deserialize, Serialize};
@@ -98,6 +105,9 @@ pub struct EnvFacts {
     /// `$NO_COLOR` is set to a non-empty value (no-color.org): adapters disable ANSI colours. Added in the
     /// wave-4 review (§1.8.7).
     pub no_color: bool,
+    /// `$HIKASA_CLIPBOARD_FILE`: a file whose bytes stand in for the clipboard text ([`FileClipboard`]; tests,
+    /// headless scripts). Added in M2 W3 (D-100).
+    pub clipboard_file_override: Option<PathBuf>,
 }
 
 impl EnvFacts {
@@ -122,6 +132,7 @@ impl EnvFacts {
             path_var: None,
             gui_exe_override: None,
             no_color: false,
+            clipboard_file_override: None,
         }
     }
 }
@@ -162,6 +173,7 @@ pub fn capture_env() -> EnvFacts {
         path_var: var("PATH"),
         gui_exe_override: path("HIKASA_GUI_EXE"),
         no_color: var("NO_COLOR").is_some(),
+        clipboard_file_override: path("HIKASA_CLIPBOARD_FILE"),
         temp_dir,
     }
 }
@@ -259,6 +271,96 @@ impl Clock for FixedClock {
     /// The fixed time.
     fn now(&self) -> jiff::Zoned {
         self.0.clone()
+    }
+}
+
+/// The operating-system clipboard through `arboard` (adapter-only, like [`SystemClock`]): non-empty text, else an
+/// image, else `Empty`; text above [`MAX_TEXT_BYTES`] or an image above [`MAX_IMAGE_BYTES`] → `TooLarge`. One `arboard::Clipboard` per read; a slow selection owner is bounded by `arboard`'s own timeouts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClipboard;
+
+/// The clipboard error of an `arboard` failure (§1.3.6).
+fn arboard_error(error: arboard::Error) -> ClipboardError {
+    match error {
+        arboard::Error::ContentNotAvailable => ClipboardError::Empty,
+        arboard::Error::ClipboardNotSupported | arboard::Error::ClipboardOccupied => {
+            ClipboardError::Unavailable(error.to_string())
+        }
+        other => ClipboardError::Failed(other.to_string()),
+    }
+}
+
+impl ClipboardProvider for SystemClipboard {
+    fn read(&self) -> Result<ClipboardContent, ClipboardError> {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        match clipboard.get_text() {
+            Ok(text) if text.len() as u64 > MAX_TEXT_BYTES => {
+                return Err(ClipboardError::TooLarge(MAX_TEXT_BYTES));
+            }
+            // Empty text is no text: an image may still be there.
+            Ok(text) if !text.is_empty() => return Ok(ClipboardContent::Text(text)),
+            Ok(_) | Err(arboard::Error::ContentNotAvailable) => {}
+            Err(e) => return Err(arboard_error(e)),
+        }
+        let image = clipboard.get_image().map_err(arboard_error)?;
+        let too_large = || ClipboardError::TooLarge(MAX_IMAGE_BYTES);
+        let pixels = (image.width as u64)
+            .checked_mul(image.height as u64)
+            .and_then(|n| n.checked_mul(4));
+        if pixels.is_none_or(|n| n > MAX_IMAGE_BYTES) {
+            return Err(too_large());
+        }
+        Ok(ClipboardContent::Image {
+            width: u32::try_from(image.width).map_err(|_| too_large())?,
+            height: u32::try_from(image.height).map_err(|_| too_large())?,
+            rgba: image.bytes.into_owned(),
+        })
+    }
+}
+
+/// A file standing in for the clipboard (`$HIKASA_CLIPBOARD_FILE`): its bytes as text (invalid UTF-8 replaced);
+/// a missing file → `Unavailable`, an empty one → `Empty`, more than [`MAX_TEXT_BYTES`] → `TooLarge`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileClipboard(pub PathBuf);
+
+impl ClipboardProvider for FileClipboard {
+    fn read(&self) -> Result<ClipboardContent, ClipboardError> {
+        // A regular file above the limit is refused from its length; otherwise at most one byte more than the
+        // limit is read, so a huge file (or a device) never fills the memory.
+        if std::fs::metadata(&self.0).is_ok_and(|m| m.is_file() && m.len() > MAX_TEXT_BYTES) {
+            return Err(ClipboardError::TooLarge(MAX_TEXT_BYTES));
+        }
+        let read = std::fs::File::open(&self.0).and_then(|file| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(
+                &mut std::io::Read::take(file, MAX_TEXT_BYTES + 1),
+                &mut bytes,
+            )
+            .map(|_| bytes)
+        });
+        match read {
+            Ok(bytes) if bytes.len() as u64 > MAX_TEXT_BYTES => {
+                Err(ClipboardError::TooLarge(MAX_TEXT_BYTES))
+            }
+            Ok(bytes) if bytes.is_empty() => Err(ClipboardError::Empty),
+            Ok(bytes) => Ok(ClipboardContent::Text(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ClipboardError::Unavailable(
+                format!("HIKASA_CLIPBOARD_FILE {} does not exist", self.0.display()),
+            )),
+            Err(e) => Err(ClipboardError::Failed(format!("{}: {e}", self.0.display()))),
+        }
+    }
+}
+
+/// The clipboard of an adapter (adapter-only): [`FileClipboard`] when `env.clipboard_file_override` is set, else
+/// [`SystemClipboard`].
+pub fn clipboard_provider(env: &EnvFacts) -> Arc<dyn ClipboardProvider> {
+    match &env.clipboard_file_override {
+        Some(path) => Arc::new(FileClipboard(path.clone())),
+        None => Arc::new(SystemClipboard),
     }
 }
 

@@ -1,0 +1,33 @@
+// Windows resources of one executable; build-windows.sh fills in the @…@ values and compiles this with windres.
+#include <winver.h>
+
+1 ICON "@ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @MAJOR@,@MINOR@,@PATCH@,0
+PRODUCTVERSION @MAJOR@,@MINOR@,@PATCH@,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Hikasa contributors"
+            VALUE "FileDescription", "@DESCRIPTION@"
+            VALUE "FileVersion", "@VERSION@"
+            VALUE "InternalName", "@NAME@"
+            VALUE "LegalCopyright", "Hikasa contributors. MIT OR Apache-2.0."
+            VALUE "OriginalFilename", "@NAME@.exe"
+            VALUE "ProductName", "Hikasa"
+            VALUE "ProductVersion", "@VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -1,0 +1,5 @@
+remove <TMP>/src/a.txt
+remove <TMP>/src/sub/b.txt
+rmdir <TMP>/src/sub
+rmdir <TMP>/src
+would remove 4 items

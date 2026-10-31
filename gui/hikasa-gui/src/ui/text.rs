@@ -198,7 +198,14 @@ pub fn triangle(painter: &Painter, centre: Pos2, size: f32, open: bool, colour: 
     painter.add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
 }
 
-/// Draws the text view of `view` into the remaining space of `ui`.
+/// The id of a text view's panes (their keyboard focus, D-111).
+pub fn pane_id(view: ViewId) -> Id {
+    Id::unique(("hikasa-text", view.0))
+}
+
+/// Draws the text view of `view` into the remaining space of `ui`; returns the commands its keys ran
+/// (bindings in the panes, D-111). `keys` is false while a dialog is open.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut Ui,
     view: ViewId,
@@ -206,7 +213,10 @@ pub fn show(
     st: &mut TextUi,
     status: &TextStatus,
     pal: &Palette,
-) {
+    dispatch: &dyn Fn(&hikasa_session::settings::Shortcut) -> Option<crate::commands::CommandId>,
+    keys: bool,
+) -> Vec<crate::commands::CommandId> {
+    let mut run = Vec::new();
     if st.refresh || st.meta.is_none() {
         st.refresh = false;
         let meta = m.meta();
@@ -220,7 +230,7 @@ pub fn show(
         st.meta = Some(meta);
     }
     let Some(meta) = st.meta.as_ref() else {
-        return;
+        return run;
     };
     let (generation, len, rows, phase, syntax, cursor, show_thumb, digits, font_px) = (
         meta.generation,
@@ -294,14 +304,14 @@ pub fn show(
         pos2(panes_left, body.top()),
         pos2(panes_right, body.bottom()),
     );
-    painter.rect_filled(body, CornerRadius::ZERO, pal.bg);
+    painter.rect_filled(body, CornerRadius::ZERO, pal.t_bg);
 
     let font = FontId::monospace(font_px as f32);
     let lh = (font_px as f32 * 1.4).round().max(4.0);
     let cw = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'M')).max(1.0);
     let page = f64::from((body.height() / lh).floor().max(1.0));
     st.page_rows = page;
-    let id = Id::unique(("hikasa-text", view.0));
+    let id = pane_id(view);
 
     // Input: wheel, clicks, keys.
     let response = ui.interact(text_rect, id, Sense::click());
@@ -327,7 +337,32 @@ pub fn show(
             }
         }
     }
-    if response.has_focus() {
+    // `keys` is false while a dialog is open: the dialog has the keyboard.
+    if keys && response.has_focus() {
+        // A binding of a key in the panes wins over scrolling (D-111: overrides of focus-bound keys too).
+        ui.ctx().input_mut(|i| {
+            i.events.retain(|event| {
+                let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    return true;
+                };
+                match crate::ui::keys::shortcuts_of(*key, *modifiers)
+                    .iter()
+                    .find_map(dispatch)
+                {
+                    Some(cmd) => {
+                        run.push(cmd);
+                        false
+                    }
+                    None => true,
+                }
+            });
+        });
         ui.memory_mut(|mem| {
             mem.set_focus_lock_filter(
                 id,
@@ -409,7 +444,7 @@ pub fn show(
         if show_thumb {
             painter.rect_filled(thumb_rect, CornerRadius::ZERO, pal.chrome);
         }
-        return;
+        return run;
     }
 
     // The slice on screen.
@@ -435,7 +470,7 @@ pub fn show(
         st.slice = Some(slice);
     }
     let Some(slice) = st.slice.as_ref() else {
-        return;
+        return run;
     };
 
     let gutter_w = ((digits as f32 + 1.5) * cw).ceil();
@@ -515,7 +550,7 @@ pub fn show(
                     text_painters[side].rect_filled(rect, CornerRadius::ZERO, colour);
                 }
             }
-            text_painters[side].galley(origin, galley, pal.fg);
+            text_painters[side].galley(origin, galley, pal.t_text);
             drawn_text = true;
         }
     }
@@ -555,6 +590,7 @@ pub fn show(
         };
         st.drawn = st.drawn.max(drawn);
     }
+    run
 }
 
 /// The background of a row's text (TC-031): changed rows by importance, orphans lighter; same rows none.
@@ -716,7 +752,7 @@ mod tests {
             &Columns::new("int x = 1;"),
             &[0, 3, 2, 3, 8, 0, 8, 9, 3, 9, 10, 0],
             &font,
-            &crate::ui::theme::LIGHT,
+            &crate::ui::theme::light(),
         );
         let ranges: Vec<_> = job
             .sections
@@ -726,14 +762,14 @@ mod tests {
         assert_eq!(ranges, vec![(0, 3), (3, 8), (8, 9), (9, 10)]);
         assert_eq!(
             job.sections[0].format.color,
-            crate::ui::theme::LIGHT.syntax[1]
+            crate::ui::theme::light().syntax[1]
         );
         let bare = row_job(
             "abc",
             &Columns::new("abc"),
             &[],
             &font,
-            &crate::ui::theme::LIGHT,
+            &crate::ui::theme::light(),
         );
         assert_eq!(bare.sections.len(), 1);
         assert_eq!(bare.sections[0].byte_range, ByteIndex(0)..ByteIndex(3));
@@ -787,7 +823,7 @@ mod tests {
         let mut checksum = 0usize;
         for _ in 0..400 {
             let cols = Columns::new(&text);
-            let job = row_job(&text, &cols, &segments, &font, &crate::ui::theme::LIGHT);
+            let job = row_job(&text, &cols, &segments, &font, &crate::ui::theme::light());
             checksum += job.sections.len();
             for k in 0..1365u32 {
                 checksum += cols.at(3 * k).1 + cols.at(3 * k + 2).1;

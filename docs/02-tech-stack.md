@@ -79,7 +79,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `tokio` | IPC is blocking: one accept thread plus one thread per connection (ARCH-080's tokio runtime is deferred). |
 | `ignore`, `globset` | In-house folder walker (`hikasa-folder` scanner) and mask engine (`hikasa_core::mask`, `04-folder-views.md` §6.1). |
 | `notify` | No file watching: FC-017 automatic refresh, TC-006 and SES-053 change detection are M2+. |
-| `arboard` | `clipboard://` resolves only when an adapter injects the clipboard content; the CLI reports "unsupported"; `gui open clipboard://` is rejected. |
+| `arboard` | M2 W3 (D-100, D-101): `clipboard://` works in the CLI and the window; see the M2 table below. |
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
 | a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
@@ -106,6 +106,14 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
   public API.
 - **`ropey`** keeps its default Unicode line breaks, so Hikasa keeps its own line table (lines end only at CR,
   LF or CRLF).
+
+### M2 additions (D-63; each crate enters in the wave that first uses it, with fixed features)
+
+| Crate | Wave | Features | Use |
+|---|---|---|---|
+| `trash` 5 (MIT) | W3 | `default-features = false`, `chrono`, `coinit_apartmentthreaded` (`chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows). New transitive crates: `chrono`, `iana-time-zone`, `urlencoding` (Linux and the BSDs), `windows` (Windows), `objc2-foundation` (macOS) | the recycle bin of `LocalVfs` (`rm --trash`, FC-073, D-98) in `hikasa-vfs`, called only from `local/trash.rs`; it reads the home and data folders and the clock inside the call (an OS side effect, not a result input, T1) and never falls back to a permanent delete |
+| `arboard` 3 (MIT OR Apache-2.0) | W3 | `default-features = false`, `image-data`, `wayland-data-control` (the set `Cargo.lock` already compiled through `egui-winit`; no new crate) | the system clipboard behind `clipboard://` (D-100) in `hikasa-session`, named only in `host.rs` (`SystemClipboard`, adapter-only); images become an in-house uncompressed PNG until W12 |
+| `zip` 9 (MIT) | W2 | `default-features = false`, `deflate` (the pure-Rust back-ends `zlib-rs` via `flate2`, and `zopfli`; no AES, no bzip2/lzma/zstd/time) | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`; W5 adds the archive features it needs |
 
 **mmap residual risk.** Mapping a file with `memmap2` is `unsafe`, because another process may modify or
 truncate a file while it is mapped; it is the only `unsafe` code in Hikasa's libraries and programs
@@ -281,6 +289,108 @@ not grow with more cycles (three rounds of five cycles: 349, 417, 388 MiB; with 
 heap (the heap shrinks only from its top), not live data; returning it would need `malloc_trim` (an `unsafe`
 FFI call or a crate that is not approved) or a different allocator, which is left to a later decision.
 
+### M2 W4a: the shell's gates (D-132)
+
+`env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1 text_scroll two_windows` (2026-10-30; the same desktop as above, the binary on Xvfb's default
+640 × 480 screen with Mesa llvmpipe, the only renderer the agents may use; the GPU figures are the maintainer's run
+at W14). The runs require `DISPLAY` and a software renderer. `two_windows` (`HIKASA_GUI_BENCH=two_windows`) opens a
+second window with Home at the first screen (`WindowNew`), lets 240 frames pass and runs the three scroll phases in
+the first window; every frame then also paints the second window (an immediate viewport).
+
+| Gate | Run at load ≈ 9 (final) | Earlier runs | Threshold |
+|---|---|---|---|
+| `text_scroll` first screen | 0.16 s (coloured 0.45 s) | 0.31 s at load ≈ 300 | < 1 s: **met** |
+| `text_scroll` memory | PSS 368 MiB (anon 315), RSS 417 MiB, peak 423 MiB | PSS 363 MiB | PSS < 381.5 MiB: **met** |
+| `text_scroll` UI frame work | p95 0.44 / 1.0 / 1.13 ms, max ≤ 1.9 ms per phase | max 6.1 ms | p95 < 8, max < 16.7 ms: **met** |
+| `two_windows` memory | PSS 375 MiB (anon 318), RSS 424 MiB, peak 429 MiB | 380 MiB; 404 MiB in a run that opened the second window after the coloured screen with a 30-frame warm-up, at load ≈ 300 | PSS < 381.5 MiB: **met** (narrowly) |
+| `two_windows` UI frame work | p95 3.1 / 3.7 / 3.8 ms, max ≤ 6.9 ms per phase | max 14.9 ms; p95 20 ms in the 30-frame warm-up run (the second window's surface was being created during the first phase) | **met** |
+
+Under llvmpipe the renderer's buffers live in the process: the single-window PSS is 363–368 MiB here against
+275 MiB on the GPU (M1, above), and a second window adds 7–40 MiB of anonymous memory for its surface and its
+copy of the font atlas, while its model (one Home tab) is a few kilobytes. The frame work of `two_windows`
+includes the software rasterisation of the second window inside the root frame (immediate viewport), which a GPU
+does asynchronously. The memory margin under llvmpipe is small (≈ 6 MiB); the maintainer's GPU run at the end of
+W4c re-measures it.
+
+**Re-run after the W4a review fixes (2026-10-30, load ≈ 250, same machine, llvmpipe over GL).** Both variants of
+the gate were run: `two_windows` (second window at the first screen) and the new `two_windows_late`
+(`HIKASA_PERF_SECOND_WINDOW=coloured`: second window once the coloured screen is up, the variant that measured
+404 MiB before), with `text_scroll` as the single-window baseline in the same conditions. The bench was not
+changed apart from that switch.
+
+| Run | PSS (anon) | RSS / peak | UI frame work | Gate |
+|---|---|---|---|---|
+| `text_scroll` (one window) | 396.9 MiB (315.1) | 417.3 MiB | p95 ≤ 3.8 ms | PSS **not met** |
+| `two_windows` (first screen) | 402.3 MiB (316.8) | 422.1 / 422.1 MiB | p95 4.68, max 9.99 ms | PSS **not met**; frames met |
+| `two_windows_late` (coloured screen) | 401.4 MiB (315.5); again 401.5 (316.0) | 421.5 / 423.1 MiB | p95 4.7, max 8.9 (15.3) ms | PSS **not met**; frames met |
+
+What the figures say (`/proc/<pid>/smaps` sampled during the runs): the anonymous memory is the same as in the
+earlier passing runs (315–318 MiB) and the second window adds only ≈ 1–2 MiB of it at the report, plus ≈ 13 MiB of
+llvmpipe colour buffers and a 3.7 MiB X shared-memory present image (1200 × 800 × 4) while it is shown — the
+software renderer's per-surface buffers, which live in video memory on a GPU. The rise against the earlier runs
+(PSS 368/375 MiB) is file-backed: the process's share of Mesa's `libLLVM` (39.8 MiB PSS), `libgallium` (12.0 MiB),
+the probed Vulkan driver (3.9 MiB) and the binary (19.5 MiB) — about 82 MiB now against about 53 MiB then. PSS
+divides a shared library's pages among the processes that map it, so the same program measures 25–30 MiB more
+when fewer other processes on the machine map Mesa's libraries; the single-window `text_scroll` fails the limit in
+this run too. No change in the GUI reduces those mappings (they are the software renderer), and the window size and
+the scenario are the gate's; the gate is therefore **reported as failing under llvmpipe in this run**, the GPU
+figure being the maintainer's run at the end of W4c (D-132). Forcing wgpu to GL only would drop the probed Vulkan
+driver (≈ 4.6 MiB) but would change the renderer real users get, so it was not done.
+
+### M2 W4b: gate G12 (D-132)
+
+`workspace_restore` (release, Xvfb, llvmpipe, 2026-10-30, load ≈ 4–8 on the shared machine): 10 tabs in one window
+through `hikasa-gui <workspace>` (5 sessions of 10,000-line pairs and 4 of 1,000-file trees behind the active tab).
+First screen: active tab the 1M-line pair. Memory: two workspaces over the same files with a 1,000-line active pair,
+one with the 9 pending tabs, one with the active tab alone, each sampled after the coloured screen with no job left
+and 60 idle frames, three rounds, the median taken.
+
+| Item | Gate | Measured |
+|---|---|---|
+| First screen of the active tab after the process start | < 1 s | 176 ms (268 ms in the previous run) |
+| Views built / tabs pending | 1 / 9 (no job for the pending tabs) | 1 / 9 |
+| (PSS_10 − PSS_1) / 9 | < 20 MiB | 0.05 MiB (rounds 0.10, 0.05, 0.00; PSS 138.2–138.5 vs 137.3–138.3 MiB) |
+| The same in anonymous memory | reported | 0.03 MiB (rounds 0.14, 0.01, 0.03; 54.1–54.2 vs 52.9–54.0 MiB) |
+
+Two whole runs gave the same median PSS. The run-to-run spread of one workspace is up to about 1 MiB, more than the
+difference measured, so the honest reading is "under about 0.1 MiB per pending tab", not 0.05 exactly; a pending tab
+holds one session value and starts no job. The earlier figure of this gate (first screen against `scroll`) sampled
+during the 1M-line comparison, so it measured that job's progress and was withdrawn.
+
+### M2 W4c: the Options gate and the wave-end run (D-132)
+
+`env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1` (2026-10-31, the same desktop, Xvfb's default screen, Mesa llvmpipe 26.2 over GL, load 3–8 on the
+shared machine, the six tests one after the other on one binary). `text_scroll`, `two_windows` and `two_windows_late` are
+sampled in `memory_settled` (60 idle frames after the last phase) and give the median of three whole runs; every run:
+
+| Gate | PSS per run (median) | anon | RSS | peak RSS | UI frame work, last run | Result |
+|---|---|---|---|---|---|---|
+| `text_scroll` | 255.4, 256.2, 253.6 (**255.4**) MiB | 190.1, 190.6, 187.9 | 293.7, 294.5, 291.8 | 423.4, 421.3, 419.2 | p95 0.41/0.99/1.15, max 0.61/1.13/1.33 ms; first screen 170 ms, coloured 409 ms | **met** |
+| `two_windows` | 263.2, 258.5, 262.0 (**262.0**) MiB | 194.4, 191.8, 195.2 | 301.5, 296.8, 300.3 | 429.2, 423.4, 424.7 | p95 2.59, max 3.29 ms | **met** |
+| `two_windows_late` | 259.0, 257.6, 255.0 (**257.6**) MiB | 190.2, 190.7, 188.4 | 297.3, 295.9, 293.2 | 423.8, 425.4, 423.2 | p95 2.60, max 4.30 ms | **met** |
+| `options_memory` | 105.4 MiB (one run) | 41.4 | | | | < 120 MiB: **met** |
+| `workspace_restore` (G12) | per pending tab 0.05, 0.02, −0.09 (median 0.02) MiB; anon median 0.07 | | | | 179 ms; 9 pending, 1 view built | **met** |
+| `folder_scan` | PSS 130.7 MiB; scan 189 ms, UI work p95 1.84, max 1.84 ms, none above 16.7 ms | | | | | **met** |
+
+**What the earlier "met" was worth.** The first W4c report gave one run each and called `two_windows` met at 359.6 MiB. It
+was bimodal, at about 383 or 358 MiB. With the code of this review, before the change below, the same runs gave
+`two_windows` 389.1, 360.2, 359.9 (median 360.2) and `two_windows_late` 385.9, 358.6, 382.5 (median **382.5: not met**).
+
+**Cause.** The explanation of W4a (Mesa's file-backed share moving with what else maps it) was wrong for this swing. The
+upper mode is one more anonymous region of about 22.6 MiB, peak RSS unchanged: glibc's retention. Its dynamic mmap
+threshold rises to 32 MiB when the first large buffers are freed, and from then on buffers of that size come from the
+arenas and stay in their free lists, whether a run returns one depends on what lies above it. With
+`MALLOC_MMAP_THRESHOLD_=4194304` the region goes, the swing goes, and 125 MiB of the settled figure goes with it
+(`two_windows_late` 261.7, 257.1, 258.1). D-134 sets it: the GUI replaces itself once at the start, because `mallopt` is
+`unsafe` (architecture check 1) and another allocator is a dependency (D-133). The frame figures did not get worse.
+
+**What this does not change.** The gate is a settled PSS. The **peak RSS is still 419–429 MiB, above 400 MB** in every
+run: the comparison's own peak, which the threshold does not touch, and which the gate does not measure. On a platform
+other than glibc there is no D-134 and these figures do not apply; the frame-rate item stays the maintainer's GPU run
+(D-132). The exec happens before `process_start`, so its milliseconds are not in the first-screen figures.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
@@ -293,12 +403,19 @@ FFI call or a crate that is not approved) or a different allocator, which is lef
 
 ## 4. Build and tooling
 
-- `cargo fmt`, `cargo clippy -D warnings`, `cargo test` and `cargo deny` in CI on
-  Linux, Windows, macOS (`.github/workflows/ci.yml`). `cargo nextest`, a CI bench job
-  on a fixed runner and `cargo xtask commands-doc` are M2 items (`16-roadmap.md`); in
-  M1 the benchmarks and performance gates run by hand.
+- `cargo fmt`, `cargo clippy -D warnings`, `cargo nextest run` (plus `cargo test
+  --doc`) and `cargo deny` in CI on Linux, Windows, macOS (`.github/workflows/ci.yml`;
+  `.config/nextest.toml` runs the wall-clock latency tests one at a time and retries
+  them on CI, D-69). A `docs` job runs `cargo xtask commands-doc --check` and `cargo
+  xtask help-check` (`xtask/`, D-68). The criterion benches and the G1/G2 gates run in
+  `.github/workflows/bench.yml`, started by hand (25 % tolerance against a baseline);
+  the reference figures in the docs come from runs on a fixed machine.
 - Window tests and GUI measurements run headless with `env -u WAYLAND_DISPLAY
   xvfb-run -a …` (17-agent-workflow §3.5).
 - Release builds with LTO, `codegen-units=1`, `panic=unwind` (we must survive
   panics in a job and report them).
-- Packaging: AppImage/Flatpak (Linux), MSI/MSIX (Windows), DMG (macOS) — P1.
+- Packaging: local scripts in `packaging/` (`packaging/README.md`), no CI job and no new crate (D-133): `.tar.gz`,
+  `.deb`, AppImage and an Arch `PKGBUILD` on Linux, a portable zip and an installer on Windows (x64 and x86). Tools:
+  `zig cc` as the linker for an old glibc floor; mingw-w64 with `windres` for the Windows targets and their resources;
+  `wixl` from msitools for the MSI installers; pinned downloads of appimagetool and the AppImage runtime. Flatpak, MSIX
+  and DMG stay P1.

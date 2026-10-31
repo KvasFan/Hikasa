@@ -1,0 +1,33 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "move",
+    "dry_run": true,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "rename",
+        "kind": "dir",
+        "source": "<TMP>/src",
+        "target": "<TMP>/moved",
+        "size": null,
+        "replaces": false,
+        "status": "planned",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 1,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

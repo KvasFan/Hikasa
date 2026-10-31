@@ -1,0 +1,17 @@
+{
+  "schema": "hikasa.format_restore.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": false,
+    "ids": [
+      "python"
+    ],
+    "removed": [
+      "<TMP>/cfg/formats/python.toml"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

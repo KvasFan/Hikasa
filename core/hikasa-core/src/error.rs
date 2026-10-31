@@ -42,6 +42,8 @@ pub enum ErrorKind {
     Protocol,
     /// A bug: invariant violation or panic.
     Internal,
+    /// A folder that must be empty is not (M2 W3, D-93; additive).
+    NotEmpty,
 }
 
 impl ErrorKind {
@@ -61,6 +63,7 @@ impl ErrorKind {
             ErrorKind::TooLarge => "too_large",
             ErrorKind::Protocol => "protocol",
             ErrorKind::Internal => "internal",
+            ErrorKind::NotEmpty => "not_empty",
         }
     }
 }
@@ -95,6 +98,8 @@ pub fn io_error_kind(e: &std::io::Error) -> ErrorKind {
         Io::InvalidData => ErrorKind::InvalidData,
         Io::Unsupported => ErrorKind::Unsupported,
         Io::FileTooLarge => ErrorKind::TooLarge,
+        Io::DirectoryNotEmpty => ErrorKind::NotEmpty,
+        Io::CrossesDevices => ErrorKind::Unsupported,
         _ => ErrorKind::Io,
     }
 }

@@ -1,0 +1,18 @@
+{
+  "schema": "hikasa.settings_export.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "path": "<TMP>/all.hikasa-pkg",
+    "items": [
+      {
+        "category": "sessions",
+        "name": "work/t",
+        "path": "sessions/work/t.toml"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

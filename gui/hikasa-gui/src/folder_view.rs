@@ -24,6 +24,13 @@ use hikasa_text::{TextDisplayFilter, ViewOptions};
 
 use crate::commands::{CommandId, Ctx};
 use crate::job::Job;
+use crate::status::{JobStatus, LogNote, StatusItems};
+use hikasa_session::log::LogKind;
+use hikasa_session::settings::State;
+use hikasa_session::settings::state::LayoutValue;
+
+/// Default height of the log panel (points, `[layout.folder-compare] log_height`).
+pub const LOG_HEIGHT: f64 = 160.0;
 
 /// Height of one tree row (logical px).
 pub const ROW_HEIGHT: u32 = 22;
@@ -70,6 +77,8 @@ pub struct RowView {
     pub mark: &'static str,
     /// Centre mark tooltip.
     pub mark_title: &'static str,
+    /// The row's category (the palette tells newer from different and older from unknown, FC-031).
+    pub category: Category,
     /// Selected.
     pub selected: bool,
     /// Error details (tooltip).
@@ -163,6 +172,12 @@ pub struct FolderViewModel {
     differences: Memo<Option<DifferenceMemo>>,
     /// How often the rows were walked for it.
     difference_walks: Memo<u64>,
+    /// The log panel is shown (`ShowLog`, `[layout] log_panel`).
+    show_log: bool,
+    /// The log panel's height (points, `[layout] log_height`).
+    log_height: f64,
+    /// What the log learns when a job ends (D-116), taken by the app.
+    notes: Vec<LogNote>,
 }
 
 /// The cached availability of next/previous difference.
@@ -213,6 +228,9 @@ impl FolderViewModel {
             rows_revision: 0,
             differences: Memo::new(None),
             difference_walks: Memo::new(0),
+            show_log: false,
+            log_height: LOG_HEIGHT,
+            notes: Vec::new(),
         }
     }
 
@@ -381,6 +399,10 @@ impl FolderViewModel {
                             self.state = FolderState::Stopped { prepared: None };
                         }
                         Err(e) => {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Error,
+                                text: e.to_string(),
+                            });
                             self.state = FolderState::Failed {
                                 prepared: None,
                                 error: e.to_string(),
@@ -394,18 +416,45 @@ impl FolderViewModel {
                     changed = true;
                     self.finished_after = Some(self.started.elapsed());
                     let prepared = prepared.clone();
+                    let ms = self.finished_after.map_or(0, |d| d.as_millis());
                     self.state = match result {
-                        Ok(response) => FolderState::Done {
-                            prepared,
-                            response: Box::new(response),
-                        },
-                        Err(ApiError::Cancelled) => FolderState::Stopped {
-                            prepared: Some(prepared),
-                        },
-                        Err(e) => FolderState::Failed {
-                            prepared: Some(prepared),
-                            error: e.to_string(),
-                        },
+                        Ok(response) => {
+                            let verdict =
+                                prepared.view_verdict(self.display.ignore_unimportant, false);
+                            self.notes.push(LogNote {
+                                kind: LogKind::Summary,
+                                text: format!("{}, compared in {ms} ms.", verdict_text(verdict)),
+                            });
+                            for w in &response.warnings {
+                                self.notes.push(LogNote {
+                                    kind: LogKind::Warning,
+                                    text: format!("[{}] {}", w.code, w.message),
+                                });
+                            }
+                            FolderState::Done {
+                                prepared,
+                                response: Box::new(response),
+                            }
+                        }
+                        Err(ApiError::Cancelled) => {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Summary,
+                                text: format!("Comparison stopped after {ms} ms."),
+                            });
+                            FolderState::Stopped {
+                                prepared: Some(prepared),
+                            }
+                        }
+                        Err(e) => {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Error,
+                                text: e.to_string(),
+                            });
+                            FolderState::Failed {
+                                prepared: Some(prepared),
+                                error: e.to_string(),
+                            }
+                        }
                     };
                 }
             }
@@ -647,6 +696,7 @@ impl FolderViewModel {
             CommandId::DirCompareFilesOnly => self.display.folders == FolderMode::OnlyFiles,
             CommandId::InsigIgnored => self.display.ignore_unimportant,
             CommandId::SuppressFilters => self.display.suppress_filters,
+            CommandId::ShowLog => self.show_log,
             _ => {
                 if let Some(preset) = preset_of(id) {
                     filter == preset
@@ -719,6 +769,7 @@ impl FolderViewModel {
                 self.display.suppress_filters = !self.display.suppress_filters;
                 self.rebuild();
             }
+            CommandId::ShowLog => self.show_log = !self.show_log,
             _ => {
                 if let Some(preset) = preset_of(id) {
                     self.display.filter = preset;
@@ -766,6 +817,127 @@ impl FolderViewModel {
                 self.display.ignore_unimportant,
                 self.busy(),
             ),
+        }
+    }
+
+    /// The log panel is shown.
+    pub fn show_log(&self) -> bool {
+        self.show_log
+    }
+
+    /// The log panel's height (points).
+    pub fn log_height(&self) -> f64 {
+        self.log_height
+    }
+
+    /// Sets the log panel's height (the panel was resized).
+    pub fn set_log_height(&mut self, height: f64) {
+        if height.is_finite() {
+            self.log_height = height.clamp(40.0, 4000.0);
+        }
+    }
+
+    /// Applies the layout of the view type (D-108): `log_panel`, `log_height`.
+    pub fn apply_layout(&mut self, layout: &State) {
+        let view = crate::commands::Scope::Folder
+            .view_name()
+            .unwrap_or_default();
+        if let Some(on) = layout
+            .layout_value(view, "log_panel")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_log = on;
+        }
+        if let Some(h) = layout
+            .layout_value(view, "log_height")
+            .and_then(LayoutValue::as_float)
+        {
+            self.set_log_height(h);
+        }
+    }
+
+    /// The layout keys this view owns (D-108): `log_panel`, `log_height`.
+    pub fn layout_keys(&self) -> Vec<(&'static str, LayoutValue)> {
+        vec![
+            ("log_panel", LayoutValue::Bool(self.show_log)),
+            ("log_height", LayoutValue::Float(self.log_height)),
+        ]
+    }
+
+    /// The request that opens the same comparison again (`TabDuplicate`, D-107), and the titles.
+    pub fn duplicate(&self) -> (hikasa_session::api::ViewRequest, [Option<String>; 2]) {
+        (
+            hikasa_session::api::ViewRequest::Folder {
+                request: self.request.clone(),
+                display: self.display,
+                expand_all: self.expand_all,
+            },
+            self.titles.clone(),
+        )
+    }
+
+    /// The display options (the session's `display`, D-120).
+    pub fn display_options(&self) -> &DisplayOptions {
+        &self.display
+    }
+
+    /// The paths of a pair relative to the bases (TC-052): `/`-separated; `None` outside them.
+    pub fn relative_pair(&self, request: &TextCompareRequest) -> Option<[String; 2]> {
+        let relative = |base: &std::ffi::OsString, path: &std::ffi::OsString| {
+            std::path::Path::new(path).strip_prefix(base).ok().map(|p| {
+                p.components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+        };
+        Some([
+            relative(&self.request.left, &request.left)?,
+            relative(&self.request.right, &request.right)?,
+        ])
+    }
+
+    /// The bases as specs (the view list).
+    pub fn specs(&self) -> Vec<String> {
+        self.names.to_vec()
+    }
+
+    /// The running jobs (the job indicator, D-115).
+    pub fn jobs(&self, view: hikasa_session::ipc::ViewId) -> Vec<JobStatus> {
+        let job = match &self.state {
+            FolderState::Preparing(job) => {
+                let (phase, fraction) = job.progress();
+                (job.title().to_owned(), phase, fraction)
+            }
+            FolderState::Running { job, .. } => {
+                let (phase, fraction) = job.progress();
+                (job.title().to_owned(), phase, fraction)
+            }
+            _ => return Vec::new(),
+        };
+        vec![JobStatus {
+            view,
+            title: job.0,
+            phase: job.1,
+            fraction: job.2,
+        }]
+    }
+
+    /// The notes for the log since the last call.
+    pub fn take_notes(&mut self) -> Vec<LogNote> {
+        std::mem::take(&mut self.notes)
+    }
+
+    /// The status bar (D-115): the state on the left, the details on the right.
+    pub fn status_items(&self) -> StatusItems {
+        let status = self.status();
+        StatusItems {
+            left: status.state,
+            right: if status.detail.is_empty() {
+                Vec::new()
+            } else {
+                vec![status.detail]
+            },
         }
     }
 
@@ -973,7 +1145,8 @@ fn row_view(
             }
         })
     };
-    let (mark, mark_title) = mark(read.category(row.node, iu));
+    let category = read.category(row.node, iu);
+    let (mark, mark_title) = mark(category);
     let errors = read
         .errors(row.node)
         .iter()
@@ -991,6 +1164,7 @@ fn row_view(
         right: cell(node.right.as_ref(), Side::Right),
         mark,
         mark_title,
+        category,
         selected: false,
         errors,
     })

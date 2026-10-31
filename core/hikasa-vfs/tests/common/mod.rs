@@ -179,6 +179,222 @@ impl XorShift {
     }
 }
 
+/// A `FileTime` at `secs` Unix seconds.
+pub fn ft(secs: i64) -> hikasa_core::FileTime {
+    hikasa_core::FileTime::from_unix(secs, 0).unwrap()
+}
+
+/// A `Ctl` over `cancel` that discards progress.
+pub fn ctl(cancel: &CancelToken) -> hikasa_core::Ctl<'_> {
+    hikasa_core::Ctl {
+        cancel,
+        progress: &hikasa_core::NullProgress,
+    }
+}
+
+/// A back-end under test with a working folder (M2 W3 table tests): a `MemoryVfs` rooted at `/w` (host syntax)
+/// or a `LocalVfs` over a tempdir. Paths are relative to the working folder, `/`-separated.
+pub enum Fx {
+    /// `MemoryVfs` with the working folder `/w`.
+    Mem(hikasa_vfs::MemoryVfs),
+    /// `LocalVfs` with a canonical tempdir.
+    Local(hikasa_vfs::LocalVfs, tempfile::TempDir, PathBuf),
+}
+
+impl Fx {
+    /// A case-sensitive or case-insensitive `MemoryVfs`.
+    pub fn mem(case: hikasa_core::CaseSensitivity) -> Fx {
+        let vfs = hikasa_vfs::MemoryVfs::new(case);
+        vfs.insert_dir(&host("/w"), hikasa_vfs::MemMeta::default())
+            .unwrap();
+        Fx::Mem(vfs)
+    }
+
+    /// A `LocalVfs` over a fresh tempdir.
+    pub fn local() -> Fx {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        Fx::Local(hikasa_vfs::LocalVfs::default(), dir, base)
+    }
+
+    /// The three back-ends of the A3.1 tables.
+    pub fn all() -> Vec<Fx> {
+        vec![
+            Fx::mem(hikasa_core::CaseSensitivity::Sensitive),
+            Fx::mem(hikasa_core::CaseSensitivity::Insensitive),
+            Fx::local(),
+        ]
+    }
+
+    /// A label for assertion messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Fx::Mem(vfs) => {
+                if vfs
+                    .capabilities(&mspec("/w"))
+                    .unwrap()
+                    .contains(Capabilities::CASE_SENSITIVE)
+                {
+                    "memory (case-sensitive)"
+                } else {
+                    "memory (case-insensitive)"
+                }
+            }
+            Fx::Local(..) => "local",
+        }
+    }
+
+    /// The back-end.
+    pub fn vfs(&self) -> &dyn Vfs {
+        match self {
+            Fx::Mem(vfs) => vfs,
+            Fx::Local(vfs, ..) => vfs,
+        }
+    }
+
+    /// The `MemoryVfs` (panics for a local fixture).
+    pub fn memory(&self) -> &hikasa_vfs::MemoryVfs {
+        match self {
+            Fx::Mem(vfs) => vfs,
+            Fx::Local(..) => panic!("not a memory fixture"),
+        }
+    }
+
+    /// True for the `MemoryVfs` fixtures.
+    pub fn is_mem(&self) -> bool {
+        matches!(self, Fx::Mem(_))
+    }
+
+    /// The host path of `rel` (`""` = the working folder).
+    pub fn path(&self, rel: &str) -> PathBuf {
+        let mut path = match self {
+            Fx::Mem(_) => PathBuf::from(host("/w")),
+            Fx::Local(_, _, base) => base.clone(),
+        };
+        for part in rel.split('/').filter(|p| !p.is_empty()) {
+            path.push(part);
+        }
+        path
+    }
+
+    /// The host path of `rel` as a string.
+    pub fn text(&self, rel: &str) -> String {
+        self.path(rel).to_string_lossy().into_owned()
+    }
+
+    /// `Spec::Local` of `rel`.
+    pub fn spec(&self, rel: &str) -> Spec {
+        Spec::Local(LocalPath::new(self.path(rel)).unwrap())
+    }
+
+    /// Creates the file `rel` (and its parents) with `content`.
+    pub fn file(&self, rel: &str, content: &[u8]) {
+        match self {
+            Fx::Mem(vfs) => vfs
+                .insert_file(
+                    &self.text(rel),
+                    content.to_vec(),
+                    hikasa_vfs::MemMeta::default(),
+                )
+                .unwrap(),
+            Fx::Local(..) => {
+                let path = self.path(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, content).unwrap();
+            }
+        }
+    }
+
+    /// Creates the folder `rel` (and its parents).
+    pub fn dir(&self, rel: &str) {
+        match self {
+            Fx::Mem(vfs) => vfs
+                .insert_dir(&self.text(rel), hikasa_vfs::MemMeta::default())
+                .unwrap(),
+            Fx::Local(..) => std::fs::create_dir_all(self.path(rel)).unwrap(),
+        }
+    }
+
+    /// Creates the symbolic link `rel` with the target text `target` (`target_is_dir` for Windows). False when
+    /// the platform refused (Windows without the privilege): the caller skips its link rows.
+    pub fn link(&self, rel: &str, target: &str, target_is_dir: bool) -> bool {
+        match self {
+            Fx::Mem(vfs) => {
+                vfs.insert_symlink(&self.text(rel), target, hikasa_vfs::MemMeta::default())
+                    .unwrap();
+                true
+            }
+            Fx::Local(..) => {
+                let path = self.path(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                #[cfg(unix)]
+                let made = {
+                    let _ = target_is_dir;
+                    std::os::unix::fs::symlink(target, &path)
+                };
+                #[cfg(windows)]
+                let made = if target_is_dir {
+                    std::os::windows::fs::symlink_dir(target, &path)
+                } else {
+                    std::os::windows::fs::symlink_file(target, &path)
+                };
+                #[cfg(not(any(unix, windows)))]
+                let made: io::Result<()> = Err(io::Error::from(io::ErrorKind::Unsupported));
+                match made {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("skipping link rows: cannot create a symbolic link ({e})");
+                        false
+                    }
+                }
+            }
+        }
+    }
+
+    /// The unfollowed entry of `rel`, if any.
+    pub fn lstat(&self, rel: &str) -> Option<Entry> {
+        self.vfs().stat(&self.spec(rel), FollowLinks::No).ok()
+    }
+
+    /// The kind of `rel` (unfollowed), if it exists.
+    pub fn kind(&self, rel: &str) -> Option<hikasa_vfs::EntryKind> {
+        self.lstat(rel).map(|e| e.kind)
+    }
+
+    /// The content of the file `rel` (links followed).
+    pub fn read(&self, rel: &str) -> Vec<u8> {
+        read_to_vec(self.vfs().open_read(&self.spec(rel)).unwrap())
+    }
+
+    /// The names in the folder `rel`, sorted.
+    pub fn names(&self, rel: &str) -> Vec<String> {
+        let listing = self
+            .vfs()
+            .list(
+                &self.spec(rel),
+                &ListOptions::default(),
+                &CancelToken::never(),
+            )
+            .unwrap();
+        let mut names: Vec<String> = listing
+            .entries
+            .iter()
+            .map(|e| e.name.as_str().to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// True when the back-end folds case.
+    pub fn insensitive(&self) -> bool {
+        !self
+            .vfs()
+            .capabilities(&self.spec(""))
+            .unwrap()
+            .contains(Capabilities::CASE_SENSITIVE)
+    }
+}
+
 /// A minimal JSON value model, serializer and deserializer with `serde_json`'s pretty layout (2-space
 /// indentation, `[]`/`{}` for empty containers). Integers only (§4.1 rule 4).
 pub mod json {

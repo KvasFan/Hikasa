@@ -554,6 +554,41 @@ impl FormatOrder {
         Ok((order, warnings))
     }
 
+    /// The position of `id` in the list.
+    pub fn position(&self, id: &FormatId) -> Option<usize> {
+        self.formats.iter().position(|item| item.id == *id)
+    }
+
+    /// Sets the enabled flag of `id` (appended when it is not listed). Additive (M2 W1, D-75).
+    pub fn set_enabled(&mut self, id: &FormatId, enabled: bool) {
+        match self.position(id) {
+            Some(k) => self.formats[k].enabled = Some(enabled),
+            None => self.formats.push(OrderItem {
+                id: id.clone(),
+                enabled: Some(enabled),
+            }),
+        }
+    }
+
+    /// Removes `id`; false when it is not listed. Additive (M2 W1).
+    pub fn remove(&mut self, id: &FormatId) -> bool {
+        let before = self.formats.len();
+        self.formats.retain(|item| item.id != *id);
+        self.formats.len() != before
+    }
+
+    /// Moves `id` to position `index` of the list without it (clamped to the end); false when it is not listed.
+    /// Additive (M2 W1).
+    pub fn move_to(&mut self, id: &FormatId, index: usize) -> bool {
+        let Some(k) = self.position(id) else {
+            return false;
+        };
+        let item = self.formats.remove(k);
+        let index = index.min(self.formats.len());
+        self.formats.insert(index, item);
+        true
+    }
+
     /// Canonical TOML.
     pub fn to_toml(&self) -> String {
         match toml::to_string_pretty(self) {

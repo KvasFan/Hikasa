@@ -1,0 +1,19 @@
+schema_version = 1
+type = "text-edit"
+description = "A text-edit session"
+favorite = true
+
+[specs]
+left = "/data/left"
+format = "c-cpp"
+left_encoding = "utf-8"
+
+[rules.alignment]
+skew_tolerance = 7
+
+[display]
+filter = "differences"
+
+[view]
+split = 0.5
+width_left = 300

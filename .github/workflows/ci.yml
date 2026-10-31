@@ -35,8 +35,21 @@ jobs:
       # xkbcommon and fontconfig at run time (dlopen) and build with the runner's C
       # compiler alone. The window tests are ignored by default and do not run here.
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - run: cargo clippy --workspace --all-targets
-      - run: cargo test --workspace --no-fail-fast
+      # nextest runs every test binary (also the `harness = false` launch tests); doc tests need cargo test.
+      - run: cargo nextest run --workspace --profile ci
+      - run: cargo test --workspace --doc
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # docs/reference/commands.md is generated from the command catalogue; every help topic and link resolves.
+      - run: cargo xtask commands-doc --check
+      - run: cargo xtask help-check
 
   deny:
     runs-on: ubuntu-latest

@@ -86,13 +86,15 @@ impl Sandbox {
         self.join("s.sock")
     }
 
-    /// `hikasa --config-dir <tmp>/cfg` in `<tmp>`, with the private endpoint, a missing GUI executable, a UTF-8
-    /// locale and the UTC zone.
+    /// `hikasa --config-dir <tmp>/cfg` in `<tmp>`, with the private endpoint, a missing GUI executable, a missing
+    /// clipboard file (never the real clipboard), a UTF-8 locale and the UTC zone.
     pub fn cmd(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::new(hikasa_exe());
         cmd.current_dir(self.path())
             .env("HIKASA_IPC_ENDPOINT", self.socket())
             .env("HIKASA_GUI_EXE", self.join("no-such-gui"))
+            // Tests never touch the real clipboard (D-100): a file that does not exist means "no clipboard".
+            .env("HIKASA_CLIPBOARD_FILE", self.join("no-clipboard"))
             .env("LC_ALL", "C.UTF-8")
             .env("TZ", "UTC")
             .env_remove("NO_COLOR")
@@ -517,9 +519,42 @@ pub struct FakeGui {
     views: Mutex<Vec<ViewInfo>>,
     waiters: Mutex<Vec<(ViewId, ViewWaiter)>>,
     requests: Mutex<Vec<Request>>,
+    /// False: an M1 GUI that answers `LoadSession`/`LoadWorkspace` with `unsupported_request` (D-89).
+    sessions: std::sync::atomic::AtomicBool,
 }
 
 impl FakeGui {
+    /// A GUI of M1: no sessions or workspaces (D-89).
+    pub fn without_sessions(self: &Arc<Self>) -> Arc<FakeGui> {
+        self.sessions.store(false, Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
+    /// Opens a scripted view (with the waiter of `--wait`).
+    fn open(
+        &self,
+        kind: hikasa_session::ipc::ViewKind,
+        specs: Vec<String>,
+        waiter: Option<ViewWaiter>,
+    ) -> ViewId {
+        let view = ViewId(self.next.fetch_add(1, Ordering::SeqCst));
+        self.views.lock().push(ViewInfo {
+            view,
+            kind,
+            title: specs.join(" | "),
+            specs,
+        });
+        if let Some(waiter) = waiter {
+            match self.mode {
+                CloseMode::Immediately => {
+                    waiter.view_closed(view, Self::result(CloseReason::User), self.exit_code)
+                }
+                CloseMode::OnRequest => self.waiters.lock().push((view, waiter)),
+            }
+        }
+        view
+    }
+
     pub fn new(mode: CloseMode, exit_code: ExitCode) -> Arc<FakeGui> {
         Arc::new(FakeGui {
             mode,
@@ -528,6 +563,7 @@ impl FakeGui {
             views: Mutex::new(Vec::new()),
             waiters: Mutex::new(Vec::new()),
             requests: Mutex::new(Vec::new()),
+            sessions: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -571,6 +607,45 @@ impl IpcHandler for FakeGui {
                     }
                 }
                 Response::ViewOpened { view }
+            }
+            Request::LoadSession { name, .. } | Request::LoadWorkspace { name }
+                if !self.sessions.load(Ordering::SeqCst) =>
+            {
+                Response::error(
+                    IpcErrorCode::UnsupportedRequest,
+                    format!("`{name}`: not supported in this version"),
+                )
+            }
+            Request::ImportPackage { path } if !self.sessions.load(Ordering::SeqCst) => {
+                Response::error(
+                    IpcErrorCode::UnsupportedRequest,
+                    format!("`{path}`: not supported in this version"),
+                )
+            }
+            Request::ImportPackage { .. } => Response::Ok,
+            Request::LoadSession { name, .. } => {
+                let view = self.open(
+                    hikasa_session::ipc::ViewKind::TextCompare,
+                    vec![name],
+                    waiter,
+                );
+                Response::ViewOpened { view }
+            }
+            Request::LoadWorkspace { name } => {
+                let a = self.open(
+                    hikasa_session::ipc::ViewKind::FolderCompare,
+                    vec![name.clone()],
+                    None,
+                );
+                let b = self.open(hikasa_session::ipc::ViewKind::TextCompare, vec![name], None);
+                let views = self.views.lock();
+                Response::Views {
+                    views: views
+                        .iter()
+                        .filter(|v| v.view == a || v.view == b)
+                        .cloned()
+                        .collect(),
+                }
             }
             Request::ListViews => Response::Views {
                 views: self.views.lock().clone(),

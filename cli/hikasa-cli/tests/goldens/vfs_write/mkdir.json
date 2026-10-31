@@ -1,0 +1,44 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "mkdir",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": null,
+        "target": "<TMP>/new/deep",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "keep_dir",
+        "kind": "dir",
+        "source": null,
+        "target": "<TMP>/src",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 2,
+      "done": 2,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

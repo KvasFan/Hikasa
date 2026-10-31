@@ -1,0 +1,37 @@
+{
+  "schema": "hikasa.settings_import.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "dry_run": false,
+    "plan": {
+      "items": [
+        {
+          "category": "options",
+          "name": "options",
+          "path": "<TMP>/cfg/options.toml",
+          "action": "replace"
+        }
+      ],
+      "deletes": [],
+      "summary": {
+        "options": {
+          "added": 0,
+          "replaced": 1,
+          "deleted": 0
+        }
+      }
+    },
+    "results": [
+      {
+        "category": "options",
+        "name": "options",
+        "ok": true,
+        "error": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

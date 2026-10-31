@@ -1,4 +1,7 @@
-//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder`, see `main`): the window
+//! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder|two_windows|workspace`, see
+//! `main`; `two_windows` is the M2 W4a gate of §1.4.17: the text scroll with a second window holding Home;
+//! `workspace` is G12: the first screen of a restored workspace, its tabs pending; `options` is the memory of the
+//! Options dialog, every page shown once): the window
 //! opens the command line's view and drives it frame by frame — scrolling the text panes through the whole
 //! comparison, or scrolling the folder tree while the scan runs — records the first-screen marks, the frame
 //! times (the UI thread's work per frame, the frame intervals and eframe's CPU time per frame) and the memory
@@ -21,6 +24,12 @@ pub enum BenchKind {
     Scroll,
     /// Folder Compare: incremental rendering while scanning (acceptance (b)).
     Folder,
+    /// The text scroll with a second window (Home) open (M2 W4a, D-132).
+    TwoWindows,
+    /// A restored workspace: the first screen of its active tab (M2 W4b, G12).
+    Workspace,
+    /// The Options dialog: every page once, then idle frames (M2 W4c, D-132).
+    Options,
 }
 
 /// One scroll phase of the text benchmark.
@@ -65,6 +74,16 @@ const PHASES: &[PhaseSpec] = &[
 
 /// Frames to let pass after the coloured screen before the first phase.
 const WARM_UP_FRAMES: u32 = 30;
+/// The same for `two_windows`, whose second window opens at the first screen.
+const TWO_WINDOWS_WARM_UP_FRAMES: u32 = 240;
+/// `workspace`: idle frames drawn after the coloured screen with no job left, before the memory is sampled.
+const WORKSPACE_TAIL_FRAMES: u32 = 60;
+/// `scroll`, `two_windows`: idle frames after the last phase, before the memory is sampled (D-132).
+const SCROLL_TAIL_FRAMES: u32 = 60;
+/// `options`: frames before the dialog opens, and on each page.
+const OPTIONS_FRAMES_PER_PAGE: u32 = 2;
+/// `options`: idle frames after the last page, before the memory is sampled.
+const OPTIONS_TAIL_FRAMES: u32 = 60;
 /// Folder benchmark: rows the tree scrolls per frame.
 const FOLDER_ROWS_PER_FRAME: f64 = 2.0;
 /// Folder benchmark: how long frames keep being drawn after the scan.
@@ -102,6 +121,8 @@ enum Script {
         step: f64,
         samples: Samples,
     },
+    /// Idle frames after the last phase.
+    Tail(u32),
     /// The folder tree scrolls while the scan runs.
     Folder,
     /// Finished: report and quit.
@@ -131,6 +152,20 @@ pub struct BenchState {
     reported: bool,
     frames: u64,
     first_frame_work: Option<f64>,
+    /// The memory when the first screen came up.
+    first_screen_memory: Value,
+    /// `workspace`: the memory after the coloured screen, every job done and a few idle frames (G12 compares it:
+    /// at the first screen the comparison is still running, so a sample there measures its progress).
+    settled_memory: Value,
+    /// `workspace`: idle frames since the coloured screen.
+    tail: u32,
+    /// `two_windows`: the second window was asked for.
+    second_window: bool,
+    /// `two_windows`: the second window opens at the coloured screen instead of the first screen
+    /// (`HIKASA_PERF_SECOND_WINDOW=coloured`; the late variant of the gate).
+    second_after_coloured: bool,
+    /// `options`: the frames of the script.
+    options_frame: u32,
 }
 
 impl BenchState {
@@ -157,6 +192,44 @@ impl BenchState {
             reported: false,
             frames: 0,
             first_frame_work: None,
+            first_screen_memory: Value::Null,
+            settled_memory: Value::Null,
+            tail: 0,
+            second_window: false,
+            second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
+                .is_some_and(|v| v == "coloured"),
+            options_frame: 0,
+        }
+    }
+
+    /// `options` (D-132): runs the script on the window's core, before the frame is drawn: `ProgramOptions`, every
+    /// page for a few frames, then idle frames; the memory is sampled at the end.
+    pub fn drive_options(&mut self, core: &mut AppCore) {
+        if self.kind != BenchKind::Options {
+            return;
+        }
+        let window = core.root();
+        let frame = self.options_frame;
+        self.options_frame += 1;
+        if frame == OPTIONS_FRAMES_PER_PAGE {
+            core.execute(window, crate::commands::CommandId::ProgramOptions);
+            self.first_screen = Some(Instant::now());
+            self.first_screen_memory = memory();
+        }
+        let pages = crate::options::pages::PAGES;
+        let total = OPTIONS_FRAMES_PER_PAGE * (pages.len() as u32 + 1);
+        if frame > OPTIONS_FRAMES_PER_PAGE && frame < total {
+            let k = (frame / OPTIONS_FRAMES_PER_PAGE - 1) as usize;
+            if let Some(d) = core
+                .window_mut(window)
+                .and_then(|w| w.dialogs.find_mut::<crate::options::OptionsDialog>())
+            {
+                d.show_page(pages[k.min(pages.len() - 1)].id);
+            }
+        }
+        if frame >= total + OPTIONS_TAIL_FRAMES {
+            self.settled_memory = memory();
+            self.script = Script::Done;
         }
     }
 
@@ -164,6 +237,22 @@ impl BenchState {
     pub fn set_view(&mut self, view: ViewId) {
         self.view = Some(view);
         self.view_opened = Some(Instant::now());
+    }
+
+    /// `two_windows`: true once, when the first screen is up (or the coloured screen with
+    /// `HIKASA_PERF_SECOND_WINDOW=coloured`) — the window then runs `WindowNew`.
+    pub fn take_second_window(&mut self) -> bool {
+        let due = if self.second_after_coloured {
+            self.ready_screen.is_some()
+        } else {
+            self.first_screen.is_some()
+        };
+        if self.kind == BenchKind::TwoWindows && !self.second_window && due {
+            self.second_window = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// Records the renderer (adapter) the window runs on.
@@ -177,6 +266,7 @@ impl BenchState {
         self.first_frame.get_or_insert(now);
         if self.drawn_pending[0].take().is_some() && self.first_screen.is_none() {
             self.first_screen = Some(now);
+            self.first_screen_memory = memory();
         }
         if self.drawn_pending[1].take().is_some() && self.ready_screen.is_none() {
             self.ready_screen = Some(now);
@@ -201,15 +291,33 @@ impl BenchState {
         texts: &mut HashMap<ViewId, TextUi>,
         folders: &mut HashMap<ViewId, FolderUi>,
     ) {
+        if self.kind == BenchKind::Workspace && self.view.is_none() {
+            // The restored window's active tab, once it is a live view.
+            if let Some(tab) = core.active_tab(core.root())
+                && matches!(tab.model(), Some(ViewModel::Text(_)))
+            {
+                self.set_view(tab.id);
+            }
+        }
         let Some(view) = self.view else {
             return;
         };
         match self.kind {
-            BenchKind::Scroll => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Scroll | BenchKind::TwoWindows => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Workspace => {
+                if self.ready_screen.is_some() && !core.busy() {
+                    self.tail += 1;
+                    if self.tail >= WORKSPACE_TAIL_FRAMES {
+                        self.settled_memory = memory();
+                        self.script = Script::Done;
+                    }
+                }
+            }
+            BenchKind::Options => {}
             BenchKind::Folder => {
                 let busy = core
                     .tab(view)
-                    .is_some_and(|t| matches!(&t.model, ViewModel::Folder(m) if m.busy()));
+                    .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
                 if matches!(self.script, Script::Waiting(_)) {
                     self.script = Script::Folder;
                 }
@@ -234,7 +342,14 @@ impl BenchState {
             Script::Waiting(n) => {
                 if self.ready_screen.is_some() {
                     *n += 1;
-                    if *n >= WARM_UP_FRAMES {
+                    // `two_windows`: the second window's viewport (its surface and its copy of the font atlas)
+                    // is created during the warm-up, which is longer, so the phases measure two open windows.
+                    let warm_up = if self.kind == BenchKind::TwoWindows {
+                        TWO_WINDOWS_WARM_UP_FRAMES
+                    } else {
+                        WARM_UP_FRAMES
+                    };
+                    if *n >= warm_up {
                         self.start_phase(0, st);
                     }
                 }
@@ -249,7 +364,7 @@ impl BenchState {
                     if next < PHASES.len() {
                         self.start_phase(next, st);
                     } else {
-                        self.script = Script::Done;
+                        self.script = Script::Tail(0);
                     }
                     return;
                 }
@@ -260,6 +375,16 @@ impl BenchState {
                     top = if spec.wrap { 0.0 } else { max };
                 }
                 st.top = top.clamp(0.0, max);
+            }
+            Script::Tail(n) => {
+                *n += 1;
+                if *n >= SCROLL_TAIL_FRAMES {
+                    self.settled_memory = memory();
+                    if let Some(obj) = self.settled_memory.as_object_mut() {
+                        obj.insert("largest_anon_regions".to_owned(), anon_regions());
+                    }
+                    self.script = Script::Done;
+                }
             }
             Script::Folder | Script::Done => {}
         }
@@ -399,8 +524,23 @@ impl BenchState {
         }
         self.reported = true;
         let mut report = json!({
-            "bench": match self.kind { BenchKind::Scroll => "text_scroll", BenchKind::Folder => "folder_scan" },
+            "bench": match self.kind {
+                BenchKind::Scroll => "text_scroll",
+                BenchKind::Folder => "folder_scan",
+                BenchKind::TwoWindows => "two_windows",
+                BenchKind::Workspace => "workspace_restore",
+                BenchKind::Options => "options_memory",
+            },
+            "windows": core.windows().len(),
+            "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
+                if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
+            ),
             "memory": memory(),
+            "memory_at_first_screen": self.first_screen_memory.clone(),
+            "memory_settled": self.settled_memory.clone(),
+            "tabs": core.windows().iter().map(|w| w.tabs.len()).sum::<usize>(),
+            "pending_tabs": core.pending_tabs(),
+            "views_built": core.views_built(),
             "renderer": self.renderer.clone(),
             "window": self.window.clone(),
             "first_frame_ms_from_process_start": self.since_start(self.first_frame),
@@ -410,7 +550,7 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
-                BenchKind::Scroll => {
+                BenchKind::Scroll | BenchKind::TwoWindows | BenchKind::Workspace => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({
@@ -426,6 +566,9 @@ impl BenchState {
                         }),
                     );
                     obj.insert("phases".into(), Value::Array(self.phases.clone()));
+                }
+                BenchKind::Options => {
+                    obj.insert("pages".into(), json!(crate::options::pages::PAGES.len()));
                 }
                 BenchKind::Folder => {
                     obj.insert(
@@ -477,7 +620,7 @@ pub fn stats(samples: &[f64]) -> Value {
 /// Facts about the view under test (rows, timings, rebuilds).
 fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
     let tab = core.tab(view)?;
-    Some(match &tab.model {
+    Some(match tab.model()? {
         ViewModel::Text(m) => {
             let (loaded, ready) = m.timings();
             let rows = m.response().map_or(0, |r| r.comparison.row_count());
@@ -558,6 +701,42 @@ pub fn memory() -> Value {
         "total_peak_rss_mib": mib(hwm),
         "processes": children,
     })
+}
+
+/// The largest anonymous regions of this process (`/proc/self/smaps`), to tell the heap from buffers: what a
+/// difference between two runs is made of.
+fn anon_regions() -> Value {
+    let Ok(text) = std::fs::read_to_string("/proc/self/smaps") else {
+        return Value::Null;
+    };
+    let mut regions: Vec<(u64, String)> = Vec::new();
+    let mut name = String::new();
+    for line in text.lines() {
+        if line
+            .split_whitespace()
+            .next()
+            .is_some_and(|w| w.contains('-') && !w.ends_with(':'))
+        {
+            name = line
+                .split_whitespace()
+                .nth(5)
+                .unwrap_or("[anon]")
+                .to_owned();
+        } else if let Some(rest) = line.strip_prefix("Anonymous:") {
+            let kib: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            regions.push((kib, name.clone()));
+        }
+    }
+    regions.sort_by_key(|r| std::cmp::Reverse(r.0));
+    regions.truncate(8);
+    regions
+        .into_iter()
+        .map(|(kib, name)| json!({ "mib": mib(kib), "name": name }))
+        .collect()
 }
 
 fn mib(kib: u64) -> f64 {

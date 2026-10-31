@@ -1,0 +1,16 @@
+{
+  "schema": "hikasa.session_write.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "action": "delete",
+    "ref": "t",
+    "written": [],
+    "removed": [
+      "<TMP>/cfg/sessions/t.toml"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

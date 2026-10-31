@@ -1,13 +1,19 @@
-//! The command catalogue (ARCH-070, UI-003, docs/14): every user action of the window is a [`Command`] with a
-//! stable id (the ids of `docs/reference/commands.md` where the reference has one), a menu, a caption, a hint, a
-//! default shortcut, menu and toolbar visibility and an availability predicate. Menus, the toolbar and the
-//! keyboard are generated from this table; the view models execute the ids (docs/17 §3.4: view logic is tested
-//! through the catalogue).
+//! The window's commands (ARCH-070, UI-003; M2 W4a, D-109…D-111): the GUI keeps per command id only its
+//! *presentation* — icon, short toolbar label, radio or check group, availability predicate and the context-menu
+//! areas — in [`PRESENTATION`]. Captions, descriptions (hints), menus, toolbar flags and shortcuts come from the
+//! core's effective command table (`hikasa_session::commands::effective`, the catalogue with `commands.toml`
+//! applied), rebuilt into [`CommandTables`] at start and when `commands.toml` changes, never per frame. Key
+//! presses are dispatched by [`dispatch`] (D-111); hints are [`hint_text`] and [`HintTiming`] (UI-007).
+//!
+//! This module holds no toolkit type (§1.4.16 rule 4); `ui/` draws what it describes.
 
-use std::fmt;
+use hikasa_session::commands::{EffectiveCommand, ViewCommands, catalogue, effective};
+use hikasa_session::settings::{CommandOverrides, Shortcut};
+
+use crate::ui::icons::IconId;
 
 /// The view type a command belongs to (commands are registered per view type, ARCH-070).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum Scope {
     /// Every view.
     #[default]
@@ -20,172 +26,45 @@ pub enum Scope {
     Text,
 }
 
-/// Menus of the menu bar (UI-002).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Menu {
-    /// Session.
-    Session,
-    /// Edit.
-    Edit,
-    /// Actions.
-    Actions,
-    /// Search.
-    Search,
-    /// View.
-    View,
-    /// Help.
-    Help,
-}
+impl Scope {
+    /// The view types the GUI shows.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub const VIEWS: [Scope; 3] = [Scope::Home, Scope::Folder, Scope::Text];
 
-impl Menu {
-    /// Menus in menu-bar order.
-    pub const ORDER: [Menu; 6] = [
-        Menu::Session,
-        Menu::Edit,
-        Menu::Actions,
-        Menu::Search,
-        Menu::View,
-        Menu::Help,
-    ];
-
-    /// Caption in the menu bar.
-    pub fn caption(self) -> &'static str {
+    /// The view type's name in the catalogue and `commands.toml` (`home`, `folder-compare`, `text-compare`;
+    /// `Global` has none: its commands are in every view's table).
+    pub fn view_name(self) -> Option<&'static str> {
         match self {
-            Menu::Session => "Session",
-            Menu::Edit => "Edit",
-            Menu::Actions => "Actions",
-            Menu::Search => "Search",
-            Menu::View => "View",
-            Menu::Help => "Help",
-        }
-    }
-}
-
-/// A key of a shortcut.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Key {
-    /// A letter or digit (upper case).
-    Char(char),
-    /// A function key F1…F12.
-    F(u8),
-    /// Enter / Return.
-    Enter,
-    /// Tab.
-    Tab,
-    /// Arrow up.
-    Up,
-    /// Arrow down.
-    Down,
-    /// Arrow left.
-    Left,
-    /// Arrow right.
-    Right,
-    /// Numeric keypad plus.
-    NumPlus,
-    /// Numeric keypad minus.
-    NumMinus,
-    /// Numeric keypad zero.
-    NumZero,
-}
-
-/// A key with modifiers (Ctrl maps to Cmd on macOS in a later milestone).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Shortcut {
-    /// Ctrl held.
-    pub ctrl: bool,
-    /// Shift held.
-    pub shift: bool,
-    /// Alt held.
-    pub alt: bool,
-    /// The key.
-    pub key: Key,
-}
-
-impl Shortcut {
-    /// The key alone.
-    pub const fn plain(key: Key) -> Shortcut {
-        Shortcut {
-            ctrl: false,
-            shift: false,
-            alt: false,
-            key,
+            Scope::Global => None,
+            Scope::Home => Some("home"),
+            Scope::Folder => Some("folder-compare"),
+            Scope::Text => Some("text-compare"),
         }
     }
 
-    /// Ctrl + key.
-    pub const fn ctrl(key: Key) -> Shortcut {
-        Shortcut {
-            ctrl: true,
-            shift: false,
-            alt: false,
-            key,
+    /// The sections of the core catalogue where this view type's commands live, own section first.
+    pub fn catalogue_sections(self) -> &'static [&'static str] {
+        match self.view_name() {
+            None => &["global"],
+            Some(view) => hikasa_session::commands::view_sections(view),
         }
     }
 
-    /// Shift + Ctrl + key.
-    pub const fn shift_ctrl(key: Key) -> Shortcut {
-        Shortcut {
-            ctrl: true,
-            shift: true,
-            alt: false,
-            key,
-        }
-    }
-
-    /// A key that focused controls use themselves (Enter activates a button, the arrows move in a list or a
-    /// text field, letters are typed), pressed without Ctrl or Alt. Such a shortcut belongs to the view's own
-    /// focus area (the folder tree), never to the window root (UI-003).
-    pub const fn is_focus_bound(self) -> bool {
-        !self.ctrl
-            && !self.alt
-            && matches!(
-                self.key,
-                Key::Enter | Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Char(_)
-            )
-    }
-}
-
-/// Where a key event is handled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyOrigin {
-    /// The window root: the event bubbled up from whatever has the focus (a button, a list, a text field).
-    Window,
-    /// The view's own focus area (the folder tree has the focus).
-    View,
-}
-
-impl fmt::Display for Shortcut {
-    /// `Shift+Ctrl+N`, the reference spelling (docs/reference/commands.md).
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.shift {
-            f.write_str("Shift+")?;
-        }
-        if self.ctrl {
-            f.write_str("Ctrl+")?;
-        }
-        if self.alt {
-            f.write_str("Alt+")?;
-        }
-        match self.key {
-            Key::Char(c) => write!(f, "{c}"),
-            Key::F(n) => write!(f, "F{n}"),
-            Key::Enter => f.write_str("Enter"),
-            Key::Tab => f.write_str("Tab"),
-            Key::Up => f.write_str("Up"),
-            Key::Down => f.write_str("Down"),
-            Key::Left => f.write_str("Left"),
-            Key::Right => f.write_str("Right"),
-            Key::NumPlus => f.write_str("Num +"),
-            Key::NumMinus => f.write_str("Num -"),
-            Key::NumZero => f.write_str("Num 0"),
-        }
+    /// The help topic of this view type (the core catalogue's section topic; F1, UI-006).
+    pub fn help_topic(self) -> &'static str {
+        let key = self.catalogue_sections()[0];
+        catalogue()
+            .section(key)
+            .map_or(hikasa_session::help::INDEX_TOPIC, |s| {
+                hikasa_session::help::topic(&s.help)
+                    .map_or(hikasa_session::help::INDEX_TOPIC, |t| t.id)
+            })
     }
 }
 
 macro_rules! command_ids {
     ($($(#[$doc:meta])* $id:ident),* $(,)?) => {
-        /// Stable command ids (the reference ids of `docs/reference/commands.md`; `HomeCompare` is the Home
-        /// view's Compare button, which the reference does not list).
+        /// Stable command ids (the ids of the core catalogue, `docs/reference/commands.md`).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum CommandId {
             $($(#[$doc])* $id,)*
@@ -193,15 +72,18 @@ macro_rules! command_ids {
 
         impl CommandId {
             /// Every id.
-            #[cfg(test)]
             pub const ALL: &'static [CommandId] = &[$(CommandId::$id,)*];
 
-            /// The id as written in the reference (`DiffNext`, `FavCompareAll`, …).
-            #[cfg(test)]
+            /// The id as written in the catalogue (`DiffNext`, `FavCompareAll`, …).
             pub fn name(self) -> &'static str {
                 match self {
                     $(CommandId::$id => stringify!($id),)*
                 }
+            }
+
+            /// The id of a catalogue name the GUI knows.
+            pub fn from_name(name: &str) -> Option<CommandId> {
+                CommandId::ALL.iter().copied().find(|id| id.name() == name)
             }
         }
     };
@@ -210,16 +92,38 @@ macro_rules! command_ids {
 command_ids! {
     /// Opens a Home view in a new tab.
     TabNew,
+    /// Opens a Home view in a new window (M2 W4a).
+    WindowNew,
     /// Closes the active tab (its view).
     CloseTab,
+    /// Opens the active tab's session again in a new tab (M2 W4a, D-107).
+    TabDuplicate,
+    /// Moves the tab into a new window (D-107).
+    TabMoveToNewWindow,
+    /// Moves the tab into another window (D-107).
+    TabMoveToWindow,
+    /// Closes the other tabs of the window (D-107).
+    TabCloseOthers,
     /// Quits the application.
     Exit,
     /// Selects the next tab.
     TabNext,
     /// Selects the previous tab.
     TabPrev,
-    /// Program information.
+    /// Program information (a dialog, D-112).
     About,
+    /// The Options dialog (D-128).
+    ProgramOptions,
+    /// The Export wizard (D-131).
+    Export,
+    /// The Import wizard (D-131).
+    Import,
+    /// The Restore wizard (D-131).
+    Restore,
+    /// Help: the contents topic.
+    HelpContents,
+    /// Help: the topic of the active view (F1).
+    ContextHelp,
     /// Home: compares the two typed paths.
     HomeCompare,
     /// Folder: terminates the comparison.
@@ -308,15 +212,77 @@ command_ids! {
     DisplayFontDecrease,
     /// Text: default font size.
     DisplayFontReset,
+    /// Shows or hides the view's toolbar (M2 W4a, `[layout] toolbar`).
+    ShowToolbar,
+    /// Folder: shows or hides the log panel (M2 W4a, FC-100).
+    ShowLog,
+    /// A Home tab with the picked session type selected (M2 W4b).
+    SessionNewList,
+    /// Opens Home in a new tab.
+    SessionOpen,
+    /// Loads a workspace (the argument; D-125).
+    WorkspaceLoadList,
+    /// The Manage Workspaces dialog.
+    WorkspaceManager,
+    /// The Save Workspace As dialog.
+    WorkspaceSaveAs,
+    /// Replaces the view by Home after its close action.
+    SessionHome,
+    /// Opens the picked named session of the view's type in this tab.
+    SessionsCombo,
+    /// Saves the view's session (D-120).
+    SessionSave,
+    /// The Save Session As dialog.
+    SessionSaveAs,
+    /// The Session Settings dialog of the view (D-122).
+    SessionEdit,
+    /// Locks or unlocks the view's named session.
+    SessionLocked,
+    /// Home: shows or hides the management panel.
+    ShowManage,
+    /// Home: maximizes or restores the management panel.
+    MaximizeManage,
+    /// Home: focuses the search box.
+    Find,
+    /// Sessions tree: opens the selection.
+    TreeOpen,
+    /// Sessions tree: opens the selection as a new unnamed session.
+    TreeOpenAsNew,
+    /// Sessions tree: opens every session directly in the folder.
+    TreeOpenAll,
+    /// Sessions tree: a new session.
+    TreeNewSession,
+    /// Sessions tree: a new folder.
+    TreeNewFolder,
+    /// Sessions tree: resets a named session to the defaults.
+    TreeClear,
+    /// Sessions tree: deletes the selection.
+    TreeDelete,
+    /// Sessions tree: saves a copy of the selection.
+    TreeSaveAs,
+    /// Sessions tree: renames the selection in place.
+    TreeRename,
+    /// Sessions tree: the Session Settings dialog of a session or a type's defaults.
+    TreeEdit,
+    /// Sessions tree: opens every folder.
+    TreeExpandAll,
+    /// Sessions tree: closes every folder.
+    TreeCollapseAll,
+    /// Sessions tree: toggles the favorite mark.
+    TreeFavorite,
 }
 
-/// What the active view offers, for [`Predicate::holds`] (computed by the app from the active view model).
+/// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Ctx {
     /// The active view's type.
     pub scope: Scope,
-    /// Open tabs.
+    /// Open tabs of the window.
     pub tabs: usize,
+    /// Open windows.
+    pub windows: usize,
+    /// A dialog of the window is open (the window's commands take no input, D-112).
+    pub dialog_open: bool,
     /// A comparison of the active view is running.
     pub busy: bool,
     /// The active view has a model to act on (a folder model, a finished text comparison).
@@ -333,6 +299,18 @@ pub struct Ctx {
     pub prev_difference: bool,
     /// Home: both paths are filled in.
     pub home_ready: bool,
+    /// The active view's session is a named one.
+    pub named: bool,
+    /// Sessions tree: a named session is selected.
+    pub tree_named: bool,
+    /// Sessions tree: a locked named session is selected.
+    pub tree_locked: bool,
+    /// Sessions tree: an auto-saved session is selected.
+    pub tree_auto: bool,
+    /// Sessions tree: a folder is selected.
+    pub tree_folder: bool,
+    /// Sessions tree: a *New* type is selected.
+    pub tree_new: bool,
 }
 
 /// Availability predicates (ARCH-070 `enabled_when`).
@@ -340,8 +318,10 @@ pub struct Ctx {
 pub enum Predicate {
     /// Always available.
     Always,
-    /// More than one tab is open.
+    /// More than one tab is open in the window.
     MultipleTabs,
+    /// Another window is open.
+    OtherWindows,
     /// A comparison is running.
     Busy,
     /// The view has a model or result.
@@ -360,6 +340,22 @@ pub enum Predicate {
     PrevDifference,
     /// Home: both paths are given.
     HomeReady,
+    /// The view's session is named.
+    Named,
+    /// Tree: a named session, an auto-saved one or a *New* type.
+    TreeOpenable,
+    /// Tree: a named or auto-saved session.
+    TreeSession,
+    /// Tree: a folder.
+    TreeFolder,
+    /// Tree: a named session that is not locked.
+    TreeUnlocked,
+    /// Tree: a named session, a folder or an auto-saved session.
+    TreeDeletable,
+    /// Tree: a named session or a folder.
+    TreeRenamable,
+    /// Tree: a named session or a *New* type (its defaults).
+    TreeEditable,
 }
 
 impl Predicate {
@@ -368,6 +364,7 @@ impl Predicate {
         match self {
             Predicate::Always => true,
             Predicate::MultipleTabs => ctx.tabs > 1,
+            Predicate::OtherWindows => ctx.windows > 1,
             Predicate::Busy => ctx.busy,
             Predicate::Ready => ctx.ready,
             Predicate::ClosedFolderSelected => ctx.closed_folder_selected,
@@ -377,807 +374,1392 @@ impl Predicate {
             Predicate::NextDifference => ctx.next_difference,
             Predicate::PrevDifference => ctx.prev_difference,
             Predicate::HomeReady => ctx.home_ready,
+            Predicate::Named => ctx.named,
+            Predicate::TreeOpenable => ctx.tree_named || ctx.tree_auto || ctx.tree_new,
+            Predicate::TreeSession => ctx.tree_named || ctx.tree_auto,
+            Predicate::TreeFolder => ctx.tree_folder,
+            Predicate::TreeUnlocked => ctx.tree_named && !ctx.tree_locked,
+            Predicate::TreeDeletable => ctx.tree_named || ctx.tree_auto || ctx.tree_folder,
+            Predicate::TreeRenamable => ctx.tree_named || ctx.tree_folder,
+            Predicate::TreeEditable => ctx.tree_named || ctx.tree_new,
         }
     }
 }
 
-/// One catalogue entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Command {
-    /// Id.
-    pub id: CommandId,
-    /// View type.
-    pub scope: Scope,
-    /// Menu.
-    pub menu: Menu,
-    /// Caption (menus, toolbar tooltips).
-    pub caption: &'static str,
-    /// Hint (status line, tooltips).
-    pub hint: &'static str,
-    /// Default shortcut.
-    pub shortcut: Option<Shortcut>,
-    /// Shown in its menu.
-    pub in_menu: bool,
-    /// Shown on the toolbar (with this short label).
-    pub toolbar: Option<&'static str>,
-    /// Radio group (0 = none): display filters (1), folder modes (2), toggles (3).
-    pub group: u8,
-    /// Availability.
-    pub enabled_when: Predicate,
+/// Where a command appears in a context menu (D-110; W9+ add pane areas).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Area {
+    /// The tab's context menu.
+    Tab,
+    /// The toolbar's context menu.
+    Toolbar,
+    /// The Home sessions tree (W4b).
+    SessionTree,
 }
 
-/// Radio group of the display filter presets.
-pub const GROUP_FILTER: u8 = 1;
-/// Radio group of the folder modes.
-pub const GROUP_FOLDER_MODE: u8 = 2;
-/// Check group of the atomic display toggles.
-pub const GROUP_TOGGLES: u8 = 3;
+/// A radio or check group of the presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Group {
+    /// A plain command.
+    None,
+    /// A display filter preset (radio).
+    Filter,
+    /// A folder mode (radio).
+    FolderMode,
+    /// An atomic display toggle (check).
+    Toggles,
+    /// A check command (its state comes from the view).
+    Check,
+}
 
-#[allow(clippy::too_many_arguments)] // one positional row per catalogue entry
-const fn cmd(
+/// One presentation row: what the GUI adds to a catalogue entry (D-109).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Row {
+    /// Id.
+    pub id: CommandId,
+    /// View type (`Global`: every view).
+    pub scope: Scope,
+    /// Icon (toolbar, menus).
+    pub icon: Option<IconId>,
+    /// Short label under the icon with large buttons, and the caption of an entry the catalogue gives none.
+    pub toolbar_label: Option<&'static str>,
+    /// Radio or check group.
+    pub group: Group,
+    /// Availability.
+    pub enabled_when: Predicate,
+    /// Context-menu areas.
+    pub areas: &'static [Area],
+}
+
+#[allow(clippy::too_many_arguments)] // one positional row per command
+const fn row(
     id: CommandId,
     scope: Scope,
-    menu: Menu,
-    caption: &'static str,
-    hint: &'static str,
-    shortcut: Option<Shortcut>,
-    toolbar: Option<&'static str>,
-    group: u8,
+    icon: Option<IconId>,
+    toolbar_label: Option<&'static str>,
+    group: Group,
     enabled_when: Predicate,
-) -> Command {
-    Command {
+    areas: &'static [Area],
+) -> Row {
+    Row {
         id,
         scope,
-        menu,
-        caption,
-        hint,
-        shortcut,
-        in_menu: true,
-        toolbar,
+        icon,
+        toolbar_label,
         group,
         enabled_when,
+        areas,
     }
 }
 
+use Area as A;
 use CommandId as C;
-use Key as K;
-use Menu as M;
+use Group as G;
+use IconId as I;
 use Predicate as P;
 use Scope as S;
 
-/// The catalogue (per view type; a view type's entry wins over a global one with the same shortcut).
-pub const CATALOGUE: &[Command] = &[
-    // Global (Session, Help)
-    cmd(
+const NONE: &[Area] = &[];
+const TAB: &[Area] = &[A::Tab];
+const TREE: &[Area] = &[A::SessionTree];
+
+/// The presentation table, one row per (scope, id). A view type's row wins over a global one.
+pub const PRESENTATION: &[Row] = &[
+    // Global
+    row(
         C::TabNew,
         S::Global,
-        M::Session,
-        "New Tab",
-        "Opens a Home view in a new tab.",
-        Some(Shortcut::ctrl(K::Char('T'))),
-        None,
-        0,
+        Some(I::NewTab),
+        Some("New Tab"),
+        G::None,
         P::Always,
+        TAB,
     ),
-    cmd(
+    row(
+        C::WindowNew,
+        S::Global,
+        Some(I::NewWindow),
+        Some("New Window"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TabDuplicate,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::Always,
+        TAB,
+    ),
+    row(
+        C::TabMoveToNewWindow,
+        S::Global,
+        Some(I::NewWindow),
+        None,
+        G::None,
+        P::MultipleTabs,
+        TAB,
+    ),
+    row(
+        C::TabMoveToWindow,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::OtherWindows,
+        TAB,
+    ),
+    row(
+        C::TabCloseOthers,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::MultipleTabs,
+        TAB,
+    ),
+    row(
         C::CloseTab,
         S::Global,
-        M::Session,
-        "Close Tab",
-        "Closes the active tab.",
-        Some(Shortcut::ctrl(K::Char('W'))),
-        None,
-        0,
+        Some(I::Close),
+        Some("Close"),
+        G::None,
         P::Always,
+        TAB,
     ),
-    cmd(
+    row(C::Exit, S::Global, None, None, G::None, P::Always, NONE),
+    row(
         C::TabNext,
         S::Global,
-        M::Session,
-        "Next Tab",
-        "Selects the tab after the active one.",
-        Some(Shortcut::ctrl(K::Tab)),
         None,
-        0,
+        None,
+        G::None,
         P::MultipleTabs,
+        NONE,
     ),
-    cmd(
+    row(
         C::TabPrev,
         S::Global,
-        M::Session,
-        "Previous Tab",
-        "Selects the tab before the active one.",
-        Some(Shortcut::shift_ctrl(K::Tab)),
         None,
-        0,
+        None,
+        G::None,
         P::MultipleTabs,
+        NONE,
     ),
-    cmd(
-        C::Exit,
+    row(
+        C::HelpContents,
         S::Global,
-        M::Session,
-        "Exit",
-        "Quits the application.",
-        Some(Shortcut::ctrl(K::Char('Q'))),
-        None,
-        0,
+        Some(I::Help),
+        Some("Help"),
+        G::None,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
+        C::ContextHelp,
+        S::Global,
+        Some(I::Help),
+        Some("Help"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ProgramOptions,
+        S::Global,
+        Some(I::Options),
+        Some("Options"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Export,
+        S::Global,
+        Some(I::Export),
+        Some("Export"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Import,
+        S::Global,
+        Some(I::Import),
+        Some("Import"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Restore,
+        S::Global,
+        Some(I::Restore),
+        Some("Restore"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
         C::About,
         S::Global,
-        M::Help,
-        "About",
-        "Displays program information and the version number.",
-        None,
-        None,
-        0,
+        Some(I::Info),
+        Some("About"),
+        G::None,
         P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionNewList,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionOpen,
+        S::Global,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceLoadList,
+        S::Global,
+        Some(I::Workspace),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceManager,
+        S::Global,
+        Some(I::Workspace),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::WorkspaceSaveAs,
+        S::Global,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
     ),
     // Home
-    cmd(
+    row(
+        C::ShowManage,
+        S::Home,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::MaximizeManage,
+        S::Home,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Find,
+        S::Home,
+        Some(I::Search),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TreeOpen,
+        S::Home,
+        Some(I::Open),
+        None,
+        G::None,
+        P::TreeOpenable,
+        TREE,
+    ),
+    row(
+        C::TreeOpenAsNew,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeSession,
+        TREE,
+    ),
+    row(
+        C::TreeOpenAll,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeFolder,
+        TREE,
+    ),
+    row(
+        C::TreeNewSession,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeNewFolder,
+        S::Home,
+        Some(I::Folder),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeClear,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeUnlocked,
+        TREE,
+    ),
+    row(
+        C::TreeDelete,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeDeletable,
+        TREE,
+    ),
+    row(
+        C::TreeSaveAs,
+        S::Home,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::TreeSession,
+        TREE,
+    ),
+    row(
+        C::TreeRename,
+        S::Home,
+        None,
+        None,
+        G::None,
+        P::TreeRenamable,
+        TREE,
+    ),
+    row(
+        C::TreeEdit,
+        S::Home,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::TreeEditable,
+        TREE,
+    ),
+    row(
+        C::TreeExpandAll,
+        S::Home,
+        Some(I::ExpandAll),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeCollapseAll,
+        S::Home,
+        Some(I::CollapseAll),
+        None,
+        G::None,
+        P::Always,
+        TREE,
+    ),
+    row(
+        C::TreeFavorite,
+        S::Home,
+        Some(I::Favorite),
+        None,
+        G::None,
+        P::TreeUnlocked,
+        TREE,
+    ),
+    row(
         C::HomeCompare,
         S::Home,
-        M::Session,
-        "Compare",
-        "Compares the two paths; the comparison replaces the Home view.",
-        None,
+        Some(I::OpenPair),
         Some("Compare"),
-        0,
+        G::None,
         P::HomeReady,
+        NONE,
     ),
     // Folder Compare
-    cmd(
+    row(
         C::Stop,
         S::Folder,
-        M::Session,
-        "Stop",
-        "Terminates the comparison.",
-        None,
+        Some(I::Stop),
         Some("Stop"),
-        0,
+        G::None,
         P::Busy,
+        NONE,
     ),
-    cmd(
+    row(
         C::FullRefresh,
         S::Folder,
-        M::Edit,
-        "Full Refresh",
-        "Refreshes the entire comparison.",
-        Some(Shortcut::ctrl(K::F(5))),
+        Some(I::Reload),
         Some("Refresh"),
-        0,
+        G::None,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::ExpandAll,
         S::Folder,
-        M::Edit,
-        "Expand All",
-        "Opens all folders.",
-        None,
+        Some(I::ExpandAll),
         Some("Expand"),
-        0,
+        G::None,
         P::Ready,
+        NONE,
     ),
-    cmd(
+    row(
         C::CollapseAll,
         S::Folder,
-        M::Edit,
-        "Collapse All",
-        "Closes all folders.",
-        None,
+        Some(I::CollapseAll),
         Some("Collapse"),
-        0,
+        G::None,
         P::Ready,
+        NONE,
     ),
-    cmd(
+    row(
         C::Open,
         S::Folder,
-        M::Actions,
-        "Open",
-        "Opens the selected file pair in a Text Compare view.",
-        Some(Shortcut::plain(K::Enter)),
+        Some(I::OpenPair),
         Some("Open"),
-        0,
+        G::None,
         P::PairSelected,
+        NONE,
     ),
-    cmd(
+    row(
         C::Expand,
         S::Folder,
-        M::Actions,
-        "Open Folder",
-        "Opens the selected folder.",
-        Some(Shortcut::plain(K::Right)),
+        Some(I::Expand),
         None,
-        0,
+        G::None,
         P::ClosedFolderSelected,
+        NONE,
     ),
-    cmd(
+    row(
         C::Collapse,
         S::Folder,
-        M::Actions,
-        "Close Folder",
-        "Closes the selected folder.",
-        Some(Shortcut::plain(K::Left)),
+        Some(I::Collapse),
         None,
-        0,
+        G::None,
         P::OpenFolderSelected,
+        NONE,
     ),
-    cmd(
+    row(
         C::ExpandSubfolders,
         S::Folder,
-        M::Actions,
-        "Open Subfolders",
-        "Opens the selected folder and all its subfolders.",
         None,
         None,
-        0,
+        G::None,
         P::FolderSelected,
+        NONE,
     ),
-    cmd(
+    row(
         C::CollapseSubfolders,
         S::Folder,
-        M::Actions,
-        "Close Subfolders",
-        "Closes the selected folder and its subfolders.",
         None,
         None,
-        0,
+        G::None,
         P::FolderSelected,
+        NONE,
     ),
-    cmd(
+    row(
         C::DiffNext,
         S::Folder,
-        M::Search,
-        "Next Difference",
-        "Positions at the next difference.",
-        Some(Shortcut::ctrl(K::Char('N'))),
+        Some(I::NextDiff),
         Some("Next"),
-        0,
+        G::None,
         P::NextDifference,
+        NONE,
     ),
-    cmd(
+    row(
         C::DiffPrev,
         S::Folder,
-        M::Search,
-        "Previous Difference",
-        "Positions at the previous difference.",
-        Some(Shortcut::ctrl(K::Char('P'))),
+        Some(I::PrevDiff),
         Some("Prev"),
-        0,
+        G::None,
         P::PrevDifference,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavCompareAll,
         S::Folder,
-        M::View,
-        "Show All",
-        "Shows same, orphan, newer and different items.",
+        Some(I::FilterAll),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavDiff,
         S::Folder,
-        M::View,
-        "Show Differences",
-        "Shows orphan, newer and different items.",
+        Some(I::FilterDiff),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavSame,
         S::Folder,
-        M::View,
-        "Show Same",
-        "Shows same items.",
+        Some(I::FilterSame),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavNoOrphan,
         S::Folder,
-        M::View,
-        "Show No Orphans",
-        "Shows same, newer and different items.",
         None,
         None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavDiffNoOrphan,
         S::Folder,
-        M::View,
-        "Show Differences but No Orphans",
-        "Shows newer and different items.",
         None,
         None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavOrphan,
         S::Folder,
-        M::View,
-        "Show Orphans",
-        "Shows left and right orphan items.",
+        Some(I::FilterOrphans),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavLeftNewer,
         S::Folder,
-        M::View,
-        "Show Left Newer",
-        "Shows left newer items.",
+        Some(I::FilterLeftNewer),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavRightNewer,
         S::Folder,
-        M::View,
-        "Show Right Newer",
-        "Shows right newer items.",
+        Some(I::FilterRightNewer),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavLeftNewerOrphan,
         S::Folder,
-        M::View,
-        "Show Left Newer and Left Orphans",
-        "Shows left orphan and left newer items.",
         None,
         None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavRightNewerOrphan,
         S::Folder,
-        M::View,
-        "Show Right Newer and Right Orphans",
-        "Shows right orphan and right newer items.",
         None,
         None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavLeftOrphan,
         S::Folder,
-        M::View,
-        "Show Left Orphans",
-        "Shows left orphan items.",
+        Some(I::FilterLeftOrphan),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavRightOrphan,
         S::Folder,
-        M::View,
-        "Show Right Orphans",
-        "Shows right orphan items.",
+        Some(I::FilterRightOrphan),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavCompareNone,
         S::Folder,
-        M::View,
-        "Show None",
-        "Hides all files.",
+        Some(I::FilterNone),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogSame,
         S::Folder,
-        M::View,
-        "Toggle Same Items",
-        "Shows or hides same items.",
-        None,
-        Some("="),
-        GROUP_TOGGLES,
+        Some(I::FilterSame),
+        Some("Same Items"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogLeftOrphan,
         S::Folder,
-        M::View,
-        "Toggle Left Orphan Items",
-        "Shows or hides left orphan items.",
-        None,
-        Some("◧"),
-        GROUP_TOGGLES,
+        Some(I::FilterLeftOrphan),
+        Some("Left Orphans"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogRightOrphan,
         S::Folder,
-        M::View,
-        "Toggle Right Orphan Items",
-        "Shows or hides right orphan items.",
-        None,
-        Some("◨"),
-        GROUP_TOGGLES,
+        Some(I::FilterRightOrphan),
+        Some("Right Orphans"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogLeftNewer,
         S::Folder,
-        M::View,
-        "Toggle Left Newer Items",
-        "Shows or hides left newer items.",
-        None,
-        Some("◀"),
-        GROUP_TOGGLES,
+        Some(I::FilterLeftNewer),
+        Some("Left Newer"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogRightNewer,
         S::Folder,
-        M::View,
-        "Toggle Right Newer Items",
-        "Shows or hides right newer items.",
-        None,
-        Some("▶"),
-        GROUP_TOGGLES,
+        Some(I::FilterRightNewer),
+        Some("Right Newer"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogDiff,
         S::Folder,
-        M::View,
-        "Toggle Difference Items",
-        "Shows or hides different, unknown and error items.",
-        None,
-        Some("≠"),
-        GROUP_TOGGLES,
+        Some(I::FilterDiff),
+        Some("Different Items"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DirShowAll,
         S::Folder,
-        M::View,
-        "Always Show Folders",
-        "Shows all folders, ignoring the display filter.",
         None,
         None,
-        GROUP_FOLDER_MODE,
+        G::FolderMode,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DirCompareStructure,
         S::Folder,
-        M::View,
-        "Compare Files and Folder Structure",
-        "Shows folders if they, or items they contain, match the display filter.",
         None,
         None,
-        GROUP_FOLDER_MODE,
+        G::FolderMode,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DirCompareFilesOnly,
         S::Folder,
-        M::View,
-        "Only Compare Files",
-        "Shows folders only if they contain files matching the display filter.",
         None,
         None,
-        GROUP_FOLDER_MODE,
+        G::FolderMode,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::InsigIgnored,
         S::Folder,
-        M::View,
-        "Ignore Unimportant Differences",
-        "Treats unimportant differences as same.",
-        None,
-        None,
-        0,
+        Some(I::Unimportant),
+        Some("Ignore Unimportant"),
+        G::Check,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::SuppressFilters,
         S::Folder,
-        M::View,
-        "Suppress Filters",
-        "Temporarily shows the items hidden by file filters.",
         None,
         None,
-        0,
+        G::Check,
         P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowToolbar,
+        S::Folder,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        &[A::Toolbar],
+    ),
+    row(
+        C::ShowLog,
+        S::Folder,
+        Some(I::Log),
+        Some("Log"),
+        G::Check,
+        P::Always,
+        NONE,
     ),
     // Text Compare
-    cmd(
+    row(
         C::Reload,
         S::Text,
-        M::Session,
-        "Reload Files",
-        "Reloads and recompares the displayed files.",
-        Some(Shortcut::plain(K::F(5))),
+        Some(I::Reload),
         Some("Reload"),
-        0,
+        G::None,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DiffSectionNext,
         S::Text,
-        M::Search,
-        "Next Difference Section",
-        "Positions at the next difference section.",
-        Some(Shortcut::ctrl(K::Char('N'))),
+        Some(I::NextSection),
         Some("Next"),
-        0,
+        G::None,
         P::NextDifference,
+        NONE,
     ),
-    cmd(
+    row(
         C::DiffSectionPrev,
         S::Text,
-        M::Search,
-        "Previous Difference Section",
-        "Positions at the previous difference section.",
-        Some(Shortcut::ctrl(K::Char('P'))),
+        Some(I::PrevSection),
         Some("Prev"),
-        0,
+        G::None,
         P::PrevDifference,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavCompareAll,
         S::Text,
-        M::View,
-        "Show All",
-        "Shows same, orphan and different lines.",
+        Some(I::FilterAll),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavDiff,
         S::Text,
-        M::View,
-        "Show Differences",
-        "Shows orphan and different lines.",
+        Some(I::FilterDiff),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavSame,
         S::Text,
-        M::View,
-        "Show Same",
-        "Shows same lines.",
+        Some(I::FilterSame),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::ShowContext,
         S::Text,
-        M::View,
-        "Show Context",
-        "Shows the differences with the lines surrounding them.",
+        Some(I::Context),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::FavCompareNone,
         S::Text,
-        M::View,
-        "Show None",
-        "Shows no lines.",
+        Some(I::FilterNone),
         None,
-        None,
-        GROUP_FILTER,
+        G::Filter,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogSame,
         S::Text,
-        M::View,
-        "Toggle Same Lines",
-        "Shows or hides same lines.",
-        None,
-        Some("="),
-        GROUP_TOGGLES,
+        Some(I::FilterSame),
+        Some("Same Lines"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogLeftOrphan,
         S::Text,
-        M::View,
-        "Toggle Left Orphan Lines",
-        "Shows or hides left orphan lines.",
-        None,
-        Some("◧"),
-        GROUP_TOGGLES,
+        Some(I::FilterLeftOrphan),
+        Some("Left Orphans"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogRightOrphan,
         S::Text,
-        M::View,
-        "Toggle Right Orphan Lines",
-        "Shows or hides right orphan lines.",
-        None,
-        Some("◨"),
-        GROUP_TOGGLES,
+        Some(I::FilterRightOrphan),
+        Some("Right Orphans"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::TogDiff,
         S::Text,
-        M::View,
-        "Toggle Difference Lines",
-        "Shows or hides different lines.",
-        None,
-        Some("≠"),
-        GROUP_TOGGLES,
+        Some(I::FilterDiff),
+        Some("Different Lines"),
+        G::Toggles,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::InsigIgnored,
         S::Text,
-        M::View,
-        "Ignore Unimportant Differences",
-        "Treats unimportant differences as same.",
-        None,
-        None,
-        0,
+        Some(I::Unimportant),
+        Some("Ignore Unimportant"),
+        G::Check,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::ShowThumbnail,
         S::Text,
-        M::View,
-        "Thumbnail",
-        "Shows or hides the thumbnail.",
-        None,
-        None,
-        0,
+        Some(I::Thumbnail),
+        Some("Thumbnail"),
+        G::Check,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DisplayFontIncrease,
         S::Text,
-        M::View,
-        "Increase Display Font Size",
-        "Makes the text larger.",
-        Some(Shortcut::ctrl(K::NumPlus)),
+        Some(I::FontLarger),
         None,
-        0,
+        G::None,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DisplayFontDecrease,
         S::Text,
-        M::View,
-        "Decrease Display Font Size",
-        "Makes the text smaller.",
-        Some(Shortcut::ctrl(K::NumMinus)),
+        Some(I::FontSmaller),
         None,
-        0,
+        G::None,
         P::Always,
+        NONE,
     ),
-    cmd(
+    row(
         C::DisplayFontReset,
         S::Text,
-        M::View,
-        "Reset Display Font Size",
-        "Restores the default text size.",
-        Some(Shortcut::ctrl(K::NumZero)),
+        Some(I::FontReset),
         None,
-        0,
+        G::None,
         P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowToolbar,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        &[A::Toolbar],
+    ),
+    // The session commands of the views.
+    row(
+        C::SessionHome,
+        S::Folder,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Folder,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Folder,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Folder,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Folder,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
+    row(
+        C::SessionHome,
+        S::Text,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Text,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Text,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Text,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Text,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
     ),
 ];
 
-/// The commands of a view type: its own entries, then the global ones.
-pub fn commands_for(scope: Scope) -> impl Iterator<Item = &'static Command> {
-    let own = CATALOGUE
+/// The presentation row of `id` in `scope` (or the global row).
+pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Row> {
+    PRESENTATION
         .iter()
-        .filter(move |c| c.scope == scope && scope != Scope::Global);
-    let global = CATALOGUE.iter().filter(|c| c.scope == Scope::Global);
+        .find(|r| r.id == id && r.scope == scope && scope != Scope::Global)
+        .or_else(|| {
+            PRESENTATION
+                .iter()
+                .find(|r| r.id == id && r.scope == Scope::Global)
+        })
+}
+
+/// The presentation rows of a view type: its own, then the global ones.
+pub fn rows_for(scope: Scope) -> impl Iterator<Item = &'static Row> {
+    let own = PRESENTATION
+        .iter()
+        .filter(move |r| r.scope == scope && scope != Scope::Global);
+    let global = PRESENTATION.iter().filter(|r| r.scope == Scope::Global);
     own.chain(global)
 }
 
-/// The command a view type binds to `shortcut` (its own binding wins over a global one).
-pub fn find_shortcut(scope: Scope, shortcut: Shortcut) -> Option<&'static Command> {
-    commands_for(scope).find(|c| c.shortcut == Some(shortcut))
+/// The effective command tables of the view types the GUI shows (D-109), built from `commands.toml`.
+#[derive(Debug, Clone)]
+pub struct CommandTables {
+    home: ViewCommands<'static>,
+    folder: ViewCommands<'static>,
+    text: ViewCommands<'static>,
 }
 
-/// The command a key event runs where it is handled: the window root takes every shortcut except the
-/// focus-bound ones ([`Shortcut::is_focus_bound`]), which only the view's focus area takes, so plain Enter, Left
-/// and Right still reach a focused button, list or check box. The caller runs the command (and prevents the
-/// key's default action) only when the command is enabled.
-pub fn shortcut_command(
-    scope: Scope,
-    shortcut: Shortcut,
-    origin: KeyOrigin,
-) -> Option<&'static Command> {
-    let here = match origin {
-        KeyOrigin::Window => !shortcut.is_focus_bound(),
-        KeyOrigin::View => shortcut.is_focus_bound(),
-    };
-    if here {
-        find_shortcut(scope, shortcut)
-    } else {
-        None
+impl Default for CommandTables {
+    fn default() -> CommandTables {
+        CommandTables::new(&CommandOverrides::default())
     }
 }
 
-/// The entry of `id` in `scope` (or the global entry).
-pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Command> {
-    commands_for(scope).find(|c| c.id == id)
+impl CommandTables {
+    /// The tables with the overrides of `commands.toml`.
+    pub fn new(overrides: &CommandOverrides) -> CommandTables {
+        let table = |scope: Scope| {
+            effective(
+                catalogue(),
+                scope.view_name().unwrap_or_default(),
+                overrides,
+            )
+        };
+        CommandTables {
+            home: table(Scope::Home),
+            folder: table(Scope::Folder),
+            text: table(Scope::Text),
+        }
+    }
+
+    /// The table of a view type (`Global`: the Home table, which holds every global command).
+    pub fn view(&self, scope: Scope) -> &ViewCommands<'static> {
+        match scope {
+            Scope::Global | Scope::Home => &self.home,
+            Scope::Folder => &self.folder,
+            Scope::Text => &self.text,
+        }
+    }
+
+    /// The effective entry of `id` in `scope`'s table.
+    pub fn entry(&self, scope: Scope, id: CommandId) -> Option<&EffectiveCommand<'static>> {
+        self.view(scope).get(id.name())
+    }
+
+    /// The caption of `id` (the catalogue's, else the presentation's label, else the id).
+    pub fn caption(&self, scope: Scope, id: CommandId) -> String {
+        let caption = self.entry(scope, id).map_or("", |e| e.caption);
+        if !caption.is_empty() {
+            return caption.to_owned();
+        }
+        lookup(scope, id)
+            .and_then(|r| r.toolbar_label)
+            .unwrap_or(id.name())
+            .to_owned()
+    }
+
+    /// The description (hint) of `id`.
+    pub fn description(&self, scope: Scope, id: CommandId) -> &'static str {
+        self.entry(scope, id).map_or("", |e| e.description)
+    }
+
+    /// The first effective shortcut of `id` (menus show it; hints with `show_shortcut_in_hints`).
+    pub fn shortcut(&self, scope: Scope, id: CommandId) -> Option<&Shortcut> {
+        self.entry(scope, id).and_then(|e| e.shortcuts.first())
+    }
+
+    /// The command a key press runs (D-111), see [`dispatch`].
+    pub fn dispatch(
+        &self,
+        scope: Scope,
+        ctx: &Ctx,
+        key: &Shortcut,
+        at: FocusArea,
+    ) -> Option<CommandId> {
+        dispatch(self, scope, ctx, key, at)
+    }
 }
 
-/// The commands of one menu for a view type, in catalogue order.
-pub fn menu_items(scope: Scope, menu: Menu) -> Vec<&'static Command> {
-    commands_for(scope)
-        .filter(|c| c.menu == menu && c.in_menu)
-        .collect()
+/// True for a command the GUI shows in `scope`: an `implemented` catalogue entry with a presentation row.
+pub fn shown(tables: &CommandTables, scope: Scope, id: CommandId) -> bool {
+    lookup(scope, id).is_some() && tables.entry(scope, id).is_some_and(|e| e.implemented())
 }
 
-/// The toolbar of a view type, in catalogue order.
-pub fn toolbar(scope: Scope) -> Vec<&'static Command> {
-    commands_for(scope)
-        .filter(|c| c.scope == scope && c.toolbar.is_some())
-        .collect()
+/// Where a key event is handled (D-111): the window root takes what no focus area owns.
+#[allow(dead_code)] // variants for W4b/W4c (contract seams)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FocusArea {
+    /// The window root: the event bubbled up from whatever has the focus.
+    Root,
+    /// The view's main area (the folder tree, the text panes).
+    ViewMain,
+    /// A path field (Home, dialogs).
+    PathField,
+    /// The Home sessions tree (W4b).
+    SessionsTree,
+    /// The Home search box (W4b).
+    HomeSearch,
+    /// A dialog (it handles its keys itself).
+    Dialog,
+}
+
+/// A key that focused controls use themselves (D-111): no Ctrl, Alt or Cmd, and a letter, digit, punctuation,
+/// Enter, Tab, Esc, Space, BkSp, Del, Ins, Home, End, PgUp, PgDn or an arrow.
+pub fn is_focus_bound(s: &Shortcut) -> bool {
+    if s.ctrl || s.alt || s.cmd {
+        return false;
+    }
+    let mut chars = s.key.chars();
+    let single = matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_graphic());
+    single
+        || matches!(
+            s.key.as_str(),
+            "Enter"
+                | "Tab"
+                | "Esc"
+                | "Space"
+                | "BkSp"
+                | "Del"
+                | "Ins"
+                | "Home"
+                | "End"
+                | "PgUp"
+                | "PgDn"
+                | "Up"
+                | "Down"
+                | "Left"
+                | "Right"
+        )
+}
+
+/// The focus area a restricted shortcut belongs to: a context naming a path field → [`FocusArea::PathField`],
+/// a command of the sessions tree → [`FocusArea::SessionsTree`], else the view's main area.
+fn area_of(shortcut: &Shortcut, row: &Row) -> FocusArea {
+    match &shortcut.context {
+        Some(context) if context.contains("path field") => FocusArea::PathField,
+        _ if row.areas.contains(&Area::SessionTree) => FocusArea::SessionsTree,
+        _ => FocusArea::ViewMain,
+    }
+}
+
+/// The command a key press runs in the active view of `scope` (D-111). Candidates are the shown, available
+/// entries whose effective shortcuts contain the key. (1) An entry whose matching shortcut has a context, whose
+/// menu is empty, or whose shortcut is focus-bound is taken only by its focus area; (2) the others only at the
+/// window root, the first in `view_sections` then catalogue order winning. (3) Workspace shortcuts (W4b) apply
+/// when this returns `None`. While a dialog is open nothing is taken.
+pub fn dispatch(
+    tables: &CommandTables,
+    scope: Scope,
+    ctx: &Ctx,
+    key: &Shortcut,
+    at: FocusArea,
+) -> Option<CommandId> {
+    if ctx.dialog_open || at == FocusArea::Dialog {
+        return None;
+    }
+    let bare = |s: &Shortcut| Shortcut {
+        context: None,
+        ..s.clone()
+    };
+    let wanted = bare(key);
+    for entry in tables.view(scope).with_shortcut(key) {
+        let Some(id) = CommandId::from_name(entry.id()) else {
+            continue;
+        };
+        let Some(row) = lookup(scope, id) else {
+            continue;
+        };
+        if !entry.implemented() || !row.enabled_when.holds(ctx) {
+            continue;
+        }
+        let Some(matched) = entry.shortcuts.iter().find(|s| bare(s) == wanted) else {
+            continue;
+        };
+        let restricted =
+            matched.context.is_some() || entry.menu.is_empty() || is_focus_bound(matched);
+        let here = if restricted {
+            at == area_of(matched, row)
+        } else {
+            at == FocusArea::Root
+        };
+        if here {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// The hint of a command (UI-007): the caption, then the first effective shortcut in parentheses when
+/// `show_shortcut`, then the description on a second line.
+pub fn hint_text(
+    caption: &str,
+    shortcut: Option<&Shortcut>,
+    description: &str,
+    show_shortcut: bool,
+) -> String {
+    let mut text = caption.to_owned();
+    if show_shortcut && let Some(s) = shortcut {
+        text.push_str(&format!(" ({s})"));
+    }
+    if !description.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(description);
+    }
+    text
+}
+
+/// When hints show (OPT-017, OPT-019): after `show_ms` of hover, hidden after `hide_ms` more (0 = never).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HintTiming {
+    /// Hints at all (`show_hints`).
+    pub enabled: bool,
+    /// The shortcut in the hint (`show_shortcut_in_hints`).
+    pub show_shortcut: bool,
+    /// Milliseconds of hover before a hint appears (`hint_show_ms`).
+    pub show_ms: u32,
+    /// Milliseconds a hint stays (`hint_hide_ms`; 0: until the pointer leaves).
+    pub hide_ms: u32,
+}
+
+impl Default for HintTiming {
+    fn default() -> HintTiming {
+        HintTiming::from_options(&hikasa_session::settings::Options::default())
+    }
+}
+
+impl HintTiming {
+    /// The timing of the options.
+    pub fn from_options(o: &hikasa_session::settings::Options) -> HintTiming {
+        HintTiming {
+            enabled: o.tweaks.interface.show_hints,
+            show_shortcut: o.tweaks.interface.show_shortcut_in_hints,
+            show_ms: o.tweaks.metrics.hint_show_ms,
+            hide_ms: o.tweaks.metrics.hint_hide_ms,
+        }
+    }
+
+    /// True when a hint is visible after `hovered_s` seconds of hover (`hovered_s` from the frame times).
+    pub fn visible(&self, hovered_s: f64) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let ms = hovered_s * 1000.0;
+        let shown = ms >= f64::from(self.show_ms);
+        let hidden = self.hide_ms > 0 && ms >= f64::from(self.show_ms) + f64::from(self.hide_ms);
+        shown && !hidden
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hikasa_session::commands::CommandStatus;
     use std::collections::HashSet;
 
+    fn sc(text: &str) -> Shortcut {
+        Shortcut::parse(text).expect("a shortcut")
+    }
+
     #[test]
-    fn ids_are_unique_per_scope_and_shortcuts_do_not_clash() {
-        for scope in [Scope::Home, Scope::Folder, Scope::Text] {
+    fn rows_are_unique_per_scope_and_names_round_trip() {
+        for scope in [Scope::Global, Scope::Home, Scope::Folder, Scope::Text] {
             let mut ids = HashSet::new();
-            let mut keys = HashSet::new();
-            for c in CATALOGUE.iter().filter(|c| c.scope == scope) {
-                assert!(ids.insert(c.id), "{:?} twice in {scope:?}", c.id);
-                if let Some(s) = c.shortcut {
-                    assert!(keys.insert(s), "{s} bound twice in {scope:?}");
-                }
+            for r in PRESENTATION.iter().filter(|r| r.scope == scope) {
+                assert!(ids.insert(r.id), "{:?} twice in {scope:?}", r.id);
             }
-            // A view's own binding never hides a global command by accident.
-            for g in CATALOGUE.iter().filter(|c| c.scope == Scope::Global) {
-                if let Some(s) = g.shortcut {
+        }
+        for id in CommandId::ALL {
+            assert_eq!(CommandId::from_name(id.name()), Some(*id));
+            assert!(
+                PRESENTATION.iter().any(|r| r.id == *id),
+                "{} has no presentation row",
+                id.name()
+            );
+        }
+        assert_eq!(CommandId::from_name("NoSuch"), None);
+    }
+
+    /// §1.4.16 rule 1 (A4.3): every command the window executes is an `implemented` entry of the core catalogue
+    /// in a section of its view type, every `implemented` entry of a section a shown view uses has a row, and
+    /// every row on a default toolbar has an icon.
+    #[test]
+    fn the_window_matches_the_core_catalogue() {
+        let core = catalogue();
+        for r in PRESENTATION {
+            let (_, entry) = core
+                .find(r.scope.catalogue_sections(), r.id.name())
+                .unwrap_or_else(|| {
+                    panic!("{} ({:?}) is not in the catalogue", r.id.name(), r.scope)
+                });
+            assert_eq!(entry.status, CommandStatus::Implemented, "{}", r.id.name());
+            if entry.toolbar {
+                assert!(
+                    r.icon.is_some(),
+                    "{} is on a toolbar without an icon",
+                    r.id.name()
+                );
+            }
+        }
+        for scope in Scope::VIEWS {
+            for section in scope.catalogue_sections() {
+                let Some(s) = core.section(section) else {
+                    continue;
+                };
+                for entry in s
+                    .commands
+                    .iter()
+                    .filter(|e| e.status == CommandStatus::Implemented)
+                {
+                    let id = CommandId::from_name(&entry.id).unwrap_or_else(|| {
+                        panic!(
+                            "{} ({section}) is implemented but unknown to the GUI",
+                            entry.id
+                        )
+                    });
                     assert!(
-                        !keys.contains(&s),
-                        "{s} of {:?} is shadowed in {scope:?}",
-                        g.id
+                        lookup(scope, id).is_some(),
+                        "{} ({section}) is implemented but {scope:?} has no row",
+                        entry.id
                     );
                 }
             }
@@ -1185,110 +1767,243 @@ mod tests {
     }
 
     #[test]
-    fn every_command_has_text_and_a_scope_entry() {
-        for c in CATALOGUE {
-            assert!(!c.caption.is_empty() && !c.hint.is_empty(), "{:?}", c.id);
-            assert!(c.hint.ends_with('.'), "{:?}", c.id);
-        }
-        for id in CommandId::ALL {
-            assert!(
-                CATALOGUE.iter().any(|c| c.id == *id),
-                "{} is not in the catalogue",
-                id.name()
-            );
-        }
+    fn every_view_type_has_a_help_topic() {
+        assert_eq!(Scope::Home.help_topic(), "view-home");
+        assert_eq!(Scope::Folder.help_topic(), "view-folder-compare");
+        assert_eq!(Scope::Text.help_topic(), "view-text-compare");
+        assert_eq!(Scope::Global.help_topic(), "main-window");
     }
 
     #[test]
-    fn shortcuts_display_in_the_reference_spelling() {
+    fn tables_read_captions_and_shortcuts_from_the_core() {
+        let tables = CommandTables::default();
         assert_eq!(
-            Shortcut::shift_ctrl(Key::Char('N')).to_string(),
-            "Shift+Ctrl+N"
+            tables.caption(Scope::Folder, CommandId::DiffNext),
+            "Next Difference"
         );
-        assert_eq!(Shortcut::ctrl(Key::F(5)).to_string(), "Ctrl+F5");
-        assert_eq!(Shortcut::ctrl(Key::NumPlus).to_string(), "Ctrl+Num +");
-        assert_eq!(CommandId::DiffNext.name(), "DiffNext");
+        assert_eq!(
+            tables.shortcut(Scope::Folder, CommandId::DiffNext),
+            Some(&sc("Ctrl+N"))
+        );
+        assert_eq!(
+            tables.shortcut(Scope::Text, CommandId::DiffSectionNext),
+            Some(&sc("Ctrl+N"))
+        );
+        // An entry without a catalogue caption takes the presentation label.
+        assert_eq!(
+            tables.caption(Scope::Folder, CommandId::TogSame),
+            "Same Items"
+        );
+        assert_eq!(
+            tables.caption(Scope::Text, CommandId::FavDiff),
+            "Show Differences"
+        );
+        assert!(
+            !tables
+                .description(Scope::Text, CommandId::Reload)
+                .is_empty()
+        );
+        assert!(shown(&tables, Scope::Text, CommandId::Reload));
+        assert!(!shown(&tables, Scope::Text, CommandId::Stop));
     }
 
+    /// §1.4.16 rule 3 (A4.3): the D-111 dispatch table.
     #[test]
-    fn lookups_prefer_the_view_type() {
-        let next = Shortcut::ctrl(Key::Char('N'));
+    fn dispatch_follows_focus_order_overrides_and_dialogs() {
+        let tables = CommandTables::default();
+        let ctx = |scope| Ctx {
+            scope,
+            tabs: 2,
+            windows: 1,
+            next_difference: true,
+            prev_difference: true,
+            pair_selected: true,
+            closed_folder_selected: true,
+            home_ready: true,
+            ..Ctx::default()
+        };
+        let run =
+            |t: &CommandTables, scope, key: &str, at| t.dispatch(scope, &ctx(scope), &sc(key), at);
+        // Own section over global: Ctrl+N is the view's next difference.
         assert_eq!(
-            find_shortcut(Scope::Folder, next).map(|c| c.id),
+            run(&tables, Scope::Folder, "Ctrl+N", FocusArea::Root),
             Some(CommandId::DiffNext)
         );
         assert_eq!(
-            find_shortcut(Scope::Text, next).map(|c| c.id),
+            run(&tables, Scope::Text, "Ctrl+N", FocusArea::Root),
             Some(CommandId::DiffSectionNext)
         );
-        assert_eq!(find_shortcut(Scope::Home, next), None);
-        let close = Shortcut::ctrl(Key::Char('W'));
-        for scope in [Scope::Home, Scope::Folder, Scope::Text] {
+        assert_eq!(run(&tables, Scope::Home, "Ctrl+N", FocusArea::Root), None);
+        // Global commands everywhere, at the root only.
+        for scope in Scope::VIEWS {
             assert_eq!(
-                find_shortcut(scope, close).map(|c| c.id),
+                run(&tables, scope, "Ctrl+W", FocusArea::Root),
                 Some(CommandId::CloseTab)
             );
-        }
-        assert_eq!(lookup(Scope::Text, CommandId::Stop), None);
-        assert!(menu_items(Scope::Folder, Menu::View).len() > 20);
-        assert!(toolbar(Scope::Text).iter().all(|c| c.scope == Scope::Text));
-    }
-
-    #[test]
-    fn plain_keys_belong_to_the_focus_area_not_to_the_window() {
-        let enter = Shortcut::plain(Key::Enter);
-        let right = Shortcut::plain(Key::Right);
-        let left = Shortcut::plain(Key::Left);
-        for key in [enter, right, left] {
-            assert!(key.is_focus_bound(), "{key}");
+            assert_eq!(run(&tables, scope, "Ctrl+W", FocusArea::ViewMain), None);
             assert_eq!(
-                shortcut_command(Scope::Folder, key, KeyOrigin::Window),
-                None
+                run(&tables, scope, "Ctrl+Tab", FocusArea::Root),
+                Some(CommandId::TabNext)
             );
         }
-        let at_tree = |s| shortcut_command(Scope::Folder, s, KeyOrigin::View).map(|c| c.id);
-        assert_eq!(at_tree(enter), Some(CommandId::Open));
-        assert_eq!(at_tree(right), Some(CommandId::Expand));
-        assert_eq!(at_tree(left), Some(CommandId::Collapse));
-        // Modified keys and function keys work wherever the focus is, and only once.
-        let next = Shortcut::ctrl(Key::Char('N'));
-        assert!(!next.is_focus_bound() && !Shortcut::plain(Key::F(5)).is_focus_bound());
-        assert_eq!(
-            shortcut_command(Scope::Folder, next, KeyOrigin::Window).map(|c| c.id),
-            Some(CommandId::DiffNext)
-        );
-        assert_eq!(at_tree(next), None);
-        assert!(
-            shortcut_command(Scope::Text, Shortcut::plain(Key::F(5)), KeyOrigin::Window).is_some()
-        );
-        // Every catalogue shortcut is reachable from exactly one place.
-        for c in CATALOGUE {
-            if let Some(s) = c.shortcut {
-                let window = shortcut_command(c.scope, s, KeyOrigin::Window).is_some();
-                let view = shortcut_command(c.scope, s, KeyOrigin::View).is_some();
-                assert!(window != view, "{:?} ({s})", c.id);
-            }
+        // Focus-bound keys belong to their area.
+        for (key, id) in [("Enter", CommandId::Open), ("Right", CommandId::Expand)] {
+            assert_eq!(
+                run(&tables, Scope::Folder, key, FocusArea::Root),
+                None,
+                "{key}"
+            );
+            assert_eq!(
+                run(&tables, Scope::Folder, key, FocusArea::ViewMain),
+                Some(id),
+                "{key}"
+            );
         }
-    }
-
-    #[test]
-    fn predicates_follow_the_context() {
-        let mut ctx = Ctx {
+        // A context: Enter in a path field is Home's Compare, nowhere else.
+        assert_eq!(
+            run(&tables, Scope::Home, "Enter", FocusArea::PathField),
+            Some(CommandId::HomeCompare)
+        );
+        assert_eq!(run(&tables, Scope::Home, "Enter", FocusArea::Root), None);
+        assert_eq!(
+            run(&tables, Scope::Home, "Enter", FocusArea::ViewMain),
+            None
+        );
+        // Unavailable commands take no key.
+        let off = Ctx {
+            scope: Scope::Folder,
             tabs: 1,
             ..Ctx::default()
         };
-        assert!(Predicate::Always.holds(&ctx));
-        assert!(!Predicate::MultipleTabs.holds(&ctx));
-        ctx.tabs = 2;
-        assert!(Predicate::MultipleTabs.holds(&ctx));
-        assert!(!Predicate::FolderSelected.holds(&ctx));
-        ctx.open_folder_selected = true;
-        assert!(Predicate::FolderSelected.holds(&ctx));
-        assert!(Predicate::OpenFolderSelected.holds(&ctx));
-        assert!(!Predicate::ClosedFolderSelected.holds(&ctx));
-        assert!(!Predicate::PairSelected.holds(&ctx));
-        assert!(!Predicate::Busy.holds(&ctx) && !Predicate::Ready.holds(&ctx));
-        assert!(!Predicate::NextDifference.holds(&ctx) && !Predicate::PrevDifference.holds(&ctx));
-        assert!(!Predicate::HomeReady.holds(&ctx));
+        assert_eq!(
+            tables.dispatch(Scope::Folder, &off, &sc("Ctrl+N"), FocusArea::Root),
+            None
+        );
+        assert_eq!(
+            tables.dispatch(Scope::Folder, &off, &sc("Ctrl+Tab"), FocusArea::Root),
+            None
+        );
+        // A dialog takes every key away from the window's commands.
+        let dialog = Ctx {
+            dialog_open: true,
+            ..ctx(Scope::Folder)
+        };
+        assert_eq!(
+            tables.dispatch(Scope::Folder, &dialog, &sc("Ctrl+W"), FocusArea::Root),
+            None
+        );
+        assert_eq!(
+            run(&tables, Scope::Folder, "Ctrl+W", FocusArea::Dialog),
+            None
+        );
+        // Overrides: a removed shortcut, a replaced one, an added one; another view keeps its defaults.
+        let mut overrides = CommandOverrides::default();
+        let custom = overrides.view.entry("folder-compare".into()).or_default();
+        custom.command.insert(
+            "DiffNext".into(),
+            hikasa_session::settings::CommandOverride {
+                shortcuts: Some(vec!["Alt+N".into()]),
+                ..Default::default()
+            },
+        );
+        custom.command.insert(
+            "CloseTab".into(),
+            hikasa_session::settings::CommandOverride {
+                shortcuts: Some(Vec::new()),
+                ..Default::default()
+            },
+        );
+        custom.command.insert(
+            "ShowLog".into(),
+            hikasa_session::settings::CommandOverride {
+                shortcuts: Some(vec!["Ctrl+L".into()]),
+                ..Default::default()
+            },
+        );
+        let custom = CommandTables::new(&overrides);
+        assert_eq!(run(&custom, Scope::Folder, "Ctrl+N", FocusArea::Root), None);
+        assert_eq!(
+            run(&custom, Scope::Folder, "Alt+N", FocusArea::Root),
+            Some(CommandId::DiffNext)
+        );
+        assert_eq!(run(&custom, Scope::Folder, "Ctrl+W", FocusArea::Root), None);
+        assert_eq!(
+            run(&custom, Scope::Folder, "Ctrl+L", FocusArea::Root),
+            Some(CommandId::ShowLog)
+        );
+        assert_eq!(
+            run(&custom, Scope::Text, "Ctrl+W", FocusArea::Root),
+            Some(CommandId::CloseTab)
+        );
+        // Planned commands never take a key (Find is Ctrl+F in the catalogue, implemented in Home only).
+        assert_eq!(run(&tables, Scope::Folder, "Ctrl+F", FocusArea::Root), None);
+        assert_eq!(
+            run(&tables, Scope::Home, "Ctrl+F", FocusArea::Root),
+            Some(CommandId::Find)
+        );
+        // The tree's keys belong to the tree (W4b).
+        let tree = Ctx {
+            tree_named: true,
+            ..ctx(Scope::Home)
+        };
+        for (key, id) in [
+            ("Enter", CommandId::TreeOpen),
+            ("Del", CommandId::TreeDelete),
+            ("F2", CommandId::TreeRename),
+        ] {
+            let at = |area| tables.dispatch(Scope::Home, &tree, &sc(key), area);
+            assert_eq!(at(FocusArea::SessionsTree), Some(id), "{key}");
+            assert_eq!(at(FocusArea::Root), None, "{key}");
+        }
+    }
+
+    #[test]
+    fn focus_bound_keys() {
+        for key in [
+            "Enter",
+            "Right",
+            "A",
+            "7",
+            "/",
+            "Shift+Tab",
+            "Space",
+            "PgDn",
+            "Esc",
+        ] {
+            assert!(is_focus_bound(&sc(key)), "{key}");
+        }
+        for key in ["Ctrl+A", "F5", "Alt+Left", "Cmd+Q", "Num +", "Ctrl+Num 0"] {
+            assert!(!is_focus_bound(&sc(key)), "{key}");
+        }
+    }
+
+    /// A4.3: hint text with and without `show_shortcut_in_hints`, timing from `hint_show_ms`/`hint_hide_ms`.
+    #[test]
+    fn hints_text_and_timing() {
+        let tables = CommandTables::default();
+        let (caption, shortcut, description) = (
+            tables.caption(Scope::Text, CommandId::Reload),
+            tables.shortcut(Scope::Text, CommandId::Reload),
+            tables.description(Scope::Text, CommandId::Reload),
+        );
+        assert_eq!(
+            hint_text(&caption, shortcut, description, true),
+            format!("Reload Files (F5)\n{description}")
+        );
+        assert_eq!(
+            hint_text(&caption, shortcut, description, false),
+            format!("Reload Files\n{description}")
+        );
+        assert_eq!(hint_text("X", None, "", true), "X");
+        let mut timing = HintTiming::default();
+        assert_eq!((timing.show_ms, timing.hide_ms), (500, 5000));
+        assert!(!timing.visible(0.4));
+        assert!(timing.visible(0.5));
+        assert!(timing.visible(5.4));
+        assert!(!timing.visible(5.5));
+        timing.hide_ms = 0;
+        assert!(timing.visible(3600.0));
+        timing.enabled = false;
+        assert!(!timing.visible(1.0));
     }
 }

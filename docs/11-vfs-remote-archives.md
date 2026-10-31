@@ -19,7 +19,7 @@ scripts, command line, Copy to Folder targets, reports).
 | Cloud drives (OAuth: Dropbox, OneDrive, Google Drive) | ✓ | ✓ | partial | ✗ | profile-only | P2 |
 | Subversion repository | ✓ | ✗ | ✓ | ✗ | `svn://`, `svn+http(s)://`, `svn+ssh://`, `@rev` | P2 |
 | HTTP(S) single file | ✓ | ✗ | Last-Modified | ✗ | file sessions only | P1 |
-| Clipboard | ✓ | ✗ | now | ✗ | text or image | P0 |
+| Clipboard | ✓ | ✗ | now | ✗ | text or image (an image as a PNG named `clipboard.png`); read once per command, only when a `clipboard://` spec is given; no clipboard → `unsupported`, empty → `not_found` (exit 100); `HIKASA_CLIPBOARD_FILE` stands in for it (D-100) | P0 |
 | Stdin / pipes | ✓ | ✗ | now | ✗ | `-` on the command line | P0 |
 | MTP devices | ✓ | ✓ | ✓ | ✗ | `mtp://Device/…` via libmtp bindings | P2 |
 
@@ -44,6 +44,45 @@ resolved first: the file the link points to is replaced (the temporary file is c
 next to that file) and the link itself stays. A target that is not a regular file — a
 FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
 to directly, which cannot be atomic.
+
+**Mutations (M2 W3, D-92…D-98).** Every back-end implements single-item primitives —
+`create_dir`, `remove` (a file, a link or an empty folder), `rename` (within one back-end),
+`set_times` (modification time; creation time on Windows and macOS; never the access time),
+`set_attrs` (Unix permission bits; on Windows the read-only attribute only), `create_symlink`,
+`move_to_trash` — each behind a capability (`mkdir`, `remove`, `rename`, `set_times`,
+`set_attrs`, `create_symlinks`, `set_created`, `trash`), plus an optional fast file copy.
+Recursion, copies across back-ends, moves, plans and per-item results live once in
+`hikasa_vfs::ops` (ARCH-031). Every operation is planned completely before the first write
+(T12) and each item re-checks its target when it runs: an item planned without a target that
+finds one fails ("changed since the plan was made"). Copies go through a temporary sibling and a
+rename, so a failed or cancelled item leaves its target untouched; local files up to 64 MiB are
+copied in one call (`copy_file_range` on Linux), larger ones are streamed so cancellation stays
+prompt. Replacing a file by a link or a folder moves the file aside first and puts it back when
+the replacement fails. Nothing runs below a folder that could not be created, and `.`/`..` names
+and roots are never removed, moved or trashed. Times, then attributes, are
+applied after the content; a folder's after its whole subtree; owner and group never.
+
+- **Links are never written through** (D-94): `remove`, `rename`, `move_to_trash` and `set_times`
+  act on a link itself; trees are never descended through links and links are copied as links;
+  a copy onto a link replaces the link, not the file it points to; root arguments are followed
+  only when asked (`--follow-symlinks`). Intermediate components are followed as by every OS call.
+  Saving (`open_write` without `replace_link`, `--output`) keeps the behaviour above.
+- **Rename race.** `rename` checks the target with `lstat` and then renames; std has no atomic
+  "rename unless it exists" without `unsafe`, so a process that creates the target in between is
+  replaced. Removing a tree re-checks each folder (kind and file id) before listing it and again
+  before touching its contents at execution (also the source folders of copies and moves), which
+  narrows, but cannot close, the race with a process that swaps a folder for a link; below a
+  changed folder nothing runs.
+- **Moves** rename where they can (same back-end and file system, the target absent or
+  replaceable); otherwise they copy and remove item by item, keeping a source folder whose items
+  could not all be moved, and removing a fresh copy again when the source cannot be removed (but
+  keeping it when the source is already gone). A
+  rename that fails across file systems at execution is expanded there (a dry run cannot know it).
+- **Recycle bin** (FC-073, D-98): `LocalVfs` only; one call per named item (a folder as a whole,
+  a link as a link). It **never falls back to a permanent delete**: when the item cannot go to the
+  recycle bin (no trash on that file system, no permission) the item fails and stays. On Linux and
+  the BSDs a link on another file system than the home trash is refused, because the trash could
+  only receive a copy of what it points to.
 
 ## 2. Spec syntax (canonical string forms)
 
