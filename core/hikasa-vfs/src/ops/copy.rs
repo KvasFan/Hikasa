@@ -408,6 +408,12 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         _ => None,
     };
     if item.action == Action::KeepDir {
+        if matches!(exec.options, PlanOptions::Move(_))
+            && let Some(source) = &item.source
+            && exec.defers_removal(source, &item.target)
+        {
+            exec.two_phase = true;
+        }
         let follow = if mkdir_parents.is_some() {
             FollowLinks::Yes
         } else {
@@ -423,6 +429,13 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         };
     }
     let parents = mkdir_parents.unwrap_or_else(|| exec.create_parents(item.depth));
+    // An empty source folder of a move into an archive waits for the rebuild too (D-148).
+    if matches!(exec.options, PlanOptions::Move(_))
+        && let Some(source) = &item.source
+        && exec.defers_removal(source, &item.target)
+    {
+        exec.two_phase = true;
+    }
     let replaced = if item.replaces {
         match lstat_target(exec.dst, &item.target) {
             Ok(Some(found)) if found.kind == EntryKind::Dir => {

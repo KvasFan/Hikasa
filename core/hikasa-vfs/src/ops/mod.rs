@@ -21,11 +21,15 @@
 //! - **Execution** (D-103) re-checks every target: an item planned without a target that finds one fails with
 //!   "changed since the plan was made"; cancellation fails the running item (target untouched) and leaves the
 //!   later ones `not_run`. Nothing is rolled back across items.
+//! - **Archives** (D-148): `execute` is the single place an operation ends, so it opens a batch on each archive it
+//!   touches (`roots`) and finishes them once, target roots first. A move into an archive removes its sources only
+//!   after the target's rebuild. An aborted or failed rebuild turns the done items of its root into failed ones.
 
 mod copy;
 mod plan;
 mod remove;
 mod rename;
+mod roots;
 mod touch;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -48,6 +52,7 @@ use crate::entry::{Entry, EntryKind, FileId, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{FollowLinks, Vfs};
 use plan::report;
+use roots::Roots;
 
 /// Applies the `cp`/`mv` naming rule (D-102), owned by core so the CLI, scripts and the GUI agree (T11):
 /// `target` an existing folder (a link to a folder is followed: the user named it) → each source goes to
@@ -389,6 +394,8 @@ pub(crate) enum Outcome {
     Failed(VfsError),
     /// A `rename` that met `CrossDevice`: these items replace it (D-97).
     Expand(Vec<PlanItem>),
+    /// A `remove_dir` that waits for a rebuild (D-148): the result comes later.
+    Deferred,
 }
 
 /// Pending metadata of a created folder, applied after its whole subtree.
@@ -420,9 +427,23 @@ pub(crate) struct Exec<'a> {
     /// Depths of the copy/move folder items that failed or were skipped: the items below them (deeper, until the
     /// next item at that depth or above) are `not_run` (§1.3.12).
     cut: Vec<u32>,
+    /// A move runs in two phases: its removals wait for the rebuild of the archive it moves into (D-148).
+    pub(crate) two_phase: bool,
+    /// What the second phase removes: result indexes, in plan order, with the entry copied for a `move`.
+    pub(crate) deferred: Vec<(usize, Option<Entry>)>,
 }
 
 impl Exec<'_> {
+    /// True when a move's source is removed only after a rebuild: its target is in an archive the source is not in.
+    pub(crate) fn defers_removal(&self, source: &Spec, target: &Spec) -> bool {
+        match target.outermost_file() {
+            Some(outer) => {
+                !same_instance(self.src, self.dst) || source.outermost_file() != Some(outer)
+            }
+            None => false,
+        }
+    }
+
     /// Reports `Phase::Writing` progress.
     pub(crate) fn progress(&self, extra: u64, current: &Spec) {
         let done = self.done_bytes + extra;
@@ -533,7 +554,10 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
         folders: BTreeMap::new(),
         changed: BTreeSet::new(),
         cut: Vec::new(),
+        two_phase: false,
+        deferred: Vec::new(),
     };
+    let mut roots = Roots::new(src, dst);
     for item in &items {
         exec.remember_folder(item);
     }
@@ -541,6 +565,7 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
     let mut queue: VecDeque<PlanItem> = items.into();
     let mut done_items: Vec<PlanItem> = Vec::with_capacity(queue.len());
     let mut results: Vec<ItemResult> = Vec::with_capacity(queue.len());
+    let mut item_bytes: Vec<u64> = Vec::with_capacity(queue.len());
     let mut cancelled = false;
     while let Some(item) = queue.pop_front() {
         exec.flush_dirs(item.depth, &mut results);
@@ -549,8 +574,10 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
         }
         if cancelled || ctl.check().is_err() {
             cancelled = true;
+            roots.note(None);
             done_items.push(item);
             results.push(ItemResult::status(ItemStatus::NotRun));
+            item_bytes.push(0);
             continue;
         }
         // Below a failed or skipped folder item, or a folder that changed since the plan was made: not run.
@@ -559,15 +586,32 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
             if tree_op && matches!(item.action, Action::CreateDir | Action::KeepDir) {
                 exec.cut.push(item.depth);
             }
+            roots.note(None);
             done_items.push(item);
             results.push(ItemResult::status(ItemStatus::NotRun));
+            item_bytes.push(0);
             continue;
         }
         let index = results.len();
-        let outcome = match &item.error {
-            Some(error) => Err(ItemResult::failed(error.clone())),
-            None => Ok(run_item(&mut exec, &item, index)),
+        let touched = match (&item.error, item.skip) {
+            (None, None) => roots.touch(&item),
+            _ => Ok(None),
         };
+        let outcome = match (&item.error, touched) {
+            (Some(error), _) => Err(ItemResult::failed(error.clone())),
+            (None, Err(e)) => Ok(Outcome::Failed(e)),
+            (None, Ok(owned)) => {
+                let outcome = run_item(&mut exec, &item, index);
+                if !matches!(outcome, Outcome::Expand(_)) {
+                    roots.note(owned);
+                }
+                Ok(outcome)
+            }
+        };
+        if !matches!(outcome, Ok(Outcome::Expand(_))) && roots.noted() == index {
+            roots.note(None);
+        }
+        let mut bytes_done = 0;
         let result = match outcome {
             Err(result) => result,
             Ok(Outcome::Expand(expansion)) => {
@@ -579,7 +623,14 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
             }
             Ok(Outcome::Done(bytes)) => {
                 exec.done_bytes += bytes;
+                bytes_done = bytes;
                 ItemResult::status(ItemStatus::Done)
+            }
+            Ok(Outcome::Deferred) => {
+                done_items.push(item);
+                results.push(ItemResult::status(ItemStatus::NotRun));
+                item_bytes.push(0);
+                continue;
             }
             Ok(Outcome::Skipped(reason)) => ItemResult::skipped(reason),
             Ok(Outcome::Failed(e)) => {
@@ -597,9 +648,23 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
         }
         done_items.push(item);
         results.push(result);
+        item_bytes.push(bytes_done);
     }
     exec.flush_dirs(0, &mut results);
-    let summary = plan::Summary::count(&results, exec.done_bytes);
+    roots::finish(
+        &mut roots,
+        &mut exec,
+        &done_items,
+        &mut results,
+        &mut cancelled,
+    );
+    let bytes = results
+        .iter()
+        .zip(&item_bytes)
+        .filter(|(result, _)| result.status == ItemStatus::Done)
+        .map(|(_, bytes)| bytes)
+        .sum();
+    let summary = plan::Summary::count(&results, bytes);
     OpReport {
         plan: Plan {
             op,
@@ -615,6 +680,40 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
 }
 
 impl Exec<'_> {
+    /// The second phase of a move: sources, then `remove_dir`, in plan order (D-148). `allowed` says whether the
+    /// rebuild of the target of a result went through.
+    fn run_deferred(
+        &mut self,
+        items: &[PlanItem],
+        results: &mut [ItemResult],
+        allowed: &dyn Fn(usize, bool) -> bool,
+    ) {
+        let deferred = std::mem::take(&mut self.deferred);
+        let (moves, folders): (Vec<_>, Vec<_>) =
+            deferred.into_iter().partition(|(_, entry)| entry.is_some());
+        for (index, entry) in moves.into_iter().chain(folders) {
+            let (Some(item), Some(result)) = (items.get(index), results.get_mut(index)) else {
+                continue;
+            };
+            if !allowed(index, entry.is_some()) {
+                self.block(item);
+                continue;
+            }
+            let outcome = match &entry {
+                Some(entry) => rename::remove_moved(self, item, entry),
+                None => remove::finish_remove(self, item),
+            };
+            *result = match outcome {
+                Outcome::Skipped(reason) => ItemResult::skipped(reason),
+                Outcome::Failed(e) => ItemResult::failed(report(&e)),
+                _ => ItemResult::status(ItemStatus::Done),
+            };
+            if result.status != ItemStatus::Done {
+                self.block(item);
+            }
+        }
+    }
+
     /// Records a folder item of the plan with the identity seen at planning.
     fn remember_folder(&mut self, item: &PlanItem) {
         if item.kind == EntryKind::Dir
@@ -753,11 +852,13 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
             copy::run_link(exec, item).map_or_else(Outcome::Failed, |()| Outcome::Done(0))
         }
         Action::Rename => rename::run_rename(exec, item),
-        Action::Move => rename::run_move(exec, item),
-        Action::Remove | Action::RemoveDir | Action::Trash => remove::run_remove(exec, item),
+        Action::Move => rename::run_move(exec, item, index),
+        Action::Remove | Action::RemoveDir | Action::Trash => remove::run_remove(exec, item, index),
         Action::Touch | Action::Create => {
             touch::run_touch(exec, item).map_or_else(Outcome::Failed, |()| Outcome::Done(0))
         }
+        Action::CreateArchive => touch::run_create_archive(exec, item)
+            .map_or_else(Outcome::Failed, |()| Outcome::Done(0)),
         Action::Skip => Outcome::Skipped(item.skip.unwrap_or(SkipReason::Exists)),
     }
 }

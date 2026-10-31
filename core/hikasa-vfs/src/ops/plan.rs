@@ -211,6 +211,8 @@ pub enum Action {
     Create,
     /// Nothing is done (see [`PlanItem::skip`]).
     Skip,
+    /// Create an empty archive (M2 W5b, D-150).
+    CreateArchive,
 }
 
 impl Action {
@@ -229,6 +231,7 @@ impl Action {
             Action::Touch => "touch",
             Action::Create => "create",
             Action::Skip => "skip",
+            Action::CreateArchive => "create_archive",
         }
     }
 
@@ -242,6 +245,7 @@ impl Action {
                 | Action::Rename
                 | Action::Move
                 | Action::Create
+                | Action::CreateArchive
         )
     }
 }
