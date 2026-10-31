@@ -311,9 +311,12 @@ impl HelpDto {
 
 /// Writes `value` as pretty JSON (2-space indentation) followed by `\n` (§4.1 rule 1).
 pub fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> std::io::Result<()> {
-    let mut text = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
-    text.push(b'\n');
-    out.write_all(&text)
+    // A value that cannot be serialised writes nothing; a large document is not held in memory twice (G6).
+    serde_json::to_writer(std::io::sink(), value).map_err(std::io::Error::other)?;
+    let mut out = std::io::BufWriter::with_capacity(1 << 16, out);
+    serde_json::to_writer_pretty(&mut out, value).map_err(std::io::Error::from)?;
+    out.write_all(b"\n")?;
+    out.flush()
 }
 
 /// `hikasa.quick.v1` (§4.3.1).
