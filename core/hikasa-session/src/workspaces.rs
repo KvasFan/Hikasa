@@ -328,7 +328,10 @@ impl WorkspaceStore {
     /// D-88 lookup: exactly, then case-insensitively.
     pub fn find(&self, text: &str) -> Option<SessionName> {
         let name = SessionName::parse(text).ok()?;
-        if self.path(&name).is_file() {
+        // `is_file` is true for any case of the name on a case-insensitive file system: the listing tells the
+        // exact spelling, and the lookup answers with the name on disk.
+        let file = format!("{name}.toml");
+        if entries(&self.dir).iter().any(|(n, d)| !*d && *n == file) {
             return Some(name);
         }
         self.resolve(&name)

@@ -194,10 +194,25 @@ impl SessionStore {
     /// D-88 lookup: the session named by `text`, exactly, then case-insensitively.
     pub fn find(&self, text: &str) -> Option<SessionRef> {
         let reference = SessionRef::parse(text).ok()?;
-        if self.path(&reference).is_file() {
+        if self.path(&reference).is_file() && self.spelled_on_disk(&reference) {
             return Some(reference);
         }
         self.resolve(&reference)
+    }
+
+    /// True when `reference` is the exact spelling on disk: on a case-insensitive file system `is_file` is true
+    /// for any case of the name, and the lookup must still answer with the name on disk.
+    fn spelled_on_disk(&self, reference: &SessionRef) -> bool {
+        let mut dir = self.dir.clone();
+        for segment in &reference.folder {
+            let folder = segment.as_str();
+            if !entries(&dir).iter().any(|(n, d)| *d && n == folder) {
+                return false;
+            }
+            dir.push(folder);
+        }
+        let file = format!("{}.toml", reference.name);
+        entries(&dir).iter().any(|(n, d)| !*d && *n == file)
     }
 
     /// Loads a named session (`not_found` when it does not exist; matched case-insensitively).
