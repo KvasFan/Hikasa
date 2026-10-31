@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased (M2, branch `feat/m2`)
+## Unreleased
+
+## 0.1.90 (2026-10-31, pre-release)
+
+A pre-release of 0.2.0 with the first part of M2: waves W0–W4 and the packages. 0.2.0 stays reserved for M2 complete;
+W5–W14 are not in this version.
+
+### Windows and macOS port of M2
+- **Session and workspace lookup:** on a case-insensitive file system (Windows, macOS) `SessionStore::find` and
+  `WorkspaceStore::find` answered with the case the user typed; they answer with the name on disk.
+- **`LocalVfs` on Windows, as the contract says on every platform:** a path below a file is `not_a_directory` (it was
+  `not_found`); `rename` with `replace` replaces an empty folder and a link to a folder, which Windows refuses
+  to rename onto (the entry is removed first and put back if the rename fails, so that step is not atomic there);
+  `create_symlink` stores `\` for `/` in the target, because a Windows link holding `/` resolves to nothing.
+- **Tests:** platform-aware paths and golden normalisation; scenarios that need a read-only folder or a `..` in a spec
+  are Unix only, each with its reason.
 
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.

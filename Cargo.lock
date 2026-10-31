@@ -1948,7 +1948,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hikasa-cli"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-core"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-diff"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "criterion",
  "hikasa-core",
@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-folder"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-formats"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "chardetng",
  "criterion",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-gui"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -2074,19 +2074,19 @@ dependencies = [
 
 [[package]]
 name = "hikasa-hex"
-version = "0.1.0"
+version = "0.1.90"
 
 [[package]]
 name = "hikasa-metadata"
-version = "0.1.0"
+version = "0.1.90"
 
 [[package]]
 name = "hikasa-picture"
-version = "0.1.0"
+version = "0.1.90"
 
 [[package]]
 name = "hikasa-report"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "bitflags 2.13.2",
  "diffy",
@@ -2107,11 +2107,11 @@ dependencies = [
 
 [[package]]
 name = "hikasa-script"
-version = "0.1.0"
+version = "0.1.90"
 
 [[package]]
 name = "hikasa-session"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "arboard",
  "crossbeam-channel",
@@ -2140,11 +2140,11 @@ dependencies = [
 
 [[package]]
 name = "hikasa-table"
-version = "0.1.0"
+version = "0.1.90"
 
 [[package]]
 name = "hikasa-text"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-vfs"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "bitflags 2.13.2",
  "crc32fast",
@@ -5561,7 +5561,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.90"
 dependencies = [
  "hikasa-session",
 ]

@@ -45,7 +45,8 @@ Moved to M2 (done in M2 wave 0):
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Done: wave 0 (catalogue in core, help topics,
+contract `docs/design/m2-contracts.md`. Version 0.1.90 is a pre-release of 0.2.0 with waves 0–4 and the packages;
+0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
 `xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
 typed, versioned and written sparsely with unknown keys kept, change detection by
 polling, all `docs/15` keys OPT-001…OPT-022, `hikasa settings get|set|unset|list|
