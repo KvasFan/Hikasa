@@ -49,8 +49,9 @@ replaces free-form actions with a planned operation per item.
   `always` (`--archives files|opened|folders`) and `open_archives`, paths relative to the bases, `/`-separated, also
   through an archive (`--open-archive <PATH>`). The scan turns a matching file into a folder pair right after
   listing, so alignment, filters and flatten need no change; `NodeFlags::ARCHIVE` marks the row, whichever side has
-  it. Headless default results equal M1. An archive that cannot be read is an error row and the scan goes on. After
-  5,000,000 entries listed inside archives a scan opens no further one (`archive_scan_limit`).
+  it. Headless default results equal M1. An archive that cannot be read is an error row and the scan goes on. A scan
+  opens at most 5,000,000 entries inside archives, counted from the index before an archive opens: one that does not fit
+  stays a file (`archive_scan_limit`).
 - **FC-016** (P0): Scanning is cancellable (Stop button), incremental, and
   parallel across sides and subfolders with a bounded worker count per back-end
   (remote back-ends use their profile's connection limit).

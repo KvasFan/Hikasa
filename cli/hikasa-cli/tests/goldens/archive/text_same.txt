@@ -1,0 +1,6 @@
+# Text Compare
+# Left: <TMP>/a.zip/inner/y (UTF-8, lf)
+# Right: <TMP>/b.tar.gz/inner/y (UTF-8, lf)
+# Mode: display: context (3 lines); ignore unimportant: no
+# Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+#

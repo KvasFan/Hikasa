@@ -1,0 +1,27 @@
+{
+  "schema": "hikasa.quick.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": "<TMP>/a.zip/inner/y",
+    "right": "<TMP>/c.tar/inner/y",
+    "method": "rules",
+    "result": {
+      "result": "important_differences"
+    },
+    "ignore_unimportant": false,
+    "format": {
+      "id": null,
+      "name": "Everything Else",
+      "kind": "text",
+      "reason": {
+        "reason": "fallback",
+        "id": null,
+        "mask": null
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

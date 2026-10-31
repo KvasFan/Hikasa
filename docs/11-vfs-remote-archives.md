@@ -55,15 +55,20 @@ scripts, command line, Copy to Folder targets, reports).
 - *Damage.* A tar or stream keeps what lies before the damage and adds a `<damaged>` row. A zip without a central
   directory, or a mask match with other content, is `invalid_data` when entered; the file stays a normal file. A
   decoder panic is `invalid_data` too.
-- *Limits* (`archives.limits.*`, OPT-010): 1,000,000 entries; 64 GiB per pass and per archive's reads; 8 GiB of cache;
-  ratio 2,000:1 past 64 MiB; nesting 8; xz and zstd windows of 1 GiB. Listing needs no declared-size limit: limits bind
-  what is decoded.
+- *Limits* (`archives.limits.*`, OPT-010): 1,000,000 entries, folders that only exist through members included; 256 MiB of
+  paths and link targets per index; 256 folders of depth; 64 GiB per decoding pass and over overlapping zip members; 8 GiB
+  of cache; ratio 2,000:1 past 64 MiB; nesting 8; xz and zstd windows of 1 GiB. Listing needs no declared-size limit:
+  limits bind what is decoded, and a plain tar decodes nothing. A limit fails the archive, never the process.
+- *Modes.* Copied out, a member keeps its `rwx` bits within what the platform gives a new file; never `setuid`, `setgid` or
+  sticky.
 - *Encrypted members* are listed, without a CRC; reading one is `unsupported`. No password is asked or tried.
 - *Times.* Zip: the NTFS field, then 0x5455, then the DOS wall time in the injected zone (a time in a gap moves forward,
   a fold takes the earlier instant). Tar: PAX `mtime`, then the header. Streams: gzip `MTIME` when set, else the file.
-- *Cache.* `<cache>/archives/s<n>/`, numeric names only, `0700`; `cache_max` evicts the least recently used files no
-  reader holds; a new stamp of the archive drops its files. Created by the first spool, removed at exit; a held lock
-  marks a live session, so a later session sweeps what a crash left, without process ids or clocks.
+- *Cache.* `<cache>/archives/s<n>/`, a random number, numeric names only, `0700`; `cache_max` evicts the least recently used
+  files no reader holds; a new stamp of the archive drops its files. Created by the first spool, removed at exit with any
+  folder that leaves empty; a held lock marks a live session, so a later session sweeps what a crash left, without
+  process ids or clocks. Concurrent sessions share the folder safely: a lock counts only for the file at its path, and
+  each cache file is checked when opened. The cache root and its parent must belong to the user or the system.
 - **VFS-003** (P1): Remote listings are cached per session; "Refresh" invalidates.
   Transfers show per-file progress and throughput; connection limits and bandwidth
   limits come from the profile.

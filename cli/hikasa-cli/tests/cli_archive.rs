@@ -248,6 +248,10 @@ fn vfs_cat_of_members() {
         assert_eq!(code(&out), 0, "{spec}: {}", stderr(&out));
         assert_eq!(stdout(&out), want, "{spec}");
     }
+    let member = run(&s, &["vfs", "cat", "b.tar.gz/inner/y"]);
+    assert_golden("archive/cat_member.txt", &s.normalise(&stdout(&member)));
+    let failed = run(&s, &["vfs", "cat", "odd.zip/lnk", "--json"]);
+    assert_golden("archive/cat_link.json", &s.normalise(&stdout(&failed)));
     for (spec, kind) in [
         ("odd.zip/lnk", "unsupported"),
         ("odd.tar/dev", "unsupported"),
@@ -442,6 +446,26 @@ fn quick_and_text_compare_members() {
     let bad = run(&s, &["quick", "odd.zip/crypt", "plain/x"]);
     assert_eq!(code(&bad), 100);
 
+    assert_golden("archive/quick_same.txt", &s.normalise(&stdout(&same)));
+    assert_golden("archive/quick_differ.txt", &s.normalise(&stdout(&differ)));
+    let doc = run(&s, &["quick", "a.zip/inner/y", "c.tar/inner/y", "--json"]);
+    assert_golden("archive/quick.json", &s.normalise(&stdout(&doc)));
+    assert_golden("archive/text_same.txt", &s.normalise(&stdout(&text)));
+    let differ = run(&s, &["text", "compare", "a.zip/inner/y", "c.tar/inner/y"]);
+    assert_eq!(code(&differ), 13, "{}", stderr(&differ));
+    assert_golden("archive/text_differ.txt", &s.normalise(&stdout(&differ)));
+    let doc = run(
+        &s,
+        &[
+            "text",
+            "compare",
+            "a.zip/inner/y",
+            "c.tar/inner/y",
+            "--json",
+        ],
+    );
+    assert_golden("archive/text.json", &s.normalise(&stdout(&doc)));
+
     // `quick a.zip b.zip` compares the two files, by design.
     s.file("copy.zip", std::fs::read(s.join("a.zip")).unwrap());
     let files = run(&s, &["quick", "a.zip", "copy.zip"]);
@@ -509,6 +533,24 @@ fn no_cache_folder_is_left_behind() {
     let list = run(&s, &["vfs", "ls", "big.zip"]);
     assert_eq!(code(&list), 0);
     assert!(!cache.exists(), "a listing never creates one");
+}
+
+/// A name that would act on a terminal stays text in `--json`: valid, the same after parsing, and escaped.
+#[test]
+fn hostile_names_in_json_are_escaped() {
+    let s = sandbox();
+    let name = "del\u{7f} csi\u{9b}31m rtl\u{202e}txt.exe";
+    s.file("evil.tar", tar_of(&[(name, b'0', "", b"x")]));
+    let out = run(&s, &["vfs", "ls", "evil.tar", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        !text
+            .chars()
+            .any(|c| matches!(c, '\u{7f}' | '\u{9b}' | '\u{202e}')),
+        "{text}"
+    );
+    assert_eq!(json(&out)["result"]["entries"][0]["name"], name);
 }
 
 /// A5.5 with real processes: sessions that start and stop on one config folder each get their own bytes.

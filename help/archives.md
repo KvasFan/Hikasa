@@ -37,12 +37,13 @@ Both sides of `folder compare` can be archives, a folder inside one, or one of e
 | `files` | always a file |
 | `folders` | always a folder |
 
-An archive that cannot be read is an error row and the comparison goes on. After 5,000,000 entries listed inside
-archives a scan opens no more of them (`archive_scan_limit`). The rules keys are `handling.archives` and
+An archive that cannot be read is an error row and the comparison goes on. A scan opens at most 5,000,000 entries
+inside archives: an archive that would pass that stays a file (`archive_scan_limit`). The rules keys are `handling.archives` and
 `open_archives`. In the window, Open on a closed archive row adds it and compares again.
 
-With `--content crc`, a zip's stored CRC is used as it is: nothing is decoded, so a damaged member with a good stored
-CRC is "same" for the CRC test. The other formats get their CRC when they are indexed.
+With `--content crc`, a zip's stored CRC is trusted as it is: nothing is decoded, so a damaged member with a good stored
+CRC, or a member changed together with its CRC, is "same" for the CRC test. Use `--content binary` to compare the
+content itself. The other formats get their CRC when they are indexed.
 
 ## Safety
 
@@ -50,12 +51,16 @@ Archives are treated as hostile input.
 
 - **Names.** Absolute names, drive letters, `..`, NUL and names over 4,096 bytes are refused: they are left out of the
   tree and listed as `<refused-N>` rows (at most 1,000) with one `archive_member_refused` warning. A file that is
-  also a parent of another member, and anything below a link member, is refused too. When a path appears twice, the
-  last one wins (`archive_duplicate_member`).
+  also a parent of another member, anything below a link member, and a file named `.` are refused too. When a path appears
+  twice, the last one wins (`archive_duplicate_member`). Names that only look equal because bytes could not be decoded are
+  two members: the last stays and the others are refused.
+- **Modes.** A member copied out keeps its `rwx` bits within what the platform gives a new file, and never `setuid`, `setgid`
+  or sticky. On Windows, names that are no file names there (`CON`, `aux.txt`, a trailing dot) fail as items.
 - **Links.** A link member is listed with its target and never followed; a copy out of an archive skips it
   (`archive_symlink_skipped`). Devices, FIFOs and sparse members are listed and not read.
 - **Damage.** A tar or a stream keeps the members before the damage and adds a `<damaged>` row. A zip with no central
-  directory, or a mask match with other content, is `invalid_data` when opened; the file itself stays a normal file.
+  directory, or a mask match with other content, is `invalid_data` when opened; the file itself stays a normal file. NUL
+  bytes after a gzip or bzip2 stream are padding: ignored, with an `archive_trailing_zeros` warning.
 - **Encrypted members** are listed with their name, size and time; reading one is `unsupported`
   (`archive_encrypted`). No password is asked or tried.
 
@@ -63,17 +68,21 @@ Archives are treated as hostile input.
 
 | Key | Default | Range | Bounds |
 |---|---|---|---|
-| `archives.limits.entries_max` | 1000000 | 1000…100000000 | members of one archive |
-| `archives.limits.stream_max_gib` | 64 | 1…4096 | decoded bytes of one pass and of all reads of one archive |
+| `archives.limits.entries_max` | 1000000 | 1000…100000000 | members of one archive, and the folders that only exist through them |
+| `archives.limits.stream_max_gib` | 64 | 1…4096 | decoded bytes of one pass, and of zip members whose data overlap |
 | `archives.limits.cache_max_gib` | 8 | 1…1024 | the temp cache, and so the largest member that spools |
 | `archives.limits.ratio_max` | 2000 | 0…1000000 | output / input past 64 MiB; 0 turns it off |
 | `archives.limits.nesting_max` | 8 | 1…32 | archives around a spec |
+| `archives.limits.paths_max_mib` | 256 | 1…65536 | the text of one index: paths, link targets, the paths of folders no member names |
+| `archives.limits.depth_max` | 256 | 16…2048 | folders above a member |
 
-A limit reached is `too_large` and names the key. Listing a large archive needs no declared-size limit: limits bind
-what is decoded.
+A limit reached is `too_large` and names the limit. Listing a large zip or plain tar needs no declared-size limit:
+limits bind what is decoded, and a compressed tar is decoded to be listed. A zip whose entries declare more than
+`ratio_max` times its size blocks reads until `ratio_max` is 0; it can still be listed.
 
 ## The cache
 
 Members over 1 MiB are decoded to files under the cache folder, in `archives/s<n>/`, with numeric names only, so no
 member name reaches a path. The oldest files that no reader holds make room. The folder goes at exit; one left by a
-crash goes at the next session that extracts. Listing creates nothing.
+crash goes at the next session that extracts. Listing creates nothing. Several running Hikasa keep apart in one
+cache folder, which must belong to the user.

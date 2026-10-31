@@ -14,7 +14,10 @@
 
 ### Safety
 - Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,
-  damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits.
+  damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits (`entries_max`,
+  `paths_max_mib`, `depth_max`, `stream_max_gib`, `cache_max_gib`, `ratio_max`, `nesting_max`).
+- A member copied out never brings `setuid`, `setgid` or sticky bits, nor more than the umask gives.
+- `--json` escapes DEL, C1 controls and bidirectional controls, so a hostile name cannot act on a terminal.
 
 ### Data safety
 - **A settings file this version cannot read is never overwritten from the Options dialog.** A newer `schema_version` or

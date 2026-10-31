@@ -1,8 +1,12 @@
 name: Bench
 
 # The criterion benches and the performance gates (contract §6.4; M2 plan Q12a). Started by hand only: a shared
-# GitHub-hosted runner is noisy, so a run compares against a baseline with a 25 % tolerance, and the reference
-# figures in the docs come from runs on a fixed machine by hand.
+# GitHub-hosted runner is noisy, and the reference figures in the docs come from runs on a fixed machine by hand.
+#
+# The 25 % tolerance covers only the first step: `--noise-threshold 0.25` makes criterion call a change against the
+# baseline noise up to 25 %, and it reports, it never fails the job. The gates of the second step know no baseline and no
+# tolerance: each compares with its absolute threshold (`perf_gates.rs`) and fails the job when past it. G6 CRC is a
+# bench, so it is a ratio in the first step's output, read by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +33,7 @@ jobs:
           else
             cargo bench --workspace -- --save-baseline ci
           fi
-      - name: gates G1 and G2 through the binary
+      - name: every performance gate through the binary (G1, G2, G6 list, G6 compare and their memory budgets)
         run: cargo test --release -p hikasa-cli --test perf_gates -- --ignored --nocapture
       - uses: actions/upload-artifact@v4
         with:
