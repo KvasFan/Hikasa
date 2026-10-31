@@ -147,15 +147,15 @@ impl InputSize {
     }
 }
 
-/// A decoded stream under the limits: a pass over more than `stream_max`, an archive whose reads pass it together
-/// (overlapping zip entries), a ratio past `ratio_max` once over `ratio_floor`, and cancellation.
+/// A decoded stream under the limits: a pass over more than `stream_max`, overlapping zip members that pass it together
+/// (rule 12), a ratio past `ratio_max` once over `ratio_floor`, and cancellation.
 pub(crate) struct Guard<'a, R> {
     inner: R,
     limits: ArchiveLimits,
     ctl: Ctl<'a>,
     spec: &'a str,
     input: InputSize,
-    /// Decoded bytes of every read of this archive.
+    /// Decoded bytes of the members of this archive that overlap another.
     archive_total: Option<&'a AtomicU64>,
     output: u64,
     checked: u64,
@@ -182,7 +182,7 @@ impl<'a, R> Guard<'a, R> {
         }
     }
 
-    /// Also counts into the archive's total of decoded bytes.
+    /// Also counts into a total of the archive.
     pub(crate) fn with_total(self, total: &'a AtomicU64) -> Guard<'a, R> {
         Guard {
             archive_total: Some(total),

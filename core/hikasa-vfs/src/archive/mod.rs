@@ -176,7 +176,7 @@ struct Index {
     zip: Option<ZipData>,
     /// The root's entry.
     root: Entry,
-    /// Decoded bytes of all reads of this archive (rule 12).
+    /// Decoded bytes of the zip members that overlap another (rule 12).
     decoded: AtomicU64,
 }
 
@@ -612,7 +612,7 @@ impl ArchiveVfs {
                 }
                 (format, DataRef::Stream) => {
                     let codec = Codec::of(format);
-                    self.read_stream(&slot, &index, node, codec, archive, config, &pass)
+                    self.read_stream(&slot, node, codec, archive, config, &pass)
                 }
                 _ => Err(corrupt(&text, "inconsistent index")),
             }
@@ -681,7 +681,6 @@ impl ArchiveVfs {
     #[allow(clippy::too_many_arguments)]
     fn decode_range(
         &self,
-        index: &Index,
         codec: Option<Codec>,
         archive: &Spec,
         start: u64,
@@ -700,8 +699,7 @@ impl ArchiveVfs {
             pass.ctl,
             pass.spec,
             InputSize::Live(Arc::clone(&input)),
-        )
-        .with_total(&index.decoded);
+        );
         let fail = |error| codec::read_failure(error, Some(&input), pass.spec);
         codec::pump(&mut guard, start, &mut |_| Ok(())).map_err(fail)?;
         let copied = codec::pump(&mut guard, len, sink).map_err(fail)?;
@@ -743,23 +741,15 @@ impl ArchiveVfs {
                 pass.spec,
             )?;
             count(&self.counters.stream_writes);
-            self.decode_range(
-                index,
-                codec,
-                archive,
-                0,
-                whole,
-                config,
-                pass,
-                &mut |bytes| writer.write(bytes),
-            )?;
+            self.decode_range(codec, archive, 0, whole, config, pass, &mut |bytes| {
+                writer.write(bytes)
+            })?;
             let file = writer.finish(slot.id, WHOLE_STREAM)?;
             return Ok(Box::new(RangeReader::new(file.reader()?, data, node.size)));
         }
         first_read.get_or_insert_with(|| member.into());
         let mut spool = self.spool(node.size, config, pass)?;
         self.decode_range(
-            index,
             codec,
             archive,
             data,
@@ -776,7 +766,6 @@ impl ArchiveVfs {
     fn read_stream(
         &self,
         slot: &Slot,
-        index: &Index,
         node: &Node,
         codec: Option<Codec>,
         archive: &Spec,
@@ -789,16 +778,9 @@ impl ArchiveVfs {
             return Ok(Box::new(reader));
         }
         let mut spool = self.spool(node.size, config, pass)?;
-        self.decode_range(
-            index,
-            codec,
-            archive,
-            0,
-            node.size,
-            config,
-            pass,
-            &mut |bytes| spool.write(bytes),
-        )?;
+        self.decode_range(codec, archive, 0, node.size, config, pass, &mut |bytes| {
+            spool.write(bytes)
+        })?;
         spool.finish(slot.id, member)
     }
 
@@ -980,9 +962,14 @@ fn index_tar(
     }
     let input = Arc::new(Input::default());
     let stream = open_stream(reader, codec, &input, pass)?;
+    // `stream_max` binds decoded bytes (rule 12): a plain tar decodes nothing, so a backup of any size can be listed.
+    let mut limits = pass.limits;
+    if codec.is_none() {
+        limits.stream_max = u64::MAX;
+    }
     let mut guard = Guard::new(
         stream,
-        pass.limits,
+        limits,
         pass.ctl,
         pass.spec,
         InputSize::Live(Arc::clone(&input)),

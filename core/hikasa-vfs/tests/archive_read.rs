@@ -658,6 +658,30 @@ fn a_stream_bigger_than_the_cache_keeps_spooling() {
     assert_eq!(counters.member_decodes, 4, "the first file was evicted");
 }
 
+/// A sound stream far past the cache and near `stream_max`: every member reads, however often the stream is decoded
+/// from its start (rule 12 binds one pass).
+#[test]
+fn a_tar_gz_over_the_cache_reads_every_member() {
+    let data: TreeData = (0..16)
+        .map(|i| (format!("m{i:02}"), noise(2 << 20)))
+        .collect();
+    let limits = ArchiveLimits {
+        stream_max: 40 << 20,
+        cache_max: 8 << 20,
+        ..ArchiveLimits::default()
+    };
+    let memory = on_memory(limits);
+    let file = memory.put(
+        "big.tar.gz",
+        compress(ArchiveFormat::TarGz, &tar_bytes(&data)),
+    );
+    for (name, content) in &data {
+        let member = Spec::archive_member(file.clone(), name.as_str());
+        check_reader(memory.vfs.open_read(&member).unwrap(), content);
+    }
+    assert_eq!(memory.vfs.counters().stream_writes, 0);
+}
+
 #[test]
 fn eight_threads_get_the_same_bytes() {
     let data: TreeData = (0..16)

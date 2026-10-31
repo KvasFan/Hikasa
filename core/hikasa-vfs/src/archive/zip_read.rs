@@ -238,6 +238,8 @@ pub(crate) struct ZipData {
     /// Sum of the declared sizes.
     declared_total: u64,
     container_len: u64,
+    /// The data ranges read so far, which never overlap: start → (end, member).
+    read_ranges: Mutex<BTreeMap<u64, (u64, usize)>>,
 }
 
 impl std::fmt::Debug for ZipData {
@@ -435,6 +437,7 @@ pub(crate) fn index_zip(
         reader: shared,
         declared_total,
         container_len: len,
+        read_ranges: Mutex::default(),
     };
     Ok((tree, data))
 }
@@ -497,9 +500,32 @@ impl ZipData {
         Ok(())
     }
 
+    /// Notes that the member `index` reads `start..end`; true when that overlaps the data of another member. A real
+    /// local header is needed to know the range, so this runs at the first read, not at the index.
+    fn overlaps(&self, index: usize, start: u64, end: u64) -> bool {
+        if start == end {
+            return false;
+        }
+        let mut ranges = self
+            .read_ranges
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some((&before, &(before_end, member))) = ranges.range(..end).next_back() {
+            if member == index && before == start {
+                return false;
+            }
+            if before_end > start {
+                return true;
+            }
+        }
+        ranges.insert(start, (end, index));
+        false
+    }
+
     /// Decodes the member `index`, of `declared` bytes and `compressed` bytes of data, to `sink`, through the
-    /// guards; `total` counts the decoded bytes of the archive (rule 12). Reads at most `declared + 1` bytes
-    /// (rule 10), and a CRC failure of the crate is `CRC mismatch`. Needs a lease.
+    /// guards. A member whose data overlaps another's counts in `total` (rule 12): a sound archive has none, however
+    /// often it is read. Reads at most `declared + 1` bytes (rule 10), and a CRC failure of the crate is
+    /// `CRC mismatch`. Needs a lease.
     pub(crate) fn decode(
         &self,
         index: usize,
@@ -517,14 +543,18 @@ impl ZipData {
         let file = archive
             .by_index(index)
             .map_err(|e| zip_error(spec, &self.reader, e))?;
+        let start = file.data_start().unwrap_or_else(|| file.header_start());
+        let overlapping = self.overlaps(index, start, start.saturating_add(compressed));
         let mut guard = Guard::new(
             file,
             pass.limits,
             pass.ctl,
             spec,
             InputSize::Fixed(compressed),
-        )
-        .with_total(total);
+        );
+        if overlapping {
+            guard = guard.with_total(total);
+        }
         let copied = codec::pump(&mut guard, declared.saturating_add(1), sink)
             .map_err(|error| self.read_error(spec, error))?;
         if copied != declared {
