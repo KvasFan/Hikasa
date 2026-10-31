@@ -3314,6 +3314,11 @@ part. `docs/reference/commands.md` is unchanged.
     `windows_name_problem`, `central_times`). Tests: `tests/archive_memory.rs` holds the counting allocator of A5.8.
 18. **Open** counts a closed archive row as `ctx.pair_selected`, so an orphan archive can be opened too.
 
+19. **`write_json` streams** (a pass to a sink, then to the output): the 39 MB document of G6 list held in memory put the
+    peak RSS at 159 MiB, over the budget of 150.
+20. **The fixture of G6 CRC** compresses 3.3:1 at gzip level 6 (four letters at random), the closest a plain text alphabet
+    gets to the ≈ 4:1 of §1.5.16.
+
 *Seams for W5b.* `ArchiveVfs::on_base` is the one place a primitive or `open_write` on a member is refused; capabilities
 come from `ArchiveFormat::capabilities`; `Tree::records` and `DataRef` give each record's range or zip index; `check_item`
 already refuses roots; `plan_copy` keeps links between archives; `Cache::writer` can stage files.
