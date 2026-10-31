@@ -11,13 +11,19 @@ closes it, **Cancel** drops what was not applied. A file with nothing changed is
 stays, unknown keys and options without a page included. Values are checked as you type: while a file you changed has
 a problem, Apply and OK are off; a problem in a file you did not touch stops nothing. OK closes only when every file was
 saved: a file that failed keeps your edit and the reason is shown. Esc closes an open list or colour picker first; with
-changes not applied it asks before discarding them. F1 shows this topic.
+changes not applied it, and the window's close button, ask before discarding them. F1 shows this topic. Drag the title
+to move the dialog: the theme preview shows in the window under it.
 
 The window, and Exit, wait while the dialog is saving: a notice says so.
 
 When a file changed on disk since the dialog read it (a `hikasa settings set`, for example), Apply asks what to do:
 **Overwrite** writes your version, **Reload** takes the file from disk and drops your edits of it, **Cancel** keeps
-your edits in the dialog. A notice says so as soon as the change is seen.
+your edits in the dialog. Overwrite keeps what the file holds that this version does not know. A notice says so as soon
+as the change is seen.
+
+A file this version cannot read (written by a newer version, or not valid TOML) is never overwritten from here. The page
+names it and says why, and Apply offers only **Reload** and **Cancel** for it. `hikasa settings restore-defaults` or an
+editor can change it.
 
 ## Pages
 

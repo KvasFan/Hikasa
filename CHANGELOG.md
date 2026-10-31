@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Data safety
+- **A settings file this version cannot read is never overwritten from the Options dialog.** A newer `schema_version` or
+  broken TOML used to show defaults, and Overwrite replaced the file with them. The page now says why, the prompt holds
+  only Reload and Cancel, and `settings_save` refuses such a file even with `force` (new outcome `Unreadable`). One such
+  file also no longer turns the other settings files into defaults at start
+  (`Service::settings_snapshot_partial`).
+- **Overwrite keeps the unknown keys on disk.** It read them when the dialog opened, so keys added since were lost; it
+  now reads the file again first.
+- **The window's close button asks** when the Options dialog has unapplied edits, as Esc does.
+- **`hikasa settings unset` removes a key kept without being known**, such as a view or command of a newer version, which
+  it used to answer `not_found`; `settings get` of a key inside a kept command override shows its value.
+
+### Fixed
+- First run: no more "File formats reloaded" notices for the program's own format files.
+- Home follows a session deleted or changed by the command line at the next 2 s poll, without a focus change.
+- Options search: the page follows the search, and no page shows when nothing matches.
+- Dialogs: buttons sit at the bottom of the wizards, lists take the free height, and a dialog moves by its title bar.
+- A notice raised while a dialog was open could not be clicked if an earlier notice was on screen, and the help of a
+  dialog (F1) could be neither scrolled nor closed: both now stand above the dialog.
+- Menu marks sit on the line of their label; the Menu column of the shortcuts page is straight; the log panel says
+  "1 entry"; the help of Text Compare puts the thumbnail on the left.
+
 ## 0.1.90 (2026-10-31, pre-release)
 
 A pre-release of 0.2.0 with the first part of M2: waves W0–W4 and the packages. 0.2.0 stays reserved for M2 complete;

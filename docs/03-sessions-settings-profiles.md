@@ -126,7 +126,8 @@ close, and Yes writes a new auto-saved file.
 *M2 W4b (D-124):* the tree shows *New* (one entry per type the GUI opens), the named sessions (folders first, then
 favorites, then the rest, each sorted case-insensitively) and *Auto-saved* in the four D-83 groups, newest first.
 Search is a case-insensitive substring of the name, folder path or description; matches show with their ancestors.
-The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. The Web
+The tree refreshes when Home becomes visible, when a window gains focus, after the GUI's own writes and at the 2 s poll
+when the session store changed. The Web
 Resources panel stays `planned` (D-133).
 
 ## 4. Workspaces

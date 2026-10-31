@@ -21,7 +21,7 @@ not a plain name is written in double quotes, an array position as a number.
 |---|---|
 | `hikasa settings get <key>` | the value (a table as TOML) |
 | `hikasa settings set <key> <value>` | changes the value; `(file unchanged)` when nothing was written |
-| `hikasa settings unset <key>` | puts the value back to its default |
+| `hikasa settings unset <key>` | puts the value back to its default; a key Hikasa keeps without knowing it (a view or command of a newer version) leaves the file |
 | `hikasa settings list [<key>] [--changed]` | every key with its value; `# default: …` after changed ones |
 | `hikasa settings restore-defaults (--all \| --file <file>…) (--dry-run \| --yes)` | deletes settings files |
 | `hikasa settings restore-defaults --category <cat>… [--delete-sessions [--force]] [--delete-workspaces] (--dry-run \| --yes)` | restores factory defaults by category |

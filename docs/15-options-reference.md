@@ -10,7 +10,8 @@ stay stored, validated and written back untouched, like unknown keys). The dialo
 opens; values are checked live with the schema of each file and Apply is disabled while a problem remains. Apply
 writes the files that changed (a file equal to what was read is not written), sparsely, through the same engine as
 `hikasa settings set`; a file changed on disk since it was read asks *Overwrite* / *Reload this file (discard my
-edits)* / *Cancel*; OK is Apply, then closes when every file succeeded; Cancel drops what was not applied and ends the
+edits)* / *Cancel*, and a file that cannot be read (a newer `schema_version`, broken TOML) is never overwritten: the page
+says why and only *Reload* and *Cancel* are offered; OK is Apply, then closes when every file succeeded; Cancel drops what was not applied and ends the
 theme preview. Numbers clamp to their range in the widget. The page last used is remembered
 (`state.dialogs.options.page`). The Toolbars, Shortcuts, Menus page edits `commands.toml` for the view types the
 window shows: Menu and Toolbar check boxes, shortcuts by Add (capture a key; Esc gives up), Remove and Default, the

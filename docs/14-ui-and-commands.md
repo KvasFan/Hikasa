@@ -237,7 +237,8 @@ windows, "File changed on disk" prompts, Script status window.
 
 *M2 W4a (D-112):* dialogs are drawn inside their window, modal to it (a dimmed backdrop
 takes the window's input; never a separate native window), one stack per window; Esc is
-Cancel, Enter the default button, F1 the dialog's help topic. A prompt (message, buttons,
+Cancel, as is the window's close button, Enter the default button, F1 the dialog's help topic
+(its panel stands over the dialog). The title bar moves a dialog. A prompt (message, buttons,
 default, optional "Do not ask again" bound to an option key) serves the close warnings and
 later waves' questions. About is a dialog.
 
