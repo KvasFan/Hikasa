@@ -82,7 +82,7 @@ pub enum VfsOpRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VfsOpItemDto {
     /// The action (`create_dir`, `keep_dir`, `copy`, `link`, `rename`, `move`, `remove`, `remove_dir`, `trash`,
-    /// `touch`, `create`, `skip`).
+    /// `touch`, `create`, `skip`, `create_archive`).
     pub action: &'static str,
     /// The item's kind.
     pub kind: EntryKind,
@@ -236,7 +236,7 @@ impl Service {
 
     /// A spec that is written, removed or touched: parsed without reading standard input or the clipboard, then
     /// resolved (§1.5.12): a trailing separator wants a folder.
-    fn write_spec(&self, raw: &OsStr) -> Result<Spec, ApiError> {
+    pub(crate) fn write_spec(&self, raw: &OsStr) -> Result<Spec, ApiError> {
         let spec = Spec::parse_os(raw, &self.spec_context())?;
         self.resolve(spec, self.use_of(raw))
     }

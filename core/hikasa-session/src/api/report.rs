@@ -153,8 +153,9 @@ impl Service {
     /// target is untouched. Its folder must exist.
     pub fn write_output(&self, target: &OsStr, bytes: &[u8]) -> Result<Spec, ApiError> {
         run_guarded(|| {
-            // `-` as an output target is refused by the VFS; it never reads standard input.
-            let spec = Spec::parse_os(target, &self.spec_context())?;
+            // `-` as an output target is refused by the VFS; it never reads standard input. A target inside an
+            // archive is a member: its commit is a rebuild (D-148).
+            let spec = self.write_spec(target)?;
             let options = WriteOptions {
                 create_parents: false,
                 overwrite: true,
