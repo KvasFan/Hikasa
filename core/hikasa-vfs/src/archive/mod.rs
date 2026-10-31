@@ -6,9 +6,9 @@
 //! passes the guards of `codec`, and a member never reaches a path (`cache`). Members are `/`-separated and
 //! case-sensitive on every platform; a format is chosen by mask, never by content.
 //!
-//! At the end of W5a archives are read-only: every primitive on a member answers `OperationUnsupported` and no write
-//! bit is reported (D-135). W5b adds batches and rebuilds behind those bits: `open_write` and the primitives
-//! go through `ArchiveVfs::on_base`, and `Tree::records` lists what a rebuild keeps.
+//! Writes (W5b, D-148, D-149) never touch an archive until its rebuild: primitives change an overlay every reader sees
+//! (`overlay`), a batch holds them for one operation (`batch`), and a rebuild writes a new container through the base's
+//! atomic writer (`rebuild`, `zip_write`), carrying over as bytes all it did not change.
 //!
 //! | Format | Index | Content of a member |
 //! |---|---|---|
@@ -17,16 +17,20 @@
 //! | `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` | one pass over the decoded stream | the first read spools its member, the second distinct one writes the stream to the cache |
 //! | `gz`, `bz2`, `xz`, `zst` | one pass that counts and hashes | the stream, spooled and reused |
 
+mod batch;
 mod cache;
 mod codec;
 mod format;
 mod index;
 pub mod name;
+mod overlay;
+mod rebuild;
 mod resolve;
 mod shared;
 mod tar_walk;
 pub mod time;
 pub mod zip_read;
+mod zip_write;
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -44,11 +48,13 @@ use hikasa_core::{
 pub use format::{ArchiveFormat, ArchiveMasks};
 pub use resolve::{Probe, Probed, SpecUse, resolve_spec, resolve_with};
 
+use batch::{Batch, Below, chain_writable};
 use cache::{Cache, CacheReader, CacheWriter, WHOLE_STREAM};
 use codec::{Codec, Counted, Failure, Guard, Input, InputSize, Pass, classify, corrupt, no_panic};
 use format::stream_member_name;
 use index::{DataRef, MemberKind, NameBudget, Node, RawMember, Tree, build_tree};
 use name::{NameRules, check_name, escape_name};
+use overlay::{Origin, Overlay};
 use shared::RangeReader;
 use tar_walk::{Damage, TarItem, TarKind, walk};
 use zip_read::{LINK_TARGET_MAX, ZipData, index_zip};
@@ -57,8 +63,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Attrs, Entry, EntryKind, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
-    SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, ListOptions, Listing, NameOnly,
+    ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// A member of at most this many bytes is decoded to memory, a larger one to a cache file.
@@ -218,19 +224,26 @@ impl Indexes {
 
 /// A `Vfs` of archives, stacked on a base (D-136). See the module documentation.
 pub struct ArchiveVfs {
+    core: Arc<Core>,
+}
+
+/// What an [`ArchiveVfs`] is. A writer of a member holds it, because its `commit` can be a rebuild.
+struct Core {
     base: Arc<dyn Vfs>,
     config: RwLock<Arc<ArchiveConfig>>,
     indexes: Mutex<Indexes>,
-    cache: Cache,
+    cache: Arc<Cache>,
     warnings: Mutex<Vec<Warning>>,
     counters: Counters,
     panic_next: AtomicBool,
+    /// The batches, by outermost file.
+    batches: Mutex<HashMap<Spec, Arc<Batch>>>,
 }
 
 impl fmt::Debug for ArchiveVfs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ArchiveVfs")
-            .field("cache", &self.cache)
+            .field("cache", &self.core.cache)
             .finish_non_exhaustive()
     }
 }
@@ -261,12 +274,12 @@ fn lock_until<'a, T>(
 }
 
 /// Where a decoded member goes.
-enum Spool<'a> {
+enum Spool {
     Memory(Vec<u8>),
-    File(CacheWriter<'a>),
+    File(CacheWriter),
 }
 
-impl Spool<'_> {
+impl Spool {
     fn write(&mut self, bytes: &[u8]) -> Result<(), VfsError> {
         match self {
             Spool::Memory(buffer) => {
@@ -293,29 +306,38 @@ impl ArchiveVfs {
     /// A back-end over `base`. Nothing is opened or created.
     pub fn new(base: Arc<dyn Vfs>, config: ArchiveConfig) -> ArchiveVfs {
         ArchiveVfs {
-            base,
-            config: RwLock::new(Arc::new(config)),
-            indexes: Mutex::default(),
-            cache: Cache::default(),
-            warnings: Mutex::default(),
-            counters: Counters::default(),
-            panic_next: AtomicBool::new(false),
+            core: Arc::new(Core {
+                base,
+                config: RwLock::new(Arc::new(config)),
+                indexes: Mutex::default(),
+                cache: Arc::default(),
+                warnings: Mutex::default(),
+                counters: Counters::default(),
+                panic_next: AtomicBool::new(false),
+                batches: Mutex::default(),
+            }),
         }
     }
 
     /// Masks and limits changed (`Service::reload_settings`): later calls use them, running calls keep theirs.
     pub fn set_config(&self, config: ArchiveConfig) {
-        *self.config.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(config);
+        *self
+            .core
+            .config
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(config);
     }
 
-    /// Removes the session's cache folder (best effort; also on `Drop`). A later spool starts a new session.
+    /// Removes the session's cache folder (best effort; also on `Drop`), and with it what open batches staged. A later
+    /// spool starts a new session.
     pub fn cleanup(&self) {
-        self.cache.cleanup();
+        lock(&self.core.batches).clear();
+        self.core.cache.cleanup();
     }
 
     /// What this back-end has done so far.
     pub fn counters(&self) -> ArchiveCounters {
-        let c = &self.counters;
+        let c = &self.core.counters;
         let get = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         ArchiveCounters {
             index_passes: get(&c.index_passes),
@@ -329,17 +351,17 @@ impl ArchiveVfs {
 
     /// Bytes the cache holds.
     pub fn cache_used(&self) -> u64 {
-        self.cache.used()
+        self.core.cache.used()
     }
 
     /// The session's cache folder, once something was spooled.
     pub fn cache_dir(&self) -> Option<PathBuf> {
-        self.cache.dir()
+        self.core.cache.dir()
     }
 
     /// Bytes of the member tree of the archive `container`, once indexed (the budget of §1.5.5).
     pub fn index_memory(&self, container: &Spec) -> Option<usize> {
-        let slot = lock(&self.indexes).slots.get(container).cloned()?;
+        let slot = lock(&self.core.indexes).slots.get(container).cloned()?;
         let index = lock(&slot.index).clone()?;
         Some(index.tree.memory())
     }
@@ -347,9 +369,11 @@ impl ArchiveVfs {
     /// Makes the next decoder pass panic (a test hook of rule 9).
     #[doc(hidden)]
     pub fn inject_decoder_panic(&self) {
-        self.panic_next.store(true, Ordering::Relaxed);
+        self.core.panic_next.store(true, Ordering::Relaxed);
     }
+}
 
+impl Core {
     fn forced_panic(&self) {
         if self.panic_next.swap(false, Ordering::Relaxed) {
             std::panic::resume_unwind(Box::new("forced decoder panic"));
@@ -366,14 +390,6 @@ impl ArchiveVfs {
             message,
             spec: Some(spec.canonical()),
         });
-    }
-
-    /// The base for a spec outside archives; a primitive on a member answers `OperationUnsupported` until W5b.
-    fn on_base(&self, spec: &Spec, op: VfsOp) -> Result<&dyn Vfs, VfsError> {
-        match spec {
-            Spec::ArchiveMember { .. } => Err(op_unsupported(spec, op)),
-            _ => Ok(&*self.base),
-        }
     }
 
     /// What every call on a member starts with: the nesting limit, and one `stat` of the outermost file. Another
@@ -487,6 +503,10 @@ impl ArchiveVfs {
     ) -> Result<Entry, VfsError> {
         match container {
             Spec::ArchiveMember { archive, member } => {
+                if let Some(view) = self.level_view(archive) {
+                    let item = view.overlay.lookup(member, container)?;
+                    return Ok(Overlay::entry(member, item));
+                }
                 let (_, index) = self.index_of(archive, config, ctl)?;
                 Ok(lookup(&index, member, container)?.entry())
             }
@@ -600,8 +620,42 @@ impl ArchiveVfs {
                 spec: spec.canonical(),
             });
         }
+        self.seal_for_read(archive, member, config, ctl)?;
+        if let Some(view) = self.level_view(archive) {
+            let item = view.overlay.lookup(member, spec)?;
+            return match &item.origin {
+                Origin::Staged(file) => Ok(Box::new(file.reader()?)),
+                Origin::Kept { node, .. } => {
+                    let Some(node) = view.index.tree.nodes.get(*node as usize) else {
+                        return Err(corrupt(&spec.canonical(), "inconsistent overlay"));
+                    };
+                    self.read_node(spec, archive, &view.slot, &view.index, node, config, ctl)
+                }
+                Origin::Implicit | Origin::Fresh if item.kind == MemberKind::Dir => {
+                    Err(VfsError::IsADirectory {
+                        spec: spec.canonical(),
+                    })
+                }
+                Origin::Implicit | Origin::Fresh => Err(op_unsupported(spec, VfsOp::Open)),
+            };
+        }
         let (slot, index) = self.index_of(archive, config, ctl)?;
         let node = lookup(&index, member, spec)?;
+        self.read_node(spec, archive, &slot, &index, node, config, ctl)
+    }
+
+    /// The content of `node` of `index`, the index of `archive`.
+    #[allow(clippy::too_many_arguments)]
+    fn read_node(
+        &self,
+        spec: &Spec,
+        archive: &Spec,
+        slot: &Arc<Slot>,
+        index: &Arc<Index>,
+        node: &Node,
+        config: &ArchiveConfig,
+        ctl: Ctl<'_>,
+    ) -> Result<Box<dyn ReadSeek>, VfsError> {
         match node.kind {
             MemberKind::Dir => {
                 return Err(VfsError::IsADirectory {
@@ -629,7 +683,7 @@ impl ArchiveVfs {
             self.forced_panic();
             match (index.format, node.data) {
                 (ArchiveFormat::Zip, DataRef::Zip { index: at }) => {
-                    self.read_zip(&slot, &index, node, at, archive, config, &pass)
+                    self.read_zip(slot, index, node, at, archive, config, &pass)
                 }
                 (ArchiveFormat::Tar, DataRef::Tar { data, .. }) => {
                     count(&self.counters.range_reads);
@@ -638,11 +692,11 @@ impl ArchiveVfs {
                 }
                 (format, DataRef::Tar { data, .. }) => {
                     let codec = Codec::of(format);
-                    self.read_tar_member(&slot, &index, node, data, codec, archive, config, &pass)
+                    self.read_tar_member(slot, index, node, data, codec, archive, config, &pass)
                 }
                 (format, DataRef::Stream) => {
                     let codec = Codec::of(format);
-                    self.read_stream(&slot, node, codec, archive, config, &pass)
+                    self.read_stream(slot, node, codec, archive, config, &pass)
                 }
                 _ => Err(corrupt(&text, "inconsistent index")),
             }
@@ -650,12 +704,7 @@ impl ArchiveVfs {
     }
 
     /// A new spool for `len` bytes: memory up to 1 MiB, else a cache file.
-    fn spool(
-        &self,
-        len: u64,
-        config: &ArchiveConfig,
-        pass: &Pass<'_>,
-    ) -> Result<Spool<'_>, VfsError> {
+    fn spool(&self, len: u64, config: &ArchiveConfig, pass: &Pass<'_>) -> Result<Spool, VfsError> {
         if len <= MEMORY_MAX {
             count(&self.counters.memory_reads);
             return Ok(Spool::Memory(Vec::with_capacity(
@@ -1017,6 +1066,8 @@ fn index_tar(
     not_an_archive(pass, &walked.damage, members.len())?;
     let mut tree = build_tree(members, budget, pass)?;
     tree.damage = walked.damage;
+    tree.members_end = walked.members_end;
+    tree.tail = walked.tail;
     tree.padded = input.padded();
     Ok((tree, walked.stream_len))
 }
@@ -1101,19 +1152,30 @@ impl Vfs for ArchiveVfs {
     /// Needs only the masks: the archive is not opened. A member gets the bits of its innermost format.
     fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
         let Spec::ArchiveMember { archive, .. } = at else {
-            return self.base.capabilities(at);
+            return self.core.base.capabilities(at);
         };
+        let config = self.core.config();
         let name = archive.file_name().unwrap_or_default();
-        let format = self.config().masks.detect(&name);
-        Ok(format.unwrap_or(ArchiveFormat::Gz).capabilities())
+        let format = config.masks.detect(&name);
+        let mut caps = format.unwrap_or(ArchiveFormat::Gz).read_capabilities();
+        if chain_writable(archive, &config) {
+            caps |= ArchiveFormat::write_bits();
+        }
+        Ok(caps)
     }
 
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         let Spec::ArchiveMember { archive, member } = spec else {
-            return self.base.stat(spec, follow);
+            return self.core.base.stat(spec, follow);
         };
-        let config = self.enter(spec)?;
-        let (_, index) = self.index_of(archive, &config, Ctl::detached())?;
+        let config = self.core.enter(spec)?;
+        if let Some(view) = self.core.level_view(archive) {
+            if member.is_empty() {
+                return Ok(view.index.root.clone());
+            }
+            return Ok(Overlay::entry(member, view.overlay.lookup(member, spec)?));
+        }
+        let (_, index) = self.core.index_of(archive, &config, Ctl::detached())?;
         if member.is_empty() {
             return Ok(index.root.clone());
         }
@@ -1127,33 +1189,46 @@ impl Vfs for ArchiveVfs {
         cancel: &CancelToken,
     ) -> Result<Listing, VfsError> {
         let Spec::ArchiveMember { archive, member } = dir else {
-            return self.base.list(dir, opts, cancel);
+            return self.core.base.list(dir, opts, cancel);
         };
-        let config = self.enter(dir)?;
+        let config = self.core.enter(dir)?;
         let progress = NullProgress;
         let ctl = Ctl {
             cancel,
             progress: &progress,
         };
-        let (_, index) = self.index_of(archive, &config, ctl)?;
         let mut listing = Listing::default();
-        if member.is_empty() {
-            listing.errors = ArchiveVfs::root_errors(&index, dir);
-        } else {
-            let node = lookup(&index, member, dir)?;
-            if node.kind != MemberKind::Dir {
-                return Err(VfsError::NotADirectory {
-                    spec: dir.canonical(),
-                });
+        let not_a_folder = || VfsError::NotADirectory {
+            spec: dir.canonical(),
+        };
+        let view = self.core.level_view(archive);
+        let held;
+        let children: Box<dyn ExactSizeIterator<Item = Entry>> = if let Some(view) = &view {
+            if member.is_empty() {
+                listing.errors = Core::root_errors(&view.index, dir);
+            } else if view.overlay.lookup(member, dir)?.kind != MemberKind::Dir {
+                return Err(not_a_folder());
             }
-        }
-        let children = index.tree.children(member);
+            let children = view.overlay.children(member);
+            Box::new(
+                children
+                    .into_iter()
+                    .map(|(path, item)| Overlay::entry(path, item)),
+            )
+        } else {
+            held = self.core.index_of(archive, &config, ctl)?.1;
+            if member.is_empty() {
+                listing.errors = Core::root_errors(&held, dir);
+            } else if lookup(&held, member, dir)?.kind != MemberKind::Dir {
+                return Err(not_a_folder());
+            }
+            Box::new(held.tree.children(member).iter().map(Node::entry))
+        };
         listing.entries.reserve_exact(children.len());
-        for (at, node) in children.iter().enumerate() {
+        for (at, entry) in children.enumerate() {
             if at % 1024 == 0 {
                 cancel.check()?;
             }
-            let entry = node.entry();
             let declined = opts.prefilter.is_some_and(|accept| {
                 entry.kind != EntryKind::Symlink && !accept(entry.name.as_str(), entry.kind)
             });
@@ -1178,13 +1253,16 @@ impl Vfs for ArchiveVfs {
         spec: &Spec,
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
-        self.on_base(spec, VfsOp::Write)?.open_write(spec, opts)
+        match spec {
+            Spec::ArchiveMember { .. } => self.core.open_member_write(spec, opts),
+            _ => self.core.base.open_write(spec, opts),
+        }
     }
 
     /// Joins `name` to the member. A name that fails rule 1, or a lossy name from a disk, is `InvalidName`.
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
         let Spec::ArchiveMember { archive, member } = dir else {
-            return self.base.child(dir, name);
+            return self.core.base.child(dir, name);
         };
         let invalid = || VfsError::InvalidName {
             name: name.as_str().to_owned(),
@@ -1210,43 +1288,126 @@ impl Vfs for ArchiveVfs {
     fn local_path(&self, spec: &Spec) -> Option<PathBuf> {
         match spec {
             Spec::ArchiveMember { .. } => None,
-            _ => self.base.local_path(spec),
+            _ => self.core.base.local_path(spec),
         }
     }
 
     fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
-        self.on_base(spec, VfsOp::Mkdir)?.create_dir(spec, parents)
+        let Some(path) = member_of(spec) else {
+            return self.core.base.create_dir(spec, parents);
+        };
+        if path.is_empty() {
+            return root_is_there(spec, parents);
+        }
+        self.core
+            .change(spec, VfsOp::Mkdir, Below::Stay, |overlay, scope| {
+                overlay.create_dir(path, parents, scope)
+            })
     }
 
     fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
-        self.on_base(spec, VfsOp::Remove)?.remove(spec)
+        let Some(path) = member_of(spec) else {
+            return self.core.base.remove(spec);
+        };
+        check_not_root(path, spec)?;
+        self.core
+            .change(spec, VfsOp::Remove, Below::Discard, |overlay, scope| {
+                overlay.remove(path, scope)
+            })
     }
 
+    /// Inside one archive. Two archives are `CrossDevice`, which a move expands (D-97); a member and a file are
+    /// `OperationUnsupported`, as on the router.
     fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
-        self.on_base(to, VfsOp::Rename)?;
-        self.on_base(from, VfsOp::Rename)?.rename(from, to, replace)
+        let (Some(source), Some(target)) = (member_of(from), member_of(to)) else {
+            if member_of(from).is_some() || member_of(to).is_some() {
+                return Err(op_unsupported(from, VfsOp::Rename));
+            }
+            return self.core.base.rename(from, to, replace);
+        };
+        if from.container() != to.container() {
+            return Err(VfsError::CrossDevice {
+                from: from.canonical(),
+                to: to.canonical(),
+            });
+        }
+        check_not_root(source, from)?;
+        if target.is_empty() {
+            return Err(VfsError::AlreadyExists {
+                spec: to.canonical(),
+            });
+        }
+        batch::check_clean(target, to)?;
+        let below = Below::Seal { to: target };
+        self.core
+            .change(from, VfsOp::Rename, below, |overlay, scope| {
+                overlay.rename(source, target, replace, scope)
+            })
     }
 
+    /// `created` needs `SET_CREATED`, which no format has.
     fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
-        self.on_base(spec, VfsOp::SetTimes)?.set_times(spec, times)
+        let Some(path) = member_of(spec) else {
+            return self.core.base.set_times(spec, times);
+        };
+        if times.created.is_some() {
+            return Err(op_unsupported(spec, VfsOp::SetTimes));
+        }
+        check_not_root(path, spec)?;
+        self.core.change(
+            spec,
+            VfsOp::SetTimes,
+            Below::Stay,
+            |overlay, scope| match times.modified {
+                Some(modified) => overlay.set_mtime(path, modified, scope),
+                None => Ok(()),
+            },
+        )
     }
 
     fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
-        self.on_base(spec, VfsOp::SetAttrs)?.set_attrs(spec, change)
+        let Some(path) = member_of(spec) else {
+            return self.core.base.set_attrs(spec, change);
+        };
+        check_not_root(path, spec)?;
+        self.core
+            .change(spec, VfsOp::SetAttrs, Below::Stay, |overlay, scope| {
+                overlay.set_attrs(path, change, scope)
+            })
     }
 
+    /// The target is text in an archive: one that is not text is refused, not replaced by something close to it.
     fn create_symlink(
         &self,
         spec: &Spec,
         target: &OsStr,
         target_is_dir: bool,
     ) -> Result<(), VfsError> {
-        self.on_base(spec, VfsOp::Symlink)?
-            .create_symlink(spec, target, target_is_dir)
+        let Some(path) = member_of(spec) else {
+            return self.core.base.create_symlink(spec, target, target_is_dir);
+        };
+        if path.is_empty() {
+            return Err(VfsError::AlreadyExists {
+                spec: spec.canonical(),
+            });
+        }
+        let Some(target) = target.to_str() else {
+            return Err(VfsError::InvalidName {
+                name: target.to_string_lossy().into_owned(),
+            });
+        };
+        self.core
+            .change(spec, VfsOp::Symlink, Below::Stay, |overlay, scope| {
+                overlay.symlink(path, target, scope)
+            })
     }
 
+    /// A member has no recycle bin (§1.5.17); deleting one for good is W6's confirmation.
     fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
-        self.on_base(spec, VfsOp::Trash)?.move_to_trash(spec)
+        if member_of(spec).is_some() {
+            return Err(op_unsupported(spec, VfsOp::Trash));
+        }
+        self.core.base.move_to_trash(spec)
     }
 
     fn copy_file_fast(
@@ -1258,7 +1419,7 @@ impl Vfs for ArchiveVfs {
     ) -> Result<Option<u64>, VfsError> {
         match (from, to) {
             (Spec::ArchiveMember { .. }, _) | (_, Spec::ArchiveMember { .. }) => Ok(None),
-            _ => self.base.copy_file_fast(from, to, opts, cancel),
+            _ => self.core.base.copy_file_fast(from, to, opts, cancel),
         }
     }
 
@@ -1272,8 +1433,8 @@ impl Vfs for ArchiveVfs {
         let Spec::ArchiveMember { archive, .. } = spec else {
             return Ok(None);
         };
-        let config = self.enter(spec)?;
-        let (_, index) = self.index_of(archive, &config, *ctl)?;
+        let config = self.core.enter(spec)?;
+        let (_, index) = self.core.index_of(archive, &config, *ctl)?;
         Ok(Some(index.tree.nodes.len() as u64))
     }
 
@@ -1283,27 +1444,73 @@ impl Vfs for ArchiveVfs {
         cancel: &CancelToken,
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
         let Spec::ArchiveMember { archive, member } = spec else {
-            return self.base.open_read_with(spec, cancel);
+            return self.core.base.open_read_with(spec, cancel);
         };
-        let config = self.enter(spec)?;
+        let config = self.core.enter(spec)?;
         let progress = NullProgress;
         let ctl = Ctl {
             cancel,
             progress: &progress,
         };
-        self.open_member(spec, archive, member, &config, ctl)
+        self.core.open_member(spec, archive, member, &config, ctl)
     }
 
     fn archive_format(&self, name: &str) -> Option<ArchiveFormat> {
-        self.config().masks.detect(name)
+        self.core.config().masks.detect(name)
     }
 
     fn take_warnings(&self) -> Vec<Warning> {
-        std::mem::take(&mut *lock(&self.warnings))
+        std::mem::take(&mut *lock(&self.core.warnings))
+    }
+
+    fn begin(&self, at: &Spec) -> Result<(), VfsError> {
+        self.core.begin(at)
+    }
+
+    fn finish(&self, at: &Spec, how: Finish) -> Result<(), VfsError> {
+        self.core.finish(at, how, Ctl::detached())
+    }
+
+    fn finish_with(&self, at: &Spec, how: Finish, ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.core.finish(at, how, *ctl)
+    }
+
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
+        self.core.create_archive(spec)
     }
 }
 
-impl Drop for ArchiveVfs {
+/// The member text of an archive spec.
+fn member_of(spec: &Spec) -> Option<&str> {
+    match spec {
+        Spec::ArchiveMember { member, .. } => Some(member),
+        _ => None,
+    }
+}
+
+/// `create_dir` of a root: it is there.
+fn root_is_there(spec: &Spec, parents: bool) -> Result<bool, VfsError> {
+    if parents {
+        Ok(false)
+    } else {
+        Err(VfsError::AlreadyExists {
+            spec: spec.canonical(),
+        })
+    }
+}
+
+/// A root is no member: an archive is changed as the file it is (§1.5.2).
+fn check_not_root(path: &str, spec: &Spec) -> Result<(), VfsError> {
+    if path.is_empty() {
+        return Err(VfsError::InvalidTarget {
+            spec: spec.canonical(),
+            reason: "is a root folder",
+        });
+    }
+    Ok(())
+}
+
+impl Drop for Core {
     fn drop(&mut self) {
         self.cache.cleanup();
     }
