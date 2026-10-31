@@ -204,12 +204,14 @@ fn shutdown_removes_the_cache_folder() {
     let spec = svc.parse_spec(a.join("m").as_os_str()).unwrap();
     let reader = svc.vfs().open_read(&spec).unwrap();
     let cache = svc.config().cache_dir.join("archives");
-    assert!(cache.join("s1").is_dir());
-    assert!(cache.join("s1.lock").is_file());
+    assert_eq!(
+        std::fs::read_dir(&cache).unwrap().count(),
+        2,
+        "s<n>, its lock"
+    );
     drop(reader);
     svc.shutdown();
-    assert!(!cache.join("s1").exists());
-    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
+    assert!(!cache.exists(), "nothing is left, not even an empty folder");
 }
 
 #[test]

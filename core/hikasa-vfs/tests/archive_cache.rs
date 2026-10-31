@@ -18,6 +18,8 @@ use hikasa_vfs::{
 };
 
 const MIB: usize = 1 << 20;
+/// The identity at the start of each cache file (§1.5.6), which `cache_used` does not count.
+const STAMP: u64 = 16;
 
 /// A stored zip of `count` members of `size` bytes.
 fn stored(count: usize, size: usize) -> Vec<u8> {
@@ -71,8 +73,12 @@ fn layout_is_numeric() {
     let file = disk.put("évil name.zip", &stored(2, MIB + 1));
     read(&*disk.vfs, &Spec::archive_member(file, "m0"));
     let dir = disk.vfs.cache_dir().unwrap();
-    assert_eq!(dir, disk.cache.join("s1"));
-    assert!(disk.cache.join("s1.lock").is_file());
+    let session = dir.file_name().unwrap().to_str().unwrap();
+    assert!(
+        session.starts_with('s') && session[1..].bytes().all(|b| b.is_ascii_digit()),
+        "{session}"
+    );
+    assert!(disk.cache.join(format!("{session}.lock")).is_file());
     for (name, _) in files_in(&dir) {
         assert!(
             name.starts_with('m') && name[1..].bytes().all(|b| b.is_ascii_digit()),
@@ -116,7 +122,7 @@ fn used_equals_the_files() {
             }
         }
         let dir = disk.vfs.cache_dir().unwrap();
-        let on_disk: u64 = files_in(&dir).iter().map(|(_, len)| len).sum();
+        let on_disk: u64 = files_in(&dir).iter().map(|(_, len)| len - STAMP).sum();
         assert_eq!(disk.vfs.cache_used(), on_disk, "step {step}");
         assert!(on_disk <= 8 * MIB as u64);
     }
@@ -201,19 +207,137 @@ fn cleanup_and_drop_remove_everything() {
     let file = disk.put("a.zip", &stored(1, 2 * MIB));
     let spec = Spec::archive_member(file, "m0");
     read(&*disk.vfs, &spec);
-    assert!(disk.cache.join("s1").is_dir());
+    assert!(disk.vfs.cache_dir().unwrap().is_dir());
     disk.vfs.cleanup();
-    assert!(!disk.cache.join("s1").exists());
-    assert!(!disk.cache.join("s1.lock").exists());
+    assert!(!disk.cache.exists(), "an empty root goes too");
+    assert_eq!(disk.vfs.cache_dir(), None);
     assert_eq!(disk.vfs.cache_used(), 0);
     // It works again, and `Drop` removes it too.
     read(&*disk.vfs, &spec);
-    assert!(disk.cache.join("s1").is_dir());
+    let dir = disk.vfs.cache_dir().unwrap();
+    assert!(dir.is_dir());
     let cache = disk.cache.clone();
     let vfs = disk.vfs;
     drop(vfs);
-    assert!(!cache.join("s1").exists());
-    assert!(files_in(&cache).is_empty());
+    assert!(!dir.exists());
+    assert!(!cache.exists());
+}
+
+/// The folders above the root that a session had to make go with it, and a root that holds something else stays.
+#[test]
+fn a_session_leaves_no_empty_folder_and_touches_no_other_file() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(1, 2 * MIB));
+    let spec = Spec::archive_member(file, "m0");
+    let root = disk.cache.join("deep").join("archives");
+    let vfs = fresh(&root);
+    read(&vfs, &spec);
+    assert!(root.is_dir());
+    vfs.cleanup();
+    assert!(!disk.cache.exists(), "all three were made by the session");
+
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("notes"), b"not ours").unwrap();
+    read(&vfs, &spec);
+    vfs.cleanup();
+    assert_eq!(files_in(&root).len(), 1);
+}
+
+/// A file at the path that is not the one written is never served (§1.5.6): the read decodes again.
+#[test]
+fn a_replaced_cache_file_is_decoded_again() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(2, 2 * MIB));
+    let spec = Spec::archive_member(file, "m1");
+    let want = read(&*disk.vfs, &spec);
+    let dir = disk.vfs.cache_dir().unwrap();
+    let (name, len) = files_in(&dir).pop().unwrap();
+    assert_eq!(len, 2 * MIB as u64 + STAMP);
+    fs::write(dir.join(&name), vec![9u8; len as usize]).unwrap();
+    let decodes = disk.vfs.counters().member_decodes;
+    assert_eq!(read(&*disk.vfs, &spec), want);
+    assert_eq!(disk.vfs.counters().member_decodes, decodes + 1);
+
+    let (name, len) = files_in(&dir).pop().unwrap();
+    fs::write(dir.join(&name), vec![0u8; len as usize - 1]).unwrap();
+    assert_eq!(read(&*disk.vfs, &spec), want, "a shorter file too");
+}
+
+/// What a reader opened stays its own, whatever the path meets later.
+#[test]
+fn a_reader_keeps_its_bytes_when_the_path_is_replaced() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(2, 2 * MIB));
+    let mut reader = disk
+        .vfs
+        .open_read(&Spec::archive_member(file, "m1"))
+        .unwrap();
+    let dir = disk.vfs.cache_dir().unwrap();
+    let (name, _) = files_in(&dir).pop().unwrap();
+    let path = dir.join(&name);
+    fs::rename(&path, dir.join("moved")).unwrap();
+    fs::write(&path, vec![9u8; 2 * MIB]).unwrap();
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).unwrap();
+    assert!(out.len() == 2 * MIB && out.iter().all(|&b| b == 1));
+    drop(reader);
+    fs::remove_file(dir.join("moved")).unwrap();
+}
+
+/// A5.5: sessions come and go on one root and each gets its own bytes. A `flock` or `LockFileEx` belongs to the open
+/// file, so threads meet in the sweep like processes do. `cli_archive.rs` repeats this with real processes.
+#[test]
+fn concurrent_sessions_on_one_root_keep_their_bytes() {
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 120;
+    let disk = on_disk(ArchiveLimits::default());
+    let root = &disk.cache;
+    std::thread::scope(|scope| {
+        for thread in 0..THREADS {
+            let member = vec![thread as u8; MIB + 1];
+            let bytes = raw_zip(&[RawEntry::new(b"big.bin", &member)]);
+            let file = disk.put(&format!("a{thread}.zip"), &bytes);
+            let spec = Spec::archive_member(file, "big.bin");
+            scope.spawn(move || {
+                for round in 0..ROUNDS {
+                    // Each round is a whole session: claim, sweep, spool, read, cleanup.
+                    let session = fresh(root);
+                    let got = read(&session, &spec);
+                    assert!(got == member, "thread {thread}, round {round}");
+                    // Read twice, the second from the cache file.
+                    assert!(read(&session, &spec) == member);
+                }
+            });
+        }
+    });
+    assert!(!root.exists(), "the last session took the root with it");
+}
+
+/// Sweeps that lose a race must never take a live session's folder: live sessions hold files while others come and go.
+#[test]
+fn a_live_session_survives_a_crowd_of_sweeps() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(1, 2 * MIB));
+    let spec = Spec::archive_member(file, "m0");
+    let live = fresh(&disk.cache);
+    let want = read(&live, &spec);
+    let dir = live.cache_dir().unwrap();
+    std::thread::scope(|scope| {
+        for _ in 0..6 {
+            let spec = &spec;
+            let root = &disk.cache;
+            scope.spawn(move || {
+                for _ in 0..80 {
+                    read(&fresh(root), spec);
+                }
+            });
+        }
+    });
+    assert!(dir.is_dir());
+    assert_eq!(read(&live, &spec), want);
+    let decodes = live.counters().member_decodes;
+    read(&live, &spec);
+    assert_eq!(live.counters().member_decodes, decodes, "its file is there");
 }
 
 fn fresh(root: &Path) -> ArchiveVfs {
@@ -262,6 +386,7 @@ fn two_back_ends_get_different_numbers() {
     assert!(a.is_dir() && b.is_dir(), "neither swept the other");
     drop(second);
     assert!(a.is_dir());
+    assert!(!b.exists());
 }
 
 /// §1.5.16: `prepare` and a spool of a 1 GiB stream stop within 100 ms of `cancel` (G4). Debug builds decode slower

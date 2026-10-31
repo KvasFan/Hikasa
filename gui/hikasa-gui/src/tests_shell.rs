@@ -1853,9 +1853,13 @@ fn shutdown_removes_the_archive_cache() {
     use hikasa_vfs::Vfs as _;
     drop(world.service.vfs().open_read(&spec).unwrap());
     let cache = world.service.config().cache_dir.join("archives");
-    assert!(cache.join("s1").is_dir());
+    assert_eq!(
+        std::fs::read_dir(&cache).unwrap().count(),
+        2,
+        "s<n>, its lock"
+    );
     let mut app = world.app(None);
     let effects = app.0.shutdown();
     assert_eq!(effects, vec![Effect::Exit]);
-    assert!(!cache.join("s1").exists());
+    assert!(!cache.exists());
 }

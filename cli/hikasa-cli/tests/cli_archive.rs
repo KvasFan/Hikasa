@@ -499,23 +499,47 @@ fn no_cache_folder_is_left_behind() {
     s.file("big.zip", zip_of(&[ZipEntry("m", &big, 0, 0, MODE)]));
     let out = run(&s, &["vfs", "cat", "big.zip/m"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    let cache = s.config().join("cache").join("archives");
-    if cache.exists() {
-        assert_eq!(
-            std::fs::read_dir(&cache).unwrap().count(),
-            0,
-            "cleaned at exit"
-        );
-    }
+    assert_eq!(
+        stdout(&out).len(),
+        big.len(),
+        "the member went through a file"
+    );
+    let cache = s.config().join("cache");
+    assert!(!cache.exists(), "a spool leaves no folder, empty or not");
     let list = run(&s, &["vfs", "ls", "big.zip"]);
     assert_eq!(code(&list), 0);
-    assert!(
-        !s.config()
-            .join("cache")
-            .join("archives")
-            .join("s1")
-            .exists()
-    );
+    assert!(!cache.exists(), "a listing never creates one");
+}
+
+/// A5.5 with real processes: sessions that start and stop on one config folder each get their own bytes.
+#[test]
+fn concurrent_processes_read_their_own_members() {
+    const WORKERS: u8 = 8;
+    const ROUNDS: usize = 12;
+    let s = sandbox();
+    let members: Vec<Vec<u8>> = (0..WORKERS)
+        .map(|worker| vec![b'A' + worker; (1 << 20) + 1])
+        .collect();
+    for (worker, data) in members.iter().enumerate() {
+        s.file(
+            &format!("a{worker}.zip"),
+            zip_of(&[ZipEntry("big.bin", data, 0, 0, MODE)]),
+        );
+    }
+    std::thread::scope(|scope| {
+        for (worker, data) in members.iter().enumerate() {
+            let s = &s;
+            scope.spawn(move || {
+                let member = format!("a{worker}.zip/big.bin");
+                for round in 0..ROUNDS {
+                    let out = run(s, &["vfs", "cat", &member]);
+                    assert_eq!(code(&out), 0, "{}", stderr(&out));
+                    assert!(out.stdout == *data, "worker {worker}, round {round}");
+                }
+            });
+        }
+    });
+    assert!(!s.config().join("cache").join("archives").exists());
 }
 
 #[test]

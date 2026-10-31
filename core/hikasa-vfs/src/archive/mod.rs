@@ -43,7 +43,7 @@ use hikasa_core::{
 pub use format::{ArchiveFormat, ArchiveMasks};
 pub use resolve::{Probe, Probed, SpecUse, resolve_spec, resolve_with};
 
-use cache::{Cache, CacheFile, CacheWriter, WHOLE_STREAM};
+use cache::{Cache, CacheReader, CacheWriter, WHOLE_STREAM};
 use codec::{Codec, Counted, Failure, Guard, Input, InputSize, Pass, classify, corrupt, no_panic};
 use format::stream_member_name;
 use index::{DataRef, MemberKind, Node, RawMember, Tree, build_tree};
@@ -244,11 +244,6 @@ impl Spool<'_> {
             }
         }
     }
-}
-
-/// A cached file as a reader of the range `start..start + len`, or of all of it.
-fn range_of(file: &Arc<CacheFile>, start: u64, len: u64) -> Result<Box<dyn ReadSeek>, VfsError> {
-    Ok(Box::new(RangeReader::new(file.reader()?, start, len)))
 }
 
 impl ArchiveVfs {
@@ -618,11 +613,11 @@ impl ArchiveVfs {
             .map(Spool::File)
     }
 
-    /// A cached file of `member`, marked as used.
-    fn cached(&self, slot: &Slot, member: &str) -> Option<Arc<CacheFile>> {
-        let file = self.cache.get(slot.id, member)?;
+    /// A reader of the cached file of `member`, marked as used.
+    fn cached(&self, slot: &Slot, member: &str) -> Option<CacheReader> {
+        let reader = self.cache.get(slot.id, member)?;
         count(&self.counters.cache_hits);
-        Some(file)
+        Some(reader)
     }
 
     /// Zip: decode one member, to memory or to a reused cache file.
@@ -637,8 +632,8 @@ impl ArchiveVfs {
         config: &ArchiveConfig,
         pass: &Pass<'_>,
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
-        if let Some(file) = self.cached(slot, &node.path) {
-            return Ok(Box::new(file.reader()?));
+        if let Some(reader) = self.cached(slot, &node.path) {
+            return Ok(Box::new(reader));
         }
         let Some(zip) = &index.zip else {
             return Err(corrupt(pass.spec, "inconsistent index"));
@@ -703,11 +698,11 @@ impl ArchiveVfs {
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
         let member: &str = &node.path;
         let mut first_read = lock(&slot.first_read);
-        if let Some(file) = self.cached(slot, WHOLE_STREAM) {
-            return range_of(&file, data, node.size);
+        if let Some(stream) = self.cached(slot, WHOLE_STREAM) {
+            return Ok(Box::new(RangeReader::new(stream, data, node.size)));
         }
-        if let Some(file) = self.cached(slot, member) {
-            return Ok(Box::new(file.reader()?));
+        if let Some(reader) = self.cached(slot, member) {
+            return Ok(Box::new(reader));
         }
         let distinct = first_read.as_deref().is_some_and(|first| first != member);
         let whole = index.stream_len;
@@ -730,7 +725,7 @@ impl ArchiveVfs {
                 &mut |bytes| writer.write(bytes),
             )?;
             let file = writer.finish(slot.id, WHOLE_STREAM)?;
-            return range_of(&file, data, node.size);
+            return Ok(Box::new(RangeReader::new(file.reader()?, data, node.size)));
         }
         first_read.get_or_insert_with(|| member.into());
         let mut spool = self.spool(node.size, config, pass)?;
@@ -761,8 +756,8 @@ impl ArchiveVfs {
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
         let member: &str = &node.path;
         let _one_decoder = lock(&slot.first_read);
-        if let Some(file) = self.cached(slot, member) {
-            return Ok(Box::new(file.reader()?));
+        if let Some(reader) = self.cached(slot, member) {
+            return Ok(Box::new(reader));
         }
         let mut spool = self.spool(node.size, config, pass)?;
         self.decode_range(

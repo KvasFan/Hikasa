@@ -3,15 +3,31 @@
 //! `<root>/s<n>.lock` and `<root>/s<n>/` (mode 0700 on Unix); inside, files with numeric names only, so **no member
 //! name ever reaches a path**. A held `File::try_lock` marks a live session; a later session sweeps the folders whose
 //! lock it can take, so a crash cleans itself without process ids or clocks. Nothing is created by listing.
+//!
+//! Sessions meet in one folder, and these rules keep them apart on every platform:
+//!
+//! - `n` is random, never the lowest free number: a dying path cannot come back as someone else's session.
+//! - A lock only counts for the file at the path: after `try_lock`, [`is_at`] compares the handle and the path, so a
+//!   handle opened before another sweep unlinked that file proves nothing.
+//! - The folder goes first and the lock file's name second, both while the lock is held. Unlinking an open file works
+//!   on Windows too, because Rust opens files with `FILE_SHARE_DELETE`; where the file system only marks it for
+//!   deletion, the name refuses a new open, which [`is_at`] reads as "gone", and a random `n` never asks for it again.
+//! - A folder that cannot be removed keeps its lock file, so a later sweep finds it (a file open on Windows).
+//! - Each file starts with [`STAMP`] bytes naming its session and number, checked at every open: whatever else goes
+//!   wrong in the folder, a reader gets an error and never the bytes of another file.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use same_file::Handle;
+
 use super::codec::STEP;
+use super::shared::RangeReader;
 use crate::error::{VfsError, VfsOp};
 
 /// Key of a cached file: the id of an archive at one stamp, and a member (or [`WHOLE_STREAM`]).
@@ -20,11 +36,16 @@ type Key = (u64, Box<str>);
 /// The member text of the cache file that holds a whole decoded stream (a member path is never empty).
 pub(crate) const WHOLE_STREAM: &str = "";
 
+/// Bytes at the start of each cache file: the session's number and the file's, little-endian. Not counted in `used`.
+const STAMP: usize = 16;
+
 /// One complete file of the cache. Each reader holds an `Arc`, so a held file is never evicted.
 #[derive(Debug)]
 pub(crate) struct CacheFile {
     path: PathBuf,
+    /// Bytes of content, after the stamp.
     len: u64,
+    stamp: [u8; STAMP],
     used: Arc<AtomicU64>,
 }
 
@@ -37,20 +58,30 @@ impl Drop for CacheFile {
 }
 
 impl CacheFile {
-    /// A reader of the file, which holds it.
+    /// A reader of the file, which holds it. It checks that the file at the path is the one that was written: the
+    /// open handle is what it reads afterwards, so nothing that happens to the path later reaches it.
     pub(crate) fn reader(self: &Arc<CacheFile>) -> Result<CacheReader, VfsError> {
-        let file = File::open(&self.path)
-            .map_err(|e| VfsError::from_io(self.path.to_string_lossy(), VfsOp::Open, e))?;
+        let open = || {
+            let mut file = File::open(&self.path)?;
+            let mut stamp = [0u8; STAMP];
+            file.read_exact(&mut stamp)?;
+            if stamp != self.stamp || file.metadata()?.len() != STAMP as u64 + self.len {
+                return Err(io::Error::other("a cache file was replaced"));
+            }
+            Ok(file)
+        };
+        let file =
+            open().map_err(|e| VfsError::from_io(self.path.to_string_lossy(), VfsOp::Open, e))?;
         Ok(CacheReader {
-            file,
+            file: RangeReader::new(file, STAMP as u64, self.len),
             _hold: Arc::clone(self),
         })
     }
 }
 
-/// A reader of a cache file.
+/// A reader of a cache file: its content, without the stamp.
 pub(crate) struct CacheReader {
-    file: File,
+    file: RangeReader<File>,
     _hold: Arc<CacheFile>,
 }
 
@@ -74,9 +105,29 @@ struct Slot {
 
 /// The session's folder and its held lock.
 struct Session {
+    number: u64,
     dir: PathBuf,
     lock_path: PathBuf,
-    lock: File,
+    lock: Handle,
+    root: PathBuf,
+    /// The folders above `root` this session had to create, deepest first.
+    made: Vec<PathBuf>,
+}
+
+impl Session {
+    /// Removes the folder, then the lock file's name while the lock is held (the module's rules), then every folder
+    /// that is left empty, so a session leaves nothing behind. Best effort.
+    fn close(self) {
+        if remove_tree(&self.dir).is_ok() {
+            let _ = fs::remove_file(&self.lock_path);
+        }
+        drop(self.lock);
+        for dir in std::iter::once(&self.root).chain(&self.made) {
+            if fs::remove_dir(dir).is_err() {
+                break;
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -118,14 +169,22 @@ impl Cache {
         self.lock().session.as_ref().map(|s| s.dir.clone())
     }
 
-    /// The cached file of `key`, marked as used.
-    pub(crate) fn get(&self, archive: u64, member: &str) -> Option<Arc<CacheFile>> {
+    /// A reader of the cached file of `key`, marked as used. A file that fails its check leaves the table and counts
+    /// as a miss: the caller decodes again.
+    pub(crate) fn get(&self, archive: u64, member: &str) -> Option<CacheReader> {
         let mut state = self.lock();
         state.tick += 1;
         let tick = state.tick;
-        let slot = state.files.get_mut(&(archive, member.into()))?;
+        let key = (archive, Box::<str>::from(member));
+        let slot = state.files.get_mut(&key)?;
         slot.last_use = tick;
-        Some(Arc::clone(&slot.file))
+        let file = Arc::clone(&slot.file);
+        drop(state);
+        let reader = file.reader().ok();
+        if reader.is_none() {
+            self.lock().files.remove(&key);
+        }
+        reader
     }
 
     /// What a new file can take: the limit minus what readers or writers hold.
@@ -182,17 +241,22 @@ impl Cache {
             }
             state.next += 1;
             let number = state.next;
-            let dir = state.session.as_ref().map(|s| s.dir.clone());
+            let session = state.session.as_ref().map(|s| (s.dir.clone(), s.number));
             drop(state);
-            let path = dir.unwrap_or_default().join(format!("m{number}"));
-            let file = OpenOptions::new()
+            let (dir, session) = session.unwrap_or_default();
+            let mut stamp = [0u8; STAMP];
+            stamp[..8].copy_from_slice(&session.to_le_bytes());
+            stamp[8..].copy_from_slice(&number.to_le_bytes());
+            let path = dir.join(format!("m{number}"));
+            let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&path)
                 .map_err(fail)?;
-            Ok::<_, VfsError>((path, file))
+            file.write_all(&stamp).map_err(fail)?;
+            Ok::<_, VfsError>((path, file, stamp))
         })();
-        let (path, file) = match created {
+        let (path, file, stamp) = match created {
             Ok(done) => done,
             Err(error) => {
                 self.used.fetch_sub(reserved, Ordering::Relaxed);
@@ -203,6 +267,7 @@ impl Cache {
             cache: self,
             file: BufWriter::with_capacity(1 << 16, file),
             path,
+            stamp,
             written: 0,
             reserved,
             cache_max,
@@ -229,12 +294,7 @@ impl Cache {
         let mut state = self.lock();
         state.files.clear();
         if let Some(session) = state.session.take() {
-            let _ = fs::remove_dir_all(&session.dir);
-            let Session {
-                lock_path, lock, ..
-            } = session;
-            drop(lock);
-            let _ = fs::remove_file(lock_path);
+            session.close();
         }
     }
 }
@@ -245,6 +305,7 @@ pub(crate) struct CacheWriter<'a> {
     cache: &'a Cache,
     file: BufWriter<File>,
     path: PathBuf,
+    stamp: [u8; STAMP],
     written: u64,
     reserved: u64,
     cache_max: u64,
@@ -278,6 +339,7 @@ impl CacheWriter<'_> {
         let file = Arc::new(CacheFile {
             path: self.path.clone(),
             len: self.written,
+            stamp: self.stamp,
             used: Arc::clone(&self.cache.used),
         });
         self.cache
@@ -304,43 +366,77 @@ fn session_number(name: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// Sweeps, then claims the first free number and creates its folder.
+/// Claims a number, sweeps, and creates the session's folder.
 fn open_session(root: &Path) -> io::Result<Session> {
-    fs::create_dir_all(root)?;
+    let made = make_root(root)?;
     let (number, lock_path, lock) = claim(root)?;
-    sweep(root, number)?;
-    let dir = root.join(format!("s{number}"));
-    match fs::remove_dir_all(&dir) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    create_private_dir(&dir)?;
-    Ok(Session {
-        dir,
+    let session = Session {
+        number,
+        dir: root.join(format!("s{number}")),
         lock_path,
         lock,
-    })
+        root: root.to_path_buf(),
+        made,
+    };
+    if let Err(error) = owned(root, &session.lock_path) {
+        session.close();
+        return Err(error);
+    }
+    sweep(root, number)?;
+    create_private_dir(&session.dir)?;
+    Ok(session)
 }
 
-/// The first number whose lock file can be created and locked.
-fn claim(root: &Path) -> io::Result<(u64, PathBuf, File)> {
-    const TRIES: u64 = 1 << 20;
-    for number in 1..TRIES {
+/// Creates `root` and returns the folders above it that did not exist, deepest first.
+fn make_root(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let made = root
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| !dir.as_os_str().is_empty() && !dir.exists())
+        .map(Path::to_path_buf)
+        .collect();
+    fs::create_dir_all(root)?;
+    Ok(made)
+}
+
+/// True when `path` names the file behind `lock`. A failure counts as no: a name marked for deletion refuses opens.
+fn is_at(lock: &Handle, path: &Path) -> bool {
+    Handle::from_path(path).is_ok_and(|at| at == *lock)
+}
+
+/// A number no session has: the keys of a `RandomState` come from the operating system.
+fn fresh_number() -> u64 {
+    RandomState::new().build_hasher().finish()
+}
+
+/// A new lock file, locked. Random numbers do not collide, so a retry only follows a sweep that took the new file
+/// between `create_new` and `try_lock`, or another session that removed `root` while it left.
+fn claim(root: &Path) -> io::Result<(u64, PathBuf, Handle)> {
+    const TRIES: u32 = 256;
+    for _ in 0..TRIES {
+        let number = fresh_number();
         let path = root.join(format!("s{number}.lock"));
         let file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(root)?;
+                continue;
+            }
+            // A folder marked for deletion by a leaving session refuses new files until it is gone.
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                continue;
+            }
             Err(error) => return Err(error),
         };
-        match file.try_lock() {
+        let lock = Handle::from_file(file)?;
+        match lock.as_file().try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => continue,
             Err(TryLockError::Error(error)) => return Err(error),
         }
-        // A sweep may have taken the new file between `create_new` and `try_lock`.
-        if path.exists() {
-            return Ok((number, path, file));
+        if is_at(&lock, &path) {
+            return Ok((number, path, lock));
         }
     }
     Err(io::Error::other("no free cache session number"))
@@ -358,17 +454,60 @@ fn sweep(root: &Path, own: u64) -> io::Result<()> {
         if number == own {
             continue;
         }
-        let Ok(file) = OpenOptions::new().write(true).open(item.path()) else {
+        let path = item.path();
+        let Ok(file) = OpenOptions::new().write(true).open(&path) else {
             continue;
         };
-        if file.try_lock().is_err() {
+        let Ok(lock) = Handle::from_file(file) else {
             continue;
+        };
+        if lock.as_file().try_lock().is_ok()
+            && is_at(&lock, &path)
+            && remove_tree(&root.join(format!("s{number}"))).is_ok()
+        {
+            let _ = fs::remove_file(&path);
         }
-        let _ = fs::remove_dir_all(root.join(format!("s{number}")));
-        drop(file);
-        let _ = fs::remove_file(item.path());
     }
     Ok(())
+}
+
+/// `remove_dir_all`; a folder that is not there is removed.
+fn remove_tree(dir: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(dir) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+/// `root` and its parent belong to whoever owns `lock` (just created: this user) or to the system. The fallback root
+/// lies in the shared temp folder, where another user may have made it first and could swap what is in it.
+#[cfg(unix)]
+fn owned(root: &Path, lock: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let me = fs::metadata(lock)?.uid();
+    for dir in root.ancestors().take(2) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        if !trusted(fs::symlink_metadata(dir)?.uid(), me) {
+            let message = format!("{} belongs to another user", dir.display());
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, message));
+        }
+    }
+    Ok(())
+}
+
+/// See [`owned`]: Windows keeps the fallback in the user's own temp folder.
+#[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
+fn owned(_root: &Path, _lock: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// True when a folder of `owner` can hold the cache of `me`.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn trusted(owner: u32, me: u32) -> bool {
+    owner == me || owner == 0
 }
 
 #[cfg(unix)]
@@ -393,5 +532,31 @@ mod tests {
         assert_eq!(session_number("s7"), None);
         assert_eq!(session_number("x7.lock"), None);
         assert_eq!(session_number("s7a.lock"), None);
+    }
+
+    #[test]
+    fn numbers_differ() {
+        assert_ne!(fresh_number(), fresh_number());
+    }
+
+    /// A handle opened before a file left its path proves nothing about the file now at that path.
+    #[test]
+    fn a_handle_counts_only_for_the_file_at_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s1.lock");
+        let lock = Handle::from_file(File::create(&path).unwrap()).unwrap();
+        assert!(is_at(&lock, &path));
+        fs::rename(&path, dir.path().join("moved")).unwrap();
+        assert!(!is_at(&lock, &path), "nothing there");
+        File::create(&path).unwrap();
+        assert!(!is_at(&lock, &path), "another file there");
+    }
+
+    #[test]
+    fn a_folder_of_another_user_is_refused() {
+        assert!(trusted(1000, 1000));
+        assert!(trusted(0, 1000), "the system's /tmp");
+        assert!(!trusted(1001, 1000));
+        assert!(!trusted(1000, 0), "root never trusts a user's folder");
     }
 }

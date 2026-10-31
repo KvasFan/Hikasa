@@ -2825,18 +2825,34 @@ Folders that only exist through their members are synthesized: `Dir`, `mtime: No
   `~/Library/Caches/Hikasa/archives`, `%LOCALAPPDATA%\Hikasa\cache\archives`, `<config>/cache/archives` when portable,
   `temp_dir` only when the home is unknown). Not the temp folder first: `/tmp` is often a RAM disk. Core reads no
   environment; `ArchiveConfig::cache_root` carries the path.
-- **Layout.** `<root>/s<n>.lock` and `<root>/s<n>/` (Unix mode 0700), `n` the first free number. Files inside have numeric
-  names only (`m<k>`, staged writes `w<k>`): **no member name ever reaches a path**, so traversal, twins and reserved
-  names cannot touch the disk through the cache. Created on the first file; a command that only lists creates nothing
-  (§2.22 of M1).
+- **Owner.** On Unix `root` and its parent must belong to the running user or to the system (the owner of the lock file
+  just created names the user, so no call asks for an id); otherwise the spool fails with `PermissionDenied`. The fallback
+  root lies in the shared temp folder, where another user could have made it first and could swap what is in it. It also
+  refuses a root process whose `HOME` still names a user's folder, which would leave root's files there.
+- **Layout.** `<root>/s<n>.lock` and `<root>/s<n>/` (Unix mode 0700), `n` a random 64-bit number from the operating system
+  (`RandomState`), so a session number never comes back and a dying path can never be someone else's. Files inside have
+  numeric names only (`m<k>`, staged writes `w<k>`): **no member name ever reaches a path**, so traversal, twins and
+  reserved names cannot touch the disk through the cache. Created on the first file; a command that only lists creates
+  nothing (§2.22 of M1).
+- **Identity.** Each file starts with a 16-byte stamp, the session's number and the file's, not counted in `used`. A reader
+  opens the path, checks stamp and length on that handle, and reads only that handle, so nothing that later happens to
+  the path reaches it. A file that fails the check leaves the table and the read decodes again: a wrong file costs a
+  decode and never serves another file's bytes.
 - **Session and crash.** The lock file is created with `create_new`, locked with `File::try_lock` and held for the life of
-  the `ArchiveVfs`. Before creating its folder a session sweeps: for every other `s*.lock` whose `try_lock` succeeds
-  the owner is gone, so its folder and then its lock file are removed. The OS releases a dead process's lock on every
-  platform, so a crash leaves a folder only until the next session that extracts. A lock that fails with another error
-  counts as held. No process ids, no clock.
-- **Exit.** `ArchiveVfs::cleanup` and `Drop` remove the folder and the lock file. `Service::shutdown` (new) calls it, and
-  the adapters call it before `main` returns. A file still open on Windows may survive until the next sweep.
-- **Accounting.** `used` is the sum of cache file lengths. `reserve(n)` runs before a known length is written, and every 1 MiB
+  the `ArchiveVfs`. After `try_lock` the handle and the path are compared (`same-file`): a lock counts only for the file
+  that is at the path, so a handle opened before a sweep unlinked that file proves nothing. A session claims its number,
+  then sweeps, then creates its folder: for every other `s*.lock` whose `try_lock` succeeds and whose file is at its path,
+  the owner is gone, so its folder and then the lock file's name are removed **while the lock is held**. The OS releases a
+  dead process's lock on every platform, so a crash leaves a folder only until the next session that extracts. A lock that
+  fails with any error counts as held. No process ids, no clock. A folder that cannot be removed keeps its lock file, so
+  a later sweep finds it. **Windows:** Rust opens files with `FILE_SHARE_DELETE`, so an open lock file can be unlinked as
+  on Unix; where the file system only marks it for deletion the name refuses new opens, which the comparison reads as
+  gone, and a random `n` never asks for that name again. `LockFileEx` belongs to the handle, as `flock` belongs to the open
+  file on Linux and macOS.
+- **Exit.** `ArchiveVfs::cleanup` and `Drop` remove the folder and the lock file in the same order, then `root` and the
+  folders above it that this session made, when they are empty. `Service::shutdown` (new) calls it, and the adapters call
+  it before `main` returns. A file still open on Windows may survive until the next sweep.
+- **Accounting.** `used` is the sum of the cached bytes. `reserve(n)` runs before a known length is written, and every 1 MiB
   while a stream of unknown length is written. Over `cache_max`: least recently used files that no reader holds are
   evicted (each file is an `Arc`); when it still does not fit → `ArchiveLimit { limit: "cache" }`, the partial file is
   removed. A failed write (disk full) removes the partial file and reports the I/O error. A file is entered in the
@@ -3648,7 +3664,9 @@ reads the real clock, zone or home folder (T1). The part of each item is in brac
   `ArchiveLimit` and leaves nothing. Reuse: a second read decodes nothing. Invalidation: touching the container (new stamp) drops the
   index and the files. Exit: `cleanup` and `Drop` remove everything. Crash: a leftover `s7/` with an unlocked `s7.lock` goes
   at the next session's first spool; a folder whose lock is held (a second handle in the test) stays. Two `ArchiveVfs`
-  on one root get different numbers.
+  on one root get different numbers. Concurrent sessions on one root, threads (`concurrent_sessions_on_one_root_keep_their_bytes`,
+  `a_live_session_survives_a_crowd_of_sweeps`) and processes (`concurrent_processes_read_their_own_members`), each read
+  their own bytes; a replaced cache file is decoded again; a reader keeps its bytes when the path is replaced.
 - A5.6 **Names (D-141) [W5a].** Rules 1–4 and 17 as tables, for zip and tar each: `../x`, `a/../../x`, `/etc/passwd`, `\x`,
   `\\srv\x`, `C:\x`, `C:/x`, `c:x`, `..\..\x`, `a\b`, NUL, 4,097 bytes, `./a//b`, `.`, `./`, invalid UTF-8, CP437, duplicates in both
   orders, `a` with `a/b` in both orders, `A.txt` with `a.txt`; rows `<refused-N>`, the cap of 1,000, the warning's total. An
