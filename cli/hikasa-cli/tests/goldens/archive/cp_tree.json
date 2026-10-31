@@ -1,0 +1,66 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "copy",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": "<TMP>/plain",
+        "target": "<TMP>/b.tar.gz/plain",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": "<TMP>/plain/inner",
+        "target": "<TMP>/b.tar.gz/plain/inner",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/plain/inner/y",
+        "target": "<TMP>/b.tar.gz/plain/inner/y",
+        "size": 5,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/plain/x",
+        "target": "<TMP>/b.tar.gz/plain/x",
+        "size": 6,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 4,
+      "done": 4,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 11
+    }
+  },
+  "warnings": [],
+  "error": null
+}

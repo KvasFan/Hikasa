@@ -223,6 +223,9 @@ fn vfs_stat_of_the_file_the_root_and_a_member() {
     assert_eq!(doc["result"]["entry"]["kind"], "dir");
     let caps = doc["result"]["capabilities"].as_array().unwrap();
     assert!(caps.iter().any(|c| c == "crc_provided"), "{caps:?}");
+    assert!(caps.iter().any(|c| c == "write"), "{caps:?}");
+    let stream = json(&run(&s, &["vfs", "stat", "note.txt.gz/", "--json"]));
+    let caps = stream["result"]["capabilities"].as_array().unwrap();
     assert!(!caps.iter().any(|c| c == "write"), "{caps:?}");
     let member = run(&s, &["vfs", "stat", "a.zip/x", "--json"]);
     let doc = json(&member);
@@ -507,13 +510,314 @@ fn copies_out_of_an_archive() {
         assert_golden("archive/cp_refused.json", &s.normalise(&stdout(&odd)));
     }
 
-    // Writes into a member are W5b: an item error, nothing changes.
+    // A root is no member: an archive is removed as the file it is.
     let before = std::fs::read(s.join("a.zip")).unwrap();
-    let write = run(&s, &["vfs", "cp", "plain/x", "a.zip/new"]);
-    assert_eq!(code(&write), 100, "{}", stderr(&write));
-    assert_eq!(std::fs::read(s.join("a.zip")).unwrap(), before);
     let root = run(&s, &["vfs", "rm", "--yes", "a.zip/"]);
     assert_eq!(code(&root), 100, "{}", stdout(&root));
+    assert_eq!(std::fs::read(s.join("a.zip")).unwrap(), before);
+}
+
+/// The file names in a folder, sorted: a temporary sibling would show.
+fn names_in(s: &Sandbox, rel: &str) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(s.join(rel))
+        .unwrap()
+        .map(|item| item.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with("config"))
+        .collect();
+    names.sort();
+    names
+}
+
+fn cat(s: &Sandbox, spec: &str) -> Vec<u8> {
+    let out = run(s, &["vfs", "cat", spec]);
+    assert_eq!(code(&out), 0, "{spec}: {}", stderr(&out));
+    out.stdout
+}
+
+/// `vfs cp` into archives (§1.5.13), for a zip and a compressed tar.
+#[test]
+fn cp_into_archives() {
+    let s = sandbox();
+    let without = run(&s, &["vfs", "cp", "plain/x", "a.zip/new/"]);
+    assert_eq!(code(&without), 100, "{}", stdout(&without));
+    assert!(stderr(&without).contains("not found") || stdout(&without).contains("not found"));
+    let with = run(&s, &["vfs", "cp", "-p", "plain/x", "a.zip/new/"]);
+    assert_eq!(code(&with), 0, "{}", stderr(&with));
+    assert_golden("archive/cp_member.txt", &s.normalise(&stdout(&with)));
+    assert_eq!(cat(&s, "a.zip/new/x"), b"alpha\n");
+
+    let root = run(&s, &["vfs", "cp", "plain/inner/y", "a.zip/"]);
+    assert_eq!(code(&root), 0, "{}", stderr(&root));
+    assert_eq!(cat(&s, "a.zip/y"), b"beta\n");
+
+    // `a.zip` without a separator names the file, which exists.
+    let file = run(&s, &["vfs", "cp", "plain/x", "a.zip", "--json"]);
+    assert_eq!(code(&file), 100, "{}", stdout(&file));
+    let doc = json(&file);
+    assert_eq!(
+        doc["result"]["items"][0]["error"]["kind"], "already_exists",
+        "{doc}"
+    );
+
+    let tree = run(&s, &["vfs", "cp", "-r", "plain", "b.tar.gz/", "--json"]);
+    assert_eq!(code(&tree), 0, "{}", stderr(&tree));
+    assert_eq!(json(&tree)["schema"], "hikasa.vfs_op.v1");
+    assert_golden("archive/cp_tree.json", &s.normalise(&stdout(&tree)));
+    assert_eq!(cat(&s, "b.tar.gz/plain/inner/y"), b"beta\n");
+    assert_eq!(cat(&s, "b.tar.gz/inner/y"), b"beta\n", "kept");
+    assert!(
+        names_in(&s, "")
+            .iter()
+            .all(|name| !name.contains("hikasa-tmp"))
+    );
+}
+
+/// A copy keeps the source's time and mode (D-95), as any target does.
+#[test]
+fn cp_into_an_archive_keeps_metadata() {
+    let s = sandbox();
+    let out = run(&s, &["vfs", "cp", "plain/x", "c.tar/copied", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let stat = run(&s, &["vfs", "stat", "c.tar/copied", "--json"]);
+    let doc = json(&stat);
+    let source = json(&run(&s, &["vfs", "stat", "plain/x", "--json"]));
+    let mtime = &doc["result"]["entry"]["mtime"];
+    assert!(mtime.is_string(), "{doc}");
+    assert_eq!(*mtime, source["result"]["entry"]["mtime"], "{doc}");
+}
+
+#[test]
+fn mv_rm_touch_mkdir_on_members() {
+    let s = sandbox();
+    let renamed = run(&s, &["vfs", "mv", "a.zip/x", "a.zip/moved"]);
+    assert_eq!(code(&renamed), 0, "{}", stderr(&renamed));
+    assert_golden("archive/mv_member.txt", &s.normalise(&stdout(&renamed)));
+    assert_eq!(cat(&s, "a.zip/moved"), b"alpha\n");
+
+    let made = run(&s, &["vfs", "mkdir", "a.zip/made"]);
+    assert_eq!(code(&made), 0, "{}", stderr(&made));
+    assert_golden("archive/mkdir_member.txt", &s.normalise(&stdout(&made)));
+
+    let touched = run(&s, &["vfs", "touch", "a.zip/moved"]);
+    assert_eq!(code(&touched), 0, "{}", stderr(&touched));
+
+    let out_of = run(&s, &["vfs", "mv", "a.zip/inner", "from_zip"]);
+    assert_eq!(code(&out_of), 0, "{}", stderr(&out_of));
+    assert_eq!(std::fs::read(s.join("from_zip/y")).unwrap(), b"beta\n");
+    assert_eq!(code(&run(&s, &["vfs", "stat", "a.zip/inner"])), 100);
+
+    let into = run(&s, &["vfs", "mv", "other", "c.tar/other"]);
+    assert_eq!(code(&into), 0, "{}", stderr(&into));
+    assert_eq!(cat(&s, "c.tar/other/x"), b"alpha\n");
+    assert!(!s.join("other").exists(), "sources go after the rebuild");
+
+    let across = run(&s, &["vfs", "mv", "a.zip/moved", "c.tar/from_a"]);
+    assert_eq!(code(&across), 0, "{}", stderr(&across));
+    assert_eq!(cat(&s, "c.tar/from_a"), b"alpha\n");
+    assert_eq!(code(&run(&s, &["vfs", "stat", "a.zip/moved"])), 100);
+
+    let needs_yes = run(&s, &["vfs", "rm", "c.tar/from_a"]);
+    assert_ne!(code(&needs_yes), 0);
+    let removed = run(&s, &["vfs", "rm", "--yes", "c.tar/from_a"]);
+    assert_eq!(code(&removed), 0, "{}", stderr(&removed));
+    assert_golden("archive/rm_member.txt", &s.normalise(&stdout(&removed)));
+
+    let trash = run(&s, &["vfs", "rm", "--trash", "--yes", "c.tar/x", "--json"]);
+    assert_eq!(code(&trash), 100, "{}", stdout(&trash));
+    assert_eq!(
+        json(&trash)["result"]["items"][0]["error"]["kind"],
+        "unsupported"
+    );
+    assert_eq!(cat(&s, "c.tar/x"), b"alpha\n");
+}
+
+#[test]
+fn a_dry_run_on_members_changes_nothing() {
+    let s = sandbox();
+    let before = std::fs::read(s.join("a.zip")).unwrap();
+    let plan = run(&s, &["vfs", "cp", "--dry-run", "plain/x", "a.zip/planned"]);
+    assert_eq!(code(&plan), 0, "{}", stderr(&plan));
+    assert_golden("archive/cp_dry_run.txt", &s.normalise(&stdout(&plan)));
+    for args in [
+        &["vfs", "mv", "--dry-run", "a.zip/x", "a.zip/y"][..],
+        &["vfs", "rm", "--dry-run", "a.zip/x"],
+        &["vfs", "mkdir", "--dry-run", "a.zip/d"],
+        &["vfs", "touch", "--dry-run", "a.zip/x"],
+    ] {
+        let out = run(&s, args);
+        assert_eq!(code(&out), 0, "{args:?}: {}", stderr(&out));
+    }
+    assert_eq!(std::fs::read(s.join("a.zip")).unwrap(), before);
+}
+
+/// Single streams and what cannot be rewritten: a clean error, the file as it was.
+#[test]
+fn what_cannot_be_rewritten_stays() {
+    let s = sandbox();
+    let before = std::fs::read(s.join("note.txt.gz")).unwrap();
+    let stream = run(
+        &s,
+        &["vfs", "rm", "--yes", "note.txt.gz/note.txt", "--json"],
+    );
+    assert_eq!(code(&stream), 100, "{}", stdout(&stream));
+    assert_eq!(
+        json(&stream)["result"]["items"][0]["error"]["kind"],
+        "unsupported"
+    );
+    assert_eq!(std::fs::read(s.join("note.txt.gz")).unwrap(), before);
+    // Refused, encrypted and link members go through a rebuild as they are.
+    let odd = run(&s, &["vfs", "mkdir", "odd.zip/new"]);
+    assert_eq!(code(&odd), 0, "{}", stderr(&odd));
+    let bytes = std::fs::read(s.join("odd.zip")).unwrap();
+    for kept in [&b"../evil"[..], b"secret", b"/etc/passwd", b"crypt"] {
+        assert!(bytes.windows(kept.len()).any(|w| w == kept), "{kept:?}");
+    }
+    let listing = stdout(&run(&s, &["vfs", "ls", "odd.zip"]));
+    assert!(listing.contains("new"), "{listing}");
+}
+
+/// A rebuild that fails: every done item of the archive is failed, exit 100, the file and its folder as they were.
+#[cfg(unix)]
+#[test]
+fn a_failed_rebuild_fails_its_items() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = sandbox();
+    s.file("locked/l.zip", std::fs::read(s.join("a.zip")).unwrap());
+    let locked = s.join("locked");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = std::fs::File::create(locked.join("probe")).is_ok();
+    let out = run(
+        &s,
+        &["vfs", "cp", "-r", "plain", "locked/l.zip/added", "--json"],
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if writable {
+        return; // Root writes anywhere.
+    }
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    let doc = json(&out);
+    let items = doc["result"]["items"].as_array().unwrap();
+    assert!(items.len() > 1, "{doc}");
+    for item in items {
+        assert_eq!(item["status"], "failed", "{item}");
+        assert_eq!(item["error"]["kind"], "permission_denied", "{item}");
+    }
+    assert_eq!(doc["result"]["summary"]["done"], 0);
+    assert_eq!(doc["result"]["summary"]["bytes"], 0);
+    assert_eq!(names_in(&s, "locked"), ["l.zip"]);
+    assert_eq!(
+        std::fs::read(s.join("locked/l.zip")).unwrap(),
+        std::fs::read(s.join("a.zip")).unwrap()
+    );
+}
+
+/// `mkdir` of an archive name (FC-077, D-150): each writable mask, a plain folder for the rest.
+#[test]
+fn mkdir_of_an_archive_name() {
+    let s = sandbox();
+    let zip = run(&s, &["vfs", "mkdir", "new.zip"]);
+    assert_eq!(code(&zip), 0, "{}", stderr(&zip));
+    assert_golden("archive/mkarchive.txt", &s.normalise(&stdout(&zip)));
+    let doc = json(&run(&s, &["vfs", "mkdir", "--json", "new2.zip"]));
+    assert_eq!(doc["result"]["items"][0]["action"], "create_archive");
+    assert_eq!(doc["result"]["items"][0]["kind"], "file");
+    let plan = json(&run(
+        &s,
+        &["vfs", "mkdir", "--dry-run", "--json", "new3.zip"],
+    ));
+    assert_eq!(plan["result"]["items"][0]["action"], "create_archive");
+    assert!(!s.join("new3.zip").exists());
+    let bytes = std::fs::read(s.join("new.zip")).unwrap();
+    assert_eq!(bytes.len(), 22, "the end record");
+    assert!(bytes.starts_with(b"PK\x05\x06"));
+    for name in [
+        "n.tar",
+        "n.tar.gz",
+        "n.tar.bz2",
+        "n.tar.xz",
+        "n.tar.zst",
+        "n.tgz",
+        "n.jar",
+    ] {
+        let made = run(&s, &["vfs", "mkdir", name]);
+        assert_eq!(code(&made), 0, "{name}: {}", stderr(&made));
+        assert!(s.join(name).is_file(), "{name}");
+        let listed = run(&s, &["vfs", "ls", name, "--json"]);
+        assert_eq!(code(&listed), 0, "{name}: {}", stderr(&listed));
+        assert_eq!(
+            json(&listed)["result"]["entries"].as_array().unwrap().len(),
+            0,
+            "{name}"
+        );
+    }
+    assert_eq!(std::fs::read(s.join("n.tar")).unwrap(), vec![0u8; 1024]);
+    // Written into, an empty archive is an archive.
+    let filled = run(&s, &["vfs", "cp", "plain/x", "n.tar.xz/x"]);
+    assert_eq!(code(&filled), 0, "{}", stderr(&filled));
+    assert_eq!(cat(&s, "n.tar.xz/x"), b"alpha\n");
+
+    let stream = run(&s, &["vfs", "mkdir", "x.gz"]);
+    assert_eq!(code(&stream), 0, "{}", stderr(&stream));
+    assert!(s.join("x.gz").is_dir(), "a single stream has no empty form");
+    let ancestors = run(&s, &["vfs", "mkdir", "-p", "folder.zip/sub"]);
+    assert_eq!(code(&ancestors), 0, "{}", stderr(&ancestors));
+    assert!(
+        s.join("folder.zip/sub").is_dir(),
+        "only the final name counts"
+    );
+    let existing = run(&s, &["vfs", "mkdir", "new.zip", "--json"]);
+    assert_eq!(code(&existing), 100, "{}", stdout(&existing));
+    assert_eq!(
+        json(&existing)["result"]["items"][0]["error"]["kind"],
+        "already_exists"
+    );
+    let parents = run(&s, &["vfs", "mkdir", "-p", "deep/er/n.zip"]);
+    assert_eq!(code(&parents), 0, "{}", stderr(&parents));
+    assert!(s.join("deep/er/n.zip").is_file());
+    let nested = run(&s, &["vfs", "mkdir", "a.zip/inner.tar"]);
+    assert_eq!(code(&nested), 0, "{}", stderr(&nested));
+    let into = run(&s, &["vfs", "cp", "plain/x", "a.zip/inner.tar/x"]);
+    assert_eq!(code(&into), 0, "{}", stderr(&into));
+    assert_eq!(cat(&s, "a.zip/inner.tar/x"), b"alpha\n");
+}
+
+/// A real folder named like an archive stays a folder in a copied tree (D-150).
+#[test]
+fn a_folder_named_like_an_archive_stays_a_folder() {
+    let s = sandbox();
+    s.file("tree/x.zip/inside", "kept");
+    let out = run(&s, &["vfs", "cp", "-r", "tree", "copied"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("copied/x.zip").is_dir());
+    assert_eq!(
+        std::fs::read(s.join("copied/x.zip/inside")).unwrap(),
+        b"kept"
+    );
+}
+
+/// `--output` into an archive: a commit outside a batch, one rebuild.
+#[test]
+fn output_into_an_archive() {
+    let s = sandbox();
+    s.file("l.txt", "left\n");
+    s.file("r.txt", "right\n");
+    let args = [
+        "text",
+        "compare",
+        "l.txt",
+        "r.txt",
+        "--report",
+        "side-by-side",
+        "--html",
+        "--output",
+        "a.zip/out.html",
+    ];
+    let out = run(&s, &args);
+    assert_ne!(code(&out), 101, "{}", stderr(&out));
+    assert!(out.stdout.is_empty(), "{}", stdout(&out));
+    let page = cat(&s, "a.zip/out.html");
+    assert!(String::from_utf8_lossy(&page).contains("left"));
+    assert_eq!(cat(&s, "a.zip/x"), b"alpha\n");
 }
 
 #[test]

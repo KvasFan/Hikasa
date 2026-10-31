@@ -404,6 +404,8 @@ pub struct RawEntry {
     /// The uncompressed size field; `None` = the length of `data`.
     pub size: Option<u32>,
     pub extra: Vec<u8>,
+    /// The comment of the central record.
+    pub comment: Vec<u8>,
     /// The local header offset of the central record; `None` = where this entry was written.
     pub at: Option<u32>,
 }
@@ -422,6 +424,7 @@ impl RawEntry {
             crc32: None,
             size: None,
             extra: Vec::new(),
+            comment: Vec::new(),
             at: None,
         }
     }
@@ -466,13 +469,14 @@ pub fn raw_zip(entries: &[RawEntry]) -> Vec<u8> {
         central.extend_from_slice(b"PK\x01\x02");
         central.extend_from_slice(&entry.version_made_by.to_le_bytes());
         common(&mut central);
-        central.extend_from_slice(&0u16.to_le_bytes()); // comment length
+        central.extend_from_slice(&(entry.comment.len() as u16).to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes()); // disk
         central.extend_from_slice(&0u16.to_le_bytes()); // internal attributes
         central.extend_from_slice(&entry.external.to_le_bytes());
         central.extend_from_slice(&entry.at.unwrap_or(offset).to_le_bytes());
         central.extend_from_slice(&entry.name);
         central.extend_from_slice(&entry.extra);
+        central.extend_from_slice(&entry.comment);
     }
     let start = out.len() as u32;
     out.extend_from_slice(&central);
@@ -484,5 +488,226 @@ pub fn raw_zip(entries: &[RawEntry]) -> Vec<u8> {
     out.extend_from_slice(&(central.len() as u32).to_le_bytes());
     out.extend_from_slice(&start.to_le_bytes());
     out.extend_from_slice(&[0u8; 2]);
+    out
+}
+
+// ---- a base that cancels ---------------------------------------------------------------------------------------
+
+/// A `MemoryVfs` whose writers cancel `token` after `after` bytes: cancellation at a byte of a rebuild. Used as the
+/// base of an `ArchiveVfs`, so only what the rebuild writes counts.
+pub struct CancellingBase {
+    pub mem: Arc<MemoryVfs>,
+    pub token: hikasa_core::CancelToken,
+    pub after: u64,
+}
+
+struct CancellingWriter {
+    inner: Box<dyn hikasa_vfs::AtomicWrite>,
+    token: hikasa_core::CancelToken,
+    left: u64,
+}
+
+impl Write for CancellingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        match self.left.checked_sub(n as u64) {
+            Some(left) => self.left = left,
+            None => self.token.cancel(),
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl std::io::Seek for CancellingWriter {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(to)
+    }
+}
+
+impl hikasa_vfs::AtomicWrite for CancellingWriter {
+    fn commit(self: Box<Self>) -> Result<(), hikasa_vfs::VfsError> {
+        self.inner.commit()
+    }
+}
+
+impl Vfs for CancellingBase {
+    fn capabilities(&self, at: &Spec) -> Result<hikasa_vfs::Capabilities, hikasa_vfs::VfsError> {
+        self.mem.capabilities(at)
+    }
+    fn stat(
+        &self,
+        spec: &Spec,
+        follow: hikasa_vfs::FollowLinks,
+    ) -> Result<hikasa_vfs::Entry, hikasa_vfs::VfsError> {
+        self.mem.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &hikasa_vfs::ListOptions<'_>,
+        cancel: &hikasa_core::CancelToken,
+    ) -> Result<hikasa_vfs::Listing, hikasa_vfs::VfsError> {
+        self.mem.list(dir, opts, cancel)
+    }
+    fn open_read(
+        &self,
+        spec: &Spec,
+    ) -> Result<Box<dyn hikasa_vfs::ReadSeek>, hikasa_vfs::VfsError> {
+        self.mem.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &hikasa_vfs::WriteOptions,
+    ) -> Result<Box<dyn hikasa_vfs::AtomicWrite>, hikasa_vfs::VfsError> {
+        Ok(Box::new(CancellingWriter {
+            inner: self.mem.open_write(spec, opts)?,
+            token: self.token.clone(),
+            left: self.after,
+        }))
+    }
+    fn child(&self, dir: &Spec, name: &hikasa_vfs::FileName) -> Result<Spec, hikasa_vfs::VfsError> {
+        self.mem.child(dir, name)
+    }
+}
+
+// ---- reading a rebuilt archive back -----------------------------------------------------------------------------
+
+/// What a member is, as every reader must agree: `None` content for a folder, the target for a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seen {
+    Dir,
+    File(Vec<u8>),
+    Link(String),
+}
+
+/// Everything an `ArchiveVfs` shows below `root`, recursively. A member that cannot be read shows its error's text.
+pub fn walk(vfs: &dyn Vfs, root: &Spec) -> std::collections::BTreeMap<String, Seen> {
+    fn visit(
+        vfs: &dyn Vfs,
+        dir: &Spec,
+        prefix: &str,
+        out: &mut std::collections::BTreeMap<String, Seen>,
+    ) {
+        let listing = vfs
+            .list(
+                dir,
+                &hikasa_vfs::ListOptions::default(),
+                &hikasa_core::CancelToken::never(),
+            )
+            .unwrap();
+        for entry in listing.entries {
+            let path = format!("{prefix}{}", entry.name.as_str());
+            let child = vfs.child(dir, &entry.name).unwrap();
+            match entry.kind {
+                hikasa_vfs::EntryKind::Dir => {
+                    out.insert(path.clone(), Seen::Dir);
+                    visit(vfs, &child, &format!("{path}/"), out);
+                }
+                hikasa_vfs::EntryKind::Symlink => {
+                    out.insert(path, Seen::Link(entry.link_target.unwrap_or_default()));
+                }
+                _ => {
+                    let bytes = vfs.open_read(&child).map(super::read_to_vec);
+                    let seen = match bytes {
+                        Ok(bytes) => Seen::File(bytes),
+                        Err(error) => Seen::Link(format!("<{error}>")),
+                    };
+                    out.insert(path, seen);
+                }
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    visit(vfs, root, "", &mut out);
+    out
+}
+
+/// The decoded stream of a compressed tar, or `bytes` for a plain one.
+pub fn decompress(format: ArchiveFormat, bytes: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    match format {
+        ArchiveFormat::TarGz => {
+            flate2::read::MultiGzDecoder::new(bytes)
+                .read_to_end(&mut out)
+                .unwrap();
+        }
+        ArchiveFormat::TarBz2 => {
+            bzip2::read::MultiBzDecoder::new(bytes)
+                .read_to_end(&mut out)
+                .unwrap();
+        }
+        ArchiveFormat::TarXz => {
+            lzma_rust2::XzReader::new(bytes, true)
+                .read_to_end(&mut out)
+                .unwrap();
+        }
+        ArchiveFormat::TarZst => {
+            zstd::stream::read::Decoder::new(bytes)
+                .unwrap()
+                .read_to_end(&mut out)
+                .unwrap();
+        }
+        _ => out = bytes.to_vec(),
+    }
+    out
+}
+
+/// `bytes` as the plain `zip` and `tar` crates read them, with none of the code under test: the portability check of
+/// a rebuild. Folders only through their own records are added, as a tree shows them.
+pub fn read_plain(format: ArchiveFormat, bytes: &[u8]) -> std::collections::BTreeMap<String, Seen> {
+    use std::collections::BTreeMap;
+    use std::io::Read;
+    let mut out = BTreeMap::new();
+    if format == ArchiveFormat::Zip {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        for at in 0..archive.len() {
+            let mut file = archive.by_index(at).unwrap();
+            let name = file.name().unwrap().trim_end_matches('/').to_owned();
+            if file.is_dir() {
+                out.insert(name, Seen::Dir);
+            } else if file.is_symlink() {
+                let mut target = String::new();
+                file.read_to_string(&mut target).unwrap();
+                out.insert(name, Seen::Link(target));
+            } else {
+                let mut content = Vec::new();
+                file.read_to_end(&mut content).unwrap();
+                out.insert(name, Seen::File(content));
+            }
+        }
+    } else {
+        let stream = decompress(format, bytes);
+        let mut archive = tar::Archive::new(stream.as_slice());
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap();
+            let name = path.to_string_lossy().trim_end_matches('/').to_owned();
+            let kind = entry.header().entry_type();
+            if kind.is_dir() {
+                out.insert(name, Seen::Dir);
+            } else if kind.is_symlink() {
+                let target = entry.link_name().unwrap().unwrap();
+                let target = target.to_string_lossy().into_owned();
+                out.insert(name, Seen::Link(target));
+            } else {
+                let mut content = Vec::new();
+                entry.read_to_end(&mut content).unwrap();
+                out.insert(name, Seen::File(content));
+            }
+        }
+    }
+    for path in out.keys().cloned().collect::<Vec<_>>() {
+        let mut dir = path.as_str();
+        while let Some((parent, _)) = dir.rsplit_once('/') {
+            out.entry(parent.to_owned()).or_insert(Seen::Dir);
+            dir = parent;
+        }
+    }
     out
 }

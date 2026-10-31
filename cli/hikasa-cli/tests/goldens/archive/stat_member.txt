@@ -1,2 +1,2 @@
 -rw-r--r-- 6 2026-10-19T13:12:00Z x
-capabilities: read list seek mtime dos_attrs unix_mode symlinks crc_provided case_sensitive
+capabilities: read write list seek mtime set_times dos_attrs unix_mode symlinks crc_provided case_sensitive mkdir remove rename set_attrs create_symlinks

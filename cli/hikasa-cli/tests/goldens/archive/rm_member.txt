@@ -1,0 +1,2 @@
+remove <TMP>/c.tar/from_a
+removed 1 of 1 items (0 skipped, 0 failed)

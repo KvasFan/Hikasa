@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b1fb3ffe72645ea586d7a0bf9f239814ae9b70487cb8b9defe0823bc15a51185 # shrinks to steps = [Write(0, [18, 199, 189, 119, 127, 204, 13, 205, 124, 229, 9, 131, 173, 11, 157, 119, 9, 142, 226, 70, 205, 132, 63, 46, 100, 132, 93, 218, 194, 172, 242, 4, 254, 80, 248, 85, 52, 221, 209, 112, 157, 58, 40, 81, 53, 5, 248, 59, 183, 168, 202, 166, 185, 226, 224, 73, 165, 214, 184, 252, 95, 57, 17])], format = TarBz2, batched = true
+cc 75e04d2c7108b30bb8a7a3a882ba01fc53961ef5d8db5ec2fdfc1b2043fbc69a # shrinks to tree = [("a", [])], format = Tar, fault = ReadAfter(1537)
+cc c37c9553aee40ae677dc29fa76ddd8643245f93e88f0930bf0f9373e03900ccb # shrinks to steps = [Remove(131), Link(71), Move(32, 0)], format = Zip, batched = false
+cc 37bfb1205334f868e52c6213797b7b3bcbe63e2e1d26fb1b7a1383ed3079d3f4 # shrinks to tree = [("a", [])], format = TarZst, fault = WriteAfter(22)

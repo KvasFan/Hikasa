@@ -8,27 +8,41 @@
       "spec": "<TMP>/a.zip/",
       "capabilities": [
         "read",
+        "write",
         "list",
         "seek",
         "mtime",
+        "set_times",
         "dos_attrs",
         "unix_mode",
         "symlinks",
         "crc_provided",
-        "case_sensitive"
+        "case_sensitive",
+        "mkdir",
+        "remove",
+        "rename",
+        "set_attrs",
+        "create_symlinks"
       ]
     },
     "right": {
       "spec": "<TMP>/b.tar.gz/",
       "capabilities": [
         "read",
+        "write",
         "list",
         "seek",
         "mtime",
+        "set_times",
         "unix_mode",
         "unix_owner",
         "symlinks",
-        "case_sensitive"
+        "case_sensitive",
+        "mkdir",
+        "remove",
+        "rename",
+        "set_attrs",
+        "create_symlinks"
       ]
     },
     "rules": {

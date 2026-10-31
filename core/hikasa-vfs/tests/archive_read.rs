@@ -249,8 +249,16 @@ fn masks_decide() {
 fn capability_table() {
     use Capabilities as C;
     let common = C::READ | C::LIST | C::SEEK | C::MTIME | C::CASE_SENSITIVE;
-    let zip = common | C::CRC_PROVIDED | C::DOS_ATTRS | C::UNIX_MODE | C::SYMLINKS;
-    let tar = common | C::UNIX_MODE | C::UNIX_OWNER | C::SYMLINKS;
+    let write = C::WRITE
+        | C::MKDIR
+        | C::REMOVE
+        | C::RENAME
+        | C::SET_TIMES
+        | C::SET_ATTRS
+        | C::CREATE_SYMLINKS;
+    let zip_read = common | C::CRC_PROVIDED | C::DOS_ATTRS | C::UNIX_MODE | C::SYMLINKS;
+    let tar_read = common | C::UNIX_MODE | C::UNIX_OWNER | C::SYMLINKS;
+    let (zip, tar) = (zip_read | write, tar_read | write);
     let memory = on_memory(ArchiveLimits::default());
     for format in ArchiveFormat::ORDER {
         let member = Spec::archive_member(common::mspec(&format!("/{}", name_of(format))), "x");
@@ -277,6 +285,13 @@ fn capability_table() {
             .unwrap(),
         zip
     );
+    // The write bits only when every archive around it is writable (§1.5.3).
+    let a = Spec::archive_member(common::mspec("/x.tar.gz"), "b.gz");
+    let below_a_stream = Spec::archive_member(Spec::archive_member(a, "b"), "x");
+    assert_eq!(memory.vfs.capabilities(&below_a_stream).unwrap(), common);
+    let a = Spec::archive_member(common::mspec("/x.gz"), "b.tar");
+    let in_a_stream = Spec::archive_member(a, "x");
+    assert_eq!(memory.vfs.capabilities(&in_a_stream).unwrap(), tar_read);
 }
 
 #[test]
@@ -324,24 +339,19 @@ fn router_table() {
         None
     );
 
-    // W5a: every primitive on a member answers `OperationUnsupported`.
+    // A recycle bin is one thing a member never has (§1.5.17); two archives and mixed kinds are the router's table.
     let unsupported = |r: Result<(), VfsError>| {
         assert!(
             matches!(r, Err(VfsError::OperationUnsupported { .. })),
             "{r:?}"
         );
     };
-    unsupported(router.remove(&member));
-    unsupported(router.create_dir(&member, false).map(drop));
-    unsupported(router.open_write(&member, &Default::default()).map(drop));
-    unsupported(router.set_times(&member, &Default::default()));
     unsupported(router.move_to_trash(&member));
     let other_archive = Spec::archive_member(disk.put("b.zip", b""), "x");
     assert!(matches!(
         router.rename(&member, &other_archive, false),
         Err(VfsError::CrossDevice { .. })
     ));
-    unsupported(router.rename(&member, &Spec::archive_member(file.clone(), "y"), false));
     unsupported(router.rename(&member, &file, false));
     unsupported(router.rename(&file, &member, false));
     assert!(router.take_warnings().is_empty());
