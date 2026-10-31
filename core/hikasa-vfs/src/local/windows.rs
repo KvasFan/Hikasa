@@ -1,9 +1,10 @@
 //! Windows metadata mapping (`std::os::windows::fs::MetadataExt::file_attributes`); the Windows parts of the
 //! mutating primitives (M2 W3): the `R` attribute, folder links and junctions, creation times.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata, OpenOptions};
 use std::io;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
@@ -88,6 +89,10 @@ pub(super) fn set_attrs(
             if set.contains(DosAttrs::READONLY) {
                 permissions.set_readonly(true);
             } else if clear.contains(DosAttrs::READONLY) {
+                #[expect(
+                    clippy::permissions_set_readonly_false,
+                    reason = "this file is Windows only, where the call clears the DOS bit"
+                )]
                 permissions.set_readonly(false);
             } else {
                 return Ok(());
@@ -107,8 +112,18 @@ pub(super) fn remove_link(path: &Path, meta: &Metadata) -> io::Result<()> {
     }
 }
 
-/// `symlink_dir` when `target_is_dir`, else `symlink_file`.
+/// True for a link whose entry is a folder entry (a folder link or junction).
+pub(super) fn is_folder_link(meta: &Metadata) -> bool {
+    meta.file_type().is_symlink() && meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+
+/// `symlink_dir` when `target_is_dir`, else `symlink_file`. The target is stored with `\`: the OS keeps a `/`
+/// verbatim, and a link holding one resolves to nothing (`ERROR_INVALID_NAME`).
 pub(super) fn symlink(target: &OsStr, path: &Path, target_is_dir: bool) -> io::Result<()> {
+    let separators = target
+        .encode_wide()
+        .map(|unit| if unit == 0x2F { 0x5C } else { unit });
+    let target = OsString::from_wide(&separators.collect::<Vec<u16>>());
     if target_is_dir {
         std::os::windows::fs::symlink_dir(target, path)
     } else {

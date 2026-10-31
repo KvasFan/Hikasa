@@ -430,7 +430,13 @@ fn a3_6_rule6_links_copy_as_links() {
         let label = fx.label();
         fx.file("tree/f", b"f");
         fx.link("tree/lfile", "f", false);
-        fx.link("tree/ldir", "../outside", true);
+        // A Windows link target takes no `/`: the link would exist and resolve to nothing.
+        let up = if cfg!(windows) && !fx.is_mem() {
+            r"..\outside"
+        } else {
+            "../outside"
+        };
+        fx.link("tree/ldir", up, true);
         fx.link("tree/broken", "missing", false);
         let report = copy(&fx, &[("tree", "copy")], &copy_opts(OverwritePolicy::Fail));
         assert!(report.ok(), "{label}: {:?}", report.results);
@@ -445,11 +451,7 @@ fn a3_6_rule6_links_copy_as_links() {
             ],
             "{label}"
         );
-        for (link, target) in [
-            ("broken", "missing"),
-            ("ldir", "../outside"),
-            ("lfile", "f"),
-        ] {
+        for (link, target) in [("broken", "missing"), ("ldir", up), ("lfile", "f")] {
             let entry = fx.lstat(&format!("copy/{link}")).unwrap();
             assert_eq!(entry.kind, EntryKind::Symlink, "{label} {link}");
             assert_eq!(entry.link_target.as_deref(), Some(target), "{label} {link}");
