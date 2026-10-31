@@ -45,7 +45,7 @@ fn text_block() -> Vec<u8> {
             if at % 64 == 63 {
                 b'\n'
             } else {
-                b'a' + (state % 7) as u8
+                b'a' + (state % 4) as u8
             }
         })
         .collect()

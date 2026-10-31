@@ -8,7 +8,7 @@
 //!
 //! At the end of W5a archives are read-only: every primitive on a member answers `OperationUnsupported` and no write
 //! bit is reported (D-135). W5b adds batches and rebuilds behind those bits: `open_write` and the primitives
-//! go through [`ArchiveVfs::on_base`], and `Tree::records` lists what a rebuild keeps.
+//! go through `ArchiveVfs::on_base`, and `Tree::records` lists what a rebuild keeps.
 //!
 //! | Format | Index | Content of a member |
 //! |---|---|---|

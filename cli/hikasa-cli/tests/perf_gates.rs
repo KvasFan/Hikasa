@@ -515,7 +515,7 @@ fn g6_compare_a_tree_against_its_zip_by_crc() {
         "crc",
         "--json",
     ]);
-    let (median, min, max, peak) = measure(dir, &args, 1);
+    let (median, min, max, peak) = measure(dir, &args, 2);
     println!(
         "G6 compare 10,000 files against their zip by CRC (warm): median {:.3} s (min {:.3}, max {:.3}); \
          peak RSS {}",

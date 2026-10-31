@@ -580,6 +580,43 @@ fn a_broken_archives_toml_is_one_warning() {
     assert_eq!(stdout(&cat), "alpha\n");
 }
 
+/// §1.5.13: the rule keys of `session new|edit`.
+#[test]
+fn session_rule_keys() {
+    let s = sandbox();
+    let new = run(&s, &["session", "new", "arc", "--type", "folder-compare"]);
+    assert_eq!(code(&new), 0, "{}", stderr(&new));
+    let edit = run(
+        &s,
+        &[
+            "session",
+            "edit",
+            "arc",
+            "--set",
+            "rules.handling.archives=always",
+            "--set",
+            "rules.open_archives=[\"a.zip\"]",
+        ],
+    );
+    assert_eq!(code(&edit), 0, "{}", stderr(&edit));
+    let show = run(&s, &["session", "show", "arc", "--json"]);
+    let doc = json(&show);
+    let text = doc.to_string();
+    assert!(text.contains("\"archives\":\"always\""), "{text}");
+    assert!(text.contains("\"open_archives\":[\"a.zip\"]"), "{text}");
+    let bad = run(
+        &s,
+        &[
+            "session",
+            "edit",
+            "arc",
+            "--set",
+            "rules.handling.archives=maybe",
+        ],
+    );
+    assert_eq!(code(&bad), 100, "{}", stdout(&bad));
+}
+
 #[test]
 fn help_has_a_topic() {
     let s = Sandbox::new();
