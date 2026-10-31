@@ -156,7 +156,11 @@ trait Vfs {
     fn prepare(&self, spec:&Spec, ctl:&Ctl) -> Result<()>;          // M2 W5: the index of every archive around spec
     fn archive_format(&self, name:&str) -> Option<ArchiveFormat>;   // M2 W5: per the masks
     fn take_warnings(&self) -> Vec<Warning>;                        // M2 W5: raised since the last call
-    fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn Write>>;
+    fn begin(&self, at:&Spec) -> Result<()>;                        // M2 W5b: a batch on an archive, its whole chain
+    fn finish(&self, at:&Spec, how:Finish) -> Result<()>;           // M2 W5b: Commit rebuilds once, Abort drops the overlay
+    fn finish_with(&self, at:&Spec, how:Finish, ctl:&Ctl) -> Result<()>; // M2 W5b: finish with cancellation and progress
+    fn create_archive(&self, spec:&Spec) -> Result<()>;             // M2 W5b: an empty archive, by its mask
+    fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn AtomicWrite>>;  // Write + Seek (M2 W5b) + commit
     fn capabilities(&self) -> Caps; // timestamps writable? attrs? unix mode? recycle bin? locks? crc provided?
     // M2 W3 (D-92): single-item mutating primitives, each behind a capability, default "unsupported";
     // they never follow the final link (D-94)

@@ -410,8 +410,9 @@ Backups). Confirmation dialogs can be disabled per operation.
 - **FC-076** (P0): **Touch…**: copy timestamps from other side, or set to a chosen
   date/time (default: current time or last touch); folders where the OS allows.
 - **FC-077** (P0): **New Folder…** (Ins) on one or both sides; a name ending in an
-  archive extension creates an archive. *M2 W5:* the read part of W5a keeps `mkdir` literal; empty archives come with
-  W5b (D-150).
+  archive extension creates an archive. *M2 W5b (D-150):* `create_dir` stays literal, because operations also use it for
+  a real folder named `x.zip`; `plan_mkdir` turns a final name with a writable mask into `create_archive`. Single-stream
+  masks stay folders, and a missing ancestor is a folder.
 - **FC-078** (P0): **Synchronize ▸ Update Right / Update Left / Update Both / Mirror
   to Right / Mirror to Left** on the current selection (or all when nothing is selected)
   with a preview dialog listing planned copies/deletes; "Just selection"; recycle bin

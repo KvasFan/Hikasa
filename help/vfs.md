@@ -21,7 +21,7 @@ the file.
 | `hikasa vfs cp <src>… <dst>` | copies files; `-r` copies folders with their contents |
 | `hikasa vfs mv <src>… <dst>` | moves or renames files and folders |
 | `hikasa vfs rm <spec>…` | removes files, links and empty folders; `-r` whole folders; `--trash` to the recycle bin |
-| `hikasa vfs mkdir <spec>…` | creates folders; `-p` also their parents (an existing folder is fine) |
+| `hikasa vfs mkdir <spec>…` | creates folders; `-p` also their parents (an existing folder is fine); a name with an [archive](topic:archives) mask that can be written makes an empty archive |
 | `hikasa vfs touch <spec>…` | sets the modification time: now, `--time <RFC 3339>` or `--reference <spec>`; `--created <RFC 3339>` also the creation time (Windows, macOS); `--create` creates missing files |
 
 - **Targets.** When `<dst>` is an existing folder, each source goes into it under its own name; otherwise one

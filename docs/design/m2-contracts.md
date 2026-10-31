@@ -2494,7 +2494,7 @@ VFS browse dialog (W9), editing a member in a text view (W10/W11).
 **Files.** `core/hikasa-core/src/` (`spec/mod.rs`, `warning.rs`); new `core/hikasa-vfs/src/archive/` with `mod.rs`
 (`ArchiveVfs`, `ArchiveConfig`), `format.rs` (`ArchiveFormat`, `ArchiveMasks`), `resolve.rs`, `name.rs` (member names),
 `index.rs` (the member tree), `zip_read.rs`, `tar_walk.rs`, `codec.rs` (decoders, encoders, guards), `cache.rs`,
-`time.rs`, `shared.rs` (`SharedReader`, `RangeReader`) and, W5b, `overlay.rs`, `rebuild.rs`; `core/hikasa-vfs/src/`
+`time.rs`, `shared.rs` (`SharedReader`, `RangeReader`) and, W5b, `batch.rs`, `overlay.rs`, `rebuild.rs`, `zip_write.rs`, `ops/roots.rs`; `core/hikasa-vfs/src/`
 (`vfs.rs`, `error.rs`, `router.rs`, `source.rs`, `memory.rs`, `local/mod.rs`, `local/windows.rs`, `ops/mod.rs`,
 `ops/plan.rs`, `ops/touch.rs`, `lib.rs`); `core/hikasa-vfs/tests/` (`archive_resolve.rs`, `archive_read.rs`,
 `archive_safety.rs`, `archive_fuzz.rs`, `archive_time.rs`, `archive_cache.rs`, `archive_write.rs`,
@@ -3391,6 +3391,97 @@ part. `docs/reference/commands.md` is unchanged.
 *Seams for W5b.* `ArchiveVfs::on_base` is the one place a primitive or `open_write` on a member is refused; capabilities
 come from `ArchiveFormat::capabilities`; `Tree::records` and `DataRef` give each record's range or zip index; `check_item`
 already refuses roots; `plan_copy` keeps links between archives; `Cache::writer` can stage files.
+
+**W5b.** Where the implementation interpreted or extended §1.5.10, and why. Item 1 is a deviation from D-149's table; the
+maintainer may want to look at it first.
+
+1. **Kept zip members are copied by `zip_write.rs`, not by `raw_copy_file`.** The crate's call builds new headers from what it
+   parsed (`ZipFile::options()`), and that is not a raw copy: it drops the encryption flag of a ZipCrypto member, so the
+   member reads as garbage afterwards; it keeps only the extra fields the crate knows; it decodes a member's comment; and
+   `insert_file_data` refuses two records of one raw name, which refused members may have. The crate's reader shows such
+   twins once as well, so a rebuild walks the central directory itself (`read_central`) and matches headers to indexes by
+   offset. A record is its local header, data and everything up to the next record (a data descriptor in any of its forms),
+   and its central header with only the offset changed; a zip64 field takes the offset past 4 GiB. A header that is not
+   there is `ArchiveCorrupt`, nothing written.
+2. **A renamed or touched zip member is edited in its headers**, in archive order, and never decoded, instead of
+   `raw_copy_file_rename` and "decoded and written again". Name, flags, DOS time, external attributes, a 0x5455 field and
+   the time in an NTFS field change; a 0x7075 field, which repeats the old name, goes. So an encrypted member or a method
+   this build cannot decode can be moved and touched too. An encrypted member keeps its DOS time, which may be its
+   password check; its 0x5455 field gives the new time.
+3. **New zip members** go through `ZipWriter` as §1.5.10 says, but into a zip of their own in the cache, whose records
+   `ZipOut` then carries over, because `ZipWriter` cannot take records it did not write. The cost is new members written
+   twice, and that second copy may pass `cache_max` by their size; the output needs no `Seek`. `AtomicWrite: Seek` is there all the same and `create_archive` uses it. `add_extra_data`
+   is deprecated in `zip` 9.2: `add_extra_field`. `unix_permissions` keeps `rwx`, and the crate's reader clears the rest, so
+   a zip member's mode stays within `0o777`; in a tar the whole mode stays.
+4. **`Vfs::finish_with(at, how, ctl)`** is new beside `finish`: §1.5.10 wants cancellation and `Phase::Writing` from a rebuild, and
+   `finish` has no `Ctl`. `ops::execute` calls it; its default calls `finish`.
+5. **A batch belongs to the outermost file.** `begin` on any archive of a chain opens it, a level (an overlay) is made on
+   its first change, and `ops` opens one root per outermost file, so `a.zip` and `a.zip/b.tar` in one operation are one
+   batch and one rebuild, not two that could disagree. `finish` on any archive of the chain ends it all.
+6. **A batch has an owner, the thread that opened it.** §1.5.10 says a plain `open_write` cannot be lost, but a write that
+   lands in another operation's overlay is lost when that operation aborts. So a change from another thread while a
+   batch is open is `Unavailable`, as a second `begin` is. `ops::execute` runs on one thread; W6 must keep it so, or pass
+   the batch along.
+7. **"Changed since the plan was made" is checked three times**: `begin` compares the stamp with the last one this back-end
+   saw, which is the plan's; a commit checks the batch's stamp before it writes and again just before the rename. The
+   first is an early answer: a long-lived back-end whose other reads moved that stamp on no longer sees a change before
+   `begin`, and the per-item re-check of D-103 covers the items. What protects the data is the second: the index a rebuild
+   copies from was built after `begin`, so a stale index cannot be written.
+8. **Shadowed duplicates go with a warning.** A5.16 and rule 3 say they go, and the brief of this part said "never drop an
+   entry silently". `archive_duplicate_member` now also counts them at a rebuild. A record of a refused name is kept
+   however many have that name.
+9. **Hard links** were not in §1.5.10: a kept `1` record names another record by path, so dropping, moving or replacing that
+   member would leave a link rule 6 refuses, and the data with it. A link stays a link while its target stays, under its
+   name, and is otherwise staged and written as a regular member, once, in archive order, so chains resolve. A moved or
+   touched link takes the same way: its data range is its target's, which the forward pass has already left.
+10. **Tar gaps.** Global headers and volume labels are no longer part of the next member's blocks (`Pending::first`), and the
+    pass copies everything no dropped record owns, so removing the first member of a `git archive` tarball keeps its
+    `pax_global_header`. Bytes other than zeros after the end of a tar or a zip are kept too (`Tree::tail`, `records_end`).
+11. **A rewritten tar member clones its old header** (owner, names, type, device numbers, link name), and its other PAX
+    records and long link stay; `path` and, when the time changed, `mtime` go. It is written at its place in the pass,
+    with the data as it is. **A sparse member cannot be rewritten:** its map lies in or after its header, so a rename or a
+    touch is `OperationUnsupported`, as is a rename of a folder that holds one, or one that holds a member whose name
+    does not decode (a new raw name would have to be made up). Both fail at the primitive, before anything changes.
+12. **A prefix the offsets count in.** `ZipArchive::offset` is 0 when a self-extractor's writer adjusted the offsets, and the
+    stub would go silently, so anything before the first record is refused the same way.
+13. **Limits on output** (rule 11–13 of what is written), checked before the commit: the entries and text of the overlay
+    plus the refused members' (rows stop at 1,000, past which a hostile archive passed the limit anyway), `stream_max` of
+    a new tar stream, `ratio_max` of the result, `depth_max` and 4,096 bytes per name at the primitive, `cache_max` for
+    staged content. A zip's records are not decoded output, so a sound zip of any size can be rewritten: its limit
+    is its own length plus what is new plus `stream_max`, which only overlapping records can reach.
+14. **A nested archive that changes, and then moves or is read whole, in one batch** is rebuilt into its member first
+    (`seal_below`); one that is removed or replaced drops what changed inside. An index read from an overlay is dropped
+    when the member changes and when the batch ends.
+15. **`begin` on a single stream is `OperationUnsupported`** and fails the item, as §1.5.10 wants of the primitives. A `keep_dir`
+    item opens a root too, so `mkdir -p x.gz/` fails rather than saying nothing happened, and so a failed rebuild turns it
+    into a failed item.
+16. **Implicit folders.** One that loses its last member is written as a record with the clock's time, so a listing does
+    not change under the user (P-ARCH-2 compares with `MemoryVfs`). `set_times` and `set_attrs` make one explicit.
+17. **A failed second phase.** A source that changed while the rebuild ran stays, and its item fails "changed during the move;
+    the copy was kept" (length, time, identity against what was copied). An empty folder of a move into an archive waits
+    for the rebuild too. When a rebuild is lost, a `move` item keeps the error and a waiting `remove_dir` stays `not_run`.
+18. **Links.** A target that is not text, is empty or is past 4,096 bytes is `InvalidName` at `create_symlink`: no reader would
+    give it back. A link whose target was too long to keep can therefore be moved inside an archive but fails an item
+    when copied to another. `Attrs::Dos` of a member with a Unix mode maps `R` to the write bits, so a copy from Windows
+    does not fail on a new member, which starts with a mode.
+19. **Times of the archive file.** §1.5.10 keeps permissions (the rule of `LocalWriter`) and no times, and §1.5.17 needs a new
+    stamp, so the file gets a new modification time. Owner, ACLs and extended attributes of the file are not carried over:
+    `LocalWriter` does not, for any file.
+20. **`MemoryVfs::clear_faults`** also clears the stream faults, as its text always said.
+21. **Windows.** Reasoned, not run: a rebuild closes every handle it opened on the container before `commit` (`Rebuild::run`
+    owns them; §1.5.19 W5a note 1 keeps none between calls), and `LocalWriter` closes its own before the rename. A member
+    reader the caller still holds on a plain tar is a handle on the file: Rust opens with `FILE_SHARE_DELETE` and its
+    `fs::rename` asks for POSIX semantics, so on NTFS the rename works and the reader keeps the old bytes; on FAT and old
+    systems it fails `permission_denied`, the temp file goes with the writer, and the archive stays. The Windows-target
+    clippy covers the code; the rename itself needs the maintainer's CI run.
+
+22. **Green is claimed per part**, as W5a's note 21: W5b's commits are grouped by subject, and an intermediate one is not
+    claimed to build or pass on its own. Rebuilds have no gate (§1.5.16), so none was measured.
+
+*Hooks for W6.* `ops::execute` already gives W6's `OpPlan` batches, the two-phase move and item results. The backup of
+§1.5.17 goes in `ops/roots.rs::finish`, before `end(root, Commit)`. A plan that waits on a confirmation should re-plan or
+carry its stamp: note 7. Sources of `OpPlan` items on one thread: note 6. `Fate`, `Overlay` and `Origin` are crate-private, and
+`Vfs::create_archive`, `begin`, `finish_with` are the whole surface.
 
 ### 1.6–1.14 W6–W14
 

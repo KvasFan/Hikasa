@@ -35,15 +35,19 @@ scripts, command line, Copy to Folder targets, reports).
   after the file without its last extension). A format is chosen by mask, never by content. Listing and CRC tests
   never write to disk; a zip member up to 1 MiB decodes to memory, a larger one to a cache file; a plain tar member is
   a range of the file; the first read of a compressed tar spools its member and a second distinct read writes the
-  whole stream to the cache once. Until W5b every primitive on a member is `unsupported` and no write bit is reported.
+  whole stream to the cache once. *M2 W5b (write; §1.5.10):* zip and the tar family are written through a batch and a
+  rebuild, below; a primitive on a single stream, or below one, is `unsupported`.
 
-**Archives in user terms (M2 W5a).**
+**Archives in user terms (M2 W5).**
 
 | Format | Reported besides read, list, seek, modification time, case-sensitive names |
 |---|---|
-| zip | stored CRC, DOS attributes, Unix mode, symbolic links |
-| tar family | Unix mode and owner, symbolic links |
+| zip | stored CRC, DOS attributes, Unix mode, symbolic links; write, mkdir, remove, rename, set times, set attributes (`Mode`, and `Dos` with the `R` bit only), create links |
+| tar family | Unix mode and owner, symbolic links; the same writes (`Mode` only) |
 | single streams | nothing more |
+
+A member of a nested archive gets the bits of the innermost format, and the write bits only when every archive around
+it can be written.
 
 - *Names.* Members are checked on their raw bytes: NUL, absolute names, drive letters, `..` and names over 4,096 bytes
   are refused, left out of the tree and shown as `<refused-N>` rows (at most 1,000), kept by a rebuild. A zip reads
@@ -74,6 +78,32 @@ scripts, command line, Copy to Folder targets, reports).
   limits come from the profile.
 - **VFS-004** (P1): Remote files opened in file views are downloaded to a temp cache
   and uploaded on save; the cache is cleared on exit.
+
+**Rebuilds (M2 W5b, D-148, D-149).** A member write never touches the archive. Primitives change an overlay of the
+member tree, which every reader of the back-end sees; a batch holds them for one operation and is finished once, so an
+operation costs **one rebuild per archive**, and a rebuild costs one copy of the archive, however small the change. `ops::execute`
+is the one place an operation ends: it opens a batch on each archive it touches, finishes target archives before
+those that only lose sources, and removes the sources of a move into an archive only after the target's rebuild. A change
+outside a batch rebuilds at once, so a plain `open_write` cannot be lost. A batch belongs to the thread that opened it:
+another thread's change meets `another operation is changing this archive`. A rebuild writes through the base's atomic
+writer (a temporary sibling, the file a link names being the target, then a rename), so a read error, a full disk, a
+cancel or a failed commit leaves the archive as it was; the done items of that archive then become failed (`not_run` when
+cancelled). The archive must still have the length and time its index read, at the start of the rebuild and again just before
+the rename, else the items fail "changed since the plan was made". Its permissions stay, as for any local write; its
+modification time is new, which is what tells other sessions it changed. A nested archive is rebuilt into the cache
+and enters the archive around it, so a chain commits only at the outermost file.
+
+What a rebuild keeps is copied as bytes, never decoded: zip records (local header, data, descriptor; the central
+header with its offset changed), so an encrypted member, a method this build does not know, unknown extra fields and raw
+names survive; tar blocks by one forward pass, with whatever lies between members (global headers, volume labels) and
+anything after the end of the archive. Refused members stay. Shadowed duplicates go, with a warning. A renamed or
+touched zip member has those fields edited in its headers, so its data is not decoded either; a renamed or touched tar
+member gets a copy of its header, keeping owner, type, device numbers, link name and its other PAX records. A hard link
+stays one while the member it names stays; otherwise it becomes a regular member with its content. Sparse members
+cannot be moved or touched, and a folder holding a name that does not decode cannot be moved: both are refused.
+A zip with a prefix and a damaged archive are refused, unchanged. A signed `.jar` or `.apk` loses its signature's
+validity. Limits bind what is written: a stream, ratio, entry, text or depth past them is refused, since nothing could
+read it back.
 
 **Local writes (M1).** Files are written atomically: the content goes to a temporary file
 in the target's folder, which is synced and renamed onto the target, so a failure leaves

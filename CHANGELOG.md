@@ -3,7 +3,11 @@
 ## Unreleased
 
 ### Added
-- **Archives, read-only.** zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams work
+- **Writes inside archives.** `hikasa vfs cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members of zip and the
+  tar family, nested ones too: `vfs cp -p notes.txt a.zip/docs/`, `vfs mv a.zip/old a.zip/new`. An archive is rewritten
+  once per operation, to a temporary file next to it, which replaces it in one step. `vfs mkdir new.zip` makes an empty
+  archive for each writable mask. Single gz, bz2, xz and zst streams stay read-only.
+- **Archives.** zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams work
   wherever a file does: `hikasa vfs ls a.zip`, `vfs cat a.zip/inner/x.txt`, `quick a.zip/x b/x`, `text compare`,
   `folder compare a.zip b/`, nested as `a.zip/b.tar.gz/c.txt`, and copies out with `vfs cp -r a.zip/ out/`. Masks and limits
   are in `archives.toml` (`hikasa help archives`).
@@ -13,6 +17,12 @@
   Compare.
 
 ### Safety
+- **A rewrite cannot lose an archive.** A read error, a full disk, Cancel or a failed rename leave it byte for byte as it
+  was, and a move into an archive removes its sources only after the rewrite. An archive that changed since the
+  operation was planned is left alone (`changed since the plan was made`).
+- **A rewrite keeps what it did not touch** as bytes, in order: encrypted members and methods it cannot decode, refused and
+  link members, devices, sparse files, unknown extra fields, comments and raw names. Members hidden by a later one of the
+  same name go, with a warning.
 - Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,
   damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits (`entries_max`,
   `paths_max_mib`, `depth_max`, `stream_max_gib`, `cache_max_gib`, `ratio_max`, `nesting_max`).

@@ -1,8 +1,8 @@
 # Archives
 
 Hikasa reads inside archives wherever it reads files: `hikasa vfs`, `quick`, `text compare`, `folder compare` and
-the window take a path into an archive as a spec. In this version archives are read-only: copying **out of** one
-works, changing a member does not (`unsupported`).
+the window take a path into an archive as a spec, and `hikasa vfs` writes there too: zip and the tar family can be
+[changed](#changes-rebuilds); a single gz, bz2, xz or zst stream stays read-only.
 
 ## Formats
 
@@ -25,6 +25,54 @@ the file without its last extension (`x.txt.gz` holds `x.txt`; a name with no ex
 - A real item always wins: a real folder named `x.zip` stays a folder.
 - Member names are case-sensitive on every platform; the masks are not.
 - `..` never enters an archive.
+
+## Changes (rebuilds)
+
+`vfs cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members as on files:
+
+```text
+hikasa vfs cp -p notes.txt a.zip/docs/      # copies into the archive; -p makes the missing folder
+hikasa vfs cp -r photos/ b.tar.gz/          # a tree, into a compressed tar
+hikasa vfs mv a.zip/old.txt a.zip/new.txt   # a rename inside the archive
+hikasa vfs rm --yes a.zip/old/              # members, for good: a member has no recycle bin
+hikasa vfs mkdir new.zip                    # an empty archive
+```
+
+**An archive is rewritten, once per operation.** The items only change what Hikasa sees; at the end the whole archive is
+written to a temporary file next to it, which then replaces it in one step. So a change costs one copy of the archive,
+however small the change, and it needs that much free space beside it. Anything that goes wrong on the way (a full
+disk, a read error, Cancel) leaves the archive as it was, and the items of that archive report `failed` (`not_run` when
+cancelled). A move into an archive removes its sources only after the rewrite. Nested archives are rewritten from
+the inside out, as one step.
+
+**What a rewrite keeps.** Members the operation did not touch stay the same bytes, in their order, with their metadata:
+also members it could not read itself, such as encrypted ones or methods it does not know, refused and link members,
+devices and sparse files. A zip keeps its comment and its members' comments and extra fields. The permissions of the
+archive file stay; it gets a new modification time. A renamed or touched member keeps its data.
+
+**What a rewrite does not keep.**
+
+- Members hidden by a later one of the same name go, with an `archive_duplicate_member` warning.
+- A signed `.jar` or `.apk` is no longer validly signed.
+- A gzip header's stored name and time go: rewrites are repeatable, byte for byte.
+- Its compression becomes the format's usual level (deflate 6, gzip 6, bzip2 9, xz 6, zstd 3) for the tar family;
+  kept zip members are not recompressed.
+
+**What is refused**, with the archive unchanged:
+
+- the archive changed since the operation was planned (`changed since the plan was made`);
+- a damaged archive (`invalid_data`), since what lies past the damage would be lost;
+- a zip with a prefix, such as a self-extractor (`unsupported`);
+- moving or touching a sparse member, or moving a folder that holds a member whose name does not decode
+  (`unsupported`): neither could be written back as it was;
+- a result that would pass the limits below, which nothing could read back (`too_large`);
+- `--trash` on a member (`unsupported`).
+
+Another operation on the same archive at the same moment fails with `another operation is changing this archive`. A
+hard link inside a tar stays one while the member it names stays; when that member goes or moves, the link becomes a
+regular member with the content it had. New members are stored as Unix mode `0644`, folders `0755`, with the current
+time; a copy then applies the source's time and mode as for any target. `vfs mkdir` makes an empty archive from any
+writable mask, `x.gz` stays a plain folder, and in `mkdir -p new.zip/sub` only the last name counts.
 
 ## Folder comparisons
 
@@ -76,13 +124,14 @@ Archives are treated as hostile input.
 | `archives.limits.paths_max_mib` | 256 | 1…65536 | the text of one index: paths, link targets, the paths of folders no member names |
 | `archives.limits.depth_max` | 256 | 16…2048 | folders above a member |
 
-A limit reached is `too_large` and names the limit. Listing a large zip or plain tar needs no declared-size limit:
+A limit reached is `too_large` and names the limit. They bind what is written too: a new member that does not fit the
+cache, or an archive that would pass a limit, is refused. Listing a large zip or plain tar needs no declared-size limit:
 limits bind what is decoded, and a compressed tar is decoded to be listed. A zip whose entries declare more than
 `ratio_max` times its size blocks reads until `ratio_max` is 0; it can still be listed.
 
 ## The cache
 
 Members over 1 MiB are decoded to files under the cache folder, in `archives/s<n>/`, with numeric names only, so no
-member name reaches a path. The oldest files that no reader holds make room. The folder goes at exit; one left by a
+member name reaches a path. What an operation writes into an archive waits there until the rewrite. The oldest files that no reader holds make room. The folder goes at exit; one left by a
 crash goes at the next session that extracts. Listing creates nothing. Several running Hikasa keep apart in one
 cache folder, which must belong to the user.
