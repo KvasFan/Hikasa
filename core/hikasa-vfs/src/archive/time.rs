@@ -7,6 +7,17 @@ use jiff::tz::TimeZone;
 
 /// 100 ns intervals between 1601-01-01 and the Unix epoch.
 const NTFS_EPOCH: i128 = 116_444_736_000_000_000;
+/// 0000-01-01T00:00:00Z and 9999-12-31T23:59:59Z, the years RFC 3339 can write.
+const WRITABLE: std::ops::RangeInclusive<i64> = -62_167_219_200..=253_402_300_799;
+
+/// `secs` and `nanos` as a member's time. An archive can state any instant, and one RFC 3339 cannot write would reach
+/// listings and JSON in the `@<secs>` form of `FileTime`, so it is no time (§1.5.8).
+fn member_time(secs: i64, nanos: u32) -> Option<FileTime> {
+    WRITABLE
+        .contains(&secs)
+        .then(|| FileTime::from_unix(secs, nanos))
+        .flatten()
+}
 
 /// DOS date and time: **local wall time** read in `zone` (`compatible`: a time in a gap moves forward with the old
 /// offset, a time in a fold takes the earlier instant). `None` for invalid fields: month 0 or over 12, day 0 or
@@ -42,7 +53,7 @@ pub fn ntfs_time(value: u64) -> Option<FileTime> {
     let intervals = i128::from(value) - NTFS_EPOCH;
     let secs = i64::try_from(intervals.div_euclid(10_000_000)).ok()?;
     let nanos = u32::try_from(intervals.rem_euclid(10_000_000) * 100).ok()?;
-    FileTime::from_unix(secs, nanos)
+    member_time(secs, nanos)
 }
 
 /// A PAX `mtime` value: decimal seconds with an optional fraction, possibly negative. `None` when it does not parse
@@ -66,18 +77,18 @@ pub fn pax_time(text: &str) -> Option<FileTime> {
         nanos = nanos * 10 + u32::from(digit);
     }
     if !negative {
-        return FileTime::from_unix(secs, nanos);
+        return member_time(secs, nanos);
     }
     if nanos == 0 {
-        FileTime::from_unix(-secs, 0)
+        member_time(-secs, 0)
     } else {
-        FileTime::from_unix(-secs - 1, 1_000_000_000 - nanos)
+        member_time(-secs - 1, 1_000_000_000 - nanos)
     }
 }
 
 /// A tar header's seconds (UTC); `None` out of range.
 pub(crate) fn tar_time(seconds: u64) -> Option<FileTime> {
-    FileTime::from_unix(i64::try_from(seconds).ok()?, 0)
+    member_time(i64::try_from(seconds).ok()?, 0)
 }
 
 #[cfg(test)]
@@ -95,6 +106,19 @@ mod tests {
 
     fn text(t: Option<FileTime>) -> String {
         t.map_or("none".to_owned(), FileTime::to_rfc3339)
+    }
+
+    /// A time RFC 3339 cannot write is no time: the `@` form of `FileTime` stays out of listings and JSON.
+    #[test]
+    fn times_past_the_years_of_rfc_3339_are_none() {
+        assert_eq!(ntfs_time(u64::MAX), None);
+        assert_eq!(pax_time("253402300800"), None, "the year 10000");
+        assert_eq!(text(pax_time("253402300799")), "9999-12-31T23:59:59Z");
+        assert_eq!(pax_time("9223372036854775807"), None);
+        assert_eq!(pax_time("-62167219201"), None, "before the year 0");
+        assert_eq!(text(pax_time("-62167219200")), "0000-01-01T00:00:00Z");
+        assert_eq!(tar_time(u64::MAX), None);
+        assert_eq!(tar_time(253_402_300_800), None);
     }
 
     /// Rows 1–4 and 7 of §1.5.8.

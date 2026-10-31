@@ -78,6 +78,8 @@ pub enum WarningCode {
     ArchiveSymlinkSkipped,
     /// A scan stopped opening archives: later ones stay files (M2 W5, D-151).
     ArchiveScanLimit,
+    /// NUL bytes followed a compressed stream and were ignored, as `gzip` does (M2 W5, §1.5.7 rule 9).
+    ArchiveTrailingZeros,
 }
 
 impl WarningCode {
@@ -111,6 +113,7 @@ impl WarningCode {
             WarningCode::ArchiveEncrypted => "archive_encrypted",
             WarningCode::ArchiveSymlinkSkipped => "archive_symlink_skipped",
             WarningCode::ArchiveScanLimit => "archive_scan_limit",
+            WarningCode::ArchiveTrailingZeros => "archive_trailing_zeros",
         }
     }
 }
@@ -156,6 +159,7 @@ mod tests {
             WarningCode::ArchiveEncrypted,
             WarningCode::ArchiveSymlinkSkipped,
             WarningCode::ArchiveScanLimit,
+            WarningCode::ArchiveTrailingZeros,
         ];
         for code in all {
             assert_eq!(

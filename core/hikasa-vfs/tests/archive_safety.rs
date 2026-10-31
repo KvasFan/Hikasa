@@ -663,6 +663,41 @@ fn ratio_of_a_tar_stream_and_of_a_whole_zip() {
     assert_eq!(memory.vfs.counters().member_decodes, 0);
 }
 
+/// Rule 12 binds overlap, not use: a sound zip reads for as long as it is read.
+#[test]
+fn repeated_reads_of_a_sound_zip_stay_under_rule_12() {
+    let limits = ArchiveLimits {
+        stream_max: 16 << 20,
+        ..ArchiveLimits::default()
+    };
+    let disk = on_disk(limits);
+    let entries: Vec<RawEntry> = (0..4)
+        .map(|i| RawEntry::new(format!("m{i}").as_bytes(), &vec![i as u8; 900 << 10]))
+        .collect();
+    let file = disk.put("a.zip", &raw_zip(&entries));
+    let member = Spec::archive_member(file, "m1");
+    for round in 0..100 {
+        let mut out = Vec::new();
+        let mut reader = disk.vfs.open_read(&member).unwrap();
+        reader.read_to_end(&mut out).unwrap();
+        assert_eq!(out.len(), 900 << 10, "round {round}");
+    }
+    assert_eq!(disk.vfs.counters().member_decodes, 100, "each one decoded");
+}
+
+/// `stream_max` binds what is decoded: a plain tar decodes nothing, so a backup of any size can be listed.
+#[test]
+fn a_plain_tar_past_stream_max_is_listed() {
+    let limits = ArchiveLimits {
+        stream_max: 1 << 20,
+        ..ArchiveLimits::default()
+    };
+    let tar = tar_bytes(&vec![("big".to_owned(), vec![7u8; 4 << 20])]);
+    let memory = limited(limits);
+    let root = memory.root("a.tar", tar);
+    assert_eq!(names(&listing(&*memory.vfs, &root)), ["big"]);
+}
+
 /// Rule 12: overlapping zip entries are stopped by the total.
 #[test]
 fn overlapping_zip_entries_stop_at_the_total() {
@@ -703,11 +738,7 @@ fn stream_max_during_an_index_pass() {
         ..ArchiveLimits::default()
     };
     let tar = tar_bytes(&vec![("zeros".to_owned(), vec![0u8; 8 << 20])]);
-    for format in [
-        ArchiveFormat::Tar,
-        ArchiveFormat::TarGz,
-        ArchiveFormat::TarZst,
-    ] {
+    for format in [ArchiveFormat::TarGz, ArchiveFormat::TarZst] {
         let memory = limited(limits);
         let root = memory.root(common::archives::name_of(format), compress(format, &tar));
         expect_limit(
@@ -796,7 +827,8 @@ fn nesting_max_plus_one() {
         .unwrap();
 }
 
-/// Rule 15: a stream that asks for more memory than the cap is `ArchiveCorrupt`, before it allocates.
+/// Rule 15: a stream that asks for more memory than the cap is `ArchiveCorrupt`, before it allocates. The reason names
+/// the refusal: a frame that merely fails to parse would pass a test of `ArchiveCorrupt` alone.
 #[test]
 fn xz_and_zstd_frames_asking_for_too_much_memory() {
     // A zstd frame header: magic, a descriptor with no content size, a window of 2^31.
@@ -811,15 +843,259 @@ fn xz_and_zstd_frames_asking_for_too_much_memory() {
     block.extend_from_slice(&crc.to_le_bytes());
     xz.extend_from_slice(&block);
     xz.extend_from_slice(&[0u8; 64]);
-    for (name, bytes) in [("big.bin.zst", zst), ("big.bin.xz", xz)] {
+    for (name, bytes, reason) in [
+        (
+            "big.bin.zst",
+            zst,
+            "Frame requires too much memory for decoding",
+        ),
+        ("big.bin.xz", xz, "needed memory too big for mem_limit_kb"),
+    ] {
         let memory = on_memory(ArchiveLimits::default());
         let root = memory.root(name, bytes);
         let result = memory.vfs.list(&root, &ListOptions::default(), &never());
         assert!(
-            matches!(result, Err(VfsError::ArchiveCorrupt { .. })),
+            matches!(&result, Err(VfsError::ArchiveCorrupt { reason: got, .. }) if got == reason),
             "{name}: {result:?}"
         );
     }
+}
+
+/// §1.5.7 rule 18: a member's mode never brings `setuid`, `setgid`, sticky or more than the umask gives to a disk,
+/// whatever the archive states. The folder shows what the platform gives a new item.
+#[cfg(unix)]
+#[test]
+fn a_copy_out_keeps_rwx_within_the_umask() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let setuid_tar = RawTar {
+        mode: 0o6777,
+        ..RawTar::file(b"su", b"#!/bin/sh\n")
+    };
+    let setuid_dir = RawTar {
+        mode: 0o2777,
+        ..RawTar::typed(b"d/", b'5')
+    };
+    let read_only = RawTar {
+        mode: 0o440,
+        ..RawTar::file(b"d/ro", b"x")
+    };
+    let zip = raw_zip(&[
+        RawEntry::new(b"su", b"x").unix(0o106_777),
+        RawEntry::new(b"ro", b"x").unix(0o100_440),
+    ]);
+    let tar = raw_tar(&[setuid_tar, setuid_dir, read_only]);
+    for (name, bytes) in [("a.zip", zip), ("a.tar", tar)] {
+        let disk = on_disk(ArchiveLimits::default());
+        let file = disk.put(name, &bytes);
+        let probe = disk.dir.join("probe");
+        fs::create_dir(&probe).unwrap();
+        let allowed = fs::metadata(&probe).unwrap().permissions().mode() & 0o777;
+        let out = disk.dir.join("out");
+        let router = VfsRouter::new(LocalVfs::default()).with_archives(disk.vfs.clone());
+        let pairs = [(
+            Spec::archive_member(file, ""),
+            common::archives::local(&out),
+        )];
+        let ctl = Ctl::detached();
+        let options = CopyOptions {
+            recursive: true,
+            ..CopyOptions::default()
+        };
+        let plan = plan_copy(&router, &router, &pairs, &options, &ctl).unwrap();
+        let report = execute(&router, &router, plan, &ctl);
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|i| i.status != ItemStatus::Failed),
+            "{name}"
+        );
+        let mode = |path: &str| fs::metadata(out.join(path)).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode("su"), 0o777 & allowed, "{name}");
+        let ro = if name == "a.tar" { "d/ro" } else { "ro" };
+        assert_eq!(mode(ro), 0o440 & allowed, "{name}: narrowed, not widened");
+        if name == "a.tar" {
+            assert_eq!(mode("d"), 0o777 & allowed, "{name}: a folder too");
+        }
+    }
+}
+
+// ---- rule 1, rule 6, damage: review findings ------------------------------------------------------------------
+
+/// A drive letter behind `./` is still a drive letter.
+#[test]
+fn a_drive_behind_a_dot_is_refused() {
+    let zip = raw_zip(&[
+        RawEntry::new(br".\C:\evil.txt", b"x"),
+        RawEntry::new(b"./D:/evil2.txt", b"y"),
+        RawEntry::new(b"ok.txt", b"ok"),
+    ]);
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("a.zip", zip);
+    let list = listing(&*memory.vfs, &root);
+    assert_eq!(names(&list), ["ok.txt"]);
+    assert_eq!(list.errors.len(), 2);
+    assert!(
+        list.errors[0].error.message.ends_with(": drive"),
+        "{:?}",
+        list.errors
+    );
+
+    let tar = raw_tar(&[RawTar::file(b"./C:/evil", b"x")]);
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("a.tar", tar);
+    assert!(listing(&*memory.vfs, &root).entries.is_empty());
+}
+
+/// A GNU long name with a NUL inside is refused: what follows the NUL must not vanish.
+#[test]
+fn a_gnu_long_name_with_a_nul_is_refused() {
+    let long = RawTar {
+        data: b"visible\0../../hidden\0\0".to_vec(),
+        ..RawTar::typed(b"././@LongLink", b'L')
+    };
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("a.tar", raw_tar(&[long, RawTar::file(b"x", b"body")]));
+    let list = listing(&*memory.vfs, &root);
+    assert!(list.entries.is_empty());
+    assert!(
+        list.errors[0].error.message.ends_with(": nul"),
+        "{:?}",
+        list.errors
+    );
+}
+
+/// Type `1` has no data of its own, whatever its size field says: the next member stays visible. PAX can state it.
+#[test]
+fn a_hard_link_with_a_size_hides_nothing() {
+    let link = RawTar {
+        size: Some(1024),
+        ..RawTar::link(b"h", b'1', b"a")
+    };
+    let mut tar = RawTar::file(b"a", b"data").bytes();
+    tar.extend(link.bytes());
+    tar.extend(RawTar::file(b"inside", b"hidden").bytes());
+    tar.extend_from_slice(&[0u8; 1024]);
+    let memory = limited(ArchiveLimits::default());
+    let file = memory.put("a.tar", tar);
+    let root = Spec::archive_member(file.clone(), "");
+    assert_eq!(names(&listing(&*memory.vfs, &root)), ["a", "h", "inside"]);
+    let mut out = Vec::new();
+    let mut reader = memory
+        .vfs
+        .open_read(&Spec::archive_member(file, "inside"))
+        .unwrap();
+    reader.read_to_end(&mut out).unwrap();
+    assert_eq!(out, b"hidden");
+
+    let mut tar = RawTar::file(b"a", b"data").bytes();
+    tar.extend(common::archives::pax(&[("size", b"512")]));
+    tar.extend(RawTar::link(b"h", b'1', b"a").bytes());
+    tar.extend_from_slice(&[0x41u8; 512]);
+    tar.extend(RawTar::file(b"after", b"z").bytes());
+    tar.extend_from_slice(&[0u8; 1024]);
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("b.tar", tar);
+    assert_eq!(names(&listing(&*memory.vfs, &root)), ["a", "after", "h"]);
+}
+
+/// A file named `.` has data and no place in a tree: it is reported, not lost in silence.
+#[test]
+fn a_file_named_dot_is_reported() {
+    let tar = raw_tar(&[
+        RawTar::typed(b"./", b'5'),
+        RawTar::file(b".", b"zzz"),
+        RawTar::file(b"ok", b"y"),
+    ]);
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("a.tar", tar);
+    let list = listing(&*memory.vfs, &root);
+    assert_eq!(names(&list), ["ok"]);
+    assert!(
+        list.errors[0].error.message.ends_with(": empty"),
+        "{:?}",
+        list.errors
+    );
+    let codes: Vec<_> = memory.vfs.take_warnings().iter().map(|w| w.code).collect();
+    assert_eq!(codes, [WarningCode::ArchiveMemberRefused]);
+}
+
+/// NULs after a gzip or bzip2 stream are padding, as `gzip` reads them; anything else is damage.
+#[test]
+fn padding_after_a_stream_is_accepted_with_a_warning() {
+    let tar = tar_bytes(&vec![("x".to_owned(), b"body".to_vec())]);
+    for format in [
+        ArchiveFormat::Gz,
+        ArchiveFormat::Bz2,
+        ArchiveFormat::TarGz,
+        ArchiveFormat::TarBz2,
+    ] {
+        let name = common::archives::name_of(format);
+        let mut padded = compress(format, &tar);
+        padded.extend_from_slice(&[0u8; 700]);
+        let memory = limited(ArchiveLimits::default());
+        let root = memory.root(name, padded.clone());
+        let list = listing(&*memory.vfs, &root);
+        assert!(list.errors.is_empty(), "{name}: {:?}", list.errors);
+        assert_eq!(list.entries.len(), 1, "{name}");
+        let codes: Vec<_> = memory.vfs.take_warnings().iter().map(|w| w.code).collect();
+        assert_eq!(codes, [WarningCode::ArchiveTrailingZeros], "{name}");
+
+        // Two streams with padding between them are both read.
+        let mut two = padded.clone();
+        two.extend_from_slice(&compress(format, &tar));
+        let memory = limited(ArchiveLimits::default());
+        let root = memory.root(name, two);
+        assert!(listing(&*memory.vfs, &root).errors.is_empty(), "{name}");
+
+        padded.extend_from_slice(b"garbage");
+        let memory = limited(ArchiveLimits::default());
+        let root = memory.root(name, padded);
+        let list = listing(&*memory.vfs, &root);
+        assert!(
+            list.errors.iter().any(|e| e.name.as_str() == "<damaged>"),
+            "{name}: {list:?}"
+        );
+    }
+    let clean = compress(ArchiveFormat::Gz, b"plain");
+    let memory = limited(ArchiveLimits::default());
+    let root = memory.root("a.txt.gz", clean);
+    listing(&*memory.vfs, &root);
+    assert!(memory.vfs.take_warnings().is_empty(), "no padding, no word");
+}
+
+/// Names that do not decode say so, and two of them with one text are not duplicates: a rebuild must keep both.
+#[test]
+fn lossy_names_say_so_and_twins_are_refused() {
+    let mut first = RawEntry::new(b"a\xff.txt", b"one");
+    first.flags = 1 << 11;
+    let mut second = RawEntry::new(b"a\xfe.txt", b"two");
+    second.flags = 1 << 11;
+    let memory = limited(ArchiveLimits::default());
+    let file = memory.put(
+        "a.zip",
+        raw_zip(&[first, second, RawEntry::new(b"b.txt", b"z")]),
+    );
+    let root = Spec::archive_member(file, "");
+    let list = listing(&*memory.vfs, &root);
+    assert_eq!(names(&list), ["a\u{FFFD}.txt", "b.txt"]);
+    assert!(list.entries[0].name.is_lossy());
+    assert!(!list.entries[1].name.is_lossy());
+    assert_eq!(list.errors.len(), 1, "{:?}", list.errors);
+    let codes: Vec<_> = memory.vfs.take_warnings().iter().map(|w| w.code).collect();
+    assert_eq!(codes, [WarningCode::ArchiveMemberRefused]);
+    // The winner is reachable through its listed name.
+    let child = memory.vfs.child(&root, &list.entries[0].name).unwrap();
+    let mut out = Vec::new();
+    memory
+        .vfs
+        .open_read(&child)
+        .unwrap()
+        .read_to_end(&mut out)
+        .unwrap();
+    assert_eq!(out, b"two");
 }
 
 // ---- encrypted -----------------------------------------------------------------------------------------------

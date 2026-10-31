@@ -580,6 +580,10 @@ impl ArchiveVfs {
             );
             self.warn(WarningCode::ArchiveEncrypted, message, container);
         }
+        if tree.padded {
+            let message = "NUL bytes follow the compressed stream: they were ignored".to_owned();
+            self.warn(WarningCode::ArchiveTrailingZeros, message, container);
+        }
     }
 
     /// The content of the member `member` of `archive`.
@@ -888,7 +892,7 @@ fn open_stream<'a>(
     let counted = Counted::new(reader, Arc::clone(input));
     match codec {
         None => Ok(Box::new(counted)),
-        Some(codec) => codec::decoder(codec, Box::new(counted))
+        Some(codec) => codec::decoder(codec, Box::new(counted), input)
             .map_err(|e| codec::read_failure(e, Some(input), pass.spec)),
     }
 }
@@ -1013,6 +1017,7 @@ fn index_tar(
     not_an_archive(pass, &walked.damage, members.len())?;
     let mut tree = build_tree(members, budget, pass)?;
     tree.damage = walked.damage;
+    tree.padded = input.padded();
     Ok((tree, walked.stream_len))
 }
 
@@ -1088,6 +1093,7 @@ fn index_single(
     }
     let mut tree = build_tree(members, NameBudget::new(pass), pass)?;
     tree.damage = damage;
+    tree.padded = input.padded();
     Ok((tree, len))
 }
 

@@ -3,9 +3,9 @@
 //! No decoder is trusted: [`Guard`] counts its output and stops at the limits, [`Counted`] counts what it consumed
 //! and keeps a base failure apart from corrupt content, and every pass runs inside [`no_panic`].
 
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use hikasa_core::{Cancelled, Ctl, Phase, Progress, Unit};
@@ -55,16 +55,83 @@ impl Codec {
     }
 }
 
-/// A decoder of concatenated streams, read to the end (§1.5.3), over `input`.
+/// One gzip or bzip2 member after another, read to the end. NULs after a member are padding that tools and tape blocks
+/// add: `gzip` accepts them, so they end the stream with a warning (rule 9); anything else starts a new member, which
+/// fails as damage when it is not one. The crates' multi-member decoders treat padding as damage.
+struct Members<D, R> {
+    decoder: Option<D>,
+    open: fn(R) -> D,
+    close: fn(D) -> R,
+    seen: Arc<Input>,
+}
+
+impl<D, R> Members<D, R> {
+    fn new(reader: R, open: fn(R) -> D, close: fn(D) -> R, seen: &Arc<Input>) -> Members<D, R> {
+        Members {
+            decoder: Some(open(reader)),
+            open,
+            close,
+            seen: Arc::clone(seen),
+        }
+    }
+}
+
+impl<D: Read, R: BufRead> Read for Members<D, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let Some(decoder) = self.decoder.as_mut() else {
+                return Ok(0);
+            };
+            let n = decoder.read(buf)?;
+            if n > 0 || buf.is_empty() {
+                return Ok(n);
+            }
+            let Some(decoder) = self.decoder.take() else {
+                return Ok(0);
+            };
+            let mut reader = (self.close)(decoder);
+            let mut padded = false;
+            loop {
+                let rest = reader.fill_buf()?;
+                if rest.is_empty() {
+                    self.seen.padded.fetch_or(padded, Ordering::Relaxed);
+                    return Ok(0);
+                }
+                let nuls = rest.iter().take_while(|&&b| b == 0).count();
+                let more = nuls < rest.len();
+                padded |= nuls > 0;
+                reader.consume(nuls);
+                if more {
+                    break;
+                }
+            }
+            self.decoder = Some((self.open)(reader));
+        }
+    }
+}
+
+/// A decoder of concatenated streams, read to the end (§1.5.3), over `input`. `seen` learns about padding.
 pub(crate) fn decoder<'a>(
     codec: Codec,
     input: Box<dyn Read + Send + 'a>,
+    seen: &Arc<Input>,
 ) -> io::Result<Box<dyn Read + Send + 'a>> {
+    use bzip2::bufread::BzDecoder;
+    use flate2::bufread::GzDecoder;
+    type Buffered<'a> = BufReader<Box<dyn Read + Send + 'a>>;
     Ok(match codec {
-        Codec::Gz => Box::new(flate2::bufread::MultiGzDecoder::new(
+        Codec::Gz => Box::new(Members::new(
             BufReader::with_capacity(BUFFER, input),
+            GzDecoder::<Buffered<'a>>::new,
+            GzDecoder::into_inner,
+            seen,
         )),
-        Codec::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(input)),
+        Codec::Bz2 => Box::new(Members::new(
+            BufReader::with_capacity(BUFFER, input),
+            BzDecoder::<Buffered<'a>>::new,
+            BzDecoder::into_inner,
+            seen,
+        )),
         Codec::Xz => Box::new(lzma_rust2::XzReader::new_mem_limit(
             BufReader::with_capacity(BUFFER, input),
             true,
@@ -83,9 +150,15 @@ pub(crate) fn decoder<'a>(
 pub(crate) struct Input {
     consumed: AtomicU64,
     error: Mutex<Option<io::Error>>,
+    padded: AtomicBool,
 }
 
 impl Input {
+    /// NULs followed the last member of a gzip or bzip2 stream.
+    pub(crate) fn padded(&self) -> bool {
+        self.padded.load(Ordering::Relaxed)
+    }
+
     /// A base failure, taken out once.
     fn take_error(&self) -> Option<io::Error> {
         self.error

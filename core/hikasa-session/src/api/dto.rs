@@ -309,12 +309,71 @@ impl HelpDto {
     }
 }
 
+/// Pretty JSON that also escapes what `serde_json` leaves as it is and a terminal or an editor would act on: DEL and
+/// the C1 controls (U+009B is a CSI), the line and paragraph separators and the bidirectional controls (U+202E shows
+/// `txt.exe` as `exe.txt`). Names reach `--json` from hostile archives. A parser gets the same text back, so this
+/// costs a consumer nothing (§1.5.13).
+struct JsonEscapes(serde_json::ser::PrettyFormatter<'static>);
+
+/// True for the characters of [`JsonEscapes`].
+fn json_escaped(c: char) -> bool {
+    matches!(
+        c,
+        '\u{7f}'..='\u{9f}'
+            | '\u{61c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
+}
+
+macro_rules! pretty {
+    ($($name:ident($($arg:ident: $ty:ty),*);)*) => {
+        $(fn $name<W: ?Sized + Write>(&mut self, out: &mut W $(, $arg: $ty)*) -> std::io::Result<()> {
+            self.0.$name(out $(, $arg)*)
+        })*
+    };
+}
+
+impl serde_json::ser::Formatter for JsonEscapes {
+    pretty! {
+        begin_array();
+        end_array();
+        begin_array_value(first: bool);
+        end_array_value();
+        begin_object();
+        end_object();
+        begin_object_key(first: bool);
+        begin_object_value();
+        end_object_value();
+    }
+
+    fn write_string_fragment<W: ?Sized + Write>(
+        &mut self,
+        out: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        let mut start = 0;
+        for (at, c) in fragment.char_indices().filter(|(_, c)| json_escaped(*c)) {
+            out.write_all(fragment.get(start..at).unwrap_or_default().as_bytes())?;
+            write!(out, "\\u{:04x}", u32::from(c))?;
+            start = at + c.len_utf8();
+        }
+        out.write_all(fragment.get(start..).unwrap_or_default().as_bytes())
+    }
+}
+
 /// Writes `value` as pretty JSON (2-space indentation) followed by `\n` (§4.1 rule 1).
 pub fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> std::io::Result<()> {
     // A value that cannot be serialised writes nothing; a large document is not held in memory twice (G6).
     serde_json::to_writer(std::io::sink(), value).map_err(std::io::Error::other)?;
     let mut out = std::io::BufWriter::with_capacity(1 << 16, out);
-    serde_json::to_writer_pretty(&mut out, value).map_err(std::io::Error::from)?;
+    let pretty = serde_json::ser::PrettyFormatter::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut out, JsonEscapes(pretty));
+    value
+        .serialize(&mut serializer)
+        .map_err(std::io::Error::from)?;
     out.write_all(b"\n")?;
     out.flush()
 }
@@ -1107,6 +1166,35 @@ impl VersionDto {
 
 #[cfg(test)]
 mod tests {
+    use super::write_json;
+
+    /// A hostile name in `--json`: valid JSON, the same text after parsing, nothing a terminal would act on.
+    #[test]
+    fn json_escapes_what_a_terminal_acts_on() {
+        let name = "esc\u{1b}[31m del\u{7f} csi\u{9b}31m rtl\u{202e}txt.exe bidi\u{2066}x ls\u{2028} é ü 日本 😀";
+        let mut out = Vec::new();
+        write_json(&mut out, &serde_json::json!({ "name": name })).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\\u001b[31m"), "{text}");
+        assert!(
+            text.contains("\\u007f") && text.contains("\\u009b31m"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\\u202etxt.exe") && text.contains("\\u2066x"),
+            "{text}"
+        );
+        assert!(text.contains("\\u2028"), "{text}");
+        assert!(text.contains(" é ü 日本 😀"), "ordinary text stays: {text}");
+        assert!(
+            !text
+                .chars()
+                .any(|c| c != '\n' && (c.is_control() || super::json_escaped(c)))
+        );
+        let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(back["name"], name);
+    }
+
     use super::*;
 
     #[test]

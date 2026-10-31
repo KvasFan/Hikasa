@@ -77,18 +77,20 @@ pub(crate) fn check_name(raw: &[u8], rules: NameRules) -> Result<Vec<u8>, Refusa
     if name.first() == Some(&b'/') {
         return Err(Refusal::Absolute);
     }
-    if let [letter, b':', ..] = *name
-        && letter.is_ascii_alphabetic()
-    {
-        return Err(Refusal::Drive);
-    }
     let mut clean = Vec::with_capacity(name.len());
     for part in name.split(|&b| b == b'/') {
         match part {
             b"" | b"." => {}
             b".." => return Err(Refusal::Traversal),
             part => {
-                if !clean.is_empty() {
+                // The first component that stays: `./C:/x` is `C:/x` once reduced.
+                if clean.is_empty() {
+                    if let [letter, b':', ..] = *part
+                        && letter.is_ascii_alphabetic()
+                    {
+                        return Err(Refusal::Drive);
+                    }
+                } else {
                     clean.push(b'/');
                 }
                 clean.extend_from_slice(part);
@@ -124,8 +126,25 @@ pub(crate) fn escape_name(raw: &[u8]) -> String {
     out
 }
 
+/// Windows device names, compared case-insensitively before the first `.`.
+const DEVICES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+    "LPT9", "LPT¹", "LPT²", "LPT³", "CONIN$", "CONOUT$",
+];
+
+/// True when `name` is a Windows device name, in any case, also with an extension (`nul.txt`, `Com1.tar.gz`) or spaces
+/// before it: Windows opens the device, not a file. The one list of them: session names ask here too.
+pub fn windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end();
+    DEVICES
+        .iter()
+        .any(|device| device.eq_ignore_ascii_case(stem))
+}
+
 /// Rule 17: `Some(reason)` when `name` cannot be a file name on Windows (`< > : " | ? *`, control characters, a
-/// trailing dot or space). Pure, so it is tested on every platform; `LocalVfs::child` calls it on Windows.
+/// trailing dot or space, a device name). Pure, so it is tested on every platform; `LocalVfs::child` calls it on
+/// Windows.
 pub fn windows_name_problem(name: &str) -> Option<&'static str> {
     if name
         .chars()
@@ -135,6 +154,9 @@ pub fn windows_name_problem(name: &str) -> Option<&'static str> {
     }
     if name.ends_with(['.', ' ']) {
         return Some("a trailing dot or space");
+    }
+    if windows_device_name(name) {
+        return Some("a device name");
     }
     None
 }
@@ -156,6 +178,10 @@ mod tests {
             (br"\x", Err(R::Absolute), Err(R::Backslash)),
             (br"\\srv\x", Err(R::Absolute), Err(R::Backslash)),
             (br"C:\x", Err(R::Drive), Err(R::Backslash)),
+            (br".\C:\x", Err(R::Drive), Err(R::Backslash)),
+            (b"./C:/x", Err(R::Drive), Err(R::Drive)),
+            (b".//D:/x", Err(R::Drive), Err(R::Drive)),
+            (b"a/C:/x", Ok(b"a/C:/x"), Ok(b"a/C:/x")),
             (b"C:/x", Err(R::Drive), Err(R::Drive)),
             (b"c:x", Err(R::Drive), Err(R::Drive)),
             (br"..\..\x", Err(R::Traversal), Err(R::Backslash)),
@@ -183,11 +209,32 @@ mod tests {
     #[test]
     fn rule_17_table() {
         for bad in [
-            "a<b", "a>b", "a:b", "a\"b", "a|b", "a?b", "a*b", "a\u{1}", "a.", "a ",
+            "a<b",
+            "a>b",
+            "a:b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
+            "a\u{1}",
+            "a.",
+            "a ",
+            "CON",
+            "con",
+            "nul.txt",
+            "Com1.tar.gz",
+            "LPT9",
+            "com¹",
+            "LPT³.x",
+            "CONIN$",
+            "conout$.log",
+            "AUX .x",
         ] {
             assert!(windows_name_problem(bad).is_some(), "{bad:?}");
         }
-        for good in ["a.b", "a b", ".a", "é", "a_b"] {
+        for good in [
+            "a.b", "a b", ".a", "é", "a_b", "console", "COM0", "COM10", "x.con", "nul_", "LPT",
+        ] {
             assert_eq!(windows_name_problem(good), None, "{good:?}");
         }
     }

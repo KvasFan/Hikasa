@@ -16,13 +16,6 @@ pub const MAX_NAME_CHARS: usize = 100;
 /// Characters a name never contains.
 const FORBIDDEN: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
-/// Windows device names (compared case-insensitively, before the first `.`).
-const DEVICES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
-    "LPT9", "LPT¹", "LPT²", "LPT³", "CONIN$", "CONOUT$",
-];
-
 /// A validated session, folder or workspace name (D-80).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionName(String);
@@ -73,8 +66,7 @@ pub(crate) fn check_name(text: &str) -> Result<(), &'static str> {
     if text.starts_with('_') {
         return Err("a name does not start with `_` (reserved)");
     }
-    let stem = text.split('.').next().unwrap_or(text).trim_end();
-    if DEVICES.iter().any(|d| d.eq_ignore_ascii_case(stem)) {
+    if hikasa_vfs::archive::name::windows_device_name(text) {
         return Err("a name is not a reserved device name (CON, NUL, COM1, …)");
     }
     Ok(())
