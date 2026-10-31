@@ -79,7 +79,7 @@ fn files(world: &World) -> BTreeMap<String, String> {
                 walk(&path, base, out);
             } else if let Ok(rel) = path.strip_prefix(base) {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
-                out.insert(rel.display().to_string(), text);
+                out.insert(rel.display().to_string().replace('\\', "/"), text);
             }
         }
     }
@@ -1379,6 +1379,7 @@ fn the_restore_wizard_equals_restore_defaults_by_category() {
                     .expect("inside")
                     .display()
                     .to_string()
+                    .replace('\\', "/")
             })
             .collect()
     };

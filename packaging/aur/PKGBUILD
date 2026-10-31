@@ -4,7 +4,7 @@
 # step with Cargo.toml in its copy; the release steps in packaging/README.md update this file and the checksum. The
 # tree of a tag must contain packaging/, so the first tag this recipe can build is the one after 0.1.0.
 pkgname=hikasa
-pkgver=0.1.0
+pkgver=0.1.90
 pkgrel=1
 pkgdesc='Compare folders and files: desktop application and command line'
 arch=('x86_64')

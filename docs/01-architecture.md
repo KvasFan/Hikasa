@@ -73,7 +73,7 @@ The product is organised in three strictly layered groups of crates:
 
 ```
 Hikasa/
-├── Cargo.toml                 # workspace, version 0.1.0
+├── Cargo.toml                 # workspace, version 0.1.90
 ├── core/                      # layer 1: libraries only
 │   ├── hikasa-core/           # shared types: Side, Spec, errors, cancellation, progress, settings schema, localization
 │   ├── hikasa-vfs/            # virtual file system: local, archive, snapshot, remote back-ends, clipboard, http

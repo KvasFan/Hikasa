@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.90"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KvasFan/Hikasa"
@@ -33,19 +33,19 @@ rust-version = "1.97"
 
 [workspace.dependencies]
 # --- internal crates ---
-hikasa-core = { path = "core/hikasa-core", version = "0.1.0" }
-hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.0" }
-hikasa-diff = { path = "core/hikasa-diff", version = "0.1.0" }
-hikasa-formats = { path = "core/hikasa-formats", version = "0.1.0" }
-hikasa-folder = { path = "core/hikasa-folder", version = "0.1.0" }
-hikasa-text = { path = "core/hikasa-text", version = "0.1.0" }
-hikasa-table = { path = "core/hikasa-table", version = "0.1.0" }
-hikasa-hex = { path = "core/hikasa-hex", version = "0.1.0" }
-hikasa-picture = { path = "core/hikasa-picture", version = "0.1.0" }
-hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.0" }
-hikasa-report = { path = "core/hikasa-report", version = "0.1.0" }
-hikasa-script = { path = "core/hikasa-script", version = "0.1.0" }
-hikasa-session = { path = "core/hikasa-session", version = "0.1.0" }
+hikasa-core = { path = "core/hikasa-core", version = "0.1.90" }
+hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.90" }
+hikasa-diff = { path = "core/hikasa-diff", version = "0.1.90" }
+hikasa-formats = { path = "core/hikasa-formats", version = "0.1.90" }
+hikasa-folder = { path = "core/hikasa-folder", version = "0.1.90" }
+hikasa-text = { path = "core/hikasa-text", version = "0.1.90" }
+hikasa-table = { path = "core/hikasa-table", version = "0.1.90" }
+hikasa-hex = { path = "core/hikasa-hex", version = "0.1.90" }
+hikasa-picture = { path = "core/hikasa-picture", version = "0.1.90" }
+hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.90" }
+hikasa-report = { path = "core/hikasa-report", version = "0.1.90" }
+hikasa-script = { path = "core/hikasa-script", version = "0.1.90" }
+hikasa-session = { path = "core/hikasa-session", version = "0.1.90" }
 
 # --- third-party (approved in docs/02-tech-stack.md) ---
 serde = { version = "1", features = ["derive"] }

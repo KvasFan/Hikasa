@@ -1082,7 +1082,8 @@ fn a3_7_same_device_is_one_rename_and_keeps_the_folder_id() {
     ] {
         move_tree(&fx);
         let id = fx.lstat("src/tree").unwrap().file_id;
-        assert!(id.is_some());
+        // `LocalVfs` has no file id on Windows (`local/windows.rs`).
+        assert_eq!(id.is_some(), cfg!(unix) || fx.is_mem());
         let report = mv(
             fx.vfs(),
             fx.vfs(),
@@ -1802,6 +1803,9 @@ fn message(report: &OpReport, i: usize) -> String {
         .unwrap_or_default()
 }
 
+// Unix only: on Windows a spec never holds `..` (paths are normalised lexically, `LocalPath::new` refuses the
+// rest), so such an item cannot reach the operations.
+#[cfg(unix)]
 #[test]
 fn fix_dot_names_and_roots_are_never_operated_on() {
     for fx in Fx::all() {
@@ -2042,7 +2046,7 @@ fn fix_nothing_runs_below_a_failed_folder_item() {
             .zip(&report.results)
             .map(|(i, r)| {
                 let own = i.source.as_ref().unwrap_or(&i.target).canonical();
-                (own.rsplit('/').next().unwrap().to_owned(), r.status)
+                (own.rsplit(['/', '\\']).next().unwrap().to_owned(), r.status)
             })
             .filter(|(_, s)| *s != ItemStatus::Done)
             .collect();

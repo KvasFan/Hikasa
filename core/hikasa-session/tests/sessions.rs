@@ -617,8 +617,9 @@ fn package_round_trip() {
 /// JSON of a plan with the temporary root replaced by `<TMP>`.
 fn plan_json(plan: &hikasa_session::package::ImportPlan, root: &Path) -> Vec<u8> {
     let text = serde_json::to_string_pretty(&PlanDto::of(plan)).unwrap();
-    let root = root.display().to_string();
-    let mut text = text.replace(&root, "<TMP>").replace('\\', "/");
+    // The path as the JSON text spells it (Windows: doubled backslashes), then host separators to `/`.
+    let root = root.display().to_string().replace('\\', "\\\\");
+    let mut text = text.replace(&root, "<TMP>").replace("\\\\", "/");
     text.push('\n');
     text.into_bytes()
 }

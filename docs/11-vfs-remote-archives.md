@@ -73,6 +73,8 @@ applied after the content; a folder's after its whole subtree; owner and group n
   before touching its contents at execution (also the source folders of copies and moves), which
   narrows, but cannot close, the race with a process that swaps a folder for a link; below a
   changed folder nothing runs.
+  On Windows, which renames onto no folder entry, a `rename` that replaces an empty folder or a link to a folder
+  removes that entry first and puts it back if the rename fails; that replacement is not atomic there.
 - **Moves** rename where they can (same back-end and file system, the target absent or
   replaceable); otherwise they copy and remove item by item, keeping a source folder whose items
   could not all be moved, and removing a fresh copy again when the source cannot be removed (but

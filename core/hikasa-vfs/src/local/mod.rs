@@ -77,6 +77,9 @@ mod platform {
     pub(super) fn remove_link(path: &Path, _meta: &Metadata) -> std::io::Result<()> {
         std::fs::remove_file(path)
     }
+    pub(super) fn is_folder_link(_meta: &Metadata) -> bool {
+        false
+    }
     pub(super) fn symlink(
         _target: &std::ffi::OsStr,
         _path: &Path,
@@ -386,7 +389,13 @@ impl Vfs for LocalVfs {
 
     fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
         let path = local(spec)?;
-        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::Mkdir, e);
+        let fail = |e: io::Error| {
+            VfsError::from_io(
+                spec.canonical(),
+                VfsOp::Mkdir,
+                below_a_file(path.as_path(), e),
+            )
+        };
         if !parents {
             return fs::create_dir(path.as_path()).map(|()| true).map_err(fail);
         }
@@ -416,7 +425,13 @@ impl Vfs for LocalVfs {
     fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
         let path = local(spec)?;
         operable(path, spec)?;
-        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::Remove, e);
+        let fail = |e: io::Error| {
+            VfsError::from_io(
+                spec.canonical(),
+                VfsOp::Remove,
+                below_a_file(path.as_path(), e),
+            )
+        };
         let meta = fs::symlink_metadata(path.as_path()).map_err(fail)?;
         if meta.file_type().is_symlink() {
             platform::remove_link(path.as_path(), &meta).map_err(fail)
@@ -449,7 +464,9 @@ impl Vfs for LocalVfs {
             },
             _ => VfsError::from_io(from.canonical(), VfsOp::Rename, e),
         };
-        let from_meta = fs::symlink_metadata(from_path.as_path()).map_err(fail)?;
+        let from_meta = fs::symlink_metadata(from_path.as_path())
+            .map_err(|e| fail(below_a_file(from_path.as_path(), e)))?;
+        let mut cleared = Cleared::Nothing;
         match fs::symlink_metadata(to_path.as_path()) {
             Ok(to_meta) => {
                 if !same_item(from_path.as_path(), &from_meta, to_path.as_path(), &to_meta) {
@@ -476,25 +493,56 @@ impl Vfs for LocalVfs {
                                     spec: to.canonical(),
                                 });
                             }
+                            // Windows renames onto no folder, not even an empty one.
+                            if cfg!(windows) {
+                                fs::remove_dir(to_path.as_path()).map_err(|e| {
+                                    VfsError::from_io(to.canonical(), VfsOp::Rename, e)
+                                })?;
+                                cleared = Cleared::Folder;
+                            }
                         }
-                        (false, false) => {}
+                        (false, false) => {
+                            // Nor onto a link to a folder, which is a folder entry there.
+                            if platform::is_folder_link(&to_meta) {
+                                let fail = |e| VfsError::from_io(to.canonical(), VfsOp::Rename, e);
+                                let target = fs::read_link(to_path.as_path()).map_err(fail)?;
+                                platform::remove_link(to_path.as_path(), &to_meta).map_err(fail)?;
+                                cleared = Cleared::FolderLink(target);
+                            }
+                        }
                     }
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(VfsError::from_io(to.canonical(), VfsOp::Rename, e)),
         }
-        fs::rename(from_path.as_path(), to_path.as_path()).map_err(|e| match e.kind() {
-            io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty {
-                spec: to.canonical(),
-            },
-            _ => fail(e),
+        fs::rename(from_path.as_path(), to_path.as_path()).map_err(|e| {
+            // Best effort: what this call removed comes back.
+            let _ = match &cleared {
+                Cleared::Nothing => Ok(()),
+                Cleared::Folder => fs::create_dir(to_path.as_path()),
+                Cleared::FolderLink(target) => {
+                    platform::symlink(target.as_os_str(), to_path.as_path(), true)
+                }
+            };
+            match e.kind() {
+                io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty {
+                    spec: to.canonical(),
+                },
+                _ => fail(below_a_file(to_path.as_path(), e)),
+            }
         })
     }
 
     fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
         let path = local(spec)?;
-        let fail = |e: io::Error| VfsError::from_io(spec.canonical(), VfsOp::SetTimes, e);
+        let fail = |e: io::Error| {
+            VfsError::from_io(
+                spec.canonical(),
+                VfsOp::SetTimes,
+                below_a_file(path.as_path(), e),
+            )
+        };
         let meta = fs::symlink_metadata(path.as_path()).map_err(fail)?;
         let is_link = meta.file_type().is_symlink();
         let created = match times.created {
@@ -522,8 +570,13 @@ impl Vfs for LocalVfs {
     fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
         let path = local(spec)?;
         change.validate()?;
-        let meta = fs::symlink_metadata(path.as_path())
-            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::SetAttrs, e))?;
+        let meta = fs::symlink_metadata(path.as_path()).map_err(|e| {
+            VfsError::from_io(
+                spec.canonical(),
+                VfsOp::SetAttrs,
+                below_a_file(path.as_path(), e),
+            )
+        })?;
         if meta.file_type().is_symlink() {
             return Err(op_unsupported(spec, VfsOp::SetAttrs));
         }
@@ -544,8 +597,13 @@ impl Vfs for LocalVfs {
         target_is_dir: bool,
     ) -> Result<(), VfsError> {
         let path = local(spec)?;
-        platform::symlink(target, path.as_path(), target_is_dir)
-            .map_err(|e| VfsError::from_io(spec.canonical(), VfsOp::Symlink, e))
+        platform::symlink(target, path.as_path(), target_is_dir).map_err(|e| {
+            VfsError::from_io(
+                spec.canonical(),
+                VfsOp::Symlink,
+                below_a_file(path.as_path(), e),
+            )
+        })
     }
 
     fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
@@ -600,6 +658,31 @@ impl Vfs for LocalVfs {
         cancel.check()?;
         writer.commit_inner()?;
         Ok(Some(copied))
+    }
+}
+
+/// What `rename` removed from the target path first, because Windows renames onto no folder entry.
+enum Cleared {
+    Nothing,
+    Folder,
+    FolderLink(PathBuf),
+}
+
+/// The error of a failed call on `path`. Windows reports a path below a file as "path not found" where Unix says
+/// `ENOTDIR`, and the mutating primitives name it `NotADirectory` on every platform: there the nearest existing
+/// ancestor decides.
+fn below_a_file(path: &Path, error: io::Error) -> io::Error {
+    let below_file = cfg!(windows)
+        && error.kind() == io::ErrorKind::NotFound
+        && path
+            .ancestors()
+            .skip(1)
+            .find_map(|a| fs::metadata(a).ok())
+            .is_some_and(|meta| !meta.is_dir());
+    if below_file {
+        io::ErrorKind::NotADirectory.into()
+    } else {
+        error
     }
 }
 

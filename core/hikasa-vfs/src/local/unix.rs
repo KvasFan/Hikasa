@@ -100,6 +100,11 @@ pub(super) fn remove_link(path: &Path, _meta: &Metadata) -> io::Result<()> {
     fs::remove_file(path)
 }
 
+/// Unix renames onto a link like onto any file.
+pub(super) fn is_folder_link(_meta: &Metadata) -> bool {
+    false
+}
+
 /// `symlink(target, path)`; `target_is_dir` is ignored on Unix.
 pub(super) fn symlink(target: &OsStr, path: &Path, _target_is_dir: bool) -> io::Result<()> {
     std::os::unix::fs::symlink(target, path)

@@ -725,7 +725,7 @@ fn a3_1_create_symlink_table() {
             if expected.is_ok() {
                 let entry = fx.lstat(rel).unwrap();
                 assert_eq!(entry.kind, EntryKind::Symlink, "{label}");
-                // Stored verbatim (on Windows the OS may normalise separators).
+                // Stored verbatim (Windows stores `\\` for `/`: a link target takes no `/` there).
                 if cfg!(unix) || fx.is_mem() {
                     assert_eq!(entry.link_target.as_deref(), Some(target), "{label}");
                 }
@@ -1492,6 +1492,9 @@ fn fix_open_write_through_a_dangling_link_creates_the_file_it_names() {
     }
 }
 
+// Unix only: on Windows a spec never holds `..` (paths are normalised lexically, `LocalPath::new` refuses the
+// rest), so such an item cannot reach the operations.
+#[cfg(unix)]
 #[test]
 fn fix_primitives_refuse_dot_dot_items() {
     for fx in Fx::all() {

@@ -20,7 +20,7 @@
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-1e2a44?style=flat-square&logo=rust">
   <img alt="Runs on Linux · Windows" src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Windows-1e2a44?style=flat-square&logo=linux&logoColor=white">
   <img alt="License MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1e2a44?style=flat-square">
-  <img alt="Status 0.1.0 plus unreleased M2 work" src="https://img.shields.io/badge/status-0.1.0%20%2B%20M2%20in%20progress-6aa0ff?style=flat-square">
+  <img alt="Status 0.1.90 pre-release" src="https://img.shields.io/badge/status-0.1.90%20pre--release-6aa0ff?style=flat-square">
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@
 
 ## What works today
 
-The last tag is 0.1.0 (milestone M1). This page describes the branch `feat/m2`, which still says 0.1.0 and carries unreleased M2 work on top; 0.2.0 is planned when M2 is complete. Of the 15 waves of M2 ([plan](docs/design/m2-plan.md#2-waves)), W0–W4 are done and W5–W14 are not. In the [command catalogue](docs/reference/commands.md), 98 of 475 commands are implemented; the rest are planned and stay out of the menus.
+This page describes version 0.1.90, a pre-release of 0.2.0 with the first part of milestone M2 on top of 0.1.0 (M1); 0.2.0 stays reserved for M2 complete. Of the 15 waves of M2 ([plan](docs/design/m2-plan.md#2-waves)), W0–W4 are in this version and W5–W14 are not. In the [command catalogue](docs/reference/commands.md), 98 of 475 commands are implemented; the rest are planned and stay out of the menus.
 
 | Area | Status |
 |---|---|
@@ -87,7 +87,7 @@ The last tag is 0.1.0 (milestone M1). This page describes the branch `feat/m2`, 
 | Clipboard as an input: `clipboard://` | Works on the command line and in the window (W3) |
 | Window: several windows, tabs, menus and shortcuts from the catalogue, status bar, log panel, notices, drag and drop, help on F1 | Works under Xvfb and in tests; tree dragging, shortcut capture and colour pickers still await a check on a real desktop (W4) |
 | Options dialog, theme editor with live preview, Toolbars/Shortcuts/Menus page, Export, Import and Restore wizards | Works under Xvfb and in tests (W4) |
-| Packages for Linux and Windows | Built from `packaging/` and smoke tested; nothing published yet, see [Downloads](#downloads) |
+| Packages for Linux and Windows | Built from `packaging/` and smoke tested, see [Downloads](#downloads) |
 | Archives (zip, tar) | Not yet (W5) |
 | Folder operations and Folder Sync in the window | Not yet (W6, W9) |
 | Script language | Not yet (W8); the crate is empty |
@@ -96,14 +96,14 @@ The last tag is 0.1.0 (milestone M1). This page describes the branch `feat/m2`, 
 | Table, Hex and Picture Compare | Not yet (W12, W13); the crates are empty |
 | Text Merge, Folder Merge, remote back-ends, snapshots, media, version and registry views | Not yet (M3) |
 
-CI was last green at 0.1.0, on Linux, Windows and macOS. The M2 work has been checked locally on Linux so far, and the window only with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
+CI was last green at 0.1.0, on Linux, Windows and macOS. At 0.1.90 the tests have run locally on Linux and, as Windows binaries, under wine, and the window only with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
 
 ## Quick start
 
 You need Rust 1.97 or newer and a C compiler. On Linux the window needs an X11 or Wayland session at run time; building needs no GUI development packages.
 
 ```sh
-git clone --branch feat/m2 https://github.com/KvasFan/Hikasa.git
+git clone --branch v0.1.90 https://github.com/KvasFan/Hikasa.git
 cd Hikasa
 cargo build --release
 target/release/hikasa --help
@@ -186,21 +186,23 @@ The screenshots on this page are real captures of `hikasa-gui` on a virtual disp
 
 ## Roadmap
 
-0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. M2, for 0.2.0, is the usable tool: W0–W4 are done, and next come archives (W5), folder operations and the sync engine (W6), reports (W7), scripts (W8), Folder Compare and Sync in the window (W9), text editing (W10, W11), Table, Hex and Picture Compare (W12, W13) and release hardening (W14). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, 7z, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
+0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. M2, for 0.2.0, is the usable tool. 0.1.90 is its pre-release with W0–W4 done, and next come archives (W5), folder operations and the sync engine (W6), reports (W7), scripts (W8), Folder Compare and Sync in the window (W9), text editing (W10, W11), Table, Hex and Picture Compare (W12, W13) and release hardening (W14). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, 7z, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
 
 ## Downloads
 
-Nothing is published yet. The tag `v0.1.0` exists without a GitHub release, and the packages below are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine. They will appear with `SHA256SUMS` on the [Releases page](https://github.com/KvasFan/Hikasa/releases) from the next release on.
+Version 0.1.90 is a pre-release: the packages are on its [release page](https://github.com/KvasFan/Hikasa/releases/tag/v0.1.90), with `SHA256SUMS`. They are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine.
 
-| Format | Status |
-|---|---|
-| Source (`cargo build --release`) | Available; see [Quick start](#quick-start) |
-| Linux x86-64 `.tar.gz` | Built, smoke tested |
-| Linux x86-64 AppImage | Built, smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
-| Debian and Ubuntu `.deb` (amd64) | Built, smoke tested |
-| Arch Linux `PKGBUILD` and package | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
-| Windows x64 and x86 MSI | Built; tested under wine only, not on real Windows |
-| Windows x64 and x86 portable zip | Built; tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Format | File | Status |
+|---|---|---|
+| Source | `cargo build --release` | See [Quick start](#quick-start) |
+| Linux x86-64 `.tar.gz` | `hikasa-0.1.90-x86_64-linux.tar.gz` | Smoke tested |
+| Linux x86-64 AppImage | `Hikasa-0.1.90-x86_64.AppImage` | Smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
+| Debian and Ubuntu `.deb` (amd64) | `hikasa_0.1.90-1_amd64.deb` | Smoke tested |
+| Arch Linux package | `hikasa-0.1.90-1-x86_64.pkg.tar.zst` | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
+| Windows x64 MSI | `hikasa-0.1.90-windows-x64.msi` | Tested under wine only, not on real Windows |
+| Windows x86 MSI | `hikasa-0.1.90-windows-x86.msi` | Tested under wine only, not on real Windows |
+| Windows x64 portable zip | `hikasa-0.1.90-windows-x64-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Windows x86 portable zip | `hikasa-0.1.90-windows-x86-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
 
 The `.tar.gz`, AppImage and `.deb` are linked against glibc 2.31 (the newest symbol they use is `GLIBC_2.30`), so they should run on distributions of that age, but they have not been run on one yet. The x86 `hikasa.exe` sometimes hangs at exit under wine (one run in 160 in a stress test), and the cause is not known yet. There is no macOS package.
 

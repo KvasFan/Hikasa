@@ -15,7 +15,7 @@ use std::sync::Arc;
 use common::Fx;
 use hikasa_core::{CaseSensitivity, Ctl, ErrorKind, FileTime, Spec};
 use hikasa_vfs::ops::{self, Action, ItemStatus, OpReport, RemoveOptions};
-use hikasa_vfs::{Blob, EntryKind, Fault, LocalVfs, Vfs, VfsError, VfsOp, VfsRouter};
+use hikasa_vfs::{Blob, Fault, LocalVfs, Vfs, VfsError, VfsOp, VfsRouter};
 
 const TRASH: RemoveOptions = RemoveOptions {
     recursive: false,
@@ -285,7 +285,7 @@ fn a3_8_local_real_trash_in_an_isolated_home() {
                 &common::lspec(&files.join("victim.txt")),
                 hikasa_vfs::FollowLinks::No
             )
-            .is_ok_and(|e| e.kind == EntryKind::File)
+            .is_ok_and(|e| e.kind == hikasa_vfs::EntryKind::File)
     );
 }
 

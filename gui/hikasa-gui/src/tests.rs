@@ -197,7 +197,9 @@ impl World {
     }
 
     pub(crate) fn path(&self, rel: &str) -> PathBuf {
-        self.dir.path().join(rel)
+        let mut path = self.dir.path().to_path_buf();
+        path.extend(rel.split('/'));
+        path
     }
 
     pub(crate) fn write(&self, rel: &str, text: &str) -> PathBuf {

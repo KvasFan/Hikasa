@@ -1298,8 +1298,9 @@ fn save_workspace(world: &World, app: &mut TestApp, name: &str) {
 
 /// The paths of a test world become `<W>` in a golden.
 fn scrub(world: &World, text: &str) -> String {
-    let root = world.dir.path().display().to_string();
-    text.replace(&root, "<W>")
+    // The path as JSON spells it (Windows: doubled backslashes), then the separators after it.
+    let root = world.dir.path().display().to_string().replace('\\', "\\\\");
+    text.replace(&root, "<W>").replace("\\\\", "/")
 }
 
 #[test]
@@ -1834,6 +1835,8 @@ mod regressions {
         assert_eq!(vs(&app, view).origin, ViewOrigin::Named(r("again")));
     }
 
+    // Unix only: `read_only` needs a folder that refuses new files, and Windows has no such read-only bit.
+    #[cfg(unix)]
     #[test]
     fn yes_on_a_refused_disk_keeps_the_tab_on_every_close_path() {
         for way in WAYS {
