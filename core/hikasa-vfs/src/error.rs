@@ -201,6 +201,32 @@ pub enum VfsError {
         /// Why.
         reason: String,
     },
+    /// An archive or member that cannot be decoded (M2 W5, D-145): content that is not what the mask says, a
+    /// missing central directory, a size or CRC mismatch.
+    #[error("{spec}: not a valid archive: {reason}")]
+    ArchiveCorrupt {
+        /// Canonical spec.
+        spec: String,
+        /// Why.
+        reason: String,
+    },
+    /// A limit of `archives.limits` was reached (M2 W5, D-143). `limit` is one of `entries`, `stream`, `cache`,
+    /// `ratio`, `nesting`.
+    #[error("{spec}: archive limit exceeded ({limit}: {value}); see archives.limits")]
+    ArchiveLimit {
+        /// Canonical spec.
+        spec: String,
+        /// The limit that was reached.
+        limit: &'static str,
+        /// Its value.
+        value: u64,
+    },
+    /// An encrypted archive member (M2 W5, D-144): reported, never guessed.
+    #[error("{spec}: the member is encrypted and cannot be read")]
+    ArchiveEncrypted {
+        /// Canonical spec.
+        spec: String,
+    },
 }
 
 impl VfsError {
@@ -251,7 +277,10 @@ impl VfsError {
             | VfsError::NotEmpty { spec }
             | VfsError::OperationUnsupported { spec, .. }
             | VfsError::InvalidTarget { spec, .. }
-            | VfsError::Unavailable { spec, .. } => Some(spec),
+            | VfsError::Unavailable { spec, .. }
+            | VfsError::ArchiveCorrupt { spec, .. }
+            | VfsError::ArchiveLimit { spec, .. }
+            | VfsError::ArchiveEncrypted { spec } => Some(spec),
             VfsError::CrossDevice { from, .. } => Some(from),
             VfsError::InvalidName { .. }
             | VfsError::InvalidAttributes { .. }
@@ -290,8 +319,11 @@ impl Classify for VfsError {
             VfsError::NotEmpty { .. } => ErrorKind::NotEmpty,
             VfsError::CrossDevice { .. }
             | VfsError::OperationUnsupported { .. }
-            | VfsError::Unavailable { .. } => ErrorKind::Unsupported,
+            | VfsError::Unavailable { .. }
+            | VfsError::ArchiveEncrypted { .. } => ErrorKind::Unsupported,
             VfsError::InvalidTarget { .. } => ErrorKind::InvalidInput,
+            VfsError::ArchiveCorrupt { .. } => ErrorKind::InvalidData,
+            VfsError::ArchiveLimit { .. } => ErrorKind::TooLarge,
         }
     }
 }
@@ -314,9 +346,11 @@ impl From<VfsError> for io::Error {
             | VfsError::InvalidTarget { .. } => io::ErrorKind::InvalidInput,
             VfsError::NotEmpty { .. } => io::ErrorKind::DirectoryNotEmpty,
             VfsError::CrossDevice { .. } => io::ErrorKind::CrossesDevices,
-            VfsError::OperationUnsupported { .. } | VfsError::Unavailable { .. } => {
-                io::ErrorKind::Unsupported
-            }
+            VfsError::OperationUnsupported { .. }
+            | VfsError::Unavailable { .. }
+            | VfsError::ArchiveEncrypted { .. } => io::ErrorKind::Unsupported,
+            VfsError::ArchiveCorrupt { .. } => io::ErrorKind::InvalidData,
+            VfsError::ArchiveLimit { .. } => io::ErrorKind::FileTooLarge,
             VfsError::Io { source, .. } => {
                 if source
                     .get_ref()

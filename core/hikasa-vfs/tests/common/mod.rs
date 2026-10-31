@@ -3,6 +3,8 @@
 //! serializer/deserializer for the serde goldens (`serde_json` is not a dev-dependency of this crate, §0.5).
 #![allow(dead_code)]
 
+pub mod archives;
+
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -81,8 +81,21 @@ clap_complete = "4"
 directories = "6"
 interprocess = "2"
 jiff = "0.2"
-# Settings packages (D-63, D-86): pure-Rust deflate only (zlib-rs + zopfli); no AES, no other codecs.
-zip = { version = "9", default-features = false, features = ["deflate"] }
+# Archives (D-154, contract M2 §1.5.15). Named only under core/hikasa-vfs/src/archive/ (`zip` also in the
+# settings packages of hikasa-session, whose import still accepts only stored and deflate entries, D-86).
+# No `aes-crypto`, `time`, `ppmd`, `rayon`, `legacy-zip`: encryption is reported, not implemented (D-144).
+zip = { version = "9.2.0", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma", "xz"] }
+# No `xattr`: `Header`, `PaxExtensions` and `Builder` only; reading is the in-house `tar_walk.rs` (D-139).
+tar = { version = "0.4.46", default-features = false }
+# The pure-Rust back-end `zip` already enables; the features unify.
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+# `libbz2-rs-sys`, a Rust port, what `zip` uses; no C.
+bzip2 = "0.6.1"
+# Not the newest 0.24: `zip` 9.2 needs ^0.23 and one LZMA codec in the tree is the point. Moves when `zip` moves.
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "encoder", "optimization", "xz"] }
+# Not the 0.13 of the plan: `zip` 9.2 needs ^0.14.2. `zstd-sys` builds libzstd with the target's C compiler,
+# the only C in Hikasa's binaries.
+zstd = { version = "0.14.3", default-features = false }
 # Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
 # Called only from core/hikasa-vfs/src/local/trash.rs.
 trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }

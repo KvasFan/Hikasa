@@ -139,9 +139,18 @@ pub(crate) fn is_blob(spec: &Spec) -> bool {
 
 /// The checks of an item an operation writes, removes, renames or trashes (§1.3.12): a final component `.` or
 /// `..` → `InvalidTarget "needs a file name"`; a local spec whose lexically normalized path is a file-system root
-/// → `InvalidTarget "is a root folder"`.
+/// → `InvalidTarget "is a root folder"`; so is the root of an archive, which is removed as the file it is
+/// (`rm a.zip`, never `rm a.zip/`, §1.5.2).
 pub(crate) fn check_item(spec: &Spec) -> Result<(), VfsError> {
     check_name(spec)?;
+    if let Spec::ArchiveMember { member, .. } = spec
+        && member.is_empty()
+    {
+        return Err(VfsError::InvalidTarget {
+            spec: spec.canonical(),
+            reason: "is a root folder",
+        });
+    }
     if let Spec::Local(path) = spec
         && (path.file_name().is_none() || lexical_is_root(path.as_path()))
     {
@@ -343,6 +352,24 @@ pub(crate) fn warn_missing(
             code: WarningCode::CapabilityMissing,
             message: format!(
                 "{}: the target does not support `{name}`; that step was skipped",
+                at.canonical()
+            ),
+            spec: Some(at.canonical()),
+        });
+    }
+}
+
+/// Adds one `archive_symlink_skipped` warning per operation (§1.5.7 rule 5).
+pub(crate) fn warn_archive_link(
+    warned: &mut BTreeSet<&'static str>,
+    warnings: &mut Vec<Warning>,
+    at: &Spec,
+) {
+    if warned.insert("archive_symlink") {
+        warnings.push(Warning {
+            code: WarningCode::ArchiveSymlinkSkipped,
+            message: format!(
+                "{}: link members of an archive are not copied out of it",
                 at.canonical()
             ),
             spec: Some(at.canonical()),

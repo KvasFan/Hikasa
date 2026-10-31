@@ -12,6 +12,12 @@ confidence-threshold = 0.9
 crate = "epaint_default_fonts"
 allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 
+# Provisional, pending the maintainer's objection (contract M2 §1.5.15, D-154): a permissive BSD-style licence, used
+# only by `libbz2-rs-sys`; no bzip2 back-end avoids it. Nothing broader is allowed.
+[[licenses.exceptions]]
+crate = "libbz2-rs-sys"
+allow = ["bzip2-1.0.6"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

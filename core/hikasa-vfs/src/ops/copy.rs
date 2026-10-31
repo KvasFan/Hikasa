@@ -10,7 +10,7 @@ use super::plan::{report, report_with};
 use super::{
     Action, CopyOptions, Decision, Exec, LinkPolicy, OpKind, Outcome, OverwritePolicy, Plan,
     PlanItem, PlanOptions, SkipReason, check_item, check_nesting, decide, lstat_target,
-    same_instance, scanning, warn_missing, warn_no_mtime,
+    same_instance, scanning, warn_archive_link, warn_missing, warn_no_mtime,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, DosAttrs, Entry, EntryKind, FileName};
@@ -90,7 +90,14 @@ impl Planner<'_> {
                 SkipReason::SpecialFile,
             )),
             EntryKind::Symlink => {
-                if self.links == LinkPolicy::Skip {
+                // A link from a hostile archive must not appear on disk, whatever the policy says (D-142);
+                // between archives it stays a link.
+                let out_of_archive = matches!(source, Spec::ArchiveMember { .. })
+                    && !matches!(target, Spec::ArchiveMember { .. });
+                if out_of_archive {
+                    warn_archive_link(&mut self.warned, &mut self.warnings, source);
+                }
+                if self.links == LinkPolicy::Skip || out_of_archive {
                     self.items.push(PlanItem::skipped(
                         EntryKind::Symlink,
                         Some(source.clone()),
@@ -502,7 +509,7 @@ pub(crate) fn copy_content(
         return Ok(bytes);
     }
     let mut writer = exec.dst.open_write(target, &opts)?;
-    let mut reader = exec.src.open_read(source)?;
+    let mut reader = exec.src.open_read_with(source, exec.ctl.cancel)?;
     let mut buffer = vec![0u8; StreamOptions::default().effective_buffer_size()];
     let mut copied: u64 = 0;
     loop {

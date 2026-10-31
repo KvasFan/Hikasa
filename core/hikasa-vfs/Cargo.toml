@@ -18,6 +18,13 @@ filetime.workspace = true
 bitflags.workspace = true
 same-file.workspace = true
 trash.workspace = true
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+bzip2.workspace = true
+lzma-rust2.workspace = true
+zstd.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -27,6 +34,10 @@ criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "archive_crc_1gb"
+harness = false
 
 [[bench]]
 name = "binary_compare_2gb"

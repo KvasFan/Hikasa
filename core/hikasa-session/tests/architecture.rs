@@ -1085,6 +1085,32 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
                 ));
             }
         }
+        // M2 W5 (§1.5.15): the archive crates only behind `ArchiveVfs`, in library code; `zip` also in the settings
+        // packages (D-86). Tests write their fixtures with them.
+        if rel.contains("/src/") && !rel.starts_with("core/hikasa-vfs/src/archive/") {
+            for token in [
+                "zip::",
+                "tar::",
+                "flate2::",
+                "bzip2::",
+                "lzma_rust2::",
+                "zstd::",
+            ] {
+                if token == "zip::" && rel.starts_with("core/hikasa-session/src/package/") {
+                    continue;
+                }
+                for at in find_token(&code, token) {
+                    let before = code[..at].trim_end();
+                    if before.ends_with("::") {
+                        continue;
+                    }
+                    violations.push(format!(
+                        "{rel}:{}: `{token}` is called only from core/hikasa-vfs/src/archive/",
+                        line_of(&code, at)
+                    ));
+                }
+            }
+        }
     }
     for top in ["core", "cli", "gui"] {
         for file in rust_files(&root.join(top)) {
@@ -1233,6 +1259,13 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "bitflags",
             "same-file",
             "trash",
+            "zip",
+            "tar",
+            "flate2",
+            "bzip2",
+            "lzma-rust2",
+            "zstd",
+            "jiff",
         ],
         &["tempfile", "proptest", "pretty_assertions", "criterion"],
     ),
@@ -3150,8 +3183,43 @@ fn check_2_confines_trash_and_arboard() {
         "cli/hikasa-cli/tests/clip.rs",
         "fn e() { let _ = hikasa_session::SystemClipboard; }\n",
     );
+    put(
+        root,
+        "core/hikasa-vfs/src/archive/zip_read.rs",
+        "fn f() { zip::ZipArchive::new(); tar::Header::new_gnu(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/package/mod.rs",
+        "fn g() { zip::ZipArchive::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-vfs/src/source.rs",
+        "fn h() { self::zip::x(); zstd::encode(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/compare.rs",
+        "fn i() { zip::ZipArchive::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-vfs/tests/archive_read.rs",
+        "fn j() { zip::ZipWriter::new(); }\n",
+    );
     let violations = check_confined_crates(root);
-    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert_eq!(violations.len(), 5, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-vfs/src/source.rs:1"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-session/src/api/compare.rs:1"))
+    );
     assert!(
         violations
             .iter()

@@ -7,7 +7,8 @@
 //! | [`LocalVfs`] | `Spec::Local` | the local file system; atomic writes; name-only prefiltered listings (D-45) |
 //! | [`MemoryVfs`] | `Spec::Local` | a deterministic in-memory fake for tests: listing orders, fault injection, symlinks |
 //! | [`Blob`] | `Spec::Stdin`, `Spec::Clipboard` | in-memory content injected by adapters |
-//! | [`VfsRouter`] | every spec | dispatches specs to the back-ends above; archive, snapshot, remote, profile and HTTP specs parse but are unsupported in M1 (D-05) |
+//! | [`ArchiveVfs`] | `Spec::ArchiveMember` | archives stacked on another `Vfs` (M2 W5): zip, tar, compressed tar, single streams; read-only until W5b |
+//! | [`VfsRouter`] | every spec | dispatches specs to the back-ends above; snapshot, remote, profile and HTTP specs parse but are unsupported (D-05) |
 //!
 //! # Content helpers
 //!
@@ -77,6 +78,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod archive;
 pub mod caps;
 pub mod compare;
 pub mod entry;
@@ -94,6 +96,10 @@ pub mod vfs;
 #[allow(unsafe_code)]
 mod mmap;
 
+pub use archive::{
+    ArchiveConfig, ArchiveCounters, ArchiveFormat, ArchiveLimits, ArchiveMasks, ArchiveVfs, Probe,
+    Probed, SpecUse, resolve_spec, resolve_with,
+};
 pub use caps::Capabilities;
 pub use compare::{BinaryComparator, BinaryOutcome, CrcComparator, compare_sources, crc32_source};
 pub use entry::{Attrs, DosAttrs, Entry, EntryKind, FileId, FileName, UnixMeta};

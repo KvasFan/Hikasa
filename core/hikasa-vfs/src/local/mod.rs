@@ -368,6 +368,13 @@ impl Vfs for LocalVfs {
     }
 
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        // Rule 17 of §1.5.7: a member name that is no file name here is an item error of a copy out of an archive.
+        #[cfg(windows)]
+        if crate::archive::name::windows_name_problem(name.as_str()).is_some() {
+            return Err(VfsError::InvalidName {
+                name: name.as_str().to_owned(),
+            });
+        }
         let path = local(dir)?;
         path.join_name(&name.to_os_string())
             .map(Spec::Local)

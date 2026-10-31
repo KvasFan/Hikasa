@@ -13,9 +13,10 @@ use std::fmt;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
-use hikasa_core::{CancelToken, ErrorReport, FileTime, Spec};
+use hikasa_core::{CancelToken, Ctl, ErrorReport, FileTime, Spec, Warning};
 use serde::{Deserialize, Serialize};
 
+use crate::archive::ArchiveFormat;
 use crate::caps::Capabilities;
 use crate::entry::{DosAttrs, Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
@@ -315,6 +316,33 @@ pub trait Vfs: Send + Sync {
         _cancel: &CancelToken,
     ) -> Result<Option<u64>, VfsError> {
         Ok(None)
+    }
+
+    // ---- archives (M2 W5, D-136, D-139, D-145; contract §1.5.3) -------------------------------------------
+
+    /// Does the slow part of reaching `spec` now, with cancellation and progress: for a spec inside an archive, the
+    /// index of every archive around it (D-139). Default: nothing.
+    fn prepare(&self, _spec: &Spec, _ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// `open_read` that can be cancelled while an archive member is decoded (`Cancelled`). Default: `open_read`.
+    fn open_read_with(
+        &self,
+        spec: &Spec,
+        _cancel: &CancelToken,
+    ) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.open_read(spec)
+    }
+
+    /// The archive format of a file name per the masks; `None` on back-ends without archives.
+    fn archive_format(&self, _name: &str) -> Option<ArchiveFormat> {
+        None
+    }
+
+    /// Warnings raised since the last call (D-145). Default: none.
+    fn take_warnings(&self) -> Vec<Warning> {
+        Vec::new()
     }
 }
 

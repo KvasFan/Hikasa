@@ -21,6 +21,8 @@ pub struct VfsSource<'a> {
     entry: Entry,
     /// [`Vfs::local_path`], asked on first use (a `LocalVfs` answers with a `stat`).
     local: OnceLock<Option<PathBuf>>,
+    /// The token of [`ContentSource::open`] (M2 W5); `None` = never cancelled.
+    cancel: Option<&'a CancelToken>,
 }
 
 impl<'a> VfsSource<'a> {
@@ -32,6 +34,16 @@ impl<'a> VfsSource<'a> {
             spec,
             entry,
             local: OnceLock::new(),
+            cancel: None,
+        }
+    }
+
+    /// Lets `open` be cancelled while an archive member is decoded (G4, D-139); the default is never cancelled.
+    /// `read_all` passes its own token.
+    pub fn with_cancel(self, cancel: &'a CancelToken) -> VfsSource<'a> {
+        VfsSource {
+            cancel: Some(cancel),
+            ..self
         }
     }
 
@@ -87,9 +99,11 @@ impl ContentSource for VfsSource<'_> {
             .as_deref()
     }
 
-    /// [`Vfs::open_read`]; a [`crate::VfsError`] is wrapped so that `VfsError::from_io` recovers it.
+    /// [`Vfs::open_read_with`]; a [`crate::VfsError`] is wrapped so that `VfsError::from_io` recovers it.
     fn open(&self) -> io::Result<Box<dyn Read + Send + '_>> {
-        let reader = self.vfs.open_read(&self.spec)?;
+        let never = CancelToken::never();
+        let cancel = self.cancel.unwrap_or(&never);
+        let reader = self.vfs.open_read_with(&self.spec, cancel)?;
         Ok(Box::new(reader))
     }
 
@@ -107,7 +121,7 @@ impl ContentSource for VfsSource<'_> {
         }
         let mut reader = self
             .vfs
-            .open_read(&self.spec)
+            .open_read_with(&self.spec, cancel)
             .map_err(|e| read_error(io::Error::from(e)))?;
         read_limited(&mut reader, expected, limit, cancel)
     }
