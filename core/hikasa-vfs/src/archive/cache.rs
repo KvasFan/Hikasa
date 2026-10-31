@@ -395,8 +395,25 @@ fn make_root(root: &Path) -> io::Result<Vec<PathBuf>> {
         .take_while(|dir| !dir.as_os_str().is_empty() && !dir.exists())
         .map(Path::to_path_buf)
         .collect();
-    fs::create_dir_all(root)?;
+    ensure_root(root)?;
     Ok(made)
+}
+
+/// `create_dir_all`, for a folder another session may be removing as it leaves: the call then fails with "already
+/// exists" or, where a folder is marked for deletion, "denied", and a new try finds it gone.
+fn ensure_root(root: &Path) -> io::Result<()> {
+    const TRIES: u32 = 64;
+    let passing = |kind| {
+        matches!(kind, io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound)
+            || (cfg!(windows) && kind == io::ErrorKind::PermissionDenied)
+    };
+    for _ in 1..TRIES {
+        match fs::create_dir_all(root) {
+            Err(error) if passing(error.kind()) => {}
+            result => return result,
+        }
+    }
+    fs::create_dir_all(root)
 }
 
 /// True when `path` names the file behind `lock`. A failure counts as no: a name marked for deletion refuses opens.
@@ -420,7 +437,7 @@ fn claim(root: &Path) -> io::Result<(u64, PathBuf, Handle)> {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                fs::create_dir_all(root)?;
+                ensure_root(root)?;
                 continue;
             }
             // A folder marked for deletion by a leaving session refuses new files until it is gone.
