@@ -1530,15 +1530,21 @@ impl Service {
         else {
             return InputState::Unwatched;
         };
-        let hikasa_core::Spec::Local(path) = &parsed else {
+        let Ok(parsed) = self.resolve(parsed, hikasa_vfs::SpecUse::Any) else {
             return InputState::Unwatched;
         };
-        // Standard input given to the GUI is spooled to `<cache>/stdin/<n>/…` (a blob that never changes).
-        if path
-            .as_path()
-            .starts_with(self.config().cache_dir.join("stdin"))
-        {
-            return InputState::Unwatched;
+        match &parsed {
+            // Standard input given to the GUI is spooled to `<cache>/stdin/<n>/…` (a blob that never changes).
+            hikasa_core::Spec::Local(path)
+                if path
+                    .as_path()
+                    .starts_with(self.config().cache_dir.join("stdin")) =>
+            {
+                return InputState::Unwatched;
+            }
+            // A member's `stat` re-stats the archive: no content is read (§1.5.14).
+            hikasa_core::Spec::Local(_) | hikasa_core::Spec::ArchiveMember { .. } => {}
+            _ => return InputState::Unwatched,
         }
         match self.vfs().stat(&parsed, FollowLinks::Yes) {
             Ok(entry) => InputState::Present(InputStamp {

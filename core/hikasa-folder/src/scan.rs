@@ -42,7 +42,7 @@ use crate::model::{
 };
 use crate::quick::{DiffFlags, quick_tests};
 use crate::resolve::{ResolvedRules, resolve_case, side_of};
-use crate::rules::{Criteria, FolderRules};
+use crate::rules::{ArchiveHandling, Criteria, FolderRules};
 use crate::state::{CompareState, base_state};
 use crate::time_cmp::TimeRelation;
 
@@ -118,6 +118,9 @@ pub struct FolderEnv<'a> {
     pub now: &'a jiff::Zoned,
     /// Content-test memory budget in bytes (D-25). The session passes `content_memory_budget_mib` × 2^20.
     pub content_budget: u64,
+    /// Entries listed inside archives after which a scan opens no further archive (D-151); normally
+    /// [`SCAN_ARCHIVE_ENTRIES_MAX`].
+    pub archive_entries_max: u64,
 }
 
 impl fmt::Debug for FolderEnv<'_> {
@@ -205,17 +208,23 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
     } else {
         FollowLinks::No
     };
+    let align = AlignOptions {
+        case,
+        align_extensions: rules.alignment.align_extensions,
+        align_normalization: rules.alignment.align_normalization,
+    };
+    let open_archives = rules
+        .open_archives
+        .iter()
+        .map(|path| path_key(&align, path).into_owned())
+        .collect();
     let scan = Scan {
         env,
         model,
         rules,
         criteria: effective_criteria(&rules.criteria, caps),
         resolved,
-        align: AlignOptions {
-            case,
-            align_extensions: rules.alignment.align_extensions,
-            align_normalization: rules.alignment.align_normalization,
-        },
+        align,
         follow,
         budget: ByteBudget::new(env.content_budget),
         caps,
@@ -230,6 +239,9 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         flat_items: [Mutex::new(Items::default()), Mutex::new(Items::default())],
         flat_dirs: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
         flat_deferred: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
+        open_archives,
+        archive_entries: AtomicU64::new(0),
+        archive_limit_warned: AtomicBool::new(false),
     };
     let root_sides = [
         Some(SideFolder::root(left.spec.clone(), &left.entry, follow)),
@@ -278,7 +290,13 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
     scan.flush();
     scan.final_progress();
     let complete = !scan.aborted.load(Ordering::Acquire);
-    model.mutate(|s| s.finish(complete));
+    let back_end = env.vfs.take_warnings();
+    model.mutate(|s| {
+        for w in back_end {
+            s.warn(w);
+        }
+        s.finish(complete);
+    });
     let cmp = FolderComparison::new(Arc::clone(model));
     model.set_finished();
     scan.emit(ScanEvent::Finished { complete });
@@ -288,6 +306,17 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         cmp.check_invariants()
     );
     Ok(cmp)
+}
+
+/// The alignment's case and normalisation options applied to a whole path.
+fn path_key<'t>(align: &AlignOptions, text: &'t str) -> Cow<'t, str> {
+    match align.case {
+        hikasa_core::CaseSensitivity::Insensitive => canonical_fold(text),
+        hikasa_core::CaseSensitivity::Sensitive if align.align_normalization => {
+            hikasa_core::case::nfc(text)
+        }
+        hikasa_core::CaseSensitivity::Sensitive => Cow::Borrowed(text),
+    }
 }
 
 /// `criteria` without the quick tests that a base's back-end cannot evaluate (§2.6.1).
@@ -337,6 +366,10 @@ fn load_base(vfs: &dyn Vfs, side: Side, spec: &Spec) -> Result<BaseInfo, FolderE
         capabilities,
     })
 }
+
+/// Entries listed inside archives after which a scan opens no further archive (D-151): it bounds a recursive
+/// archive in `Always` mode, with `nesting_max` and the cache limits.
+pub const SCAN_ARCHIVE_ENTRIES_MAX: u64 = 5_000_000;
 
 /// One side of a folder that is listed.
 #[derive(Debug, Clone)]
@@ -388,6 +421,10 @@ struct Facts {
     dir: u32,
     /// A per-entry error (failed stat, broken or looping followed link).
     error: Option<Box<ErrorReport>>,
+    /// An archive by its name (D-151): `NodeFlags::ARCHIVE`.
+    archive: bool,
+    /// An archive opened as a folder: its entry reads as a folder, its spec is the archive's root.
+    opened: bool,
 }
 
 impl Facts {
@@ -402,6 +439,8 @@ impl Facts {
             verdict: FolderVerdict::Excluded,
             dir,
             error: None,
+            archive: false,
+            opened: false,
         }
     }
 
@@ -513,6 +552,12 @@ struct Scan<'a> {
     flat_dirs: [Mutex<Vec<DirInfo>>; 2],
     /// Flatten: protected folders waiting for their counterpart, per side.
     flat_deferred: [Mutex<Vec<Deferred>>; 2],
+    /// `open_archives`, as [`Scan::path_key`] keys.
+    open_archives: HashSet<String>,
+    /// Entries listed inside archives (D-151).
+    archive_entries: AtomicU64,
+    /// The `archive_scan_limit` warning was added.
+    archive_limit_warned: AtomicBool,
 }
 
 fn spawn_task<'s>(scope: &rayon::Scope<'s>, scan: &'s Scan<'_>, task: Task) {
@@ -808,13 +853,7 @@ impl<'a> Scan<'a> {
     /// The key under which flatten folder paths of the two sides are matched (the alignment's case and
     /// normalisation options applied to the whole path).
     fn path_key<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        match self.align.case {
-            hikasa_core::CaseSensitivity::Insensitive => canonical_fold(text),
-            hikasa_core::CaseSensitivity::Sensitive if self.align.align_normalization => {
-                hikasa_core::case::nfc(text)
-            }
-            hikasa_core::CaseSensitivity::Sensitive => Cow::Borrowed(text),
-        }
+        path_key(&self.align, text)
     }
 
     // ------------------------------------------------------------------------------------------------------
@@ -847,10 +886,58 @@ impl<'a> Scan<'a> {
         }
     }
 
+    /// True when the mode says the file `name` in the folder `parent` opens as a folder (D-151, step 2). The name
+    /// masks use this: it does not change during a scan, so the prefilter and the items agree.
+    fn archive_mode_opens(&self, parent: &RelPath, name: &str) -> bool {
+        let mode = self.rules.handling.archives;
+        if mode == ArchiveHandling::AsFiles
+            || (mode == ArchiveHandling::OnceOpened && self.open_archives.is_empty())
+            || self.env.vfs.archive_format(name).is_none()
+        {
+            return false;
+        }
+        mode == ArchiveHandling::Always || {
+            let path = join_text(parent.as_str(), name);
+            self.open_archives.contains(self.path_key(&path).as_ref())
+        }
+    }
+
+    /// [`Scan::archive_mode_opens`] within the budget (step 5): past it no further archive opens, and one warning
+    /// says so.
+    fn opens_archive(&self, parent: &RelPath, name: &str) -> bool {
+        if !self.archive_mode_opens(parent, name) {
+            return false;
+        }
+        let budget = self.env.archive_entries_max;
+        if self.archive_entries.load(Ordering::Relaxed) <= budget {
+            return true;
+        }
+        if !self.archive_limit_warned.swap(true, Ordering::Relaxed) {
+            self.model.mutate(|s| {
+                s.warn(Warning {
+                    code: WarningCode::ArchiveScanLimit,
+                    message: format!(
+                        "over {budget} entries were listed inside archives: \
+                         later archives stay files"
+                    ),
+                    spec: None,
+                });
+            });
+        }
+        false
+    }
+
     fn list_side(&self, sf: &SideFolder) -> Result<Listing, VfsError> {
         let rules = &self.resolved;
-        let prefilter =
-            |name: &str, kind: EntryKind| rules.names_accept(&sf.rel, sf.verdict, name, kind);
+        let prefilter = |name: &str, kind: EntryKind| {
+            // An archive that opens passes the name masks as a folder (D-45, D-151 step 3).
+            let kind = if kind == EntryKind::File && self.archive_mode_opens(&sf.rel, name) {
+                EntryKind::Dir
+            } else {
+                kind
+            };
+            rules.names_accept(&sf.rel, sf.verdict, name, kind)
+        };
         let opts = ListOptions {
             follow: self.follow,
             prefilter: if rules.has_name_filter() {
@@ -859,7 +946,14 @@ impl<'a> Scan<'a> {
                 None
             },
         };
-        self.env.vfs.list(&sf.spec, &opts, self.env.ctl.cancel)
+        let listing = self.env.vfs.list(&sf.spec, &opts, self.env.ctl.cancel);
+        if matches!(sf.spec, Spec::ArchiveMember { .. })
+            && let Ok(listing) = &listing
+        {
+            self.archive_entries
+                .fetch_add(listing.entries.len() as u64, Ordering::Relaxed);
+        }
+        listing
     }
 
     fn list_pair(&self, sides: &[Option<SideFolder>; 2]) -> [Option<Result<Listing, VfsError>>; 2] {
@@ -907,15 +1001,25 @@ impl<'a> Scan<'a> {
         } = listing;
         let dir = dir.unwrap_or(NO);
         let mut facts = Vec::with_capacity(entries.len() + name_only.len() + errors.len());
-        for (step, entry) in entries.iter().enumerate() {
+        for (step, entry) in entries.iter_mut().enumerate() {
             if self.cancelled_at(step) {
                 return Err(Items { entries, facts });
+            }
+            let mut f = Facts::new(dir);
+            if entry.kind == EntryKind::File
+                && self.env.vfs.archive_format(entry.name.as_str()).is_some()
+            {
+                f.archive = true;
+                if self.opens_archive(parent, entry.name.as_str()) {
+                    f.opened = true;
+                    entry.kind = EntryKind::Dir;
+                    entry.size = 0;
+                }
             }
             let kind = entry.kind;
             let name = entry.name.as_str();
             let names_ok = rules.names_accept(parent, verdict, name, kind);
             let other = rules.other_filtered(kind, entry.size, entry.mtime, &entry.attrs);
-            let mut f = Facts::new(dir);
             f.filtered = !names_ok || other;
             if kind == EntryKind::Dir {
                 f.verdict = rules.folder_verdict(parent, name, verdict);
@@ -930,12 +1034,22 @@ impl<'a> Scan<'a> {
                 return Err(Items { entries, facts });
             }
             let mut f = Facts::new(dir);
-            if declined.kind == EntryKind::Dir {
+            let mut kind = declined.kind;
+            if kind == EntryKind::File {
+                let name = declined.name.as_str();
+                f.archive = self.env.vfs.archive_format(name).is_some();
+                // The prefilter judged it as a folder: so it is one, also for the invariants.
+                if f.archive && self.archive_mode_opens(parent, name) {
+                    f.opened = true;
+                    kind = EntryKind::Dir;
+                }
+            }
+            if kind == EntryKind::Dir {
                 f.verdict = rules.folder_verdict(parent, declined.name.as_str(), verdict);
             }
             f.filtered = true;
             f.stat_skipped = true;
-            entries.push(Entry::new(declined.name, declined.kind));
+            entries.push(Entry::new(declined.name, kind));
             facts.push(f);
         }
         if !errors.is_empty() {
@@ -1461,6 +1575,12 @@ impl<'a> Scan<'a> {
             if f.stat_skipped {
                 flags |= NodeFlags::stat_skipped(side);
             }
+            if f.archive {
+                flags |= NodeFlags::ARCHIVE;
+            }
+            if f.opened {
+                flags |= NodeFlags::archive_root(side);
+            }
             if let Some(error) = &f.error {
                 flags |= NodeFlags::error(side);
                 if f.looped {
@@ -1641,6 +1761,7 @@ impl<'a> Scan<'a> {
                 continue;
             }
             let spec = match spec_of(index, entry, f.dir()) {
+                Ok(spec) if f.opened => Spec::archive_member(spec, ""),
                 Ok(spec) => spec,
                 Err(e) => {
                     plan.flags |= NodeFlags::error(side);
@@ -1901,8 +2022,9 @@ impl<'a> Scan<'a> {
             self.aborted.store(true, Ordering::Release);
             return;
         };
-        let left = VfsSource::new(self.env.vfs, ls, le);
-        let right = VfsSource::new(self.env.vfs, rs, re);
+        let cancel = self.env.ctl.cancel;
+        let left = VfsSource::new(self.env.vfs, ls, le).with_cancel(cancel);
+        let right = VfsSource::new(self.env.vfs, rs, re).with_cancel(cancel);
         let outcome = comparator.compare(&left, &right, &self.env.ctl);
         drop(guard);
         let Ok(outcome) = outcome else {
@@ -2191,6 +2313,7 @@ impl<'a> Scan<'a> {
                 continue;
             }
             let spec = match self.env.vfs.child(&folder.spec, &entry.name) {
+                Ok(spec) if f.opened => Spec::archive_member(spec, ""),
                 Ok(spec) => spec,
                 Err(e) => {
                     f.failed_folder = true;

@@ -677,7 +677,7 @@ pub fn load_document(
             limit,
         });
     }
-    let mut reader = vfs.open_read(spec).map_err(load_error)?;
+    let mut reader = vfs.open_read_with(spec, ctl.cancel).map_err(load_error)?;
     let mut raw = read_all(&mut reader, entry.size, limit, ctl).map_err(|e| match e {
         ReadFail::Cancelled => TextError::Cancelled,
         ReadFail::TooLarge => TextError::TooLarge {

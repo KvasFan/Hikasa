@@ -12,7 +12,7 @@ per-user folder). Every value has a key `<file>.<path>`:
 | `themes.<scheme>` | one colour scheme (`themes/<scheme>.toml`; `light` and `dark` are built in) |
 | `filters` | name filter presets (`filters.toml`) |
 | `openwith` | Open With applications (`openwith.toml`) |
-| `archives` | archive type masks (`archives.toml`) |
+| `archives` | archive type masks and [limits](topic:archives) (`archives.toml`) |
 
 The path is the TOML key path: `options.text_editing.auto_indent`, `openwith.app.0.command`; a segment that is
 not a plain name is written in double quotes, an array position as a number.

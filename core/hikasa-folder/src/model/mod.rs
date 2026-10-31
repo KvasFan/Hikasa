@@ -7,6 +7,7 @@ mod check;
 pub(crate) mod node;
 pub(crate) mod store;
 
+use std::ffi::OsStr;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -63,6 +64,28 @@ impl fmt::Debug for FolderModel {
             .field("finished", &self.is_finished())
             .finish_non_exhaustive()
     }
+}
+
+/// `name` below `spec`; with `opened`, the root of the archive that name is.
+fn join_name(spec: Spec, name: &OsStr, opened: bool) -> Option<Spec> {
+    let child = match spec {
+        Spec::Local(path) => Spec::Local(path.join_name(name).ok()?),
+        Spec::ArchiveMember { archive, member } => {
+            let name = name.to_str()?;
+            let joined = if member.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{member}/{name}")
+            };
+            Spec::archive_member(*archive, joined)
+        }
+        _ => return None,
+    };
+    Some(if opened {
+        Spec::archive_member(child, "")
+    } else {
+        child
+    })
 }
 
 impl FolderModel {
@@ -224,8 +247,9 @@ impl TreeRead<'_> {
         RelPath::parse(&text).unwrap_or_default()
     }
 
-    /// Spec of a node's side, built from the base spec and the raw names (`None` when the side is absent or the
-    /// base is not `Spec::Local` in M1). The GUI opens file pairs with it (FC-062).
+    /// Spec of a node's side, built from the base spec and the raw names; an opened archive on the way turns the
+    /// names below it into members (D-151). `None` when the side is absent or the base is another kind of spec.
+    /// The GUI opens file pairs with it (FC-062).
     pub fn spec(&self, id: NodeId, side: Side) -> Option<Spec> {
         if !matches!(side, Side::Left | Side::Right) {
             return None;
@@ -239,14 +263,12 @@ impl TreeRead<'_> {
         if id == NodeId::ROOT {
             return Some(self.model.specs.get(side)?.clone());
         }
+        let opened = NodeFlags::archive_root(side);
         // Flatten: the side's folder spec plus the name.
         if let Some(dir) = rec.dir() {
             let base = self.store.dir_info(s, dir)?.spec.clone()?;
-            let Spec::Local(path) = base else {
-                return None;
-            };
             let raw = self.store.raw_name(s, id.0, rec);
-            return path.join_name(&raw).ok().map(Spec::Local);
+            return join_name(base, &raw, node.flags().contains(opened));
         }
         let mut names = Vec::new();
         let mut current = id.0;
@@ -256,19 +278,20 @@ impl TreeRead<'_> {
             if !rec.present() {
                 return None;
             }
-            names.push(self.store.raw_name(s, current, rec));
+            names.push((
+                self.store.raw_name(s, current, rec),
+                node.flags().contains(opened),
+            ));
             current = node.parent;
             if current == NONE {
                 return None;
             }
         }
-        let Spec::Local(mut path) = self.model.specs.get(side)?.clone() else {
-            return None;
-        };
-        for name in names.iter().rev() {
-            path = path.join_name(name).ok()?;
+        let mut spec = self.model.specs.get(side)?.clone();
+        for (name, opened) in names.iter().rev() {
+            spec = join_name(spec, name, *opened)?;
         }
-        Some(Spec::Local(path))
+        Some(spec)
     }
 
     /// Display category (§2.6.3), O(1).

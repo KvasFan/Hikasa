@@ -1,0 +1,145 @@
+{
+  "schema": "hikasa.folder_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 2,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a.zip/",
+      "capabilities": [
+        "read",
+        "list",
+        "seek",
+        "mtime",
+        "dos_attrs",
+        "unix_mode",
+        "symlinks",
+        "crc_provided",
+        "case_sensitive"
+      ]
+    },
+    "right": {
+      "spec": "<TMP>/b.tar.gz/",
+      "capabilities": [
+        "read",
+        "list",
+        "seek",
+        "mtime",
+        "unix_mode",
+        "unix_owner",
+        "symlinks",
+        "case_sensitive"
+      ]
+    },
+    "rules": {
+      "schema_version": 1,
+      "criteria": {
+        "size": true,
+        "timestamps": {
+          "enabled": true,
+          "tolerance_secs": 2,
+          "ignore_dst": false,
+          "ignore_timezone": false,
+          "offset": null
+        },
+        "filename_case": false,
+        "dos_attributes": "",
+        "unix": {
+          "permissions": false,
+          "owner": false,
+          "group": false
+        },
+        "content": {
+          "method": "crc",
+          "skip_if_quick_same": false,
+          "override_quick": true
+        }
+      },
+      "alignment": {
+        "case": "auto",
+        "align_extensions": false,
+        "align_normalization": false
+      },
+      "filters": {
+        "names": {
+          "include_files": [],
+          "exclude_files": [],
+          "include_folders": [],
+          "exclude_folders": []
+        },
+        "other": {
+          "exclude_protected": true,
+          "size": null,
+          "date": null
+        }
+      },
+      "handling": {
+        "follow_symlinks": false,
+        "flatten": false,
+        "scan_orphan_folders": true
+      }
+    },
+    "case": "sensitive",
+    "complete": true,
+    "display": {
+      "filter": "differences",
+      "folders": "compare_structure",
+      "ignore_unimportant": false,
+      "suppress_filters": false,
+      "toggles": [
+        "left_orphans",
+        "right_orphans",
+        "left_newer",
+        "right_newer",
+        "differences"
+      ]
+    },
+    "verdict": "no_differences",
+    "stats": {
+      "files": {
+        "same": 2,
+        "left_newer": 0,
+        "right_newer": 0,
+        "different": 0,
+        "left_orphan": 0,
+        "right_orphan": 0,
+        "unknown": 0,
+        "error": 0,
+        "filtered": 0
+      },
+      "folders": {
+        "same": 1,
+        "left_newer": 0,
+        "right_newer": 0,
+        "different": 0,
+        "left_orphan": 0,
+        "right_orphan": 0,
+        "unknown": 0,
+        "error": 0,
+        "filtered": 0
+      },
+      "left": {
+        "files": 2,
+        "folders": 1,
+        "bytes": 11
+      },
+      "right": {
+        "files": 2,
+        "folders": 1,
+        "bytes": 11
+      },
+      "content": {
+        "binary_same": 2,
+        "rules_same": 0,
+        "unimportant_only": 0,
+        "important_differences": 0,
+        "binary_different": 0,
+        "error": 0,
+        "not_compared": 0
+      }
+    },
+    "items": []
+  },
+  "warnings": [],
+  "error": null
+}

@@ -13,8 +13,8 @@ use hikasa_report::{FolderColumns, FolderLayout, FolderReportOptions, OutputForm
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_COMPARE_SCHEMA, GUI_OPEN_SCHEMA};
 use hikasa_session::api::{
-    ApiOp, FolderCompareRequest, GuiOpenRequest, ReportSettings, ViewWords, parse_content_method,
-    resolve_folder_display,
+    ApiOp, FolderCompareRequest, GuiOpenRequest, ReportSettings, ViewWords, parse_archive_handling,
+    parse_content_method, resolve_folder_display,
 };
 
 use super::{Ctx, gui, importance_patch, tri};
@@ -157,6 +157,12 @@ fn request(ctx: &Ctx<'_>, args: &FolderCompareArgs) -> Result<FolderCompareReque
         follow_symlinks: args.follow_symlinks.then_some(true),
         flatten: args.flatten.then_some(true),
         scan_orphan_folders: args.no_scan_orphans.then_some(false),
+        archives: args
+            .archives
+            .as_deref()
+            .map(parse_archive_handling)
+            .transpose()?,
+        open_archives: (!args.open_archive.is_empty()).then(|| args.open_archive.clone()),
         ..FolderRulesPatch::default()
     };
     Ok(FolderCompareRequest {

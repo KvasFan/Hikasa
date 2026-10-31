@@ -294,7 +294,10 @@ impl Service {
     /// A spec as a session stores it (D-80, §1.2.1): canonical absolute; `-` and `clipboard://` are not stored
     /// (`""` and warning `spec_not_saved`). Standard input is never read.
     pub fn stored_spec(&self, text: &str) -> Result<(String, Option<Warning>), ApiError> {
-        let spec = Spec::parse_os(OsStr::new(text), &self.spec_context())?;
+        let raw = OsStr::new(text);
+        let spec = Spec::parse_os(raw, &self.spec_context())?;
+        // An archive member or root is stored as what it is (§1.5.12), without reading anything else.
+        let spec = self.resolve(spec, self.use_of(raw))?;
         match spec {
             Spec::Stdin | Spec::Clipboard => Ok((
                 String::new(),

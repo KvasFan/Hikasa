@@ -739,6 +739,7 @@ pub fn run_tree(
         observer,
         now: &now,
         content_budget: tree.options.content_budget,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let model = FolderModel::new(mspec("/l"), mspec("/r"), rules.clone())?;
     hikasa_folder::compare_into(&model, &env)

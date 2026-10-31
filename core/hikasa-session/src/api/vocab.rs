@@ -11,6 +11,7 @@
 //! | Flag | Parser |
 //! |---|---|
 //! | `--folders` | [`parse_folder_mode`] |
+//! | `--archives files\|opened\|folders` | [`parse_archive_handling`] |
 //! | `--content none\|crc\|binary\|rules` | [`parse_content_method`] |
 //! | `--algorithm …` | [`parse_algorithm`] |
 //! | `--lines <a>-<b>` | [`parse_line_range`] |
@@ -20,7 +21,7 @@
 use std::ops::RangeInclusive;
 
 use hikasa_core::ContentMethod;
-use hikasa_folder::{DisplayOptions, FolderDisplayFilter, FolderMode};
+use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
 use hikasa_text::AlgorithmChoice;
@@ -40,6 +41,28 @@ pub const DEFAULT_FOLDER_MODE: FolderMode = FolderMode::CompareStructure;
 /// `ApiError::Report(ReportError::InvalidOption)` (kind `invalid_input`, exit 100).
 pub fn parse_folder_mode(word: &str) -> Result<FolderMode, ApiError> {
     Ok(hikasa_report::parse_folder_mode(word)?)
+}
+
+/// The words of `--archives` (D-152).
+const ARCHIVE_WORDS: [(&str, ArchiveHandling); 3] = [
+    ("files", ArchiveHandling::AsFiles),
+    ("opened", ArchiveHandling::OnceOpened),
+    ("folders", ArchiveHandling::Always),
+];
+
+/// Parses `--archives files|opened|folders` (ASCII case-insensitive). An unknown word is `InvalidArgument` naming
+/// the valid words.
+pub fn parse_archive_handling(word: &str) -> Result<ArchiveHandling, ApiError> {
+    let trimmed = word.trim();
+    ARCHIVE_WORDS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(trimmed))
+        .map(|(_, mode)| *mode)
+        .ok_or_else(|| {
+            ApiError::InvalidArgument(format!(
+                "unknown archive handling {word:?} (valid: files, opened, folders)"
+            ))
+        })
 }
 
 /// The words of `--content` (§1.9.2), in `ContentMethod` order.

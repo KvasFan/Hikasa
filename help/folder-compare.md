@@ -10,6 +10,8 @@ default it shows the differences with the folder structure; the [exit code](topi
   `--ignore-timezone`, `--filename-case`, `--attributes <letters>`, `--permissions`, `--owner`, `--group`.
 - `--content none|crc|binary|rules` adds a content test; `--skip-if-quick-same` and `--no-override-quick`
   tune it; `--text-rules-file` and the `--unimportant…` flags apply to `rules`.
+- The bases can be [archives](topic:archives); `--archives files|opened|folders` and `--open-archive <PATH>` say what
+  an archive inside a tree is.
 - `--rules-file <toml>` loads folder rules; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`,
   `--case-sensitive`, `--case-insensitive`, `--cutoff`, `--size-filter`, `--include-protected`.
 

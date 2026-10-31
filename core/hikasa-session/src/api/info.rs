@@ -10,7 +10,7 @@ use hikasa_formats::{
 };
 use hikasa_report::json::{DetectReasonJson, FormatJson};
 use hikasa_text::{LineIdx, load_document};
-use hikasa_vfs::{FollowLinks, ListOptions, Vfs, VfsError, VfsOp};
+use hikasa_vfs::{FollowLinks, ListOptions, SpecUse, Vfs, VfsError, VfsOp};
 
 use super::dto::{
     EncodingDto, FileFormatDto, FormatDetectDto, FormatListDto, FormatListItemDto, FormatRefDto,
@@ -248,7 +248,8 @@ impl Service {
         job: &JobControl,
     ) -> Result<VfsListDto, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
+            // `vfs ls a.zip` lists the members (§1.5.13).
+            let spec = self.parse_spec_in(spec, SpecUse::Folder, &job.cancel)?;
             let options = ListOptions {
                 follow,
                 prefilter: None,
@@ -298,14 +299,17 @@ impl Service {
         job: &JobControl,
     ) -> Result<u64, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
+            let spec = self.parse_spec_in(spec, self.use_of(spec), &job.cancel)?;
             let canonical = spec.canonical();
             let total = self
                 .vfs()
                 .stat(&spec, FollowLinks::Yes)
                 .ok()
                 .map(|e| e.size);
-            let mut reader = self.vfs().open_read(&spec).map_err(ApiError::from_vfs)?;
+            let mut reader = self
+                .vfs()
+                .open_read_with(&spec, &job.cancel)
+                .map_err(ApiError::from_vfs)?;
             let mut buffer = vec![0u8; CAT_BUFFER];
             let mut copied: u64 = 0;
             let ctl = job.ctl();

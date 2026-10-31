@@ -245,6 +245,8 @@ fn folder_args(
     request: &hikasa_session::api::FolderCompareRequest,
 ) -> FolderCompareArgs {
     FolderCompareArgs {
+        archives: None,
+        open_archive: Vec::new(),
         left: request.left.clone(),
         right: request.right.clone(),
         filters: None,

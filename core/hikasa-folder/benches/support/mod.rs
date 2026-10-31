@@ -146,6 +146,7 @@ pub fn compare(
         observer,
         now: &now,
         content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let model = FolderModel::new(left, right, rules.clone()).unwrap();
     let cmp = hikasa_folder::compare_into(&model, &env).ok();

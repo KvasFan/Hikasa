@@ -10,7 +10,9 @@
 | `hikasa vfs stat <spec>` | the metadata of one item and what its back-end can do |
 | `hikasa vfs cat <spec>` | the bytes of a file on stdout (`--json`: base64) |
 
-`ls` and `stat` report symbolic links themselves; `--follow-symlinks` reports their targets.
+`ls` and `stat` report symbolic links themselves; `--follow-symlinks` reports their targets. A spec can name a member
+of an [archive](topic:archives): `hikasa vfs cat a.zip/inner/x.txt`; `vfs ls a.zip` lists its members and `vfs stat a.zip`
+the file.
 
 ## Changing
 
@@ -58,9 +60,8 @@
 
 ## Specs
 
-A spec is a local path, `-` for standard input or `clipboard://` for the clipboard (text, or an image as
+A spec is a local path, a member of an [archive](topic:archives), `-` for standard input or `clipboard://` for the clipboard (text, or an image as
 `clipboard.png`): `vfs cat clipboard://`, `vfs stat clipboard://` and `vfs cp clipboard:// <file>` (it needs a
 file name). An empty clipboard is `not_found`; clipboard text (or `HIKASA_CLIPBOARD_FILE`) above 1 GiB, or an
-image above 1 GiB of pixels, is `too_large`. Archive members, snapshots and remote specs parse but are not
-available yet. See
+image above 1 GiB of pixels, is `too_large`. Snapshots and remote specs parse but are not available yet. See
 [Using the command line](topic:cli).

@@ -90,11 +90,18 @@ bitflags::bitflags! {
         const RULES_SKIPPED_SIZE = 128;
         /// A content test was requested but skipped because the quick tests said "same" (FC-026).
         const CONTENT_SKIPPED = 256;
+        /// An archive by its name, closed or opened, whichever side has it (FC-015, D-151).
+        const ARCHIVE = 512;
+        /// The left side of this folder is an opened archive: below it specs are members (D-151). Internal: not
+        /// in the JSON names.
+        const LEFT_ARCHIVE_ROOT = 1024;
+        /// The same on the right.
+        const RIGHT_ARCHIVE_ROOT = 2048;
     }
 }
 
 /// JSON names of the node flags in bit order (§4.1 rule 9).
-const FLAG_NAMES: [(NodeFlags, &str); 9] = [
+const FLAG_NAMES: [(NodeFlags, &str); 10] = [
     (NodeFlags::LEFT_FILTERED, "left_filtered"),
     (NodeFlags::RIGHT_FILTERED, "right_filtered"),
     (NodeFlags::LEFT_STAT_SKIPPED, "left_stat_skipped"),
@@ -104,6 +111,7 @@ const FLAG_NAMES: [(NodeFlags, &str); 9] = [
     (NodeFlags::SYMLINK_LOOP, "symlink_loop"),
     (NodeFlags::RULES_SKIPPED_SIZE, "rules_skipped_size"),
     (NodeFlags::CONTENT_SKIPPED, "content_skipped"),
+    (NodeFlags::ARCHIVE, "archive"),
 ];
 
 impl NodeFlags {
@@ -122,6 +130,14 @@ impl NodeFlags {
         match side {
             Side::Right => NodeFlags::RIGHT_FILTERED,
             Side::Left | Side::Center | Side::Output => NodeFlags::LEFT_FILTERED,
+        }
+    }
+
+    /// `LEFT_ARCHIVE_ROOT` or `RIGHT_ARCHIVE_ROOT`.
+    pub const fn archive_root(side: Side) -> NodeFlags {
+        match side {
+            Side::Right => NodeFlags::RIGHT_ARCHIVE_ROOT,
+            Side::Left | Side::Center | Side::Output => NodeFlags::LEFT_ARCHIVE_ROOT,
         }
     }
 
@@ -277,7 +293,11 @@ mod tests {
             (NodeFlags::SYMLINK_LOOP | NodeFlags::LEFT_FILTERED).names(),
             ["left_filtered", "symlink_loop"]
         );
-        assert_eq!(NodeFlags::all().names().len(), 9);
+        assert_eq!(NodeFlags::all().names().len(), 10);
+        assert_eq!(
+            NodeFlags::archive_root(Side::Right),
+            NodeFlags::RIGHT_ARCHIVE_ROOT
+        );
         assert_eq!(NodeFlags::filtered(Side::Right), NodeFlags::RIGHT_FILTERED);
         assert_eq!(
             NodeFlags::stat_skipped(Side::Left),

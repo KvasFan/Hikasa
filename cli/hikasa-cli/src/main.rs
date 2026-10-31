@@ -193,13 +193,15 @@ fn execute(
                         };
                         Ok(cmd::dispatch(&mut ctx, command, open))
                     });
-                    match dispatched {
+                    let code = match dispatched {
                         Ok(code) => code,
                         Err(e) => {
                             progress.clear();
                             cmd::fail(out, schema, &e, op, service.startup_warnings(), &[])
                         }
-                    }
+                    };
+                    service.shutdown();
+                    code
                 }
                 Err(e) => cmd::fail(out, schema, &e, ApiOp::Other, &[], &[]),
             }

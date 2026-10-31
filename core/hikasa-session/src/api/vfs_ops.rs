@@ -234,9 +234,11 @@ impl Service {
         })
     }
 
-    /// A spec that is written, removed or touched: parsed without reading standard input or the clipboard.
+    /// A spec that is written, removed or touched: parsed without reading standard input or the clipboard, then
+    /// resolved (§1.5.12): a trailing separator wants a folder.
     fn write_spec(&self, raw: &OsStr) -> Result<Spec, ApiError> {
-        Ok(Spec::parse_os(raw, &self.spec_context())?)
+        let spec = Spec::parse_os(raw, &self.spec_context())?;
+        self.resolve(spec, self.use_of(raw))
     }
 
     fn build_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<Plan, ApiError> {

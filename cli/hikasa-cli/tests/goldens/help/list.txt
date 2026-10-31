@@ -10,6 +10,7 @@ settings	hikasa settings
 session	hikasa session
 workspace	hikasa workspace
 vfs	hikasa vfs
+archives	Archives
 gui	hikasa gui
 completions	hikasa completions
 version	hikasa version

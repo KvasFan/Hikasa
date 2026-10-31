@@ -8,7 +8,8 @@ use hikasa_core::{
     ExitCode, Pair, ReadError, Side, Spec, Warning, WarningCode,
 };
 use hikasa_folder::{
-    ContentEngines, Criteria, FolderEnv, FolderModel, FolderRules, ScanObserver, compare_into,
+    ArchiveHandling, ContentEngines, Criteria, FolderEnv, FolderModel, FolderRules, ScanObserver,
+    compare_into,
 };
 use hikasa_formats::{
     CompiledFormat, DetectReason, Detection, EnabledOverrides, FormatError, FormatKind,
@@ -20,8 +21,8 @@ use hikasa_text::{
     compare_with_limits, load_document, quick_compare_bytes_with,
 };
 use hikasa_vfs::{
-    BinaryComparator, BinaryOutcome, CrcComparator, Entry, EntryKind, FollowLinks, Vfs, VfsError,
-    VfsOp, VfsSource, compare_sources,
+    BinaryComparator, BinaryOutcome, CrcComparator, Entry, EntryKind, FollowLinks, SpecUse, Vfs,
+    VfsError, VfsOp, VfsSource, compare_sources,
 };
 
 use super::requests::{FolderCompareRequest, QuickMethod, QuickRequest, TextCompareRequest};
@@ -68,8 +69,8 @@ impl Service {
     }
 
     fn quick_inner(&self, req: &QuickRequest, job: &JobControl) -> Result<QuickResponse, ApiError> {
-        let left = self.parse_spec(&req.left)?;
-        let right = self.parse_spec(&req.right)?;
+        let left = self.parse_spec_in(&req.left, self.use_of(&req.left), &job.cancel)?;
+        let right = self.parse_spec_in(&req.right, self.use_of(&req.right), &job.cancel)?;
         let left_entry = self.stat_input(Side::Left, &left)?;
         let right_entry = self.stat_input(Side::Right, &right)?;
         if left_entry.kind == EntryKind::Dir || right_entry.kind == EntryKind::Dir {
@@ -97,8 +98,8 @@ impl Service {
                 (None, outcome)
             }
             QuickMethod::Crc | QuickMethod::Binary => {
-                let l = VfsSource::new(vfs, left.clone(), left_entry);
-                let r = VfsSource::new(vfs, right.clone(), right_entry);
+                let l = VfsSource::new(vfs, left.clone(), left_entry).with_cancel(&job.cancel);
+                let r = VfsSource::new(vfs, right.clone(), right_entry).with_cancel(&job.cancel);
                 let outcome = if req.method == QuickMethod::Crc {
                     CrcComparator { opts: stream }.compare(&l, &r, &ctl)
                 } else {
@@ -108,8 +109,8 @@ impl Service {
                 (None, outcome)
             }
             QuickMethod::Rules => {
-                let l = VfsSource::new(vfs, left.clone(), left_entry);
-                let r = VfsSource::new(vfs, right.clone(), right_entry);
+                let l = VfsSource::new(vfs, left.clone(), left_entry).with_cancel(&job.cancel);
+                let r = VfsSource::new(vfs, right.clone(), right_entry).with_cancel(&job.cancel);
                 let (choice, outcome) = self.quick_rules(req, &l, &r, job)?;
                 (Some(choice), outcome)
             }
@@ -207,8 +208,8 @@ impl Service {
         job: &JobControl,
         mut observer: Option<&mut dyn CompareObserver>,
     ) -> Result<TextCompareResponse, ApiError> {
-        let left = self.parse_spec(&req.left)?;
-        let right = self.parse_spec(&req.right)?;
+        let left = self.parse_spec_in(&req.left, self.use_of(&req.left), &job.cancel)?;
+        let right = self.parse_spec_in(&req.right, self.use_of(&req.right), &job.cancel)?;
         let mut warnings = Vec::new();
         let rules = self.text_rules_from(
             req.base_rules.as_ref(),
@@ -291,8 +292,9 @@ impl Service {
         &self,
         req: &FolderCompareRequest,
     ) -> Result<PreparedFolderCompare, ApiError> {
-        let left = self.parse_spec(&req.left)?;
-        let right = self.parse_spec(&req.right)?;
+        // A base is a folder: `a.zip` is the archive's root, whatever the handling mode (FC-001).
+        let left = self.parse_spec_as(&req.left, SpecUse::Folder)?;
+        let right = self.parse_spec_as(&req.right, SpecUse::Folder)?;
         let mut warnings = Vec::new();
         let effective = self.folder_rules(req, &mut warnings)?;
         let model = FolderModel::new(left.clone(), right.clone(), effective.rules.clone())
@@ -337,6 +339,19 @@ impl Service {
             ignore_unimportant |= parsed.ignore_unimportant;
         }
         rules.apply(&req.patch).map_err(ApiError::from_folder)?;
+        if rules.handling.archives == ArchiveHandling::AsFiles
+            && req
+                .patch
+                .open_archives
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+        {
+            warnings.push(Warning {
+                code: WarningCode::SwitchIgnored,
+                message: "--open-archive has no effect with --archives files".into(),
+                spec: None,
+            });
+        }
         let text_rules = if rules.criteria.content.method == ContentMethod::Rules {
             Some(self.text_rules_from(
                 req.base_text_rules.as_ref(),
@@ -415,6 +430,7 @@ impl Service {
             observer,
             now: &now,
             content_budget: self.options().content_budget_bytes(),
+            archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
         };
         let comparison = compare_into(&prepared.model, &env).map_err(ApiError::from_folder)?;
         let mut warnings = prepared.warnings.clone();

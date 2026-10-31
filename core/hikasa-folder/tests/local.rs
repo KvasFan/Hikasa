@@ -35,6 +35,7 @@ fn compare(root: &Path, rules: &FolderRules, threads: usize) -> FolderComparison
         observer: &NullObserver,
         now: &now,
         content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let cmp = compare_folders(&spec(&root.join("l")), &spec(&root.join("r")), rules, &env).unwrap();
     cmp.check_invariants().unwrap();

@@ -363,6 +363,7 @@ fn run_replay(
         observer: &replay,
         now: &now,
         content_budget: 1 << 20,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let cmp = compare_into(&model, &env).unwrap();
     (cmp, replay)

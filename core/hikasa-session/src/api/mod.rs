@@ -50,7 +50,8 @@ use hikasa_core::{
 };
 use hikasa_formats::{FormatRegistry, ProcessRunner, RegexLimits, TextEncoding};
 use hikasa_vfs::{
-    Blob, BlobFailure, LocalOptions, LocalVfs, StreamOptions, VfsError, VfsOp, VfsRouter,
+    ArchiveConfig, ArchiveVfs, Blob, BlobFailure, LocalOptions, LocalVfs, SpecUse, StreamOptions,
+    Vfs, VfsError, VfsOp, VfsRouter, resolve_spec,
 };
 use parking_lot::{Mutex, RwLock};
 
@@ -83,8 +84,8 @@ pub use vfs_ops::{
     parse_overwrite, parse_time,
 };
 pub use vocab::{
-    parse_algorithm, parse_content_method, parse_folder_mode, parse_line_range,
-    resolve_folder_display, resolve_text_display,
+    parse_algorithm, parse_archive_handling, parse_content_method, parse_folder_mode,
+    parse_line_range, resolve_folder_display, resolve_text_display,
 };
 
 use crate::clipboard::{
@@ -98,7 +99,7 @@ use crate::jobs::{
 };
 use crate::options::{ProgramOptions, load_options_with};
 use crate::paths::{ConfigLocation, resolve_config_dir};
-use crate::settings::LoadMode;
+use crate::settings::{ArchiveTypes, FileId, LoadMode, SettingsFile};
 
 /// Version of this build (`CARGO_PKG_VERSION`), as written in `hikasa_version` and the client/generator names.
 pub const HIKASA_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -258,6 +259,41 @@ struct Inner {
     clipboard: Arc<dyn ClipboardProvider>,
     /// The clipboard snapshot: `None` until the first `clipboard://` spec (or `read_clipboard`).
     clipboard_state: Mutex<Option<Result<Blob, BlobFailure>>>,
+    /// The archive back-end (M2 W5): the router of every generation shares it.
+    archives: Arc<ArchiveVfs>,
+}
+
+/// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
+/// must not depend on it (§1.5.12).
+fn load_archive_settings(config: &ConfigLocation) -> (ArchiveTypes, Vec<Warning>) {
+    let path = crate::settings::SettingsStore::new(config).path(FileId::Archives);
+    match SettingsFile::<ArchiveTypes>::load(&path, LoadMode::Strict) {
+        Ok(file) => (file.value().clone(), file.loaded().warnings.clone()),
+        Err(e) => (
+            ArchiveTypes::default(),
+            vec![Warning {
+                code: hikasa_core::WarningCode::InvalidConfigValue,
+                message: format!("{e} (the default archive settings are used)"),
+                spec: None,
+            }],
+        ),
+    }
+}
+
+/// The value `hikasa-vfs` takes: masks and limits of `archives.toml`, the injected clock (T1) and
+/// `<cache>/archives` (§1.5.6).
+fn archive_config(
+    config: &ConfigLocation,
+    clock: &Arc<dyn Clock>,
+    settings: &ArchiveTypes,
+) -> ArchiveConfig {
+    let clock = Arc::clone(clock);
+    ArchiveConfig {
+        masks: settings.masks(),
+        limits: settings.limits(),
+        clock: Arc::new(move || clock.now()),
+        cache_root: config.cache_dir.join("archives"),
+    }
 }
 
 /// The settings a [`Service`] holds in memory (D-119): one consistent view, taken with
@@ -370,7 +406,14 @@ impl Service {
             })
             .build()
             .map_err(|e| ApiError::Internal(format!("cannot start the worker threads: {e}")))?;
-        let router = VfsRouter::new(LocalVfs::new(LocalOptions::default()));
+        let (archive_settings, archive_warnings) = load_archive_settings(&config);
+        startup_warnings.extend(archive_warnings);
+        let archives = Arc::new(ArchiveVfs::new(
+            Arc::new(LocalVfs::new(LocalOptions::default())),
+            archive_config(&config, &clock, &archive_settings),
+        ));
+        let router = VfsRouter::new(LocalVfs::new(LocalOptions::default()))
+            .with_archives(Arc::clone(&archives));
         let (stdin_name, stdin_read) = match stdin {
             Some(source) => (source.name, Some(source.read)),
             None => (None, None),
@@ -402,6 +445,7 @@ impl Service {
                 stdin: OnceLock::new(),
                 clipboard,
                 clipboard_state: Mutex::new(None),
+                archives,
             }),
         })
     }
@@ -469,7 +513,26 @@ impl Service {
             ignored_keys,
             registry,
         });
+        let (archive_settings, archive_warnings) = load_archive_settings(&self.inner.config);
+        warnings.extend(archive_warnings);
+        self.inner.archives.set_config(archive_config(
+            &self.inner.config,
+            &self.inner.clock,
+            &archive_settings,
+        ));
         warnings
+    }
+
+    /// Removes the session's archive cache (`ArchiveVfs::cleanup`, M2 W5, §1.5.12): the adapters call it before
+    /// `main` returns. A crash leaves the folder to the next session that extracts.
+    pub fn shutdown(&self) {
+        self.inner.archives.cleanup();
+    }
+
+    /// The warnings of the back-ends since the last call (D-145): adapters drain them at the end of a command, so
+    /// `warnings` in JSON is complete and a listing stays pure.
+    pub fn take_warnings(&self) -> Vec<Warning> {
+        self.router().take_warnings()
     }
 
     /// Warnings collected during construction (unknown config sections, skipped user formats).
@@ -536,8 +599,50 @@ impl Service {
     /// error reading it, or no source, is an error here. A `clipboard://` spec reads the clipboard now, once per
     /// service (M2 W3, D-100); a failed read is not an error here: the router answers it when the spec is read
     /// (`unsupported`, `not_found` or `io`).
+    ///
+    /// A local spec then goes through [`resolve_spec`] (M2 W5, D-138): `a.zip/inner/x` names the member, and an
+    /// input ending in a separator wants a folder (`SpecUse::Folder`).
     pub fn parse_spec(&self, input: &OsStr) -> Result<Spec, ApiError> {
+        self.parse_spec_as(input, self.use_of(input))
+    }
+
+    /// [`Service::parse_spec`] with an explicit use (`Folder`: `folder_prepare`, `vfs ls`, the specs of a Folder
+    /// Compare view).
+    pub fn parse_spec_as(&self, input: &OsStr, use_: SpecUse) -> Result<Spec, ApiError> {
         let spec = Spec::parse_os(input, &self.spec_context())?;
+        self.capture_input(&spec)?;
+        self.resolve(spec, use_)
+    }
+
+    /// [`Service::parse_spec_as`] inside a job: indexing an outer archive stops with `cancel` (§1.5.4).
+    pub(crate) fn parse_spec_in(
+        &self,
+        input: &OsStr,
+        use_: SpecUse,
+        cancel: &CancelToken,
+    ) -> Result<Spec, ApiError> {
+        let spec = Spec::parse_os(input, &self.spec_context())?;
+        self.capture_input(&spec)?;
+        resolve_spec(&*self.router(), spec, use_, cancel).map_err(|_| ApiError::Cancelled)
+    }
+
+    /// The use of a spec typed as `input`: a trailing separator wants a folder.
+    pub(crate) fn use_of(&self, input: &OsStr) -> SpecUse {
+        if ends_with_separator(input, self.env().platform) {
+            SpecUse::Folder
+        } else {
+            SpecUse::Any
+        }
+    }
+
+    /// [`resolve_spec`] on this service's back-ends, without a job: bounded by the limits, not cancellable.
+    pub(crate) fn resolve(&self, spec: Spec, use_: SpecUse) -> Result<Spec, ApiError> {
+        resolve_spec(&*self.router(), spec, use_, &CancelToken::never())
+            .map_err(|_| ApiError::Cancelled)
+    }
+
+    /// Reads standard input or the clipboard now, when `spec` names them.
+    fn capture_input(&self, spec: &Spec) -> Result<(), ApiError> {
         match spec {
             Spec::Stdin => {
                 self.stdin_state()?;
@@ -552,7 +657,7 @@ impl Service {
             }
             _ => {}
         }
-        Ok(spec)
+        Ok(())
     }
 
     /// Reads the clipboard **again** and replaces the snapshot later `clipboard://` specs see (TC-065 data; the
@@ -606,7 +711,8 @@ impl Service {
 
     /// Rebuilds the router from the captured blobs.
     fn rebuild_router(&self) {
-        let mut router = VfsRouter::new(LocalVfs::new(LocalOptions::default()));
+        let mut router = VfsRouter::new(LocalVfs::new(LocalOptions::default()))
+            .with_archives(Arc::clone(&self.inner.archives));
         if let Some(blob) = self.stdin() {
             router = router.with_stdin(blob.clone());
         }
