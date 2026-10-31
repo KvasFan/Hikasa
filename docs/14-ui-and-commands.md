@@ -107,7 +107,12 @@ Ctrl, Alt or Cmd only at the window root.
 
 - **UI-020** (P0): Theme mode: Follow operating system / Light / Dark. Colour
   schemes are TOML files in `themes/`; the two built-ins are editable through the
-  Options ▸ Theme, Colors, Fonts page with live **Preview** in the open view.
+  Options ▸ Theme, Colors, Fonts page with live **Preview** in the open view. *M2 W4c (D-130):* there is no separate
+  preview mode: every change of the Appearance pages (mode, schemes, elements, flags, fonts) is applied at once to
+  every window from the dialog's working copies; Cancel restores the applied theme, Apply writes `theme.toml` and the
+  changed scheme files sparsely. New (name and base), Clone and Delete (not the built-ins) manage schemes; *Reset*
+  takes an element back to its base (removed from the file), *Reset all* on a built-in deletes its override file.
+  Default text below 4.5:1 on a background is a warning, not an error.
 - **UI-021** (P0): Folder view elements: default text, background, folder info,
   selection (custom or system), inactive selection background, stripes, log panel,
   filtered-out, unknown, same, newer, older, orphan, different (compare colours), left

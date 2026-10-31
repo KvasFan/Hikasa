@@ -27,12 +27,12 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Copy` | Edit | Copy | Ctrl+C | Copies selection and puts it on Clipboard. | planned |
 | `Paste` | Edit | Paste | Ctrl+V | Inserts Clipboard contents. | planned |
 | `SelectAll` | Edit | Select All | Ctrl+A | Selects all visible items. | planned |
-| `ProgramOptions` | Tools | Options... |  | Sets global preferences. | planned |
+| `ProgramOptions` | Tools | Options... |  | Sets global preferences. | implemented |
 | `FileFormatManager` | Tools | File Formats... |  | Manages file formats. | planned |
 | `ProfileManager` | Tools | Profiles... |  | Manages profiles. | planned |
-| `Export` | Tools | Export Settings... |  | Saves user settings as a file. | planned |
-| `Import` | Tools | Import Settings... |  | Loads user settings from a file. | planned |
-| `Restore` | Tools | Restore Factory Defaults... |  | Loads factory default settings. | planned |
+| `Export` | Tools | Export Settings... |  | Saves user settings as a file. | implemented |
+| `Import` | Tools | Import Settings... |  | Loads user settings from a file. | implemented |
+| `Restore` | Tools | Restore Factory Defaults... |  | Loads factory default settings. | implemented |
 | `SaveSnapshot` | Tools | Save Snapshot... |  | Saves details of specified folder for future comparison. | planned |
 | `EditTextFile` | Tools | Edit Text File |  | Opens new Text Edit view. | planned |
 | `ViewPatch` | Tools | View Patch... |  | Opens picked patch file in new Text Patch view. | planned |

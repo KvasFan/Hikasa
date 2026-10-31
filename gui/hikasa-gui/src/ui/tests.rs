@@ -302,3 +302,132 @@ fn text_panes_run_their_key_bindings() {
     world.settle(&mut app.core);
     assert_ne!(cursor(&mut app), before, "Down ran DiffSectionNext");
 }
+
+/// W4c: every page of the Options dialog and every wizard draws, with its widgets on screen, and the capture takes
+/// keys through the window's key path.
+#[test]
+fn the_settings_dialogs_draw() {
+    use crate::dialog::ButtonRole;
+    use crate::options::OptionsDialog;
+    use crate::options::pages::PAGES;
+    let world = World::new();
+    world.write(
+        "config/openwith.toml",
+        "schema_version = 1\n[[app]]\ndescription = \"Ed\"\ncommand = \"ed %f\"\n",
+    );
+    let ctx = egui::Context::default();
+    let mut app = new_app(&world, &ctx);
+    let root = app.core.root();
+    frame(&mut app, &ctx, raw(0.0));
+    app.core.execute(root, CommandId::ProgramOptions);
+    let mut t = 0.1;
+    for page in PAGES {
+        let d = app
+            .core
+            .window_mut(root)
+            .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+            .expect("the dialog");
+        d.show_page(page.id);
+        d.select_command("About");
+        d.open_with_new();
+        frame(&mut app, &ctx, raw(t));
+        t += 0.1;
+        let out = frame(&mut app, &ctx, raw(t));
+        t += 0.1;
+        let texts = out
+            .shapes
+            .iter()
+            .filter(|s| matches!(s.shape, egui::Shape::Text(_)))
+            .count();
+        assert!(texts > 5, "{}: {texts} text shapes", page.id);
+    }
+    let d = app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+        .expect("the dialog");
+    d.show_page("commands");
+    d.begin_capture();
+    let mut keyed = raw(t);
+    keyed.events.push(Event::Key {
+        key: Key::F9,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::CTRL,
+    });
+    frame(&mut app, &ctx, keyed);
+    let d = app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+        .expect("the dialog");
+    assert!(!d.capturing());
+    assert!(
+        d.commands.view["home"].command["About"]
+            .shortcuts
+            .as_ref()
+            .is_some_and(|s| s == &["Ctrl+F9".to_owned()])
+    );
+    app.core.dialog_button(root, ButtonRole::Cancel);
+    for command in [CommandId::Export, CommandId::Import, CommandId::Restore] {
+        app.core.execute(root, command);
+        for _ in 0..3 {
+            t += 0.1;
+            world.settle(&mut app.core);
+            frame(&mut app, &ctx, raw(t));
+        }
+        app.core.dialog_button(root, ButtonRole::Cancel);
+        assert!(app.core.window(root).is_some_and(|w| w.dialogs.is_empty()));
+    }
+}
+
+/// M4: an open popup (a combo, a colour picker) takes Esc first; the dialog stays.
+#[test]
+fn an_open_popup_takes_esc_before_the_options_dialog() {
+    use crate::options::OptionsDialog;
+    let world = World::new();
+    let ctx = egui::Context::default();
+    let mut app = new_app(&world, &ctx);
+    let root = app.core.root();
+    frame(&mut app, &ctx, raw(0.0));
+    app.core.execute(root, CommandId::ProgramOptions);
+    frame(&mut app, &ctx, raw(0.1));
+    let open = |app: &mut crate::ui::HikasaApp| {
+        app.core
+            .window_mut(root)
+            .is_some_and(|w| w.dialogs.find_mut::<OptionsDialog>().is_some())
+    };
+    egui::Popup::open_id(&ctx, egui::Id::unique("a popup of the page"));
+    let esc = |t: f64| {
+        let mut input = raw(t);
+        input.events.push(Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        });
+        input
+    };
+    frame(&mut app, &ctx, esc(0.2));
+    assert!(open(&mut app), "the popup took the key");
+    egui::Popup::close_all(&ctx);
+    frame(&mut app, &ctx, esc(0.3));
+    assert!(!open(&mut app), "no popup, no edits: Esc closes");
+}
+
+/// L6: the button shows the stored colour unmultiplied: picking nothing changes nothing.
+#[test]
+fn a_colour_with_alpha_reads_back_as_stored() {
+    use hikasa_session::settings::Colour;
+    let value = Colour {
+        rgb: [200, 100, 50],
+        alpha: Some(128),
+    };
+    assert_eq!(crate::ui::options::colour_rgba(value), [200, 100, 50, 128]);
+    assert_eq!(
+        crate::ui::options::colour_rgba(Colour::hex(0x102030)),
+        [0x10, 0x20, 0x30, 255]
+    );
+}

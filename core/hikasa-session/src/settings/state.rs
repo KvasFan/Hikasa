@@ -128,6 +128,25 @@ impl LayoutValue {
 }
 
 impl State {
+    /// A text remembered for a dialog (`[dialogs.<dialog>] <key>`; another type reads as none).
+    pub fn dialog_text(&self, dialog: &str, key: &str) -> Option<&str> {
+        self.dialogs.get(dialog)?.get(key)?.as_str()
+    }
+
+    /// Remembers a text for a dialog; the table's other keys stay.
+    pub fn set_dialog_text(&mut self, dialog: &str, key: &str, value: &str) {
+        let entry = self
+            .dialogs
+            .entry(dialog.to_owned())
+            .or_insert_with(|| toml::Value::Table(Table::new()));
+        if !entry.is_table() {
+            *entry = toml::Value::Table(Table::new());
+        }
+        if let Some(table) = entry.as_table_mut() {
+            table.insert(key.to_owned(), toml::Value::String(value.to_owned()));
+        }
+    }
+
     /// The value of `key` in `[layout.<view>]`: a boolean, or a finite number (an integer counts); anything else
     /// is `None` (the view's default applies).
     pub fn layout_value(&self, view: &str, key: &str) -> Option<LayoutValue> {
@@ -252,6 +271,22 @@ pub(crate) const RULES: &[KindRule] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialogs_remember_texts() {
+        let mut state = State::default();
+        assert_eq!(state.dialog_text("options", "page"), None);
+        state.set_dialog_text("options", "page", "tabs");
+        state.set_dialog_text("options", "other", "x");
+        assert_eq!(state.dialog_text("options", "page"), Some("tabs"));
+        assert_eq!(state.dialog_text("options", "other"), Some("x"));
+        state
+            .dialogs
+            .insert("broken".into(), toml::Value::Integer(1));
+        assert_eq!(state.dialog_text("broken", "page"), None);
+        state.set_dialog_text("broken", "page", "y");
+        assert_eq!(state.dialog_text("broken", "page"), Some("y"));
+    }
 
     #[test]
     fn mru_push_moves_and_caps() {

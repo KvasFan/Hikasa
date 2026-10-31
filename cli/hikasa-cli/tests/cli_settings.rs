@@ -467,3 +467,45 @@ fn restore_defaults_usage_names_every_alternative() {
     );
     assert_eq!(c, 100, "the alternatives exclude each other");
 }
+
+/// H1: what a later build wrote into `commands.toml` survives a `settings set` of another key, as a warning.
+#[test]
+fn settings_set_keeps_views_and_commands_this_build_does_not_know() {
+    let s = Sandbox::new();
+    let path = s.config().join("commands.toml");
+    std::fs::create_dir_all(s.config()).unwrap();
+    let text = "schema_version = 1\n[view.future-view]\nlarge_buttons = true\n\
+                [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.FileFormatManager]\n\
+                shortcuts = [\"Bogus+1\", \"Ctrl+F7\"]\n";
+    std::fs::write(&path, text).unwrap();
+    let (exit, _, err) = run(
+        &s,
+        &[
+            "settings",
+            "set",
+            "commands.view.home.large_buttons",
+            "true",
+        ],
+    );
+    assert_eq!(exit, 0, "{err}");
+    let written = std::fs::read_to_string(&path).unwrap();
+    for kept in [
+        "[view.future-view]",
+        "[view.home.command.FutureCmd]",
+        "[view.home.command.FileFormatManager]",
+        "\"Bogus+1\"",
+    ] {
+        assert!(written.contains(kept), "{kept} lost:\n{written}");
+    }
+    // Typing into an unknown view is still refused.
+    let (exit, _, _) = run(
+        &s,
+        &[
+            "settings",
+            "set",
+            "commands.view.future-view.show_all_in_menu",
+            "true",
+        ],
+    );
+    assert_ne!(exit, 0);
+}

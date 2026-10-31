@@ -28,6 +28,12 @@ settings_enum! {
 /// The built-in scheme names.
 pub const BUILTIN_SCHEMES: [&str; 2] = ["light", "dark"];
 
+/// The contrast the default text must reach on a background (UI-009; below it a warning, D-130).
+pub const MIN_CONTRAST: f64 = 4.5;
+
+/// The range of a font size of `theme.toml` (D-78).
+pub const FONT_SIZES: (f64, f64) = (6.0, 72.0);
+
 /// A colour: `#rrggbb` or `#rrggbbaa` (written in lower case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Colour {
@@ -253,6 +259,48 @@ macro_rules! scheme_group {
             pub fn colours(&self) -> Vec<(&'static str, Colour)> {
                 vec![$((stringify!($colour), self.$colour)),*]
             }
+
+            /// The flags by name.
+            pub fn flags(&self) -> Vec<(&'static str, bool)> {
+                vec![$((stringify!($flag), self.$flag)),*]
+            }
+        }
+
+        impl $file {
+            /// The colour element `name` as the file sets it; `None` also for an unknown name.
+            pub fn colour(&self, name: &str) -> Option<Colour> {
+                match name {
+                    $(stringify!($colour) => self.$colour,)*
+                    _ => None,
+                }
+            }
+
+            /// Sets the colour element `name` (`None`: not set, the base's value applies). False for an unknown
+            /// name.
+            pub fn set_colour(&mut self, name: &str, value: Option<Colour>) -> bool {
+                match name {
+                    $(stringify!($colour) => { self.$colour = value; true })*
+                    _ => false,
+                }
+            }
+
+            /// The flag `name` as the file sets it; `None` also for an unknown name.
+            pub fn flag(&self, name: &str) -> Option<bool> {
+                let _ = self; // a group without flags does not read it
+                match name {
+                    $(stringify!($flag) => self.$flag,)*
+                    _ => None,
+                }
+            }
+
+            /// Sets the flag `name` (`None`: not set). False for an unknown name.
+            pub fn set_flag(&mut self, name: &str, value: Option<bool>) -> bool {
+                let _ = value; // a group without flags does not read it
+                match name {
+                    $(stringify!($flag) => { self.$flag = value; true })*
+                    _ => false,
+                }
+            }
         }
     };
 }
@@ -445,6 +493,98 @@ pub struct SchemeFile {
     pub file: FileColoursFile,
     /// `[picture]`.
     pub picture: PictureColoursFile,
+}
+
+/// The scheme `selection` chooses for `mode` and the OS theme: `lookup` gives the scheme files by name; a selected
+/// scheme that does not exist is the built-in of its mode.
+pub fn selected_scheme<'a>(
+    selection: &ThemeSelection,
+    mode: ThemeMode,
+    os_dark: bool,
+    lookup: impl Fn(&str) -> Option<&'a SchemeFile>,
+) -> Scheme {
+    let name = selection.scheme_for(mode, os_dark);
+    match lookup(name) {
+        Some(file) => Scheme::resolve(name, Some(file)),
+        None => {
+            let dark = match mode {
+                ThemeMode::FollowOs => os_dark,
+                ThemeMode::Light => false,
+                ThemeMode::Dark => true,
+            };
+            let builtin = if dark { "dark" } else { "light" };
+            Scheme::resolve(builtin, lookup(builtin))
+        }
+    }
+}
+
+/// A group of a scheme's elements (the sub-pages of the theme editor, D-130).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SchemeGroup {
+    /// `[folder]`.
+    Folder,
+    /// `[file]`.
+    File,
+    /// `[picture]`.
+    Picture,
+}
+
+impl SchemeFile {
+    /// The colour element `name` of `group` as the file sets it.
+    pub fn colour(&self, group: SchemeGroup, name: &str) -> Option<Colour> {
+        match group {
+            SchemeGroup::Folder => self.folder.colour(name),
+            SchemeGroup::File => self.file.colour(name),
+            SchemeGroup::Picture => self.picture.colour(name),
+        }
+    }
+
+    /// Sets a colour element (`None`: back to the base). False for an unknown name.
+    pub fn set_colour(&mut self, group: SchemeGroup, name: &str, value: Option<Colour>) -> bool {
+        match group {
+            SchemeGroup::Folder => self.folder.set_colour(name, value),
+            SchemeGroup::File => self.file.set_colour(name, value),
+            SchemeGroup::Picture => self.picture.set_colour(name, value),
+        }
+    }
+
+    /// The flag `name` of `group` as the file sets it.
+    pub fn flag(&self, group: SchemeGroup, name: &str) -> Option<bool> {
+        match group {
+            SchemeGroup::Folder => self.folder.flag(name),
+            SchemeGroup::File => self.file.flag(name),
+            SchemeGroup::Picture => self.picture.flag(name),
+        }
+    }
+
+    /// Sets a flag (`None`: back to the base). False for an unknown name.
+    pub fn set_flag(&mut self, group: SchemeGroup, name: &str, value: Option<bool>) -> bool {
+        match group {
+            SchemeGroup::Folder => self.folder.set_flag(name, value),
+            SchemeGroup::File => self.file.set_flag(name, value),
+            SchemeGroup::Picture => self.picture.set_flag(name, value),
+        }
+    }
+}
+
+impl Scheme {
+    /// The colour elements of `group`.
+    pub fn colours(&self, group: SchemeGroup) -> Vec<(&'static str, Colour)> {
+        match group {
+            SchemeGroup::Folder => self.folder.colours(),
+            SchemeGroup::File => self.file.colours(),
+            SchemeGroup::Picture => self.picture.colours(),
+        }
+    }
+
+    /// The flags of `group`.
+    pub fn flags(&self, group: SchemeGroup) -> Vec<(&'static str, bool)> {
+        match group {
+            SchemeGroup::Folder => self.folder.flags(),
+            SchemeGroup::File => self.file.flags(),
+            SchemeGroup::Picture => self.picture.flags(),
+        }
+    }
 }
 
 impl SettingsSchema for SchemeFile {
@@ -867,8 +1007,8 @@ pub(crate) const SELECTION_RULES: &[KindRule] = &[
     plain(
         "fonts.*.size",
         ValueKind::Float {
-            min: 6.0,
-            max: 72.0,
+            min: FONT_SIZES.0,
+            max: FONT_SIZES.1,
         },
     ),
     plain("fonts.*.family", ValueKind::String),
@@ -902,6 +1042,32 @@ pub(crate) const SCHEME_RULES: &[KindRule] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheme_elements_are_edited_by_name() {
+        let mut file = SchemeFile::default();
+        let red = Colour::hex(0xff0000);
+        assert!(file.set_colour(SchemeGroup::Folder, "orphan", Some(red)));
+        assert!(file.set_colour(SchemeGroup::File, "gutter", Some(red)));
+        assert!(file.set_colour(SchemeGroup::Picture, "same", Some(red)));
+        assert!(file.set_flag(SchemeGroup::File, "use_stripes", Some(true)));
+        assert!(!file.set_colour(SchemeGroup::Picture, "use_stripes", Some(red)));
+        assert!(!file.set_flag(SchemeGroup::Folder, "orphan", Some(true)));
+        assert_eq!(file.colour(SchemeGroup::Folder, "orphan"), Some(red));
+        assert_eq!(file.flag(SchemeGroup::File, "use_stripes"), Some(true));
+        let scheme = Scheme::resolve("x", Some(&file));
+        assert_eq!(scheme.folder.orphan, red);
+        for group in [SchemeGroup::Folder, SchemeGroup::File, SchemeGroup::Picture] {
+            assert!(!scheme.colours(group).is_empty());
+            for (name, _) in scheme.colours(group) {
+                assert!(file.set_colour(group, name, None), "{name}");
+            }
+            for (name, _) in scheme.flags(group) {
+                assert!(file.set_flag(group, name, None), "{name}");
+            }
+        }
+        assert_eq!(file, SchemeFile::default());
+    }
 
     #[test]
     fn colours_parse_and_print_lower_case() {

@@ -60,7 +60,10 @@ results, `hikasa vfs cp|mv|rm|mkdir|touch`; the clipboard as `clipboard://` for 
 effective command table, vector icons, dialogs, the theme from `theme.toml`, status bar with jobs, message panel,
 log book and panel, notices and polling of settings and input files, drops, D-104…D-119; W4b sessions in the
 window: save, lock, close prompts, auto-save, the Session Settings shell, Home with its tree and management panel,
-workspaces with lazy restore, the GUI's command line, D-120…D-127; W4c settings dialogs follows).
+workspaces with lazy restore, the GUI's command line, D-120…D-127; W4c settings dialogs: the Options dialog with the
+Toolbars/Shortcuts/Menus page and the theme editor with live preview, the Export, Import and Restore wizards, IPC
+`ImportPackage`, D-128…D-134; wave 4 complete; settled memory gates met on glibc, peak RSS 419–429 MiB and the ≥ 60 fps
+GPU run still open, docs/02).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

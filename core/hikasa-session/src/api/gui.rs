@@ -1615,6 +1615,40 @@ impl Service {
         })
     }
 
+    /// `gui open <file.hikasa-pkg>` without `--silent` and `hikasa-gui <file.hikasa-pkg>` with a GUI running
+    /// (D-127): `ImportPackage` with the absolute path (`classify_single_arg` gives one); `Ok` once the import wizard
+    /// is shown. An older GUI is
+    /// reported as for [`Service::gui_load_session`].
+    pub fn gui_import_package(
+        &self,
+        path: &Path,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<(), ApiError> {
+        run_guarded(|| {
+            if !path.is_absolute() {
+                return Err(ApiError::InvalidArgument(format!(
+                    "{}: the GUI needs an absolute path",
+                    path.display()
+                )));
+            }
+            let Some(text) = path.to_str() else {
+                return Err(ApiError::InvalidArgument(format!(
+                    "{}: paths that are not valid UTF-8 cannot be sent to the GUI",
+                    path.display()
+                )));
+            };
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let request = Request::ImportPackage {
+                path: text.to_owned(),
+            };
+            match client.request(request).map_err(sessions_error)?.1 {
+                Response::Ok => Ok(()),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        })
+    }
+
     /// A connection to the GUI, launching it when `launcher` is given.
     fn connect_for_sessions(
         &self,
@@ -1760,7 +1794,8 @@ impl Service {
     }
 }
 
-/// D-89: a GUI that answers `unsupported_request` to `LoadSession`/`LoadWorkspace` is older than this build.
+/// D-89: a GUI that answers `unsupported_request` to `LoadSession`/`LoadWorkspace`/`ImportPackage` is older than
+/// this build.
 fn sessions_error(error: crate::ipc::IpcError) -> ApiError {
     match &error {
         crate::ipc::IpcError::Remote { code, .. }

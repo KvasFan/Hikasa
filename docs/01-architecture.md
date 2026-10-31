@@ -274,7 +274,7 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
 - **ARCH-091** (P0): IPC protocol (`hikasa_session::ipc`): JSON messages, length-
   prefixed, over a per-user local socket (`$XDG_RUNTIME_DIR/hikasa.sock`,
   `\\.\pipe\hikasa-<user>`). Requests: `Hello{version}`, `OpenView{kind, specs,
-  options, wait}`, `LoadSession{name}`, `LoadWorkspace{name}`, `RunScript{path,args}`,
+  options, wait}`, `LoadSession{name}`, `LoadWorkspace{name}`, `ImportPackage{path}`, `RunScript{path,args}`,
   `ListViews`, `CloseView{id}`, `Ping`, `Shutdown`. Responses carry a view id, and
   when `wait` was requested a final `ViewClosed{id, result, exit_code}`. Unknown
   fields are ignored; the version is negotiated in `Hello`.
@@ -357,7 +357,9 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   command line as `OpenView` without waiting (`Service::forward_open`: specs made absolute
   against its own current directory, standard input spooled) and exits with 0.
 - **M2 additions (D-89, additive to protocol v1).** `LoadSession{name, wait}` and
-  `LoadWorkspace{name}` reach the GUI's handler. `LoadSession` answers `ViewOpened{view}`
+  `LoadWorkspace{name}` and (M2 W4c, D-127) `ImportPackage{path}` reach the GUI's handler. `ImportPackage` (an absolute
+  path) answers `Ok` once the import wizard is shown in the window focused last; a GUI that answers
+  `unsupported_request` is reported as for D-89. `LoadSession` answers `ViewOpened{view}`
   (and `ViewClosed` when waited; the server gives it a waiter like `OpenView`);
   `LoadWorkspace` answers `Views{views}` with the views it opened, after closing the open
   ones (SES-040). An unknown name is `Error{not_found}`, a session type the GUI cannot

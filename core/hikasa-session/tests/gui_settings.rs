@@ -7,7 +7,8 @@ use std::path::Path;
 
 use common::{service, write};
 use hikasa_session::settings::{
-    ChangeKind, FileId, FileOutcome, LoadMode, SettingsChanges, State, parse_key,
+    ChangeKind, CommandOverrides, FileId, FileOutcome, LoadMode, SettingsChanges, SettingsFile,
+    State, parse_key,
 };
 use hikasa_session::watch::{InputState, InputWatch};
 
@@ -481,4 +482,149 @@ fn reload_settings_swaps_one_consistent_view_and_serializes() {
     for r in readers {
         r.join().unwrap();
     }
+}
+
+/// Commands of a later build, and a planned command's override with a shortcut this build cannot read (H1).
+const FUTURE_COMMANDS: &str = "schema_version = 1\n[view.future-view]\nlarge_buttons = true\n\
+    [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.FileFormatManager]\n\
+    shortcuts = [\"Bogus+1\", \"Ctrl+F7\"]\n";
+
+fn assert_future_commands_kept(text: &str) {
+    for key in [
+        "[view.future-view]",
+        "large_buttons = true",
+        "[view.home.command.FutureCmd]",
+        "menu = false",
+        "[view.home.command.FileFormatManager]",
+        "\"Bogus+1\"",
+        "\"Ctrl+F7\"",
+    ] {
+        assert!(text.contains(key), "{key} lost:\n{text}");
+    }
+}
+
+#[test]
+fn unknown_views_and_commands_are_kept_with_warnings_not_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    write(&config, "commands.toml", FUTURE_COMMANDS.as_bytes());
+    let svc = service(tmp.path());
+    let snap = svc.settings_snapshot().unwrap();
+    // Out of the value, in the kept keys: nothing to validate, nothing repaired.
+    assert!(
+        snap.commands.value().view.is_empty(),
+        "{:?}",
+        snap.commands.value()
+    );
+    let warnings = snap.commands.loaded().warnings.clone();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(warnings.iter().any(|w| w.message.contains("future-view")));
+    assert!(warnings.iter().any(|w| w.message.contains("FutureCmd")));
+    assert!(warnings.iter().any(|w| w.message.contains("Bogus+1")));
+    assert!(
+        snap.commands
+            .loaded()
+            .ignored_keys
+            .contains(&"view.future-view.large_buttons".to_owned())
+    );
+    // A strict read (a package entry) takes them too.
+    SettingsFile::<CommandOverrides>::parse(FUTURE_COMMANDS, "c", LoadMode::Strict).unwrap();
+    // `settings_save` of a change elsewhere in the file keeps them.
+    let mut commands = snap.commands.value().clone();
+    commands.set_in_menu("home", "About", Some(false));
+    let changes = SettingsChanges {
+        commands: Some(commands),
+        ..SettingsChanges::default()
+    };
+    let out = svc.settings_save(&snap, &changes, false).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Written);
+    let saved = read(&config.join("commands.toml"));
+    assert_future_commands_kept(&saved);
+    assert!(saved.contains("[view.home.command.About]"), "{saved}");
+    // The file reads back the same: a second save has nothing to do.
+    let again = svc.settings_snapshot().unwrap();
+    assert_eq!(
+        again.commands.value().view["home"]
+            .command
+            .keys()
+            .collect::<Vec<_>>(),
+        ["About"]
+    );
+    assert_eq!(
+        read(&config.join("commands.toml")),
+        again.commands.to_toml()
+    );
+}
+
+#[test]
+fn settings_set_keeps_unknown_views_commands_and_planned_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    write(&config, "commands.toml", FUTURE_COMMANDS.as_bytes());
+    let svc = service(tmp.path());
+    let key = parse_key("commands.view.home.large_buttons").unwrap();
+    let dto = svc.settings_set(&key, "true", false).unwrap();
+    assert!(dto.written);
+    let text = read(&config.join("commands.toml"));
+    assert_future_commands_kept(&text);
+    assert!(text.contains("[view.home]\nlarge_buttons = true"), "{text}");
+    // Typing a new key there stays refused.
+    let key = parse_key("commands.view.future-view.show_all_in_menu").unwrap();
+    assert!(svc.settings_set(&key, "true", false).is_err());
+}
+
+#[test]
+fn a_failed_read_back_keeps_the_outcomes_and_the_saved_stamps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let svc = service(tmp.path());
+    let snap = svc.settings_snapshot().unwrap();
+    // Any file that no longer parses fails the snapshot after the write.
+    write(&config, "filters.toml", b"this is = = broken");
+    let mut options = snap.options.value().clone();
+    options.tabs.open_new_tab_next_to_active = false;
+    let changes = SettingsChanges {
+        options: Some(options.clone()),
+        ..SettingsChanges::default()
+    };
+    let out = svc.settings_save(&snap, &changes, false).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Written);
+    assert!(
+        out.reread_error
+            .as_deref()
+            .is_some_and(|e| e.contains("filters.toml"))
+    );
+    // The stale snapshot holds what was written, with its stamp: the next save is no Conflict.
+    assert_eq!(*out.snapshot.options.value(), options);
+    assert!(!out.snapshot.options.changed_on_disk().unwrap());
+}
+
+#[test]
+fn every_file_of_a_save_has_its_own_outcome() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let svc = service(tmp.path());
+    let snap = svc.settings_snapshot().unwrap();
+    let mut options = snap.options.value().clone();
+    options.tabs.open_new_tab_next_to_active = false;
+    let mut scheme = snap.schemes["light"].value().clone();
+    scheme.base = Some(hikasa_session::settings::theme::SchemeBase::Dark);
+    let mut changes = SettingsChanges {
+        options: Some(options),
+        ..SettingsChanges::default()
+    };
+    changes.schemes.insert("light".into(), Some(scheme));
+    let themes = config.join("themes");
+    std::fs::create_dir_all(&themes).unwrap();
+    std::fs::set_permissions(&themes, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let out = svc.settings_save(&snap, &changes, false).unwrap();
+    std::fs::set_permissions(&themes, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Written);
+    assert!(
+        matches!(out.files[1].2, FileOutcome::Failed(_)),
+        "{:?}",
+        out.files
+    );
+    assert!(out.reread_error.is_none());
 }

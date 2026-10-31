@@ -376,7 +376,7 @@ pub fn toolbar(
         })
         .response;
     // UI-004: the toolbar's context menu.
-    let menu = crate::menus::toolbar_menu(t.tables, t.scope, false);
+    let menu = crate::menus::toolbar_menu(t.tables, t.scope);
     let response = ui.interact(
         response.rect,
         ui.scope_id().with("hk-toolbar-menu"),

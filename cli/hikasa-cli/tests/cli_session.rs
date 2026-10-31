@@ -1074,7 +1074,7 @@ mod gui {
             })
             .collect();
         assert_eq!(loads, ["s:t", "w:w", "s:both"]);
-        // A package: imported headless with --silent; without it the wizard is not there yet.
+        // A package: imported headless with --silent; without it the GUI shows the wizard (D-127).
         let pkg = s.join("p.hikasa-pkg");
         ok(
             &s,
@@ -1087,12 +1087,20 @@ mod gui {
                 "sessions",
             ],
         );
-        let t = Sandbox::new();
-        let (c, out, _) = run(&t, &["gui", "open", pkg.to_str().unwrap(), "--json"]);
-        assert_eq!(
-            (c, json_text(&out)["error"]["kind"].as_str()),
-            (100, Some("unsupported"))
+        let (c, out, err) = run(&s, &["gui", "open", pkg.to_str().unwrap(), "--json"]);
+        assert_eq!(c, 0, "{err}");
+        assert_eq!(json_text(&out)["schema"], "hikasa.gui_open.v1");
+        assert!(
+            gui.requests().iter().any(|r| matches!(
+                r,
+                Request::ImportPackage { path } if *path == pkg.to_str().unwrap()
+            )),
+            "{:?}",
+            gui.requests()
         );
+        let t = Sandbox::new();
+        let (c, _, _) = run(&t, &["gui", "open", pkg.to_str().unwrap(), "--no-launch"]);
+        assert_eq!(c, 100, "no GUI, --no-launch");
         let (c, out, err) = run(
             &t,
             &["gui", "open", pkg.to_str().unwrap(), "--silent", "--json"],
@@ -1122,11 +1130,14 @@ mod gui {
             ],
         );
         s.file("cfg/workspaces/w.toml", "[[window]]\n");
+        let pkg = s.join("x.hikasa-pkg");
+        ok(&s, &["settings", "export", "-o", pkg.to_str().unwrap()]);
         let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame).without_sessions();
         let server = serve(&s, Arc::clone(&gui));
         for args in [
             &["gui", "session", "t", "--json"][..],
             &["gui", "workspace", "w", "--json"],
+            &["gui", "open", pkg.to_str().unwrap(), "--json"],
         ] {
             let (c, out, err) = run(&s, args);
             assert_eq!(c, 100, "{args:?}");

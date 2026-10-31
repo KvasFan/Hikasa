@@ -1,6 +1,7 @@
 //! The scripted performance mode of ARCH-GUI-003 (`HIKASA_GUI_BENCH=scroll|folder|two_windows|workspace`, see
 //! `main`; `two_windows` is the M2 W4a gate of §1.4.17: the text scroll with a second window holding Home;
-//! `workspace` is G12: the first screen of a restored workspace, its tabs pending): the window
+//! `workspace` is G12: the first screen of a restored workspace, its tabs pending; `options` is the memory of the
+//! Options dialog, every page shown once): the window
 //! opens the command line's view and drives it frame by frame — scrolling the text panes through the whole
 //! comparison, or scrolling the folder tree while the scan runs — records the first-screen marks, the frame
 //! times (the UI thread's work per frame, the frame intervals and eframe's CPU time per frame) and the memory
@@ -27,6 +28,8 @@ pub enum BenchKind {
     TwoWindows,
     /// A restored workspace: the first screen of its active tab (M2 W4b, G12).
     Workspace,
+    /// The Options dialog: every page once, then idle frames (M2 W4c, D-132).
+    Options,
 }
 
 /// One scroll phase of the text benchmark.
@@ -75,6 +78,12 @@ const WARM_UP_FRAMES: u32 = 30;
 const TWO_WINDOWS_WARM_UP_FRAMES: u32 = 240;
 /// `workspace`: idle frames drawn after the coloured screen with no job left, before the memory is sampled.
 const WORKSPACE_TAIL_FRAMES: u32 = 60;
+/// `scroll`, `two_windows`: idle frames after the last phase, before the memory is sampled (D-132).
+const SCROLL_TAIL_FRAMES: u32 = 60;
+/// `options`: frames before the dialog opens, and on each page.
+const OPTIONS_FRAMES_PER_PAGE: u32 = 2;
+/// `options`: idle frames after the last page, before the memory is sampled.
+const OPTIONS_TAIL_FRAMES: u32 = 60;
 /// Folder benchmark: rows the tree scrolls per frame.
 const FOLDER_ROWS_PER_FRAME: f64 = 2.0;
 /// Folder benchmark: how long frames keep being drawn after the scan.
@@ -112,6 +121,8 @@ enum Script {
         step: f64,
         samples: Samples,
     },
+    /// Idle frames after the last phase.
+    Tail(u32),
     /// The folder tree scrolls while the scan runs.
     Folder,
     /// Finished: report and quit.
@@ -153,6 +164,8 @@ pub struct BenchState {
     /// `two_windows`: the second window opens at the coloured screen instead of the first screen
     /// (`HIKASA_PERF_SECOND_WINDOW=coloured`; the late variant of the gate).
     second_after_coloured: bool,
+    /// `options`: the frames of the script.
+    options_frame: u32,
 }
 
 impl BenchState {
@@ -185,6 +198,38 @@ impl BenchState {
             second_window: false,
             second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
                 .is_some_and(|v| v == "coloured"),
+            options_frame: 0,
+        }
+    }
+
+    /// `options` (D-132): runs the script on the window's core, before the frame is drawn: `ProgramOptions`, every
+    /// page for a few frames, then idle frames; the memory is sampled at the end.
+    pub fn drive_options(&mut self, core: &mut AppCore) {
+        if self.kind != BenchKind::Options {
+            return;
+        }
+        let window = core.root();
+        let frame = self.options_frame;
+        self.options_frame += 1;
+        if frame == OPTIONS_FRAMES_PER_PAGE {
+            core.execute(window, crate::commands::CommandId::ProgramOptions);
+            self.first_screen = Some(Instant::now());
+            self.first_screen_memory = memory();
+        }
+        let pages = crate::options::pages::PAGES;
+        let total = OPTIONS_FRAMES_PER_PAGE * (pages.len() as u32 + 1);
+        if frame > OPTIONS_FRAMES_PER_PAGE && frame < total {
+            let k = (frame / OPTIONS_FRAMES_PER_PAGE - 1) as usize;
+            if let Some(d) = core
+                .window_mut(window)
+                .and_then(|w| w.dialogs.find_mut::<crate::options::OptionsDialog>())
+            {
+                d.show_page(pages[k.min(pages.len() - 1)].id);
+            }
+        }
+        if frame >= total + OPTIONS_TAIL_FRAMES {
+            self.settled_memory = memory();
+            self.script = Script::Done;
         }
     }
 
@@ -268,6 +313,7 @@ impl BenchState {
                     }
                 }
             }
+            BenchKind::Options => {}
             BenchKind::Folder => {
                 let busy = core
                     .tab(view)
@@ -318,7 +364,7 @@ impl BenchState {
                     if next < PHASES.len() {
                         self.start_phase(next, st);
                     } else {
-                        self.script = Script::Done;
+                        self.script = Script::Tail(0);
                     }
                     return;
                 }
@@ -329,6 +375,16 @@ impl BenchState {
                     top = if spec.wrap { 0.0 } else { max };
                 }
                 st.top = top.clamp(0.0, max);
+            }
+            Script::Tail(n) => {
+                *n += 1;
+                if *n >= SCROLL_TAIL_FRAMES {
+                    self.settled_memory = memory();
+                    if let Some(obj) = self.settled_memory.as_object_mut() {
+                        obj.insert("largest_anon_regions".to_owned(), anon_regions());
+                    }
+                    self.script = Script::Done;
+                }
             }
             Script::Folder | Script::Done => {}
         }
@@ -473,6 +529,7 @@ impl BenchState {
                 BenchKind::Folder => "folder_scan",
                 BenchKind::TwoWindows => "two_windows",
                 BenchKind::Workspace => "workspace_restore",
+                BenchKind::Options => "options_memory",
             },
             "windows": core.windows().len(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
@@ -509,6 +566,9 @@ impl BenchState {
                         }),
                     );
                     obj.insert("phases".into(), Value::Array(self.phases.clone()));
+                }
+                BenchKind::Options => {
+                    obj.insert("pages".into(), json!(crate::options::pages::PAGES.len()));
                 }
                 BenchKind::Folder => {
                     obj.insert(
@@ -641,6 +701,42 @@ pub fn memory() -> Value {
         "total_peak_rss_mib": mib(hwm),
         "processes": children,
     })
+}
+
+/// The largest anonymous regions of this process (`/proc/self/smaps`), to tell the heap from buffers: what a
+/// difference between two runs is made of.
+fn anon_regions() -> Value {
+    let Ok(text) = std::fs::read_to_string("/proc/self/smaps") else {
+        return Value::Null;
+    };
+    let mut regions: Vec<(u64, String)> = Vec::new();
+    let mut name = String::new();
+    for line in text.lines() {
+        if line
+            .split_whitespace()
+            .next()
+            .is_some_and(|w| w.contains('-') && !w.ends_with(':'))
+        {
+            name = line
+                .split_whitespace()
+                .nth(5)
+                .unwrap_or("[anon]")
+                .to_owned();
+        } else if let Some(rest) = line.strip_prefix("Anonymous:") {
+            let kib: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            regions.push((kib, name.clone()));
+        }
+    }
+    regions.sort_by_key(|r| std::cmp::Reverse(r.0));
+    regions.truncate(8);
+    regions
+        .into_iter()
+        .map(|(kib, name)| json!({ "mib": mib(kib), "name": name }))
+        .collect()
 }
 
 fn mib(kib: u64) -> f64 {

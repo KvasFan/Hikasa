@@ -19,5 +19,9 @@ view-home	The Home view
 dialog-session-settings	Session Settings
 dialog-save-session	Save Session As
 dialog-workspaces	Workspaces
+dialog-options	Options
+wizard-export	Export Settings
+wizard-import	Import Settings
+wizard-restore	Restore Factory Defaults
 view-folder-compare	The Folder Compare view
 view-text-compare	The Text Compare view

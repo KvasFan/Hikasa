@@ -4,10 +4,12 @@
 use egui::{Align, Button, Layout, RichText, Ui};
 
 use crate::dialog::{AboutDialog, ButtonRole, DialogModel, Prompt};
+use crate::options::OptionsDialog;
 use crate::session_dialog::{NameDialog, SaveSessionDialog, SessionSettingsDialog};
 use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
-use crate::ui::{session_dialog, workspace};
+use crate::ui::{options, session_dialog, wizards, workspace};
+use crate::wizards::{ExportWizard, ImportWizard, RestoreWizard};
 use crate::workspace::{ManageWorkspacesDialog, SaveWorkspaceDialog};
 
 /// What the user did in the dialog.
@@ -18,6 +20,8 @@ pub enum DialogInput {
     DoNotAsk(bool),
     /// The dialog's help (F1 button).
     Help(&'static str),
+    /// A field of the dialog changed (the theme preview, D-130).
+    Edited,
 }
 
 /// Draws `dialog` (the top of a window's stack) as a modal.
@@ -31,8 +35,18 @@ pub fn show(
     let ctx = ui.ctx().clone();
     let id = egui::Id::unique(("hk-dialog", depth));
     egui::Modal::new(id).show(&ctx, |ui| {
-        ui.set_min_width(360.0);
-        ui.set_max_width(560.0);
+        // Text fields stand out from the dialog's background.
+        ui.visuals_mut().extreme_bg_color = pal.chrome;
+        match dialog.size() {
+            Some((width, _)) => {
+                ui.set_min_width(width);
+                ui.set_max_width(width);
+            }
+            None => {
+                ui.set_min_width(360.0);
+                ui.set_max_width(560.0);
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(dialog.title())
@@ -68,6 +82,15 @@ pub fn show(
             workspace::save_as(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ManageWorkspacesDialog>() {
             workspace::manage(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<OptionsDialog>() {
+            options::show(ui, d, pal);
+            out.push(DialogInput::Edited);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ExportWizard>() {
+            wizards::export(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ImportWizard>() {
+            wizards::import(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RestoreWizard>() {
+            wizards::restore(ui, d, pal);
         }
         ui.add_space(12.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

@@ -358,6 +358,39 @@ difference measured, so the honest reading is "under about 0.1 MiB per pending t
 holds one session value and starts no job. The earlier figure of this gate (first screen against `scroll`) sampled
 during the 1M-line comparison, so it measured that job's progress and was withdrawn.
 
+### M2 W4c: the Options gate and the wave-end run (D-132)
+
+`env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1` (2026-10-31, the same desktop, Xvfb's default screen, Mesa llvmpipe 26.2 over GL, load 3–8 on the
+shared machine, the six tests one after the other on one binary). `text_scroll`, `two_windows` and `two_windows_late` are
+sampled in `memory_settled` (60 idle frames after the last phase) and give the median of three whole runs; every run:
+
+| Gate | PSS per run (median) | anon | RSS | peak RSS | UI frame work, last run | Result |
+|---|---|---|---|---|---|---|
+| `text_scroll` | 255.4, 256.2, 253.6 (**255.4**) MiB | 190.1, 190.6, 187.9 | 293.7, 294.5, 291.8 | 423.4, 421.3, 419.2 | p95 0.41/0.99/1.15, max 0.61/1.13/1.33 ms; first screen 170 ms, coloured 409 ms | **met** |
+| `two_windows` | 263.2, 258.5, 262.0 (**262.0**) MiB | 194.4, 191.8, 195.2 | 301.5, 296.8, 300.3 | 429.2, 423.4, 424.7 | p95 2.59, max 3.29 ms | **met** |
+| `two_windows_late` | 259.0, 257.6, 255.0 (**257.6**) MiB | 190.2, 190.7, 188.4 | 297.3, 295.9, 293.2 | 423.8, 425.4, 423.2 | p95 2.60, max 4.30 ms | **met** |
+| `options_memory` | 105.4 MiB (one run) | 41.4 | | | | < 120 MiB: **met** |
+| `workspace_restore` (G12) | per pending tab 0.05, 0.02, −0.09 (median 0.02) MiB; anon median 0.07 | | | | 179 ms; 9 pending, 1 view built | **met** |
+| `folder_scan` | PSS 130.7 MiB; scan 189 ms, UI work p95 1.84, max 1.84 ms, none above 16.7 ms | | | | | **met** |
+
+**What the earlier "met" was worth.** The first W4c report gave one run each and called `two_windows` met at 359.6 MiB. It
+was bimodal, at about 383 or 358 MiB. With the code of this review, before the change below, the same runs gave
+`two_windows` 389.1, 360.2, 359.9 (median 360.2) and `two_windows_late` 385.9, 358.6, 382.5 (median **382.5: not met**).
+
+**Cause.** The explanation of W4a (Mesa's file-backed share moving with what else maps it) was wrong for this swing. The
+upper mode is one more anonymous region of about 22.6 MiB, peak RSS unchanged: glibc's retention. Its dynamic mmap
+threshold rises to 32 MiB when the first large buffers are freed, and from then on buffers of that size come from the
+arenas and stay in their free lists, whether a run returns one depends on what lies above it. With
+`MALLOC_MMAP_THRESHOLD_=4194304` the region goes, the swing goes, and 125 MiB of the settled figure goes with it
+(`two_windows_late` 261.7, 257.1, 258.1). D-134 sets it: the GUI replaces itself once at the start, because `mallopt` is
+`unsafe` (architecture check 1) and another allocator is a dependency (D-133). The frame figures did not get worse.
+
+**What this does not change.** The gate is a settled PSS. The **peak RSS is still 419–429 MiB, above 400 MB** in every
+run: the comparison's own peak, which the threshold does not touch, and which the gate does not measure. On a platform
+other than glibc there is no D-134 and these figures do not apply; the frame-rate item stays the maintainer's GPU run
+(D-132). The exec happens before `process_start`, so its milliseconds are not in the first-screen figures.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |

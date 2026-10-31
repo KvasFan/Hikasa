@@ -30,8 +30,8 @@ start the window when it is not running.
 `hikasa gui open <arg>` (and `hikasa-gui <arg>`) with one argument that is not an existing file or folder
 opens the named session of that name (exactly, then in any case), else the workspace of that name. An existing
 file ending in `.hikasa-pkg` is a settings package: with `--silent` everything in it is imported at once (as
-`hikasa settings import --silent`); without it the import wizard of the window is needed, which comes in a later
-version (exit 100). A window older than this command line answers that it does not support sessions: restart
+`hikasa settings import --silent`); without it the window shows the [import wizard](topic:wizard-import) with the
+path filled in (exit 0). A window older than this command line answers that it does not support sessions: restart
 it.
 
 `hikasa text compare … --gui` and `hikasa folder compare … --gui` send the comparison to the window. See

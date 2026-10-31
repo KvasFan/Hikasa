@@ -29,7 +29,7 @@ use crate::help::edit_distance;
 use crate::jobs::run_guarded;
 use crate::settings::file::full_table;
 use crate::settings::keys::{info_for, parse_path, rule_for};
-use crate::settings::theme::SchemeBase;
+use crate::settings::theme::{BUILTIN_SCHEMES, SchemeBase};
 use crate::settings::{
     ArchiveTypes, CommandOverrides, FileId, FileOutcome, FilterPresets, KeySegment, LoadMode,
     OpenWith, Options, Overwrite, SchemeFile, SettingsChanges, SettingsFile, SettingsKey,
@@ -1205,30 +1205,60 @@ fn write_dto(
 // ---- M2 W4a: the GUI's settings calls (§1.4.15, D-105, D-108) ------------------------------------------------
 
 /// Saves one file of a [`crate::settings::SettingsChanges`]: equal to the snapshot → `Unchanged`; checks fail →
-/// `Invalid`; else the snapshot's file with the new value, saved sparsely (`IfUnchanged` unless `force`).
+/// `Invalid`; else the snapshot's file with the new value, saved sparsely (`IfUnchanged` unless `force`). The
+/// outcome is pushed on `files`; `slot` takes the saved file (its new stamp).
 fn save_one<T: SettingsSchema + Clone + PartialEq>(
-    file: &SettingsFile<T>,
+    files: &mut Vec<(FileId, PathBuf, FileOutcome)>,
+    slot: &mut SettingsFile<T>,
     id: FileId,
     value: &T,
     overwrite: Overwrite,
-) -> (FileId, PathBuf, FileOutcome) {
-    let path = file.path().to_path_buf();
+) {
+    let (outcome, saved) = save_copy(slot, value, overwrite);
+    files.push((id, slot.path().to_path_buf(), outcome));
+    if let Some(saved) = saved {
+        *slot = saved;
+    }
+}
+
+fn save_copy<T: SettingsSchema + Clone + PartialEq>(
+    file: &SettingsFile<T>,
+    value: &T,
+    overwrite: Overwrite,
+) -> (FileOutcome, Option<SettingsFile<T>>) {
     if file.value() == value && file.loaded().migrated_from.is_none() {
-        return (id, path, FileOutcome::Unchanged);
+        return (FileOutcome::Unchanged, None);
     }
     let problems = value.validate();
     if !problems.is_empty() {
-        return (id, path, FileOutcome::Invalid(problems));
+        return (FileOutcome::Invalid(problems), None);
     }
     let mut copy = file.clone();
     *copy.value_mut() = value.clone();
-    let outcome = match copy.save(overwrite) {
-        Ok(true) => FileOutcome::Written,
-        Ok(false) => FileOutcome::Unchanged,
-        Err(SessionError::Conflict { .. }) => FileOutcome::Conflict,
-        Err(e) => FileOutcome::Failed(e.to_string()),
-    };
-    (id, path, outcome)
+    match copy.save(overwrite) {
+        Ok(true) => (FileOutcome::Written, Some(copy)),
+        Ok(false) => (FileOutcome::Unchanged, Some(copy)),
+        Err(SessionError::Conflict { .. }) => (FileOutcome::Conflict, None),
+        Err(e) => (FileOutcome::Failed(e.to_string()), None),
+    }
+}
+
+/// Deletes the file of a scheme change of `None`.
+fn delete_scheme_file(file: &SettingsFile<SchemeFile>, force: bool) -> FileOutcome {
+    let path = file.path();
+    if !path.exists() {
+        return FileOutcome::Unchanged;
+    }
+    match file.changed_on_disk() {
+        Ok(true) if !force => return FileOutcome::Conflict,
+        Err(e) if !force => return FileOutcome::Failed(e.to_string()),
+        _ => {}
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => FileOutcome::Deleted,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileOutcome::Unchanged,
+        Err(e) => FileOutcome::Failed(SessionError::io(path, e).to_string()),
+    }
 }
 
 impl Service {
@@ -1259,7 +1289,9 @@ impl Service {
     /// value equal to its snapshot is `Unchanged`, a value that fails its checks `Invalid` (not written), else
     /// the snapshot's `SettingsFile` saves it sparsely with `IfUnchanged` (`Force` with `force`): `Written` or
     /// `Conflict`. A scheme change of `None` deletes `themes/<name>.toml` (`Deleted`). The same `SettingsFile`
-    /// path as `settings set`. Returns the outcomes and a fresh snapshot.
+    /// path as `settings set`. Returns the outcomes and a fresh snapshot; files already written are never reported
+    /// as a failure of the whole call: when the files cannot be read back, the snapshot is the given one with the
+    /// saved files in it and `reread_error` says why.
     pub fn settings_save(
         &self,
         snapshot: &SettingsSnapshot,
@@ -1274,55 +1306,85 @@ impl Service {
                 Overwrite::IfUnchanged
             };
             let mut files = Vec::new();
+            let mut after = snapshot.clone();
             if let Some(v) = &changes.options {
-                files.push(save_one(&snapshot.options, FileId::Options, v, overwrite));
+                save_one(
+                    &mut files,
+                    &mut after.options,
+                    FileId::Options,
+                    v,
+                    overwrite,
+                );
             }
             if let Some(v) = &changes.commands {
-                files.push(save_one(&snapshot.commands, FileId::Commands, v, overwrite));
+                save_one(
+                    &mut files,
+                    &mut after.commands,
+                    FileId::Commands,
+                    v,
+                    overwrite,
+                );
             }
             if let Some(v) = &changes.theme {
-                files.push(save_one(&snapshot.theme, FileId::Theme, v, overwrite));
+                save_one(&mut files, &mut after.theme, FileId::Theme, v, overwrite);
             }
             for (name, change) in &changes.schemes {
                 let id = FileId::Themes(name.clone());
-                let file = match snapshot.schemes.get(name) {
-                    Some(file) => file.clone(),
-                    None => SettingsFile::<SchemeFile>::new_default(&store.path(id.clone())),
-                };
+                let path = store.path(id.clone());
+                let file = after
+                    .schemes
+                    .entry(name.clone())
+                    .or_insert_with(|| SettingsFile::new_default(&path));
                 match change {
-                    Some(v) => files.push(save_one(&file, id, v, overwrite)),
+                    Some(v) => save_one(&mut files, file, id, v, overwrite),
                     None => {
-                        let path = file.path().to_path_buf();
-                        let outcome = if !path.exists() {
-                            FileOutcome::Unchanged
-                        } else if !force && file.changed_on_disk()? {
-                            FileOutcome::Conflict
-                        } else {
-                            match std::fs::remove_file(&path) {
-                                Ok(()) => FileOutcome::Deleted,
-                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                                    FileOutcome::Unchanged
-                                }
-                                Err(e) => {
-                                    FileOutcome::Failed(SessionError::io(&path, e).to_string())
-                                }
-                            }
-                        };
-                        files.push((id, path, outcome));
+                        let outcome = delete_scheme_file(file, force);
+                        let deleted = outcome == FileOutcome::Deleted;
+                        files.push((id, path.clone(), outcome));
+                        if deleted && BUILTIN_SCHEMES.contains(&name.as_str()) {
+                            *file = SettingsFile::new_default(&path);
+                        } else if deleted {
+                            after.schemes.remove(name);
+                        }
                     }
                 }
             }
             if let Some(v) = &changes.filters {
-                files.push(save_one(&snapshot.filters, FileId::Filters, v, overwrite));
+                save_one(
+                    &mut files,
+                    &mut after.filters,
+                    FileId::Filters,
+                    v,
+                    overwrite,
+                );
             }
             if let Some(v) = &changes.openwith {
-                files.push(save_one(&snapshot.openwith, FileId::OpenWith, v, overwrite));
+                save_one(
+                    &mut files,
+                    &mut after.openwith,
+                    FileId::OpenWith,
+                    v,
+                    overwrite,
+                );
             }
             if let Some(v) = &changes.archives {
-                files.push(save_one(&snapshot.archives, FileId::Archives, v, overwrite));
+                save_one(
+                    &mut files,
+                    &mut after.archives,
+                    FileId::Archives,
+                    v,
+                    overwrite,
+                );
             }
-            let snapshot = self.settings_snapshot()?;
-            Ok(SettingsSaveDto { files, snapshot })
+            let (snapshot, reread_error) = match self.settings_snapshot() {
+                Ok(fresh) => (fresh, None),
+                Err(e) => (after, Some(e.to_string())),
+            };
+            Ok(SettingsSaveDto {
+                files,
+                snapshot,
+                reread_error,
+            })
         })
     }
 

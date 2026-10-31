@@ -6,6 +6,8 @@
 //! `--no-launch`). Its exit code is 0 when the view opened, or the view's raw code with `--wait` (D-23). The
 //! control commands never launch; no GUI is exit 100 (D-22).
 
+use std::path::Path;
+
 use hikasa_core::{ExitCode, Warning};
 use hikasa_session::api::dto::{
     GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA, GUI_PING_SCHEMA, GUI_QUIT_SCHEMA,
@@ -14,7 +16,6 @@ use hikasa_session::api::dto::{
 use hikasa_session::api::{ApiOp, GuiLauncher, GuiOpenRequest, OpenArgs, find_gui_exe, human};
 use hikasa_session::ipc::{RetryPolicy, ViewId};
 
-use hikasa_session::ApiError;
 use hikasa_session::api::{GuiOpenReport, SingleArg};
 use hikasa_session::package::ImportChoices;
 
@@ -152,16 +153,39 @@ fn open_args(ctx: &mut Ctx<'_>, open: &OpenArgs) -> u8 {
                             .settings_import(&path, &ImportChoices::default(), false);
                     return super::settings::import_done(ctx, result);
                 }
-                let e = ApiError::Unsupported(
-                    "the import wizard of the window comes in a later version: add --silent to import \
-                     everything, or use `hikasa settings import`"
-                        .into(),
-                );
-                return ctx.fail(GUI_OPEN_SCHEMA, &e, ApiOp::GuiOpen { wait: false }, &[]);
+                return import_package(ctx, &path, open.no_launch, &open.warnings);
             }
         }
     }
     open_view(ctx, request, open.no_launch, &open.warnings)
+}
+
+/// `gui open <file.hikasa-pkg>` without `--silent` (D-127): the GUI shows its import wizard (exit 0).
+fn import_package(ctx: &mut Ctx<'_>, path: &Path, no_launch: bool, own: &[Warning]) -> u8 {
+    let op = ApiOp::GuiOpen { wait: false };
+    let launcher = launcher(ctx, no_launch);
+    let launcher = launcher.as_ref().map(|l| l as &dyn GuiLauncher);
+    match ctx
+        .service
+        .gui_import_package(path, launcher, &RetryPolicy::default())
+    {
+        Ok(()) => {
+            if ctx.out.json() {
+                let dto = hikasa_session::api::dto::GuiOpenDto {
+                    view: 0,
+                    waited: false,
+                    result: None,
+                    view_exit_code: None,
+                    spooled_stdin: None,
+                    views: Vec::new(),
+                };
+                ctx.json_success(GUI_OPEN_SCHEMA, OK, dto, own, op)
+            } else {
+                ctx.human_done(Ok(()), OK, GUI_OPEN_SCHEMA, own, op)
+            }
+        }
+        Err(e) => ctx.fail(GUI_OPEN_SCHEMA, &e, op, own),
+    }
 }
 
 /// The launcher of a GUI command (`None` with `--no-launch`).

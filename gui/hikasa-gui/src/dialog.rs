@@ -9,15 +9,16 @@
 //! confirmed command must not ask again.
 
 use std::any::Any;
+use std::path::PathBuf;
 
 use hikasa_session::settings::Shortcut;
-use hikasa_session::{HIKASA_VERSION, Service};
+use hikasa_session::{ApiError, HIKASA_VERSION, Service};
 
+use crate::options::ConflictAnswer;
 use crate::session_dialog::SessionAction;
 use crate::window::Invocation;
 
 /// The role of a dialog button.
-#[allow(dead_code)] // `Apply`, `Back`, `Next`, `Finish` are W4c's (contract seams)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ButtonRole {
     /// OK.
@@ -68,6 +69,33 @@ pub enum Followup {
     DisableOption(&'static str),
     /// A session or workspace action of the window (W4b).
     Session(SessionAction),
+    /// The answer to the conflict prompt of the Options dialog (D-128).
+    Options(ConflictAnswer),
+    /// The overwrite of an existing package was confirmed (the Export wizard, D-131).
+    WizardOverwrite,
+    /// The Import wizard drops its choices and takes this package (D-127).
+    SwitchPackage(PathBuf),
+}
+
+/// The body of a write on the window's settings queue: writes and returns the paths to acknowledge.
+pub type SettingsBody = Box<dyn FnOnce(&Service) -> Result<Vec<PathBuf>, ApiError> + Send>;
+
+/// What a dialog asks of its window between two calls (W4c): the dialogs that write settings use the window's
+/// ordered settings queue instead of a job of their own.
+pub enum DialogRequest {
+    /// A write on the settings queue (acknowledged, then the settings reload: D-117, D-119).
+    Settings {
+        /// The job's title.
+        title: String,
+        /// The write.
+        body: SettingsBody,
+    },
+    /// A prompt over the dialog.
+    Ask(Box<Prompt>),
+    /// The dialog closes.
+    Close,
+    /// The Home tree and the menus read the stores again.
+    Refresh,
 }
 
 /// What a button or key did.
@@ -98,6 +126,22 @@ pub trait DialogModel: Any {
     /// Polls the dialog's jobs; true when it changed.
     fn poll(&mut self, _svc: &Service) -> bool {
         false
+    }
+    /// True while a job of the dialog runs.
+    fn busy(&self) -> bool {
+        false
+    }
+    /// The size of the dialog's body (`None`: a small dialog that follows its content).
+    fn size(&self) -> Option<(f32, f32)> {
+        None
+    }
+    /// True while every key goes to [`DialogModel::on_key`] (a shortcut capture).
+    fn wants_keys(&self) -> bool {
+        false
+    }
+    /// What the dialog asks of its window since the last call.
+    fn take_requests(&mut self) -> Vec<DialogRequest> {
+        Vec::new()
     }
     /// For the drawing layer (downcast to the concrete dialog).
     fn as_any(&self) -> &dyn Any;
@@ -146,6 +190,43 @@ impl DialogStack {
     /// Closes the top dialog.
     pub fn pop(&mut self) -> Option<Box<dyn DialogModel>> {
         self.dialogs.pop()
+    }
+
+    /// The dialog `T` of the stack, the top-most one first.
+    pub fn find_mut<T: DialogModel>(&mut self) -> Option<&mut T> {
+        self.dialogs
+            .iter_mut()
+            .rev()
+            .find_map(|d| d.as_any_mut().downcast_mut::<T>())
+    }
+
+    /// True while a dialog's job runs.
+    pub fn busy(&self) -> bool {
+        self.dialogs.iter().any(|d| d.busy())
+    }
+
+    /// True when the top dialog takes every key.
+    pub fn wants_keys(&self) -> bool {
+        self.dialogs.last().is_some_and(|d| d.wants_keys())
+    }
+
+    /// True when the stack holds a dialog `T`.
+    pub fn holds<T: DialogModel>(&self) -> bool {
+        self.dialogs.iter().any(|d| d.as_any().is::<T>())
+    }
+
+    /// Closes dialog `index`.
+    pub fn remove(&mut self, index: usize) -> Box<dyn DialogModel> {
+        self.dialogs.remove(index)
+    }
+
+    /// The requests of every dialog, with its index, bottom first.
+    pub fn take_requests(&mut self) -> Vec<(usize, DialogRequest)> {
+        self.dialogs
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(i, d)| d.take_requests().into_iter().map(move |r| (i, r)))
+            .collect()
     }
 
     /// The top dialog.

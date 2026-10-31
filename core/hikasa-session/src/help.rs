@@ -47,6 +47,10 @@ topics!(
     "dialog-session-settings",
     "dialog-save-session",
     "dialog-workspaces",
+    "dialog-options",
+    "wizard-export",
+    "wizard-import",
+    "wizard-restore",
     "view-folder-compare",
     "view-text-compare",
 );

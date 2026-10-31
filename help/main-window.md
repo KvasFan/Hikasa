@@ -73,3 +73,9 @@ sizes of `theme.toml` set the text panes and the folder tree.
 <workspace>` a [workspace](topic:dialog-workspaces); a second start sends its request to the running window and
 exits. Closing a view with unsaved session changes asks first: see [Save Session As](topic:dialog-save-session). See [hikasa gui](topic:gui), [Folder Compare](topic:view-folder-compare) and
 [Text Compare](topic:view-text-compare).
+
+## Settings
+
+Tools ▸ [Options…](topic:dialog-options) sets the preferences, the theme, the shortcuts, menus and toolbars. Tools ▸
+[Export Settings…](topic:wizard-export), [Import Settings…](topic:wizard-import) and
+[Restore Factory Defaults…](topic:wizard-restore) move settings between machines or back to the start.

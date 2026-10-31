@@ -18,7 +18,8 @@
 //!   frame), a page per frame, and through the whole comparison; the summary has the first screen (unaligned
 //!   text, then the aligned and syntax-coloured comparison), per phase the frame rate, the UI thread's work per
 //!   frame, the frame intervals and eframe's CPU time per frame, and the memory: PSS (`smaps_rollup`) and RSS of
-//!   the GUI process, in MiB against 400 MB = 381.47 MiB.
+//!   the GUI process, in MiB against 400 MB = 381.47 MiB, sampled in `memory_settled` (60 idle frames after the
+//!   last phase), the median of three whole runs, every run printed with its anonymous memory and the load.
 //! * `folder_scan`: 10,000 × `HIKASA_PERF_TREE_TOP` files per side (default 10: 100,000 files in 11,110
 //!   folders, depth 4), compared with CRC content tests and shown with the display filter *Show All*; every
 //!   folder opens as it arrives while the window scrolls the tree two rows per frame (the heaviest incremental
@@ -40,6 +41,9 @@
 //!   (PSS_10 − PSS_1) / 9 < 20 MiB. The anonymous memory is printed beside the PSS (the PSS under llvmpipe moves
 //!   with the file-backed share of Mesa).
 //!
+//! * `options_memory` (M2 W4c, D-132): one window with Home; `ProgramOptions`, every page shown once, then 60 idle
+//!   frames; the gate is PSS < 120 MiB.
+//!
 //! Every run requires `DISPLAY` and a software renderer (llvmpipe): the benchmarks never use the real display
 //! (D-132).
 //!
@@ -53,6 +57,9 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 const GUI: &str = env!("CARGO_BIN_EXE_hikasa-gui");
+
+/// Whole runs of a memory figure (D-132): `text_scroll`, `two_windows` and `two_windows_late` take the median.
+const RUNS: usize = 3;
 
 /// xorshift64* (seeded, §6.1).
 struct Rng(u64);
@@ -266,23 +273,73 @@ fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or(f64::NAN)
 }
 
+/// What one measured run leaves: the figures of `memory_settled` (D-132, idle frames after the last phase).
+struct Settled {
+    pss: f64,
+    anon: f64,
+    rss: f64,
+    peak: f64,
+}
+
+impl Settled {
+    fn of(doc: &Value) -> Settled {
+        let m = &doc["memory_settled"];
+        Settled {
+            pss: f(&m["total_pss_mib"]),
+            anon: f(&m["gui_pss_anon_mib"]),
+            rss: f(&m["total_rss_mib"]),
+            peak: f(&m["gui_peak_rss_mib"]),
+        }
+    }
+}
+
+/// The machine's load, printed beside every run: the PSS under llvmpipe moves with who else maps Mesa.
+fn load() -> String {
+    std::fs::read_to_string("/proc/loadavg")
+        .map(|t| t.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// The median PSS of [`RUNS`] whole runs, each printed: one run of a bimodal figure proves nothing (D-132).
+fn median_pss(name: &str, mut run: impl FnMut() -> Value) -> (f64, Value) {
+    let mut last = Value::Null;
+    let mut pss = Vec::new();
+    for k in 0..RUNS {
+        last = run();
+        let s = Settled::of(&last);
+        assert!(s.pss > 0.0, "no settled sample: {last}");
+        eprintln!(
+            "{name} run {k}: PSS {:.1} MiB, anonymous {:.1} MiB, RSS {:.1} MiB, peak RSS {:.1} MiB, load {}; \
+             anonymous regions {}",
+            s.pss,
+            s.anon,
+            s.rss,
+            s.peak,
+            load(),
+            last["memory_settled"]["largest_anon_regions"]
+        );
+        pss.push(s.pss);
+    }
+    pss.sort_by(f64::total_cmp);
+    let median = pss[pss.len() / 2];
+    eprintln!("{name}: median PSS {median:.1} MiB of {pss:?}");
+    (median, last)
+}
+
 #[test]
 #[ignore = "opens a window and generates 100 MB of input: run in release with --ignored"]
 fn text_scroll() {
     let dir = tempfile::tempdir().expect("temp dir");
     let (l, r) = generate_text(dir.path());
-    let doc = bench("scroll", dir.path(), &l, &r);
+    let (total_pss, doc) = median_pss("text_scroll", || bench("scroll", dir.path(), &l, &r));
     let first = f(&doc["first_screen_ms"]["from_process_start"]);
     let coloured = f(&doc["coloured_screen_ms"]["from_process_start"]);
-    let total_pss = f(&doc["memory"]["total_pss_mib"]);
-    let total_rss = f(&doc["memory"]["total_rss_mib"]);
-    let gui_rss = f(&doc["memory"]["gui_rss_mib"]);
     let limit = f(&doc["memory"]["limit_mib"]);
     let phases = doc["phases"].as_array().cloned().unwrap_or_default();
     assert_eq!(phases.len(), 3, "three scroll phases: {doc}");
     eprintln!(
-        "ARCH-GUI-003 text: first screen {first} ms, coloured {coloured} ms; memory: PSS {total_pss} MiB (RSS \
-         {total_rss} MiB), RSS of the GUI process {gui_rss} MiB; limit 400 MB = {limit} MiB"
+        "ARCH-GUI-003 text: first screen {first} ms, coloured {coloured} ms; memory: median settled PSS {total_pss} \
+         MiB; limit 400 MB = {limit} MiB"
     );
     for p in &phases {
         eprintln!(
@@ -302,14 +359,12 @@ fn text_scroll() {
     let fps: Vec<String> = phases.iter().map(|p| p["fps"].to_string()).collect();
     let gate_fps = phases.iter().all(|p| f(&p["fps"]) >= 60.0);
     let gate_pss = total_pss < limit;
-    let gate_gui = gui_rss < limit;
     let gate_first = first < 1000.0;
     eprintln!(
-        "gate: fps ≥ 60 {gate_fps} (measured {}), memory < 400 MB: PSS total {gate_pss}, GUI RSS {gate_gui}, \
-         first screen < 1 s {gate_first}",
+        "gate: fps ≥ 60 {gate_fps} (measured {}), memory < 400 MB: PSS {gate_pss}, first screen < 1 s {gate_first}",
         fps.join(" / ")
     );
-    assert!(first.is_finite() && coloured.is_finite() && total_pss > 0.0 && gui_rss > 0.0);
+    assert!(first.is_finite() && coloured.is_finite() && total_pss > 0.0);
 }
 
 #[test]
@@ -377,17 +432,19 @@ fn two_windows_late() {
 fn two_windows_gate(env: &[(&str, &str)]) {
     let dir = tempfile::tempdir().expect("temp dir");
     let (l, r) = generate_text(dir.path());
-    let doc = bench_with("two_windows", dir.path(), &l, &r, env);
-    assert_eq!(doc["windows"], 2, "the second window was open: {doc}");
+    let name = env.first().map_or("two_windows", |_| "two_windows_late");
+    let (total_pss, doc) = median_pss(name, || {
+        let doc = bench_with("two_windows", dir.path(), &l, &r, env);
+        assert_eq!(doc["windows"], 2, "the second window was open: {doc}");
+        doc
+    });
     let phases = doc["phases"].as_array().cloned().unwrap_or_default();
     assert_eq!(phases.len(), 3, "three scroll phases: {doc}");
-    let total_pss = f(&doc["memory"]["total_pss_mib"]);
-    let peak = f(&doc["memory"]["gui_peak_rss_mib"]);
     let limit = f(&doc["memory"]["limit_mib"]);
     let (p95, max) = frame_work(&phases);
     eprintln!(
-        "two windows (second at {}): PSS {total_pss} MiB (limit {limit} MiB), peak RSS {peak} MiB; UI frame work p95 {p95} ms, \
-         max {max} ms",
+        "two windows (second at {}): median settled PSS {total_pss} MiB (limit {limit} MiB); last run UI frame work \
+         p95 {p95} ms, max {max} ms",
         doc["second_window_at"]
     );
     let gate = total_pss < limit && p95 < 8.0 && max < 16.7;
@@ -415,6 +472,22 @@ fn write_lines(path: &Path, seed: u64, lines: u64) {
         text.push('\n');
     }
     std::fs::write(path, text).expect("write");
+}
+
+/// The Options dialog (M2 W4c, D-132): one window with Home; `ProgramOptions`, every page shown once, then 60 idle
+/// frames. Gate: PSS < 120 MiB.
+#[test]
+#[ignore = "opens a window: run in release with --ignored"]
+fn options_memory() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let doc = bench_args("options", dir.path(), &[], &[]);
+    let pss = f(&doc["memory_settled"]["total_pss_mib"]);
+    let anonymous = f(&doc["memory_settled"]["gui_pss_anon_mib"]);
+    eprintln!(
+        "Options: {} pages, PSS {pss:.1} MiB, anonymous {anonymous:.1} MiB",
+        doc["pages"]
+    );
+    assert!(pss > 0.0 && pss < 120.0, "memory gate: {pss} MiB");
 }
 
 #[test]

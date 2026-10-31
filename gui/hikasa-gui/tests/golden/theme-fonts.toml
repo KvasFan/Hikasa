@@ -1,0 +1,10 @@
+schema_version = 1
+
+[fonts.editor]
+size = 15.0
+
+[fonts.hex]
+family = "Mono"
+
+[fonts.folder]
+use_system = false

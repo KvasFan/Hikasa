@@ -4,6 +4,19 @@ The Options dialog has a searchable category list on the left and pages on the
 right; Apply / OK / Cancel. Every setting below maps to a key in `options.toml`
 (key names in `snake_case` mirroring the headings).
 
+**The dialog (M2 W4c; D-128, D-129).** Tools ▸ Options…. The page tree is searched by page title, label, key path and
+OPT id, case-insensitively; each P0 key of the Keys table is on exactly one page, and P1/P2 keys are not shown (they
+stay stored, validated and written back untouched, like unknown keys). The dialog edits a working copy taken when it
+opens; values are checked live with the schema of each file and Apply is disabled while a problem remains. Apply
+writes the files that changed (a file equal to what was read is not written), sparsely, through the same engine as
+`hikasa settings set`; a file changed on disk since it was read asks *Overwrite* / *Reload this file (discard my
+edits)* / *Cancel*; OK is Apply, then closes when every file succeeded; Cancel drops what was not applied and ends the
+theme preview. Numbers clamp to their range in the widget. The page last used is remembered
+(`state.dialogs.options.page`). The Toolbars, Shortcuts, Menus page edits `commands.toml` for the view types the
+window shows: Menu and Toolbar check boxes, shortcuts by Add (capture a key; Esc gives up), Remove and Default, the
+display filter mode, large buttons and the show-all flags; shortcut conflicts within a view show on both rows and
+never block Apply; overrides of `planned` commands are kept.
+
 ## Startup
 - Load workspace (combo of saved workspaces, empty = Home view).
 - On exit, save workspace as (combo).
@@ -234,7 +247,9 @@ type `[view.<view>]` (`home`, `folder-compare`, `folder-sync`, `text-compare`,
 `show_all_in_menu`, `show_all_on_toolbar` (bool, false), and per command
 `[view.<view>.command.<Id>]` with `shortcuts` (array of shortcuts in the reference
 spelling; replaces the defaults; `[]` removes them), `menu` and `toolbar` (bool). A
-command id must exist in a catalogue section of that view; a shortcut must parse.
+command id must exist in a catalogue section of that view; a shortcut must parse. A view or command id this build does
+not know, and the override of a `planned` command with a shortcut it cannot read, are kept in the file as they are with
+a warning (they may be a later version's, T13); `settings set` still refuses to create one.
 
 **`openwith.toml` (OPT-012).** `schema_version = 1`, then `[[app]]` entries:
 `description` (string, required), `shortcut` (string), `command` (string, required;

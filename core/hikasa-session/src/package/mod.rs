@@ -30,6 +30,20 @@ use crate::sessions::store::entries;
 /// The extension of settings packages.
 pub const PACKAGE_EXTENSION: &str = "hikasa-pkg";
 
+/// The file a typed package path names: only an absolute path is taken. Nothing is expanded (`~`) and core has no
+/// current folder to resolve against (the GUI's would be a place the user never sees).
+pub fn package_path(text: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(text.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{:?} is not a full path: enter the whole path of the package file.",
+            text.trim()
+        ))
+    }
+}
+
 /// A category of a package (D-86).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Category {

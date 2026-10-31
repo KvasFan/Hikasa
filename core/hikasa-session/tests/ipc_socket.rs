@@ -121,6 +121,9 @@ fn handshake_requests_and_views() {
             wait: false,
         },
         Request::LoadWorkspace { name: "w".into() },
+        Request::ImportPackage {
+            path: "/p.hikasa-pkg".into(),
+        },
         Request::RunScript {
             path: "/x".into(),
             args: vec![],

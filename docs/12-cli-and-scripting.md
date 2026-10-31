@@ -100,8 +100,8 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
   resolved as a named session (the exact reference, then case-insensitively) → `LoadSession`, else a
   workspace → `LoadWorkspace`, else the M1 error; an existing path always wins over a name. An existing file
   whose name ends in `.hikasa-pkg` (any case) is a settings package: with `--silent` it is imported headless
-  (every category and item, no deletes; `hikasa.settings_import.v1`), without it the window's import wizard is
-  needed (W4; until then exit 100 `unsupported`). `@file` stays reserved for the script wave. `hikasa gui open` and,
+  (every category and item, no deletes; `hikasa.settings_import.v1`), without it the window shows its import wizard
+  (`ImportPackage`, D-127; exit 0, also from `hikasa-gui <file.hikasa-pkg>`, forwarded to a running GUI). `@file` stays reserved for the script wave. `hikasa gui open` and,
   since W4b (D-127), the window's own command line serve these forms: `hikasa-gui <session>` and `hikasa-gui
   <workspace>` open them, or forward `LoadSession`/`LoadWorkspace` to a running GUI; an existing path always wins.
 - **CLI-002** (P0): Positional arguments:

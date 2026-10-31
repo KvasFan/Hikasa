@@ -842,6 +842,7 @@ fn dispatch(
         request @ (Request::OpenView { .. }
         | Request::LoadSession { .. }
         | Request::LoadWorkspace { .. }
+        | Request::ImportPackage { .. }
         | Request::ListViews
         | Request::CloseView { .. }
         | Request::Ping

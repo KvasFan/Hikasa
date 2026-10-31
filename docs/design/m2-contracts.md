@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-133, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-134, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5–§1.14 W5–W14 (outline in plan §6, written before each wave)
@@ -105,13 +105,14 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-124 | **Home view** (SES-030, SES-031, SES-093). Type buttons (one per session type the GUI can open; drop targets), a search box (`Find`, Ctrl+F), the sessions tree and the management panel (`ShowManage`, `MaximizeManage`). Tree: *New* (one entry per type: its defaults), named sessions in folders (folders first, then favorites, then the rest, each case-insensitively sorted), *Auto-saved* in the four D-83 groups, newest first. Search: case-insensitive substring of the name, folder path or description; matches are shown with their ancestors. The M1 path form becomes the management panel's Specs editor; `HomeCompare` opens the selection. The tree's context-menu commands (SES-031) are new catalogue entries of the `home` section (§1.4.11). The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. `SessionHome` (Alt+Home) replaces the view by Home after its close action; `SessionsCombo` lists the named sessions of the view's type and opens the chosen one in this tab. | SES-030/031 with the store of W2; no polling of `sessions/`. | 03 §3 |
 | D-125 | **Workspaces in the GUI** (SES-040…042). Save Workspace As captures every window (root first, then in opening order): geometry, active tab, and per tab a reference for `Named` views, an inline session (`Service::inline_table`) for the others, the pending session of a not yet restored tab, and the view layout; Home tabs are not saved (D-85 has no Home tab; a window without saved tabs restores as one Home tab). Load Workspace runs every open view's close action first (a Cancel aborts the load), then restores the windows lazily (D-126). A workspace `shortcut` is dispatched by D-111 rule 3; Manage Workspaces renames, deletes, edits the shortcut (conflicts with global commands and other workspaces are shown) and loads. Startup: without view arguments and with `[startup] load_workspace` set, that workspace is loaded (missing: a warning notice and Home); exit: with `on_exit_save_workspace_as` set it is saved after the close warnings and before the views close. IPC `LoadWorkspace` restores windows the same way. | SES-040/041 on the W2 files. | 03 §4 |
 | D-126 | **Lazy restore** (G12). A restored tab is *pending* (its session or reference, title, layout) until it is first activated; only the active tab of each window starts its comparison. A pending tab is registered with the IPC view list (`gui list`) and closes with `close_unopened` semantics. A pending tab's caption is the session reference, else its description, else the input names. | First screen < 1 s whatever the workspace size; memory per unopened tab is a session value. | 03 §4 |
-| D-127 | **GUI command line and `ImportPackage`** (CLI-002, SES-061; revises D-88's wizard clause, additive to protocol v1 per D-46/D-89). `hikasa-gui <one argument>` uses `Service::classify_single_arg` like `gui open`: a session or workspace opens (or is forwarded as `LoadSession`/`LoadWorkspace` to a running GUI), a `.hikasa-pkg` without `--silent` shows the Import wizard. New request `ImportPackage{path}` (absolute path) → `Ok` once the wizard is shown in the window focused last; a GUI that answers `unsupported_request` is reported as for D-89. `hikasa gui open <file.hikasa-pkg>` without `--silent` sends it (exit 0) instead of exiting 100 `unsupported`. | Completes D-88; old GUIs fail clearly. | 12 §1, 01 §5.1 |
-| D-128 | **Options dialog** (OPT, docs/15). Searchable page tree on the left (pages and sub-pages of §1.4.13), page on the right, Apply / OK / Cancel. Each P0 key of `key_infos(FileId::Options)` appears on exactly one page; P1/P2 keys are not shown (they stay stored and validated). Widgets follow `ValueKind`; values are validated live with the schema's `validate`, and Apply is disabled while a problem remains. The dialog edits a typed working copy (`SettingsSnapshot`) taken when it opens; Apply writes the changed files with `Service::settings_save` (`IfUnchanged` per file; a file equal to its snapshot is not written); a `Conflict` asks *Overwrite* / *Reload this file (discard my edits)* / *Cancel*; OK = Apply, then close when every file succeeded; Cancel discards unapplied edits and ends the theme preview. Search matches page titles, labels, key paths and OPT ids, case-insensitively. | One dialog over the W1 models; the CLI's sparse, preserving writes (T13). | 15 |
-| D-129 | **Toolbars, Shortcuts, Menus page** (UI-003, OPT-011). View selector (the view types the GUI shows), search over id, caption, description and shortcut, and a list of the view's `implemented` commands with Menu and Toolbar check boxes (Toolbar only for commands with an icon) and their shortcuts: Add (capture a key), Remove (the selected shortcut; removing all writes `shortcuts = []`), Default (drops the override). Conflicts (`CommandOverrides::conflicts`) are computed live on the working copy and shown on both rows; they never block Apply. Also the view's display-filter mode, large buttons, show all in menu and show all on toolbar. Edits use pure `CommandOverrides` helpers; overrides of `planned` commands in the file are kept untouched. | UI-003 editor over the W1 model; conflicts are warnings (W1). | 14 §1, 15 |
-| D-130 | **Theme editor with live preview** (UI-020…023). The Appearance pages edit working copies of `theme.toml` and the scheme files: mode, the light and the dark scheme, every element of `[folder]`, `[file]` (with syntax elements and the fallback cycle) and `[picture]`, the flags, the four fonts; per element *Reset* (back to the base value: removed from the file); New (name and base), Clone, Delete (not for built-ins; *Reset all* on a built-in deletes its override file). Every change is applied at once to every window (the preview is always on); Cancel restores the applied theme; Apply writes `theme.toml` and the changed scheme files (sparse, D-78). Default text below 4.5:1 contrast on a background is a warning, not an error. | UI-020 "live Preview in the open view" without a separate preview mode. | 14 §2 |
-| D-131 | **Export, Import and Restore wizards** (SES-060…062). Step dialogs (Back / Next / Finish / Cancel) over the W2 calls: Export = categories and items → target file (default `~/hikasa-settings-<YYYY-MM-DD>.hikasa-pkg`, injected clock) → `settings_export`; Import = package → the dry-run plan of every category → categories, items (collisions in red, locked sessions kept unless "include locked sessions"), delete-existing choices → summary (dry run of the exact choices) → `settings_import`; Restore = categories and the two delete choices → the dry-run plan → `settings_restore_categories`. Finish re-plans in core (T12); when the executed plan differs from the summary shown, the result page says so. Written paths are acknowledged, then settings reload as in D-117; open views keep running. | SES-060…062 as wizards over the CLI's calls (T11). | 03 §6 |
-| D-132 | **Measuring the W4 gates** (§1.4.17). Scripted bench modes of the binary (`HIKASA_GUI_BENCH=scroll|folder|options|two_windows|workspace`) driven by `gui/hikasa-gui/tests/perf_gate.rs`, release build, **only** under `env -u WAYLAND_DISPLAY xvfb-run -a`; the test fails when the renderer is not a software one (llvmpipe), so the real display is never used. Memory = PSS from `smaps_rollup` (MiB; 400 MB = 381.47 MiB) plus peak RSS; under Xvfb the frame-rate item of ARCH-GUI-003 is checked as UI frame work (p95 < 8 ms, max < 16.7 ms), the ≥ 60 fps figure on a GPU display is the maintainer's run (W14). | `docs/17` §3.5; llvmpipe cannot reach 60 fps (docs/02). | 02, 17 |
+| D-127 | **GUI command line and `ImportPackage`** (CLI-002, SES-061; revises D-88's wizard clause, additive to protocol v1 per D-46/D-89). `hikasa-gui <one argument>` uses `Service::classify_single_arg` like `gui open`: a session or workspace opens (or is forwarded as `LoadSession`/`LoadWorkspace` to a running GUI), a `.hikasa-pkg` without `--silent` shows the Import wizard. New request `ImportPackage{path}` (absolute path) → `Ok` once the wizard is shown in the window focused last (an open wizard takes the path on step 1, is replaced after its result, asks in between, and raises a notice while a job runs); a GUI that answers `unsupported_request` is reported as for D-89. `hikasa gui open <file.hikasa-pkg>` without `--silent` sends it (exit 0) instead of exiting 100 `unsupported`. | Completes D-88; old GUIs fail clearly. | 12 §1, 01 §5.1 |
+| D-128 | **Options dialog** (OPT, docs/15). Searchable page tree on the left (pages and sub-pages of §1.4.13), page on the right, Apply / OK / Cancel. Each P0 key of `key_infos(FileId::Options)` appears on exactly one page; P1/P2 keys are not shown (they stay stored and validated). Widgets follow `ValueKind`; values are validated live with the schema's `validate`, and Apply is disabled while a problem remains. The dialog edits a typed working copy (`SettingsSnapshot`) taken when it opens; Apply writes the changed files with `Service::settings_save` (`IfUnchanged` per file; a file equal to its snapshot is not written); a `Conflict` asks *Overwrite* / *Reload this file (discard my edits)* / *Cancel*; OK = Apply, then close when every file of the run succeeded (a file that failed keeps the dialog open, also after a later Overwrite of a conflict); Cancel discards unapplied edits and ends the theme preview. Only the files `changes()` would write are checked: a file left alone never blocks. Esc leaves an open popup first and asks when edits are unapplied. Search matches page titles, labels, key paths and OPT ids, case-insensitively. | One dialog over the W1 models; the CLI's sparse, preserving writes (T13). | 15 |
+| D-129 | **Toolbars, Shortcuts, Menus page** (UI-003, OPT-011). View selector (the view types the GUI shows), search over id, caption, description and shortcut, and a list of the view's `implemented` commands with Menu and Toolbar check boxes (Toolbar only for commands with an icon) and their shortcuts: Add (capture a key), Remove (the selected shortcut; removing all writes `shortcuts = []`; a list equal to the default is no override), Default (drops the shortcuts' override; off when there is none). Conflicts (`CommandOverrides::conflicts`) are computed live on the working copy and shown on both rows; they never block Apply. Also the view's display-filter mode, large buttons, show all in menu and show all on toolbar. Edits use pure `CommandOverrides` helpers; overrides of `planned` commands in the file are kept untouched, like views and commands this build does not know. | UI-003 editor over the W1 model; conflicts are warnings (W1). | 14 §1, 15 |
+| D-130 | **Theme editor with live preview** (UI-020…023). The Appearance pages edit working copies of `theme.toml` and the scheme files: mode, the light and the dark scheme, every element of `[folder]`, `[file]` (with syntax elements and the fallback cycle) and `[picture]`, the flags, the four fonts; per element *Reset* (back to the base value: removed from the file); New (name and base), Clone, Delete (not for built-ins; *Reset all* on a built-in deletes its override file, unknown keys included; the last element reset one by one deletes it only when it holds no unknown key). Every change is applied at once to every window (the preview is always on); Cancel restores the applied theme; Apply writes `theme.toml` and the changed scheme files (sparse, D-78). Default text below 4.5:1 contrast on a background is a warning, not an error. | UI-020 "live Preview in the open view" without a separate preview mode. | 14 §2 |
+| D-131 | **Export, Import and Restore wizards** (SES-060…062). Step dialogs (Back / Next / Finish / Cancel) over the W2 calls: Export = categories and items → target file (default `~/hikasa-settings-<YYYY-MM-DD>.hikasa-pkg`, injected clock) → `settings_export`; Import = package → the dry-run plan of every category → categories, items (collisions in red, locked sessions kept unless "include locked sessions"), delete-existing choices → summary (dry run of the exact choices) → `settings_import`; Restore = categories and the two delete choices → the dry-run plan → `settings_restore_categories`. A typed path must be absolute (`package::package_path`); nothing is expanded. Finish re-plans in core (T12); when the executed plan differs from the summary shown, the result page says so. The window and Exit are refused while a dialog's job runs. Written paths are acknowledged, then settings reload as in D-117; open views keep running. | SES-060…062 as wizards over the CLI's calls (T11). | 03 §6 |
+| D-132 | **Measuring the W4 gates** (§1.4.17). Scripted bench modes of the binary (`HIKASA_GUI_BENCH=scroll|folder|options|two_windows|workspace`) driven by `gui/hikasa-gui/tests/perf_gate.rs`, release build, **only** under `env -u WAYLAND_DISPLAY xvfb-run -a`; the test fails when the renderer is not a software one (llvmpipe), so the real display is never used. Memory = PSS from `smaps_rollup` (MiB; 400 MB = 381.47 MiB) plus peak RSS, sampled after idle frames (`memory_settled`), the median of three whole runs for `text_scroll`, `two_windows` and `two_windows_late`; under Xvfb the frame-rate item of ARCH-GUI-003 is checked as UI frame work (p95 < 8 ms, max < 16.7 ms), the ≥ 60 fps figure on a GPU display is the maintainer's run (W14). | `docs/17` §3.5; llvmpipe cannot reach 60 fps (docs/02). | 02, 17 |
 | D-133 | **No new dependency in W4.** egui/eframe draw everything (icons D-114); fonts are the built-ins (D-113); the Web Resources panel (`ShowWeb`) and website links stay `planned` until `open` (D-63) enters with print (W7/W13). | Plan §0.5; smallest surface. | 02 |
+| D-134 | **glibc's mmap threshold** (W4c review). On glibc the GUI replaces itself once at the very start with `MALLOC_MMAP_THRESHOLD_=4194304` set, unless the variable is set already (a failed `exec` just goes on). Buffers of 4 MiB and more go back to the system when freed instead of staying in the arenas' free lists once glibc's dynamic threshold has climbed (up to 32 MiB). The child processes inherit the variable, which is harmless to them. | Measured: 125 MiB of a settled comparison and the bimodal 25 MiB of the W4 gates (docs/02, W4c). `mallopt` is `unsafe` (architecture check 1) and another allocator a dependency (D-133). | 02 |
 
 ### 0.4 Dependencies
 
@@ -337,6 +338,9 @@ masks parse with `hikasa_core::mask::MaskList` (OPT-010, OPT-020); filter preset
 Open With `description` and `command` non-empty and the command splits (D-76); a `commands.toml` view key is one
 of the eight view names, a command id exists in one of the catalogue sections of that view (mapping below), a
 shortcut parses. Unknown ids or views are **problems**, not unknown keys (a typo must not pass silently).
+*Revised in W4c (§1.4.20):* in a loaded file they are kept as they are with a warning (`unknown_config_key`), as is the
+override of a `planned` command with a shortcut this build cannot read (`invalid_config_value`): the problem stays for a
+value built by hand and for a `settings set` that would create one.
 
 View → catalogue sections (moves from the GUI's `Scope::catalogue_sections` into
 `hikasa_session::commands::view_sections(view) -> &'static [&'static str]`; the GUI calls it):
@@ -1528,7 +1532,7 @@ UI-030, UI-031, SES-001…006 (GUI), SES-020…022 (dialog shell), SES-030, SES-
 (notice), SES-060…062 (wizards), SES-090, SES-091, SES-092 (framework), SES-093, FC-031 (configurable colours),
 FC-100 (panel), CLI-002 (the GUI's own command line, D-88), OPT-001, OPT-004…009, OPT-011, OPT-012, OPT-014,
 OPT-015, OPT-017…021 (the P0 keys of the Options dialog; each takes effect in the wave of its feature), ARCH-GUI-003
-(re-measured), G12. Decisions D-104…D-133. Out of scope (W5+): archives, folder operations and sync, scripts, the
+(re-measured), G12. Decisions D-104…D-134. Out of scope (W5+): archives, folder operations and sync, scripts, the
 report and Quick Compare dialogs, text editing, the table/hex/picture views, the VFS browse dialog (W9), the rule
 tabs of the Session Settings dialog (W9/W11/W13).
 
@@ -1959,7 +1963,7 @@ of `-` stay; `clipboard://` is accepted (D-101: the GUI reads its own clipboard 
     pub filters: Option<FilterPresets>, pub openwith: Option<OpenWith>, pub archives: Option<ArchiveTypes>,
 }
 pub enum FileOutcome { Written, Unchanged, Deleted, Conflict, Invalid(Vec<Problem>), Failed(String) }
-pub struct SettingsSaveDto { pub files: Vec<(FileId, PathBuf, FileOutcome)>, pub snapshot: SettingsSnapshot }
+pub struct SettingsSaveDto { pub files: Vec<(FileId, PathBuf, FileOutcome)>, pub snapshot: SettingsSnapshot, pub reread_error: Option<String> }
 // CommandOverrides helpers (W4c; pure)
 impl CommandOverrides {
     pub fn set_shortcuts(&mut self, view: &str, id: &str, s: Option<Vec<Shortcut>>);   // None = Default
@@ -1972,7 +1976,8 @@ impl CommandOverrides {
 
 `settings_save` processes the files in `FileId::every` order, each independently: unchanged value → `Unchanged`;
 `validate` problems → `Invalid` (not written); else `SettingsFile::save(IfUnchanged | Force)` → `Written` /
-`Conflict`; a deleted scheme file → `Deleted`; and returns a fresh snapshot. It is the same `SettingsFile` path as
+`Conflict`; a deleted scheme file → `Deleted`; and returns a fresh snapshot (when that read fails, the given snapshot
+with the saved files in it, and `reread_error`: the outcomes hold all the same). It is the same `SettingsFile` path as
 `settings set` (A4.17 compares the files).
 
 **Pages** (`options/pages.rs`, data; label wording original, after `docs/15`):
@@ -2023,7 +2028,7 @@ operations, or GUI-only state). Pure functions the GUI calls directly are not li
 | state and layout | `state_update(&mut dyn FnMut(&mut State)) -> Result<bool, ApiError>` | new (W4a) |
 | log and inputs | `log_append(&Path, &[String])` (append, create the parent folder; not atomic), `input_stamp(&str) -> InputState` | new (W4a) |
 | packages | `settings_export`, `settings_import`, `settings_restore_categories` | exist |
-| IPC client (CLI) | `gui_import_package(&Path)` | new (W4c) |
+| IPC client (CLI) | `gui_import_package(&Path, launcher, policy)` | new (W4c) |
 
 `Service::options()` and `registry()` return snapshots (D-119). The IPC handler of the GUI gains
 `ImportPackage` (W4c).
@@ -2197,7 +2202,8 @@ linked from `index`/`main-window`; `CHANGELOG.md` per part.
   review fixes both fail the PSS limit under llvmpipe (402.3 and 401.4 MiB; frame work met), and so does the
   single-window `text_scroll` in the same run (396.9 MiB): the anonymous memory is unchanged (315–318 MiB, the
   second window ≈ 1–2 MiB of it), the rise is the file-backed share of Mesa's libraries (docs/02, W4a). Open: the
-  maintainer's GPU run (end of W4c) decides the gate; no GUI change reduces the software renderer's mappings.
+  maintainer's GPU run (end of W4c) decides the gate; no GUI change reduces the software renderer's mappings. *Corrected
+  in W4c: the swing was the allocator, see D-134.*
 - **"No more differences".** The message panel's "Do not show again" (bound to `[next_difference]
   show_message_panel`) is implemented and tested through `dismiss_message`; no view raises the "no more
   differences" message yet: `DiffNext`/`DiffPrev` are disabled when there is none, and wrap-around and the message
@@ -2314,6 +2320,92 @@ linked from `index`/`main-window`; `CHANGELOG.md` per part.
 - **Gate G12.** The first PSS comparison (workspace against `scroll`, both at the first screen) sampled while the 1M-line
   comparison ran, so its −123 MiB measured the job's progress and proved nothing: dropped. §1.4.17 now compares two
   workspaces over the same files with a small active pair at a settled point; the figures are in docs/02.
+
+**W4c**
+
+- **`DialogRequest`.** A dialog that writes settings hands the body to the window's ordered queue, so the §1.4.20 rules
+  (one write at a time, sequence-numbered snapshots, `Acknowledge`, `reload_settings`) hold for Apply and the wizards too.
+  `DialogModel` gains `take_requests() -> Vec<DialogRequest>` (`Settings{title, body}`, `Ask(Prompt)`, `Close`,
+  `Refresh`), `busy()`, `size()` and `wants_keys()`; `Followup` gains `Options(ConflictAnswer)` and `WizardOverwrite`.
+  The body returns the paths to acknowledge and reports its outcome to the dialog over a channel; a settings job always
+  reports `Ok` to the queue, so a failed Apply is the dialog's message, not also a notice. `AppCore::poll_all` polls the
+  dialogs **after** `poll_jobs`, so a dialog sees the result in the tick its job ended. The write job also calls
+  `reload_settings` when it wrote a format file (an import).
+- **Generic fields.** The GUI has no `toml` (D-133) and the pages are data over `key_infos`, so core gains
+  `settings::form`: `FormValue`, `form_value`, `set_form_value` (by dotted path through the typed value), `clamp_value`
+  and `enum_caption` (the captions are keyed by the schema's spellings, which an adapter may not tabulate: architecture
+  check 7).
+  `CommandOverrides` also gains `prune_view`: an override or a view left at its defaults goes, so an edit undone writes
+  nothing. `reset_view` keeps the overrides of `planned` commands (D-129). Scheme elements are read and set by name
+  (`SchemeFile::{colour, set_colour, flag, set_flag}`, `Scheme::{colours, flags}`, `SchemeGroup`). `SettingsSnapshot::scheme`
+  moved to `theme::selected_scheme`, which the preview calls with the working copies.
+- **Sparse working copies.** A colour, flag or syntax part equal to the scheme's base is stored as "not set" at the edit,
+  and after each save the saved files' working copies are taken from the fresh snapshot, so a value that was dropped as a
+  default does not read as an unapplied edit.
+- **Preview.** `AppCore::preview` (base and working `theme.toml`) exists from the first theme edit until the dialog
+  leaves its stack by any path (`dialog_closed`: Cancel, OK, a `Close` request, the OS close button). While it exists
+  `reapply_theme` keeps the working scheme; `theme()` and `scheme_base()` return the preview's. One step = one
+  `ApplyTheme`; a step that changes nothing emits none. The UI reports `DialogInput::Edited` each frame of the dialog,
+  which costs one flag test.
+- **One Options dialog** in the process: a second `ProgramOptions` raises the first (the preview has one owner).
+- **Unapplied edits (§1.4.7).** A snapshot the window applies reaches the dialog (`follow`): a file without unapplied
+  edits follows it silently; one with edits keeps its old stamp and raises the *Reload (discard my edits)* / *Keep my
+  edits* notice, so the next Apply meets `Conflict`. The warning notice of a reset key gains *Options…* (`OpenOptions`).
+- **Conflicts** are asked in one prompt for every conflicted file; Overwrite saves only those files with `force`,
+  Reload reads a fresh snapshot on a job. The files that succeeded stay written; after Cancel the conflicted files keep
+  their old stamp, so the next Apply asks again. After OK and Reload the dialog stays open.
+- **Enter in the Options dialog** presses no button: its text fields use Enter, and Apply must not fire on a typed value
+  (D-112's "Enter = default button" applies to a dialog that has one). The wizards have one.
+- **Open With item.** The item editor is a panel on the page, not a second modal (one body under the same Esc and F1);
+  New, Edit, Clone, Delete and the check by `split_words` and `OpenWith::validate` as specified.
+- **Tree heading.** `tweaks` is a page without content (the parent of the seven sub-pages).
+- **Item lists of the Export wizard** come from `package::category_files` on a job, not from `session_list`,
+  `format_list` and `workspace_list`: the names of `--item` are the manifest's (`_defaults/…` included), which those lists
+  do not spell. Restore adds "Session defaults" as a choice for the category `sessions` (without it a restore can not keep
+  `_defaults`), and `state`, `formats` as listed. The Export overwrite test (`exists`) runs on the job.
+- **`gui_import_package(&Path, launcher, policy)`** has the shape of `gui_load_workspace`; the path must be absolute
+  (`classify_single_arg` makes it so; core may not read the current folder). The handler refuses a relative path with
+  `invalid_request`; a package that does not validate is the wizard's step 1, not an IPC error. `hikasa-gui x.hikasa-pkg
+  --silent` imports before the IPC endpoint is bound and prints only failures (exit 0 or 100). A second `ImportPackage`
+  while the wizard is on step 1 changes its path; see *Review fixes* for the later steps.
+- **Drops** do not reach the view while a dialog is open; a Path field of the Options dialog takes a drop when hovered or
+  focused (Browse: W9).
+- **Layout.** A separator in a horizontal row takes the available height, so the page row of the Options dialog has an
+  explicit height (at most the window's minus 150 points) and the buttons stay on screen. The dialog tints text fields
+  (`extreme_bg_color`): in a light scheme they were invisible on the dialog's background.
+- **Bench `options`** needs no specs: `drive_options` runs on the core before the frame; 2 frames per page, then 60 idle
+  frames, `memory_settled` sampled at the end.
+- **Review fixes.**
+  - *What this build does not know.* `SettingsSchema::set_aside` runs on the raw table after the migrations:
+    `CommandOverrides` moves views and command ids outside the catalogue, and the override of a `planned` command with a
+    shortcut that does not parse, into the kept unknown keys with a warning, in both load modes. So they are never in
+    the value, `validate` and `repair` never see them, `settings set` and `settings_save` keep them, and a package with
+    them imports. `settings set` of a new key under them stays refused (`names_an_entry`), and `get`/`unset` of them stay
+    `not_found` (§1.1.8); a bad shortcut of an `implemented` command stays a repaired problem (D-71).
+  - *`check`* runs over `changes()`, so a list element kept as it is (`app.0`) blocks only an Apply of its own file.
+  - *OK.* Any error of a run clears `close_after`, so a later Overwrite of the same run cannot close over a failed file;
+    the message stays until the next Apply or OK.
+  - *`settings_save`* no longer fails after writing (`reread_error`; `changed_on_disk` of a delete is a `Failed` outcome).
+  - *`follow`* during a job keeps the snapshot and applies it when the job ends; every save or reload also refreshes the
+    files without edits, stamps included. *Reload* during a job waits for it.
+  - *Scheme deletes.* An empty built-in is deleted when the snapshot holds no unknown key, or after *Reset all*, which
+    also drops a stray `base`; a later edit of that scheme forgets the *Reset all*.
+  - *Open With item.* The open panel counts as an edit of `openwith.toml` (its row must stay the row it was opened on);
+    Apply and OK commit it or refuse with the page shown. Its shortcut is a capture field (`OpenWithPage::capturing`).
+  - *Esc.* An open egui popup (`Popup::is_any_open`) keeps the key; `DialogModel::on_key` of the Options dialog asks when
+    `dirty()`; `Followup::Options(ConflictAnswer::Discard)` closes. The OS close button stays D-112's Cancel.
+  - *Close during a job.* `close_window`, `close_window_confirmed`, `exit` and `exit_confirmed` refuse with a notice while
+    `dialogs.busy()`; `Service`-side shutdowns nobody can refuse (IPC, the desktop session) go through `flush`, which
+    waits for settings writes up to 60 s and logs an error past that. `close_window_now` ends the window's dialogs.
+  - *Second package.* `ImportWizard::offer`: same path nothing, step 1 takes it, the result page a fresh wizard, in
+    between a prompt (`Followup::SwitchPackage`), a job a notice; the wizard is found in every window.
+  - *T11.* `FONT_SIZES`, `MIN_CONTRAST` and `package_path` are in core; `PlanDto::locked_kept` counts the locked sessions
+    a plan keeps, also those "delete existing" would delete.
+- **Gates of the wave end.** Settled samples, median of three runs: `text_scroll` 255.4, `two_windows` 262.0,
+  `two_windows_late` 257.6 MiB; `options_memory` 105.4 MiB; all met, every run in docs/02 (W4c). The earlier single runs
+  proved nothing: the figures were bimodal by about 25 MiB (two of three `two_windows_late` runs above the limit, median
+  382.5 MiB). The cause is glibc's dynamic mmap threshold, not Mesa's mappings as the W4a note above says; D-134 fixes the
+  threshold. The peak RSS stays 419–429 MiB, above 400 MB, and is not what the gate measures.
 
 ### 1.5–1.14 W5–W14
 

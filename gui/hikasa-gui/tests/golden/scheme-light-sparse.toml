@@ -1,0 +1,11 @@
+schema_version = 1
+
+[folder]
+orphan = "#ff0000"
+
+[file]
+gutter = "#0000ff"
+use_stripes = true
+
+[picture]
+similar = "#0000ff"

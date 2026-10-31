@@ -36,6 +36,9 @@ pub struct PlanDto {
     pub deletes: Vec<String>,
     /// Per category: added, replaced, deleted.
     pub summary: BTreeMap<Category, CategoryCounts>,
+    /// The locked sessions the plan keeps, as items and against "delete existing" (`session_locked`, D-91).
+    #[serde(skip)]
+    pub locked_kept: usize,
 }
 
 impl PlanDto {
@@ -58,6 +61,7 @@ impl PlanDto {
                 .map(|p| p.display().to_string())
                 .collect(),
             summary: plan.summary.clone(),
+            locked_kept: plan.warnings.len(),
         }
     }
 }

@@ -484,14 +484,14 @@ pub enum ToolbarMenuItem {
     Mode(DisplayFilterMode, bool),
     /// "Large buttons with text labels" (check).
     LargeButtons(bool),
-    /// "Toolbar Options…" (`ProgramOptions` on the commands page; W4c — hidden before).
+    /// "Toolbar Options…" (`ProgramOptions` on the commands page with the view preselected).
     Options,
     /// "Hide Toolbar" (`ShowToolbar`).
     HideToolbar,
 }
 
-/// The toolbar's context menu of a view type. `options` is false until the Options dialog exists (W4c).
-pub fn toolbar_menu(tables: &CommandTables, scope: Scope, options: bool) -> Vec<ToolbarMenuItem> {
+/// The toolbar's context menu of a view type.
+pub fn toolbar_menu(tables: &CommandTables, scope: Scope) -> Vec<ToolbarMenuItem> {
     let custom = &tables.view(scope).custom;
     let mut items: Vec<ToolbarMenuItem> = [
         DisplayFilterMode::Dropdown,
@@ -502,9 +502,7 @@ pub fn toolbar_menu(tables: &CommandTables, scope: Scope, options: bool) -> Vec<
     .map(|m| ToolbarMenuItem::Mode(m, custom.display_filter_mode == m))
     .collect();
     items.push(ToolbarMenuItem::LargeButtons(custom.large_buttons));
-    if options {
-        items.push(ToolbarMenuItem::Options);
-    }
+    items.push(ToolbarMenuItem::Options);
     items.push(ToolbarMenuItem::HideToolbar);
     items
 }

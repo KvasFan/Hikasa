@@ -5,6 +5,39 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Wave 4c — Settings dialogs
+- **Options dialog** (OPT pages, D-128): Tools ▸ Options…: a searchable page tree (title, label, key path, OPT id),
+  every P0 key of `options.toml` on exactly one page, Archive Types, Open With and Name Filter Presets; live checks with
+  each file's schema, Apply / OK / Cancel; only changed files are written, sparsely, as `hikasa settings set` writes
+  them, keeping unknown and hidden keys. A file changed on disk meanwhile asks Overwrite / Reload / Cancel, and a notice
+  offers Reload or Keep my edits as soon as it is seen.
+- **Toolbars, Shortcuts, Menus** (UI-003, OPT-011, D-129): per view type: Menu and Toolbar check boxes, shortcuts by
+  capture (Add, Remove, Default), display filter mode, large buttons, show-all flags, Reset View; conflicts shown live,
+  never blocking; overrides of commands not implemented yet are kept. "Toolbar Options…" opens it from the toolbar's
+  right-click menu.
+- **Theme editor** (UI-020…023, FC-031, D-130): theme mode, the light and dark scheme, every element of `[folder]`,
+  `[file]` (syntax elements and the fallback cycle) and `[picture]`, the flags and the four fonts, with Reset, New, Clone,
+  Delete and Reset All; every change shows at once in every window, Cancel restores; contrast warnings below 4.5:1.
+- **Wizards** (SES-060…062, D-131): Export, Import (per-item actions, locked sessions, delete choices, a summary of the
+  exact choices) and Restore Factory Defaults, over the same calls as `hikasa settings`.
+- **Packages on the command line** (D-127): `hikasa-gui x.hikasa-pkg` and `hikasa gui open x.hikasa-pkg` show the import
+  wizard (new IPC request `ImportPackage`; forwarded to a running GUI; exit 0); `--silent` still imports without a window.
+- **Core:** `CommandOverrides::{set_shortcuts, set_in_menu, set_on_toolbar, view_mut, reset_view, prune_view}`,
+  `settings::form` (one key of a typed schema as a form field), scheme elements by name, `theme::selected_scheme`,
+  `State::{dialog_text, set_dialog_text}`, `Service::gui_import_package`. `ProgramOptions`, `Export`, `Import` and
+  `Restore` are implemented.
+- **Dialogs:** a drop while a dialog is open no longer reaches the view under it; text fields stand out from the
+  dialog's background.
+- **Review fixes.** `commands.toml`: a view or command id this build does not know, and the override of a planned
+  command with an unreadable shortcut, are kept in the file with a warning, in every load mode and through `settings
+  set` (they used to be errors or dropped). The Options dialog checks only the files it would write; OK closes only when
+  every file of the run succeeded; a failed read-back after the writes no longer reads as a failed save
+  (`SettingsSaveDto::reread_error`); resetting the last element of a built-in keeps a file with unknown keys; Esc leaves
+  open popups first and asks before discarding; Apply takes or refuses an open Open With item, whose shortcut is a capture
+  field. The Import wizard shows its package on every step and never ignores a second one; wizard paths must be
+  absolute. The OS close button and Exit wait for a running import, restore or Apply, and an exit nobody can refuse
+  waits for the write. `text_scroll` and `two_windows` report the median of three runs after idle frames.
+
 ### Wave 4b — Sessions in the window
 - **Sessions of views** (SES-001…006, D-120, D-121): every comparison view has a session: Save, Save As, Locked,
   close prompts ("Save changes to session?", "Save changes to locked session?") on every close path (tab, window,

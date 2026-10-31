@@ -346,3 +346,30 @@ fn the_gui_command_line_opens_sessions_and_workspaces() {
     assert_eq!(code(&world.run(&["gui", "quit"])), 0);
     assert_eq!(wait_child(&mut gui, Duration::from_secs(30)), 0);
 }
+
+/// A4.21 (D-127): `hikasa gui open x.hikasa-pkg` exits 0 with a running GUI, a second `hikasa-gui x.hikasa-pkg`
+/// forwards it, `hikasa-gui x.hikasa-pkg` starts with the wizard, and `--silent` imports with no window.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn settings_packages_reach_the_import_wizard() {
+    if !ready() {
+        return;
+    }
+    let world = World::new();
+    let pkg = world.path("all.hikasa-pkg");
+    let pkg_text = pkg.display().to_string();
+    let out = world.run(&["settings", "export", "-o", &pkg_text]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    // The GUI starts on the package, with the wizard, and keeps running.
+    let mut gui = world.gui(&[&pkg_text]).spawn().expect("spawn");
+    world.wait_running(true);
+    let out = world.run(&["gui", "open", &pkg_text, "--no-launch"]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    let mut second = world.gui(&[&pkg_text]).spawn().expect("spawn");
+    assert_eq!(wait_child(&mut second, Duration::from_secs(30)), 0);
+    assert_eq!(code(&world.run(&["gui", "quit"])), 0);
+    assert_eq!(wait_child(&mut gui, Duration::from_secs(30)), 0);
+    // `--silent`: no window, no IPC.
+    let mut silent = world.gui(&[&pkg_text, "--silent"]).spawn().expect("spawn");
+    assert_eq!(wait_child(&mut silent, Duration::from_secs(30)), 0);
+}

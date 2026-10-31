@@ -24,5 +24,7 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [The Home view](topic:view-home): sessions tree, search, management panel.
 - [Session Settings](topic:dialog-session-settings), [Save Session As](topic:dialog-save-session) and
   [Workspaces](topic:dialog-workspaces).
+- [Options](topic:dialog-options), and the settings wizards [Export](topic:wizard-export),
+  [Import](topic:wizard-import) and [Restore Factory Defaults](topic:wizard-restore).
 - [The Folder Compare view](topic:view-folder-compare).
 - [The Text Compare view](topic:view-text-compare).

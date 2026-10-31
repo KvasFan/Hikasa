@@ -616,6 +616,13 @@ impl IpcHandler for FakeGui {
                     format!("`{name}`: not supported in this version"),
                 )
             }
+            Request::ImportPackage { path } if !self.sessions.load(Ordering::SeqCst) => {
+                Response::error(
+                    IpcErrorCode::UnsupportedRequest,
+                    format!("`{path}`: not supported in this version"),
+                )
+            }
+            Request::ImportPackage { .. } => Response::Ok,
             Request::LoadSession { name, .. } => {
                 let view = self.open(
                     hikasa_session::ipc::ViewKind::TextCompare,

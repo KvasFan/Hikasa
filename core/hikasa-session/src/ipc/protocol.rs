@@ -71,6 +71,12 @@ pub enum Request {
         /// Workspace name.
         name: String,
     },
+    /// Shows the import wizard for a settings package (D-127): `Ok` once it is shown in the window focused last.
+    /// GUIs before M2 W4c answer `Error{unsupported_request}`.
+    ImportPackage {
+        /// Absolute path of the `.hikasa-pkg`.
+        path: String,
+    },
     /// Runs a script (M1: `Error{unsupported_request}`).
     RunScript {
         /// Script path.
@@ -103,6 +109,7 @@ impl Request {
             Request::OpenView { .. } => "open_view",
             Request::LoadSession { .. } => "load_session",
             Request::LoadWorkspace { .. } => "load_workspace",
+            Request::ImportPackage { .. } => "import_package",
             Request::RunScript { .. } => "run_script",
             Request::ListViews => "list_views",
             Request::CloseView { .. } => "close_view",

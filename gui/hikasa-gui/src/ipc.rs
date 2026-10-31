@@ -3,7 +3,7 @@
 //! `clipboard://` spec first, M2 W3 D-101), registered (with its waiter) and posted to the UI
 //! thread; `LoadSession` reads the session and posts it, `LoadWorkspace` reads the workspace, registers its tabs
 //! and posts it (M2 W4b, D-125: the window runs the close actions and restores the tabs lazily, D-126);
-//! `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
+//! `ImportPackage` posts the package (M2 W4c, D-127: the window shows the import wizard); `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
 
 use std::sync::Arc;
 
@@ -157,6 +157,19 @@ impl IpcHandler for GuiHandler {
                         Response::Views { views }
                     }
                     Err(response) => response,
+                }
+            }
+            // D-127: the window shows the wizard; a bad package is its step 1's message, not an IPC error.
+            Request::ImportPackage { path } => {
+                let path = std::path::PathBuf::from(path);
+                if path.is_absolute() {
+                    self.mailbox.post(UiMsg::ImportPackage(path));
+                    Response::Ok
+                } else {
+                    Response::error(
+                        IpcErrorCode::InvalidRequest,
+                        format!("{}: an absolute path is needed", path.display()),
+                    )
                 }
             }
             Request::ListViews => Response::Views {

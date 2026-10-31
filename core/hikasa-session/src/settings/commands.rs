@@ -9,11 +9,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use toml::Table;
+use toml::{Table, Value};
 
-use super::file::{Problem, SettingsSchema, migrate_from_zero};
+use hikasa_core::{Warning, WarningCode};
+
+use super::file::{Problem, SetAside, SettingsSchema, migrate_from_zero};
 use super::keys::{FileId, KeySegment, KindRule, ValueKind};
-use crate::commands::{VIEWS, catalogue, view_sections};
+use crate::commands::{CommandStatus, VIEWS, catalogue, view_sections};
 
 settings_enum! {
     /// How a view shows its display filters (`display_filter_mode`).
@@ -150,6 +152,83 @@ impl CommandOverrides {
     }
 }
 
+/// Editing helpers of the Toolbars, Shortcuts, Menus page (M2 W4c, D-129): pure, on a working copy. An override
+/// that no longer changes anything goes, and so does a view left at its defaults, so an edit undone writes nothing.
+impl CommandOverrides {
+    /// The customization of `view`, created on demand.
+    pub fn view_mut(&mut self, view: &str) -> &mut ViewCustomization {
+        self.view.entry(view.to_owned()).or_default()
+    }
+
+    /// Replaces the shortcuts of a command (`Some(vec![])` removes them, written `shortcuts = []`); `None` is
+    /// Default: the override goes and the catalogue default applies, as it does for a list equal to that default.
+    pub fn set_shortcuts(&mut self, view: &str, id: &str, shortcuts: Option<Vec<Shortcut>>) {
+        let texts = shortcuts.map(|list| list.iter().map(ToString::to_string).collect::<Vec<_>>());
+        let default = catalogue()
+            .find(view_sections(view), id)
+            .map(|(_, e)| e.shortcut.clone())
+            .filter(|s| !s.is_empty());
+        let texts = texts.filter(|list| match (list.as_slice(), &default) {
+            ([one], Some(default)) => one != default,
+            _ => true,
+        });
+        self.edit_command(view, id, |c| c.shortcuts = texts);
+    }
+
+    /// Overrides "shown in its menu" (`None`: the catalogue default).
+    pub fn set_in_menu(&mut self, view: &str, id: &str, shown: Option<bool>) {
+        self.edit_command(view, id, |c| c.menu = shown);
+    }
+
+    /// Overrides "shown on the toolbar" (`None`: the catalogue default).
+    pub fn set_on_toolbar(&mut self, view: &str, id: &str, shown: Option<bool>) {
+        self.edit_command(view, id, |c| c.toolbar = shown);
+    }
+
+    /// Back to the defaults of `view`: the view's flags and the overrides of its `implemented` commands. Overrides
+    /// of `planned` commands stay (D-129: the page does not show them).
+    pub fn reset_view(&mut self, view: &str) {
+        let Some(custom) = self.view.get_mut(view) else {
+            return;
+        };
+        let sections = view_sections(view);
+        let kept: BTreeMap<String, CommandOverride> = std::mem::take(&mut custom.command)
+            .into_iter()
+            .filter(|(id, _)| {
+                catalogue()
+                    .find(sections, id)
+                    .is_none_or(|(_, e)| e.status != CommandStatus::Implemented)
+            })
+            .collect();
+        *custom = ViewCustomization {
+            command: kept,
+            ..ViewCustomization::default()
+        };
+        self.prune_view(view);
+    }
+
+    /// Drops the view's table when it holds only defaults.
+    pub fn prune_view(&mut self, view: &str) {
+        if self
+            .view
+            .get(view)
+            .is_some_and(|c| *c == ViewCustomization::default())
+        {
+            self.view.remove(view);
+        }
+    }
+
+    fn edit_command(&mut self, view: &str, id: &str, change: impl FnOnce(&mut CommandOverride)) {
+        let custom = self.view_mut(view);
+        let command = custom.command.entry(id.to_owned()).or_default();
+        change(command);
+        if *command == CommandOverride::default() {
+            custom.command.remove(id);
+        }
+        self.prune_view(view);
+    }
+}
+
 impl SettingsSchema for CommandOverrides {
     const FILE: FileId = FileId::Commands;
     const VERSION: u32 = 1;
@@ -158,7 +237,84 @@ impl SettingsSchema for CommandOverrides {
         migrate_from_zero(from)
     }
 
-    /// Unknown views and command ids, and shortcuts that do not parse.
+    /// Views and command ids this build does not know, and the override of a `planned` command with a shortcut it
+    /// cannot read: this build does not use them and a later one may, so they are kept as they are (T13, D-129)
+    /// and stay out of the value. A `settings set` of such a key is still refused (`names_an_entry`).
+    fn set_aside(table: &mut Table, origin: &str) -> Vec<SetAside> {
+        let mut out = Vec::new();
+        let Some(Value::Table(views)) = table.get_mut("view") else {
+            return out;
+        };
+        let name = |s: &str| KeySegment::Name(s.to_owned());
+        let mut aside = |path: Vec<KeySegment>, value: Value, code, message: String| {
+            out.push(SetAside {
+                path,
+                value,
+                warning: Warning {
+                    code,
+                    message: format!("{origin}: {message}"),
+                    spec: None,
+                },
+            });
+        };
+        let unknown: Vec<String> = views
+            .keys()
+            .filter(|v| !VIEWS.contains(&v.as_str()))
+            .cloned()
+            .collect();
+        for view in unknown {
+            if let Some(value) = views.remove(&view) {
+                let message = format!("unknown view `{view}` (kept as it is)");
+                let path = vec![name("view"), name(&view)];
+                aside(path, value, WarningCode::UnknownConfigKey, message);
+            }
+        }
+        for (view, custom) in views.iter_mut() {
+            let sections = view_sections(view);
+            let Some(Value::Table(commands)) =
+                custom.as_table_mut().and_then(|c| c.get_mut("command"))
+            else {
+                continue;
+            };
+            let ids: Vec<String> = commands.keys().cloned().collect();
+            for id in ids {
+                let reason = match catalogue().find(sections, &id) {
+                    None => Some((
+                        WarningCode::UnknownConfigKey,
+                        format!("no command `{id}` in the {view} view (kept as it is)"),
+                    )),
+                    Some((_, entry)) if entry.status != CommandStatus::Implemented => {
+                        unreadable_shortcut(&commands[&id]).map(|why| {
+                            (
+                                WarningCode::InvalidConfigValue,
+                                format!(
+                                    "`view.{view}.command.{id}.shortcuts`: {why} (the override of \
+                                     a planned command is kept as it is)"
+                                ),
+                            )
+                        })
+                    }
+                    Some(_) => None,
+                };
+                if let Some((code, message)) = reason
+                    && let Some(value) = commands.remove(&id)
+                {
+                    let path = vec![name("view"), name(view), name("command"), name(&id)];
+                    aside(path, value, code, message);
+                }
+            }
+            if commands.is_empty()
+                && let Some(table) = custom.as_table_mut()
+            {
+                table.remove("command");
+            }
+        }
+        views.retain(|_, custom| custom.as_table().is_none_or(|t| !t.is_empty()));
+        out
+    }
+
+    /// Views and command ids that are not in the catalogue, and shortcuts that do not parse. Loading sets the
+    /// first two aside ([`CommandOverrides::set_aside`]), so they are only found in a value built by hand.
     fn validate(&self) -> Vec<Problem> {
         let mut problems = Vec::new();
         let key = |segments: &[&str]| {
@@ -199,6 +355,18 @@ impl SettingsSchema for CommandOverrides {
         }
         problems
     }
+}
+
+/// Why the `shortcuts` of a raw override cannot be read, if so.
+fn unreadable_shortcut(command: &Value) -> Option<String> {
+    let shortcuts = command.get("shortcuts")?;
+    let Some(list) = shortcuts.as_array() else {
+        return Some("not a list".to_owned());
+    };
+    list.iter().find_map(|item| match item.as_str() {
+        Some(text) => Shortcut::parse(text).err(),
+        None => Some(format!("{item} is not a shortcut")),
+    })
 }
 
 /// Kinds of the keys of `commands.toml`.
@@ -459,6 +627,67 @@ mod tests {
             let parsed = Shortcut::parse(&entry.shortcut).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(parsed.to_string(), entry.shortcut);
         }
+    }
+
+    #[test]
+    fn editing_helpers_keep_the_file_sparse() {
+        let mut c = CommandOverrides::default();
+        let exit = Shortcut::parse("Ctrl+F12").unwrap();
+        c.set_shortcuts("home", "About", Some(vec![exit.clone()]));
+        assert_eq!(
+            c.view["home"].command["About"].shortcuts,
+            Some(vec!["Ctrl+F12".to_owned()])
+        );
+        // Removing all is written, Default drops the override and the view with it.
+        c.set_shortcuts("home", "About", Some(Vec::new()));
+        assert_eq!(c.view["home"].command["About"].shortcuts, Some(Vec::new()));
+        c.set_shortcuts("home", "About", None);
+        assert!(c.view.is_empty(), "{c:?}");
+        c.set_in_menu("home", "About", Some(false));
+        c.set_on_toolbar("home", "About", Some(true));
+        assert_eq!(c.view["home"].command["About"].menu, Some(false));
+        assert_eq!(c.view["home"].command["About"].toolbar, Some(true));
+        c.set_in_menu("home", "About", None);
+        c.set_on_toolbar("home", "About", None);
+        assert!(c.view.is_empty(), "{c:?}");
+        c.view_mut("home").large_buttons = true;
+        c.prune_view("home");
+        assert!(c.view["home"].large_buttons);
+    }
+
+    #[test]
+    fn a_list_equal_to_the_default_is_no_override() {
+        let entry = catalogue()
+            .find(view_sections("home"), "Exit")
+            .map(|(_, e)| e.shortcut.clone())
+            .filter(|s| !s.is_empty());
+        let Some(default) = entry else {
+            panic!("Exit has a default shortcut");
+        };
+        let shortcut = Shortcut::parse(&default).unwrap();
+        let mut c = CommandOverrides::default();
+        c.set_shortcuts("home", "Exit", Some(Vec::new()));
+        assert_eq!(c.view["home"].command["Exit"].shortcuts, Some(Vec::new()));
+        c.set_shortcuts("home", "Exit", Some(vec![shortcut]));
+        assert!(c.view.is_empty(), "{c:?}");
+    }
+
+    #[test]
+    fn reset_view_keeps_the_overrides_of_planned_commands() {
+        let mut c = CommandOverrides::default();
+        c.set_in_menu("home", "About", Some(false));
+        c.set_in_menu("home", "FileFormatManager", Some(true));
+        c.view_mut("home").show_all_in_menu = true;
+        c.reset_view("home");
+        let custom = &c.view["home"];
+        assert!(!custom.show_all_in_menu);
+        assert_eq!(
+            custom.command.keys().collect::<Vec<_>>(),
+            ["FileFormatManager"]
+        );
+        c.set_in_menu("home", "FileFormatManager", None);
+        assert!(c.view.is_empty());
+        c.reset_view("nowhere");
     }
 
     #[test]

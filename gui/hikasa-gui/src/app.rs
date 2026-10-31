@@ -25,13 +25,16 @@ use hikasa_session::settings::{
 use hikasa_session::{ApiError, Service};
 
 use crate::commands::{CommandId, CommandTables, Ctx, FocusArea, HintTiming, Scope, lookup};
-use crate::dialog::{AboutDialog, ButtonRole, DialogStep, Followup, Prompt};
+use crate::dialog::{
+    AboutDialog, ButtonRole, DialogModel, DialogRequest, DialogStep, Followup, Prompt, SettingsBody,
+};
 use crate::dnd::{DropOutcome, DropTarget, FieldId, decide};
 use crate::folder_view::FolderViewModel;
 use crate::home::HomeOpen;
 use crate::job::Job;
 use crate::mailbox::Mailbox;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
+use crate::options::OptionsDialog;
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
 use crate::text_view::TextViewModel;
@@ -39,6 +42,7 @@ use crate::watch::{WatchCmd, WatchEvent, WatchLink};
 pub use crate::window::{
     CommandArg, Invocation, Tab, TabContent, ViewModel, WindowId, WindowModel,
 };
+use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod flow;
 
@@ -73,6 +77,8 @@ pub enum UiMsg {
         /// The view ids per window and tab.
         ids: Vec<Vec<Option<ViewId>>>,
     },
+    /// Show the import wizard for a package (IPC `ImportPackage`, D-127).
+    ImportPackage(PathBuf),
     /// Close a view (IPC `CloseView`).
     Close {
         /// The view.
@@ -155,6 +161,8 @@ pub enum Startup {
     Workspace(String),
     /// The session of the command line.
     Session(hikasa_session::sessions::SessionRef),
+    /// The settings package of the command line (D-127).
+    Import(PathBuf),
 }
 
 impl CoreJob {
@@ -169,9 +177,6 @@ impl CoreJob {
         }
     }
 }
-
-/// The body of a settings write: writes and returns the written paths.
-type SettingsBody = Box<dyn FnOnce(&Service) -> Result<Vec<PathBuf>, ApiError> + Send>;
 
 /// A settings job waiting for its turn (writes and reloads run one at a time, in order).
 enum QueuedSettings {
@@ -247,6 +252,17 @@ pub struct AppCore {
     startup: Option<Startup>,
     /// Views built so far (the G12 job counter: a pending tab builds none).
     views_built: u64,
+    /// The theme of the Options dialog's working copies while it differs from the files (D-130).
+    preview: Option<Preview>,
+}
+
+/// The theme preview of the Options dialog (D-130).
+#[derive(Debug, Clone, PartialEq)]
+struct Preview {
+    /// The working scheme's base.
+    base: hikasa_session::settings::theme::SchemeBase,
+    /// The working `theme.toml` (fonts).
+    theme: ThemeSelection,
 }
 
 /// The tab caption cut for the title of a menu entry.
@@ -329,6 +345,7 @@ impl AppCore {
             exit_saved: false,
             startup: None,
             views_built: 0,
+            preview: None,
         };
         let root = app.new_window(None);
         app.new_home_tab(root);
@@ -433,13 +450,19 @@ impl AppCore {
 
     /// The base of the applied scheme (its chrome): a built-in's own, else its file's `base`.
     pub fn scheme_base(&self) -> hikasa_session::settings::theme::SchemeBase {
+        if let Some(preview) = &self.preview {
+            return preview.base;
+        }
         let name = &self.scheme.name;
         Scheme::base_of(name, self.settings.schemes.get(name).map(|f| f.value()))
     }
 
     /// `theme.toml` (fonts).
     pub fn theme(&self) -> &ThemeSelection {
-        self.settings.theme.value()
+        match &self.preview {
+            Some(preview) => &preview.theme,
+            None => self.settings.theme.value(),
+        }
     }
 
     /// `state.toml` as this process knows it (layout tables, the last window).
@@ -491,6 +514,10 @@ impl AppCore {
     }
 
     fn reapply_theme(&mut self) -> Vec<Effect> {
+        if self.preview.is_some() {
+            // The dialog's working copies stay on screen until it closes (D-130).
+            return self.preview_step();
+        }
         let scheme = self
             .settings
             .scheme(self.options().appearance.theme_mode, self.os_dark);
@@ -593,6 +620,7 @@ impl AppCore {
             || !self.queued_settings.is_empty()
             || !self.queued_store.is_empty()
             || self.refresh_wanted
+            || self.windows.iter().any(|w| w.dialogs.busy())
             || self
                 .windows
                 .iter()
@@ -934,7 +962,7 @@ impl AppCore {
             .collect()
     }
 
-    fn window_ids(&self) -> Vec<WindowId> {
+    pub(crate) fn window_ids(&self) -> Vec<WindowId> {
         self.windows.iter().map(|w| w.id).collect()
     }
 
@@ -976,6 +1004,13 @@ impl AppCore {
                     }
                 } else {
                     effects.extend(self.load_registered(*load, ids));
+                }
+            }
+            UiMsg::ImportPackage(path) => {
+                if !self.quitting {
+                    let window = self.focused();
+                    let shown = self.open_import(window, Some(&path));
+                    effects.push(Effect::Raise(shown));
                 }
             }
             UiMsg::Close { view } => {
@@ -1053,8 +1088,6 @@ impl AppCore {
                     None => {}
                 }
             }
-            // Once per window and frame, also in a window without tabs.
-            w.dialogs.poll(&service);
         }
         for (window, index, open) in opened {
             let active = self.window(window).map(|w| w.active);
@@ -1082,6 +1115,12 @@ impl AppCore {
             }
         }
         effects.extend(self.poll_jobs());
+        // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
+        // a settings job in the frame the job ended.
+        for w in &mut self.windows {
+            w.dialogs.poll(&service);
+        }
+        effects.extend(self.dialog_requests());
         self.flush_log();
         effects
     }
@@ -1282,6 +1321,32 @@ impl AppCore {
             CommandId::About => {
                 if let Some(w) = self.window_mut(window) {
                     w.dialogs.push(Box::new(AboutDialog));
+                }
+            }
+            CommandId::ProgramOptions => {
+                let page = match inv.arg {
+                    Some(CommandArg::Page(page)) => Some(page),
+                    _ => None,
+                };
+                effects.extend(self.open_options(window, page));
+            }
+            CommandId::Export => {
+                let wizard = ExportWizard::new(&self.service, self.wake());
+                if let Some(w) = self.window_mut(window) {
+                    w.dialogs.push(Box::new(wizard));
+                }
+            }
+            CommandId::Import => {
+                let path = match &inv.arg {
+                    Some(CommandArg::Paths(paths)) => paths.first().cloned(),
+                    _ => None,
+                };
+                self.open_import(window, path.as_deref());
+            }
+            CommandId::Restore => {
+                let wizard = RestoreWizard::new(self.wake());
+                if let Some(w) = self.window_mut(window) {
+                    w.dialogs.push(Box::new(wizard));
                 }
             }
             CommandId::HelpContents => self.show_help(window, hikasa_session::help::INDEX_TOPIC),
@@ -1716,12 +1781,19 @@ impl AppCore {
         let Some(w) = self.window(window) else {
             return Vec::new();
         };
+        if w.dialogs.busy() {
+            // Cancel is not offered either: the write ends first, then the dialog reports it.
+            self.refuse_close(window);
+            return Vec::new();
+        }
         if !w.dialogs.is_empty() {
             // The top dialog closes with Cancel first (D-112): the window stays, what lies under it is not lost.
-            if let Some(w) = self.window_mut(window) {
-                w.dialogs.pop();
+            let mut effects = Vec::new();
+            if let Some(closed) = self.window_mut(window).and_then(|w| w.dialogs.pop()) {
+                effects.extend(self.dialog_closed(closed));
             }
-            return self.cancel_flow(window);
+            effects.extend(self.cancel_flow(window));
+            return effects;
         }
         let tabs = self.window(window).map_or(0, |w| w.tabs.len());
         if tabs > 1 && self.options().tabs.warn_when_closing_multiple_tabs {
@@ -1739,8 +1811,32 @@ impl AppCore {
         self.close_window_confirmed(window)
     }
 
+    /// A dialog's job runs (an import, a restore, an Apply): stopping now would leave it half done with nobody to
+    /// report it, so the window stays and says why.
+    fn refuse_close(&mut self, window: WindowId) {
+        self.notify(
+            window,
+            Notice::new(
+                "dialog-busy",
+                NoticeKind::Warning,
+                "A settings dialog is still working: close it when it has finished.",
+            ),
+            "settings",
+            LogKind::Warning,
+        );
+    }
+
+    /// The window whose dialog's job runs, if any.
+    fn busy_dialog(&self) -> Option<WindowId> {
+        self.windows.iter().find(|w| w.dialogs.busy()).map(|w| w.id)
+    }
+
     /// The close actions of a window's tabs, then it closes (the last window: the exit).
     fn close_window_confirmed(&mut self, window: WindowId) -> Vec<Effect> {
+        if self.window(window).is_some_and(|w| w.dialogs.busy()) {
+            self.refuse_close(window);
+            return Vec::new();
+        }
         let views = self.window(window).map_or_else(Vec::new, |w| {
             w.tabs.iter().map(|t| t.id).collect::<Vec<_>>()
         });
@@ -1752,7 +1848,7 @@ impl AppCore {
     }
 
     /// Closes a window without asking.
-    fn close_window_now(&mut self, window: WindowId) -> Vec<Effect> {
+    pub(crate) fn close_window_now(&mut self, window: WindowId) -> Vec<Effect> {
         let Some(index) = self.index_of(window) else {
             return Vec::new();
         };
@@ -1766,21 +1862,29 @@ impl AppCore {
             self.close_model(&mut tab, CloseReason::User);
         }
         self.persist_state(Some(geometry));
+        // A dialog that goes with the window ends like any other (the Options dialog's theme preview).
+        let mut effects = Vec::new();
+        while let Some(closed) = w.dialogs.pop() {
+            effects.extend(self.dialog_closed(closed));
+        }
         if index == 0 {
             // The root swap: the next window is drawn in the root viewport from now on.
             let root = &self.windows[0];
-            vec![
-                Effect::Geometry(root.id, root.geometry.clone()),
-                Effect::CloseViewport(root.id),
-            ]
+            effects.push(Effect::Geometry(root.id, root.geometry.clone()));
+            effects.push(Effect::CloseViewport(root.id));
         } else {
-            vec![Effect::CloseViewport(window)]
+            effects.push(Effect::CloseViewport(window));
         }
+        effects
     }
 
     /// `Exit` (D-106): with `warn_when_closing_multiple_windows` and more than one window, else with
     /// `warn_when_closing_multiple_tabs` and more than one tab, a prompt first; then quits.
     fn exit(&mut self, window: WindowId, confirmed: bool) -> Vec<Effect> {
+        if let Some(busy) = self.busy_dialog() {
+            self.refuse_close(busy);
+            return Vec::new();
+        }
         if !confirmed {
             let tabs: usize = self.windows.iter().map(|w| w.tabs.len()).sum();
             let windows = self.windows.len();
@@ -1814,6 +1918,10 @@ impl AppCore {
 
     /// The exit workspace, then every close action (a Cancel stops the exit), then the shutdown (D-106).
     fn exit_confirmed(&mut self) -> Vec<Effect> {
+        if let Some(busy) = self.busy_dialog() {
+            self.refuse_close(busy);
+            return Vec::new();
+        }
         let views: Vec<ViewId> = self
             .windows
             .iter()
@@ -1849,13 +1957,28 @@ impl AppCore {
         vec![Effect::Exit]
     }
 
-    /// Waits (at most `limit`) for the core's own jobs (the layout write at exit, log appends).
+    /// Waits (at most `limit`) for the core's own jobs (the layout write at exit, log appends). A settings write
+    /// (an import, a restore: it deletes first) is not cut off by `limit`: a shutdown nobody can refuse (IPC, the
+    /// end of the desktop session) gives it [`SETTINGS_FLUSH`] and logs an error if it is still running.
     pub fn flush(&mut self, limit: std::time::Duration) {
         let began = std::time::Instant::now();
         self.flush_log();
         self.next_settings_job();
         self.next_store_job();
-        while !self.jobs.is_empty() && began.elapsed() < limit {
+        loop {
+            let writing = !self.queued_settings.is_empty()
+                || self.jobs.iter().any(|j| matches!(j, CoreJob::Settings(..)));
+            let wait = (!self.jobs.is_empty() && began.elapsed() < limit)
+                || (writing && began.elapsed() < SETTINGS_FLUSH);
+            if !wait {
+                if writing {
+                    tracing::error!(
+                        target: "hikasa::gui",
+                        "a settings write was still running at exit: it may be incomplete"
+                    );
+                }
+                return;
+            }
             self.poll_jobs();
             if !self.jobs.is_empty() {
                 std::thread::sleep(std::time::Duration::from_millis(2));
@@ -1894,25 +2017,230 @@ impl AppCore {
             Some(top) => top.on_button(role, &service),
             None => return Vec::new(),
         };
+        let mut effects = Vec::new();
         match step {
-            DialogStep::Stay => Vec::new(),
+            DialogStep::Stay => {}
             DialogStep::Close => {
-                if let Some(w) = self.window_mut(window) {
-                    w.dialogs.pop();
+                if let Some(closed) = self.window_mut(window).and_then(|w| w.dialogs.pop()) {
+                    effects.extend(self.dialog_closed(closed));
                 }
-                Vec::new()
             }
             DialogStep::CloseWith(followups) => {
-                if let Some(w) = self.window_mut(window) {
-                    w.dialogs.pop();
+                if let Some(closed) = self.window_mut(window).and_then(|w| w.dialogs.pop()) {
+                    effects.extend(self.dialog_closed(closed));
                 }
-                let mut effects = Vec::new();
                 for f in followups {
                     effects.extend(self.followup(window, f));
                 }
-                effects
             }
         }
+        effects.extend(self.dialog_requests());
+        effects
+    }
+
+    // ---- the settings dialogs (W4c) ----------------------------------------------------------------------------
+
+    /// Opens the Options dialog on `page` (`None`: the last page used, `state.dialogs.options.page`). One at a time:
+    /// a dialog open in another window is raised instead.
+    fn open_options(&mut self, window: WindowId, page: Option<&'static str>) -> Vec<Effect> {
+        if let Some(other) = self
+            .windows
+            .iter()
+            .find(|w| w.dialogs.holds::<OptionsDialog>())
+            .map(|w| w.id)
+        {
+            return vec![Effect::Raise(other)];
+        }
+        let remembered = self.state.dialog_text("options", "page").map(str::to_owned);
+        let dialog = OptionsDialog::new(
+            self.settings.clone(),
+            page.or(remembered.as_deref()),
+            self.workspace_names(),
+        );
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
+        Vec::new()
+    }
+
+    /// "Toolbar Options…" (UI-004): the commands page with the view preselected.
+    pub fn open_commands_page(&mut self, window: WindowId, view: &str) {
+        self.run(
+            window,
+            Invocation::with(CommandId::ProgramOptions, CommandArg::Page("commands")),
+            true,
+        );
+        if let Some(d) = self
+            .window_mut(window)
+            .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+            && let Some((name, _)) = crate::options::commands_page::SHOWN_VIEWS
+                .iter()
+                .find(|(v, _)| *v == view)
+        {
+            d.select_view(name);
+        }
+    }
+
+    /// Opens the Import wizard, prefilled with `path`, and returns its window. One at a time: an open wizard takes
+    /// the path on its first step, is replaced after its result, asks in between and refuses (with a notice) while
+    /// a job runs: a package is never dropped or imported in place of another in silence.
+    fn open_import(&mut self, window: WindowId, path: Option<&std::path::Path>) -> WindowId {
+        let wake = self.wake();
+        let open = self
+            .windows
+            .iter()
+            .find(|w| w.dialogs.holds::<ImportWizard>())
+            .map(|w| w.id);
+        let Some(owner) = open else {
+            if let Some(w) = self.window_mut(window) {
+                w.dialogs.push(Box::new(ImportWizard::new(path, wake)));
+            }
+            return window;
+        };
+        let (Some(path), Some(wizard)) = (
+            path,
+            self.window_mut(owner)
+                .and_then(|w| w.dialogs.find_mut::<ImportWizard>()),
+        ) else {
+            return owner;
+        };
+        let current = wizard.path.clone();
+        match wizard.offer(path) {
+            PackageOffer::Taken => {}
+            PackageOffer::Fresh => *wizard = ImportWizard::new(Some(path), wake),
+            PackageOffer::Ask => {
+                let prompt = Prompt::ask(
+                    "Import Settings",
+                    format!(
+                        "The Import wizard is on {current}. Switch to {}? The choices made so far are lost.",
+                        path.display()
+                    ),
+                    ButtonRole::Cancel,
+                    vec![
+                        (
+                            ButtonRole::Yes,
+                            "Switch",
+                            vec![Followup::SwitchPackage(path.to_path_buf())],
+                        ),
+                        (ButtonRole::Cancel, "Keep this package", Vec::new()),
+                    ],
+                    "wizard-import",
+                );
+                if let Some(w) = self.window_mut(owner) {
+                    w.dialogs.push(Box::new(prompt));
+                }
+            }
+            PackageOffer::Refused => self.package_refused(owner, path),
+        }
+        owner
+    }
+
+    fn package_refused(&mut self, window: WindowId, path: &std::path::Path) {
+        let text = format!(
+            "The Import wizard is working: {} was not opened. Open it when the wizard has finished.",
+            path.display()
+        );
+        self.notify(
+            window,
+            Notice::new("import-busy", NoticeKind::Warning, text),
+            "settings",
+            LogKind::Warning,
+        );
+    }
+
+    /// The fields of a window's dialog changed (each frame of the Options dialog): the preview (D-130).
+    pub fn dialog_edited(&mut self, window: WindowId) -> Vec<Effect> {
+        let mut effects = self.preview_step_of(window);
+        effects.extend(self.dialog_requests());
+        effects
+    }
+
+    fn preview_step_of(&mut self, window: WindowId) -> Vec<Effect> {
+        let edited = self
+            .window_mut(window)
+            .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+            .is_some_and(|d| std::mem::take(&mut d.theme_edited));
+        if edited {
+            self.preview_step()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Shows the theme of the Options dialog's working copies when it differs from what is on screen; one
+    /// `ApplyTheme` per step (D-130).
+    fn preview_step(&mut self) -> Vec<Effect> {
+        let os_dark = self.os_dark;
+        let working = self.windows.iter_mut().find_map(|w| {
+            w.dialogs
+                .find_mut::<OptionsDialog>()
+                .map(|d| (d.working_scheme(os_dark), d.theme.clone()))
+        });
+        let Some(((scheme, base), theme)) = working else {
+            return Vec::new();
+        };
+        let changed = self.scheme != scheme || self.scheme_base() != base || *self.theme() != theme;
+        self.scheme = scheme;
+        self.preview = Some(Preview { base, theme });
+        if changed {
+            vec![Effect::ApplyTheme]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A dialog left its stack: the Options dialog's preview ends with the applied theme, its page is remembered.
+    fn dialog_closed(&mut self, closed: Box<dyn DialogModel>) -> Vec<Effect> {
+        let Some(options) = closed.as_any().downcast_ref::<OptionsDialog>() else {
+            return Vec::new();
+        };
+        let page = options.page;
+        if self.state.dialog_text("options", "page") != Some(page) {
+            self.state.set_dialog_text("options", "page", page);
+            self.update_state(move |s| s.set_dialog_text("options", "page", page));
+        }
+        let previewing = self.preview.take();
+        let mut effects = self.reapply_theme();
+        if effects.is_empty() && previewing.is_some_and(|p| p.theme != *self.settings.theme.value())
+        {
+            effects.push(Effect::ApplyTheme);
+        }
+        self.check_fonts();
+        effects
+    }
+
+    /// What the dialogs of every window asked for: writes on the settings queue, prompts, closes.
+    fn dialog_requests(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for window in self.window_ids() {
+            effects.extend(self.preview_step_of(window));
+            let Some(w) = self.window_mut(window) else {
+                continue;
+            };
+            let requests = w.dialogs.take_requests();
+            // Highest index first: a close never shifts a dialog still to be served.
+            for (index, request) in requests.into_iter().rev() {
+                match request {
+                    DialogRequest::Settings { title, body } => {
+                        self.queue_settings(QueuedSettings::Write(title, body));
+                    }
+                    DialogRequest::Ask(prompt) => {
+                        if let Some(w) = self.window_mut(window) {
+                            w.dialogs.push(prompt);
+                        }
+                        effects.push(Effect::Raise(window));
+                    }
+                    DialogRequest::Close => {
+                        if let Some(w) = self.window_mut(window) {
+                            let closed = w.dialogs.remove(index);
+                            effects.extend(self.dialog_closed(closed));
+                        }
+                    }
+                    DialogRequest::Refresh => self.refresh_sessions(),
+                }
+            }
+        }
+        effects
     }
 
     /// A key in a window with an open dialog (D-112): F1 shows the dialog's topic, Esc and Enter press their
@@ -1921,6 +2249,10 @@ impl AppCore {
         let Some(top) = self.window_mut(window).and_then(|w| w.dialogs.top_mut()) else {
             return Vec::new();
         };
+        if top.wants_keys() {
+            top.on_key(key);
+            return self.dialog_edited(window);
+        }
         if key.key == "F1" && !key.ctrl && !key.alt && !key.shift && !key.cmd {
             let topic = top.help_topic();
             self.show_help(window, topic);
@@ -1928,7 +2260,7 @@ impl AppCore {
         }
         match top.on_key(key) {
             Some(role) => self.dialog_button(window, role),
-            None => Vec::new(),
+            None => self.dialog_requests(),
         }
     }
 
@@ -1955,6 +2287,37 @@ impl AppCore {
             Followup::Session(action) => self.session_action(window, action),
             Followup::DisableOption(key) => {
                 self.set_option_false(key);
+                Vec::new()
+            }
+            Followup::Options(answer) => {
+                if let Some(d) = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
+                {
+                    d.answer(answer);
+                }
+                self.dialog_requests()
+            }
+            Followup::SwitchPackage(path) => {
+                let wake = self.wake();
+                let wizard = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<ImportWizard>());
+                match wizard {
+                    Some(wizard) if wizard.busy() => self.package_refused(window, &path),
+                    Some(wizard) => *wizard = ImportWizard::new(Some(&path), wake),
+                    None => {}
+                }
+                Vec::new()
+            }
+            Followup::WizardOverwrite => {
+                let service = self.service.clone();
+                if let Some(d) = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<ExportWizard>())
+                {
+                    d.overwrite(&service);
+                }
                 Vec::new()
             }
         }
@@ -2021,12 +2384,14 @@ impl AppCore {
                             link.send(WatchCmd::Acknowledge(written.clone()));
                         }
                         // The window's own write of `options.toml` reaches later calls and jobs too (D-119).
-                        let warnings =
-                            if written.iter().any(|p| file_class(p) == FileClass::Options) {
-                                svc.reload_settings()
-                            } else {
-                                Vec::new()
-                            };
+                        let reload = written.iter().any(|p| {
+                            matches!(file_class(p), FileClass::Options | FileClass::Formats)
+                        });
+                        let warnings = if reload {
+                            svc.reload_settings()
+                        } else {
+                            Vec::new()
+                        };
                         Ok((svc.settings_snapshot()?, warnings))
                     },
                 );
@@ -2225,11 +2590,21 @@ impl AppCore {
                     self.focus(w);
                 }
             }
-            // The Options dialog's actions arrive with W4c.
-            NoticeAction::ReloadSettings
-            | NoticeAction::KeepMine
-            | NoticeAction::OpenOptions
-            | NoticeAction::Dismiss => {}
+            // §1.4.7: the unapplied edits of the file go; the Options dialog reads it again.
+            NoticeAction::ReloadSettings => {
+                for w in &mut self.windows {
+                    if let Some(d) = w.dialogs.find_mut::<OptionsDialog>()
+                        && let Some(file) = d.notified.remove(key)
+                    {
+                        d.reload_files(vec![file]);
+                    }
+                }
+                let effects = self.dialog_requests();
+                return effects;
+            }
+            NoticeAction::OpenOptions => return self.open_options(window, None),
+            // The dialog keeps its old stamp: the next Apply meets `Conflict` (D-128).
+            NoticeAction::KeepMine | NoticeAction::Dismiss => {}
         }
         self.dirty_effects()
     }
@@ -2416,6 +2791,13 @@ impl AppCore {
             !options.tweaks.log_panel.save_to_file.is_empty() && !self.log_save_failed,
         );
         self.sync_debug_flag();
+        // An Options dialog follows every file it has no unapplied edits for (§1.4.7).
+        let settings = self.settings.clone();
+        for w in &mut self.windows {
+            if let Some(d) = w.dialogs.find_mut::<OptionsDialog>() {
+                d.follow(&settings);
+            }
+        }
         effects.extend(self.reapply_theme());
         self.check_fonts();
         effects
@@ -2459,6 +2841,27 @@ impl AppCore {
                 ChangeKind::Created | ChangeKind::Changed => "changed on disk".to_owned(),
             };
             let class = file_class(&change.path);
+            // §1.4.7: a file the Options dialog has unapplied edits for.
+            let key = format!("settings:{name}");
+            let file = file_id(&change.path);
+            let edited = self.windows.iter_mut().find_map(|w| {
+                let d = w.dialogs.find_mut::<OptionsDialog>()?;
+                let file = file.clone().filter(|f| d.has_edits(f))?;
+                d.notified.insert(key.clone(), file);
+                Some(())
+            });
+            if edited.is_some() {
+                let text =
+                    format!("{name} {how}, and the Options dialog has unapplied edits of it.");
+                self.notify(
+                    window,
+                    Notice::new(key, NoticeKind::Warning, text)
+                        .with_actions(vec![NoticeAction::ReloadSettings, NoticeAction::KeepMine]),
+                    "settings",
+                    LogKind::Warning,
+                );
+                continue;
+            }
             let (text, kind) = match class {
                 FileClass::Options => {
                     let problems: Vec<&Warning> = warnings
@@ -2503,12 +2906,13 @@ impl AppCore {
             } else {
                 LogKind::Warning
             };
-            self.notify(
-                window,
-                Notice::new(format!("settings:{name}"), kind, text),
-                "settings",
-                log_kind,
-            );
+            let notice = Notice::new(key, kind, text);
+            let notice = if kind == NoticeKind::Warning {
+                notice.with_actions(vec![NoticeAction::OpenOptions])
+            } else {
+                notice
+            };
+            self.notify(window, notice, "settings", log_kind);
         }
         for w in warnings {
             self.log_entry(
@@ -2693,6 +3097,9 @@ impl AppCore {
     }
 }
 
+/// How long an exit nobody can refuse waits for a settings write (an import, a restore).
+const SETTINGS_FLUSH: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// `tabs.warn_when_closing_multiple_tabs` (the prompts' "Do not ask again").
 const WARN_TABS: &str = "tabs.warn_when_closing_multiple_tabs";
 /// `tabs.warn_when_closing_multiple_windows`.
@@ -2737,6 +3144,24 @@ fn file_class(path: &std::path::Path) -> FileClass {
         (_, "theme.toml") => FileClass::Theme,
         (_, "state.toml") => FileClass::State,
         _ => FileClass::Other,
+    }
+}
+
+/// The settings file of a path (`state.toml` and the format files have none here).
+fn file_id(path: &std::path::Path) -> Option<hikasa_session::settings::FileId> {
+    use hikasa_session::settings::FileId;
+    let stem = path.file_stem()?.to_str()?;
+    let parent = path.parent().and_then(|p| p.file_name())?.to_str()?;
+    match (parent, stem) {
+        ("themes", name) => Some(FileId::Themes(name.to_owned())),
+        ("formats", _) => None,
+        (_, "options") => Some(FileId::Options),
+        (_, "commands") => Some(FileId::Commands),
+        (_, "theme") => Some(FileId::Theme),
+        (_, "filters") => Some(FileId::Filters),
+        (_, "openwith") => Some(FileId::OpenWith),
+        (_, "archives") => Some(FileId::Archives),
+        _ => None,
     }
 }
 

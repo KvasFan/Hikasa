@@ -15,6 +15,7 @@
 //! | [`filters`] | [`FilterPresets`] (OPT-020) |
 //! | [`openwith`] | [`OpenWith`], [`expand_command`] (OPT-012, D-76) |
 //! | [`archives`] | [`ArchiveTypes`] (OPT-010) |
+//! | [`form`] | [`FormValue`]: one key of a typed schema as a form field (the Options dialog, M2 W4c) |
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -94,6 +95,7 @@ pub mod archives;
 pub mod commands;
 pub mod file;
 pub mod filters;
+pub mod form;
 pub mod keys;
 pub mod openwith;
 pub mod options;
@@ -108,6 +110,7 @@ pub use commands::{
 };
 pub use file::{LoadMode, Loaded, Overwrite, Problem, SettingsFile, SettingsSchema};
 pub use filters::{FilterPreset, FilterPresets};
+pub use form::{FormValue, clamp_value, enum_caption, form_value, set_form_value};
 pub use keys::{FileId, KeyInfo, KeySegment, SettingsKey, ValueKind, key_infos, parse_key};
 pub use openwith::{
     ExpandContext, ExpandError, ExpandItem, InstanceMode, OpenWith, OpenWithApp, WorkingFolder,
@@ -304,19 +307,9 @@ impl SettingsSnapshot {
     /// The resolved scheme of `mode` for an OS in dark mode or not (a selected scheme that does not exist is the
     /// built-in of its mode).
     pub fn scheme(&self, mode: ThemeMode, os_dark: bool) -> Scheme {
-        let name = self.theme.value().scheme_for(mode, os_dark);
-        match self.schemes.get(name) {
-            Some(file) => Scheme::resolve(name, Some(file.value())),
-            None => {
-                let dark = match mode {
-                    ThemeMode::FollowOs => os_dark,
-                    ThemeMode::Light => false,
-                    ThemeMode::Dark => true,
-                };
-                let builtin = if dark { "dark" } else { "light" };
-                Scheme::resolve(builtin, self.schemes.get(builtin).map(SettingsFile::value))
-            }
-        }
+        theme::selected_scheme(self.theme.value(), mode, os_dark, |name| {
+            self.schemes.get(name).map(SettingsFile::value)
+        })
     }
 
     /// Every load warning of the snapshot's files.
@@ -381,13 +374,15 @@ impl FileOutcome {
 }
 
 /// The result of `Service::settings_save`: one outcome per changed file (in `FileId::every` order) and the
-/// snapshot read after the writes.
+/// snapshot read after the writes (when that read fails, the given snapshot with the saved files in it).
 #[derive(Debug, Clone)]
 pub struct SettingsSaveDto {
     /// `(file, path, outcome)` per file of the changes.
     pub files: Vec<(FileId, PathBuf, FileOutcome)>,
     /// The files as they are now.
     pub snapshot: SettingsSnapshot,
+    /// Why the files could not be read back after the writes (the outcomes hold all the same).
+    pub reread_error: Option<String>,
 }
 
 /// The kind rules of a file.

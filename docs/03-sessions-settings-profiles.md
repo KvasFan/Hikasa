@@ -334,9 +334,10 @@ stamp of the load: a file changed in between is not overwritten (error, exit 100
 **Keys and the `settings` command (D-73).** `hikasa settings get|set|unset|list` address every value as
 `<file>.<path>` (`options.text_editing.auto_indent`, `openwith.app.0.command`, `themes.dark.folder.background`);
 see `12-cli-and-scripting.md` §4. `set` refuses a value of the wrong type, out of range or failing a check
-(an unknown command id or view in `commands.toml`, a shortcut that does not parse, a duplicate preset name, an
-Open With command that does not split) and leaves the file as it was. Setting a value equal to its default
-removes the key.
+(a command id or view in `commands.toml` that this build does not know, a shortcut that does not parse, a duplicate
+preset name, an Open With command that does not split) and leaves the file as it was. Such an id already in the file is
+kept as it is, with a warning (T13, §1.4.20 W4c of the M2 contract). Setting a value equal to its default removes the
+key.
 
 **Restore defaults (D-77; the single-file part of SES-062).** `hikasa settings restore-defaults (--all |
 --file <file>…)` deletes settings files so that the next load sees defaults. It is a plan: `--dry-run` prints
@@ -402,6 +403,14 @@ files at their configuration-relative paths (§6).
   everything.
 - **SES-062** (P0): **Restore Factory Defaults** reuses the same wizard against the
   built-in defaults.
+- *M2 W4c (D-131):* the three wizards are step dialogs (Back, Next, Finish, Cancel) over the CLI's calls. Export:
+  categories and items, then the target (default `~/hikasa-settings-<YYYY-MM-DD>.hikasa-pkg`, an existing file is
+  replaced after a question). Import: the package (validated; a bad one stops here with nothing written), then the
+  categories and items with their planned action (Add, Replace in red, Kept for a locked session), "Include locked
+  sessions" and the delete choices, then the summary (the dry run of exactly these choices). Restore: categories and
+  the delete choices, then the files to delete. Finish plans again in core; when what ran differs from what was shown,
+  the result says so. Written and deleted paths are acknowledged first, so the window's own import raises no notice;
+  the settings reload and open views keep running.
 - *M2 interpretation (D-86, D-87):* the categories of a package are `options` (`options.toml`, `filters.toml`,
   `openwith.toml`, `archives.toml`), `theme` (`theme.toml`, `themes/*.toml`), `commands`, `state`, `sessions`
   (named sessions and `_defaults`, per item; never `_autosaved`), `formats` (per item, and `order.toml`),

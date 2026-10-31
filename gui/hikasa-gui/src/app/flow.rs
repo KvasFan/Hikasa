@@ -2826,6 +2826,11 @@ impl AppCore {
                 self.open_named(reference, OpenHow::Target(target));
                 return;
             }
+            super::Startup::Import(path) => {
+                let window = self.focused();
+                self.open_import(window, Some(&path));
+                return;
+            }
             super::Startup::Options => self.options().startup.load_workspace.clone(),
         };
         if name.is_empty() {

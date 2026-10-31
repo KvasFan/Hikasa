@@ -30,7 +30,7 @@ use crate::workspace::{
     MANAGE_DELETE, MANAGE_RENAME, MANAGE_SHORTCUT, ManageWorkspacesDialog, SaveWorkspaceDialog,
 };
 
-fn r(text: &str) -> SessionRef {
+pub(crate) fn r(text: &str) -> SessionRef {
     SessionRef::parse(text).expect("a reference")
 }
 
@@ -115,7 +115,7 @@ fn vs(app: &TestApp, view: ViewId) -> ViewSession {
 }
 
 /// A named view whose specs differ from the file (through the dialog's path).
-fn make_dirty(world: &World, app: &mut TestApp, view: ViewId) {
+pub(crate) fn make_dirty(world: &World, app: &mut TestApp, view: ViewId) {
     let (_, other) = text_pair(world);
     let copy = world.write("other.c", &std::fs::read_to_string(&other).expect("read"));
     app.0.execute(app.win(), CommandId::SessionEdit);
@@ -212,7 +212,7 @@ fn run_way(world: &World, app: &mut TestApp, way: Way) {
     world.settle(app);
 }
 
-fn way_world(view_text: bool) -> (World, TestApp, ViewId) {
+pub(crate) fn way_world(view_text: bool) -> (World, TestApp, ViewId) {
     let world = World::new();
     let session = text_session(&world);
     save(&world, "main", &session);
@@ -801,7 +801,7 @@ fn dated_autosaves(list: &mut hikasa_session::api::SessionListDto) {
     }
 }
 
-fn home(app: &TestApp) -> &HomeModel {
+pub(crate) fn home(app: &TestApp) -> &HomeModel {
     match app.active_tab().and_then(|t| t.model()) {
         Some(ViewModel::Home(h)) => h,
         _ => panic!("Home is not active"),
@@ -1590,7 +1590,7 @@ fn ipc_load_workspace_restores_windows_and_ipc_load_session_is_named() {
 // ---- A4.15 ---------------------------------------------------------------------------------------------------
 
 /// A server that records what it receives.
-struct Recorder(std::sync::Mutex<Vec<Request>>);
+pub(crate) struct Recorder(pub(crate) std::sync::Mutex<Vec<Request>>);
 
 impl hikasa_session::ipc::IpcHandler for Recorder {
     fn server_info(&self) -> hikasa_session::ipc::ServerInfo {
@@ -1607,6 +1607,7 @@ impl hikasa_session::ipc::IpcHandler for Recorder {
     ) -> Response {
         let response = match &request {
             Request::LoadSession { .. } => Response::ViewOpened { view: ViewId(7) },
+            Request::ImportPackage { .. } => Response::Ok,
             _ => Response::Views { views: Vec::new() },
         };
         self.0.lock().expect("lock").push(request);

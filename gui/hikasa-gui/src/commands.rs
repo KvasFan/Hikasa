@@ -112,6 +112,14 @@ command_ids! {
     TabPrev,
     /// Program information (a dialog, D-112).
     About,
+    /// The Options dialog (D-128).
+    ProgramOptions,
+    /// The Export wizard (D-131).
+    Export,
+    /// The Import wizard (D-131).
+    Import,
+    /// The Restore wizard (D-131).
+    Restore,
     /// Help: the contents topic.
     HelpContents,
     /// Help: the topic of the active view (F1).
@@ -554,6 +562,42 @@ pub const PRESENTATION: &[Row] = &[
         S::Global,
         Some(I::Help),
         Some("Help"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ProgramOptions,
+        S::Global,
+        Some(I::Options),
+        Some("Options"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Export,
+        S::Global,
+        Some(I::Export),
+        Some("Export"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Import,
+        S::Global,
+        Some(I::Import),
+        Some("Import"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Restore,
+        S::Global,
+        Some(I::Restore),
+        Some("Restore"),
         G::None,
         P::Always,
         NONE,

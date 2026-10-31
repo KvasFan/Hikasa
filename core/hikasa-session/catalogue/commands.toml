@@ -159,7 +159,7 @@ id = "ProgramOptions"
 menu = "Tools"
 caption = "Options..."
 description = "Sets global preferences."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FileFormatManager"
@@ -180,21 +180,21 @@ id = "Export"
 menu = "Tools"
 caption = "Export Settings..."
 description = "Saves user settings as a file."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Import"
 menu = "Tools"
 caption = "Import Settings..."
 description = "Loads user settings from a file."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Restore"
 menu = "Tools"
 caption = "Restore Factory Defaults..."
 description = "Loads factory default settings."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SaveSnapshot"

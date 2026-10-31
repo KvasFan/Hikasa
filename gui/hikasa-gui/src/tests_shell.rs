@@ -640,8 +640,9 @@ fn the_toolbar_menu_writes_commands_toml_and_hides_the_toolbar() {
     let (a, b) = folder_pair(&world);
     world.open(&mut app, &a, &b);
     world.settle(&mut app);
-    let items = crate::menus::toolbar_menu(app.tables(), Scope::Folder, false);
-    assert_eq!(items.len(), 5, "three modes, large buttons, hide");
+    let items = crate::menus::toolbar_menu(app.tables(), Scope::Folder);
+    assert_eq!(items.len(), 6, "three modes, large buttons, options, hide");
+    assert_eq!(items[4], crate::menus::ToolbarMenuItem::Options);
     app.set_display_filter_mode(root, DisplayFilterMode::Toggles);
     app.set_large_buttons(root, true);
     world.settle(&mut app);

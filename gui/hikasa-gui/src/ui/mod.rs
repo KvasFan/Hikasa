@@ -17,11 +17,13 @@ pub mod keys;
 pub mod log;
 pub mod menus;
 pub mod notify;
+pub mod options;
 pub mod scroll;
 pub mod session_dialog;
 pub mod status;
 pub mod text;
 pub mod theme;
+pub mod wizards;
 pub mod workspace;
 
 use std::collections::HashMap;
@@ -296,6 +298,7 @@ impl HikasaApp {
                 self.core.show_help(window, topic);
                 Vec::new()
             }
+            Action::Dialog(DialogInput::Edited) => self.core.dialog_edited(window),
             Action::Notice(key, action) => self.core.notice_action(window, &key, action),
             Action::Message(view, m) => {
                 self.core
@@ -316,7 +319,11 @@ impl HikasaApp {
                     Vec::new()
                 }
                 ToolbarMenuItem::HideToolbar => self.core.execute(window, CommandId::ShowToolbar),
-                ToolbarMenuItem::Options => Vec::new(),
+                ToolbarMenuItem::Options => {
+                    let view = self.core.scope(window).view_name().unwrap_or("home");
+                    self.core.open_commands_page(window, view);
+                    Vec::new()
+                }
             },
             Action::Log(view, LogAction::Clear) => {
                 let _ = view;
@@ -465,6 +472,11 @@ impl HikasaApp {
             .core
             .window(window)
             .is_some_and(|w| !w.dialogs.is_empty());
+        let wants_keys = self
+            .core
+            .window(window)
+            .is_some_and(|w| w.dialogs.wants_keys());
+        let popup_open = egui::Popup::is_any_open(&ctx);
         let mut dialog_keys = Vec::new();
         let mut run = Vec::new();
         {
@@ -487,8 +499,16 @@ impl HikasaApp {
                     let Some(shortcut) = candidates.first() else {
                         return true;
                     };
+                    if wants_keys {
+                        dialog_keys.push(shortcut.clone());
+                        return false;
+                    }
                     if dialog_open {
                         let plain = !shortcut.ctrl && !shortcut.alt && !shortcut.shift;
+                        // An open combo or colour picker takes Esc first: egui closes it.
+                        if plain && shortcut.key == "Esc" && popup_open {
+                            return true;
+                        }
                         if plain && matches!(shortcut.key.as_str(), "Esc" | "Enter" | "F1") {
                             dialog_keys.push(shortcut.clone());
                             return false;
@@ -796,7 +816,8 @@ impl HikasaApp {
             );
             let _ = p;
         }
-        if !dropped.is_empty() {
+        // With a dialog open a drop belongs to the dialog's fields, not to the view under it.
+        if !dropped.is_empty() && !dialog_open {
             let target = match (drop_fields, pointer) {
                 (Some([l, _]), Some(p)) if l.contains(p) => {
                     DropTarget::PathField(FieldId::HomeLeft)
@@ -1062,6 +1083,7 @@ impl HikasaApp {
             self.apply(ctx, effects);
         }
         if let Some(b) = self.bench.as_mut() {
+            b.drive_options(&mut self.core);
             b.drive(&self.core, &mut self.texts, &mut self.folders);
             ctx.request_repaint();
         }

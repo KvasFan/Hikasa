@@ -7,7 +7,8 @@
 //!   1. missing → T::default(), stamp Absent; other read errors → Io; not UTF-8 → Config
 //!   2. parse to a table (syntax error → Config, one line)
 //!   3. schema_version: absent → current; negative or not an integer → Config; newer → Schema (both modes)
-//!   4. older: T::migrate(v) for v = found … VERSION-1 on the table; migrated_from = found (not written now)
+//!   4. older: T::migrate(v) for v = found … VERSION-1 on the table; migrated_from = found (not written now);
+//!      T::set_aside: entries this build cannot judge leave the table for the kept keys, each with a warning
 //!   5. deserialize T (unknown keys are ignored by serde); a type error is found leaf by leaf: Strict → Config
 //!      naming the key; Lenient → the leaf is removed (its default applies), warning invalid_config_value, retry
 //!   6. unknown keys = the paths of the table that the full serialization of the value lacks: top-level ones
@@ -68,6 +69,14 @@ pub trait SettingsSchema:
         Value::try_from(Self::default()).ok()
     }
 
+    /// Takes out of the raw `table` the entries this build must keep without judging them (T13): they go to the
+    /// kept unknown keys with a warning, in both load modes. For the entries of a map keyed by ids that a later
+    /// build may know (`commands.toml`).
+    fn set_aside(table: &mut Table, origin: &str) -> Vec<SetAside> {
+        let _ = (table, origin);
+        Vec::new()
+    }
+
     /// Top-level keys that are not fields of this schema but are allowed (kept without a warning).
     fn known_sections() -> &'static [&'static str] {
         &[]
@@ -118,6 +127,17 @@ pub(crate) fn repair_by_path<T: SettingsSchema>(value: &mut T, problems: &[Probl
         }
     }
     *value = tree.try_into().unwrap_or_default();
+}
+
+/// An entry [`SettingsSchema::set_aside`] took out of a file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetAside {
+    /// Where it is in the file.
+    pub path: Vec<KeySegment>,
+    /// The entry.
+    pub value: Value,
+    /// What the load reports.
+    pub warning: Warning,
 }
 
 /// How strictly a file is read (D-71).
@@ -258,6 +278,7 @@ impl<T: SettingsSchema> SettingsFile<T> {
                 });
             }
         };
+        let aside = T::set_aside(&mut table, origin);
         let mut warnings = Vec::new();
         // Step 5: the value, type errors located leaf by leaf.
         let defaults = full_table(&T::default());
@@ -319,6 +340,27 @@ impl<T: SettingsSchema> SettingsFile<T> {
                 _ => Table::new(),
             };
         }
+        let mut aside_warnings = Vec::new();
+        for entry in aside {
+            match &entry.value {
+                Value::Table(inner) if !inner.is_empty() => {
+                    for (sub, _) in tree::leaves(inner, false) {
+                        let mut full = entry.path.clone();
+                        full.extend(sub);
+                        ignored_keys.push(tree::display_path(&full));
+                    }
+                }
+                _ => ignored_keys.push(tree::display_path(&entry.path)),
+            }
+            let mut root = Value::Table(raw);
+            let _ = tree::set(&mut root, &entry.path, entry.value);
+            raw = match root {
+                Value::Table(t) => t,
+                _ => Table::new(),
+            };
+            aside_warnings.push(entry.warning);
+        }
+        unknown_warnings.extend(aside_warnings);
         ignored_keys.sort();
         // Step 7: checks.
         let problems = value.validate();
