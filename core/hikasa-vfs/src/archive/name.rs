@@ -25,6 +25,8 @@ pub(crate) enum Refusal {
     Conflict,
     /// A hard link that names no earlier regular member (rule 6).
     HardLink,
+    /// A file whose name reduces to nothing: it has nowhere to go.
+    Empty,
 }
 
 impl Refusal {
@@ -39,6 +41,7 @@ impl Refusal {
             Refusal::Backslash => "backslash",
             Refusal::Conflict => "conflict",
             Refusal::HardLink => "hard_link",
+            Refusal::Empty => "empty",
         }
     }
 }

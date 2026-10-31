@@ -160,9 +160,13 @@ fn checksum_ok(block: &[u8; BLOCK as usize], header: &Header) -> bool {
     stored == unsigned || i64::from(stored) == i64::from(signed)
 }
 
-/// Drops NULs at the end of a GNU long name.
+/// Drops the NULs at the end of a GNU long name. One inside stays, so rule 1 refuses the name: what follows it must not
+/// be lost to a reader that stops at the first NUL.
 fn trim_body(mut body: Vec<u8>) -> Vec<u8> {
-    let end = body.iter().position(|&b| b == 0).unwrap_or(body.len());
+    let end = body
+        .iter()
+        .rposition(|&b| b != 0)
+        .map_or(0, |last| last + 1);
     body.truncate(end);
     body
 }
@@ -339,7 +343,10 @@ impl Walker<'_> {
     ) -> Result<TarItem, Stop> {
         let header = Header::from_byte_slice(block);
         let first_block = pending.first.unwrap_or(self.pos - BLOCK);
-        let data_len = pending.pax_size.unwrap_or(declared);
+        // A hard link has no data of its own, whatever its size field says, unless PAX states it: reading "its data"
+        // would hide the next member (as GNU tar reads it).
+        let header_size = if type_byte == b'1' { 0 } else { declared };
+        let data_len = pending.pax_size.unwrap_or(header_size);
         let name = pending
             .sparse_name
             .or(pending.pax_path)
@@ -447,5 +454,11 @@ mod tests {
     fn long_names_lose_their_nuls() {
         assert_eq!(trim_body(b"abc\0\0".to_vec()), b"abc");
         assert_eq!(trim_body(b"abc".to_vec()), b"abc");
+        assert_eq!(
+            trim_body(b"a\0b\0".to_vec()),
+            b"a\0b",
+            "rule 1 sees the NUL"
+        );
+        assert_eq!(trim_body(b"\0\0".to_vec()), b"");
     }
 }

@@ -274,6 +274,8 @@ pub struct RawTar {
     /// The size field; `None` = the length of `data`.
     pub size: Option<u64>,
     pub mtime: u64,
+    /// The mode field.
+    pub mode: u32,
     /// `ustar\0` + `00` when true, nothing (an old V7 header) otherwise.
     pub ustar: bool,
 }
@@ -287,6 +289,7 @@ impl RawTar {
             data: data.to_vec(),
             size: None,
             mtime: 1_792_415_520,
+            mode: 0o644,
             ustar: true,
         }
     }
@@ -310,7 +313,7 @@ impl RawTar {
         let mut block = [0u8; 512];
         let name = &self.name[..self.name.len().min(100)];
         block[..name.len()].copy_from_slice(name);
-        block[100..108].copy_from_slice(b"0000644\0");
+        block[100..108].copy_from_slice(format!("{:07o}\0", self.mode).as_bytes());
         block[108..116].copy_from_slice(b"0000000\0");
         block[116..124].copy_from_slice(b"0000000\0");
         let size = self.size.unwrap_or(self.data.len() as u64);

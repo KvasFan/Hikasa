@@ -33,8 +33,9 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::io::{Cursor, Read, SeekFrom};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
+use std::time::Duration;
 
 use hikasa_core::{
     CancelToken, Ctl, ErrorKind, ErrorReport, FileTime, NullProgress, Spec, Warning, WarningCode,
@@ -46,11 +47,11 @@ pub use resolve::{Probe, Probed, SpecUse, resolve_spec, resolve_with};
 use cache::{Cache, CacheReader, CacheWriter, WHOLE_STREAM};
 use codec::{Codec, Counted, Failure, Guard, Input, InputSize, Pass, classify, corrupt, no_panic};
 use format::stream_member_name;
-use index::{DataRef, MemberKind, Node, RawMember, Tree, build_tree};
+use index::{DataRef, MemberKind, NameBudget, Node, RawMember, Tree, build_tree};
 use name::{NameRules, check_name, escape_name};
 use shared::RangeReader;
 use tar_walk::{Damage, TarItem, TarKind, walk};
-use zip_read::{ZipData, index_zip};
+use zip_read::{LINK_TARGET_MAX, ZipData, index_zip};
 
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, Entry, EntryKind, FileName, UnixMeta};
@@ -64,6 +65,8 @@ use crate::vfs::{
 const MEMORY_MAX: u64 = 1 << 20;
 /// When the members of all indexes pass this, the least recently used indexes no call holds are dropped.
 const INDEX_MEMBERS_MAX: usize = 10_000_000;
+/// How often a call that waits for another call's pass looks at its own `cancel`.
+const WAIT_STEP: Duration = Duration::from_millis(2);
 
 /// Limits of `archives.limits` (D-143; §1.5.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +83,10 @@ pub struct ArchiveLimits {
     pub ratio_floor: u64,
     /// Archives around a spec.
     pub nesting_max: u32,
+    /// Bytes of the text of one index: paths, refused names, link targets, the paths of synthesized folders.
+    pub paths_max: u64,
+    /// Folders above a member.
+    pub depth_max: u32,
 }
 
 impl Default for ArchiveLimits {
@@ -92,6 +99,8 @@ impl Default for ArchiveLimits {
             ratio_max: 2000,
             ratio_floor: 64 << 20,
             nesting_max: 8,
+            paths_max: 256 << 20,
+            depth_max: 256,
         }
     }
 }
@@ -215,6 +224,26 @@ impl fmt::Debug for ArchiveVfs {
 /// Locks `mutex`; a poisoned lock only means a decoder panicked, and the data under it stays valid.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// [`lock`] for a lock that a pass holds for minutes: a call that waits stops with its own `cancel` (G4). The condition
+/// is nobody's: it is the timed wait that polls a token, as in `hikasa-diff`.
+fn lock_until<'a, T>(
+    mutex: &'a Mutex<T>,
+    cancel: &CancelToken,
+) -> Result<MutexGuard<'a, T>, VfsError> {
+    let (idle, step) = (Mutex::new(()), Condvar::new());
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => {
+                cancel.check()?;
+                let waited = step.wait_timeout(lock(&idle), WAIT_STEP);
+                drop(waited.map_err(PoisonError::into_inner));
+            }
+        }
+    }
 }
 
 /// Where a decoded member goes.
@@ -632,7 +661,7 @@ impl ArchiveVfs {
         config: &ArchiveConfig,
         pass: &Pass<'_>,
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
-        if let Some(reader) = self.cached(slot, &node.path) {
+        if let Some(reader) = self.cached(slot, node.path()) {
             return Ok(Box::new(reader));
         }
         let Some(zip) = &index.zip else {
@@ -645,7 +674,7 @@ impl ArchiveVfs {
         zip.decode(at, node.size, pass, &index.decoded, &mut |bytes| {
             spool.write(bytes)
         })?;
-        spool.finish(slot.id, &node.path)
+        spool.finish(slot.id, node.path())
     }
 
     /// `decode_range`: decodes the stream of `archive` forward, drops `start` bytes, passes `len` to `sink`.
@@ -696,8 +725,8 @@ impl ArchiveVfs {
         config: &ArchiveConfig,
         pass: &Pass<'_>,
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
-        let member: &str = &node.path;
-        let mut first_read = lock(&slot.first_read);
+        let member = node.path();
+        let mut first_read = lock_until(&slot.first_read, pass.ctl.cancel)?;
         if let Some(stream) = self.cached(slot, WHOLE_STREAM) {
             return Ok(Box::new(RangeReader::new(stream, data, node.size)));
         }
@@ -754,8 +783,8 @@ impl ArchiveVfs {
         config: &ArchiveConfig,
         pass: &Pass<'_>,
     ) -> Result<Box<dyn ReadSeek>, VfsError> {
-        let member: &str = &node.path;
-        let _one_decoder = lock(&slot.first_read);
+        let member = node.path();
+        let _one_decoder = lock_until(&slot.first_read, pass.ctl.cancel)?;
         if let Some(reader) = self.cached(slot, member) {
             return Ok(Box::new(reader));
         }
@@ -869,6 +898,12 @@ fn tar_text(clean: &[u8]) -> String {
     String::from_utf8_lossy(clean).into_owned()
 }
 
+/// A link target as it is kept: text, at most [`LINK_TARGET_MAX`] bytes, as for a zip. A longer one has no target.
+fn link_text(link: &[u8]) -> Option<Box<str>> {
+    (link.len() as u64 <= LINK_TARGET_MAX)
+        .then(|| String::from_utf8_lossy(link).into_owned().into_boxed_str())
+}
+
 /// A tar record as a [`RawMember`].
 fn tar_member(item: TarItem) -> RawMember {
     let kind = match item.kind {
@@ -879,6 +914,7 @@ fn tar_member(item: TarItem) -> RawMember {
         TarKind::Other => MemberKind::Other,
         TarKind::Sparse => MemberKind::Sparse,
     };
+    let lossy = std::str::from_utf8(&item.name).is_err();
     let path = check_name(&item.name, NameRules::Tar)
         .map(|clean| tar_text(&clean))
         .map_err(|reason| (escape_name(&item.name), reason));
@@ -890,6 +926,7 @@ fn tar_member(item: TarItem) -> RawMember {
     RawMember {
         path,
         kind,
+        lossy,
         encrypted: false,
         size: item.size,
         mtime: item.mtime,
@@ -902,9 +939,9 @@ fn tar_member(item: TarItem) -> RawMember {
             },
         },
         crc32: item.crc32,
-        link_target: (kind == MemberKind::Symlink)
-            .then(|| link.map(|l| String::from_utf8_lossy(l).into_owned().into_boxed_str()))
-            .flatten(),
+        link_target: link
+            .filter(|_| kind == MemberKind::Symlink)
+            .and_then(link_text),
         hard_target,
         data: DataRef::Tar {
             first_block: item.first_block,
@@ -951,6 +988,7 @@ fn index_tar(
         InputSize::Live(Arc::clone(&input)),
     );
     let mut members = Vec::new();
+    let mut budget = NameBudget::new(pass);
     let entries_max = pass.limits.entries_max;
     let classify_error = |error| classify(error, Some(&input), pass.spec);
     let walked = walk(&mut guard, &classify_error, &mut |item| {
@@ -961,11 +999,13 @@ fn index_tar(
                 value: entries_max,
             });
         }
-        members.push(tar_member(item));
+        let member = tar_member(item);
+        budget.member(&member)?;
+        members.push(member);
         Ok(())
     })?;
     not_an_archive(pass, &walked.damage, members.len())?;
-    let mut tree = build_tree(members);
+    let mut tree = build_tree(members, budget, pass)?;
     tree.damage = walked.damage;
     Ok((tree, walked.stream_len))
 }
@@ -1028,6 +1068,7 @@ fn index_single(
         members.push(RawMember {
             path: Ok(stream_member_name(name)),
             kind: MemberKind::File,
+            lossy: false,
             encrypted: false,
             size: len,
             mtime: stored.or(container.mtime),
@@ -1039,7 +1080,7 @@ fn index_single(
             data: DataRef::Stream,
         });
     }
-    let mut tree = build_tree(members);
+    let mut tree = build_tree(members, NameBudget::new(pass), pass)?;
     tree.damage = damage;
     Ok((tree, len))
 }
@@ -1128,7 +1169,7 @@ impl Vfs for ArchiveVfs {
         self.on_base(spec, VfsOp::Write)?.open_write(spec, opts)
     }
 
-    /// Joins `name` to the member. A name that fails rule 1, or is lossy, is `InvalidName`.
+    /// Joins `name` to the member. A name that fails rule 1, or a lossy name from a disk, is `InvalidName`.
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
         let Spec::ArchiveMember { archive, member } = dir else {
             return self.base.child(dir, name);
@@ -1136,7 +1177,9 @@ impl Vfs for ArchiveVfs {
         let invalid = || VfsError::InvalidName {
             name: name.as_str().to_owned(),
         };
-        if name.is_lossy() || name.as_str().contains('/') {
+        // A lossy name of a listed member is its key; a lossy name from a disk has no text that means it.
+        let exact = name.to_os_string().to_str() == Some(name.as_str());
+        if !exact || name.as_str().contains('/') {
             return Err(invalid());
         }
         let joined = if member.is_empty() {
@@ -1262,6 +1305,8 @@ mod tests {
         assert_eq!(limits.ratio_max, 2000);
         assert_eq!(limits.ratio_floor, 64 << 20);
         assert_eq!(limits.nesting_max, 8);
+        assert_eq!(limits.paths_max, 256 << 20);
+        assert_eq!(limits.depth_max, 256);
         let error = VfsError::ArchiveLimit {
             spec: "s".into(),
             limit: "ratio",

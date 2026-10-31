@@ -248,6 +248,8 @@ comparisons started after the change. `[limits]` (M2 W5, D-143), each a key of `
 | `limits.cache_max_gib` | int 1..1024 | 8 |
 | `limits.ratio_max` | int 0..1000000 (0 = off) | 2000 |
 | `limits.nesting_max` | int 1..32 | 8 |
+| `limits.paths_max_mib` | int 1..65536 | 256 |
+| `limits.depth_max` | int 16..2048 | 256 |
 
 **`commands.toml` (OPT-011, UI-003).** `schema_version = 1`, then one table per view
 type `[view.<view>]` (`home`, `folder-compare`, `folder-sync`, `text-compare`,

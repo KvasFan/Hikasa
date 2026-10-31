@@ -90,6 +90,15 @@ impl FileName {
         })
     }
 
+    /// A name whose exact bytes stay elsewhere (an archive holds them, D-141): `text` is lossy, and it is also the only
+    /// form this name has, so `to_os_string` gives `text`.
+    pub(crate) fn from_lossy_text(text: &str) -> FileName {
+        FileName {
+            text: text.into(),
+            raw: Some(OsString::from(text)),
+        }
+    }
+
     /// UTF-8 (possibly lossy) text.
     pub fn as_str(&self) -> &str {
         &self.text

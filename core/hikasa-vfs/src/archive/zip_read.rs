@@ -1,15 +1,18 @@
 //! Zip: the index from the crate's central directory plus an in-house read of the time fields (D-139), without
 //! touching local headers, and member decoding.
 
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::collections::BTreeMap;
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use hikasa_core::FileTime;
+use hikasa_core::{CancelToken, Cancelled, FileTime};
 use jiff::tz::TimeZone;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
 use super::codec::{self, Guard, InputSize, Pass, corrupt, read_failure};
-use super::index::{DataRef, MemberKind, RawMember, Tree, build_tree};
+use super::index::{DataRef, MemberKind, NameBudget, RawMember, Tree, build_tree};
 use super::name::{NameRules, check_name, escape_name, reduce_text};
 use super::shared::{ReaderLease, SharedReader};
 use super::time::{dos_time, ntfs_time};
@@ -20,12 +23,17 @@ use crate::vfs::ReadSeek;
 /// The AES method id: encrypted, whether or not an AES extra field is there.
 const METHOD_AES: u16 = 99;
 /// The longest link target read at index time.
-const LINK_TARGET_MAX: u64 = 4096;
+pub(crate) const LINK_TARGET_MAX: u64 = 4096;
 /// Unix file type bits.
 const S_IFMT: u32 = 0o170_000;
 const S_IFDIR: u32 = 0o040_000;
 const S_IFREG: u32 = 0o100_000;
 const S_IFLNK: u32 = 0o120_000;
+/// The UTF-8 flag of a central header.
+const FLAG_UTF8: u16 = 1 << 11;
+/// The central directory read at index time may take this much per entry on top of `paths_max`: a fixed header and
+/// the extra fields of real archives.
+const DIRECTORY_ENTRY_MAX: u64 = 128;
 /// The central directory header signature.
 const CENTRAL_SIGNATURE: [u8; 4] = *b"PK\x01\x02";
 /// Fixed part of a central directory header.
@@ -282,6 +290,42 @@ fn member_text(raw: &[u8], utf8_flag: bool, crate_text: Option<String>) -> Strin
     reduce_text(&text.replace('\\', "/"))
 }
 
+/// The reader of an index pass. The crate reads a central directory as long as the entry count says, whatever size
+/// the end record states, and keeps it in memory, so this reader is what bounds it (rule 13): past `left` bytes it
+/// answers `ArchiveLimit`, and it looks at `cancel` on every read.
+struct IndexReader {
+    inner: Box<dyn ReadSeek>,
+    left: Arc<AtomicU64>,
+    cancel: CancelToken,
+    spec: String,
+    limit: u64,
+}
+
+impl Read for IndexReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.cancel.is_cancelled() {
+            return Err(io::Error::other(Cancelled));
+        }
+        let n = self.inner.read(buf)?;
+        // Calls come one at a time through `SharedReader`.
+        let Some(left) = self.left.load(Ordering::Relaxed).checked_sub(n as u64) else {
+            return Err(io::Error::from(VfsError::ArchiveLimit {
+                spec: self.spec.clone(),
+                limit: "paths",
+                value: self.limit,
+            }));
+        };
+        self.left.store(left, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+impl Seek for IndexReader {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(to)
+    }
+}
+
 /// Builds the tree of a zip.
 pub(crate) fn index_zip(
     mut reader: Box<dyn ReadSeek>,
@@ -293,8 +337,24 @@ pub(crate) fn index_zip(
     if stated_entries(&mut *reader, len) > entries_max {
         return Err(entries_limit(spec, entries_max));
     }
+    let directory_max = pass
+        .limits
+        .paths_max
+        .saturating_add(DIRECTORY_ENTRY_MAX.saturating_mul(entries_max));
+    let left = Arc::new(AtomicU64::new(directory_max));
+    let reader: Box<dyn ReadSeek> = Box::new(IndexReader {
+        inner: reader,
+        left: Arc::clone(&left),
+        cancel: pass.ctl.cancel.clone(),
+        spec: spec.to_owned(),
+        limit: pass.limits.paths_max,
+    });
     let (shared, lease) = SharedReader::new(reader, len);
-    let mut archive = ZipArchive::new(shared.clone()).map_err(|e| zip_error(spec, &shared, e))?;
+    let opened = ZipArchive::new(shared.clone());
+    // The crate tries other end records after a failed read, so a stop can come back as "not a zip".
+    pass.ctl.check()?;
+    let mut archive = opened.map_err(|e| zip_error(spec, &shared, e))?;
+    left.store(u64::MAX, Ordering::Relaxed);
     if archive.len() as u64 > entries_max {
         return Err(entries_limit(spec, entries_max));
     }
@@ -311,6 +371,7 @@ pub(crate) fn index_zip(
         )
     };
     let mut members = Vec::with_capacity(archive.len());
+    let mut budget = NameBudget::new(pass);
     let mut declared_total = 0u64;
     for index in 0..archive.len() {
         if index % 1024 == 0 {
@@ -320,16 +381,15 @@ pub(crate) fn index_zip(
             .by_index_data(index)
             .map_err(|e| zip_error(spec, &shared, e))?;
         let raw_name = entry.name_raw();
-        let central = fields
-            .binary_search_by_key(&entry.central_header_start(), |f| f.at)
-            .ok()
-            .and_then(|at| fields.get(at));
+        let central = central_of(&fields, entry.central_header_start());
         let flags = central.map_or(0, |f| f.flags);
+        // Without the flag the crate decodes CP437, which has a character for every byte.
+        let lossy = flags & FLAG_UTF8 != 0 && std::str::from_utf8(raw_name).is_err();
         let path = check_name(raw_name, NameRules::Zip)
             .map(|clean| {
                 member_text(
                     &clean,
-                    flags & (1 << 11) != 0,
+                    flags & FLAG_UTF8 != 0,
                     entry.name().ok().map(|text| text.into_owned()),
                 )
             })
@@ -339,9 +399,10 @@ pub(crate) fn index_zip(
         let encrypted = entry.encrypted() || central.is_some_and(|f| f.method == METHOD_AES);
         let (mtime, ctime) = central.map_or((None, None), |f| f.times(&pass.zone));
         declared_total = declared_total.saturating_add(entry.size());
-        members.push(RawMember {
+        let member = RawMember {
             path,
             kind,
+            lossy,
             encrypted,
             size: entry.size(),
             mtime,
@@ -351,17 +412,20 @@ pub(crate) fn index_zip(
             link_target: None,
             hard_target: None,
             data: DataRef::Zip { index },
-        });
+        };
+        budget.member(&member)?;
+        members.push(member);
     }
     for (index, member) in members.iter_mut().enumerate() {
         if member.kind == MemberKind::Symlink && !member.encrypted && member.size <= LINK_TARGET_MAX
         {
             pass.ctl.check()?;
             member.link_target = read_link(&mut archive, index);
+            budget.member_link(member)?;
         }
     }
     let duplicates = archive.has_duplicate_names();
-    let mut tree = build_tree(members);
+    let mut tree = build_tree(members, budget, pass)?;
     if duplicates && tree.duplicates == 0 {
         tree.duplicates = 1;
     }
@@ -373,6 +437,14 @@ pub(crate) fn index_zip(
         container_len: len,
     };
     Ok((tree, data))
+}
+
+/// The fields of the central header at `at`.
+fn central_of(fields: &[CentralFields], at: u64) -> Option<&CentralFields> {
+    fields
+        .binary_search_by_key(&at, |f| f.at)
+        .ok()
+        .and_then(|found| fields.get(found))
 }
 
 fn entries_limit(spec: &str, value: u64) -> VfsError {

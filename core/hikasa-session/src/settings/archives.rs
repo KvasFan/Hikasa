@@ -63,6 +63,10 @@ settings_section! {
         ratio_max: u32 = 2000,
         /// Archives around a spec.
         nesting_max: u32 = 8,
+        /// MiB of the text of one index: paths, link targets, the paths of folders no member names.
+        paths_max_mib: u64 = 256,
+        /// Folders above a member.
+        depth_max: u32 = 256,
     }
 }
 
@@ -115,6 +119,8 @@ impl ArchiveTypes {
             cache_max: l.cache_max_gib.saturating_mul(GIB),
             ratio_max: l.ratio_max,
             nesting_max: l.nesting_max,
+            paths_max: l.paths_max_mib.saturating_mul(1 << 20),
+            depth_max: l.depth_max,
             ..ArchiveLimits::default()
         }
     }
@@ -197,6 +203,8 @@ pub(crate) const RULES: &[KindRule] = &[
     limit("limits.cache_max_gib", 1, 1_024),
     limit("limits.ratio_max", 0, 1_000_000),
     limit("limits.nesting_max", 1, 32),
+    limit("limits.paths_max_mib", 1, 65_536),
+    limit("limits.depth_max", 16, 2_048),
 ];
 
 /// The rule of one limit of §1.5.7.
@@ -252,13 +260,17 @@ mod tests {
         low.limits.cache_max_gib = 2000;
         low.limits.ratio_max = 1_000_001;
         low.limits.nesting_max = 33;
+        low.limits.paths_max_mib = 0;
+        low.limits.depth_max = 15;
         let keys: Vec<_> = low.validate().into_iter().map(|p| p.key).collect();
         assert_eq!(
             keys,
             [
                 "limits.cache_max_gib",
+                "limits.depth_max",
                 "limits.entries_max",
                 "limits.nesting_max",
+                "limits.paths_max_mib",
                 "limits.ratio_max",
                 "limits.stream_max_gib"
             ]
