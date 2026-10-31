@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Installed as share/mime/packages/hikasa.xml. A settings package is a ZIP file (docs/03, D-86). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-hikasa-pkg">
+    <comment>Hikasa settings package</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.hikasa-pkg" weight="60"/>
+  </mime-type>
+</mime-info>

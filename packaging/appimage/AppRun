@@ -1,0 +1,12 @@
+#!/bin/sh
+# Entry point of the AppImage. The GUI by default; the command line when the AppImage is started under the name
+# `hikasa` (a symlink: the runtime passes the name in ARGV0) or with `--cli` as the first argument.
+here=$(dirname "$(readlink -f "$0")")
+if [ "${1-}" = --cli ]; then
+    shift
+    exec "$here/usr/bin/hikasa" "$@"
+fi
+if [ "${ARGV0##*/}" = hikasa ]; then
+    exec "$here/usr/bin/hikasa" "$@"
+fi
+exec "$here/usr/bin/hikasa-gui" "$@"

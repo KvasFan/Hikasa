@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kvasfan.hikasa</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Hikasa</name>
+  <summary>Compare folders and files</summary>
+  <description>
+    <p>
+      Hikasa compares folder trees and text files side by side. The desktop application and the hikasa command line
+      share the same engines, so every comparison can also run headless, with exit codes and JSON output.
+    </p>
+    <ul>
+      <li>Folder Compare with rules, filters and a parallel scan</li>
+      <li>Text Compare with grammar-aware formats and inline differences</li>
+      <li>Reports as plain text, HTML and patches</li>
+      <li>Sessions, workspaces and settings packages</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">hikasa.desktop</launchable>
+  <url type="homepage">https://github.com/KvasFan/Hikasa</url>
+  <url type="bugtracker">https://github.com/KvasFan/Hikasa/issues</url>
+  <developer id="io.github.kvasfan">
+    <name>Hikasa contributors</name>
+  </developer>
+  <categories>
+    <category>Development</category>
+    <category>Utility</category>
+  </categories>
+  <provides>
+    <binary>hikasa</binary>
+    <binary>hikasa-gui</binary>
+    <mediatype>application/x-hikasa-pkg</mediatype>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-28"/>
+  </releases>
+</component>

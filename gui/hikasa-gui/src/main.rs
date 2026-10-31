@@ -16,6 +16,12 @@
 //!
 //! M2 W4a: the windows (D-106), the watch thread `hikasa-watch` (D-117) and the forwarding of `hikasa::*`
 //! debug events to the log book (D-116) start with the window.
+//!
+//! Windows: release builds use the windows subsystem, so the program never opens a console. Debug builds keep theirs
+//! for the log. `hikasa <command> --help` is the way to read the help there: `hikasa-gui --help` has no console to
+//! print on unless its output is redirected.
+
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
 mod bench;
@@ -82,6 +88,11 @@ use crate::ui::HikasaApp;
 
 /// Exit code of every failure before the window runs (D-35).
 const FAILURE: u8 = 100;
+
+/// The window icon: raw RGBA, written by `packaging/generate-brand.sh` from `assets/brand/logo-light.svg`.
+const WINDOW_ICON: &[u8] = include_bytes!("../../../assets/brand/window-icon-64.rgba");
+/// Width and height of [`WINDOW_ICON`].
+const WINDOW_ICON_SIZE: u32 = 64;
 
 /// glibc only (D-134): its dynamic mmap threshold climbs to 32 MiB with the first large buffers freed, after which
 /// such buffers stay in the arenas' free lists for good: 125 MiB of a settled 1M-line comparison, and a run-to-run
@@ -482,6 +493,11 @@ fn launch(
         viewport: egui::ViewportBuilder::default()
             .with_title("Hikasa")
             .with_app_id("hikasa")
+            .with_icon(egui::IconData {
+                rgba: WINDOW_ICON.to_vec(),
+                width: WINDOW_ICON_SIZE,
+                height: WINDOW_ICON_SIZE,
+            })
             .with_inner_size(size)
             .with_min_inner_size([640.0, 400.0])
             .with_maximized(bench.is_none() && root.maximized),

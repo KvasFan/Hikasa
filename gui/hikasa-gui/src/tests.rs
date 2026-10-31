@@ -24,6 +24,13 @@ use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
 
+/// The generated window icon holds exactly one RGBA image of the declared size.
+#[test]
+fn the_window_icon_has_its_size() {
+    let side = crate::WINDOW_ICON_SIZE as usize;
+    assert_eq!(crate::WINDOW_ICON.len(), side * side * 4);
+}
+
 /// M2 W0: F1 shows the topic of the active view, Help ▸ Contents the index; links open topics; the panel closes.
 #[test]
 fn help_commands_show_topics() {

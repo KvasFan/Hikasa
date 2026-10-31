@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hikasa logo, for dark backgrounds. The geometry of logo-light.svg with lighter panes and a light shared band. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Hikasa">
+  <title>Hikasa</title>
+  <clipPath id="left"><rect x="8" y="8" width="72" height="96" rx="12"/></clipPath>
+  <rect x="8" y="8" width="72" height="96" rx="12" fill="#5aa2f5"/>
+  <rect x="48" y="24" width="72" height="96" rx="12" fill="#ff9450"/>
+  <rect x="48" y="24" width="72" height="96" rx="12" fill="#f4f6fb" clip-path="url(#left)"/>
+</svg>

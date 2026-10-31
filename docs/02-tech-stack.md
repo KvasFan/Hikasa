@@ -414,4 +414,8 @@ other than glibc there is no D-134 and these figures do not apply; the frame-rat
   xvfb-run -a …` (17-agent-workflow §3.5).
 - Release builds with LTO, `codegen-units=1`, `panic=unwind` (we must survive
   panics in a job and report them).
-- Packaging: AppImage/Flatpak (Linux), MSI/MSIX (Windows), DMG (macOS) — P1.
+- Packaging: local scripts in `packaging/` (`packaging/README.md`), no CI job and no new crate (D-133): `.tar.gz`,
+  `.deb`, AppImage and an Arch `PKGBUILD` on Linux, a portable zip and an installer on Windows (x64 and x86). Tools:
+  `zig cc` as the linker for an old glibc floor; mingw-w64 with `windres` for the Windows targets and their resources;
+  `wixl` from msitools for the MSI installers; pinned downloads of appimagetool and the AppImage runtime. Flatpak, MSIX
+  and DMG stay P1.

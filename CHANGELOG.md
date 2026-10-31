@@ -5,6 +5,15 @@
 M2 is planned in `docs/design/m2-plan.md` (the maintainer's answers in §4.1) and specified wave by wave in
 `docs/design/m2-contracts.md`. Entries per wave, newest first.
 
+### Brand and packaging
+- **Brand:** a logo for light and dark backgrounds (`assets/brand/`), with generated icons; the window now shows it.
+- **Packages** (`packaging/`, local scripts, `packaging/README.md`): Linux `.tar.gz`, `.deb`, AppImage and an Arch
+  `PKGBUILD`, Windows portable zips and MSI installers for x64 and x86, with `SHA256SUMS` and smoke tests. Every package
+  carries `THIRD_PARTY_LICENSES.txt`, generated from the crates compiled into it. Desktop entry, AppStream metainfo and
+  the `application/x-hikasa-pkg` MIME type for `.hikasa-pkg` files.
+- **Windows:** `hikasa-gui.exe` is a windows-subsystem program in release builds and no longer opens a console;
+  external conversions started by the GUI do not open console windows either.
+
 ### Wave 4c — Settings dialogs
 - **Options dialog** (OPT pages, D-128): Tools ▸ Options…: a searchable page tree (title, label, key path, OPT id),
   every P0 key of `options.toml` on exactly one page, Archive Types, Open With and Name Filter Presets; live checks with

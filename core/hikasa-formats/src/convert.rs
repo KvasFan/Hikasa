@@ -45,6 +45,19 @@ pub trait ProcessRunner: Send + Sync {
 /// Poll interval of [`StdProcessRunner`] (§5.3: every 20 ms while waiting for an external conversion).
 const POLL: Duration = Duration::from_millis(20);
 
+/// Windows: a console program started by the GUI, which has no console of its own, would open a console window. The
+/// output is discarded either way.
+#[cfg(windows)]
+fn hide_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+/// Other targets: nothing to do.
+#[cfg(not(windows))]
+fn hide_console(_command: &mut Command) {}
+
 /// `std::process::Command` runner (no shell; stdin null; stdout/stderr discarded; polls `try_wait`
 /// every 20 ms to honour cancellation and timeout).
 #[derive(Debug, Clone, Copy, Default)]
@@ -62,16 +75,17 @@ impl ProcessRunner for StdProcessRunner {
         };
         let name = program.to_string_lossy().into_owned();
         cancel.check()?;
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|source| ConvertError::Spawn {
-                program: name.clone(),
-                source,
-            })?;
+            .stderr(Stdio::null());
+        hide_console(&mut command);
+        let mut child = command.spawn().map_err(|source| ConvertError::Spawn {
+            program: name.clone(),
+            source,
+        })?;
         // Allow-point (§6.1 check 2): the timeout is measured with the monotonic clock.
         let started = Instant::now();
         loop {

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Windows installer, compiled by wixl (package-windows-msi.sh) with Version, Arch and Stage defined. Per user by
+     default; ALLUSERS=1 on the msiexec command line installs per machine, ADDTOPATH=1 adds the PATH entry. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <?if $(var.Arch) = x64 ?>
+    <?define ProgramFiles = "ProgramFiles64Folder" ?>
+    <?define UpgradeCode = "6B1E0C52-8F0D-4E0B-9C57-3D5A4C1F7E21" ?>
+  <?else?>
+    <?define ProgramFiles = "ProgramFilesFolder" ?>
+    <?define UpgradeCode = "A47D2F90-5C3B-4B66-8E1A-92F0C6D3B714" ?>
+  <?endif?>
+
+  <Product Id="*" Name="Hikasa" Language="1033" Version="$(var.Version)" Manufacturer="Hikasa contributors" UpgradeCode="$(var.UpgradeCode)">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" Description="Hikasa $(var.Version) ($(var.Arch))" Comments="Compare folders and files"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Hikasa is already installed."/>
+    <Media Id="1" Cabinet="hikasa.cab" EmbedCab="yes"/>
+
+    <!-- A dual-purpose package: per user unless ALLUSERS=1 is given. -->
+    <Property Id="ALLUSERS" Value="2"/>
+    <Property Id="MSIINSTALLPERUSER" Value="1"/>
+    <Property Id="ARPPRODUCTICON" Value="hikasa.ico"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/KvasFan/Hikasa"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/KvasFan/Hikasa/issues"/>
+    <Icon Id="hikasa.ico" SourceFile="$(var.Stage)/hikasa.ico"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="$(var.ProgramFiles)">
+        <Directory Id="INSTALLDIR" Name="Hikasa">
+          <Component Id="Cli" Guid="*">
+            <File Id="hikasa.exe" Source="$(var.Stage)/hikasa.exe" KeyPath="yes"/>
+          </Component>
+          <Component Id="Gui" Guid="*">
+            <File Id="hikasa_gui.exe" Source="$(var.Stage)/hikasa-gui.exe" KeyPath="yes"/>
+          </Component>
+          <Component Id="Licenses" Guid="*">
+            <File Id="LICENSE_MIT" Source="$(var.Stage)/LICENSE-MIT" KeyPath="yes"/>
+            <File Id="LICENSE_APACHE" Source="$(var.Stage)/LICENSE-APACHE"/>
+            <File Id="THIRD_PARTY_LICENSES" Source="$(var.Stage)/THIRD_PARTY_LICENSES.txt"/>
+          </Component>
+          <Component Id="Shortcut" Guid="*">
+            <RegistryValue Root="HKMU" Key="Software\Hikasa" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes"/>
+            <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Hikasa" Description="Compare folders and files" Target="[INSTALLDIR]hikasa-gui.exe" WorkingDirectory="INSTALLDIR" Icon="hikasa.ico"/>
+          </Component>
+          <Component Id="Association" Guid="*">
+            <RegistryValue Root="HKMU" Key="Software\Classes\.hikasa-pkg" Type="string" Value="Hikasa.Package" KeyPath="yes"/>
+            <RegistryValue Root="HKMU" Key="Software\Classes\Hikasa.Package" Type="string" Value="Hikasa settings package"/>
+            <RegistryValue Root="HKMU" Key="Software\Classes\Hikasa.Package\DefaultIcon" Type="string" Value="[INSTALLDIR]hikasa-gui.exe,0"/>
+            <RegistryValue Root="HKMU" Key="Software\Classes\Hikasa.Package\shell\open\command" Type="string" Value="&quot;[INSTALLDIR]hikasa-gui.exe&quot; &quot;%1&quot;"/>
+          </Component>
+          <!-- The PATH entry goes to the machine's or the user's environment, whichever the install is. REMOVE="ALL" keeps the
+               condition true on uninstall, when ADDTOPATH is not given: a component whose condition is false stays. -->
+          <Component Id="PathMachine" Guid="9D2C1E34-7A6F-4F3B-8C05-1B7E4A6D2F01">
+            <Condition>(ADDTOPATH OR REMOVE="ALL") AND ALLUSERS</Condition>
+            <RegistryValue Root="HKMU" Key="Software\Hikasa" Name="PathEntry" Type="integer" Value="1" KeyPath="yes"/>
+            <Environment Id="PathEntryMachine" Name="PATH" Value="[INSTALLDIR]" Action="set" Part="last" Permanent="no" System="yes"/>
+          </Component>
+          <Component Id="PathUser" Guid="3E8B5A71-2D4C-4E96-A1F7-60C9D8E3B2A5">
+            <Condition>(ADDTOPATH OR REMOVE="ALL") AND NOT ALLUSERS</Condition>
+            <RegistryValue Root="HKMU" Key="Software\Hikasa" Name="PathEntry" Type="integer" Value="1" KeyPath="yes"/>
+            <Environment Id="PathEntryUser" Name="PATH" Value="[INSTALLDIR]" Action="set" Part="last" Permanent="no" System="no"/>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+
+    <Feature Id="Complete" Title="Hikasa" Level="1">
+      <ComponentRef Id="Cli"/>
+      <ComponentRef Id="Gui"/>
+      <ComponentRef Id="Licenses"/>
+      <ComponentRef Id="Shortcut"/>
+      <ComponentRef Id="Association"/>
+      <ComponentRef Id="PathMachine"/>
+      <ComponentRef Id="PathUser"/>
+    </Feature>
+  </Product>
+</Wix>
