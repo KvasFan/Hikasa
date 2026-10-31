@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::archives::{
-    RawEntry, compress, config, name_of, on_disk, on_memory, raw_zip, tar_bytes,
+    RawEntry, RawTar, compress, config, name_of, on_disk, on_memory, raw_zip, tar_bytes,
 };
 use hikasa_core::{CancelToken, Classify, Ctl, ErrorKind, FileTime, Spec};
 use hikasa_vfs::{
@@ -426,6 +426,7 @@ fn cancel_of_prepare_and_spool_of_a_1_gib_stream() {
         assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
         done.duration_since(asked)
     });
+    println!("prepare stopped after {late:?}");
     assert!(late < Duration::from_millis(100), "{late:?}");
 
     // A spool: the index is built, then a read decodes the stream to a cache file.
@@ -447,12 +448,167 @@ fn cancel_of_prepare_and_spool_of_a_1_gib_stream() {
         assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
         done.duration_since(asked)
     });
+    println!("spool stopped after {late:?}");
     assert!(late < Duration::from_millis(100), "{late:?}");
     assert_eq!(
         memory.vfs.cache_used(),
         0,
         "a cancelled spool removes its file"
     );
+}
+
+/// A `tar.zst` of `gib` GiB of zeros, from frames of 1 GiB: its index takes a second or more in any build, and a test
+/// stops it long before that.
+fn slow_index(memory: &common::archives::OnMemory, gib: usize) -> Spec {
+    let zeros = |encoder: &mut zstd::stream::write::Encoder<'_, Vec<u8>>, mib: usize| {
+        for _ in 0..mib {
+            std::io::Write::write_all(encoder, &[0u8; 1 << 20]).unwrap();
+        }
+    };
+    let header = RawTar {
+        size: Some((gib as u64) << 30),
+        ..RawTar::file(b"big", b"")
+    }
+    .header();
+    let mut first = zstd::stream::write::Encoder::new(Vec::new(), 1).unwrap();
+    std::io::Write::write_all(&mut first, &header).unwrap();
+    zeros(&mut first, 1);
+    let mut stream = first.finish().unwrap();
+    let mut frame = zstd::stream::write::Encoder::new(Vec::new(), 1).unwrap();
+    zeros(&mut frame, 1024);
+    stream.extend(frame.finish().unwrap().repeat(gib));
+    memory.put("big.tar.zst", stream)
+}
+
+/// A decoder that panics leaves no reservation, no partial file and no lock behind: the next read works.
+#[test]
+fn a_panic_leaves_the_cache_usable() {
+    let data: Vec<(String, Vec<u8>)> = (0u8..3)
+        .map(|i| (format!("m{i}"), vec![i; 2 * MIB]))
+        .collect();
+    let memory = on_memory(ArchiveLimits::default());
+    let format = ArchiveFormat::TarGz;
+    let file = memory.put(name_of(format), compress(format, &tar_bytes(&data)));
+    let member = |i: u32| Spec::archive_member(file.clone(), format!("m{i}"));
+    assert_eq!(read(&*memory.vfs, &member(0)).len(), 2 * MIB);
+    let used = memory.vfs.cache_used();
+    memory.vfs.inject_decoder_panic();
+    let failed = memory.vfs.open_read(&member(1)).map(drop);
+    assert!(
+        matches!(failed, Err(VfsError::ArchiveCorrupt { .. })),
+        "{failed:?}"
+    );
+    assert_eq!(memory.vfs.cache_used(), used, "the reservation went back");
+    assert_eq!(read(&*memory.vfs, &member(1)), vec![1u8; 2 * MIB]);
+    assert_eq!(read(&*memory.vfs, &member(2)), vec![2u8; 2 * MIB]);
+}
+
+/// G4 for a call that waits: it does not wait for the pass of another call to end.
+#[test]
+fn cancel_of_a_call_waiting_for_an_index() {
+    let limits = ArchiveLimits {
+        ratio_max: 0,
+        ..ArchiveLimits::default()
+    };
+    let memory = on_memory(limits);
+    let file = slow_index(&memory, 7);
+    let root = Spec::archive_member(file, "");
+    let stop_builder = CancelToken::new();
+    let cancel = CancelToken::new();
+    std::thread::scope(|scope| {
+        let (vfs, spec, stop) = (&memory.vfs, &root, &stop_builder);
+        let builder = scope.spawn(move || vfs.list(spec, &ListOptions::default(), stop).map(drop));
+        std::thread::sleep(Duration::from_millis(20));
+        let (vfs, spec, token) = (&memory.vfs, &root, &cancel);
+        let waiter = scope.spawn(move || {
+            let result = vfs.list(spec, &ListOptions::default(), token).map(drop);
+            (result, Instant::now())
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        let asked = Instant::now();
+        cancel.cancel();
+        let (result, done) = waiter.join().unwrap();
+        assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
+        let late = done.duration_since(asked);
+        println!("waiter stopped after {late:?}");
+        assert!(late < Duration::from_millis(100), "{late:?}");
+        assert!(
+            !builder.is_finished(),
+            "the pass still ran: the wait was real"
+        );
+        stop_builder.cancel();
+        assert!(matches!(builder.join().unwrap(), Err(VfsError::Cancelled)));
+    });
+}
+
+/// A read that waits for the one decoder of a stream stops too.
+#[test]
+fn cancel_of_a_read_waiting_for_the_decoder() {
+    let limits = ArchiveLimits {
+        ratio_max: 0,
+        ..ArchiveLimits::default()
+    };
+    let memory = on_memory(limits);
+    let file = slow_index(&memory, 1);
+    let member = Spec::archive_member(file, "big");
+    memory.vfs.prepare(&member, &Ctl::detached()).unwrap();
+    let stop_reader = CancelToken::new();
+    let cancel = CancelToken::new();
+    std::thread::scope(|scope| {
+        let (vfs, spec, stop) = (&memory.vfs, &member, &stop_reader);
+        let reader = scope.spawn(move || vfs.open_read_with(spec, stop).map(drop));
+        std::thread::sleep(Duration::from_millis(20));
+        let (vfs, spec, token) = (&memory.vfs, &member, &cancel);
+        let waiter = scope.spawn(move || {
+            let result = vfs.open_read_with(spec, token).map(drop);
+            (result, Instant::now())
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        let asked = Instant::now();
+        cancel.cancel();
+        let (result, done) = waiter.join().unwrap();
+        assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
+        let late = done.duration_since(asked);
+        println!("reader stopped after {late:?}");
+        assert!(late < Duration::from_millis(100), "{late:?}");
+        stop_reader.cancel();
+        assert!(matches!(reader.join().unwrap(), Err(VfsError::Cancelled)));
+    });
+}
+
+/// The tree of a zip of 400,000 entries: cancellation reaches the crate's directory read, the sorts and the loops of
+/// `build_tree`, whichever of them a delay lands in.
+#[test]
+fn cancel_of_a_large_tree() {
+    let entries: Vec<RawEntry> = (0..400_000)
+        .map(|i| RawEntry::new(format!("dir{}/file{i}", i % 1000).as_bytes(), b""))
+        .collect();
+    let bytes = raw_zip(&entries);
+    for delay in [1, 5, 20, 60, 150] {
+        let memory = on_memory(ArchiveLimits::default());
+        let root = memory.root("big.zip", bytes.clone());
+        let cancel = CancelToken::new();
+        let ctl = Ctl {
+            cancel: &cancel,
+            progress: &hikasa_core::NullProgress,
+        };
+        let (late, stopped) = std::thread::scope(|scope| {
+            let (vfs, root) = (&memory.vfs, &root);
+            let worker = scope.spawn(move || (vfs.prepare(root, &ctl), Instant::now()));
+            std::thread::sleep(Duration::from_millis(delay));
+            let asked = Instant::now();
+            cancel.cancel();
+            let (result, done) = worker.join().unwrap();
+            // A fast machine may have finished: the bound is on the time, not on the answer.
+            assert!(
+                result.is_ok() || matches!(result, Err(VfsError::Cancelled)),
+                "{result:?}"
+            );
+            (done.saturating_duration_since(asked), result.is_err())
+        });
+        println!("tree, {delay} ms in: stopped {stopped} after {late:?}");
+        assert!(late < Duration::from_millis(100), "{delay} ms in: {late:?}");
+    }
 }
 
 #[test]

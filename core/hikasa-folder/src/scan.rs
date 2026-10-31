@@ -198,8 +198,8 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
     let rules = model.rules();
     env.ctl.check()?;
     let specs = model.specs();
-    let left = load_base(env.vfs, Side::Left, &specs.left)?;
-    let right = load_base(env.vfs, Side::Right, &specs.right)?;
+    let left = load_base(env, Side::Left, &specs.left)?;
+    let right = load_base(env, Side::Right, &specs.right)?;
     let caps = [left.capabilities, right.capabilities];
     let case = resolve_case(rules.alignment.case, caps);
     let resolved = ResolvedRules::new(rules, case, env.now)?;
@@ -340,7 +340,8 @@ fn effective_criteria(criteria: &Criteria, caps: [Capabilities; 2]) -> Criteria 
 }
 
 /// Stats a base (symlinks followed: a base named through a link is its target) and reads its capabilities.
-fn load_base(vfs: &dyn Vfs, side: Side, spec: &Spec) -> Result<BaseInfo, FolderError> {
+fn load_base(env: &FolderEnv<'_>, side: Side, spec: &Spec) -> Result<BaseInfo, FolderError> {
+    let vfs = env.vfs;
     let not_loadable = |source: VfsError| {
         if source.is_cancelled() {
             FolderError::Cancelled
@@ -352,6 +353,8 @@ fn load_base(vfs: &dyn Vfs, side: Side, spec: &Spec) -> Result<BaseInfo, FolderE
             }
         }
     };
+    // The slow part of a base inside an archive runs here, where it can be cancelled: `stat` cannot.
+    vfs.prepare(spec, &env.ctl).map_err(not_loadable)?;
     let entry = vfs.stat(spec, FollowLinks::Yes).map_err(not_loadable)?;
     if entry.kind != EntryKind::Dir {
         return Err(FolderError::BaseNotFolder {

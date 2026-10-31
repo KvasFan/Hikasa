@@ -59,11 +59,11 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderComp
         Ok(plan) => plan,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
-    let prepared = match ctx.service.folder_prepare(request) {
+    let job = ctx.job(JobKind::FolderCompare);
+    let prepared = match ctx.service.folder_prepare_in(request, &job) {
         Ok(prepared) => prepared,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
-    let job = ctx.job(JobKind::FolderCompare);
     let resp = match ctx.service.folder_run(&prepared, &job, &NullObserver) {
         Ok(resp) => resp,
         Err(e) => {

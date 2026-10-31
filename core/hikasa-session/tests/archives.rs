@@ -234,3 +234,57 @@ fn input_stamps_of_members_read_no_content() {
         "",
     ));
 }
+
+/// A cancelled job stops at the index on every path that reaches one (G4): `quick`, `text compare`, a folder
+/// comparison before its scan, `vfs stat`, `vfs cat`.
+#[test]
+fn a_cancelled_job_stops_at_the_index() {
+    use hikasa_session::api::{ApiError, FolderCompareRequest, QuickMethod, QuickRequest};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = service(tmp.path());
+    let work = tmp.path().join("work");
+    let file = write(&work, "a.zip", &stored(&[("x", b"one")]));
+    let member = file.join("x");
+    let plain = write(&work, "plain.txt", b"one");
+    let cancelled = || {
+        let job = job(&svc, JobKind::VfsRead);
+        job.cancel.cancel();
+        job
+    };
+    let quick = QuickRequest {
+        left: os(&member),
+        right: os(&plain),
+        method: QuickMethod::Binary,
+        ..QuickRequest::default()
+    };
+    assert!(matches!(
+        svc.quick(&quick, &cancelled()),
+        Err(ApiError::Cancelled)
+    ));
+    let stat = svc.vfs_stat_in(member.as_os_str(), FollowLinks::Yes, &cancelled());
+    assert!(matches!(stat, Err(ApiError::Cancelled)), "{stat:?}");
+    let cat = svc.vfs_cat(member.as_os_str(), &mut Vec::new(), &cancelled());
+    assert!(matches!(cat, Err(ApiError::Cancelled)), "{cat:?}");
+    let text = TextCompareRequest {
+        left: os(&member),
+        right: os(&plain),
+        ..TextCompareRequest::default()
+    };
+    let text = svc.text_compare(&text, &cancelled(), None);
+    assert!(matches!(text, Err(ApiError::Cancelled)), "{text:?}");
+    // Nested: the base resolves through the outer archive, inside the job.
+    let nested = write(
+        &work,
+        "n.zip",
+        &stored(&[("inner.zip", &stored(&[("y", b"z")]))]),
+    );
+    let folder = FolderCompareRequest {
+        left: os(&nested.join("inner.zip")),
+        right: os(&work),
+        ..FolderCompareRequest::default()
+    };
+    let prepared = svc.folder_prepare_in(&folder, &cancelled());
+    assert!(matches!(prepared, Err(ApiError::Cancelled)), "{prepared:?}");
+    assert_eq!(svc.vfs().take_warnings().len(), 0);
+}

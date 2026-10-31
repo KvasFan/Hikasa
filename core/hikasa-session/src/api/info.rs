@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 
-use hikasa_core::{ErrorReport, Phase, Progress, Side, Unit};
+use hikasa_core::{ErrorReport, Phase, Progress, Side, Spec, Unit};
 use hikasa_formats::{
     DetectReason, Detection, EnabledOverrides, FormatError, LineState, Origin, ShadowStatus,
     to_toml, tokenize_all,
@@ -276,15 +276,32 @@ impl Service {
 
     /// `vfs stat`.
     pub fn vfs_stat(&self, spec: &OsStr, follow: FollowLinks) -> Result<VfsStatDto, ApiError> {
+        run_guarded(|| self.stat_dto(&self.parse_spec(spec)?, follow))
+    }
+
+    /// `vfs stat` inside a job: indexing an archive stops with it.
+    pub fn vfs_stat_in(
+        &self,
+        spec: &OsStr,
+        follow: FollowLinks,
+        job: &JobControl,
+    ) -> Result<VfsStatDto, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
-            let entry = self.vfs().stat(&spec, follow).map_err(ApiError::from_vfs)?;
-            let caps = self.vfs().capabilities(&spec).map_err(ApiError::from_vfs)?;
-            Ok(VfsStatDto {
-                spec: spec.canonical(),
-                entry: VfsEntryDto::new(&entry),
-                capabilities: VfsStatDto::capability_names(caps),
-            })
+            let spec = self.parse_spec_in(spec, self.use_of(spec), &job.cancel)?;
+            self.vfs()
+                .prepare(&spec, &job.ctl())
+                .map_err(ApiError::from_vfs)?;
+            self.stat_dto(&spec, follow)
+        })
+    }
+
+    fn stat_dto(&self, spec: &Spec, follow: FollowLinks) -> Result<VfsStatDto, ApiError> {
+        let entry = self.vfs().stat(spec, follow).map_err(ApiError::from_vfs)?;
+        let caps = self.vfs().capabilities(spec).map_err(ApiError::from_vfs)?;
+        Ok(VfsStatDto {
+            spec: spec.canonical(),
+            entry: VfsEntryDto::new(&entry),
+            capabilities: VfsStatDto::capability_names(caps),
         })
     }
 
@@ -301,6 +318,10 @@ impl Service {
         run_guarded(|| {
             let spec = self.parse_spec_in(spec, self.use_of(spec), &job.cancel)?;
             let canonical = spec.canonical();
+            // Indexing runs here, where it can be cancelled; `stat` below cannot.
+            self.vfs()
+                .prepare(&spec, &job.ctl())
+                .map_err(ApiError::from_vfs)?;
             let total = self
                 .vfs()
                 .stat(&spec, FollowLinks::Yes)

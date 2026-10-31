@@ -254,7 +254,7 @@ impl FolderViewModel {
             "prepare folder comparison".into(),
             wake,
             move |svc, job| {
-                let prepared = svc.folder_prepare(&request);
+                let prepared = svc.folder_prepare_in(&request, job);
                 // Stop while preparing: no scan may start (the UI also drops this job's result).
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);

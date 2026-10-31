@@ -250,7 +250,7 @@ impl Service {
                 target,
                 options,
             } => {
-                let pairs = self.pairs(sources, target, options.create_parents, platform)?;
+                let pairs = self.pairs(sources, target, options.create_parents, platform, job)?;
                 let router = self.router();
                 ops::plan_copy(&*router, &*router, &pairs, options, &job.ctl()).map_err(cancelled)
             }
@@ -260,7 +260,7 @@ impl Service {
                 options,
             } => {
                 refuse_dot_names(sources, platform)?;
-                let pairs = self.pairs(sources, target, options.create_parents, platform)?;
+                let pairs = self.pairs(sources, target, options.create_parents, platform, job)?;
                 let router = self.router();
                 ops::plan_move(&*router, &*router, &pairs, options, &job.ctl()).map_err(cancelled)
             }
@@ -323,14 +323,23 @@ impl Service {
         target: &OsStr,
         create_parents: bool,
         platform: Platform,
+        job: &JobControl,
     ) -> Result<Vec<(Spec, Spec)>, ApiError> {
         let sources = sources
             .iter()
-            .map(|s| self.parse_spec(s))
+            .map(|s| self.parse_spec_in(s, self.use_of(s), &job.cancel))
             .collect::<Result<Vec<_>, _>>()?;
         let target_spec = self.write_spec(target)?;
         let into = ends_with_separator(target, platform);
         let router = self.router();
+        // Indexing runs here, where it can be cancelled; `stat` cannot. Any other failure is its item's error.
+        for source in &sources {
+            if let Err(error) = router.prepare(source, &job.ctl())
+                && error.is_cancelled()
+            {
+                return Err(ApiError::Cancelled);
+            }
+        }
         ops::resolve_targets(
             &*router as &dyn Vfs,
             &sources,

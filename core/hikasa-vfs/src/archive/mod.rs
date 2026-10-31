@@ -191,6 +191,8 @@ struct Slot {
     /// The member of the first read of a compressed tar. Its lock keeps one decoder per stream at a time.
     first_read: Mutex<Option<Box<str>>>,
     last_use: AtomicU64,
+    /// Members of the built index, as counted in [`Indexes::members`].
+    members: AtomicUsize,
 }
 
 /// The indexes and stamps.
@@ -200,6 +202,18 @@ struct Indexes {
     stamps: HashMap<Spec, Stamp>,
     next_id: u64,
     tick: u64,
+    /// Members of all built indexes in `slots`.
+    members: usize,
+}
+
+impl Indexes {
+    /// Takes `key` out, with its cache files and its share of the total.
+    fn drop_slot(&mut self, key: &Spec, cache: &Cache) {
+        if let Some(slot) = self.slots.remove(key) {
+            self.members -= slot.members.load(Ordering::Relaxed);
+            cache.drop_archive(slot.id);
+        }
+    }
 }
 
 /// A `Vfs` of archives, stacked on a base (D-136). See the module documentation.
@@ -394,15 +408,13 @@ impl ArchiveVfs {
                 .map(|(key, _)| key.clone())
                 .collect();
             for key in stale {
-                if let Some(slot) = indexes.slots.remove(&key) {
-                    self.cache.drop_archive(slot.id);
-                }
+                indexes.drop_slot(&key, &self.cache);
             }
         }
         Ok(config)
     }
 
-    /// The slot of `container`, created on first use, with the indexes trimmed to their budget.
+    /// The slot of `container`, created on first use.
     fn slot(&self, container: &Spec, format: ArchiveFormat) -> Arc<Slot> {
         let mut indexes = lock(&self.indexes);
         indexes.tick += 1;
@@ -419,12 +431,25 @@ impl ArchiveVfs {
             index: Mutex::new(None),
             first_read: Mutex::new(None),
             last_use: AtomicU64::new(tick),
+            members: AtomicUsize::new(0),
         });
-        if let Some(old) = indexes.slots.insert(container.clone(), Arc::clone(&slot)) {
-            self.cache.drop_archive(old.id);
-        }
-        trim_indexes(&mut indexes, &self.cache);
+        indexes.drop_slot(container, &self.cache);
+        indexes.slots.insert(container.clone(), Arc::clone(&slot));
         slot
+    }
+
+    /// Counts a built index and trims the indexes to their budget. A slot dropped meanwhile counts for nothing.
+    fn count_index(&self, container: &Spec, slot: &Arc<Slot>, members: usize) {
+        let mut indexes = lock(&self.indexes);
+        let current = indexes
+            .slots
+            .get(container)
+            .is_some_and(|now| Arc::ptr_eq(now, slot));
+        if current {
+            slot.members.store(members, Ordering::Relaxed);
+            indexes.members += members;
+            trim_indexes(&mut indexes, &self.cache, INDEX_MEMBERS_MAX);
+        }
     }
 
     /// The index of the archive `container`, built on first need.
@@ -442,13 +467,14 @@ impl ArchiveVfs {
             ));
         };
         let slot = self.slot(container, format);
-        let mut built = lock(&slot.index);
+        let mut built = lock_until(&slot.index, ctl.cancel)?;
         if let Some(index) = built.as_ref() {
             return Ok((Arc::clone(&slot), Arc::clone(index)));
         }
         let index = Arc::new(self.build(container, format, &name, config, ctl)?);
         *built = Some(Arc::clone(&index));
         drop(built);
+        self.count_index(container, &slot, index.tree.nodes.len());
         Ok((slot, index))
     }
 
@@ -821,28 +847,21 @@ impl ArchiveVfs {
     }
 }
 
-/// Drops the least recently used indexes that no call holds until the members of all indexes fit.
-fn trim_indexes(indexes: &mut Indexes, cache: &Cache) {
-    let members = |slot: &Slot| {
-        slot.index
-            .try_lock()
-            .ok()
-            .and_then(|index| index.as_ref().map(|index| index.tree.nodes.len()))
-            .unwrap_or(0)
-    };
-    let mut total: usize = indexes.slots.values().map(|slot| members(slot)).sum();
-    while total > INDEX_MEMBERS_MAX {
+/// Drops the least recently used indexes that no call holds until the members of all indexes fit in `max`.
+fn trim_indexes(indexes: &mut Indexes, cache: &Cache, max: usize) {
+    while indexes.members > max {
         let victim = indexes
             .slots
             .iter()
-            .filter(|(_, slot)| Arc::strong_count(slot) == 1 && members(slot) > 0)
+            .filter(|(_, slot)| {
+                Arc::strong_count(slot) == 1 && slot.members.load(Ordering::Relaxed) > 0
+            })
             .min_by_key(|(_, slot)| slot.last_use.load(Ordering::Relaxed))
             .map(|(key, _)| key.clone());
-        let Some(slot) = victim.and_then(|key| indexes.slots.remove(&key)) else {
+        let Some(key) = victim else {
             return;
         };
-        total -= members(&slot);
-        cache.drop_archive(slot.id);
+        indexes.drop_slot(&key, cache);
     }
 }
 
@@ -1282,6 +1301,44 @@ impl Drop for ArchiveVfs {
 mod tests {
     use super::*;
     use hikasa_core::Classify;
+
+    fn spec_of(name: &str) -> Spec {
+        Spec::Local(hikasa_core::LocalPath::new(PathBuf::from(name)).unwrap())
+    }
+
+    fn slot_of(id: u64, members: usize, last_use: u64) -> Arc<Slot> {
+        let outer = spec_of("/a.zip");
+        Arc::new(Slot {
+            id,
+            outer,
+            format: ArchiveFormat::Zip,
+            index: Mutex::new(None),
+            first_read: Mutex::new(None),
+            last_use: AtomicU64::new(last_use),
+            members: AtomicUsize::new(members),
+        })
+    }
+
+    /// The total runs along, so a new slot costs nothing and only an index over the budget looks at the others.
+    #[test]
+    fn indexes_are_trimmed_by_the_running_total() {
+        let cache = Cache::default();
+        let mut indexes = Indexes::default();
+        let spec = |n: u64| spec_of(&format!("/{n}.zip"));
+        for n in 0..4 {
+            indexes.slots.insert(spec(n), slot_of(n, 10, n));
+            indexes.members += 10;
+        }
+        let held = indexes.slots.get(&spec(0)).cloned();
+        trim_indexes(&mut indexes, &cache, 25);
+        assert_eq!(indexes.members, 20);
+        assert_eq!(indexes.slots.len(), 2);
+        assert!(indexes.slots.contains_key(&spec(0)), "a call holds it");
+        assert!(indexes.slots.contains_key(&spec(3)), "the newest");
+        drop(held);
+        indexes.drop_slot(&spec(0), &cache);
+        assert_eq!(indexes.members, 10);
+    }
 
     #[test]
     fn default_limits_are_the_table() {
