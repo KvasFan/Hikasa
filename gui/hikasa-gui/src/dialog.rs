@@ -136,7 +136,7 @@ pub trait DialogModel: Any {
     fn busy(&self) -> bool {
         false
     }
-    /// The size of the dialog's body (`None`: a small dialog that follows its content).
+    /// The width of the dialog and the height of its body (`None`: a small dialog that follows its content).
     fn size(&self) -> Option<(f32, f32)> {
         None
     }

@@ -1,4 +1,5 @@
-//! Draws the Export, Import and Restore wizards (M2 W4c, D-131). The models decide; this only edits their fields.
+//! Draws the Export, Import and Restore wizards (M2 W4c, D-131) into a body of fixed height: a list takes the height
+//! that what stands under it leaves. The models decide; this only edits their fields.
 
 use egui::{Color32, RichText, ScrollArea, TextEdit, Ui};
 use hikasa_session::package::{Category, PlanAction};
@@ -9,7 +10,30 @@ use crate::wizards::{
     summary_lines,
 };
 
-const LIST_HEIGHT: f32 = 300.0;
+/// The least height of a list.
+const MIN_LIST_HEIGHT: f32 = 60.0;
+
+/// A list that fills the body but for what `below` draws under it. The height of `below` is the one of the last frame.
+fn filled<S: ?Sized>(
+    ui: &mut Ui,
+    state: &mut S,
+    list: impl FnOnce(&mut Ui, &mut S),
+    below: impl FnOnce(&mut Ui, &mut S),
+) {
+    let id = ui.scope_id().with("hk-wizard-below");
+    let reserved: f32 = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .max_height((ui.available_height() - reserved).max(MIN_LIST_HEIGHT))
+        .show(ui, |ui| list(ui, state));
+    let top = ui.cursor().top();
+    below(ui, state);
+    let height = ui.cursor().top() - top;
+    if height != reserved {
+        ui.ctx().data_mut(|d| d.insert_temp(id, height));
+        ui.ctx().request_repaint();
+    }
+}
 
 fn error_line(ui: &mut Ui, error: Option<&String>, pal: &Palette) {
     if let Some(error) = error {
@@ -75,14 +99,21 @@ pub fn export(ui: &mut Ui, w: &mut ExportWizard, pal: &Palette) {
     match w.step {
         0 => {
             ui.label("Choose what to export.");
-            ScrollArea::vertical()
-                .max_height(LIST_HEIGHT)
-                .show(ui, |ui| {
+            filled(
+                ui,
+                w,
+                |ui, w| {
                     for row in &mut w.rows {
                         let per_item = row.category.per_item();
                         category_row(ui, row, pal, per_item, false);
                     }
-                });
+                },
+                |ui, w| {
+                    busy_line(ui, w.busy(), pal);
+                    error_line(ui, w.error.as_ref(), pal);
+                },
+            );
+            return;
         }
         1 => {
             ui.label("The package file");
@@ -112,27 +143,36 @@ pub fn import(ui: &mut Ui, w: &mut ImportWizard, pal: &Palette) {
         }
         1 => {
             ui.label("Choose what to import.");
-            ScrollArea::vertical()
-                .max_height(LIST_HEIGHT - 60.0)
-                .show(ui, |ui| {
+            filled(
+                ui,
+                w,
+                |ui, w| {
                     for row in &mut w.rows {
                         category_row(ui, row, pal, true, true);
                     }
-                });
-            ui.separator();
-            ui.checkbox(&mut w.force, "Include locked sessions");
-            ui.horizontal(|ui| {
-                for category in [Category::Sessions, Category::Formats, Category::Workspaces] {
-                    let mut on = w.delete_existing.contains(&category);
-                    if ui.checkbox(&mut on, delete_caption(category)).changed() {
-                        if on {
-                            w.delete_existing.insert(category);
-                        } else {
-                            w.delete_existing.remove(&category);
+                },
+                |ui, w| {
+                    ui.separator();
+                    ui.checkbox(&mut w.force, "Include locked sessions");
+                    ui.horizontal(|ui| {
+                        for category in
+                            [Category::Sessions, Category::Formats, Category::Workspaces]
+                        {
+                            let mut on = w.delete_existing.contains(&category);
+                            if ui.checkbox(&mut on, delete_caption(category)).changed() {
+                                if on {
+                                    w.delete_existing.insert(category);
+                                } else {
+                                    w.delete_existing.remove(&category);
+                                }
+                            }
                         }
-                    }
-                }
-            });
+                    });
+                    busy_line(ui, w.busy(), pal);
+                    error_line(ui, w.error.as_ref(), pal);
+                },
+            );
+            return;
         }
         2 => {
             if let Some(plan) = &w.summary {
@@ -156,10 +196,12 @@ pub fn import(ui: &mut Ui, w: &mut ImportWizard, pal: &Palette) {
                     "{} items imported, {failed} failed.",
                     result.results.len() - failed
                 ));
-                ScrollArea::vertical()
-                    .max_height(LIST_HEIGHT)
-                    .show(ui, |ui| {
-                        for r in &result.results {
+                filled(
+                    ui,
+                    w,
+                    |ui, w| {
+                        let results = w.result.iter().flat_map(|r| &r.results);
+                        for r in results {
                             let colour: Color32 = if r.ok { pal.fg } else { pal.error };
                             let mut text = format!("{}: {}", r.category, r.name);
                             if let Some(e) = &r.error {
@@ -167,7 +209,13 @@ pub fn import(ui: &mut Ui, w: &mut ImportWizard, pal: &Palette) {
                             }
                             ui.label(RichText::new(text).color(colour));
                         }
-                    });
+                    },
+                    |ui, w| {
+                        busy_line(ui, w.busy(), pal);
+                        error_line(ui, w.error.as_ref(), pal);
+                    },
+                );
+                return;
             }
         }
     }
@@ -180,28 +228,49 @@ pub fn restore(ui: &mut Ui, w: &mut RestoreWizard, pal: &Palette) {
     match w.step {
         0 => {
             ui.label("Choose what goes back to the factory defaults.");
-            for (category, on) in &mut w.categories {
-                ui.checkbox(on, category_caption(*category));
-            }
-            ui.checkbox(&mut w.session_defaults, "Session defaults");
-            ui.separator();
-            ui.checkbox(&mut w.delete_sessions, "Delete all named sessions");
-            ui.checkbox(&mut w.delete_workspaces, "Delete all workspaces");
-            ui.checkbox(&mut w.force, "Include locked sessions");
+            filled(
+                ui,
+                w,
+                |ui, w| {
+                    for (category, on) in &mut w.categories {
+                        ui.checkbox(on, category_caption(*category));
+                    }
+                    ui.checkbox(&mut w.session_defaults, "Session defaults");
+                },
+                |ui, w| {
+                    ui.separator();
+                    ui.checkbox(&mut w.delete_sessions, "Delete all named sessions");
+                    ui.checkbox(&mut w.delete_workspaces, "Delete all workspaces");
+                    ui.checkbox(&mut w.force, "Include locked sessions");
+                    busy_line(ui, w.busy(), pal);
+                    error_line(ui, w.error.as_ref(), pal);
+                },
+            );
+            return;
         }
         1 => {
             if let Some(plan) = &w.plan {
                 ui.label(format!("{} files will be deleted.", plan.files.len()));
-                ScrollArea::vertical()
-                    .max_height(LIST_HEIGHT)
-                    .show(ui, |ui| {
+                filled(
+                    ui,
+                    w,
+                    |ui, w| {
+                        let Some(plan) = &w.plan else {
+                            return;
+                        };
                         for file in &plan.files {
                             ui.label(RichText::new(&file.path).small());
                         }
                         for warning in &plan.warnings {
                             ui.label(RichText::new(&warning.message).color(pal.warning));
                         }
-                    });
+                    },
+                    |ui, w| {
+                        busy_line(ui, w.busy(), pal);
+                        error_line(ui, w.error.as_ref(), pal);
+                    },
+                );
+                return;
             }
         }
         _ => {

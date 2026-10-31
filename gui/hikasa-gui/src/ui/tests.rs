@@ -12,7 +12,7 @@ use crate::startup::Deferred;
 use crate::tests::{World, text_pair};
 use crate::window::ViewModel;
 
-fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
+pub(super) fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
     let core = world.app(None).0;
     HikasaApp::with_context(
         ctx,
@@ -24,7 +24,7 @@ fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
     )
 }
 
-fn raw(time: f64) -> RawInput {
+pub(super) fn raw(time: f64) -> RawInput {
     RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -36,7 +36,7 @@ fn raw(time: f64) -> RawInput {
 }
 
 /// One frame: the logic, then the drawing (what eframe does).
-fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullOutput {
+pub(super) fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullOutput {
     let mut out = ctx.run_ui(raw, |ui| {
         app.step(ui.ctx());
         app.draw(ui);
@@ -45,14 +45,14 @@ fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullO
     out
 }
 
-fn root_commands(out: &egui::FullOutput) -> Vec<ViewportCommand> {
+pub(super) fn root_commands(out: &egui::FullOutput) -> Vec<ViewportCommand> {
     out.viewport_output
         .get(&ViewportId::ROOT)
         .map(|v| v.commands.clone())
         .unwrap_or_default()
 }
 
-fn close_root(time: f64) -> RawInput {
+pub(super) fn close_root(time: f64) -> RawInput {
     let mut r = raw(time);
     r.viewports.insert(
         ViewportId::ROOT,
@@ -468,7 +468,7 @@ fn toolbar_frame(
     result
 }
 
-fn pointer_button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Event {
+pub(super) fn pointer_button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Event {
     Event::PointerButton {
         pos,
         button,

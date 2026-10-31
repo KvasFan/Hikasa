@@ -2,7 +2,7 @@
 
 The Text Compare view shows two text files side by side, aligned line by line. Changed lines are highlighted,
 and inside them the changed characters; unimportant differences use a lighter colour. The thumbnail on the
-right shows where the differences are.
+left shows where the differences are.
 
 ## Navigating
 

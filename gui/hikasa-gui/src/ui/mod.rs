@@ -477,6 +477,7 @@ impl HikasaApp {
             .window(window)
             .is_some_and(|w| w.dialogs.wants_keys());
         let popup_open = egui::Popup::is_any_open(&ctx);
+        let help_open = self.core.window(window).is_some_and(|w| w.help.is_some());
         let mut dialog_keys = Vec::new();
         let mut run = Vec::new();
         {
@@ -505,8 +506,8 @@ impl HikasaApp {
                     }
                     if dialog_open {
                         let plain = !shortcut.ctrl && !shortcut.alt && !shortcut.shift;
-                        // An open combo or colour picker takes Esc first: egui closes it.
-                        if plain && shortcut.key == "Esc" && popup_open {
+                        // An open combo or colour picker takes Esc first: egui closes it; so does the help.
+                        if plain && shortcut.key == "Esc" && (popup_open || help_open) {
                             return true;
                         }
                         if plain && matches!(shortcut.key.as_str(), "Esc" | "Enter" | "F1") {
@@ -710,8 +711,8 @@ impl HikasaApp {
             }
         }
 
-        // Help panel.
-        if let Some(topic) = help {
+        // Help panel (with a dialog open: over the dialog, below, or the modal would take its clicks).
+        if let Some(topic) = help.filter(|_| !dialog_open) {
             egui::Panel::right("hk-help")
                 .resizable(true)
                 .default_size(380.0)
@@ -853,6 +854,13 @@ impl HikasaApp {
                 for input in dialog::show(ui, &mut **top, depth, &pal) {
                     actions.push(Action::Dialog(input));
                 }
+            }
+        }
+        if let Some(topic) = help.filter(|_| dialog_open) {
+            match help::show_over_dialog(ui, topic, &pal) {
+                Some(help::HelpAction::Open(id)) => actions.push(Action::Help(id)),
+                Some(help::HelpAction::Close) => actions.push(Action::CloseHelp),
+                None => {}
             }
         }
 
@@ -1171,3 +1179,5 @@ impl eframe::App for HikasaApp {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_pointer;

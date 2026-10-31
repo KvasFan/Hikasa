@@ -23,7 +23,7 @@ pub fn show(ui: &mut Ui, notices: &[&Notice], pal: &Palette) -> Option<(String, 
     }
     let mut pressed = None;
     let ctx = ui.ctx().clone();
-    egui::Area::new(egui::Id::unique("hk-notices"))
+    let shown = egui::Area::new(egui::Id::unique("hk-notices"))
         .order(egui::Order::Foreground)
         .anchor(Align2::RIGHT_TOP, egui::vec2(-12.0, 64.0))
         .show(&ctx, |ui| {
@@ -67,5 +67,8 @@ pub fn show(ui: &mut Ui, notices: &[&Notice], pal: &Palette) -> Option<(String, 
                 ui.add_space(6.0);
             }
         });
+    // An area that was on screen before a dialog opened stays under the modal, which takes its clicks; and a notice
+    // of the Options dialog's files is answered with that dialog open (§1.4.7).
+    ctx.move_to_top(shown.response.layer_id);
     pressed
 }

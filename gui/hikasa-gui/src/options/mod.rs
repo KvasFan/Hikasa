@@ -314,6 +314,21 @@ impl OptionsDialog {
         })
     }
 
+    /// The search text changed: a page it does not match gives way to the first one that it does, so the page
+    /// shown is one the tree lists for this search (no match: the page stays, the drawing layer hides it).
+    pub fn search_changed(&mut self) {
+        let needle = self.search.trim().to_lowercase();
+        if needle.is_empty() {
+            return;
+        }
+        if page_of(self.page).is_some_and(|p| self.page_matches(p, &needle)) {
+            return;
+        }
+        if let Some(first) = PAGES.iter().find(|p| self.page_matches(p, &needle)) {
+            self.show_page(first.id);
+        }
+    }
+
     /// Shows a page.
     pub fn show_page(&mut self, id: &'static str) {
         self.page = id;

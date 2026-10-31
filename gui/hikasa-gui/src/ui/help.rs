@@ -7,6 +7,9 @@ use hikasa_session::help::{self, Block, Inline};
 use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
 
+/// The width of the panel over a dialog.
+const WIDTH: f32 = 380.0;
+
 /// What the user asked for while the panel was drawn.
 pub enum HelpAction {
     /// Open another topic.
@@ -76,6 +79,31 @@ pub fn show(ui: &mut Ui, id: &str, pal: &Palette) -> Option<HelpAction> {
         action = Some(HelpAction::Close);
     }
     action
+}
+
+/// The panel over a modal dialog (F1 in a dialog): a foreground area on the right edge, on top of the dialog. A panel
+/// of the window would lie under the modal's backdrop, which takes its clicks.
+pub fn show_over_dialog(ui: &mut Ui, id: &str, pal: &Palette) -> Option<HelpAction> {
+    let ctx = ui.ctx().clone();
+    let height = ctx.content_rect().height();
+    let margin = egui::Margin::symmetric(10, 6);
+    let shown = egui::Area::new(egui::Id::unique("hk-help-over-dialog"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
+        .show(&ctx, |ui| {
+            egui::Frame::NONE
+                .fill(pal.chrome)
+                .inner_margin(margin)
+                .show(ui, |ui| {
+                    let size = egui::vec2(WIDTH, height - margin.sum().y);
+                    ui.set_min_size(size);
+                    ui.set_max_size(size);
+                    show(ui, id, pal)
+                })
+                .inner
+        });
+    ctx.move_to_top(shown.response.layer_id);
+    shown.inner
 }
 
 /// One paragraph or list item, wrapped, with clickable links.

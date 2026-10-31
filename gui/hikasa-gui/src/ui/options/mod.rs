@@ -14,6 +14,9 @@ use crate::ui::theme::Palette;
 const TREE_WIDTH: f32 = 210.0;
 const PAGE_WIDTH: f32 = 610.0;
 const PAGE_HEIGHT: f32 = 470.0;
+/// The columns of the check boxes of the commands list.
+const TOOLBAR_COLUMN: f32 = 76.0;
+const MENU_COLUMN: f32 = 62.0;
 
 /// Draws the dialog.
 pub fn show(ui: &mut Ui, d: &mut OptionsDialog, pal: &Palette) {
@@ -37,6 +40,9 @@ pub fn show(ui: &mut Ui, d: &mut OptionsDialog, pal: &Palette) {
                     if search.gained_focus() {
                         d.end_capture();
                     }
+                    if search.changed() {
+                        d.search_changed();
+                    }
                     ScrollArea::vertical()
                         .id_salt("hk-options-tree")
                         .max_height(height - 28.0)
@@ -49,7 +55,15 @@ pub fn show(ui: &mut Ui, d: &mut OptionsDialog, pal: &Palette) {
                         .id_salt(("hk-options-page", d.page))
                         .max_height(height)
                         .auto_shrink([false, false])
-                        .show(ui, |ui| page(ui, d, pal));
+                        .show(ui, |ui| {
+                            if d.visible_pages().is_empty() {
+                                ui.label(
+                                    RichText::new("No page matches the search.").color(pal.muted),
+                                );
+                            } else {
+                                page(ui, d, pal);
+                            }
+                        });
                 });
             },
         );
@@ -551,18 +565,33 @@ fn commands(ui: &mut Ui, d: &mut OptionsDialog, pal: &Palette) {
                         d.select_command(&row.id);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(on) = row.toolbar {
-                            let mut on2 = on;
-                            if ui.checkbox(&mut on2, "Toolbar").changed() {
-                                d.set_command_toolbar(&row.id, on2);
+                        // Each box has its column, whether the row has that box or not.
+                        let column = |ui: &mut Ui, width: f32, add: &mut dyn FnMut(&mut Ui)| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, ui.available_height()),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_min_width(width);
+                                    add(ui);
+                                },
+                            );
+                        };
+                        column(ui, TOOLBAR_COLUMN, &mut |ui| {
+                            if let Some(on) = row.toolbar {
+                                let mut on2 = on;
+                                if ui.checkbox(&mut on2, "Toolbar").changed() {
+                                    d.set_command_toolbar(&row.id, on2);
+                                }
                             }
-                        }
-                        if let Some(on) = row.menu {
-                            let mut on2 = on;
-                            if ui.checkbox(&mut on2, "Menu").changed() {
-                                d.set_command_menu(&row.id, on2);
+                        });
+                        column(ui, MENU_COLUMN, &mut |ui| {
+                            if let Some(on) = row.menu {
+                                let mut on2 = on;
+                                if ui.checkbox(&mut on2, "Menu").changed() {
+                                    d.set_command_menu(&row.id, on2);
+                                }
                             }
-                        }
+                        });
                     });
                 });
             }
