@@ -994,3 +994,54 @@ fn menu_marks_sit_on_their_line() {
         "the labels stay in a column"
     );
 }
+
+/// A5.19: a double-click on a closed archive row opens it as a folder; the zipper icon is on the row.
+#[test]
+fn a_double_click_opens_an_archive_row() {
+    let world = World::new();
+    let write = |rel: &str, bytes: &[u8]| {
+        let path = world.path(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    let zip = crate::tests_shell::stored_zip(&[("member.txt", b"inside\n")]);
+    write("l/a.zip", &zip);
+    write(
+        "r/a.zip",
+        &crate::tests_shell::stored_zip(&[("member.txt", b"other\n")]),
+    );
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let row = s.find("a.zip");
+    let pos = row.center();
+    // Two presses within the double-click time.
+    for _ in 0..2 {
+        s.input(vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        s.input(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        s.time += 0.05;
+    }
+    s.settle();
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let rules = model.prepared().expect("prepared").rules().clone();
+    assert_eq!(rules.open_archives, ["a.zip"]);
+    s.settle();
+    s.find("member.txt");
+}

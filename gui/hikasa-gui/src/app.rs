@@ -1964,6 +1964,7 @@ impl AppCore {
         {
             tracing::warn!(target: "hikasa::gui", "IPC server shutdown: {e}");
         }
+        self.service.shutdown();
         vec![Effect::Exit]
     }
 

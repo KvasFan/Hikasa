@@ -12,6 +12,7 @@ use hikasa_session::ipc::ViewId;
 use crate::commands::CommandId;
 use crate::folder_view::{Cell, FolderStatus, FolderViewModel, ROW_HEIGHT, RowView};
 use crate::ui::hint::Hint as _;
+use crate::ui::icons::{self, IconId};
 use crate::ui::keys::shortcuts_of;
 use crate::ui::scroll;
 use crate::ui::text::{hatch, triangle};
@@ -398,7 +399,16 @@ fn draw_side(
     } else {
         colour
     };
-    painter.circle_filled(pos2(indent + 20.0, y), 4.5, spot_colour);
+    if row.archive {
+        icons::paint(
+            painter,
+            icons::square(pos2(indent + 13.0, y - 7.0), 14.0),
+            IconId::Zipper,
+            spot_colour,
+        );
+    } else {
+        painter.circle_filled(pos2(indent + 20.0, y), 4.5, spot_colour);
+    }
     let time_x = rect.right() - 6.0;
     let size_x = rect.right() - TIME_W - 8.0;
     let name_rect = Rect::from_min_max(
