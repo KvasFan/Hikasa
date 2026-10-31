@@ -341,6 +341,17 @@ pub fn platform_view(text: &str) -> String {
             out.push(format!("{indent}\"case\": <CASE>{comma}\n"));
             continue;
         }
+        // TOML writes a Windows path, with its backslashes, as a literal string: the golden holds `/`.
+        if cfg!(windows)
+            && trimmed.trim_end().ends_with('\'')
+            && let Some((key, value)) = trimmed.trim_end().split_once(" = '")
+        {
+            out.push(format!(
+                "{indent}{key} = \"{}\"\n",
+                value.trim_end_matches('\'')
+            ));
+            continue;
+        }
         let key = ["attrs", "mode", "permissions", "uid", "gid"]
             .into_iter()
             .find(|k| trimmed.starts_with(&format!("\"{k}\": ")));

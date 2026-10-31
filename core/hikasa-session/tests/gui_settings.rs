@@ -405,6 +405,19 @@ fn the_input_watch_counts_the_views_of_an_input() {
     assert!(!watch.is_tracked("-"));
 }
 
+/// `std::fs::rename` onto `to`. On Windows a reader holding `to` open can refuse the replace for a moment.
+fn replace_file(from: &Path, to: &Path) {
+    for _ in 0..500 {
+        match std::fs::rename(from, to) {
+            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            other => return other.unwrap(),
+        }
+    }
+    panic!("{} stayed locked", to.display());
+}
+
 #[test]
 fn reload_settings_swaps_one_consistent_view_and_serializes() {
     let tmp = tempfile::tempdir().unwrap();
@@ -465,7 +478,7 @@ fn reload_settings_swaps_one_consistent_view_and_serializes() {
             .collect();
         // Written whole (rename), so a reload never reads half a file.
         let next = write(&config, "options.next", body.as_bytes());
-        std::fs::rename(&next, config.join("options.toml")).unwrap();
+        replace_file(&next, &config.join("options.toml"));
         let last = {
             let svc = svc.clone();
             std::thread::spawn(move || {
@@ -599,6 +612,8 @@ fn a_failed_read_back_keeps_the_outcomes_and_the_saved_stamps() {
     assert!(!out.snapshot.options.changed_on_disk().unwrap());
 }
 
+// Unix only: it needs a folder that refuses new files, and Windows folders have no such read-only bit.
+#[cfg(unix)]
 #[test]
 fn every_file_of_a_save_has_its_own_outcome() {
     use std::os::unix::fs::PermissionsExt;

@@ -1,7 +1,6 @@
 //! Regression tests of the W4c review (§1.4.20 W4c): each names what it protects. Same harness as `tests_options`:
 //! the toolkit-free models, no window.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,15 +68,16 @@ fn key(text: &str) -> hikasa_session::settings::Shortcut {
     hikasa_session::settings::Shortcut::parse(text).expect("a shortcut")
 }
 
+/// Makes the write of `themes/light.toml` fail: a folder at that path refuses it on every platform (Windows folders
+/// have no read-only bit that stops a new file). Returns the `themes` folder.
 fn locked_themes(world: &World) -> std::path::PathBuf {
     let themes = world.path("config/themes");
-    std::fs::create_dir_all(&themes).expect("mkdir");
-    std::fs::set_permissions(&themes, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    std::fs::create_dir_all(themes.join("light.toml")).expect("mkdir");
     themes
 }
 
 fn unlock(themes: &Path) {
-    std::fs::set_permissions(themes, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    std::fs::remove_dir(themes.join("light.toml")).expect("rmdir");
 }
 
 // ---- H1 what this build does not know blocks nothing and survives -----------------------------------------------

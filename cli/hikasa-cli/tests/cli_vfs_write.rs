@@ -8,7 +8,9 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{CloseMode, FakeGui, Sandbox, assert_golden, code, json, serve, stderr, stdout};
+#[cfg(unix)]
+use common::assert_golden;
+use common::{CloseMode, FakeGui, Sandbox, code, json, serve, stderr, stdout};
 use hikasa_core::ExitCode;
 use hikasa_session::ipc::Request;
 

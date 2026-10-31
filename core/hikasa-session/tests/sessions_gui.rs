@@ -42,6 +42,15 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     out
 }
 
+/// A Unix absolute path as this host spells an absolute path.
+fn abs(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{}", path.replace('/', "\\"))
+    } else {
+        path.to_owned()
+    }
+}
+
 fn sessions_dir(svc: &Service) -> std::path::PathBuf {
     svc.session_store().dir().to_path_buf()
 }
@@ -60,8 +69,8 @@ fn session_save_writes_the_bytes_of_new_and_edit() {
     let (cli, gui) = (service(a.path()), service(b.path()));
     let reference = r("work/api");
     // `new`, with the same absolute specs in both worlds.
-    let left = "/w/a.txt";
-    let right = "/w/b.txt";
+    let left = &abs("/w/a.txt");
+    let right = &abs("/w/b.txt");
     cli.session_new(
         &reference,
         SessionType::TextCompare,
@@ -197,8 +206,8 @@ fn session_for_view_and_back() {
     let dir = tempfile::tempdir().unwrap();
     let svc = service(dir.path());
     let mut named = Session::builtin(SessionType::TextCompare);
-    named.specs.left = "/w/a.txt".into();
-    named.specs.right = "/w/b.txt".into();
+    named.specs.left = abs("/w/a.txt");
+    named.specs.right = abs("/w/b.txt");
     named.specs.format = "text".into();
     named.specs.left_encoding = "utf-8".into();
     named.rules = changed_rules();
@@ -233,14 +242,14 @@ fn session_for_view_and_back() {
     let mut defaults = svc.session_defaults(SessionType::TextCompare).unwrap();
     defaults.rules = changed_rules();
     svc.session_save_defaults(&defaults).unwrap();
-    let plain = text_request(&svc, "/w/a.txt", "/w/b.txt");
+    let plain = text_request(&svc, &abs("/w/a.txt"), &abs("/w/b.txt"));
     let (current, _) = svc
         .session_for_view(&plain, Table::new(), Table::new(), None)
         .unwrap();
     assert_eq!(current.rules, changed_rules());
 
     // `clipboard://` is not stored.
-    let plain = text_request(&svc, "clipboard://", "/w/b.txt");
+    let plain = text_request(&svc, "clipboard://", &abs("/w/b.txt"));
     let (current, warnings) = svc
         .session_for_view(&plain, Table::new(), Table::new(), None)
         .unwrap();
@@ -253,8 +262,8 @@ fn session_for_view_of_a_folder_view_keeps_rules_and_text_rules() {
     let dir = tempfile::tempdir().unwrap();
     let svc = service(dir.path());
     let mut named = Session::builtin(SessionType::FolderCompare);
-    named.specs.left = "/w/l".into();
-    named.specs.right = "/w/r".into();
+    named.specs.left = abs("/w/l");
+    named.specs.right = abs("/w/r");
     if let SessionRules::Folder(rules) = &mut named.rules {
         rules.criteria.timestamps.tolerance_secs += 5;
     }
@@ -267,8 +276,8 @@ fn session_for_view_of_a_folder_view_keeps_rules_and_text_rules() {
 
 fn parent_session(svc: &Service) -> Session {
     let mut folder = Session::builtin(SessionType::FolderCompare);
-    folder.specs.left = "/w/l".into();
-    folder.specs.right = "/w/r".into();
+    folder.specs.left = abs("/w/l");
+    folder.specs.right = abs("/w/r");
     let _ = svc;
     folder
 }
@@ -442,8 +451,8 @@ fn workspace_load_gives_the_tabs_as_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let svc = service(dir.path());
     let mut named = Session::builtin(SessionType::TextCompare);
-    named.specs.left = "/w/a".into();
-    named.specs.right = "/w/b".into();
+    named.specs.left = abs("/w/a");
+    named.specs.right = abs("/w/b");
     svc.session_save(&r("n"), &named, false).unwrap();
     let inline = svc.inline_table(&named, None).unwrap();
     assert!(!inline.contains_key("schema_version"));
