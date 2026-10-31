@@ -10,11 +10,12 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-134, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-155, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
-  dialogs) · §1.5–§1.14 W5–W14 (outline in plan §6, written before each wave)
-- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4
+  dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6–§1.14 W6–W14 (outline in plan §6, written before each
+  wave)
+- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5
 
 ---
 
@@ -113,6 +114,27 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-132 | **Measuring the W4 gates** (§1.4.17). Scripted bench modes of the binary (`HIKASA_GUI_BENCH=scroll|folder|options|two_windows|workspace`) driven by `gui/hikasa-gui/tests/perf_gate.rs`, release build, **only** under `env -u WAYLAND_DISPLAY xvfb-run -a`; the test fails when the renderer is not a software one (llvmpipe), so the real display is never used. Memory = PSS from `smaps_rollup` (MiB; 400 MB = 381.47 MiB) plus peak RSS, sampled after idle frames (`memory_settled`), the median of three whole runs for `text_scroll`, `two_windows` and `two_windows_late`; under Xvfb the frame-rate item of ARCH-GUI-003 is checked as UI frame work (p95 < 8 ms, max < 16.7 ms), the ≥ 60 fps figure on a GPU display is the maintainer's run (W14). | `docs/17` §3.5; llvmpipe cannot reach 60 fps (docs/02). | 02, 17 |
 | D-133 | **No new dependency in W4.** egui/eframe draw everything (icons D-114); fonts are the built-ins (D-113); the Web Resources panel (`ShowWeb`) and website links stay `planned` until `open` (D-63) enters with print (W7/W13). | Plan §0.5; smallest surface. | 02 |
 | D-134 | **glibc's mmap threshold** (W4c review). On glibc the GUI replaces itself once at the very start with `MALLOC_MMAP_THRESHOLD_=4194304` set, unless the variable is set already (a failed `exec` just goes on). Buffers of 4 MiB and more go back to the system when freed instead of staying in the arenas' free lists once glibc's dynamic threshold has climbed (up to 32 MiB). The child processes inherit the variable, which is harmless to them. | Measured: 125 MiB of a settled comparison and the bimodal 25 MiB of the W4 gates (docs/02, W4c). `mallopt` is `unsafe` (architecture check 1) and another allocator a dependency (D-133). | 02 |
+| D-135 | **W5 in two sequential parts.** W5a *Read* (every format read, resolution, cache, safety, time, CRC, FC-015 scan, read commands, the GUI's rows, dependencies, G6), then W5b *Write* (batches, overlay, rebuild, `create_archive`, the write capabilities). One implementer per part, each ends green; at the end of W5a archives are simply read-only. | Size L; the capability bits make the cut safe, and the risky code (rebuild) gets a review of its own. | 16 |
+| D-136 | **`ArchiveVfs` is stacked on a base `Vfs`** and plugs into `VfsRouter` with `with_archives`. It reads containers only through the base, so `MemoryVfs` tests it with faults. Formats are `ArchiveFormat` (the ten types of `archives.toml`, chosen by mask, never by content); a single stream is a one-member archive named after the container without its last extension. Capabilities per format: §1.5.3. Links are reported and never followed. | No special back-end; T11; masks arrive as a value because `hikasa-vfs` cannot name the session. | 01 §3.2, 11 |
+| D-137 | **Spec model.** `Spec::parse` is unchanged and never yields `ArchiveMember`. `member: ""` is the archive as a folder, canonical `/x/a.zip/`; members are `/`-separated on every platform; nesting wraps the spec. `Spec::parent` walks out of an archive into the folder that holds it; new `archive_member`, `container`, `outermost_file`, `archive_depth`. | The M1 round trip holds; a root is told from the file by its trailing separator. | 01 §3.1, 11 §2 |
+| D-138 | **Resolution** (normative, §1.5.4) is `hikasa_vfs::archive::resolve_spec`: a real item wins; else the deepest existing prefix decides; only a regular file whose name matches a mask opens a way in; `..` never enters. It uses only `Vfs` calls, opens the archive only when a nested name needs it, never fails. `SpecUse::{Any, Folder}`: an archive file stays a file unless a folder is wanted, or the input ends in a separator. Masks ignore case, members never do. `Service::parse_spec` calls it, so every command gets it. | One owner; a real folder `x.zip` stays a folder; `vfs stat a.zip` and `vfs ls a.zip` both do what they say. | 11 §2 |
+| D-139 | **Index and reads.** One index per archive and stamp. Zip: the crate's central directory plus an in-house read of the time fields, without touching local headers. Tar family: an in-house block walker over `tar::Header`, because `Entries` buffers extension headers without limit; it hashes every member. Content is never a live decoder: zip members decode to memory (≤ 1 MiB) or a cache file; plain tar members are file ranges; a compressed tar spools the first member read and writes the whole stream to the cache at the second; a stream that does not fit keeps spooling. New `Vfs::prepare`, `open_read_with`, `VfsSource::with_cancel` keep G4 for long decodes. | `ZipFile` borrows its archive, so no owned reader exists in safe Rust; listing and CRC never write to disk; many reads of a `tar.gz` stay linear. | 11 |
+| D-140 | **Temp cache.** `ConfigLocation::cache_dir` + `archives`, never the temp folder first (often a RAM disk). `s<n>/` per session, files with numeric names only, 0700. A held `File::try_lock` on `s<n>.lock` marks a live session; a later session sweeps folders whose lock it can take. `cache_max` with least-recently-used eviction of files no reader holds. Key = archive key + member; a new stamp drops the files. `cleanup` and `Drop` remove the folder; nothing is created by listing. | A crash cleans itself on every platform without process ids or clocks; no member name can reach a path. | 03 §5, 11 |
+| D-141 | **Member names** (§1.5.7 rules 1–4, 17). Checked on raw bytes before anything else: NUL, absolute, drive letters, `..`, over 4,096 bytes are **refused**: left out of the tree, shown as `<refused-N>` rows with a warning, kept by a rebuild. Zip reads `\` as `/` (legacy tools); tar refuses `\`. File vs. parent, and anything below a link, are refused whatever the order. Duplicates: the last wins, with a warning. Case twins are two members. `LocalVfs::child` on Windows refuses names that are no file names there. | Safe by construction, visible rather than silently dropped, nothing lost on rewrite. | 11 |
+| D-142 | **Link, device and special members.** A link member is never followed and never materialized: not in the cache, and a copy out of an archive skips it whatever `LinkPolicy` says (one warning); between archives it stays a link. Hard links resolve to an earlier valid member, else refused. Devices and FIFOs are `Other`. Sparse members are listed, not read, kept by a rebuild. | Revises D-94 rule 6 for archive sources: a link from a hostile archive must not appear on disk. | 11 |
+| D-143 | **Limits** (`[limits]` of `archives.toml`, OPT-010): 1,000,000 entries; 64 GiB per pass and per archive's reads; 8 GiB of cache; ratio 2,000:1 past 64 MiB; nesting 8. Declared and streamed sizes must agree; xz and zstd windows capped at 1 GiB. Errors `ArchiveLimit` (`too_large`) and `ArchiveCorrupt` (`invalid_data`). Listing never needs a declared-size limit: limits bind what is decoded. | Bombs stop at the first of several bounds; a 200 GiB backup can still be listed; each limit is a settings key. | 11, 15 |
+| D-144 | **Encrypted members** (no AES in M2): name, size and time listed, `crc32: None`, reads → `ArchiveEncrypted` (`unsupported`), one warning, an error row in a content test. No password is asked, tried or guessed. A rebuild copies them raw. | Reported, never guessed; the P1 password prompt can build on it. | 11 |
+| D-145 | **Corrupt input never panics.** Every decoder and index pass runs in `catch_unwind`. Tar family and streams keep the members before the damage and add a `<damaged>` row; a zip without a central directory is `ArchiveCorrupt`; a mask match with other content is `ArchiveCorrupt` only when entered, and stays a normal file otherwise; a rebuild refuses a damaged archive. Warnings of the back-end are collected and drained by `Vfs::take_warnings`. | Error rows, not failed commands; a rewrite must not lose a tail it could not read; `Vfs` calls stay free of a warning channel. | 11 |
+| D-146 | **Time** (normative, §1.5.8). Zip: NTFS field, then 0x5455, then DOS wall time in the injected zone (`compatible`: gap forward, fold earlier), invalid fields = none. Tar: PAX `mtime`, then the header. Streams: gzip `MTIME` when set, else the container. Written zip members carry DOS time and 0x5455. The zone comes from the injected clock (T1). | Plan §5.1 risk; exact fields first, so most archives do not depend on a zone at all. | 11 |
+| D-147 | **CRC.** Zip's central value is `Entry::crc32` and `CRC_PROVIDED`, used **as it is** by `CrcComparator` (no decode, `None` when encrypted); the other formats get it computed by the index pass, `CRC_PROVIDED` off. | FC-025; a second decode is never needed for a CRC test. | 04, 11 §3 |
+| D-148 | **Batches** (W5b). `Vfs::begin` and `Vfs::finish(at, Commit\|Abort)`, the W3 hook with an outcome. `ops::execute` batches each archive it touches; primitives only change an overlay every reader sees; outside a batch a change rebuilds at once, so a plain `open_write` cannot be lost. Target roots finish before source roots; a move into an archive removes its sources only after the rebuild. An abort or failed rebuild turns the root's done items into failed ones. | One rebuild per operation; no path loses data when a rebuild fails. | 11 |
+| D-149 | **Rebuild protocol** (normative, §1.5.10). `open_write` on the container (temp + atomic rename, Q8), kept members raw: `raw_copy_file` in zip, raw blocks in tar; new or touched members after them, sorted; levels deflate 6, gzip 6, bzip2 9, xz 6, zstd 3; gzip header without time or name, so rebuilds are repeatable. A changed stamp or a damaged archive stops it; a chain of nested archives commits only at the outermost file. A rebuild keeps what it did not touch. A zip with a prefix is refused. | Faults leave the archive untouched by construction; cost is one copy of the archive, documented. | 11 |
+| D-150 | **Empty archives** (FC-077), revises §1.3.10: `create_dir` stays literal, because `ops` also uses it for a real folder named `x.zip`. `plan_mkdir` turns a final name with a writable mask into the new `Action::CreateArchive`, run by `Vfs::create_archive`. Single-stream masks and missing ancestors stay folders. | The W3 hook would have broken copying a folder named like an archive. | 04, 11, 12 |
+| D-151 | **FC-015.** `handling.archives` = `as_files`, `once_opened` (default), `always`, plus `open_archives` (paths). The scan turns a matching file into a folder pair right after listing, so alignment, filters and flatten need no change; `NodeFlags::ARCHIVE` marks the row; a failed listing is the existing error row; opening stops after 5,000,000 entries per scan. A base may be an archive in every mode. Headless default results equal M1. | FC-015 without a new node kind (D-20 holds); a recursive archive cannot fill the model. | 04 |
+| D-152 | **CLI.** No new subcommand, no new schema: `vfs`, `quick`, `text compare`, `folder compare` work on specs; new `--archives files\|opened\|folders`, `--open-archive`. `hikasa.vfs_op.v1` gains the action `create_archive`. Exit codes unchanged. `quick a.zip b.zip` compares the files. New help topic `archives`; no catalogue status changes. | T10: complete before the GUI; a spec is a spec. | 12 |
+| D-153 | **GUI.** A zipper icon on `ARCHIVE` rows; `Open` on a closed archive row with `once_opened` adds its path and re-runs the view; `infer_view_kind` makes two archives, or an archive and a folder, a Folder Compare; `Service::shutdown` at exit. No new dialog, command or setting. | Archive sides in the existing views only; W9 and W6 refine the re-run. | 14 |
+| D-154 | **Dependencies** (§1.5.15). `zip` 9.2.0 (`deflate`, `deflate64`, `bzip2`, `zstd`, `lzma`, `xz`), `tar` 0.4.46 (no `xattr`), `flate2` 1.1.10 (`zlib-rs`), `bzip2` 0.6.1, `lzma-rust2` **0.23.0** (as `zip`, not the newest 0.24), `zstd` **0.14.3** (as `zip`, not the plan's 0.13; BSD-3-Clause). `deny.toml` gains a crate-scoped exception for `libbz2-rs-sys` (`bzip2-1.0.6`, permissive), pending the maintainer's objection. `zstd-sys` builds C with the `cc` crate: a C compiler per target, nothing else; verified for all packaging targets; `build-linux.sh` pins `CFLAGS` for its target. | One LZMA and one zstd in the tree; plan §5.1's platform risk closed by a real build. | 02 |
+| D-155 | **G6** (§1.5.16). List 100,000 zip entries < 1 s; a 10,000-file tree against its zip by CRC < 2 s; the index of a 1 GiB `tar.gz` ≤ 1.3 × the raw decode, CRC included; G2 unchanged; RSS budgets. Headless, release, idle machine, fixtures generated; G4 holds for long decodes. | Plan §5.2 confirmed; the first figure already measured at 15 ms for the crate's part. | 02 |
 
 ### 0.4 Dependencies
 
@@ -127,6 +149,11 @@ D-100).
 **W4** adds no dependency (D-133): icons are drawn with egui's painter (D-114), fonts are egui's built-ins (D-113),
 and `open` waits for W7/W13; `Cargo.lock` gains no package and the member manifests of check 3 are unchanged. The
 architecture test gains one check-7 rule (§1.4.16 rule 4).
+**W5** (D-154) moves `zip` to 9.2.0 with the archive features and adds `tar` 0.4.46, `flate2` 1.1.10, `bzip2` 0.6.1, `lzma-rust2`
+0.23.0 and `zstd` 0.14.3 to `hikasa-vfs`, with `jiff` for the injected zone: §1.5.15 has the exact entries. Member manifests:
+`hikasa-vfs` += `zip`, `tar`, `flate2`, `bzip2`, `lzma-rust2`, `zstd`, `jiff`. `lzma-rust2` and `zstd` follow `zip`'s requirements, so one
+copy of each is in `Cargo.lock`. `deny.toml` gains one crate-scoped exception (`libbz2-rs-sys`, `bzip2-1.0.6`), the only new licence;
+`zstd-sys` brings the only C code, built by the `cc` crate with the target's C compiler; check 2 gains one confinement rule.
 
 ### 0.5 Documentation updates of W0
 
@@ -2455,7 +2482,799 @@ linked from `index`/`main-window`; `CHANGELOG.md` per part.
 - **Tests.** `ui/tests_pointer.rs` presses and releases at a widget's place on screen, found from the text shapes of the
   frame, over the whole `HikasaApp`: tab bar, Home, status bar, notices, dialogs, wizards, menus, view panes.
 
-### 1.5–1.14 W5–W14
+### 1.5 W5 — Archives
+
+**Ids.** VFS-002 (archive back-end: zip, tar, gz, bz2, xz, zst; nesting; temp cache; rebuild on write; type masks),
+ARCH-021 (nested members), VFS-001 (capabilities per format), FC-001 (archive sides), FC-015, FC-025 (archive-provided
+CRC), FC-077 and FC-072 (the VFS part: an empty archive, copying into an archive), TC-002 (archive members), OPT-010,
+ARCH-101 (item results of rebuilds), CLI-000 (the new flags comply), gate G6. Decisions D-135…D-155. Out of scope: 7z
+and the other P1/P2 formats, passwords and AES (P1), folder operations, confirmations and backups (W6, §1.5.17), the
+VFS browse dialog (W9), editing a member in a text view (W10/W11).
+
+**Files.** `core/hikasa-core/src/` (`spec/mod.rs`, `warning.rs`); new `core/hikasa-vfs/src/archive/` with `mod.rs`
+(`ArchiveVfs`, `ArchiveConfig`), `format.rs` (`ArchiveFormat`, `ArchiveMasks`), `resolve.rs`, `name.rs` (member names),
+`index.rs` (the member tree), `zip_read.rs`, `tar_walk.rs`, `codec.rs` (decoders, encoders, guards), `cache.rs`,
+`time.rs`, `shared.rs` (`SharedReader`, `RangeReader`) and, W5b, `overlay.rs`, `rebuild.rs`; `core/hikasa-vfs/src/`
+(`vfs.rs`, `error.rs`, `router.rs`, `source.rs`, `memory.rs`, `local/mod.rs`, `local/windows.rs`, `ops/mod.rs`,
+`ops/plan.rs`, `ops/touch.rs`, `lib.rs`); `core/hikasa-vfs/tests/` (`archive_resolve.rs`, `archive_read.rs`,
+`archive_safety.rs`, `archive_fuzz.rs`, `archive_time.rs`, `archive_cache.rs`, `archive_write.rs`,
+`archive_faults.rs`, `common/archives.rs`) and `benches/archive_crc_1gb.rs`; `core/hikasa-folder/src/` (`rules.rs`,
+`scan.rs`, `model/node.rs`); `core/hikasa-session/src/` (`settings/archives.rs`, `api/mod.rs`, `api/compare.rs`,
+`api/info.rs`, `api/vfs_ops.rs`, `api/vocab.rs`, `api/gui.rs`, `api/human.rs`, `api/settings.rs`);
+`cli/hikasa-cli/src/` (`args.rs`, `cmd/folder.rs`), `cli/hikasa-cli/tests/` (`cli_archive.rs`, `perf_gates.rs`,
+goldens); `gui/hikasa-gui/src/` (`ui/folder.rs`, `folder_view.rs`, the icon table); workspace `Cargo.toml`,
+`Cargo.lock`, `core/hikasa-vfs/Cargo.toml`, `deny.toml`, `core/hikasa-session/tests/architecture.rs`,
+`packaging/build-linux.sh`; `help/archives.md` (new), `help/vfs.md`, `help/folder-compare.md`, `help/settings.md`,
+`help/index.md`.
+
+#### 1.5.1 Parts (D-135)
+
+W5 is one wave in two sequential parts, one implementer each; a part starts when the previous one is committed on
+`feat/m2` and ends with the tree green.
+
+| Part | Content | Sections | Acceptance |
+|---|---|---|---|
+| **W5a Read** | spec model, resolution, `ArchiveVfs` reads for every format, index, cache, safety, time, CRC, FC-015 scan, settings, every read command of the CLI, the GUI's rows, dependencies, G6 | §1.5.2–§1.5.9, §1.5.11–§1.5.16 | A5.1…A5.13, A5.19, A5.20 |
+| **W5b Write** | batches, overlay, rebuild, `create_archive`, the write capabilities, `vfs cp x a.zip/dir/` and the other write commands on members | §1.5.10 | A5.14…A5.18, A5.20 |
+
+At the end of W5a every primitive on a member answers `OperationUnsupported` (the W3 default bodies) and no write bit
+is reported, so a read-only tree ships if W5b waits. Copies **out of** an archive work in W5a: they only read it. The cut
+is natural: W5b only adds code behind the capability bits.
+
+#### 1.5.2 Spec model (D-137)
+
+`Spec::parse` does not change: it never produces `ArchiveMember`, so ARCH-020's round trip stays as it is. Members
+appear only through resolution (§1.5.4), `Vfs::child` and `Spec::archive_member`.
+
+- **Root.** `ArchiveMember { archive, member: "" }` is the archive **as a folder**. Its canonical form keeps the existing
+  `Display`: `/x/a.zip/`, with the trailing `/` that tells it from the file `/x/a.zip`.
+- **Member text.** `member` is `/`-separated on every platform, has no leading, trailing or doubled `/`, and no `.` or
+  `..` component. Nesting wraps: `a.zip/b.tar.gz/c.txt` is `ArchiveMember { archive: ArchiveMember { archive: a.zip,
+  member: "b.tar.gz" }, member: "c.txt" }`. On Windows the canonical form is `C:\x\a.zip/inner/x`; parsing it again
+  gives the local path `C:\x\a.zip\inner\x`, which resolution maps back.
+- **Round trip (P-ARCH-1).** For every archive spec `s` on a given tree, `resolve_spec(parse(canonical(s)), use)` = `s`,
+  with `use = Folder` when `s` is a root or an input with a trailing separator, else `Any`.
+
+```rust
+// hikasa_core::spec (additive)
+impl Spec {
+    /// `ArchiveMember { archive, member }`; `member` is stored as given, `""` is the root.
+    pub fn archive_member(archive: Spec, member: impl Into<String>) -> Spec;
+    /// The spec of the archive that directly holds this member (`None` for anything but `ArchiveMember`).
+    pub fn container(&self) -> Option<&Spec>;
+    /// The file outside every archive (`a.zip` for `a.zip/b.tar/c`); `None` for anything but `ArchiveMember`.
+    pub fn outermost_file(&self) -> Option<&Spec>;
+    /// Levels of archives around this spec: 0 for a local path, 2 for `a.zip/b.tar/c`.
+    pub fn archive_depth(&self) -> u32;
+}
+```
+
+`Spec::parent` (W3 said W5 adds members) and `Spec::file_name`:
+
+| Spec | `parent()` | `file_name()` |
+|---|---|---|
+| member `"x/y"` of `A` | member `"x"` of `A` | `y` |
+| member `"x"` of `A` | root of `A` | `x` |
+| root of `A` | `A.parent()` (a folder outside, or for a nested `A` the folder holding it inside its own archive) | the name of `A` |
+
+`ops::check_item` refuses a root like a file-system root: `InvalidTarget "is a root folder"` (an archive is removed as
+the file it is, `rm a.zip`, never through `rm a.zip/`).
+
+#### 1.5.3 `ArchiveVfs`, formats, capabilities, router (D-136)
+
+`ArchiveVfs` is a `Vfs` **stacked on another `Vfs`**: it serves `ArchiveMember` specs itself and passes every other spec
+to its base, and it reads containers only through the base (`open_read_with`, `stat`), so `MemoryVfs` tests every
+algorithm, faults included, and no back-end is special. `hikasa-vfs` cannot name `hikasa-session`, so the masks reach it
+as a value.
+
+```rust
+// hikasa_vfs::archive
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum ArchiveFormat { Zip, Tar, TarGz, TarBz2, TarXz, TarZst, Gz, Bz2, Xz, Zst }
+impl ArchiveFormat {
+    pub const ORDER: [ArchiveFormat; 10];            // the same order as ArchiveType::ORDER
+    pub const fn writable(self) -> bool;             // Zip and the five tar formats (D-63)
+    pub const fn is_single_stream(self) -> bool;     // Gz, Bz2, Xz, Zst
+}
+pub struct ArchiveMasks { /* (format, compiled MaskList) in ORDER; an empty mask is left out */ }
+impl ArchiveMasks {
+    pub fn new(masks: impl IntoIterator<Item = (ArchiveFormat, String)>) -> Result<ArchiveMasks, MaskError>;
+    /// The first format in ORDER whose mask matches `name`, case-insensitively (as `ArchiveTypes::detect`).
+    pub fn detect(&self, name: &str) -> Option<ArchiveFormat>;
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveLimits { pub entries_max: u64, pub stream_max: u64, pub cache_max: u64, pub ratio_max: u32,
+                           pub ratio_floor: u64, pub nesting_max: u32 }    // Default: §1.5.7 table
+pub struct ArchiveConfig {
+    pub masks: ArchiveMasks,
+    pub limits: ArchiveLimits,
+    /// "Now" with the user's zone (T1): the zone of DOS times, the time of a written member. The session passes
+    /// its injected clock.
+    pub clock: Arc<dyn Fn() -> jiff::Zoned + Send + Sync>,
+    /// The folder under which the per-session cache folder lives; created on the first write only.
+    pub cache_root: PathBuf,
+}
+pub struct ArchiveVfs { /* base, config, indexes, cache */ }
+impl ArchiveVfs {
+    pub fn new(base: Arc<dyn Vfs>, config: ArchiveConfig) -> ArchiveVfs;
+    /// Masks and limits changed (`Service::reload_settings`): later calls use them, running calls keep theirs.
+    pub fn set_config(&self, config: ArchiveConfig);
+    /// Removes the session's cache folder (best effort; also on `Drop`).
+    pub fn cleanup(&self);
+}
+impl Vfs for ArchiveVfs { /* … */ }
+
+// hikasa_vfs::vfs (additive; every body is defaulted, so implementors compile unchanged)
+pub trait Vfs: Send + Sync {
+    // … M1 and W3 methods …
+    /// Does the slow part of reaching `spec` now, with cancellation and progress: for a spec inside an archive, the
+    /// index of every archive around it (D-139). Default: nothing.
+    fn prepare(&self, _spec: &Spec, _ctl: &Ctl<'_>) -> Result<(), VfsError> { Ok(()) }
+    /// `open_read` that can be cancelled while an archive member is decoded (`Cancelled`). Default: `open_read`.
+    fn open_read_with(&self, spec: &Spec, _cancel: &CancelToken) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.open_read(spec)
+    }
+    /// The archive format of a file name per the masks; `None` on back-ends without archives.
+    fn archive_format(&self, _name: &str) -> Option<ArchiveFormat> { None }
+    /// Warnings raised since the last call (D-145). Default: none.
+    fn take_warnings(&self) -> Vec<Warning> { Vec::new() }
+}
+```
+
+`VfsSource` gains `with_cancel(self, &'a CancelToken) -> Self` (default: never cancelled); its `open` calls
+`open_read_with`, and `read_all` passes its own token. The scanner and `quick` set the job's token.
+
+**Formats.** A format is decided by the mask of the file name, never by content (the content can only confirm it, §1.5.7
+rule 8). A single-stream format is an archive of **one member**, named after the container without its last `.ext`
+(`x.txt.gz` → `x.txt`; a name without a dot → `<name>.data`; a stored name in a gzip header is untrusted and ignored).
+
+| Format | Mask type | Container | Member reads (§1.5.5) | Write (W5b) |
+|---|---|---|---|---|
+| `zip` | `zip` | central directory, random access | decode one member | rebuild |
+| `tar` | `tar` | one pass over the file | range of the file | rebuild |
+| `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` | `tar_*` | one pass over the decoded stream | spool, then the whole stream in the cache | rebuild |
+| `gz`, `bz2`, `xz`, `zst` | `gz` … | one pass counts length and CRC | spool the stream | none: `OperationUnsupported` |
+
+Concatenated streams are read to the end (`MultiGzDecoder`, `MultiBzDecoder`, xz multiple streams, zstd frames).
+
+**Capabilities** (ARCH-030). Common set `C` = `READ LIST SEEK MTIME CASE_SENSITIVE`. Never reported: `CTIME`, `LOCAL_PATH`,
+`TRASH`, `SET_CREATED`. `Vfs::capabilities` needs only the masks: it does not open the archive. A member of a nested
+archive gets the bits of the innermost format, and the write bits only when every archive around it is writable.
+
+| Format | W5a | W5b adds (`W` = `WRITE MKDIR REMOVE RENAME SET_TIMES SET_ATTRS CREATE_SYMLINKS`) |
+|---|---|---|
+| `zip` | `C CRC_PROVIDED DOS_ATTRS UNIX_MODE SYMLINKS` | `W` (`set_attrs`: `Mode`, and `Dos` with the `R` bit only) |
+| `tar`, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` | `C UNIX_MODE UNIX_OWNER SYMLINKS` | `W` (`set_attrs`: `Mode` only) |
+| `gz`, `bz2`, `xz`, `zst` | `C` | none |
+
+Each zip entry carries one attribute family: `Attrs::Unix { mode, uid: 0, gid: 0 }` when the entry has a Unix mode, else
+`Attrs::Dos`; the quick tests compare only two entries of one family, as in M1. Tar entries are `Attrs::Unix`.
+`Entry::file_id` is `None`. Symbolic links are reported, and `FollowLinks::Yes` never follows one: the entry stays a
+`Symlink`, `followed = false`, and no `EntryError` is added (§1.5.7 rule 5).
+
+**Router.** `VfsRouter::with_archives(self, Arc<ArchiveVfs>) -> VfsRouter` (additive). `ArchiveVfs` is built on the same
+`LocalVfs`; `Service::rebuild_router` keeps the `Arc`. Extends the tables of `router.rs` and §1.3.1:
+
+| Spec | Read methods, `child`, `capabilities`, primitives, `prepare`, `open_read_with` | `rename(from, to)` | `copy_file_fast` | `local_path` |
+|---|---|---|---|---|
+| `ArchiveMember`, archives set | `ArchiveVfs` | both inside one archive → `ArchiveVfs`; two archives → `CrossDevice` (D-97 expands it); mixed kinds → `OperationUnsupported` | `Ok(None)` | `None` |
+| `ArchiveMember`, no archives (M1 embedders) | `Unsupported { what: "archive specs" }` (M1 row) | same | `Ok(None)` | `None` |
+| every other spec | unchanged | unchanged | unchanged | unchanged |
+
+`Vfs::archive_format` and `take_warnings` of the router ask the `ArchiveVfs`. `child(dir, name)` of an archive spec joins
+`name` to `member`; a `name` that fails §1.5.7 rule 1 or is lossy is `InvalidName`.
+
+**Stamps.** An archive is identified by its key: the canonical spec of the container plus the stamp (length, modification
+time) from `base.stat(.., Yes)`; a nested archive adds the stamp of the outermost file and its member position. Every
+`ArchiveVfs` call re-stats the outermost file once; another stamp drops the index and its cache files. A same-length rewrite
+within the file system's time resolution is not seen (accepted, as `InputStamp`, D-118).
+
+#### 1.5.4 Spec resolution (normative; D-138)
+
+Maps the local path of a typed spec to the spec that names the item. It lives once in `hikasa_vfs::archive::resolve_spec`
+and uses **only** the `Vfs` passed to it (`stat`, `archive_format`, `prepare`), never the OS: no listing, no current folder,
+no environment. It is deterministic: the same tree gives the same answer on any thread, and it never fails (a problem is
+reported when the spec is used).
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecUse {
+    /// The named item, whatever it is: an archive file stays a file.
+    Any,
+    /// A folder is wanted: an archive file is its root (`folder compare`, `vfs ls`, an input ending in a separator).
+    Folder,
+}
+pub fn resolve_spec(vfs: &dyn Vfs, spec: Spec, use_: SpecUse, cancel: &CancelToken) -> Result<Spec, Cancelled>;
+
+// The pure core, tested on every platform for both path styles with a table-driven fake.
+pub trait Probe {
+    fn kind(&self, spec: &Spec) -> Probed;                  // Dir | File | Other | Missing | Failed
+    fn format(&self, name: &str) -> Option<ArchiveFormat>;
+    fn open(&self, archive: &Spec) -> bool;                 // `prepare`: false when the archive cannot be read
+}
+pub fn resolve_with(probe: &dyn Probe, spec: Spec, use_: SpecUse, style: PathStyle) -> Spec;
+```
+
+```text
+resolve(spec, use):
+ 1. spec is not Local                                → spec, unchanged
+ 2. k = kind(spec) (links followed)
+    Dir                                              → spec                 (a real folder wins, whatever its name)
+    File, use = Folder, format(name) is Some         → root of spec
+    File or Other                                    → spec
+    Failed (permission, I/O)                         → spec                 (the error comes at use)
+    Missing                                          → step 3
+ 3. P = parent of spec, rest = [last name]; while P exists:
+      kind(P):  Missing → push P's name in front of rest; P = parent of P; continue
+                Dir, Other, Failed                   → spec                 (nothing here is an archive)
+                File, format(name of P) is None      → spec
+                File, format(name of P) is Some      → descend(P, rest, use)
+    no P left                                        → spec
+ 4. descend(A, rest, use):
+      rest holds "." or ".." or an empty name        → spec of step 1       (never a member; fails at use)
+      no name but the last matches a mask, and (use = Any or the last does not match)
+                                                     → archive_member(A, rest joined by "/")    (A is not opened)
+      open A (prepare); on failure                   → archive_member(A, rest joined by "/")
+      walk m over the prefixes of rest:
+        member m Missing                             → archive_member(A, rest joined)   (a missing member, or a target)
+        member m is Dir                              → next prefix
+        member m is File, format(its name) is Some:
+           names remain                              → descend(archive_member(A, m), names left, use)
+           no name remains, use = Folder             → root of archive_member(A, m)
+           otherwise                                 → archive_member(A, rest joined)
+        member m is anything else                    → archive_member(A, rest joined)
+      every prefix walked                            → archive_member(A, rest joined)
+```
+
+- At most one `stat` per path component, plus one member lookup per component inside archives. In the common case
+  (`a.tar.gz/x.txt`) resolution ends without opening the archive. A test counts the calls (`MemoryVfs::stat_calls`).
+- `NotADirectory` and `NotFound` are both `Missing`, so a file used as a folder behaves alike on every platform.
+- Parents and names come from `LocalPath`/`Spec::parent`; `resolve_with` takes the path style so that Windows drive
+  and UNC rows run on Linux too. `..` stays in a Unix path (D-06; `Path::file_name` gives no name for it, which counts as
+  `..`), so step 4 refuses it: a spec can never walk out of an archive.
+- Mask matching is case-insensitive on every platform (`ArchiveTypes::detect`); **member names are case-sensitive on
+  every platform** (archives hold bytes, the capability `CASE_SENSITIVE` says so); the prefix on disk follows the file
+  system. A type whose mask is empty does not exist for resolution.
+- Resolution of a nested spec can index the outer archive before a job exists; that index is bounded by the limits but
+  not cancellable. Service calls that run inside a job pass its token.
+
+| # | Input (`/w` as below) | Use | Result | At use |
+|---|---|---|---|---|
+| 1 | `/w/a.zip` | Any | `Local` | the file |
+| 2 | `/w/a.zip` | Folder | root of `a.zip` | listing |
+| 3 | `/w/a.zip/` (trailing separator) | Folder (from the input) | root of `a.zip` | listing |
+| 4 | `/w/a.zip/inner/x` | Any | `a.zip` + `inner/x` | the member |
+| 5 | `/w/a.zip/inner` | Any | `a.zip` + `inner` | a folder |
+| 6 | `/w/a.zip/missing` | Any | `a.zip` + `missing` | `NotFound`, or a write target |
+| 7 | `/w/a.zip/b.tar.gz/c.txt` | Any | (`a.zip` + `b.tar.gz`) + `c.txt` | the nested member |
+| 8 | `/w/a.zip/b.tar.gz` | Any | `a.zip` + `b.tar.gz` | a file |
+| 9 | `/w/a.zip/b.tar.gz` | Folder | root of (`a.zip` + `b.tar.gz`) | listing |
+| 10 | `/w/dir.zip/y` (`dir.zip` is a real folder) | Any | `Local` | the file |
+| 11 | `/w/dir.zip` | Folder | `Local` | a folder |
+| 12 | `/w/fake.zip/x` (`fake.zip` holds text) | Any | `fake.zip` + `x` | `ArchiveCorrupt`, not `NotFound` |
+| 13 | `/w/fake.zip` | Any | `Local` | the file |
+| 14 | `/w/fake.zip` | Folder | root of `fake.zip` | `ArchiveCorrupt` |
+| 15 | `/w/plain.txt/x` | Any | `Local` | `NotADirectory` |
+| 16 | `/w/up.ZIP/x` | Any | `up.ZIP` + `x` | the member (masks ignore case) |
+| 17 | `/w/a.zip/INNER/x` | Any | `a.zip` + `INNER/x` | `NotFound` (members keep case) |
+| 18 | `/w/none.zip/x` | Any | `Local` | `NotFound` |
+| 19 | `/w/a.zip/../plain.txt` (Unix) | Any | `Local` | `NotADirectory` |
+| 20 | `/w/a.zip/x`, zip mask empty | Any | `Local` | `NotADirectory` |
+| 21 | `/w/link.zip/x` (link to `a.zip`) | Any | `link.zip` + `x` | the member (a link on disk is followed; a write replaces its target) |
+| 22 | `/w/a.zip/lnk/x` (`lnk` a link member) | Any | `a.zip` + `lnk/x` | `NotADirectory` (never followed) |
+| 23 | more nested archives than `nesting_max` | Any | nests one level past the limit, the rest as member text | `ArchiveLimit` |
+| 24 | `C:\w\a.zip\inner\x` (Windows) | Any | `C:\w\a.zip` + `inner/x`, canonical `C:\w\a.zip/inner/x` | the member |
+| 25 | `\\srv\share\a.zip\x` (Windows) | Any | `\\srv\share\a.zip` + `x` | the member |
+| 26 | `C:\w\a.zip\` (Windows) | Folder | root of `C:\w\a.zip` | listing |
+| 27 | `-`, `clipboard://`, `ftp://h/a.zip/x` | any | unchanged | as before |
+| 28 | `/w/x.tar.gz/y` | Any | `x.tar.gz` + `y`, the archive not opened | the member |
+
+#### 1.5.5 Index and reads (D-139)
+
+An archive is opened once per stamp: one `Arc<Index>` behind a per-archive lock, built on first need; other threads wait
+for it. An index holds the validated member tree (`index.rs`: nodes sorted by path, a map from path to node, children as
+ranges), counts and warnings. It costs at most 512 bytes per member. Indexes are kept while their stamp holds; when the
+members of all indexes pass 10,000,000 the least recently used indexes that no call holds are dropped.
+
+| Format | Index | Time |
+|---|---|---|
+| zip | `zip::ZipArchive::new`, then `by_index_data(i)` for names, sizes, CRC, method, flags, attributes; the 0x5455 and 0x000a extra fields come from one read of the central directory by the pure `central_times` of `zip_read.rs` (keyed by `central_header_start`, bounds-checked, a malformed field is ignored) | 14 ms + 1 ms for 100,000 entries, measured; `by_index_raw` per entry would read every local header (268 ms warm, far worse cold), so it is not used |
+| tar family | `tar_walk.rs`: a loop over the (decoded) stream reading 512-byte blocks; **the `tar` crate's `Archive` and `Entries` are not used to read**, only `tar::Header` (checksum, type, size, path, link, numeric forms) and `tar::PaxExtensions`, because `Entries` reads extension headers into memory without a limit and borrows the archive. Every member's bytes pass through `crc32fast` and are dropped | one decode of the stream |
+| single stream | one pass that counts and hashes | one decode of the stream |
+
+The walker records for each member the offset of its first block (extension headers included), of its data, and the
+end of its padded data. Block rules: an all-zero block or the end of the stream at a block boundary ends the archive; a
+wrong checksum or a short block is damage (§1.5.7 rule 9); `x` and `L`/`K` bodies apply to the next member (at most 1 MiB
+each, else damage; a `path`, `linkpath`, `size`, `mtime` PAX record overrides the header); `g` and GNU volume labels are
+skipped; GNU sparse headers walk their extension blocks. PAX `size` wins over the header, so no two readers disagree.
+
+**Content reads.** `open_read` needs `Seek`, and a `ZipFile` borrows its archive (no self-reference in safe Rust), so
+content is never a live decoder:
+
+| Format | `open_read_with(member)` | Notes |
+|---|---|---|
+| zip | clone the `ZipArchive` (`Arc` metadata) over a `SharedReader`, `by_index`, copy through the guards: a member of at most 1 MiB into memory (`Cursor`), a larger one into a cache file (`File`), reused by key | `SharedReader` = `Arc<Mutex<Box<dyn ReadSeek>>>` + its own position, so threads decode one archive in parallel; the crate checks the CRC at the end |
+| tar | `RangeReader` over `base.open_read_with(container)` | true random access; nothing extracted |
+| tar.gz … | first member read: decode forward, drop bytes up to the member, spool only that member (memory or cache file). A second distinct member: decode the whole stream once to one cache file when `stream length ≤ free cache`, then every member is a `RangeReader` on it; when it does not fit, each read spools its own member | a single `decode_range(start, len, sink)`; one decoder per stream at a time. Listing and CRC tests never reach this path |
+| gz … | spool the stream (memory or cache file), reused | |
+
+- `Dir` → `IsADirectory`; `Symlink`, `Other` and sparse members → `OperationUnsupported` (op `open`).
+- A zip member's own limits apply before decoding (§1.5.7).
+- `stat`/`list` of a member open the index; `prepare` builds it with cancellation and `Phase::Scanning` progress in bytes.
+  `list` passes its `cancel`. Cancellation is checked at least every 1 MiB of decoded output (G4); a cancelled spool
+  removes its file.
+- **Nesting.** A nested archive's bytes are its member's content: memory or cache file, read through the same paths.
+  `depth > nesting_max` → `ArchiveLimit`.
+
+| Entry field | zip | tar family | single stream |
+|---|---|---|---|
+| `kind` | `Dir` (name ends in `/`), `Symlink` (Unix mode), else `File`; other Unix types `Other` | by type: `0 7 \0` file (a name ending in `/` is a folder), `5 D` folder, `2` link, `1` hard link (§1.5.7 rule 6), `3 4 6` `Other`, `S` sparse | `File` |
+| `size` | central directory | header or PAX | counted |
+| `mtime`, `ctime` | §1.5.8 | §1.5.8 | §1.5.8 |
+| `crc32` | §1.5.9 | computed | computed |
+| `link_target` | the entry's content, at most 4096 bytes, read at index time | header or PAX | — |
+
+Folders that only exist through their members are synthesized: `Dir`, `mtime: None`. The root's entry: the container's name,
+`Dir`, size 0, the container's `mtime`.
+
+#### 1.5.6 Temp cache (D-140)
+
+`cache.rs` owns every file W5 writes outside a rebuild target, and it is the only part of `archive/` that calls `std::fs`.
+
+- **Location (T1).** `ConfigLocation::cache_dir` + `archives`: the host decides it from `EnvFacts` (`~/.cache/hikasa/archives`,
+  `~/Library/Caches/Hikasa/archives`, `%LOCALAPPDATA%\Hikasa\cache\archives`, `<config>/cache/archives` when portable,
+  `temp_dir` only when the home is unknown). Not the temp folder first: `/tmp` is often a RAM disk. Core reads no
+  environment; `ArchiveConfig::cache_root` carries the path.
+- **Layout.** `<root>/s<n>.lock` and `<root>/s<n>/` (Unix mode 0700), `n` the first free number. Files inside have numeric
+  names only (`m<k>`, staged writes `w<k>`): **no member name ever reaches a path**, so traversal, twins and reserved
+  names cannot touch the disk through the cache. Created on the first file; a command that only lists creates nothing
+  (§2.22 of M1).
+- **Session and crash.** The lock file is created with `create_new`, locked with `File::try_lock` and held for the life of
+  the `ArchiveVfs`. Before creating its folder a session sweeps: for every other `s*.lock` whose `try_lock` succeeds
+  the owner is gone, so its folder and then its lock file are removed. The OS releases a dead process's lock on every
+  platform, so a crash leaves a folder only until the next session that extracts. A lock that fails with another error
+  counts as held. No process ids, no clock.
+- **Exit.** `ArchiveVfs::cleanup` and `Drop` remove the folder and the lock file. `Service::shutdown` (new) calls it, and
+  the adapters call it before `main` returns. A file still open on Windows may survive until the next sweep.
+- **Accounting.** `used` is the sum of cache file lengths. `reserve(n)` runs before a known length is written, and every 1 MiB
+  while a stream of unknown length is written. Over `cache_max`: least recently used files that no reader holds are
+  evicted (each file is an `Arc`); when it still does not fit → `ArchiveLimit { limit: "cache" }`, the partial file is
+  removed. A failed write (disk full) removes the partial file and reports the I/O error. A file is entered in the
+  table only when complete.
+- **Reuse and invalidation.** Key = archive key + member path (or the stream). A hit needs no decoding. A new stamp drops
+  every file of the old key. Member reads through memory are not cached.
+
+#### 1.5.7 Safety (normative; D-141…D-145)
+
+Each rule is a table test (§6.5). Archives are hostile input. **A refused member** is left out of the tree and reported:
+in the root's `Listing::errors` under the unique name `<refused-N>` (`N` = 1… in archive order; at most 1,000 rows), kind
+`invalid_data`, message `refused member "<escaped raw name>": <reason>`; plus one `archive_member_refused` warning per
+index with the total. Nothing can address it, and a rebuild keeps it untouched.
+
+| # | Subject | Rule |
+|---|---|---|
+| 1 | Names | `name.rs`, on raw bytes, before anything else. Zip: `\` is read as `/` (legacy tools), then the rules; tar: a `\` refuses the member. Refused: NUL (`nul`); a leading `/` (`absolute`), so also `\\srv\x` and `\x` in zip; a first component `X:` with one ASCII letter (`drive`: `C:\x`, `C:/x`, `c:x`); a `..` component (`traversal`); over 4,096 bytes (`too_long`). `.` and empty components are dropped; a name that reduces to nothing (`./`) only gives the root its metadata. Text = UTF-8 flag or valid UTF-8 as it is; zip without the flag as the crate decodes it (CP437); otherwise lossy with the raw bytes kept for a rebuild |
+| 2 | Tree | A path that is both a file and a parent (`a` and `a/b`): the folder stays, the file `a` is refused (`conflict`). A member below a link member (`lnk` and `lnk/x`) is refused (`conflict`). The result does not depend on archive order |
+| 3 | Duplicates | The same path twice: the last one wins (zip: the last of the central directory, `has_duplicate_names`; tar: the last in the stream), one `archive_duplicate_member` warning per index. A rebuild drops the shadowed ones |
+| 4 | Case twins | `A.txt` and `a.txt` are two members. Cache names are numeric, so nothing collides. Copied out to a case-insensitive disk the second meets the overwrite policy (D-96, default `fail`) |
+| 5 | Links | A link member is listed with its target text and **never followed**: no read through it, no lookup through it, `stat(Yes)` returns the link. It is never materialized: not in the cache, and a copy **out of** an archive skips it (`SkipReason::Symlink`, one `archive_symlink_skipped` warning per operation), whatever `LinkPolicy` says (revises D-94 rule 6 for archive sources; `plan_copy` decides from the source's and the target's scheme). Between archives it stays a link member |
+| 6 | Hard links | `1` entries become the member they name, which must be a regular member earlier in the archive, addressed by a name that passes rule 1; otherwise refused (`hard_link`) |
+| 7 | Devices, FIFOs, sparse | Devices and FIFOs are `Other`: listed, never opened, skipped by copies (D-96). Sparse members are listed; content → `OperationUnsupported`; a rebuild keeps their blocks |
+| 8 | Not an archive | A mask match with other content: `ArchiveCorrupt`. Only `list`, `stat` and reads of its members meet it; the file itself stays a normal file. A zero-length `.tar` is an empty archive; a zero-length `.zip` or stream is `ArchiveCorrupt` |
+| 9 | Corrupt or truncated | Never a panic (`clippy::unwrap_used` already denies them; every decoder and index pass runs inside `catch_unwind`, a panic becomes `ArchiveCorrupt { reason: "decoder failed" }`). Tar family and streams: members complete before the damage stay readable, and the root's listing gains a row `<damaged>`, kind `invalid_data`, with the offset (`Index::damage`). Zip: no central directory → `ArchiveCorrupt`; a member whose local data is bad fails alone. A rebuild refuses a damaged archive (`ArchiveCorrupt`) |
+| 10 | Declared vs. streamed | Every copy reads at most declared + 1 bytes; streamed ≠ declared → `ArchiveCorrupt { reason: "size mismatch" }`, the partial output removed. The zip crate's CRC failure is `ArchiveCorrupt { reason: "CRC mismatch" }` |
+| 11 | Ratio | `output / input > ratio_max` once `output > ratio_floor`, checked each 1 MiB of output on every stream and member (input is the compressed bytes consumed). For zip also before decoding, over the whole archive: declared total / container length. `ArchiveLimit { limit: "ratio" }`. `ratio_max = 0` turns the check off |
+| 12 | Sizes | Decoded bytes of one pass > `stream_max`, or decoded bytes of all reads of one archive > `stream_max` (overlapping zip entries) → `ArchiveLimit { limit: "stream" }`. Tar index: the same limit |
+| 13 | Entries | Members of one archive > `entries_max` → `ArchiveLimit { limit: "entries" }` while indexing; memory stops there |
+| 14 | Nesting | `depth > nesting_max` → `ArchiveLimit { limit: "nesting" }`; depth counts archives around the spec. A self-containing or recursive archive can do no more |
+| 15 | Decoder memory | xz: `new_mem_limit` of 1 GiB; zstd: `window_log_max(30)`; a stream that asks for more is `ArchiveCorrupt` |
+| 16 | Encrypted | A member with the encryption flag (ZipCrypto or AES; AES needs no crate to be seen) keeps its name, size and time, `crc32: None` (an AE-2 CRC is 0), and `open_read` → `ArchiveEncrypted`. Reported once per index as `archive_encrypted`. No password is asked, tried or guessed; a content test gives an error row. A rebuild copies it raw. An unknown method (PPMd, Shrink …) → `Unsupported { what: "this zip compression method" }` at read |
+| 17 | Names on disk | `LocalVfs::child` on Windows refuses names that are not file names there (`< > : " \| ? *`, control characters, a trailing dot or space): `InvalidName`, an item error when a copy out meets one. The check is a pure function, tested on every platform |
+
+**Limits** (`ArchiveLimits::default()`, overridable in `archives.toml`, §1.5.12):
+
+| Field | Default | Key | Range | Why |
+|---|---|---|---|---|
+| `entries_max` | 1,000,000 | `limits.entries_max` | 1,000…100,000,000 | ten times G6 |
+| `stream_max` | 64 GiB | `limits.stream_max_gib` | 1…4,096 | one pass of a large backup |
+| `cache_max` | 8 GiB | `limits.cache_max_gib` | 1…1,024 | also the largest member that spools |
+| `ratio_max` | 2,000 | `limits.ratio_max` | 0…1,000,000 | deflate ends at 1,032, so only bzip2, xz and zstd extremes trip it; a gzip bomb is stopped by the sizes |
+| `ratio_floor` | 64 MiB | none (a test parameter) | | small streams of zeros are normal |
+| `nesting_max` | 8 | `limits.nesting_max` | 1…32 | far above real nesting |
+
+**New errors** (`VfsError`, `#[non_exhaustive]`; §1.3.2 rules, exit codes unchanged):
+
+| Variant | `kind()` | Message | `io::Error` |
+|---|---|---|---|
+| `ArchiveCorrupt { spec, reason: String }` | `invalid_data` | `{spec}: not a valid archive: {reason}` | `InvalidData` |
+| `ArchiveLimit { spec, limit: &'static str, value: u64 }` | `too_large` | `{spec}: archive limit exceeded ({limit}: {value}); see archives.limits` | `FileTooLarge` |
+| `ArchiveEncrypted { spec }` | `unsupported` | `{spec}: the member is encrypted and cannot be read` | `Unsupported` |
+
+**Warnings (D-145).** New `WarningCode`s, appended: `archive_member_refused`, `archive_duplicate_member`, `archive_encrypted`,
+`archive_symlink_skipped`, `archive_scan_limit`. A warning is raised once per index (or operation), kept in the `ArchiveVfs` and
+drained by `Vfs::take_warnings`, which the scan calls at its end and the `Service` at the end of a `vfs`, `quick` or `text`
+command, so `warnings` in JSON is complete and a listing stays pure.
+
+#### 1.5.8 Time (normative; D-146)
+
+The zone is `(config.clock)().time_zone()` when an index is built (T1); no call reads the system zone. Order for a zip
+entry; the first that gives a value wins:
+
+1. NTFS extra field (0x000a): modification and creation time, 100 ns (`mtime`, `ctime`).
+2. Extended timestamp (0x5455), central form: modification time in Unix seconds (`mtime`).
+3. DOS date and time: **local wall time**, read in the injected zone by `tz.to_ambiguous_timestamp(dt).compatible()` (a
+   time in a gap moves forward with the old offset; a time in a fold takes the earlier instant). Resolution 2 s; FC-021's
+   default tolerance of 2 s covers it.
+4. Otherwise `None`. Invalid DOS fields are no time: month 0 or over 12, day 0 or past the month, hour over 23, minute over 59,
+   second field over 29; the all-zero date too.
+
+Tar: a PAX `mtime` record (decimal, with a fraction) that parses, else the header's seconds (UTC, including 0, the epoch);
+out of `FileTime` range → `None`. Single streams: gzip `MTIME` when not zero, otherwise the container's `mtime`. A
+written zip member (W5b) stores DOS time in the injected zone, clamped to 1980–2107, **plus** a 0x5455 field, so a reader in
+another zone gets the same instant; a time outside the field's `u32` range writes no field. Written tar headers hold whole
+seconds. Tests use `TimeZone::fixed` and POSIX strings (`TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3")`), so no
+time-zone database is needed on any platform.
+
+| # | Stored | Zone | Result |
+|---|---|---|---|
+| 1 | DOS 2026-07-15 12:00:00 | UTC+2 | `2026-07-15T10:00:00Z` |
+| 2 | same | UTC−5 | `2026-07-15T17:00:00Z` |
+| 3 | DOS 2026-03-29 02:30:00 (gap) | CET rule | `2026-03-29T01:30:00Z` |
+| 4 | DOS 2026-10-25 02:30:00 (fold) | CET rule | `2026-10-25T00:30:00Z` |
+| 5 | DOS with 0x5455 = 1,792,415,520 | any | `2026-10-19T13:12:00Z`, zone unused |
+| 6 | DOS, 0x5455 and NTFS with 500 ms | any | the NTFS time, with its fraction |
+| 7 | DOS month 13, day 0, second field 30, date 0 | any | `None` |
+| 8 | malformed 0x5455 (length 3) | UTC+2 | the DOS time |
+| 9 | tar header 1,792,415,520 + PAX `mtime=1792415520.5` | any | `2026-10-19T13:12:00.5Z` |
+| 10 | tar header 0 | any | `1970-01-01T00:00:00Z` |
+| 11 | PAX `mtime=abc` | any | the header's time |
+| 12 | gzip `MTIME` 0, container 12:00 | any | the container's time |
+
+#### 1.5.9 CRC (D-147)
+
+| Source | `Entry::crc32` | `CRC_PROVIDED` |
+|---|---|---|
+| zip | the central directory's value, without reading; `None` for folders and encrypted members | yes |
+| tar family, single streams | computed by the index pass (`Entry` documents "computed earlier in this run"), so no second decode | no |
+| a member in a cache file | as its archive | as its archive |
+
+`CrcComparator` needs no change: `VfsSource::known_crc32` returns the value and `crc_result` compares it **as it is**. Zip against
+zip reads nothing; zip against a local file computes the local side only (FC-025). A corrupt zip member with a correct
+central CRC is therefore "same" for the CRC test: that is what the test promises, and the binary test decodes it. `quick
+--crc` is the same comparator. `vfs stat` and `vfs ls --json` show the value.
+
+#### 1.5.10 Writes (W5b; D-148, D-149, D-150)
+
+Writes exist for zip and the tar family (Q8, D-63). A primitive on a single-stream archive, or below one →
+`OperationUnsupported`; `Dos` attributes other than `R`, `created` times and `move_to_trash` → `OperationUnsupported`,
+as the capabilities say. A member write never touches the archive until the rebuild.
+
+```rust
+// hikasa_vfs::vfs (additive)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish { Commit, Abort }
+pub trait Vfs: Send + Sync {
+    /// Opens a batch on the archive `at`: until `finish` the primitives on its members only change an overlay,
+    /// which every reader of this back-end sees. Another batch on it → `Unavailable`. Default: nothing.
+    fn begin(&self, _at: &Spec) -> Result<(), VfsError> { Ok(()) }
+    /// Ends the batch: `Commit` rebuilds `at` (the W3 hook, §1.3.10), `Abort` drops the overlay. Default: nothing.
+    fn finish(&self, _at: &Spec, _how: Finish) -> Result<(), VfsError> { Ok(()) }
+    /// Creates an empty archive at `spec`, whose name matches a writable mask. Default: `OperationUnsupported`.
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> { Err(op_unsupported(spec, VfsOp::Mkdir)) }
+}
+/// Gains `Seek` (the zip writer patches local headers). `DirectWriter` answers `Unsupported`; `MemWriter` keeps a position.
+pub trait AtomicWrite: Write + Seek + Send { fn commit(self: Box<Self>) -> Result<(), VfsError>; }
+```
+
+**Batches (D-148).** `begin` and `finish` keep "one rebuild per operation" and stop a write from vanishing: a
+primitive or an `open_write` commit **outside** a batch is its own batch and rebuilds at once, so `--output` into an
+archive and W10's save need nothing special. `begin` on an archive with a batch of another operation → `Unavailable
+{ reason: "another operation is changing this archive" }`. `ops::execute`, the single place an operation ends, runs:
+
+1. Before an item touches a spec with `Spec::container() = c` (target on `dst`, source on `src` for moves and
+   removes): the first time, `vfs.begin(c)`. An error fails the item.
+2. Items run as in W3 and change only the overlay. **Moves into an archive run in two phases:** the copy parts first; the
+   source removals (`move` sources, then `remove_dir`, plan order) only after the target's rebuild succeeded, so a failed
+   rebuild leaves every source in place. A removal that fails then fails its item (the copy stays).
+3. At the end, roots in this order: every target root, then source-only roots. `finish(root, Commit)`; with
+   `cancelled`, `finish(root, Abort)`, and a source-only root is aborted too when a target root failed.
+4. `Abort` or a failed `Commit`: the `done` items of that root become `failed` with that error (`cancelled` →
+   `not_run`), the summary is recounted, `ok()` is false, exit 100. Nothing is partly written. With an item failed
+   and others done, the done ones are committed (per-item results, ARCH-101).
+5. A guard aborts every open batch if `execute` unwinds.
+
+Nested archives: `begin(c)` on `a.zip/b.tar` opens the chain up to the outermost file.
+
+**Overlay (`overlay.rs`).** On the first change of a batch the member tree is cloned into a mutable tree whose nodes
+are `Kept(index)`, `New { cache file, mode, mtime }`, `Dir`, `Link`. Primitives follow the semantics of `MemoryVfs`
+(§1.3.1, D-94): `remove` of a non-empty folder → `NotEmpty`; `rename` moves a subtree; existing targets as W3;
+`open_write` spools into a cache file (`reserve` per 1 MiB) and enters the tree on `commit`; a link at the target is
+replaced, never followed, whatever `replace_link` says. Implicit folders become explicit only when a primitive
+names them. `create_symlink` adds a link member. New member defaults: mode `0o644`, folders `0o755`, the clock's now.
+Staged content follows the cache rules; `Abort` releases it.
+
+**Rebuild protocol (normative; D-149).** `finish(at, Commit)`:
+
+1. An overlay with no net change: nothing is written.
+2. Re-stat the container. A stamp other than the index's → every done item fails `InvalidTarget "changed since the plan
+   was made"`, nothing is written. A damaged archive (rule 9) → `ArchiveCorrupt`.
+3. `w = base.open_write(container, { overwrite: true, create_parents: false, replace_link: false })`: a temporary sibling
+   of the file, the file a link names being the target (Q8, `docs/11` "Local writes"). For a nested archive `w` is a cache
+   file.
+4. Write the archive (below). Any read, write or cancel error drops `w`: the archive is untouched (INV-VFS-3).
+5. `w.commit()`: `fsync` and atomic rename. For a nested archive the result enters the parent's overlay as a `New` member and
+   step 1 repeats for the parent; only the outermost `commit` touches a real file, so a chain is atomic too.
+6. Drop the index and the cache files of the old stamp.
+
+| Format | Kept members | New or changed members | Stream |
+|---|---|---|---|
+| zip | `raw_copy_file` in central-directory order, no recompression; renamed ones `raw_copy_file_rename`; the archive's comment kept | after the kept ones, sorted by path: `start_file` with `Deflated`, level 6, `large_file` from 4 GiB; a 5-byte 0x5455 field by `add_extra_data`; UTF-8 names; a folder by `add_directory`, a link by `add_symlink`. A touched member (`set_times`, `set_attrs`) is decoded and written again: `raw_copy_file_touch` would keep a stale 0x5455 field | `ZipWriter::new(w)`, seekable |
+| tar | the raw blocks of each member (extension headers, header, data, padding) in archive order, by one forward pass; a renamed or touched one: a new header, its data range | after the kept ones, sorted by path: `tar::Builder` with `HeaderMode::Complete`, uid and gid 0 | plain |
+| tar.gz | same | same | `GzBuilder` with `mtime(0)` and no name, level 6 |
+| tar.bz2 | same | same | `BzEncoder`, level 9 |
+| tar.xz | same | same | `XzWriter`, `XzOptions::with_preset(6)`, CRC64 |
+| tar.zst | same | same | `zstd` level 3, checksum on |
+
+- Levels are the formats' usual defaults, constants of `rebuild.rs`, not options. The same inputs give the same bytes (given
+  the same crate versions).
+- **A rebuild keeps what it did not touch:** refused, encrypted, sparse and link members go on as raw data; shadowed
+  duplicates go. CRCs of new members come from the writers; kept zip members keep theirs.
+- A zip with a prefix (`ZipArchive::offset() != 0`, a self-extractor) → `Unsupported { what: "rewriting a zip with a
+  prefix" }`, nothing written. Signed `.jar`, `.apk` lose their signature's validity when rebuilt (`docs/11` says so).
+- The fresh archive is not re-read before the rename: every path through the writers is covered by round-trip
+  properties, and verifying would double the disk use.
+- A rebuild's cost is the size of the archive, not of the change: `Phase::Writing` reports the archive's bytes after
+  the items. Cancellation is checked per 1 MiB and before `commit`; a cancelled rebuild is `Abort`.
+
+**Empty archives (FC-077; D-150, revises the hook of §1.3.10).** `create_dir` stays literal: `ops` also calls it for a real
+folder named `x.zip` inside a copied tree, which must stay a folder. **`plan_mkdir` decides:** a target whose final name
+has `vfs.archive_format(name)` with `writable()` gets the new `Action::CreateArchive` (`create_archive`, human word
+`mkarchive`, `kind: file`), run through `Vfs::create_archive`, which writes an empty archive through `open_write`. An
+existing item: the W3 rules of `mkdir`. Single-stream masks (`x.gz`) stay plain folders. Only the final name counts: a
+missing ancestor is a folder, as in `mkdir -p new.zip/sub`. Inside an archive the same rule makes a nested empty
+archive.
+
+| Format | Bytes of an empty archive |
+|---|---|
+| zip | the 22-byte end record (`ZipWriter::new(w).finish()`) |
+| tar | two zero blocks (1,024 bytes) |
+| tar.gz, tar.bz2, tar.xz, tar.zst | the same two blocks through the encoder |
+
+**Backups** belong to W6 (§1.5.17): W5 rebuilds without one.
+
+#### 1.5.11 Folder scan (FC-001, FC-015; D-151)
+
+```rust
+// hikasa_folder::rules (additive; a key of [handling] and a key of the rules root, both sparse, schema version unchanged)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum ArchiveHandling { AsFiles, #[default] OnceOpened, Always }
+pub struct Handling { /* … */ pub archives: ArchiveHandling }
+pub struct FolderRules { /* … */ pub open_archives: Vec<String> }     // paths relative to the bases, `/`-separated
+pub struct FolderRulesPatch { /* … */ pub archives: Option<ArchiveHandling>, pub open_archives: Option<Vec<String>> }
+// hikasa_folder::model
+NodeFlags::ARCHIVE = 512                                               // name "archive"; FLAG_NAMES grows to 10
+```
+
+**Base sides (FC-001).** A base is an `ArchiveMember` root or a folder member (`Service::folder_prepare` resolves with
+`SpecUse::Folder`, so `folder compare a.zip b/` works whatever the handling mode). `load_base`, capabilities, case
+resolution (`CaseMode::Auto`: sensitive only when both sides are), `effective_criteria` and the content engines work
+unchanged: a base that cannot be read → `BaseNotLoadable`, exit 107.
+
+**Modes (FC-015).** Headless default `OnceOpened` with nothing opened gives M1's results: an archive inside a tree is a file
+(goldens unchanged).
+
+| Mode (`--archives`) | Archive in a tree |
+|---|---|
+| `AsFiles` (`files`) | a file, always: size, time, content tests of the file |
+| `OnceOpened` (`opened`, default) | a file, until its path is in `open_archives`, then a folder |
+| `Always` (`folders`) | a folder |
+
+**Algorithm** (one place in `scan.rs`, after a side is listed, so the flat mode gets it too):
+
+1. For each `File` entry: `vfs.archive_format(name)`; `None` → nothing. The rest uses the entry's fact `archive`:
+   `NodeFlags::ARCHIVE` on the node, whichever side has it.
+2. It **opens** when the mode says so (its relative path on either side, as written in `open_archives`) and the budget of
+   step 5 allows. Then `entry.kind = Dir`, `entry.size = 0`, and `spec_of` gives `Spec::archive_member(child, "")`.
+3. The prefilter (D-45) passes such a name with kind `Dir`, so the folder masks decide, as for a folder. An archive
+   that stays a file meets the file masks.
+4. Alignment, FC-054, counters and states see a folder pair. A listing that fails (corrupt, encrypted index, limit)
+   takes the existing path: the node's `ScanStatus::Failed`, the side's error flag, a `NodeError`, an **error row**; the
+   scan goes on. Rows `<refused-N>` and `<damaged>` of `Listing::errors` arrive as entry errors.
+5. **Budget.** Entries listed inside archives add to one atomic counter per scan. Past `SCAN_ARCHIVE_ENTRIES_MAX` =
+   5,000,000 no further archive opens (it stays a file) and one `archive_scan_limit` warning is added. With `nesting_max`
+   and the cache limits this bounds a recursive archive in `Always` mode.
+6. At the end `vfs.take_warnings()` joins the comparison's warnings.
+
+Nested archives follow the same rule inside archives: `a.zip/b.tar.gz` opens in `Always`, or through the entry
+`b.tar.gz` below an opened `a.zip`, written `a.zip/b.tar.gz` in `open_archives`. Links inside archives stay `Symlink`
+nodes compared by target text, also with follow-symlinks on. FC-014 flatten descends opened archives like folders, and
+their members are in the Path column. FC-025: §1.5.9. The memory budget of content tests (D-25) applies as for files.
+
+#### 1.5.12 Service and settings
+
+`archives.toml` gains a section, schema version unchanged (an additive known section, as D-108):
+
+```toml
+schema_version = 1
+[types]                  # unchanged
+[limits]                 # OPT-010; §1.5.7
+entries_max = 1000000
+stream_max_gib = 64
+cache_max_gib = 8
+ratio_max = 2000
+nesting_max = 8
+```
+
+`ArchiveLimitsSection` in `settings/archives.rs` with the ranges of §1.5.7 (`validate`, one `KindRule` for `limits.*`, OPT-010,
+P0); `ArchiveTypes::masks(&self) -> ArchiveMasks`, `ArchiveTypes::limits(&self) -> ArchiveLimits`; `ArchiveType` maps one to one
+to `ArchiveFormat`. The Options page `archive_types` keeps its table of masks (no new dialog); limits are `settings` keys. A
+package (D-86) carries the file unchanged. D-86 itself is unchanged: its import still accepts only stored and deflate
+entries, although the workspace `zip` now has more codecs (test).
+
+```rust
+impl Service {
+    pub fn parse_spec(&self, input: &OsStr) -> Result<Spec, ApiError>;              // + resolve_spec: Any, or Folder
+                                                                                   //   when the input ends in a separator
+    pub fn parse_spec_as(&self, input: &OsStr, use_: SpecUse) -> Result<Spec, ApiError>;
+    pub fn shutdown(&self);                                                         // `ArchiveVfs::cleanup`
+}
+```
+
+- `Service::build` reads `archives.toml` (a broken file: defaults and one `invalid_config_value` startup warning, a comparison
+  of plain files must not depend on it), builds `ArchiveConfig` with `Clock` and `config.cache_dir.join("archives")`, and
+  `VfsRouter::with_archives`. `rebuild_router` keeps the `Arc`. `reload_settings` calls `set_config`.
+- `SpecUse::Folder`: `folder_prepare`, `vfs ls`, a `cp`/`mv` target with a trailing separator, the specs of a Folder Compare
+  view. Everything else `Any`.
+- Every place that uses `Spec::parse_os` directly on a user spec resolves too: the targets of W3's write commands (they
+  are still parsed without reading stdin) and `input_stamp` (`api/settings.rs`).
+- `infer_view_kind` (D-50) gains: two files that are both archives by name, or one archive and one folder → `FolderCompare`.
+  `--fv` still wins. `gui open` sends the resolved canonical spec.
+- Sessions store specs as canonical text (D-80), so `a.zip/inner/x` and `a.zip/` round-trip (§1.5.2).
+
+#### 1.5.13 CLI and JSON (D-152)
+
+No new subcommand and **no new schema**: `SCHEMAS` stays at 35; the shapes do not change, `spec` fields show archive
+specs. Exit codes are the table of M1 §2.21: every `vfs` error or failed item 100; `quick`, `text compare` loading errors 100; a
+`folder compare` base that cannot be loaded 107; error rows as in M1.
+
+| Command | Behaviour in W5 |
+|---|---|
+| `hikasa vfs ls a.zip`, `a.zip/`, `a.zip/inner` | lists members, `SpecUse::Folder`; `<refused-N>` and `<damaged>` in the listing's errors, as M1's entry errors |
+| `hikasa vfs stat a.zip` | the file; `a.zip/` the root, with the format's capabilities; `a.zip/x` the member, `crc32` included |
+| `hikasa vfs cat a.zip/x`, `x.txt.gz/x.txt` | the member's bytes; `Symlink`, `Other`, encrypted: error, exit 100 |
+| `hikasa folder compare a.zip b/`, `a.zip/inner b/`, `a.zip b.tar.gz` | §1.5.11; new `--archives files\|opened\|folders`, repeatable `--open-archive <PATH>` |
+| `hikasa quick a.zip/x b/x`, `hikasa text compare a.zip/x b.tar.gz/y` | as files; format detection uses the member's name |
+| `hikasa quick a.zip b.zip` | the two files: `SpecUse::Any`, by design |
+| `hikasa vfs cp out.txt a.zip/dir/` (W5b) | D-102 naming over the resolved target; `-p` for a missing `dir/`; `hikasa.vfs_op.v1`; one rebuild after the items |
+| `hikasa vfs cp a.zip/x out/`, `cp -r a.zip/ out/` | W5a: reads only; link members skipped (rule 5) |
+| `hikasa vfs mv`, `rm`, `touch`, `mkdir` on members (W5b) | as W3, through batches; `--trash` on a member: item error `unsupported` |
+| `hikasa vfs mkdir new.zip`, `new.tar.gz` (W5b) | item `create_archive`, human `mkarchive new.zip`; summary `created` |
+
+`--archives` and `--open-archive` are in `folder compare` and `session new|edit` rule keys (`handling.archives`, `open_archives`);
+the word list is parsed by core (`vocab::parse_archive_handling`, T11; architecture check 7): `--open-archive` with `files`
+adds `switch_ignored`. A dry run prints the plan (T12); a rebuild is not an item, and only a failed one changes results (the items
+take its `error`, the shape of W3). `action` gains `create_archive`, an additive value of `hikasa.vfs_op.v1`.
+
+Human output adds nothing except the `mkarchive` word. Warnings go to stderr as usual. **Catalogue:** no entry names
+archives and no status changes: `NewFolder` stays `planned` until W9, `Open` and `Expand` are `implemented` already, so
+`docs/reference/commands.md` does not change. **Help:** new topic `archives` (formats, masks, specs, nesting, modes, limits,
+safety, the cache, rebuilds), linked from `index`, `vfs`, `folder-compare` and `settings`; `help/vfs.md` loses the "not supported"
+sentence on archive members; `cargo xtask help-check` stays clean.
+
+#### 1.5.14 GUI (D-153)
+
+Only what the archive sides need, in the existing views; no new dialog, command, page or setting, and no logic (T11):
+
+- **Folder view.** A row whose node has `NodeFlags::ARCHIVE` shows the new in-house zipper icon (D-114, on the 16 × 16 grid,
+  in the row's icon place; light and dark). Error rows, `<refused-N>` and `<damaged>` use the existing error row.
+- **Opening.** With `OnceOpened`, `Open` (double-click, Enter) on a closed archive row, the right place for FC-015's "expand on
+  double-click", adds the row's path to the view's `rules.open_archives` and runs the comparison again by the view's reload
+  path; the new folder row is shown expanded. In `AsFiles` `Open` is as before. W9 replaces the full run by a subtree refresh
+  (W6). Which rows offer it is `FolderRow::opens_archive`, computed from the flag and the rules in the view model.
+- **Text view.** Members load through the VFS; the title shows the canonical spec. The view is read-only as all views are
+  before W11. Watching inputs (D-118) uses `stat` of the member, which re-stats the archive: no content is read.
+- **Sides.** Path fields of Home and the management panel, command line, IPC and drops pass through `parse_spec` and
+  `infer_view_kind`. The base label of a Folder Compare shows the canonical spec.
+- **Exit.** `Service::shutdown` after the last window closes.
+
+All of this is view-model tested without a window (§6.5 A5.19).
+
+#### 1.5.15 Dependencies and architecture test (D-154)
+
+Versions checked with `cargo info` on 2026-10-31. Added to `[workspace.dependencies]` with fixed features (architecture
+check 3 refuses member-level features):
+
+| Crate | Version | Licence | Features | Why these |
+|---|---|---|---|---|
+| `zip` | 9.2.0 (from 9.1.3) | MIT | `default-features = false`, `deflate`, `deflate64`, `bzip2`, `zstd`, `lzma`, `xz`. No `aes-crypto`, `time`, `ppmd`, `rayon`, `legacy-zip` | reading what zip tools write; encryption is reported, not implemented |
+| `tar` | 0.4.46 | MIT OR Apache-2.0 | `default-features = false` (no `xattr`) | `Header`, `PaxExtensions`, `Builder` |
+| `flate2` | 1.1.10 | MIT OR Apache-2.0 | `default-features = false`, `zlib-rs` | the pure-Rust back-end `zip` already enables; features unify |
+| `bzip2` | 0.6.1 | MIT OR Apache-2.0 | default (`libbz2-rs-sys`, a Rust port; no C) | `bzip2/default` is what `zip` uses |
+| `lzma-rust2` | **0.23.0** | Apache-2.0 | `default-features = false`, `std`, `encoder`, `optimization`, `xz` | not the newest 0.24.0: `zip` 9.2 needs `^0.23`, and one LZMA codec in the tree is the point (plan §3). Moves when `zip` moves. Pure Rust (D-63) |
+| `zstd` | **0.14.3** | BSD-3-Clause | `default-features = false` | not the 0.13 of plan §3: `zip` 9.2 needs `^0.14.2`, and the licence is not the plan's MIT. `zstd-safe` 8.2.0, `zstd-sys` 2.1.2 (BSD-3-Clause), libzstd 1.5.7 |
+
+`hikasa-vfs` manifest += `zip`, `tar`, `flate2`, `bzip2`, `lzma-rust2`, `zstd`, `jiff` (`ArchiveConfig::clock`, the zone). New crates
+in `Cargo.lock` besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`, `hybrid-array`, `typenum`,
+`const-oid`, `crypto-common`, `zstd-safe`, `zstd-sys`, and the build-time `cc`.
+
+**Licence: one exception, for the maintainer.** `libbz2-rs-sys` is under `bzip2-1.0.6`, a permissive BSD-style licence that
+`deny.toml` does not list (verified: `cargo deny check licenses` rejects it, and plan §3 only named the wrapper's
+licence). No bzip2 back-end avoids it, the C original has the same licence. The contract adds a crate-scoped
+`[[licenses.exceptions]] crate = "libbz2-rs-sys", allow = ["bzip2-1.0.6"]`, as for `epaint_default_fonts`. W3's "stop and
+ask" does not block: this row is the question, and it stands unless the maintainer objects. `packaging/third-party-licenses.py`
+needs no change (the crate ships `LICENSE`). `cargo deny check` passes with no other new exception.
+
+**`zstd` bundles C.** `zstd-sys` compiles libzstd with the `cc` crate at build time: no cmake, no bindgen (pregenerated
+bindings), no nasm. What each build needs is a C compiler for the target. Verified on 2026-10-31 with this feature set in a
+scratch crate, each run printing `1.5.7`:
+
+| Target | How packaging or CI builds | Result | Needs |
+|---|---|---|---|
+| `x86_64-unknown-linux-gnu` | C by the host `cc`, link by `zig cc` (`packaging/zig-cc.sh`, glibc 2.31) | builds, glibc floor 2.30, no BMI code | host `cc`. `packaging/build-linux.sh` gains `export CFLAGS_x86_64_unknown_linux_gnu="-march=x86-64 -mtune=generic"`, because a machine-wide `CFLAGS` with `-march=native` would reach the C objects, which `RUSTFLAGS` does not govern (`check-linux-binaries.sh` still checks) |
+| `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu` | mingw gcc, `+crt-static` (`packaging/build-windows.sh`) | build, run under wine, system DLLs only | the mingw gcc the scripts already require |
+| `x86_64-pc-windows-msvc` | `cargo xwin` here; `cl.exe` on `windows-latest` | builds | the MSVC tools `link.exe` already needs |
+| `aarch64-apple-darwin` | `zig cc` here; Xcode's `clang` on `macos-latest` | builds and links | the Command Line Tools rustc already needs for linking |
+
+zstd's one assembly file is used on x86-64 outside Windows only and goes through the same C compiler. Do not set `CC` to
+`zig cc` for Linux: the `cc` crate passes `--target=x86_64-unknown-linux-gnu`, which zig refuses. Plan §5.1's
+fallback `ruzstd` is not needed. LZMA stays free of C (D-63); libzstd is the only C code in Hikasa's binaries, and no Hikasa
+source is `unsafe` for it.
+
+**Architecture test.** Manifest table as above. Check 2 gains a confinement rule: the tokens `zip::`, `tar::`, `flate2::`,
+`bzip2::`, `lzma_rust2::`, `zstd::` only under `core/hikasa-vfs/src/archive/` (`zip::` also in
+`core/hikasa-session/src/package/`, D-86). `docs/02`: the lines of the table, the `zip` row updated, the C note, the
+exception.
+
+#### 1.5.16 Gate G6 and budgets (D-155)
+
+Measured once at the end of W5a on an idle machine, release build, fixtures generated by the test; recorded in `docs/02`;
+`bench.yml` carries them with the 25 % tolerance (D-64).
+
+| Item | Measure | Where | Threshold |
+|---|---|---|---|
+| G6 list | `hikasa vfs ls big.zip --json` on a zip of 100,000 stored files in one root, wall time of the process, warm cache | `cli/hikasa-cli/tests/perf_gates.rs`, `#[ignore]` | < 1 s |
+| G6 compare | `hikasa folder compare tree/ tree.zip --content crc --json`, 10,000 files of 4 KiB in 100 folders, equal sides | same | < 2 s |
+| G6 CRC | `ArchiveVfs::prepare` of a 1 GiB `tar.gz` of one member (repeating pseudo-random text, ratio ≈ 4:1, the CRC in the index) against decoding the same stream to a sink with `MultiGzDecoder` | `core/hikasa-vfs/benches/archive_crc_1gb.rs` | ≤ 1.3 × the raw decode |
+| G2 | the M1 gate again: every file now meets `archive_format` | `perf_gates.rs` | unchanged |
+| Memory | index ≤ 512 bytes per member; peak RSS of G6 list ≤ 150 MiB; of G6 CRC ≤ 64 MiB (nothing spooled) | `perf_gates.rs`, RSS from the existing helper | listed |
+| Cancel | `prepare` and a spool of a 1 GiB stream stop within 100 ms | `archive_cache.rs`, name holds `cancel` (D-69) | G4 |
+
+Measured in the scratch crate: `ZipArchive::new` 14 ms and `by_index_data` of all entries 1 ms for 100,000 entries, so the gate has
+room for the tree and the JSON. Rebuilds have no gate: their cost is one copy of the archive (`docs/11`).
+
+#### 1.5.17 Hooks for W6
+
+- **Operations inside archives.** W6's `OpPlan` wraps `ops::Plan`, so its items reach `execute` and get batches, the two-phase
+  move and item results for nothing. `Capabilities` per spec (`REMOVE`, `RENAME`, `WRITE`) grey out what a format lacks,
+  so single-stream archives are read-only with no special case.
+- **Backups.** W6 inserts one step in `execute` just before `finish(root, Commit)`: one backup of `root.outermost_file()` per
+  operation, when the backup option asks. A backup of the archive replaces per-member backups inside it; W6 decides
+  whether a `replaces` item inside an archive also keeps a copy.
+- **Recycle bin.** `move_to_trash` stays unsupported on members; FS-005's "delete to recycle bin if possible" is W6's
+  confirmation choice (§1.3.10), a member being deleted for good only after a rebuild.
+- **Open With, external conversions.** They need a real path. W6 adds `ArchiveVfs::extract_to_cache(spec, cancel) ->
+  Result<PathBuf, VfsError>` on the existing spool; the path is valid for the session.
+- **Refresh.** `Open` on an archive row re-runs the comparison (§1.5.14); W6's subtree refresh replaces it. An archive
+  rebuilt by an operation changes its stamp, so the refreshed subtree reads the new index.
+- **Sync.** FS's *Sync within archives* is a mode of W6's plan over `SpecUse::Folder` sides; D-151 already compares them.
+
+#### 1.5.18 Documentation updates of W5
+
+`docs/01` §3.1 (`ArchiveMember { archive, member }`, root `""`), §3.2 (the new trait methods, `AtomicWrite: Seek`); `docs/02` (§1.5.15, the
+G6 measurements); `docs/03` §5 (`archives.toml` `[limits]`, the cache folder); `docs/04` FC-001, FC-015 (modes, opening,
+`open_archives`, the budget), FC-025 (the zip CRC as it is), FC-077; `docs/05` TC-002; `docs/10` (format detection by the member's
+name); `docs/11` §1 (the Archives row and VFS-002: formats, capabilities, cache, safety and limits in user terms, rebuild cost, a
+signature does not survive; "Mutations": batches), §2 (how `…/a.zip/inner/x` resolves, the trailing separator, nesting,
+case); `docs/12` §1 and §4 (`vfs` rows, `--archives`, `--open-archive`, `create_archive`, `mkarchive`); `docs/14` (the zipper icon,
+`Open` on an archive row); `docs/15` OPT-010 (`[limits]`); `docs/16` M2 progress; `help/` as §1.5.13; `CHANGELOG.md` per
+part. `docs/reference/commands.md` is unchanged.
+
+#### 1.5.19 W5 notes (implementation)
+
+*Empty until the wave runs: the implementers record here where the implementation had to interpret or extend the text
+above.*
+
+### 1.6–1.14 W6–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -2739,3 +3558,127 @@ headless through the models (§1.4.16). Each part ends with its items and the fu
 - A4.23 **Wave end.** Whole workspace green as A4.10; every W4 help topic linked and `help-check` clean;
   `docs/reference/commands.md` regenerated with every W4 status; the documentation updates of §1.4.19 done; the
   `docs/16` progress line updated.
+
+### 6.5 W5 acceptance
+
+Rules for every item: fixtures are **generated in the tests** by `core/hikasa-vfs/tests/common/archives.rs` (a tree as data → bytes
+of each format; hostile members as raw bytes: tar headers built by hand with their checksum, because `tar::Builder` refuses
+them, zip records patched after writing), never downloaded and never committed as binaries. **Every test runs on Linux,
+Windows and macOS** (CI runs all three): no real links, FIFOs or devices on disk (link and device members are bytes in an
+archive); no hard-coded `/tmp` or `/`-only paths (specs from `Spec::parse` on a `tempfile` folder, canonicalized because
+macOS' temp folder is a link); Windows path rows use `resolve_with` and `PathStyle::Windows`, so they run everywhere; time zones
+by `TimeZone::fixed` and POSIX strings, no time-zone database; readers dropped before a folder is removed (Windows); Unix-only
+checks (`0700`) behind `cfg(unix)`; goldens normalize the temp prefix and separators as the existing CLI tests do. No test
+reads the real clock, zone or home folder (T1). The part of each item is in brackets.
+
+- A5.1 **Spec model (D-137) [W5a].** Table test of `Spec::parent`, `file_name`, `container`, `outermost_file`, `archive_depth`
+  and `canonical` for a root, a member, a nested member and a nested root, Unix and Windows styles; `ops::check_item` refuses
+  a root. Property P-ARCH-1: generated nested specs over a generated tree round-trip through `canonical`, `Spec::parse` and
+  `resolve_spec`, and `Serialize` refuses a lossy base as before. `Spec::parse` never yields `ArchiveMember` (the M1 table
+  of 30 rows is unchanged).
+- A5.2 **Resolution (D-138) [W5a].** Every row of §1.5.4 through `resolve_with` and a table-driven fake, in both path styles
+  where the row applies, on every platform; rows 1–23, 27 and 28 again through `resolve_spec` on `ArchiveVfs` over
+  `MemoryVfs` and over `LocalVfs` in a tempdir (host syntax). Call counts: at most one `stat` per component; rows 4, 6 and
+  28 never open the archive (`open` journal empty). Determinism: the same 1,000 specs resolved from 8 threads, in any
+  order, give the same answers. A source check: `resolve.rs` names neither `std::fs` nor `std::env`.
+- A5.3 **Formats (D-136) [W5a].** One generated tree in each of the ten formats (one member for the four streams), plus a
+  tree with 300-byte names: `list`, `stat`, `open_read` equal the tree, on `MemoryVfs` and `LocalVfs` containers. Nested `a.zip/b.tar.gz/c.txt`
+  and three levels. Concatenated gz, bz2, xz, zst. Member names of single streams (`x.txt.gz`, `noext.gz`-style cases). Masks: `.JAR`
+  as zip, a disabled `tar_gz` makes `x.tar.gz` a one-member `gz`, a custom mask, an empty mask. The capability table per format
+  and per nesting; the router table, with and without `with_archives`; `child` of root and folder; synthesized folders; the root's
+  entry; every `Entry` column of §1.5.5. `FollowLinks::Yes` leaves a link member a link without an `EntryError`.
+- A5.4 **Content reads (D-139) [W5a].** Zip members of 1 MiB and 1 MiB + 1 byte take memory and the cache (a counter). A plain tar
+  member reads with no cache file and `Seek` in any order. Compressed tar: the first read decodes only up to its member and
+  spools it, the second distinct read writes the whole stream once, later reads decode nothing (test counters), and a stream
+  bigger than the free cache keeps spooling member by member. Every reader passes the same seek and read table. 8 threads on
+  one archive give the same bytes. `tar_walk`: PAX `size` over the header, GNU long names and links, base-256 sizes, `g`
+  headers, labels, an old V7 header; an extension body of 1 MiB + 1 byte is damage.
+- A5.5 **Cache (D-140) [W5a].** The location for each `ConfigMode` and platform by a pure table (`resolve_config_dir`). A command
+  that only lists creates no folder. Layout: numeric names, `0700` on Unix. Accounting: `used` equals the files' lengths in a
+  random workload; `cache_max` evicts least recently used files, never one a reader holds; a member over the limit is
+  `ArchiveLimit` and leaves nothing. Reuse: a second read decodes nothing. Invalidation: touching the container (new stamp) drops the
+  index and the files. Exit: `cleanup` and `Drop` remove everything. Crash: a leftover `s7/` with an unlocked `s7.lock` goes
+  at the next session's first spool; a folder whose lock is held (a second handle in the test) stays. Two `ArchiveVfs`
+  on one root get different numbers.
+- A5.6 **Names (D-141) [W5a].** Rules 1–4 and 17 as tables, for zip and tar each: `../x`, `a/../../x`, `/etc/passwd`, `\x`,
+  `\\srv\x`, `C:\x`, `C:/x`, `c:x`, `..\..\x`, `a\b`, NUL, 4,097 bytes, `./a//b`, `.`, `./`, invalid UTF-8, CP437, duplicates in both
+  orders, `a` with `a/b` in both orders, `A.txt` with `a.txt`; rows `<refused-N>`, the cap of 1,000, the warning's total. An
+  end-to-end test extracts each hostile archive with `vfs cp -r a.zip/ out/` and asserts that the tempdir holds only what lies
+  below `out/` and that the cache held numeric names only. The pure Windows name check of rule 17 on every platform, `LocalVfs::child`
+  on Windows.
+- A5.7 **Kinds (D-142) [W5a].** Link members: listed with their target (also `/etc/passwd`, `../..`), `open_read` →
+  `OperationUnsupported`, lookups through them `NotADirectory`, a member below one refused, a copy out skips them with one
+  warning and creates no link anywhere. Hard links: to an earlier member, to a later one, to a refused name, to themselves.
+  Devices, FIFOs: `Other`, skipped. Sparse: listed, read refused.
+- A5.8 **Limits (D-143) [W5a].** Rules 10–15 with small injected limits: a zip whose declared size is smaller and one whose
+  declared size is larger than its stream; a CRC-corrupted member; a gz, a bz2, an xz and a zst of zeros over `ratio_max` once past
+  `ratio_floor`, and the same with `ratio_max = 0` passing; an archive-wide ratio; overlapping zip entries stopped by the total;
+  `stream_max` during an index pass; `entries_max + 1` members; `nesting_max + 1` levels, a zip that contains itself by
+  name; an xz and a zst frame asking for too much memory. Each: the right error, no partial cache file, memory bounded
+  (peak allocation below 64 MiB for a stream of 1 GiB of zeros with a 16 MiB `stream_max`), and an in-limit neighbour still reads.
+- A5.9 **Encrypted (D-144) [W5a].** A zip with one ZipCrypto-flagged member, one AES-flagged member (method 99) and a plain one
+  (flags patched into generated bytes): names, sizes, times listed; `crc32: None`; `open_read` → `ArchiveEncrypted`; one
+  warning; a folder compare gives an error row for them and a normal row for the plain one. An unknown method gives `Unsupported`.
+- A5.10 **Corrupt input (D-145) [W5a].** Fuzz-style proptest, one per format of the ten, with its default case count: (a)
+  random bytes under the format's mask, (b) a valid fixture with random byte flips, (c) cut at a random length. `list`, `stat`,
+  `open_read` and a full read of every listed member never panic, finish, and return data or a typed error; every error
+  kind is one of the four of §1.5.7. Cuts at every byte of a small `tar.gz`: members complete before the cut read correctly and
+  `<damaged>` appears. `central_times` over random bytes. A decoder panic forced by a test hook becomes `ArchiveCorrupt`.
+  A mask match with text (rule 8) in `vfs ls`, `quick`, a scan. Warnings arrive once through `take_warnings`.
+- A5.11 **Time (D-146) [W5a].** Every row of §1.5.8. A property: a member written with a 0x5455 field reads the same instant in
+  zones −12…+14, and one with only DOS time reads the wall time back in any zone. No call reads the system zone (the zone
+  comes from the injected clock; a test passes two clocks).
+- A5.12 **Scan (D-147, D-151) [W5a].** The mode table for: `a.zip` and `a.zip` in two trees, an archive against a folder of the
+  same name, an orphan archive, a corrupt one (error row, the rest of the scan complete), a nested one. `--archives` default
+  equals M1's results: the existing folder goldens do not change. `open_archives` by a path on the left, on the right, nested. Filter
+  masks: a folder-exclude and a file-include against an opened archive (D-45 prefilter). Flatten. `NodeFlags::ARCHIVE`
+  closed and open. The scan budget with a small injected constant: later archives stay files, one warning. FC-025:
+  zip-vs-zip with `--content crc` opens nothing (`MemoryVfs` journal), zip-vs-local reads the local side only, tar-vs-tar reuses
+  the index's CRC, a corrupt member with a good central CRC is "same" for CRC and "different or error" for binary.
+  `folder compare a.zip b/` and `a.zip b.tar.gz` equal the comparison of the extracted trees (states, sizes, CRCs,
+  times within 2 s). `rules` TOML round trip with the two new keys, sparse (D-90).
+- A5.13 **CLI, settings, gate (D-152, D-154, D-155) [W5a].** `cli/hikasa-cli/tests/cli_archive.rs`: each row of §1.5.13 marked W5a, text and
+  `--json` goldens, exit codes (0, 1, 11, 100, 107), `--archives`, `--open-archive`, `switch_ignored`, unknown word → 100,
+  `quick a.zip b.zip` by bytes, `vfs cat` of a link member → 100. `hikasa help archives` and `help-check`. `settings get|set
+  archives.limits.*` with ranges, and a bad value refused; a broken `archives.toml` gives one warning and a working
+  comparison of plain files; `reload_settings` applies new masks. D-86: a package with a bzip2 entry is still refused.
+  `infer_view_kind` table. Session round trip of a Folder Compare on `a.zip/` and a Text Compare on `a.zip/x`. G6, G2 and
+  the budgets of §1.5.16 measured and in `docs/02`.
+- A5.14 **Batches (D-148) [W5b].** `begin`/`finish` calls in `execute` as a journal: one rebuild per operation and archive, nested
+  chains, target roots before source roots. A second `begin` → `Unavailable`. A primitive and an `open_write` commit
+  outside a batch rebuild at once. A panic inside `execute` aborts (guard).
+- A5.15 **Overlay [W5b].** The primitive table of A3.1, on members of a zip and a `tar.gz`, as far as it applies: rows for a missing
+  item, a file, an empty and a non-empty folder, an implicit folder, a link member, existing targets with and without
+  `replace`, a missing parent with and without `parents`, a rename of a subtree, across archives → `CrossDevice`, a
+  single-stream archive → `OperationUnsupported`, `set_attrs` `Dos` other than `R`, `created`. The overlay is visible to
+  `stat` and `list` during a batch, and gone after `Abort`.
+- A5.16 **Rebuild (D-149) [W5b].** For zip and each tar format: add, replace, remove, rename, `set_times`, `set_attrs`, a folder, a link.
+  Kept zip members are byte-identical compressed (same offsets of data within the raw copy, same CRC, same extra fields);
+  tar members keep their raw blocks; refused, encrypted and sparse members survive; the comment survives; shadowed duplicates
+  go. Written times read back per §1.5.8; new CRCs are right. Two equal rebuilds give equal bytes. A zip with a prefix →
+  `Unsupported`, unchanged; a damaged archive → `ArchiveCorrupt`, unchanged; a stamp change between plan and rebuild → items
+  failed, unchanged. Property P-ARCH-2: a random script of operations on `MemoryVfs` and on an archive of the same tree ends
+  in equal listings and contents, and re-reading the rebuilt archive with a fresh `ArchiveVfs` gives them too.
+- A5.17 **Faults (D-149) [W5b].** Property over small trees × format × fault (`inject_read_error_after` on the container,
+  `inject_write_error_after`, `Fault { op: Commit }`, cancellation at a random byte, a nested rebuild failing at each level):
+  `MemoryVfs::dump()` of the archive is unchanged, no temporary sibling remains, every done item of the root is `failed`
+  (`not_run` when cancelled), the summary matches, exit 100. Moves: local → archive with a failing rebuild keeps all
+  sources; archive → archive with a failing target keeps the source archive unchanged; archive → local with a failing
+  source rebuild keeps both copies. A later retry on the same tree succeeds.
+- A5.18 **Writes through the CLI (D-150, D-152) [W5b].** `cli_archive.rs`: `vfs cp x a.zip/dir/` with and without `-p`, `cp x a.zip/`, `cp x
+  a.zip` (the file, `already_exists`), `cp -r d a.tar.gz/`, `mv`, `rm --yes`, `rm --trash`, `touch`, `mkdir` inside, `--dry-run`
+  plans and no change, goldens. `vfs mkdir new.zip`, each writable mask, `x.gz` a plain folder, `mkdir -p new.zip/sub` plain folders, an
+  existing target; the bytes of §1.5.10; each empty archive opens and lists nothing. `cp -r` of a real folder `x.zip` stays
+  a folder. `--output a.zip/out.html` rebuilds once. Local writes unchanged: `AtomicWrite: Seek` on `LocalWriter`, and
+  `DirectWriter` answers `Unsupported`.
+- A5.19 **GUI (D-153) [W5a].** View-model tests through the catalogue, no window: the flag gives the icon on closed and open rows;
+  `Open` on a closed row with `OnceOpened` adds the path and runs once, in `AsFiles` it opens as before; a corrupt archive
+  shows the error row; a Text Compare on a member loads; `infer_view_kind` through Home's Compare; `Service::shutdown` runs at
+  exit. The icon draws in the tests of D-114 (light and dark, every scale). A pointer test in `ui/tests_pointer.rs`
+  double-clicks an archive row. ARCH-GUI-003 unaffected: no window gate is re-measured unless a figure moves in the folder
+  gate of M1.
+- A5.20 **Wave end, each part.** Whole workspace green as A4.23, including `cargo deny` (with the one exception of §1.5.15) and the
+  architecture test (manifests, the confinement rule). Packaging: `packaging/build-linux.sh` and `build-windows.sh` both
+  architectures once, `check-linux-binaries.sh` clean (glibc floor ≤ 2.31, baseline code), `smoke-test.sh`. Maintainer's
+  run on Windows and macOS through CI before W5 merges (plan §5.1). The documentation updates of §1.5.18 done, the §1.5.19
+  notes written, the `docs/16` progress line updated.
