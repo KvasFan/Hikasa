@@ -96,7 +96,7 @@ This page describes version 0.1.90, a pre-release of 0.2.0 with the first part o
 | Table, Hex and Picture Compare | Not yet (W12, W13); the crates are empty |
 | Text Merge, Folder Merge, remote back-ends, snapshots, media, version and registry views | Not yet (M3) |
 
-CI was last green at 0.1.0, on Linux, Windows and macOS. At 0.1.90 the tests have run locally on Linux and, as Windows binaries, under wine, and the window only with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
+CI is green at 0.1.90 on Linux, Windows and macOS: clippy, the tests and the doc tests on all three. The tests that open a window are not part of CI; they run locally on Linux, with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
 
 ## Quick start
 

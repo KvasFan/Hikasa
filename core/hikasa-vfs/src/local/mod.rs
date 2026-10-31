@@ -513,8 +513,13 @@ impl Vfs for LocalVfs {
                     }
                 }
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(VfsError::from_io(to.canonical(), VfsOp::Rename, e)),
+            // Checked here: a rename below a file fails with `ERROR_INVALID_PARAMETER` on Windows.
+            Err(e) => {
+                let e = below_a_file(to_path.as_path(), e);
+                if e.kind() != io::ErrorKind::NotFound {
+                    return Err(VfsError::from_io(to.canonical(), VfsOp::Rename, e));
+                }
+            }
         }
         fs::rename(from_path.as_path(), to_path.as_path()).map_err(|e| {
             // Best effort: what this call removed comes back.
@@ -529,7 +534,7 @@ impl Vfs for LocalVfs {
                 io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty {
                     spec: to.canonical(),
                 },
-                _ => fail(below_a_file(to_path.as_path(), e)),
+                _ => fail(e),
             }
         })
     }
