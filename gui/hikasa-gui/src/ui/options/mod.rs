@@ -90,6 +90,9 @@ fn page(ui: &mut Ui, d: &mut OptionsDialog, pal: &Palette) {
     if let Some(note) = page.note {
         ui.label(RichText::new(note).color(pal.muted));
     }
+    for note in d.unreadable_notes() {
+        ui.label(RichText::new(note).color(pal.warning));
+    }
     ui.add_space(6.0);
     fields(ui, d, page);
     match page.body {

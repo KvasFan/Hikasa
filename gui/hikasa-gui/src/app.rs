@@ -269,8 +269,9 @@ struct Preview {
 const CAPTION_CHARS: usize = 60;
 
 impl AppCore {
-    /// The core with one window holding one Home tab. Reads the settings (`settings_snapshot`, leniently) and
-    /// `state.toml` once, before the first frame; a failure leaves the defaults and a warning notice.
+    /// The core with one window holding one Home tab. Reads the settings (`settings_snapshot_partial`, leniently)
+    /// and `state.toml` once, before the first frame; a file that cannot be read stays as it is on disk, leaves its
+    /// defaults in memory and raises a warning notice.
     pub fn new(
         service: Service,
         shared: Arc<Shared>,
@@ -278,13 +279,14 @@ impl AppCore {
         server: Option<ServerHandle>,
     ) -> AppCore {
         let mut problems = Vec::new();
-        let settings = match service.settings_snapshot() {
+        let settings = match service.settings_snapshot_partial() {
             Ok(s) => s,
             Err(e) => {
                 problems.push(e.to_string());
                 default_snapshot(&service)
             }
         };
+        problems.extend(settings.unreadable.values().cloned());
         let state = match service.settings_store().state(LoadMode::Lenient) {
             Ok(loaded) => loaded.value,
             Err(e) => {
@@ -1788,6 +1790,14 @@ impl AppCore {
         }
         if !w.dialogs.is_empty() {
             // The top dialog closes with Cancel first (D-112): the window stays, what lies under it is not lost.
+            // Unapplied edits ask first, like Esc.
+            if self
+                .window_mut(window)
+                .and_then(|w| w.dialogs.top_mut())
+                .is_some_and(|d| d.on_close())
+            {
+                return self.dialog_requests();
+            }
             let mut effects = Vec::new();
             if let Some(closed) = self.window_mut(window).and_then(|w| w.dialogs.pop()) {
                 effects.extend(self.dialog_closed(closed));
@@ -2505,7 +2515,9 @@ impl AppCore {
                                     .join("; "),
                             ));
                         }
-                        FileOutcome::Failed(e) => return Err(ApiError::Internal(e)),
+                        FileOutcome::Failed(e) | FileOutcome::Unreadable(e) => {
+                            return Err(ApiError::Internal(e));
+                        }
                     }
                 }
                 match conflict {
@@ -3184,5 +3196,6 @@ fn default_snapshot(service: &Service) -> SettingsSnapshot {
         filters: SettingsFile::new_default(&store.path(FileId::Filters)),
         openwith: SettingsFile::new_default(&store.path(FileId::OpenWith)),
         archives: SettingsFile::new_default(&store.path(FileId::Archives)),
+        unreadable: std::collections::BTreeMap::new(),
     }
 }

@@ -13,8 +13,8 @@ use hikasa_session::settings::{Colour, FileId, FormValue, ValueKind, key_infos, 
 use crate::app::{AppCore, Effect, UiMsg};
 use crate::commands::CommandId;
 use crate::dialog::{ButtonRole, DialogButton, DialogModel, DialogRequest, DialogStep, Prompt};
-use crate::options::OptionsDialog;
 use crate::options::commands_page::ViewFlag;
+use crate::options::{ConflictAnswer, OptionsDialog};
 use crate::tests::{TestApp, World};
 use crate::window::{CommandArg, Invocation, WindowId};
 use crate::wizards::{ExportWizard, ImportWizard, delete_caption, summary_lines};
@@ -981,10 +981,10 @@ fn every_p0_key_has_a_field_with_a_real_widget() {
     }
 }
 
-/// Review T8: a configuration the window could not read: the dialog shows defaults and nothing is overwritten
-/// without the conflict prompt.
+/// Review T8, W4 leftovers: a file that turns unreadable under the dialog: only *Reload* or *Cancel*, and whatever is
+/// answered the file stays.
 #[test]
-fn defaults_never_replace_an_unreadable_file_without_asking() {
+fn an_unreadable_file_cannot_be_overwritten_from_the_prompt() {
     let world = World::new();
     let mut app = world.app(None);
     world.settle(&mut app.0);
@@ -997,6 +997,126 @@ fn defaults_never_replace_an_unreadable_file_without_asking() {
     dlg(&mut app, w).set_view_flag(ViewFlag::ShowAllInMenu, true);
     dlg(&mut app, w).set_field("tabs.open_new_tab_next_to_active", FormValue::Bool(false));
     press(&world, &mut app, w, ButtonRole::Apply);
-    assert!(top_prompt(&app, w).is_some());
+    let prompt = top_prompt(&app, w).expect("the prompt");
+    let labels: Vec<&str> = prompt.buttons.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(labels, ["Reload (discard my edits)", "Cancel"]);
+    assert!(
+        prompt.message.contains("options.toml"),
+        "{}",
+        prompt.message
+    );
     assert_eq!(read(&options), before);
+    assert!(
+        dlg(&mut app, w).unreadable_notes()[0].contains("99"),
+        "the page says why: {:?}",
+        dlg(&mut app, w).unreadable_notes()
+    );
+    // An answer that is not offered cannot write it either (a stale prompt, a later change of the file).
+    let held = app
+        .0
+        .window(w)
+        .and_then(|d| d.dialogs.top())
+        .map(|d| d.title());
+    assert_eq!(held.as_deref(), Some("Settings Cannot Be Read"));
+    dlg(&mut app, w).answer(ConflictAnswer::Overwrite);
+    app.0.dialog_key(w, &key("F2"));
+    world.settle(&mut app.0);
+    assert_eq!(read(&options), before);
+    let refused = top_prompt(&app, w).expect("asked again");
+    assert_eq!(refused.buttons.len(), 2, "{refused:?}");
+    // Reload drops the edit; the file stays what it was and the page keeps saying why.
+    press(&world, &mut app, w, ButtonRole::Other(2));
+    assert!(!dlg(&mut app, w).has_edits(&FileId::Options));
+    assert_eq!(read(&options), before);
+    assert_eq!(dlg(&mut app, w).unreadable_notes().len(), 1);
+}
+
+/// A file unreadable at start: the other files are what they are on disk, the dialog says so, and Apply offers no
+/// *Overwrite*. A readable file beside it saves; the plain conflict of another file keeps its prompt for the next Apply.
+#[test]
+fn a_start_with_an_unreadable_file_reads_the_others() {
+    let world = World::with_files(&[
+        ("commands.toml", "schema_version = 99\nfuture = 1\n"),
+        (
+            "filters.toml",
+            "schema_version = 1\n[[preset]]\nname = \"mine\"\nmask = \"*.c\"\n",
+        ),
+    ]);
+    let commands = world.path("config/commands.toml");
+    let options = world.path("config/options.toml");
+    let before = read(&commands);
+    let mut app = world.app(None);
+    world.settle(&mut app.0);
+    let w = open(&mut app);
+    assert_eq!(
+        dlg(&mut app, w).filters.preset.len(),
+        1,
+        "not the defaults: {:?}",
+        dlg(&mut app, w).filters
+    );
+    assert_eq!(dlg(&mut app, w).unreadable_notes().len(), 1);
+    dlg(&mut app, w).set_field("tabs.open_new_tab_next_to_active", FormValue::Bool(false));
+    dlg(&mut app, w).set_view_flag(ViewFlag::ShowAllInMenu, true);
+    std::fs::write(&options, "schema_version = 1\n# touched\n").expect("write");
+    press(&world, &mut app, w, ButtonRole::Ok);
+    let prompt = top_prompt(&app, w).expect("the prompt");
+    assert!(
+        prompt.buttons.iter().all(|(_, l)| l != "Overwrite"),
+        "{prompt:?}"
+    );
+    assert!(
+        prompt.message.contains("commands.toml"),
+        "{}",
+        prompt.message
+    );
+    assert!(
+        !prompt.message.contains("options.toml"),
+        "{}",
+        prompt.message
+    );
+    assert_eq!(read(&commands), before);
+    press(&world, &mut app, w, ButtonRole::Other(2));
+    assert!(
+        has_dlg(&mut app, w),
+        "OK does not close over a refused file"
+    );
+    assert!(dlg(&mut app, w).has_edits(&FileId::Options), "kept");
+    assert!(!dlg(&mut app, w).has_edits(&FileId::Commands), "reloaded");
+    press(&world, &mut app, w, ButtonRole::Apply);
+    let prompt = top_prompt(&app, w).expect("the conflict of options.toml");
+    assert!(
+        prompt.buttons.iter().any(|(_, l)| l == "Overwrite"),
+        "{prompt:?}"
+    );
+    press(&world, &mut app, w, ButtonRole::Other(1));
+    assert!(read(&options).contains("open_new_tab_next_to_active = false"));
+    assert_eq!(read(&commands), before);
+}
+
+/// *Overwrite* writes over the file as it is then: unknown keys added on disk after the dialog read it stay.
+#[test]
+fn overwrite_keeps_the_unknown_keys_added_after_the_dialog_read_the_file() {
+    let world = World::with_files(&[("options.toml", "schema_version = 1\nold_key = 1\n")]);
+    let options = world.path("config/options.toml");
+    let mut app = world.app(None);
+    world.settle(&mut app.0);
+    let w = open(&mut app);
+    dlg(&mut app, w).set_field("tabs.open_new_tab_next_to_active", FormValue::Bool(false));
+    std::fs::write(
+        &options,
+        "schema_version = 1\nnew_key = 2\n[future_section]\nx = 3\n",
+    )
+    .expect("write");
+    press(&world, &mut app, w, ButtonRole::Apply);
+    assert!(top_prompt(&app, w).is_some());
+    press(&world, &mut app, w, ButtonRole::Other(1));
+    let text = read(&options);
+    for kept in [
+        "new_key = 2",
+        "[future_section]",
+        "open_new_tab_next_to_active = false",
+    ] {
+        assert!(text.contains(kept), "{kept} lost:\n{text}");
+    }
+    assert!(!text.contains("old_key"), "{text}");
 }

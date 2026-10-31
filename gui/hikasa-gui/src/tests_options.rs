@@ -982,7 +982,10 @@ fn closing_the_window_ends_the_preview() {
     dlg(&mut app, w).select_scheme("light");
     dlg(&mut app, w).set_element_colour(SchemeGroup::Folder, "orphan", RED);
     app.0.dialog_edited(w);
-    let effects = app.close_window(w);
+    // The edit is unapplied: the OS close asks first, and the preview ends with the answer.
+    app.close_window(w);
+    assert_ne!(*app.scheme(), saved, "still previewing");
+    let effects = app.0.dialog_button(w, ButtonRole::Other(1));
     assert!(effects.contains(&Effect::ApplyTheme));
     assert_eq!(*app.scheme(), saved);
 }

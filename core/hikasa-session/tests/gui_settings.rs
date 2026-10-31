@@ -586,6 +586,136 @@ fn settings_set_keeps_unknown_views_commands_and_planned_overrides() {
     assert!(svc.settings_set(&key, "true", false).is_err());
 }
 
+/// `force` writes over the file as it is now: keys this build does not know that reached the file after the snapshot
+/// stay, whatever the snapshot held.
+#[test]
+fn force_keeps_the_unknown_keys_on_disk_now() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let svc = service(tmp.path());
+    write(
+        &config,
+        "options.toml",
+        b"schema_version = 1\nold_key = 1\n[tabs]\nhide_tab_bar_if_single_tab = true\n",
+    );
+    let snap = svc.settings_snapshot().unwrap();
+    write(
+        &config,
+        "options.toml",
+        b"schema_version = 1\nnew_key = 2\n[tabs]\nhide_tab_bar_if_single_tab = true\n\
+          future = 3\n[future_section]\nx = 4\n",
+    );
+    let mut options = snap.options.value().clone();
+    options.tabs.open_new_tab_next_to_active = false;
+    let changes = SettingsChanges {
+        options: Some(options),
+        ..SettingsChanges::default()
+    };
+    let out = svc.settings_save(&snap, &changes, false).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Conflict);
+    let out = svc.settings_save(&snap, &changes, true).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Written);
+    let text = read(&config.join("options.toml"));
+    for kept in ["new_key = 2", "future = 3", "[future_section]"] {
+        assert!(text.contains(kept), "{kept} lost:\n{text}");
+    }
+    assert!(!text.contains("old_key"), "{text}");
+    assert!(
+        text.contains("open_new_tab_next_to_active = false"),
+        "{text}"
+    );
+}
+
+/// T13: a file this build cannot read is never replaced or deleted, `force` or not.
+#[test]
+fn a_file_that_cannot_be_read_is_never_overwritten() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let svc = service(tmp.path());
+    write(
+        &config,
+        "themes/mine.toml",
+        b"schema_version = 1\nbase = \"dark\"\n",
+    );
+    let snap = svc.settings_snapshot().unwrap();
+    let newer = b"schema_version = 99\nfuture = 1\n";
+    write(&config, "options.toml", newer);
+    write(&config, "themes/mine.toml", newer);
+    let mut options = snap.options.value().clone();
+    options.tabs.open_new_tab_next_to_active = false;
+    let mut changes = SettingsChanges {
+        options: Some(options),
+        ..SettingsChanges::default()
+    };
+    changes.schemes.insert("mine".to_owned(), None);
+    for force in [false, true] {
+        let out = svc.settings_save(&snap, &changes, force).unwrap();
+        for (id, _, outcome) in &out.files {
+            assert!(
+                matches!(outcome, FileOutcome::Unreadable(e) if e.contains("99")),
+                "{id}, force {force}: {outcome:?}"
+            );
+        }
+        assert_eq!(read(&config.join("options.toml")).as_bytes(), newer);
+        assert_eq!(read(&config.join("themes/mine.toml")).as_bytes(), newer);
+    }
+    // Broken TOML is the same: there is nothing to keep it from but the refusal.
+    write(&config, "options.toml", b"this is = = broken");
+    let out = svc.settings_save(&snap, &changes, true).unwrap();
+    assert!(matches!(out.files[0].2, FileOutcome::Unreadable(_)));
+    assert_eq!(read(&config.join("options.toml")), "this is = = broken");
+}
+
+/// The window starts whatever one file holds: every other file is read, the bad one is its defaults and is named.
+#[test]
+fn a_partial_snapshot_reads_what_it_can_and_names_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let svc = service(tmp.path());
+    write(
+        &config,
+        "commands.toml",
+        b"schema_version = 1\n[view.home]\nlarge_buttons = true\n",
+    );
+    write(&config, "options.toml", b"schema_version = 99\n");
+    write(&config, "themes/mine.toml", b"this is = = broken");
+    assert!(svc.settings_snapshot().is_err(), "the strict read refuses");
+    let snap = svc.settings_snapshot_partial().unwrap();
+    assert!(snap.commands.value().view["home"].large_buttons);
+    assert_eq!(
+        snap.unreadable.keys().cloned().collect::<Vec<_>>(),
+        [FileId::Options, FileId::Themes("mine".into())]
+    );
+    assert!(snap.unreadable[&FileId::Options].contains("99"));
+    assert_eq!(
+        *snap.options.value(),
+        hikasa_session::settings::Options::default()
+    );
+    // Its working copy changes nothing on disk, and the readable file saves as usual.
+    let mut commands = snap.commands.value().clone();
+    commands
+        .view
+        .entry("home".into())
+        .or_default()
+        .large_buttons = false;
+    let changes = SettingsChanges {
+        commands: Some(commands),
+        ..SettingsChanges::default()
+    };
+    let out = svc.settings_save(&snap, &changes, false).unwrap();
+    assert_eq!(out.files[0].2, FileOutcome::Written);
+    assert_eq!(read(&config.join("options.toml")), "schema_version = 99\n");
+    // Without a bad file both reads agree.
+    std::fs::remove_file(config.join("options.toml")).unwrap();
+    std::fs::remove_file(config.join("themes/mine.toml")).unwrap();
+    assert!(
+        svc.settings_snapshot_partial()
+            .unwrap()
+            .unreadable
+            .is_empty()
+    );
+}
+
 #[test]
 fn a_failed_read_back_keeps_the_outcomes_and_the_saved_stamps() {
     let tmp = tempfile::tempdir().unwrap();

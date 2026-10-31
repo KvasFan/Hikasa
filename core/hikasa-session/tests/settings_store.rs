@@ -1120,6 +1120,74 @@ fn a_file_modified_before_1970_saves_without_a_conflict() {
     assert!(file.save(Overwrite::IfUnchanged).unwrap());
 }
 
+/// §1.4.20: what this build keeps without knowing it can be read and removed from the CLI, and only that.
+#[test]
+fn unset_removes_a_kept_view_or_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    common::write(
+        &config,
+        "commands.toml",
+        b"schema_version = 1\n\n[view.future-view]\nlarge_buttons = true\n\n\
+          [view.home]\nlarge_buttons = true\n\n[view.home.command.FutureCmd]\nmenu = false\n\
+          note = \"x\"\n\n[view.home.command.FileFormatManager]\nshortcuts = [\"Bogus+1\"]\n",
+    );
+    let service = common::service(tmp.path());
+    let text = || std::fs::read_to_string(config.join("commands.toml")).unwrap();
+    for (name, want) in [
+        ("view.future-view.large_buttons", serde_json::json!(true)),
+        ("view.home.command.FutureCmd.menu", serde_json::json!(false)),
+        (
+            "view.home.command.FileFormatManager.shortcuts",
+            serde_json::json!(["Bogus+1"]),
+        ),
+    ] {
+        let key = parse_key(&format!("commands.{name}")).unwrap();
+        let got = service.settings_get(&key).unwrap();
+        assert_eq!(got.value, want, "{name}");
+    }
+    // One key of a kept command, then the whole command: nothing empty stays behind.
+    let key = parse_key("commands.view.home.command.FutureCmd.menu").unwrap();
+    let out = service.settings_unset(&key).unwrap();
+    assert!(out.written);
+    assert_eq!(out.old, serde_json::json!(false));
+    assert_eq!(out.new, serde_json::Value::Null);
+    assert!(!text().contains("menu = false") && text().contains("note = \"x\""));
+    let err = service.settings_get(&key).unwrap_err();
+    assert!(matches!(err, ApiError::NotFound(_)), "{err}");
+    let key = parse_key("commands.view.home.command.FutureCmd").unwrap();
+    service.settings_unset(&key).unwrap();
+    assert!(!text().contains("FutureCmd"), "{}", text());
+    // A whole kept view; what the file knows stays.
+    let key = parse_key("commands.view.future-view").unwrap();
+    service.settings_unset(&key).unwrap();
+    assert!(!text().contains("future-view"), "{}", text());
+    // The override this build cannot read of a command it knows.
+    let key = parse_key("commands.view.home.command.FileFormatManager").unwrap();
+    service.settings_unset(&key).unwrap();
+    assert!(!text().contains("FileFormatManager"), "{}", text());
+    assert!(
+        text().contains("[view.home]\nlarge_buttons = true"),
+        "{}",
+        text()
+    );
+    // Nothing is kept there any more: as for any name that never was one.
+    let key = parse_key("commands.view.home.command.FutureCmd").unwrap();
+    let err = service.settings_unset(&key).unwrap_err();
+    assert!(matches!(err, ApiError::NotFound(_)), "{err}");
+    // Removing is not setting: a kept key cannot be given a value.
+    common::write(&config, "options.toml", b"schema_version = 1\nfuture = 1\n");
+    let key = parse_key("options.future").unwrap();
+    let err = service.settings_set(&key, "2", false).unwrap_err();
+    assert!(matches!(err, ApiError::NotFound(_)), "{err}");
+    service.settings_unset(&key).unwrap();
+    assert!(
+        !std::fs::read_to_string(config.join("options.toml"))
+            .unwrap()
+            .contains("future")
+    );
+}
+
 #[test]
 fn unknown_keys_under_rule_tables_are_shown_as_unknown() {
     let tmp = tempfile::tempdir().unwrap();
