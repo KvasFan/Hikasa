@@ -431,3 +431,95 @@ fn a_colour_with_alpha_reads_back_as_stored() {
         [0x10, 0x20, 0x30, 255]
     );
 }
+
+/// One frame of a bare toolbar; returns what it asked for and the rect it took.
+fn toolbar_frame(
+    ctx: &egui::Context,
+    time: f64,
+    events: Vec<Event>,
+) -> (Vec<super::menus::ToolbarAction>, egui::Rect) {
+    use super::menus::{Hover, ToolbarCtx, toolbar};
+    let tables = crate::commands::CommandTables::default();
+    let scope = crate::commands::Scope::Text;
+    let items = crate::menus::toolbar_items(&tables, scope);
+    let pal = super::theme::light();
+    let enabled = |_: CommandId| true;
+    let checked = |_: CommandId| None;
+    let t = ToolbarCtx {
+        sessions: &[],
+        open_sessions: false,
+        tables: &tables,
+        scope,
+        enabled: &enabled,
+        checked: &checked,
+        timing: crate::commands::HintTiming::default(),
+        pal: &pal,
+    };
+    let mut result = (Vec::new(), egui::Rect::NOTHING);
+    let mut input = raw(time);
+    input.events = events;
+    let mut output = ctx.run_ui(input, |ui| {
+        let mut hover = Hover::default();
+        let mut status = None;
+        let actions = toolbar(ui, &t, &items, &mut hover, &mut status);
+        result = (actions, ui.min_rect());
+    });
+    output.textures_delta.clear();
+    result
+}
+
+fn pointer_button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Event {
+    Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+/// Regression: the right-click area of UI-004 lay over the buttons and took their left clicks.
+#[test]
+fn a_left_click_reaches_the_toolbar_button_under_it() {
+    let ctx = egui::Context::default();
+    let (_, rect) = toolbar_frame(&ctx, 0.0, Vec::new());
+    assert!(rect.width() > 20.0, "the toolbar drew nothing: {rect:?}");
+    let pos = rect.left_center() + egui::vec2(12.0, 0.0);
+    let _hover = toolbar_frame(&ctx, 0.1, vec![Event::PointerMoved(pos)]);
+    let _hover = toolbar_frame(&ctx, 0.2, vec![Event::PointerMoved(pos)]);
+    let _down = toolbar_frame(
+        &ctx,
+        0.3,
+        vec![pointer_button(pos, egui::PointerButton::Primary, true)],
+    );
+    let (actions, _) = toolbar_frame(
+        &ctx,
+        0.4,
+        vec![pointer_button(pos, egui::PointerButton::Primary, false)],
+    );
+    assert!(
+        matches!(actions.as_slice(), [super::menus::ToolbarAction::Run(_)]),
+        "the click ran no command"
+    );
+}
+
+#[test]
+fn a_right_click_on_the_toolbar_opens_its_menu() {
+    let ctx = egui::Context::default();
+    let (_, rect) = toolbar_frame(&ctx, 0.0, Vec::new());
+    let pos = rect.left_center() + egui::vec2(12.0, 0.0);
+    let _hover = toolbar_frame(&ctx, 0.1, vec![Event::PointerMoved(pos)]);
+    let _hover = toolbar_frame(&ctx, 0.2, vec![Event::PointerMoved(pos)]);
+    let _down = toolbar_frame(
+        &ctx,
+        0.3,
+        vec![pointer_button(pos, egui::PointerButton::Secondary, true)],
+    );
+    let _up = toolbar_frame(
+        &ctx,
+        0.4,
+        vec![pointer_button(pos, egui::PointerButton::Secondary, false)],
+    );
+    let (actions, _) = toolbar_frame(&ctx, 0.5, Vec::new());
+    assert!(actions.is_empty(), "a right click must run nothing");
+    assert!(egui::Popup::is_any_open(&ctx), "no menu opened");
+}

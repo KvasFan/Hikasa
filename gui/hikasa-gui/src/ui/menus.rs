@@ -375,14 +375,9 @@ pub fn toolbar(
             }
         })
         .response;
-    // UI-004: the toolbar's context menu.
+    // UI-004: the toolbar's context menu, also over its buttons, which keep their left clicks.
     let menu = crate::menus::toolbar_menu(t.tables, t.scope);
-    let response = ui.interact(
-        response.rect,
-        ui.scope_id().with("hk-toolbar-menu"),
-        Sense::click(),
-    );
-    response.context_menu(|ui| {
+    response.container_context_menu(|ui| {
         for entry in &menu {
             let (mark, on) = match entry {
                 ToolbarMenuItem::Mode(_, on) => (Some("●"), *on),
