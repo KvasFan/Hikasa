@@ -393,12 +393,21 @@ pub(crate) fn pump(
     limit: u64,
     sink: &mut dyn FnMut(&[u8]) -> Result<(), VfsError>,
 ) -> io::Result<u64> {
-    let mut buf = vec![0u8; BUFFER];
+    pump_with(&mut vec![0u8; BUFFER], reader, limit, sink)
+}
+
+/// [`pump`] with a buffer of the caller's: a rebuild pumps once per member.
+pub(crate) fn pump_with(
+    buf: &mut [u8],
+    reader: &mut dyn Read,
+    limit: u64,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), VfsError>,
+) -> io::Result<u64> {
     let mut copied = 0u64;
     while copied < limit {
         let want = usize::try_from(limit - copied)
-            .unwrap_or(BUFFER)
-            .min(BUFFER);
+            .unwrap_or(usize::MAX)
+            .min(buf.len());
         let n = read_full(reader, buf.get_mut(..want).unwrap_or_default())?;
         if n == 0 {
             break;

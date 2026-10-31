@@ -75,6 +75,10 @@ pub(crate) struct Walked {
     pub(crate) stream_len: u64,
     /// `None` when the stream was sound to its end.
     pub(crate) damage: Option<Damage>,
+    /// Where the blocks of members end: the first zero block, or the end of the stream.
+    pub(crate) members_end: u64,
+    /// Bytes other than zeros follow the first zero block. No reader sees them, and a rebuild keeps them.
+    pub(crate) tail: bool,
 }
 
 /// The extension records that apply to the next member.
@@ -95,7 +99,7 @@ struct Pending {
 /// Calls `f` for each well-formed record of a PAX body (`<length> <key>=<value>\n`). `tar::PaxExtensions` is not used
 /// because it splits on newlines, which a `path` value may hold, and a wrong `size` here would make two readers
 /// disagree. A malformed record ends the body.
-fn pax_records(mut body: &[u8], f: &mut dyn FnMut(&[u8], &[u8])) {
+pub(crate) fn pax_records(mut body: &[u8], f: &mut dyn FnMut(&[u8], &[u8])) {
     while !body.is_empty() {
         let Some(space) = body.iter().position(|&b| b == b' ') else {
             return;
@@ -185,6 +189,8 @@ struct Walker<'a> {
     classify: &'a dyn Fn(io::Error) -> Failure,
     pos: u64,
     buf: Vec<u8>,
+    members_end: u64,
+    tail: bool,
 }
 
 impl Walker<'_> {
@@ -275,7 +281,10 @@ impl Walker<'_> {
             let chunk = self.buf.as_mut_slice();
             match self.stream.read(chunk) {
                 Ok(0) => return Ok(()),
-                Ok(n) => self.pos += n as u64,
+                Ok(n) => {
+                    self.pos += n as u64;
+                    self.tail |= chunk.get(..n).unwrap_or_default().iter().any(|&b| b != 0);
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) => return Err(self.stop(error)),
             }
@@ -287,6 +296,7 @@ impl Walker<'_> {
         loop {
             let at = self.pos;
             let mut block = [0u8; BLOCK as usize];
+            self.members_end = at;
             match self.block(&mut block)? {
                 0 => return Ok(()),
                 512 => {}
@@ -321,6 +331,10 @@ impl Walker<'_> {
                 b'g' | b'V' => {
                     self.data(declared, None)?;
                     self.padding(declared)?;
+                    // Not part of the next member: a rebuild that drops that member keeps these blocks.
+                    if pending.first == Some(at) {
+                        pending.first = None;
+                    }
                     continue;
                 }
                 _ => {}
@@ -421,6 +435,8 @@ pub(crate) fn walk(
         classify,
         pos: 0,
         buf: vec![0u8; BUFFER],
+        members_end: 0,
+        tail: false,
     };
     let damage = match walker.walk(visit) {
         Ok(()) => None,
@@ -430,6 +446,8 @@ pub(crate) fn walk(
     Ok(Walked {
         stream_len: walker.pos,
         damage,
+        members_end: walker.members_end,
+        tail: walker.tail,
     })
 }
 

@@ -56,6 +56,84 @@ pub fn ntfs_time(value: u64) -> Option<FileTime> {
     member_time(secs, nanos)
 }
 
+/// The fields of a written DOS time (§1.5.8): the wall clock in `zone`, clamped to 1980–2107, in steps of 2 s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DosFields {
+    pub(crate) year: u16,
+    pub(crate) month: u8,
+    pub(crate) day: u8,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
+    pub(crate) second: u8,
+}
+
+impl DosFields {
+    const FIRST: DosFields = DosFields {
+        year: 1980,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
+    };
+    const LAST: DosFields = DosFields {
+        year: 2107,
+        month: 12,
+        day: 31,
+        hour: 23,
+        minute: 59,
+        second: 58,
+    };
+
+    /// `time` as local wall time in `zone`.
+    pub(crate) fn of(time: FileTime, zone: &TimeZone) -> DosFields {
+        let Ok(instant) = jiff::Timestamp::new(time.unix_seconds(), 0) else {
+            return if time.unix_seconds() < 0 {
+                DosFields::FIRST
+            } else {
+                DosFields::LAST
+            };
+        };
+        let wall = zone.to_datetime(instant);
+        let field = |value: i8| u8::try_from(value).unwrap_or(0);
+        match u16::try_from(wall.year()) {
+            Ok(year) if (1980..=2107).contains(&year) => DosFields {
+                year,
+                month: field(wall.month()),
+                day: field(wall.day()),
+                hour: field(wall.hour()),
+                minute: field(wall.minute()),
+                second: field(wall.second()) & !1,
+            },
+            Ok(year) if year > 2107 => DosFields::LAST,
+            _ => DosFields::FIRST,
+        }
+    }
+
+    /// The date word of a zip header.
+    pub(crate) fn date(self) -> u16 {
+        ((self.year - 1980) << 9) | (u16::from(self.month) << 5) | u16::from(self.day)
+    }
+
+    /// The time word of a zip header.
+    pub(crate) fn time(self) -> u16 {
+        (u16::from(self.hour) << 11) | (u16::from(self.minute) << 5) | u16::from(self.second / 2)
+    }
+}
+
+/// The value of a 0x5455 field: a time outside its `u32` range writes no field (§1.5.8).
+pub(crate) fn unix_field(time: FileTime) -> Option<u32> {
+    u32::try_from(time.unix_seconds()).ok()
+}
+
+/// `time` as a Windows `FILETIME`; `None` before 1601 or past the field.
+pub(crate) fn ntfs_ticks(time: FileTime) -> Option<u64> {
+    let intervals = i128::from(time.unix_seconds()) * 10_000_000
+        + i128::from(time.subsec_nanos() / 100)
+        + NTFS_EPOCH;
+    u64::try_from(intervals).ok().filter(|&ticks| ticks != 0)
+}
+
 /// A PAX `mtime` value: decimal seconds with an optional fraction, possibly negative. `None` when it does not parse
 /// or is out of range.
 pub fn pax_time(text: &str) -> Option<FileTime> {
@@ -144,6 +222,37 @@ mod tests {
         assert_eq!(dos_time(date, 24 << 11, &utc), None);
         assert_eq!(dos_time(date, 60 << 5, &utc), None);
         assert_eq!(dos_time(0, noon, &utc), None);
+    }
+
+    /// The written fields read back (§1.5.8): the wall clock in the zone, clamped to what the fields can hold.
+    #[test]
+    fn written_dos_fields() {
+        let at = |secs| FileTime::from_unix(secs, 0).unwrap();
+        let plus2 = offset(2).to_time_zone();
+        let written = DosFields::of(at(1_784_109_600), &plus2);
+        assert_eq!(
+            text(dos_time(written.date(), written.time(), &plus2)),
+            "2026-07-15T10:00:00Z"
+        );
+        assert_eq!(DosFields::of(at(0), &TimeZone::UTC), DosFields::FIRST);
+        assert_eq!(
+            DosFields::of(at(253_402_300_799), &TimeZone::UTC),
+            DosFields::LAST
+        );
+        assert_eq!(
+            DosFields::of(at(1_792_415_521), &TimeZone::UTC).second % 2,
+            0
+        );
+    }
+
+    #[test]
+    fn written_fields_of_other_formats() {
+        let at = |secs, nanos| FileTime::from_unix(secs, nanos).unwrap();
+        assert_eq!(unix_field(at(1_792_415_520, 0)), Some(1_792_415_520));
+        assert_eq!(unix_field(at(-1, 0)), None, "before the field");
+        assert_eq!(unix_field(at(1 << 33, 0)), None, "past the field");
+        let time = at(1_792_415_520, 500_000_000);
+        assert_eq!(ntfs_time(ntfs_ticks(time).unwrap()), Some(time));
     }
 
     #[test]

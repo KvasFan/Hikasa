@@ -58,6 +58,11 @@ impl Drop for CacheFile {
 }
 
 impl CacheFile {
+    /// Bytes of content.
+    pub(crate) fn len(&self) -> u64 {
+        self.len
+    }
+
     /// A reader of the file, which holds it. It checks that the file at the path is the one that was written: the
     /// open handle is what it reads afterwards, so nothing that happens to the path later reaches it.
     pub(crate) fn reader(self: &Arc<CacheFile>) -> Result<CacheReader, VfsError> {
@@ -225,12 +230,34 @@ impl Cache {
     /// Starts a cache file. `known` is its length when known: it is reserved at once, so a member over the limit
     /// creates nothing.
     pub(crate) fn writer(
-        &self,
+        self: &Arc<Cache>,
         root: &Path,
         known: Option<u64>,
         cache_max: u64,
         spec: &str,
-    ) -> Result<CacheWriter<'_>, VfsError> {
+    ) -> Result<CacheWriter, VfsError> {
+        self.create(root, known, cache_max, spec, 'm')
+    }
+
+    /// Starts a staged write (`w<k>`): content a batch holds until its rebuild. [`CacheWriter::finish_staged`] keeps it
+    /// out of the table, so only its holder can reach it and nothing evicts it.
+    pub(crate) fn stage(
+        self: &Arc<Cache>,
+        root: &Path,
+        cache_max: u64,
+        spec: &str,
+    ) -> Result<CacheWriter, VfsError> {
+        self.create(root, None, cache_max, spec, 'w')
+    }
+
+    fn create(
+        self: &Arc<Cache>,
+        root: &Path,
+        known: Option<u64>,
+        cache_max: u64,
+        spec: &str,
+        prefix: char,
+    ) -> Result<CacheWriter, VfsError> {
         let reserved = known.unwrap_or(0);
         self.reserve(reserved, cache_max, spec)?;
         let fail = |e: io::Error| VfsError::from_io(spec, VfsOp::Write, e);
@@ -247,7 +274,7 @@ impl Cache {
             let mut stamp = [0u8; STAMP];
             stamp[..8].copy_from_slice(&session.to_le_bytes());
             stamp[8..].copy_from_slice(&number.to_le_bytes());
-            let path = dir.join(format!("m{number}"));
+            let path = dir.join(format!("{prefix}{number}"));
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -264,10 +291,11 @@ impl Cache {
             }
         };
         Ok(CacheWriter {
-            cache: self,
+            cache: Arc::clone(self),
             file: BufWriter::with_capacity(1 << 16, file),
             path,
             stamp,
+            pos: 0,
             written: 0,
             reserved,
             cache_max,
@@ -301,11 +329,14 @@ impl Cache {
 
 /// A cache file being written. Dropped before [`CacheWriter::finish`], it removes the partial file and gives its
 /// reservation back.
-pub(crate) struct CacheWriter<'a> {
-    cache: &'a Cache,
+pub(crate) struct CacheWriter {
+    cache: Arc<Cache>,
     file: BufWriter<File>,
     path: PathBuf,
     stamp: [u8; STAMP],
+    /// Where the next write lands, after the stamp.
+    pos: u64,
+    /// The length so far: the end of the furthest write.
     written: u64,
     reserved: u64,
     cache_max: u64,
@@ -313,42 +344,84 @@ pub(crate) struct CacheWriter<'a> {
     done: bool,
 }
 
-impl CacheWriter<'_> {
-    /// Appends `bytes`, reserving 1 MiB at a time past what is reserved.
+impl CacheWriter {
+    /// Writes `bytes` where the writer stands, reserving 1 MiB at a time past what is reserved.
     pub(crate) fn write(&mut self, bytes: &[u8]) -> Result<(), VfsError> {
-        let needed = self.written + bytes.len() as u64;
-        while needed > self.reserved {
+        let end = self.pos + bytes.len() as u64;
+        while end > self.reserved {
             self.cache.reserve(STEP, self.cache_max, &self.spec)?;
             self.reserved += STEP;
         }
         self.file
             .write_all(bytes)
             .map_err(|e| VfsError::from_io(self.spec.as_str(), VfsOp::Write, e))?;
-        self.written = needed;
+        self.pos = end;
+        self.written = self.written.max(end);
         Ok(())
     }
 
-    /// Completes the file and enters it in the table.
-    pub(crate) fn finish(mut self, archive: u64, member: &str) -> Result<Arc<CacheFile>, VfsError> {
+    /// Flushes and gives what was reserved past the end back; the file is the caller's from here on.
+    fn complete(&mut self) -> Result<Arc<CacheFile>, VfsError> {
         self.file
             .flush()
             .map_err(|e| VfsError::from_io(self.spec.as_str(), VfsOp::Write, e))?;
         self.done = true;
         let extra = self.reserved - self.written;
         self.cache.used.fetch_sub(extra, Ordering::Relaxed);
-        let file = Arc::new(CacheFile {
+        Ok(Arc::new(CacheFile {
             path: self.path.clone(),
             len: self.written,
             stamp: self.stamp,
             used: Arc::clone(&self.cache.used),
-        });
+        }))
+    }
+
+    /// Completes the file and enters it in the table.
+    pub(crate) fn finish(mut self, archive: u64, member: &str) -> Result<Arc<CacheFile>, VfsError> {
+        let file = self.complete()?;
         self.cache
             .enter((archive, member.into()), Arc::clone(&file));
         Ok(file)
     }
+
+    /// Completes a staged write. Dropping the last `Arc` removes the file (`Abort`, a finished rebuild).
+    pub(crate) fn finish_staged(mut self) -> Result<Arc<CacheFile>, VfsError> {
+        self.complete()
+    }
 }
 
-impl Drop for CacheWriter<'_> {
+impl Write for CacheWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        CacheWriter::write(self, buf).map_err(io::Error::from)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Seek for CacheWriter {
+    /// Positions are the content's: the stamp stays out of reach.
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let target = match to {
+            SeekFrom::Start(at) => Some(at),
+            SeekFrom::Current(delta) => self.pos.checked_add_signed(delta),
+            SeekFrom::End(delta) => self.written.checked_add_signed(delta),
+        };
+        let target = target.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before the start of the file",
+            )
+        })?;
+        self.file.seek(SeekFrom::Start(STAMP as u64 + target))?;
+        self.pos = target;
+        Ok(target)
+    }
+}
+
+impl Drop for CacheWriter {
     fn drop(&mut self) {
         if !self.done {
             let _ = fs::remove_file(&self.path);

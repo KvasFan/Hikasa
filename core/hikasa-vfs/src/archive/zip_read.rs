@@ -339,10 +339,7 @@ pub(crate) fn index_zip(
     if stated_entries(&mut *reader, len) > entries_max {
         return Err(entries_limit(spec, entries_max));
     }
-    let directory_max = pass
-        .limits
-        .paths_max
-        .saturating_add(DIRECTORY_ENTRY_MAX.saturating_mul(entries_max));
+    let directory_max = directory_limit(&pass.limits);
     let left = Arc::new(AtomicU64::new(directory_max));
     let reader: Box<dyn ReadSeek> = Box::new(IndexReader {
         inner: reader,
@@ -442,6 +439,13 @@ pub(crate) fn index_zip(
     Ok((tree, data))
 }
 
+/// The most bytes of a central directory an index reads (rule 13).
+pub(crate) fn directory_limit(limits: &super::ArchiveLimits) -> u64 {
+    limits
+        .paths_max
+        .saturating_add(DIRECTORY_ENTRY_MAX.saturating_mul(limits.entries_max))
+}
+
 /// The fields of the central header at `at`.
 fn central_of(fields: &[CentralFields], at: u64) -> Option<&CentralFields> {
     fields
@@ -474,6 +478,34 @@ fn read_link(archive: &mut ZipArchive<SharedReader>, index: usize) -> Option<Box
 }
 
 impl ZipData {
+    /// Bytes in front of the first record (a self-extractor): such a zip is not rewritten (§1.5.10).
+    pub(crate) fn prefix(&self) -> u64 {
+        self.archive.offset()
+    }
+
+    /// Where the central directory starts.
+    pub(crate) fn directory_start(&self) -> u64 {
+        self.archive.central_directory_start()
+    }
+
+    /// Each entry the crate kept, as `(offset of its central header, its number)`.
+    pub(crate) fn directory_offsets(&self) -> impl Iterator<Item = (u64, usize)> {
+        (0..self.archive.len()).filter_map(|at| {
+            let entry = self.archive.by_index_data(at).ok()?;
+            Some((entry.central_header_start(), at))
+        })
+    }
+
+    /// Bytes of the file.
+    pub(crate) fn container_len(&self) -> u64 {
+        self.container_len
+    }
+
+    /// The archive's comment, as bytes.
+    pub(crate) fn comment(&self) -> &[u8] {
+        self.archive.comment()
+    }
+
     /// Holds the container open for one call.
     pub(crate) fn lease<E>(
         &self,

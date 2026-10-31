@@ -59,8 +59,8 @@ impl ArchiveFormat {
         )
     }
 
-    /// The bits of §1.5.3 for W5a: no write bit in any format.
-    pub(crate) fn capabilities(self) -> Capabilities {
+    /// The bits of §1.5.3 for one format; [`ArchiveFormat::write_bits`] are added by the caller, who knows the chain.
+    pub(crate) fn read_capabilities(self) -> Capabilities {
         let common = Capabilities::READ
             | Capabilities::LIST
             | Capabilities::SEEK
@@ -85,6 +85,17 @@ impl ArchiveFormat {
                 common
             }
         }
+    }
+
+    /// `W` of §1.5.3, for a format and every archive around it (W5b).
+    pub(crate) const fn write_bits() -> Capabilities {
+        Capabilities::WRITE
+            .union(Capabilities::MKDIR)
+            .union(Capabilities::REMOVE)
+            .union(Capabilities::RENAME)
+            .union(Capabilities::SET_TIMES)
+            .union(Capabilities::SET_ATTRS)
+            .union(Capabilities::CREATE_SYMLINKS)
     }
 }
 
@@ -175,7 +186,8 @@ mod tests {
         assert_eq!(writable, 6);
         for format in ArchiveFormat::ORDER {
             assert_eq!(format.writable(), !format.is_single_stream());
-            assert!(!format.capabilities().contains(Capabilities::WRITE));
+            let bits = format.read_capabilities();
+            assert!(!bits.intersects(ArchiveFormat::write_bits()), "{format:?}");
         }
     }
 }

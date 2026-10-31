@@ -155,8 +155,10 @@ pub(crate) struct Node {
     /// Where the last component starts.
     name_at: u32,
     pub(crate) kind: MemberKind,
-    lossy: bool,
+    pub(crate) lossy: bool,
     pub(crate) encrypted: bool,
+    /// The record of [`Tree::records`] this node stands for; [`NO_RECORD`] for a synthesized folder.
+    pub(crate) record: u32,
     pub(crate) size: u64,
     pub(crate) mtime: Option<FileTime>,
     pub(crate) ctime: Option<FileTime>,
@@ -166,8 +168,11 @@ pub(crate) struct Node {
     pub(crate) data: DataRef,
 }
 
+/// No record: see [`Node::record`].
+pub(crate) const NO_RECORD: u32 = u32::MAX;
+
 impl Node {
-    fn new(raw: RawMember, path: Arc<str>) -> Node {
+    fn new(raw: RawMember, path: Arc<str>, record: usize) -> Node {
         Node {
             name_at: name_start(&path),
             len: u32::try_from(path.len()).unwrap_or(0),
@@ -175,6 +180,7 @@ impl Node {
             kind: raw.kind,
             lossy: raw.lossy,
             encrypted: raw.encrypted,
+            record: u32::try_from(record).unwrap_or(NO_RECORD),
             size: raw.size,
             mtime: raw.mtime,
             ctime: raw.ctime,
@@ -194,6 +200,7 @@ impl Node {
             kind: MemberKind::Dir,
             lossy,
             encrypted: false,
+            record: NO_RECORD,
             size: 0,
             mtime: None,
             ctime: None,
@@ -217,20 +224,7 @@ impl Node {
     /// The entry of this node.
     pub(crate) fn entry(&self) -> Entry {
         let (_, name) = self.key();
-        let kind = match self.kind {
-            MemberKind::Dir => EntryKind::Dir,
-            MemberKind::File | MemberKind::HardLink | MemberKind::Sparse => EntryKind::File,
-            MemberKind::Symlink => EntryKind::Symlink,
-            MemberKind::Other => EntryKind::Other,
-        };
-        let name = match FileName::new(name) {
-            Ok(_) if self.lossy && name.contains(char::REPLACEMENT_CHARACTER) => {
-                FileName::from_lossy_text(name)
-            }
-            Ok(name) => name,
-            Err(_) => FileName::from_os(std::ffi::OsStr::new(name)),
-        };
-        let mut entry = Entry::new(name, kind);
+        let mut entry = Entry::new(entry_name(name, self.lossy), self.kind.entry_kind());
         entry.size = self.size;
         entry.mtime = self.mtime;
         entry.ctime = self.ctime;
@@ -238,6 +232,29 @@ impl Node {
         entry.link_target = self.link_target.as_deref().map(str::to_owned);
         entry.crc32 = self.crc32;
         entry
+    }
+}
+
+impl MemberKind {
+    /// What a listing shows.
+    pub(crate) fn entry_kind(self) -> EntryKind {
+        match self {
+            MemberKind::Dir => EntryKind::Dir,
+            MemberKind::File | MemberKind::HardLink | MemberKind::Sparse => EntryKind::File,
+            MemberKind::Symlink => EntryKind::Symlink,
+            MemberKind::Other => EntryKind::Other,
+        }
+    }
+}
+
+/// The entry name of the last component `name`; `lossy` says the text replaced bytes that do not decode.
+pub(crate) fn entry_name(name: &str, lossy: bool) -> FileName {
+    match FileName::new(name) {
+        Ok(_) if lossy && name.contains(char::REPLACEMENT_CHARACTER) => {
+            FileName::from_lossy_text(name)
+        }
+        Ok(name) => name,
+        Err(_) => FileName::from_os(std::ffi::OsStr::new(name)),
     }
 }
 
@@ -260,9 +277,8 @@ fn path_key(path: &str) -> (&str, &str) {
     split_path(path, name_start(path) as usize)
 }
 
-/// What became of a record of the archive; a rebuild (W5b) keeps `Refused` and drops `Shadowed`.
+/// What became of a record of the archive; a rebuild keeps `Refused` and drops `Shadowed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum RecordState {
     Live,
     Refused,
@@ -271,7 +287,6 @@ pub(crate) enum RecordState {
 
 /// One record of the archive, in archive order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Record {
     pub(crate) data: DataRef,
     pub(crate) state: RecordState,
@@ -295,13 +310,19 @@ pub(crate) struct Tree {
     pub(crate) encrypted: u64,
     /// The attributes a `./` entry gives the root.
     pub(crate) root_attrs: Option<Attrs>,
-    /// Every record in archive order (the seam of W5b).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Every record in archive order: what a rebuild goes through.
     pub(crate) records: Vec<Record>,
     /// Set when the stream was damaged.
     pub(crate) damage: Option<Damage>,
     /// NUL bytes followed the compressed stream.
     pub(crate) padded: bool,
+    /// The hard links that stayed: `(record, the record it names)`, in archive order. A hard link's node has that
+    /// member's data.
+    pub(crate) hard_links: Vec<(u32, u32)>,
+    /// A tar: where the blocks of members end.
+    pub(crate) members_end: u64,
+    /// A tar: bytes other than zeros follow the end of the members.
+    pub(crate) tail: bool,
 }
 
 impl Tree {
@@ -654,11 +675,17 @@ pub(crate) fn build_tree(
             continue;
         }
         tree.encrypted += u64::from(member.encrypted);
-        nodes.push(Node::new(member, Arc::clone(path)));
+        nodes.push(Node::new(member, Arc::clone(path), *at));
     }
     sort_checked(&mut nodes, |a, b| a.key().cmp(&b.key()), ctl)?;
     nodes.shrink_to_fit();
     tree.nodes = nodes;
+    let number = |at: usize| u32::try_from(at).unwrap_or(NO_RECORD);
+    tree.hard_links = hard_links
+        .iter()
+        .filter(|(at, _)| !gone.contains(at))
+        .map(|&(at, target)| (number(at), number(target)))
+        .collect();
     for (record, state) in tree.records.iter_mut().zip(&states) {
         record.state = *state;
     }
