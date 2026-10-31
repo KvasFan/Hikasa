@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use hikasa_core::{Ctl, Spec};
 
 use super::copy::{
-    Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy, source_changed,
+    Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy,
+    narrow_archive_mode, source_changed,
 };
 use super::plan::report;
 use super::{
@@ -229,7 +230,11 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     };
     let copied = match entry.kind {
         EntryKind::File => copy_content(exec, source, &item.target, item.replaces, item.depth)
-            .and_then(|bytes| apply_metadata(exec, &item.target, &entry).map(|()| bytes)),
+            .and_then(|bytes| {
+                let mut entry = entry.clone();
+                narrow_archive_mode(exec, source, &item.target, &mut entry);
+                apply_metadata(exec, &item.target, &entry).map(|()| bytes)
+            }),
         EntryKind::Symlink => {
             create_link_copy(exec, source, &item.target, item.replaces, item.depth).map(|()| 0)
         }

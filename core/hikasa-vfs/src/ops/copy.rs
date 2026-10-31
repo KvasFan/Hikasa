@@ -452,7 +452,10 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         let preserve = exec.preserve();
         if preserve.times || preserve.attrs {
             match exec.src.stat(source, FollowLinks::No) {
-                Ok(entry) => exec.defer_dir(item.depth, index, item.target.clone(), entry),
+                Ok(mut entry) => {
+                    narrow_archive_mode(exec, source, &item.target, &mut entry);
+                    exec.defer_dir(item.depth, index, item.target.clone(), entry);
+                }
                 Err(e) => return Outcome::Failed(e),
             }
         }
@@ -467,7 +470,8 @@ pub(crate) fn run_copy(exec: &mut Exec<'_>, item: &PlanItem) -> Result<u64, VfsE
         .as_ref()
         .ok_or_else(|| source_changed(&item.target))?;
     let bytes = copy_content(exec, source, &item.target, item.replaces, item.depth)?;
-    let entry = source_file(exec, source, item.depth)?;
+    let mut entry = source_file(exec, source, item.depth)?;
+    narrow_archive_mode(exec, source, &item.target, &mut entry);
     apply_metadata(exec, &item.target, &entry)?;
     Ok(bytes)
 }
@@ -664,6 +668,31 @@ fn replace_with(
             }
             Err(e)
         }
+    }
+}
+
+/// §1.5.7 rule 18: the mode of a member stands for what an archive asks, and an archive is hostile. Outside an archive
+/// it keeps `rwx` bits only, and only those the platform gave the new `target`: a file created with the default mode
+/// has the umask (and any default ACL) in it, so the umask needs no call and no environment (T1). Such a file was
+/// created without `x`, so a reader's `r` stands for its `x`. A target that shows no mode counts as umask 022.
+pub(crate) fn narrow_archive_mode(
+    exec: &Exec<'_>,
+    source: &Spec,
+    target: &Spec,
+    entry: &mut Entry,
+) {
+    if !matches!(source, Spec::ArchiveMember { .. }) || matches!(target, Spec::ArchiveMember { .. })
+    {
+        return;
+    }
+    if let Attrs::Unix { meta } = &mut entry.attrs {
+        let created = exec
+            .dst
+            .stat(target, FollowLinks::No)
+            .ok()
+            .and_then(|entry| entry.attrs.unix())
+            .map_or(0o755, |created| created.mode);
+        meta.mode &= 0o777 & (created | ((created & 0o444) >> 2));
     }
 }
 
