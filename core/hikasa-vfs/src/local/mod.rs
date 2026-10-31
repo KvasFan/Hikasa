@@ -91,7 +91,7 @@ mod platform {
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{CancelToken, CaseSensitivity, ErrorReport, FileTime, LocalPath, Spec};
@@ -945,6 +945,12 @@ impl Write for LocalWriter {
     }
 }
 
+impl Seek for LocalWriter {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.writer()?.seek(to)
+    }
+}
+
 impl AtomicWrite for LocalWriter {
     fn commit(mut self: Box<Self>) -> Result<(), VfsError> {
         self.commit_inner()
@@ -986,6 +992,13 @@ impl Write for DirectWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         self.writer()?.flush()
+    }
+}
+
+impl Seek for DirectWriter {
+    /// A pipe or a device has no position to go back to.
+    fn seek(&mut self, _to: SeekFrom) -> io::Result<u64> {
+        Err(io::ErrorKind::Unsupported.into())
     }
 }
 

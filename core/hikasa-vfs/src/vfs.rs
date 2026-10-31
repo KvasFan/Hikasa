@@ -208,10 +208,20 @@ impl<T: Read + Seek + Send> ReadSeek for T {}
 /// An atomic writer: nothing is visible at the target until `commit`; dropping without `commit` discards the
 /// temporary file (SES-053, INV-VFS-3). Exception (contract §1.2.7 item 12): a local target that is not a regular
 /// file (a FIFO, a character or block device) is written to directly and is never replaced, so such a write is
-/// not atomic.
-pub trait AtomicWrite: Write + Send {
+/// not atomic. `Seek` is for writers that patch what they wrote, as the zip writer does (M2 W5b, §1.5.10); a writer on a
+/// target that cannot seek answers `Unsupported`.
+pub trait AtomicWrite: Write + Seek + Send {
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;
+}
+
+/// How a batch ends (M2 W5b, D-148).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    /// Rebuild the archive, once, with every change of the batch.
+    Commit,
+    /// Drop every change: the archive stays as it is.
+    Abort,
 }
 
 /// A virtual file system back-end (VFS-001). Implementations are `Send + Sync` and stateless per call
@@ -349,6 +359,30 @@ pub trait Vfs: Send + Sync {
     /// Warnings raised since the last call (D-145). Default: none.
     fn take_warnings(&self) -> Vec<Warning> {
         Vec::new()
+    }
+
+    // ---- archive batches (M2 W5b, D-148, D-150; contract §1.5.10) --------------------------------------------
+
+    /// Opens a batch on the archive `at`: until `finish` the primitives on its members only change an overlay, which
+    /// every reader of this back-end sees. The batch covers the whole chain up to the outermost file: `a.zip/b.tar`
+    /// and `a.zip` are one batch. Another batch on it → `Unavailable`. Default: nothing.
+    fn begin(&self, _at: &Spec) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// Ends the batch: `Commit` rebuilds `at` (the W3 hook, §1.3.10), `Abort` drops the overlay. Default: nothing.
+    fn finish(&self, _at: &Spec, _how: Finish) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// `finish` that a job can cancel, with `Phase::Writing` progress in bytes of the archive. Default: `finish`.
+    fn finish_with(&self, at: &Spec, how: Finish, _ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.finish(at, how)
+    }
+
+    /// Creates an empty archive at `spec`, whose name matches a writable mask. Default: `OperationUnsupported`.
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::Mkdir))
     }
 }
 

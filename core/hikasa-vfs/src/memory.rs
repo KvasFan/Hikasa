@@ -993,9 +993,12 @@ impl MemoryVfs {
         tree.faults.push((fault, key));
     }
 
-    /// Removes every fault.
+    /// Removes every fault, the streams that fail after a number of bytes included.
     pub fn clear_faults(&self) {
-        self.shared.write().faults.clear();
+        let mut tree = self.shared.write();
+        tree.faults.clear();
+        tree.read_errors.clear();
+        tree.write_errors.clear();
     }
 
     /// Makes the directory record of the entry at `path` (the entry itself; a final symlink is not followed)
@@ -1373,6 +1376,7 @@ impl Vfs for MemoryVfs {
             spec: spec_text,
             overwrite: opts.overwrite,
             buf: Vec::new(),
+            pos: 0,
             fail_after,
         }))
     }
@@ -1710,6 +1714,8 @@ struct MemWriter {
     spec: String,
     overwrite: bool,
     buf: Vec<u8>,
+    /// Where the next write lands.
+    pos: usize,
     /// `inject_write_error_after`: the bytes accepted before writes fail, and the kind.
     fail_after: Option<(u64, ErrorKind)>,
 }
@@ -1726,12 +1732,39 @@ impl Write for MemWriter {
             }
             None => buf.len(),
         };
-        self.buf.extend_from_slice(buf.get(..take).unwrap_or(buf));
+        let bytes = buf.get(..take).unwrap_or(buf);
+        let end = self.pos + bytes.len();
+        if self.buf.len() < end {
+            self.buf.resize(end, 0);
+        }
+        if let Some(room) = self.buf.get_mut(self.pos..end) {
+            room.copy_from_slice(bytes);
+        }
+        self.pos = end;
         Ok(take)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl Seek for MemWriter {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let target = match to {
+            SeekFrom::Start(at) => Some(at),
+            SeekFrom::Current(delta) => (self.pos as u64).checked_add_signed(delta),
+            SeekFrom::End(delta) => (self.buf.len() as u64).checked_add_signed(delta),
+        };
+        let target = target.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before the start of the file",
+            )
+        })?;
+        self.pos = usize::try_from(target)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "seek past memory"))?;
+        Ok(target)
     }
 }
 

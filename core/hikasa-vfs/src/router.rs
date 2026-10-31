@@ -42,7 +42,7 @@ use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::local::LocalVfs;
 use crate::vfs::{
-    AtomicWrite, AttrChange, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
+    AtomicWrite, AttrChange, Finish, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
     WriteOptions, op_unsupported,
 };
 
@@ -468,6 +468,28 @@ impl Vfs for VfsRouter {
         self.archives
             .as_ref()
             .map_or_else(Vec::new, |archive| archive.take_warnings())
+    }
+
+    fn begin(&self, at: &Spec) -> Result<(), VfsError> {
+        self.archives.as_ref().map_or(Ok(()), |a| a.begin(at))
+    }
+
+    fn finish(&self, at: &Spec, how: Finish) -> Result<(), VfsError> {
+        self.archives.as_ref().map_or(Ok(()), |a| a.finish(at, how))
+    }
+
+    fn finish_with(&self, at: &Spec, how: Finish, ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.archives
+            .as_ref()
+            .map_or(Ok(()), |a| a.finish_with(at, how, ctl))
+    }
+
+    /// `ArchiveVfs` makes the file, on the same `LocalVfs`, or the member. Without archives no plan asks for it.
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
+        match (&self.archives, self.route(spec)) {
+            (Some(archives), Route::Local | Route::Archive(_)) => archives.create_archive(spec),
+            _ => Err(op_unsupported(spec, VfsOp::Mkdir)),
+        }
     }
 }
 
