@@ -79,6 +79,12 @@ fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     zip_raw(&raw)
 }
 
+/// [`zip_of`] for byte names of nested archives.
+fn zip_raw_with(entries: &[(&str, &Vec<u8>)]) -> Vec<u8> {
+    let raw: Vec<(&str, &[u8])> = entries.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    zip_of(&raw)
+}
+
 fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, data) in entries {
@@ -425,30 +431,122 @@ fn flatten_descends_opened_archives() {
     assert_eq!(spec, Spec::archive_member(mspec("/l/a.zip"), "d/x"));
 }
 
+/// Step 5: the budget binds inside one folder: an archive's entries are reserved from its index before it opens, so
+/// neighbours in one listing cannot all open before anything was counted.
 #[test]
 fn the_budget_leaves_later_archives_files() {
     let mut w = world();
-    w.budget = 2;
-    // One folder each: a scan on one thread counts an archive before it meets the next folder.
+    w.budget = 4;
+    let zip = zip_of(&[("1", b"1"), ("2", b"2"), ("3", b"3")]);
     for i in 0..5 {
-        let zip = zip_of(&[("1", b"1"), ("2", b"2"), ("3", b"3")]);
-        w.put(&format!("/l/d{i}/a.zip"), &zip);
-        w.put(&format!("/r/d{i}/a.zip"), &zip);
+        w.put(&format!("/l/a{i}.zip"), &zip);
+        w.put(&format!("/r/a{i}.zip"), &zip);
     }
     let cmp = w.trees(&rules(ArchiveHandling::Always));
     let read = cmp.read();
-    let warnings: Vec<_> = read
+    let warnings = read
         .warnings()
         .iter()
         .filter(|w| w.code == WarningCode::ArchiveScanLimit)
-        .collect();
-    assert_eq!(warnings.len(), 1);
+        .count();
+    assert_eq!(warnings, 1);
     drop(read);
     let shown = shape(&cmp);
+    let opened = shown.iter().filter(|l| l.contains("/")).count();
+    assert!(opened <= 3, "one archive of 3 fits in 4: {shown:?}");
     assert!(
         shown.iter().any(|l| l.ends_with("zip file same")),
         "{shown:?}"
     );
+}
+
+/// The folders of one archive count once, by the index, however many listings walk them; a base counts first.
+#[test]
+fn the_budget_counts_bases_and_synthesized_folders() {
+    let mut w = world();
+    w.budget = 6;
+    let tree = zip_of(&[("a/b/c", b"1"), ("a/b/d", b"2")]);
+    let inner = zip_of(&[("x", b"1")]);
+    let outer = zip_raw_with(&[("t.zip", &tree), ("u.zip", &inner)]);
+    w.put("/base.zip", &outer);
+    w.put("/empty/keep", b"k");
+    // The base: 2 entries. `t.zip`: 4, with two folders that only exist through it. `u.zip` passes the budget.
+    let root = Spec::archive_member(mspec("/base.zip"), "");
+    let cmp = w.compare(root, mspec("/empty"), &rules(ArchiveHandling::Always));
+    let shown = shape(&cmp);
+    assert!(
+        shown.iter().any(|l| l.starts_with("t.zip/a/b/c")),
+        "{shown:?}"
+    );
+    assert!(shown.iter().any(|l| l.starts_with("u.zip ")), "{shown:?}");
+    assert!(!shown.iter().any(|l| l.starts_with("u.zip/")), "{shown:?}");
+}
+
+/// A fan of nested archives multiplies by each level, and the budget binds it: 4^3 + 4^2 + 4 + 1 archives lie in a few
+/// KiB, and the scan stops where the entries say.
+#[test]
+fn a_fan_of_nested_archives_stops_at_the_budget() {
+    let mut w = world();
+    w.budget = 40;
+    let mut level = zip_of(&[("leaf.txt", b"x")]);
+    for _ in 0..3 {
+        let copies: Vec<(String, Vec<u8>)> = (0..4)
+            .map(|i| (format!("n{i}.zip"), level.clone()))
+            .collect();
+        let entries: Vec<(&str, &Vec<u8>)> = copies.iter().map(|(n, d)| (n.as_str(), d)).collect();
+        level = zip_raw_with(&entries);
+    }
+    w.put("/l/fan.zip", &level);
+    w.put("/r/keep", b"k");
+    let cmp = w.trees(&rules(ArchiveHandling::Always));
+    let read = cmp.read();
+    let warned = read
+        .warnings()
+        .iter()
+        .filter(|w| w.code == WarningCode::ArchiveScanLimit)
+        .count();
+    assert_eq!(warned, 1);
+    drop(read);
+    let rows = shape(&cmp).len();
+    assert!(
+        rows <= 45,
+        "{rows}: the entries of the budget, and the files that stayed"
+    );
+}
+
+/// G4 at the start of a scan: a base inside an archive is indexed where the job's token reaches it.
+#[test]
+fn a_base_inside_an_archive_stops_with_the_job() {
+    let mut w = world();
+    w.budget = u64::MAX;
+    w.put("/l.tar", &tar_of(&[("x", &vec![0u8; 256 << 20])]));
+    w.put("/r/keep", b"k");
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let contents: ContentEngines = engines(1 << 20);
+    let now = default_now();
+    let progress = NullProgress;
+    let env = FolderEnv {
+        vfs: &w.vfs,
+        content: &contents,
+        pool: None,
+        ctl: Ctl {
+            cancel: &cancel,
+            progress: &progress,
+        },
+        observer: &NullObserver,
+        now: &now,
+        content_budget: 1 << 30,
+        archive_entries_max: w.budget,
+    };
+    let root = Spec::archive_member(mspec("/l.tar"), "");
+    let model = FolderModel::new(root, mspec("/r"), FolderRules::default()).unwrap();
+    let error = compare_into(&model, &env).unwrap_err();
+    assert!(
+        matches!(error, hikasa_folder::FolderError::Cancelled),
+        "{error:?}"
+    );
+    assert_eq!(w.vfs.counters().index_passes, 0, "stopped before the pass");
 }
 
 /// FC-025: the zip's central value as it is, no member decoded.

@@ -1258,11 +1258,17 @@ impl Vfs for ArchiveVfs {
 
     /// Builds the index of every archive around `spec`, with cancellation and `Phase::Scanning` progress in bytes.
     fn prepare(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.archive_entries(spec, ctl).map(drop)
+    }
+
+    /// [`Vfs::prepare`], and the members of the archive that directly holds `spec`.
+    fn archive_entries(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<Option<u64>, VfsError> {
         let Spec::ArchiveMember { archive, .. } = spec else {
-            return Ok(());
+            return Ok(None);
         };
         let config = self.enter(spec)?;
-        self.index_of(archive, &config, *ctl).map(|_| ())
+        let (_, index) = self.index_of(archive, &config, *ctl)?;
+        Ok(Some(index.tree.nodes.len() as u64))
     }
 
     fn open_read_with(

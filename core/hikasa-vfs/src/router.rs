@@ -442,6 +442,13 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn archive_entries(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<Option<u64>, VfsError> {
+        match self.route(spec) {
+            Route::Archive(archive) => archive.archive_entries(spec, ctl),
+            _ => Ok(None),
+        }
+    }
+
     fn open_read_with(
         &self,
         spec: &Spec,

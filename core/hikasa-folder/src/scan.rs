@@ -240,7 +240,7 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         flat_dirs: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
         flat_deferred: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
         open_archives,
-        archive_entries: AtomicU64::new(0),
+        archive_entries: AtomicU64::new(base_entries(env, specs)),
         archive_limit_warned: AtomicBool::new(false),
     };
     let root_sides = [
@@ -370,9 +370,17 @@ fn load_base(env: &FolderEnv<'_>, side: Side, spec: &Spec) -> Result<BaseInfo, F
     })
 }
 
-/// Entries listed inside archives after which a scan opens no further archive (D-151): it bounds a recursive
-/// archive in `Always` mode, with `nesting_max` and the cache limits.
+/// Entries inside archives that one scan opens (D-151): it bounds a recursive archive in `Always` mode, with
+/// `nesting_max` and the cache limits.
 pub const SCAN_ARCHIVE_ENTRIES_MAX: u64 = 5_000_000;
+
+/// What the bases take of the budget: their archives open whatever it says, and later ones count after them.
+fn base_entries(env: &FolderEnv<'_>, specs: &Pair<Spec>) -> u64 {
+    [&specs.left, &specs.right]
+        .into_iter()
+        .filter_map(|spec| env.vfs.archive_entries(spec, &env.ctl).ok().flatten())
+        .sum()
+}
 
 /// One side of a folder that is listed.
 #[derive(Debug, Clone)]
@@ -905,23 +913,42 @@ impl<'a> Scan<'a> {
         }
     }
 
-    /// [`Scan::archive_mode_opens`] within the budget (step 5): past it no further archive opens, and one warning
-    /// says so.
-    fn opens_archive(&self, parent: &RelPath, name: &str) -> bool {
-        if !self.archive_mode_opens(parent, name) {
+    /// [`Scan::archive_mode_opens`] within the budget (step 5). The index says how many entries the archive will add
+    /// before any of it is listed, and they are reserved here: entries counted when listed would come after every
+    /// archive of a folder had opened. An archive that does not fit stays a file, and one warning says so. An
+    /// archive that cannot be indexed opens: its listing fails, which is its error row.
+    fn opens_archive(&self, folder: &Spec, parent: &RelPath, name: &FileName) -> bool {
+        if !self.archive_mode_opens(parent, name.as_str()) {
             return false;
         }
+        let entries = self
+            .env
+            .vfs
+            .child(folder, name)
+            .and_then(|file| {
+                let root = Spec::archive_member(file, "");
+                self.env.vfs.archive_entries(&root, &self.env.ctl)
+            })
+            .map_or(0, |entries| entries.unwrap_or(0));
         let budget = self.env.archive_entries_max;
-        if self.archive_entries.load(Ordering::Relaxed) <= budget {
-            return true;
+        let mut used = self.archive_entries.load(Ordering::Relaxed);
+        while let Some(total) = used.checked_add(entries).filter(|total| *total <= budget) {
+            match self.archive_entries.compare_exchange_weak(
+                used,
+                total,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(now) => used = now,
+            }
         }
         if !self.archive_limit_warned.swap(true, Ordering::Relaxed) {
             self.model.mutate(|s| {
                 s.warn(Warning {
                     code: WarningCode::ArchiveScanLimit,
                     message: format!(
-                        "over {budget} entries were listed inside archives: \
-                         later archives stay files"
+                        "an archive would pass the {budget} entries a scan opens: it stays a file"
                     ),
                     spec: None,
                 });
@@ -949,14 +976,7 @@ impl<'a> Scan<'a> {
                 None
             },
         };
-        let listing = self.env.vfs.list(&sf.spec, &opts, self.env.ctl.cancel);
-        if matches!(sf.spec, Spec::ArchiveMember { .. })
-            && let Ok(listing) = &listing
-        {
-            self.archive_entries
-                .fetch_add(listing.entries.len() as u64, Ordering::Relaxed);
-        }
-        listing
+        self.env.vfs.list(&sf.spec, &opts, self.env.ctl.cancel)
     }
 
     fn list_pair(&self, sides: &[Option<SideFolder>; 2]) -> [Option<Result<Listing, VfsError>>; 2] {
@@ -992,6 +1012,7 @@ impl<'a> Scan<'a> {
     fn items(
         &self,
         listing: Listing,
+        folder: &Spec,
         parent: &RelPath,
         verdict: FolderVerdict,
         dir: Option<u32>,
@@ -1013,7 +1034,7 @@ impl<'a> Scan<'a> {
                 && self.env.vfs.archive_format(entry.name.as_str()).is_some()
             {
                 f.archive = true;
-                if self.opens_archive(parent, entry.name.as_str()) {
+                if self.opens_archive(folder, parent, &entry.name) {
                     f.opened = true;
                     entry.kind = EntryKind::Dir;
                     entry.size = 0;
@@ -1118,7 +1139,7 @@ impl<'a> Scan<'a> {
             let side = side_of(index);
             match (listings[index].take(), &sides[index]) {
                 (Some(Ok(listing)), Some(sf)) => {
-                    match self.items(listing, &sf.rel, sf.verdict, None) {
+                    match self.items(listing, &sf.spec, &sf.rel, sf.verdict, None) {
                         Ok(list) => items[index] = list,
                         Err(rest) => {
                             self.discard((rest, items, listings));
@@ -2288,7 +2309,13 @@ impl<'a> Scan<'a> {
         listing: Listing,
         spawn: &mut dyn FnMut(Task),
     ) {
-        let items = match self.items(listing, &folder.rel, folder.verdict, Some(dir)) {
+        let items = match self.items(
+            listing,
+            &folder.spec,
+            &folder.rel,
+            folder.verdict,
+            Some(dir),
+        ) {
             Ok(items) => items,
             Err(rest) => {
                 self.discard(rest);

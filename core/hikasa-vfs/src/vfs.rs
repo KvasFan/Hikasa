@@ -326,6 +326,12 @@ pub trait Vfs: Send + Sync {
         Ok(())
     }
 
+    /// [`Vfs::prepare`], then the members of the archive that directly holds `spec`, the folders it synthesizes
+    /// included; `None` when `spec` is not inside an archive. A scan budgets by this before it opens one (D-151).
+    fn archive_entries(&self, _spec: &Spec, _ctl: &Ctl<'_>) -> Result<Option<u64>, VfsError> {
+        Ok(None)
+    }
+
     /// `open_read` that can be cancelled while an archive member is decoded (`Cancelled`). Default: `open_read`.
     fn open_read_with(
         &self,
