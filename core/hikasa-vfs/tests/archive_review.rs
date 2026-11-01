@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
+#[cfg(unix)]
+use common::archives::local;
 use common::archives::{
     OnDisk, OnMemory, RawEntry, RawTar, Seen, TreeData, bytes_of, chain_of, config, decompress,
-    local, name_of, on_disk, on_memory, pax, raw_tar, raw_zip, read_plain, seal, ustar_of, walk,
+    name_of, on_disk, on_memory, pax, raw_tar, raw_zip, read_plain, seal, ustar_of, walk,
 };
 use common::{ctl, ft, host, mspec, read_to_vec};
 use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, Spec, WarningCode};
