@@ -853,6 +853,11 @@ impl Service {
     }
 
     /// The router as a shared value: with standard input and the clipboard once captured.
+    /// What the archive back-end has done so far (tests and diagnostics).
+    pub fn archive_counters(&self) -> Option<hikasa_vfs::ArchiveCounters> {
+        self.router().archives().map(|archives| archives.counters())
+    }
+
     pub(crate) fn router(&self) -> Arc<VfsRouter> {
         Arc::clone(&self.inner.router.read())
     }

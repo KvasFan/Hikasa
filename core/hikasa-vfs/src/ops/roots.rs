@@ -199,7 +199,12 @@ pub(super) fn finish(
         }
     }
     if *cancelled {
-        exec.deferred.clear();
+        // A rebuild went through before the stop: its copies stay, and a move that kept its source is not done.
+        for (index, _) in std::mem::take(&mut exec.deferred) {
+            if let Some(result) = results.get_mut(index) {
+                *result = ItemResult::status(ItemStatus::NotRun);
+            }
+        }
     } else {
         // A failed rebuild leaves every source in place: a folder stays even with none of its own moved.
         let whole = lost.is_empty();

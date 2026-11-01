@@ -9,8 +9,8 @@ use std::ffi::{OsStr, OsString};
 
 use hikasa_core::{ErrorReport, FileTime, Spec, Warning};
 use hikasa_vfs::ops::{
-    self, CopyOptions, ItemStatus, LinkPolicy, MoveOptions, OpReport, OverwritePolicy, Plan,
-    RemoveOptions, SkipReason, Summary, TouchOptions,
+    self, Action, CopyOptions, ItemStatus, LinkPolicy, MoveOptions, OpReport, OverwritePolicy,
+    Plan, RemoveOptions, SkipReason, Summary, TouchOptions,
 };
 use hikasa_vfs::{EntryKind, FollowLinks, SetTimes, Vfs, VfsError};
 use serde::Serialize;
@@ -219,7 +219,9 @@ impl Service {
     /// The plan of a write command, as `--dry-run` prints it (nothing is written; T12).
     pub fn vfs_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpDto, ApiError> {
         run_guarded(|| {
-            let plan = self.build_plan(req, job)?;
+            let mut plan = self.build_plan(req, job)?;
+            let router = self.router();
+            ops::note_shadow_drops(&*router, &*router, &mut plan);
             Ok(VfsOpDto::from_report(ops::dry_run(plan), true))
         })
     }
@@ -271,8 +273,17 @@ impl Service {
                 ops::plan_remove(&*router, &specs, options, &job.ctl()).map_err(cancelled)
             }
             VfsOpRequest::Mkdir { specs, parents } => {
-                let specs = self.write_specs(specs)?;
-                Ok(ops::plan_mkdir(&*self.router(), &specs, *parents))
+                let raw = specs;
+                let specs = self.write_specs(raw)?;
+                let mut plan = ops::plan_mkdir(&*self.router(), &specs, *parents);
+                // A trailing separator wants a folder (§1.5.12), whatever the name looks like.
+                for (item, raw) in plan.items.iter_mut().zip(raw) {
+                    if item.action == Action::CreateArchive && ends_with_separator(raw, platform) {
+                        item.action = Action::CreateDir;
+                        item.kind = EntryKind::Dir;
+                    }
+                }
+                Ok(plan)
             }
             VfsOpRequest::Touch {
                 specs,

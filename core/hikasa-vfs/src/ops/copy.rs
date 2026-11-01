@@ -9,8 +9,8 @@ use hikasa_core::{Ctl, ErrorKind, Spec, Warning};
 use super::plan::{report, report_with};
 use super::{
     Action, CopyOptions, Decision, Exec, LinkPolicy, OpKind, Outcome, OverwritePolicy, Plan,
-    PlanItem, PlanOptions, SkipReason, check_item, check_nesting, decide, lstat_target,
-    same_instance, scanning, warn_archive_link, warn_missing, warn_no_mtime,
+    PlanItem, PlanOptions, SkipReason, check_holder, check_item, check_nesting, decide,
+    lstat_target, same_instance, scanning, warn_archive_link, warn_missing, warn_no_mtime,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, DosAttrs, Entry, EntryKind, FileName};
@@ -180,6 +180,10 @@ impl Planner<'_> {
         if entry.kind == EntryKind::File {
             item.size = Some(entry.size);
         }
+        let holder = match existing {
+            Some(_) => check_holder(self.src, self.dst, source, target),
+            None => Ok(()),
+        };
         match existing {
             None => self.items.push(item),
             Some(found) if found.kind == EntryKind::Dir => {
@@ -187,6 +191,12 @@ impl Planner<'_> {
                     spec: target.canonical(),
                 };
                 self.fail(action, entry.kind, source, target, depth, &error);
+            }
+            // Below a root too: a member of `a.zip` copied out next to it can have the archive's own name.
+            Some(_) if holder.is_err() => {
+                if let Err(error) = holder {
+                    self.fail(action, entry.kind, source, target, depth, &error);
+                }
             }
             Some(found) => match decide(self.overwrite, entry, found, target) {
                 Decision::Replace => {

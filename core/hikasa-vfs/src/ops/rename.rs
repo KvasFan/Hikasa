@@ -11,8 +11,8 @@ use super::copy::{
 use super::plan::report;
 use super::{
     Action, Decision, Exec, LinkPolicy, MoveOptions, OpKind, Outcome, Plan, PlanItem, PlanOptions,
-    check_item, check_nesting, decide, is_blob, is_respelling, lstat_target, same_instance,
-    scanning,
+    check_item, check_move_inside, check_nesting, decide, is_blob, is_respelling, lstat_target,
+    same_instance, scanning,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind};
@@ -119,7 +119,9 @@ pub fn plan_move(
             planner.items.push(rename);
             continue;
         }
-        if let Err(e) = check_nesting(src, dst, source, &entry, target) {
+        let inside = check_nesting(src, dst, source, &entry, target)
+            .and_then(|()| check_move_inside(src, dst, source, target));
+        if let Err(e) = inside {
             fail(&mut planner, entry.kind, &e);
             continue;
         }

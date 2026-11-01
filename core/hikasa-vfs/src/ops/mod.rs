@@ -273,6 +273,7 @@ pub(crate) fn check_nesting(
             reason: "is the source itself",
         });
     }
+    check_holder(src, dst, source, target)?;
     if source_entry.kind == EntryKind::Dir {
         let mut cur = target.parent();
         while let Some(parent) = cur {
@@ -286,6 +287,95 @@ pub(crate) fn check_nesting(
         }
     }
     Ok(())
+}
+
+/// The archives around `spec`, nearest first.
+fn levels(spec: &Spec) -> impl Iterator<Item = &Spec> {
+    std::iter::successors(around(spec), |spec| around(spec))
+}
+
+/// The archive that directly holds `spec`.
+fn around(spec: &Spec) -> Option<&Spec> {
+    match spec {
+        Spec::ArchiveMember { archive, .. } => Some(archive),
+        _ => None,
+    }
+}
+
+/// True when `a` on `src` and `b` on `dst` are one file: by name, or by identity, which sees through a link.
+fn one_file(src: &dyn Vfs, dst: &dyn Vfs, a: &Spec, b: &Spec) -> bool {
+    if spec_key(src, a) == spec_key(dst, b) {
+        return true;
+    }
+    let id = |vfs: &dyn Vfs, spec: &Spec| {
+        vfs.stat(spec, FollowLinks::Yes)
+            .ok()
+            .and_then(|entry| entry.file_id)
+    };
+    !matches!(a, Spec::ArchiveMember { .. })
+        && !matches!(b, Spec::ArchiveMember { .. })
+        && id(src, a).is_some_and(|found| id(dst, b) == Some(found))
+}
+
+/// A target that is an archive around the source, or the file behind one: writing it would replace the archive the
+/// source lives in, and take every other member with it → `InvalidTarget` (§1.5.10). `Ok` for two back-ends.
+pub(crate) fn check_holder(
+    src: &dyn Vfs,
+    dst: &dyn Vfs,
+    source: &Spec,
+    target: &Spec,
+) -> Result<(), VfsError> {
+    if same_instance(src, dst) && levels(source).any(|level| one_file(src, dst, level, target)) {
+        return Err(VfsError::InvalidTarget {
+            spec: target.canonical(),
+            reason: "is the archive that holds the source",
+        });
+    }
+    Ok(())
+}
+
+/// A move of a file into an archive it is, or holds: its source removal would take the copy with it → `InvalidTarget`.
+pub(crate) fn check_move_inside(
+    src: &dyn Vfs,
+    dst: &dyn Vfs,
+    source: &Spec,
+    target: &Spec,
+) -> Result<(), VfsError> {
+    if same_instance(src, dst) && levels(target).any(|level| one_file(dst, src, level, source)) {
+        return Err(VfsError::InvalidTarget {
+            spec: target.canonical(),
+            reason: "is inside the source",
+        });
+    }
+    Ok(())
+}
+
+/// The warning of `--dry-run` for what a plan would take along: older records that share a path with a member that
+/// goes or is replaced (§1.5.7 rule 3). A run says the same when its rebuild is in place.
+pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
+    let mut count = 0;
+    for item in plan.items.iter().filter(|item| item.error.is_none()) {
+        let gone = match item.action {
+            Action::Remove | Action::Trash => src.shadows_of(&item.target),
+            Action::Move => item.source.as_ref().map_or(0, |at| src.shadows_of(at)),
+            _ => 0,
+        };
+        let replaced = if item.replaces {
+            dst.shadows_of(&item.target)
+        } else {
+            0
+        };
+        count += gone + replaced;
+    }
+    if count > 0 {
+        plan.warnings.push(Warning {
+            code: WarningCode::ArchiveDuplicateMember,
+            message: format!(
+                "{count} shadowed members would go with the members they share a path with"
+            ),
+            spec: None,
+        });
+    }
 }
 
 /// The target's state at planning: absent, or its unfollowed entry.
