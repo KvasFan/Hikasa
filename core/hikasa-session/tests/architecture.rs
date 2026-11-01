@@ -1425,6 +1425,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tracing",
             "tracing-subscriber",
             "jiff",
+            "ctrlc",
         ],
         &[
             "assert_cmd",

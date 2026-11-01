@@ -37,6 +37,7 @@ use crate::args::{
     Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SessionCmd, SettingsCmd, TextCmd,
     VfsCmd, WorkspaceCmd,
 };
+use crate::interrupt::Interrupt;
 use crate::output::{Output, WriteError};
 use crate::progress::ProgressLine;
 
@@ -49,14 +50,19 @@ pub struct Ctx<'a> {
     pub out: &'a mut Output,
     /// Progress on stderr.
     pub progress: &'a ProgressLine,
+    /// Ctrl-C.
+    pub interrupt: &'a Interrupt,
     /// clap's matches of the leaf subcommand.
     pub matches: &'a ArgMatches,
 }
 
 impl Ctx<'_> {
-    /// A job control for a blocking service call, reporting to the progress line.
+    /// A job control for a blocking service call, reporting to the progress line and cancelled by Ctrl-C (D-159).
     pub fn job(&self, kind: JobKind) -> JobControl {
-        self.service.job(kind, self.progress.sink())
+        JobControl {
+            cancel: self.interrupt.token(),
+            ..self.service.job(kind, self.progress.sink())
+        }
     }
 
     /// The warnings of an envelope: the startup warnings, the command's own (§1.8.7 item 8), then what the
