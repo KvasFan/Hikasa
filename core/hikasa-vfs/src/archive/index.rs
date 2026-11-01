@@ -277,7 +277,8 @@ fn path_key(path: &str) -> (&str, &str) {
     split_path(path, name_start(path) as usize)
 }
 
-/// What became of a record of the archive; a rebuild keeps `Refused` and drops `Shadowed`.
+/// What became of a record of the archive. A rebuild keeps `Refused` as it is; a `Shadowed` one shares the fate of
+/// the record that won its path ([`Shadow`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecordState {
     Live,
@@ -290,6 +291,17 @@ pub(crate) enum RecordState {
 pub(crate) struct Record {
     pub(crate) data: DataRef,
     pub(crate) state: RecordState,
+}
+
+/// A record another one of the same path shadows (rule 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Shadow {
+    /// The shadowed record.
+    pub(crate) record: u32,
+    /// The record that won the path.
+    pub(crate) winner: u32,
+    /// Bytes of the path: what the record costs the next index.
+    pub(crate) path_len: u32,
 }
 
 /// One `<refused-N>` row.
@@ -316,6 +328,15 @@ pub(crate) struct Tree {
     pub(crate) damage: Option<Damage>,
     /// NUL bytes followed the compressed stream.
     pub(crate) padded: bool,
+    /// The shadowed records with a number, in no order: a few bytes each, and only when an archive has any.
+    pub(crate) shadows: Vec<Shadow>,
+    /// A zip: the records the crate hides because the same raw name follows, as `(offset of the central header, the
+    /// record that won)`, sorted by offset. They have no number of their own.
+    pub(crate) hidden: Vec<(u64, u32)>,
+    /// How many shadowed records each winner has, hidden ones included.
+    pub(crate) shadowed: HashMap<u32, u32>,
+    /// The winners with a shadow no rewrite can carry to another path (a sparse one), sorted.
+    pub(crate) stuck: Vec<u32>,
     /// The hard links that stayed: `(record, the record it names)`, in archive order. A hard link's node has that
     /// member's data.
     pub(crate) hard_links: Vec<(u32, u32)>,
@@ -340,6 +361,20 @@ impl Tree {
         let start = self.nodes.partition_point(|node| node.key().0 < path);
         let end = self.nodes.partition_point(|node| node.key().0 <= path);
         self.nodes.get(start..end).unwrap_or(&[])
+    }
+
+    /// The winner of the record at `at` in the central directory, when the crate hides that record.
+    pub(crate) fn hidden_winner(&self, at: u64) -> Option<u32> {
+        let found = self.hidden.binary_search_by_key(&at, |(at, _)| *at);
+        found
+            .ok()
+            .and_then(|found| self.hidden.get(found))
+            .map(|(_, winner)| *winner)
+    }
+
+    /// True when `record` has a shadow that cannot move with it.
+    pub(crate) fn is_stuck(&self, record: u32) -> bool {
+        self.stuck.binary_search(&record).is_ok()
     }
 
     /// Why `path` cannot be looked up: `true` when a component on the way is not a folder.
@@ -368,6 +403,10 @@ impl Tree {
         nodes
             + self.nodes.capacity() * size_of::<Node>()
             + self.records.capacity() * size_of::<Record>()
+            + self.shadows.capacity() * size_of::<Shadow>()
+            + self.hidden.capacity() * size_of::<(u64, u32)>()
+            + self.stuck.capacity() * size_of::<u32>()
+            + self.shadowed.capacity() * size_of::<(u32, u32)>()
     }
 }
 
@@ -447,6 +486,8 @@ pub(crate) fn build_tree(
         }
     };
     let mut tree = Tree::default();
+    let mut shadows: Vec<Shadow> = Vec::new();
+    let mut stuck: Vec<u32> = Vec::new();
     let mut refused: Vec<(usize, RefusedRow)> = Vec::new();
     let mut states = vec![RecordState::Live; raw.len()];
     let mut raw: Vec<Option<RawMember>> = raw.into_iter().map(Some).collect();
@@ -575,7 +616,15 @@ pub(crate) fn build_tree(
                 if let Some(state) = states.get_mut(at) {
                     *state = RecordState::Shadowed;
                 }
-                tree.duplicates += 1;
+                let number = |at: usize| u32::try_from(at).unwrap_or(NO_RECORD);
+                if kind_of(&raw, at) == MemberKind::Sparse {
+                    stuck.push(number(winner));
+                }
+                shadows.push(Shadow {
+                    record: number(at),
+                    winner: number(winner),
+                    path_len: u32::try_from(path.len()).unwrap_or(u32::MAX),
+                });
             }
             if let Some(slot) = raw.get_mut(at) {
                 *slot = None;
@@ -689,6 +738,14 @@ pub(crate) fn build_tree(
     for (record, state) in tree.records.iter_mut().zip(&states) {
         record.state = *state;
     }
+    tree.duplicates = shadows.len() as u64;
+    for shadow in &shadows {
+        *tree.shadowed.entry(shadow.winner).or_insert(0) += 1;
+    }
+    tree.shadows = shadows;
+    stuck.sort_unstable();
+    stuck.dedup();
+    tree.stuck = stuck;
     refused.sort_by_key(|(at, _)| *at);
     tree.refused = refused
         .into_iter()

@@ -14,6 +14,7 @@ use std::io::{self, Read, SeekFrom, Write};
 use hikasa_core::{Ctl, Phase, Progress, Unit};
 
 use super::codec::{BUFFER, STEP, corrupt};
+use super::name::{NameRules, check_name};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::ReadSeek;
 
@@ -120,10 +121,16 @@ impl Patch {
     /// `extra` with this patch applied. A new name drops the fields that repeat the old one.
     fn extra(&self, extra: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(extra.len() + 9);
+        let mut stamped = false;
         for (id, field) in extra_fields(extra) {
             match (id, self.time) {
                 (Some(UNICODE_PATH_EXTRA), _) if self.name.is_some() => {}
-                (Some(TIMESTAMP_EXTRA), Some(_)) => {}
+                (Some(TIMESTAMP_EXTRA), Some(time)) => {
+                    if let Some(seconds) = time.unix {
+                        out.extend_from_slice(&timestamp_field(field, seconds));
+                        stamped = true;
+                    }
+                }
                 (Some(NTFS_EXTRA), Some(time)) => {
                     if let Some(ticks) = time.ntfs {
                         out.extend_from_slice(&ntfs_field(field, ticks));
@@ -132,7 +139,7 @@ impl Patch {
                 _ => out.extend_from_slice(field),
             }
         }
-        if let Some(seconds) = self.time.and_then(|time| time.unix) {
+        if let Some(seconds) = self.time.and_then(|time| time.unix).filter(|_| !stamped) {
             out.extend_from_slice(&TIMESTAMP_EXTRA.to_le_bytes());
             out.extend_from_slice(&5u16.to_le_bytes());
             out.push(1);
@@ -144,8 +151,10 @@ impl Patch {
     /// The fixed fields shared by a local and a central header; `base` is where the flags stand in `head`, and the
     /// DOS time and date follow two bytes after the method.
     fn fixed(&self, head: &mut [u8], base: usize) {
-        // The flag also says how a comment reads, so it is only ever turned on.
-        if self.name.as_ref().is_some_and(|name| !name.is_ascii()) {
+        // The flag also says how a comment reads, so it is only ever turned on; a name that keeps raw bytes of another
+        // code page stays without it.
+        let text = |name: &Vec<u8>| !name.is_ascii() && std::str::from_utf8(name).is_ok();
+        if self.name.as_ref().is_some_and(text) {
             put_u16(head, base, u16_at(head, base) | FLAG_UTF8);
         }
         if let Some((date, time)) = self.time.and_then(|time| time.dos) {
@@ -172,6 +181,36 @@ impl Patch {
         out.extend_from_slice(&extra);
         Ok(out)
     }
+}
+
+/// A 0x5455 field with a new modification time, which comes first when the flags say there is one. The access and
+/// change times of a local field stay; the central form has a flag for them and no value.
+fn timestamp_field(field: &[u8], seconds: u32) -> Vec<u8> {
+    let mut out = field.to_vec();
+    match out.get_mut(4) {
+        Some(flags) if *flags & 1 != 0 => {
+            if let Some(slot) = out.get_mut(5..9) {
+                slot.copy_from_slice(&seconds.to_le_bytes());
+            }
+        }
+        Some(flags) => {
+            *flags |= 1;
+            out.splice(5..5, seconds.to_le_bytes());
+            put_u16(
+                &mut out,
+                2,
+                u16::try_from(field.len() - 4 + 4).unwrap_or(FULL_16),
+            );
+        }
+        None => {
+            out = Vec::with_capacity(9);
+            out.extend_from_slice(&TIMESTAMP_EXTRA.to_le_bytes());
+            out.extend_from_slice(&5u16.to_le_bytes());
+            out.push(1);
+            out.extend_from_slice(&seconds.to_le_bytes());
+        }
+    }
+    out
 }
 
 /// An NTFS field with a new modification time; the creation and access times stay.
@@ -419,6 +458,23 @@ pub(crate) fn zip64_data(
     Ok(Some(data))
 }
 
+/// True when a digital signature record (`PK\x05\x05`) follows the directory at `end`. It signs what a rebuild
+/// changes, so it cannot be carried over.
+pub(crate) fn directory_signature(
+    reader: &mut dyn ReadSeek,
+    end: u64,
+    spec: &str,
+) -> Result<bool, VfsError> {
+    let read_err = |e: io::Error| VfsError::from_io(spec, VfsOp::Read, e);
+    reader.seek(SeekFrom::Start(end)).map_err(read_err)?;
+    let mut head = [0u8; 4];
+    match reader.read_exact(&mut head) {
+        Ok(()) => Ok(head == *b"PK\x05\x05"),
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(error) => Err(read_err(error)),
+    }
+}
+
 /// Where the end records that follow the directory at `end` stop. `None` when they are not what a zip has there (a
 /// signature block, say): then nothing past them is known to be a tail.
 pub(crate) fn records_end(
@@ -428,14 +484,18 @@ pub(crate) fn records_end(
 ) -> Result<Option<u64>, VfsError> {
     let read_err = |e: io::Error| VfsError::from_io(spec, VfsOp::Read, e);
     let mut head = [0u8; END_FIXED];
-    for _ in 0..3 {
+    for _ in 0..4 {
         reader.seek(SeekFrom::Start(end)).map_err(read_err)?;
         match reader.read_exact(&mut head) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(error) => return Err(read_err(error)),
         }
-        if head.starts_with(b"PK\x06\x06") {
+        if head.starts_with(b"PK\x05\x05") {
+            end = end
+                .saturating_add(6)
+                .saturating_add(u64::from(u16_at(&head, 4)));
+        } else if head.starts_with(b"PK\x06\x06") {
             end = end.saturating_add(12).saturating_add(u64_at(&head, 4));
         } else if head.starts_with(b"PK\x06\x07") {
             end += 20;
@@ -473,6 +533,8 @@ pub(crate) struct ZipOut<'a> {
     output_max: u64,
     central: Vec<u8>,
     entries: u64,
+    /// Bytes of the names of the records.
+    names: u64,
     declared: u64,
     next_check: u64,
     buffer: Vec<u8>,
@@ -494,10 +556,21 @@ impl<'a> ZipOut<'a> {
             output_max,
             central: Vec::new(),
             entries: 0,
+            names: 0,
             declared: 0,
             next_check: STEP,
             buffer: vec![0u8; BUFFER],
         }
+    }
+
+    /// Records so far.
+    pub(crate) fn entries(&self) -> u64 {
+        self.entries
+    }
+
+    /// Bytes of the names of the records so far.
+    pub(crate) fn names(&self) -> u64 {
+        self.names
     }
 
     /// The sum of the decoded sizes of the records.
@@ -610,6 +683,7 @@ impl<'a> ZipOut<'a> {
             .map_err(|()| too_long(spec))?;
         self.central.extend_from_slice(&central);
         self.entries += 1;
+        self.names += patch.name.as_ref().map_or(header.name().len(), Vec::len) as u64;
         self.declared = self.declared.saturating_add(header.uncompressed());
         Ok(())
     }
@@ -685,13 +759,46 @@ fn too_long(spec: &str) -> VfsError {
     }
 }
 
-/// The UTF-8 name of a kept member as `member`, a folder's with its `/`.
-pub(crate) fn member_name(path: &str, folder: bool) -> Vec<u8> {
-    let mut name = path.as_bytes().to_vec();
+/// The raw name of a record that moves from the path `from` to `to`, a folder's with its `/`: the UTF-8 text of `to`.
+/// A name that is not UTF-8 is another code page, whose reading here is only a reading, so what the move leaves alone
+/// keeps its bytes around the new ASCII text. New text that is not ASCII cannot share a name with such bytes: then the
+/// whole name is text.
+pub(crate) fn moved_name(raw: &[u8], from: &str, to: &str, folder: bool) -> Vec<u8> {
+    let mut name = spliced_name(raw, from, to).unwrap_or_else(|| to.as_bytes().to_vec());
     if folder {
         name.push(b'/');
     }
     name
+}
+
+fn spliced_name(raw: &[u8], from: &str, to: &str) -> Option<Vec<u8>> {
+    let clean = check_name(raw, NameRules::Zip).ok()?;
+    if std::str::from_utf8(&clean).is_ok() {
+        return None;
+    }
+    let bytes: Vec<&[u8]> = clean.split(|&b| b == b'/').collect();
+    let old: Vec<&str> = from.split('/').collect();
+    let new: Vec<&str> = to.split('/').collect();
+    if bytes.len() != old.len() {
+        return None;
+    }
+    let shorter = old.len().min(new.len());
+    let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let tail = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(shorter - head)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let middle = new.get(head..new.len() - tail)?;
+    if !middle.iter().all(|part| part.is_ascii()) {
+        return None;
+    }
+    let parts = bytes.get(..head)?.iter().copied();
+    let parts = parts.chain(middle.iter().map(|part| part.as_bytes()));
+    let parts = parts.chain(bytes.get(bytes.len() - tail..)?.iter().copied());
+    Some(parts.collect::<Vec<_>>().join(&b'/'))
 }
 
 /// The attributes of a kept member, for [`Patch::attrs`]: a Unix mode makes `made by` Unix; DOS bits stay where they are.
@@ -845,6 +952,65 @@ mod tests {
         assert_eq!(moved.compressed(), 5, "the sizes stay in the header");
         let again = moved.rewritten(&Patch::default(), far + 1).unwrap();
         assert_eq!(Central { at: 0, raw: again }.local_at(), far + 1);
+    }
+
+    /// A name in another code page keeps the bytes a move leaves alone, around ASCII; anything else is whole text.
+    #[test]
+    fn a_moved_name_keeps_raw_bytes_where_it_can() {
+        let raw = b"d\\\x93\xfa/\xe9.txt";
+        let (from, folder) = ("d/ôú/Θ.txt", false);
+        assert_eq!(
+            moved_name(raw, from, "new/ôú/Θ.txt", folder),
+            b"new/\x93\xfa/\xe9.txt"
+        );
+        assert_eq!(
+            moved_name(raw, from, "d/ôú/b.txt", folder),
+            b"d/\x93\xfa/b.txt"
+        );
+        assert_eq!(
+            moved_name(raw, from, "ôú/Θ.txt", folder),
+            b"\x93\xfa/\xe9.txt"
+        );
+        assert_eq!(
+            moved_name(raw, from, "é/ôú/Θ.txt", folder),
+            "é/ôú/Θ.txt".as_bytes(),
+            "new text that is not ASCII takes the whole name"
+        );
+        assert_eq!(moved_name(b"a/b", "a/b", "c/b", true), b"c/b/");
+    }
+
+    /// Only a name that is text gets the UTF-8 flag.
+    #[test]
+    fn raw_bytes_get_no_utf8_flag() {
+        let patch = |name: &[u8]| Patch {
+            name: Some(name.to_vec()),
+            ..Patch::default()
+        };
+        let flags = |patch: Patch| {
+            let mut head = vec![0u8; 8];
+            patch.fixed(&mut head, 0);
+            u16_at(&head, 0)
+        };
+        assert_eq!(flags(patch("é".as_bytes())), FLAG_UTF8);
+        assert_eq!(flags(patch(b"e")), 0);
+        assert_eq!(flags(patch(b"\x93\xfa")), 0);
+    }
+
+    /// A new time keeps its place and what stands after it; a field without one gets it where the flags say.
+    #[test]
+    fn a_timestamp_field_changes_in_place() {
+        let mut long = vec![0x55, 0x54, 13, 0, 7];
+        long.extend_from_slice(&[1; 12]);
+        let out = timestamp_field(&long, 2);
+        assert_eq!(out.get(5..9), Some(&2u32.to_le_bytes()[..]));
+        assert_eq!(out.get(9..), Some(&[1u8; 8][..]));
+        let bare = [0x55, 0x54, 5, 0, 2, 9, 9, 9, 9];
+        let out = timestamp_field(&bare, 2);
+        assert_eq!(u16_at(&out, 2), 9);
+        assert_eq!(out.get(4), Some(&3));
+        assert_eq!(out.get(5..9), Some(&2u32.to_le_bytes()[..]));
+        assert_eq!(out.get(9..13), Some(&[9u8; 4][..]));
+        assert_eq!(timestamp_field(&[0x55, 0x54, 0, 0], 2).len(), 9);
     }
 
     #[test]

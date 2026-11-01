@@ -396,8 +396,8 @@ impl Overlay {
     }
 
     /// `rename`, of a whole subtree (§1.3.1). What a rebuild could not carry over is refused here, before anything
-    /// changes: a sparse member keeps a block map no header rewrite can move, and a name that does not decode has no
-    /// text to be written under.
+    /// changes: a sparse member, or a shadowed one that must follow its winner (rule 3), keeps a block map no header
+    /// rewrite can move, and a name that does not decode has no text to be written under.
     pub(crate) fn rename(
         &mut self,
         from: &str,
@@ -406,9 +406,14 @@ impl Overlay {
         scope: &Scope<'_>,
     ) -> Result<(), VfsError> {
         let spec = Spec::archive_member(scope.archive.clone(), from);
-        let moved_folder = self.lookup(from, &spec)?.kind == MemberKind::Dir;
+        let source = self.lookup(from, &spec)?;
+        let moved_folder = source.kind == MemberKind::Dir;
         if from == to {
             return Ok(());
+        }
+        // The text of the name is not the name: writing it back would make up a new one.
+        if source.lossy && to.contains(char::REPLACEMENT_CHARACTER) {
+            return Err(scope.unsupported(from, VfsOp::Rename));
         }
         let prefix = format!("{from}/");
         if to.starts_with(&prefix) {
@@ -432,11 +437,11 @@ impl Overlay {
             let below = self.get(path).is_some_and(|item| item.lossy);
             let new = format!("{to}{}", path.get(from.len()..).unwrap_or_default());
             check_path(&new, &scope.limits, scope.archive)?;
-            if below || self.sparse(path) {
+            if below || self.sparse(path) || self.stuck(path, scope.tree) {
                 return Err(scope.unsupported(path, VfsOp::Rename));
             }
         }
-        if self.sparse(from) {
+        if self.sparse(from) || self.stuck(from, scope.tree) {
             return Err(scope.unsupported(from, VfsOp::Rename));
         }
         if let Some(existing) = self.get(to) {
@@ -471,6 +476,27 @@ impl Overlay {
             .is_some_and(|item| item.kind == MemberKind::Sparse)
     }
 
+    /// True when the record at `path` has a shadow that cannot follow it.
+    fn stuck(&self, path: &str, tree: &Tree) -> bool {
+        match self.get(path).map(|item| &item.origin) {
+            Some(Origin::Kept { node, .. }) => tree
+                .nodes
+                .get(*node as usize)
+                .is_some_and(|node| tree.is_stuck(node.record)),
+            _ => false,
+        }
+    }
+
+    /// An implicit folder that does not decode has no record to edit, and a new one would need a name made up.
+    fn check_can_touch(&self, path: &str, op: VfsOp, scope: &Scope<'_>) -> Result<(), VfsError> {
+        match self.get(path) {
+            Some(item) if item.lossy && matches!(item.origin, Origin::Implicit) => {
+                Err(scope.unsupported(path, op))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Moves one item to `to`, which it replaces. The item itself loses a name that does not decode: `to` is text.
     fn relocate(&mut self, from: &str, to: &str, tree: &Tree) {
         let Some(mut item) = self.nodes.remove(from) else {
@@ -496,6 +522,7 @@ impl Overlay {
         if self.sparse(path) {
             return Err(scope.unsupported(path, VfsOp::SetTimes));
         }
+        self.check_can_touch(path, VfsOp::SetTimes, scope)?;
         if let Some(item) = self.nodes.get_mut(path)
             && item.mtime != Some(modified)
         {
@@ -519,6 +546,7 @@ impl Overlay {
         if matches!(item.kind, MemberKind::Symlink | MemberKind::Sparse) {
             return Err(scope.unsupported(path, VfsOp::SetAttrs));
         }
+        self.check_can_touch(path, VfsOp::SetAttrs, scope)?;
         let zip = scope.format == ArchiveFormat::Zip;
         let unix = |mode: u32, was: &Attrs| {
             let (uid, gid) = was.unix().map_or((0, 0), |meta| (meta.uid, meta.gid));
@@ -615,18 +643,25 @@ impl Overlay {
     }
 
     /// Puts the rebuilt bytes of a nested archive in the place of its member: its attributes stay, and so does a
-    /// time the batch set on it.
-    pub(crate) fn put_rebuilt(&mut self, path: &str, file: Arc<CacheFile>, scope: &Scope<'_>) {
-        if let Some(item) = self.nodes.get_mut(path) {
-            let set = matches!(item.origin, Origin::Kept { touched: true, .. });
-            item.size = file.len();
-            item.crc32 = None;
-            item.origin = Origin::Staged(file);
-            item.kind = MemberKind::File;
-            if !set {
-                item.mtime = scope.now;
-            }
+    /// time the batch set on it. `false` when no such member exists: the write would be lost.
+    pub(crate) fn put_rebuilt(
+        &mut self,
+        path: &str,
+        file: Arc<CacheFile>,
+        scope: &Scope<'_>,
+    ) -> bool {
+        let Some(item) = self.nodes.get_mut(path) else {
+            return false;
+        };
+        let set = matches!(item.origin, Origin::Kept { touched: true, .. });
+        item.size = file.len();
+        item.crc32 = None;
+        item.origin = Origin::Staged(file);
+        item.kind = MemberKind::File;
+        if !set {
+            item.mtime = scope.now;
         }
+        true
     }
 }
 

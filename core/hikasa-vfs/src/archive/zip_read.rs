@@ -1,7 +1,7 @@
 //! Zip: the index from the crate's central directory plus an in-house read of the time fields (D-139), without
 //! touching local headers, and member decoding.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -16,6 +16,7 @@ use super::index::{DataRef, MemberKind, NameBudget, RawMember, Tree, build_tree}
 use super::name::{NameRules, check_name, escape_name, reduce_text};
 use super::shared::{ReaderLease, SharedReader};
 use super::time::{dos_time, ntfs_time};
+use super::zip_write::read_central;
 use crate::entry::{Attrs, DosAttrs, UnixMeta};
 use crate::error::VfsError;
 use crate::vfs::ReadSeek;
@@ -425,6 +426,9 @@ pub(crate) fn index_zip(
     }
     let duplicates = archive.has_duplicate_names();
     let mut tree = build_tree(members, budget, pass)?;
+    if fields.len() > archive.len() {
+        hidden_records(&archive, &shared, start, directory_max, &mut tree, spec)?;
+    }
     if duplicates && tree.duplicates == 0 {
         tree.duplicates = 1;
     }
@@ -437,6 +441,43 @@ pub(crate) fn index_zip(
         read_ranges: Mutex::default(),
     };
     Ok((tree, data))
+}
+
+/// Finds the records the crate keeps no number for: it holds one per raw name, the last, and a central directory that
+/// states more is read once more here, so an archive without duplicates pays nothing. A refused name is no shadow: a
+/// rebuild keeps those whatever else has that name.
+fn hidden_records(
+    archive: &ZipArchive<SharedReader>,
+    shared: &SharedReader,
+    start: u64,
+    bytes_max: u64,
+    tree: &mut Tree,
+    spec: &str,
+) -> Result<(), VfsError> {
+    let mut numbers: HashMap<u64, u32> = HashMap::with_capacity(archive.len());
+    let mut winners: HashMap<Box<[u8]>, u32> = HashMap::with_capacity(archive.len());
+    for at in 0..archive.len() {
+        let entry = archive
+            .by_index_data(at)
+            .map_err(|e| zip_error(spec, shared, e))?;
+        let number = u32::try_from(at).unwrap_or(u32::MAX);
+        numbers.insert(entry.central_header_start(), number);
+        winners.insert(entry.name_raw().into(), number);
+    }
+    let mut directory: Box<dyn ReadSeek> = Box::new(shared.clone());
+    let headers = read_central(&mut *directory, start, bytes_max, spec)?;
+    for header in headers.iter().filter(|h| !numbers.contains_key(&h.at)) {
+        if check_name(header.name(), NameRules::Zip).is_err() {
+            continue;
+        }
+        if let Some(&winner) = winners.get(header.name()) {
+            tree.hidden.push((header.at, winner));
+            *tree.shadowed.entry(winner).or_insert(0) += 1;
+            tree.duplicates += 1;
+        }
+    }
+    tree.hidden.sort_unstable();
+    Ok(())
 }
 
 /// The most bytes of a central directory an index reads (rule 13).

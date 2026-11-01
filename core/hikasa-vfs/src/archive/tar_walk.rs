@@ -164,6 +164,16 @@ fn checksum_ok(block: &[u8; BLOCK as usize], header: &Header) -> bool {
     stored == unsigned || i64::from(stored) == i64::from(signed)
 }
 
+/// The size field of a header. A field with nothing in it is 0: GNU tar leaves the field of a volume label empty, and
+/// the crate only reads digits.
+pub(crate) fn entry_size(header: &Header) -> io::Result<u64> {
+    let field = &header.as_old().size;
+    if field.iter().all(|&b| b == 0 || b == b' ') {
+        return Ok(0);
+    }
+    header.entry_size()
+}
+
 /// Drops the NULs at the end of a GNU long name. One inside stays, so rule 1 refuses the name: what follows it must not
 /// be lost to a reader that stops at the first NUL.
 fn trim_body(mut body: Vec<u8>) -> Vec<u8> {
@@ -310,9 +320,8 @@ impl Walker<'_> {
                 return Err(Stop::Damage(at, "bad header checksum".into()));
             }
             pending.first.get_or_insert(at);
-            let declared = header
-                .entry_size()
-                .map_err(|_| Stop::Damage(at, "bad size field".into()))?;
+            let declared =
+                entry_size(header).map_err(|_| Stop::Damage(at, "bad size field".into()))?;
             let type_byte = block.get(156).copied().unwrap_or(0);
             match type_byte {
                 b'x' | b'X' => {
