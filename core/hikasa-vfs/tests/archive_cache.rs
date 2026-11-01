@@ -456,7 +456,8 @@ fn cancel_of_prepare_and_spool_of_a_1_gib_stream() {
     let cancel = CancelToken::new();
     std::thread::scope(|scope| {
         let (vfs, member, token) = (&memory.vfs, &member, &cancel);
-        let worker = scope.spawn(move || (vfs.open_read_with(member, token).map(drop), Instant::now()));
+        let worker =
+            scope.spawn(move || (vfs.open_read_with(member, token).map(drop), Instant::now()));
         // The spool grows in the cache as it goes.
         while memory.vfs.cache_used() == 0 && !worker.is_finished() {
             std::thread::yield_now();
