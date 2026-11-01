@@ -60,6 +60,16 @@ pub(super) fn capabilities() -> Capabilities {
 /// Folders cannot be synced on Windows; `MoveFileEx` is already durable enough for M1.
 pub(super) fn sync_dir(_dir: &Path) {}
 
+/// A file's ACL comes from its folder: there is no owner-only mode to give it.
+pub(super) fn make_private(_file: &std::fs::File) -> Option<std::fs::Permissions> {
+    None
+}
+
+/// No mode to go by: the reserved name and the lock decide.
+pub(super) fn looks_private(_meta: &Metadata) -> bool {
+    true
+}
+
 /// Sets the creation time through a handle opened for `FILE_WRITE_ATTRIBUTES` (folders with backup semantics).
 pub(super) fn set_created(path: &Path, time: std::time::SystemTime) -> Option<io::Result<()>> {
     use std::os::windows::fs::FileTimesExt;

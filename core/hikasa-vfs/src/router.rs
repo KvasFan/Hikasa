@@ -43,7 +43,7 @@ use crate::error::{VfsError, VfsOp};
 use crate::local::LocalVfs;
 use crate::vfs::{
     AtomicWrite, AttrChange, Finish, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
-    WriteOptions, op_unsupported,
+    WriteLock, WriteOptions, op_unsupported,
 };
 
 /// In-memory content injected by an adapter (stdin bytes read once; clipboard text).
@@ -468,6 +468,17 @@ impl Vfs for VfsRouter {
         self.archives
             .as_ref()
             .map_or_else(Vec::new, |archive| archive.take_warnings())
+    }
+
+    fn lock_writer(&self, spec: &Spec) -> Result<Option<Box<dyn WriteLock>>, VfsError> {
+        match spec {
+            Spec::Local(_) => self.local.lock_writer(spec),
+            _ => Ok(None),
+        }
+    }
+
+    fn shadows_of(&self, spec: &Spec) -> u64 {
+        self.archives.as_ref().map_or(0, |vfs| vfs.shadows_of(spec))
     }
 
     fn begin(&self, at: &Spec) -> Result<(), VfsError> {

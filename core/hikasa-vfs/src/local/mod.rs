@@ -16,7 +16,8 @@
 //! - **Atomic writes** (SES-053, INV-VFS-3) go to a temporary file in the target's folder, created with
 //!   `create_new` (`.<name>.hikasa-tmp[-N]`); `commit` flushes, syncs and renames it onto the target (with
 //!   `overwrite = false` through a hard link, which fails atomically when the target exists); dropping the
-//!   writer removes the temporary file. A target that is a symbolic link is resolved first: the file the link
+//!   writer removes the temporary file. Its writer keeps it locked and owner-only until the rename, when it gets the
+//!   mode it will have (`lock`). A target that is a symbolic link is resolved first: the file the link
 //!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
 //!   a regular file (a FIFO, a character or block device such as `/dev/null`) is never replaced: it is written
 //!   to directly, which is not atomic (contract §1.2.7 item 12).
@@ -31,6 +32,7 @@ mod windows;
 #[cfg(windows)]
 use windows as platform;
 
+mod lock;
 mod trash;
 
 #[cfg(not(any(unix, windows)))]
@@ -61,6 +63,12 @@ mod platform {
             | C::RENAME
     }
     pub(super) fn sync_dir(_dir: &Path) {}
+    pub(super) fn make_private(_file: &std::fs::File) -> Option<std::fs::Permissions> {
+        None
+    }
+    pub(super) fn looks_private(_meta: &Metadata) -> bool {
+        true
+    }
     pub(super) fn set_created(
         _path: &Path,
         _time: std::time::SystemTime,
@@ -89,7 +97,7 @@ mod platform {
     }
 }
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -100,8 +108,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
-    SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, BUSY, EntryError, FollowLinks, ListOptions, Listing, NameOnly,
+    ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions, op_unsupported,
 };
 
 /// Files up to this size are copied by `copy_file_fast` with `std::fs::copy` (not cancellable); larger ones are
@@ -364,6 +372,22 @@ impl Vfs for LocalVfs {
         match prepare_write(path, &spec.canonical(), opts)? {
             Prepared::Direct(writer) => Ok(Box::new(writer)),
             Prepared::Temp(writer) => Ok(Box::new(writer)),
+        }
+    }
+
+    /// `.<name>.hikasa-lock` next to the file a link names, for as long as the lock is held (`lock`).
+    fn lock_writer(&self, spec: &Spec) -> Result<Option<Box<dyn WriteLock>>, VfsError> {
+        let path = local(spec)?;
+        let Ok(target) = resolve_links(path.as_path()) else {
+            return Ok(None);
+        };
+        match lock::take(&target) {
+            lock::Taken::Held(held) => Ok(Some(Box::new(held))),
+            lock::Taken::Busy => Err(VfsError::Unavailable {
+                spec: spec.canonical(),
+                reason: BUSY.to_owned(),
+            }),
+            lock::Taken::Impossible => Ok(None),
         }
     }
 
@@ -787,7 +811,7 @@ fn prepare_write(
     if opts.create_parents {
         fs::create_dir_all(parent).map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
     }
-    let (file, tmp) = create_temp(parent, name).map_err(io_error)?;
+    let (file, tmp, made) = create_temp(parent, name).map_err(io_error)?;
     let dir = parent.to_path_buf();
     Ok(Prepared::Temp(LocalWriter {
         file: Some(BufWriter::new(file)),
@@ -797,12 +821,11 @@ fn prepare_write(
         spec: spec_text,
         overwrite: opts.overwrite,
         keep_permissions: !replaces_other,
+        made,
+        synced: false,
         pending: true,
     }))
 }
-
-/// Longest target name that is embedded in the temporary file name.
-const MAX_EMBEDDED_NAME: usize = 200;
 
 /// Most symbolic links followed when resolving a write target (the Linux limit).
 const MAX_LINK_HOPS: usize = 40;
@@ -832,22 +855,20 @@ fn resolve_links(path: &Path) -> io::Result<PathBuf> {
         .unwrap_or_else(|| io::Error::other("too many levels of symbolic links")))
 }
 
-/// Creates a new temporary file next to the target: `.<name>.hikasa-tmp`, then `-1`, `-2`, … when taken.
-fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
-    let mut base = OsString::from(".");
-    if name.len() <= MAX_EMBEDDED_NAME {
-        base.push(name);
-        base.push(".");
-    }
-    base.push("hikasa-tmp");
-    for attempt in 0..1000u32 {
-        let mut file_name = base.clone();
-        if attempt > 0 {
-            file_name.push(format!("-{attempt}"));
-        }
-        let tmp = dir.join(&file_name);
+/// Creates a new temporary file next to the target: `.<name>.hikasa-tmp`, then `-1`, `-2`, … when taken. Locked by its
+/// writer, so a later rebuild can tell it from what a dead one left, and private until it is renamed: the bytes of a
+/// private file must not lie around under a wider mode. The result's second path is the file; the mode it was made
+/// with comes third, for a target that gives it no other.
+fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf, Option<fs::Permissions>)> {
+    let base = lock::temp_base(name);
+    for attempt in 0..lock::TEMP_NAMES {
+        let tmp = dir.join(lock::temp_name(&base, attempt));
         match OpenOptions::new().write(true).create_new(true).open(&tmp) {
-            Ok(file) => return Ok((file, tmp)),
+            Ok(file) => {
+                let _ = file.try_lock();
+                let made = platform::make_private(&file);
+                return Ok((file, tmp, made));
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e),
         }
@@ -871,12 +892,17 @@ struct LocalWriter {
     /// Copy the permissions of a replaced regular file onto the new one (not when a link or a special file is
     /// replaced, M2 W3).
     keep_permissions: bool,
+    /// The mode the file was created with, before it was made private (Unix).
+    made: Option<fs::Permissions>,
+    /// Everything written so far reached the disk.
+    synced: bool,
     /// The temporary file still exists and belongs to this writer.
     pending: bool,
 }
 
 impl LocalWriter {
     fn writer(&mut self) -> io::Result<&mut BufWriter<File>> {
+        self.synced = false;
         self.file
             .as_mut()
             .ok_or_else(|| io::Error::other("the writer was already committed"))
@@ -895,15 +921,20 @@ impl LocalWriter {
             // The handle is closed at the end of this block, before the rename (Windows cannot rename an
             // open file).
             let file = writer.into_inner().map_err(|e| self.fail(e.into_error()))?;
-            file.sync_all().map_err(|e| self.fail(e))?;
+            if !self.synced {
+                file.sync_all().map_err(|e| self.fail(e))?;
+            }
+        }
+        // The permissions of the file being replaced, or the ones a new file gets (best effort).
+        let old = self.overwrite && self.keep_permissions;
+        let old = old.then(|| fs::metadata(&self.target).ok()).flatten();
+        if let Some(mode) = old
+            .map(|old| old.permissions())
+            .or_else(|| self.made.take())
+        {
+            let _ = fs::set_permissions(&self.tmp, mode);
         }
         if self.overwrite {
-            if self.keep_permissions
-                && let Ok(old) = fs::metadata(&self.target)
-            {
-                // Keep the permissions of the file being replaced (best effort).
-                let _ = fs::set_permissions(&self.tmp, old.permissions());
-            }
             fs::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
             self.pending = false;
         } else {
@@ -952,6 +983,16 @@ impl Seek for LocalWriter {
 }
 
 impl AtomicWrite for LocalWriter {
+    fn sync(&mut self) -> Result<(), VfsError> {
+        let synced = self.writer().and_then(|writer| {
+            writer.flush()?;
+            writer.get_ref().sync_all()
+        });
+        synced.map_err(|e| self.fail(e))?;
+        self.synced = true;
+        Ok(())
+    }
+
     fn commit(mut self: Box<Self>) -> Result<(), VfsError> {
         self.commit_inner()
     }

@@ -211,9 +211,21 @@ impl<T: Read + Seek + Send> ReadSeek for T {}
 /// not atomic. `Seek` is for writers that patch what they wrote, as the zip writer does (M2 W5b, §1.5.10); a writer on a
 /// target that cannot seek answers `Unsupported`.
 pub trait AtomicWrite: Write + Seek + Send {
+    /// Flushes and syncs what was written, without touching the target, so that a look at the target can come after
+    /// the wait and right before `commit`. Default: nothing.
+    fn sync(&mut self) -> Result<(), VfsError> {
+        Ok(())
+    }
+
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;
 }
+
+/// The reason of [`VfsError::Unavailable`] when another operation holds a file or an archive (§1.5.10).
+pub(crate) const BUSY: &str = "another operation is changing this archive";
+
+/// A writer's hold on a file ([`Vfs::lock_writer`]), released when dropped.
+pub trait WriteLock: Send + Sync + fmt::Debug {}
 
 /// How a batch ends (M2 W5b, D-148).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +390,18 @@ pub trait Vfs: Send + Sync {
     /// `finish` that a job can cancel, with `Phase::Writing` progress in bytes of the archive. Default: `finish`.
     fn finish_with(&self, at: &Spec, how: Finish, _ctl: &Ctl<'_>) -> Result<(), VfsError> {
         self.finish(at, how)
+    }
+
+    /// Keeps other writers that ask the same off the file `spec` until the result is dropped: a rebuild reads a file
+    /// and replaces it, and two at once would lose one. Another holder → `Unavailable`, at once. `Ok(None)` when the
+    /// back-end has no such thing, or this file cannot have one. Readers never ask, and never wait. Default: `Ok(None)`.
+    fn lock_writer(&self, _spec: &Spec) -> Result<Option<Box<dyn WriteLock>>, VfsError> {
+        Ok(None)
+    }
+
+    /// Older records of the path of the member `spec` that it shadows, which go if it goes (§1.5.7 rule 3). Default: 0.
+    fn shadows_of(&self, _spec: &Spec) -> u64 {
+        0
     }
 
     /// Creates an empty archive at `spec`, whose name matches a writable mask. Default: `OperationUnsupported`.
