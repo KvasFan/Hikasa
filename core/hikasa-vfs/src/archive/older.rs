@@ -97,6 +97,7 @@ impl Core {
         }));
 
         // Each record, under its number, in a zip of their own.
+        let _kept = self.keep_levels(archive);
         let mut input = self.open_container(archive, config, pass.ctl)?;
         let start = data.directory_start();
         let headers = read_central(&mut *input, start, directory_limit(&pass.limits), text)?;

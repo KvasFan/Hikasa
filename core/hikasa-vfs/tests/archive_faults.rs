@@ -462,6 +462,97 @@ fn model_view(vfs: &dyn Vfs, root: &Spec) -> BTreeMap<String, Seen> {
     walk(vfs, root)
 }
 
+/// One case of P-ARCH-2.
+fn matches_the_model(
+    steps: &[Step],
+    format: ArchiveFormat,
+    batched: bool,
+    chained: bool,
+) -> Result<(), TestCaseError> {
+    let start: TreeData = vec![
+        ("a".into(), b"first".to_vec()),
+        ("p/b".into(), b"second".to_vec()),
+        ("p/r/a".into(), b"third".to_vec()),
+        ("q/".into(), Vec::new()),
+        (format!("{LONG_DIR}{LONG_NAME}"), b"fourth".to_vec()),
+        (format!("{LONG_DIR}a"), b"fifth".to_vec()),
+    ];
+    let model = MemoryVfs::new(CaseSensitivity::Sensitive);
+    for (path, content) in &start {
+        let full = host(&format!("/m/{path}"));
+        if path.ends_with('/') {
+            model
+                .insert_dir(full.trim_end_matches(['/', '\\']), MemMeta::default())
+                .unwrap();
+        } else {
+            model
+                .insert_file(&full, content.clone(), MemMeta::default())
+                .unwrap();
+        }
+    }
+    let memory = on_memory(ArchiveLimits::default());
+    let name = name_of(format);
+    let bytes = ustar_of(format, &start);
+    // Below a zip and a tar that only pass the change on.
+    let file = if chained {
+        let middle: TreeData = vec![(name.to_owned(), bytes)];
+        let outer: TreeData = vec![("mid.tar".to_owned(), bytes_of(ArchiveFormat::Tar, &middle))];
+        let outermost = memory.put("outer.zip", bytes_of(ArchiveFormat::Zip, &outer));
+        Spec::archive_member(Spec::archive_member(outermost, "mid.tar"), name)
+    } else {
+        memory.put(name, bytes)
+    };
+    let vfs = &*memory.vfs;
+    let in_model = |path: &str| mspec(&format!("/m/{path}"));
+    let in_archive = |path: &str| Spec::archive_member(file.clone(), path);
+    if batched {
+        vfs.begin(&file).unwrap();
+    }
+    for step in steps {
+        if batched
+            && !matches!(
+                step,
+                Step::Write(..) | Step::Mkdir(_) | Step::Rename(..) | Step::Link(_)
+            )
+        {
+            continue;
+        }
+        let want = run(step, &model, &in_model);
+        let got = run(step, vfs, &in_archive);
+        prop_assert_eq!(&got, &want, "{:?}", step);
+    }
+    if batched {
+        vfs.finish(&file, hikasa_vfs::Finish::Commit).unwrap();
+    }
+    let want = model_view(&model, &mspec("/m"));
+    prop_assert_eq!(walk(vfs, &in_archive("")), want.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let fresh = ArchiveVfs::new(
+        Arc::clone(&memory.mem) as Arc<dyn Vfs>,
+        config(dir.path(), ArchiveLimits::default()),
+    );
+    prop_assert_eq!(walk(&fresh, &in_archive("")), want.clone());
+    let inner = |bytes: &[u8], format, member: &str| match read_plain(format, bytes).remove(member)
+    {
+        Some(Seen::File(bytes)) => bytes,
+        other => panic!("{other:?}"),
+    };
+    let bytes = if chained {
+        let outer = memory.mem.read_back(&host("/outer.zip")).unwrap();
+        let middle = inner(&outer, ArchiveFormat::Zip, "mid.tar");
+        inner(&middle, ArchiveFormat::Tar, name)
+    } else {
+        memory
+            .mem
+            .read_back(&host(&format!("/{name}")))
+            .unwrap()
+            .to_vec()
+    };
+    let plain = read_plain(format, &bytes);
+    prop_assert_eq!(plain, want);
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(config_of())]
 
@@ -474,72 +565,20 @@ proptest! {
         batched in any::<bool>(),
         chained in any::<bool>(),
     ) {
-        let start: TreeData = vec![
-            ("a".into(), b"first".to_vec()),
-            ("p/b".into(), b"second".to_vec()),
-            ("p/r/a".into(), b"third".to_vec()),
-            ("q/".into(), Vec::new()),
-            (format!("{LONG_DIR}{LONG_NAME}"), b"fourth".to_vec()),
-            (format!("{LONG_DIR}a"), b"fifth".to_vec()),
-        ];
-        let model = MemoryVfs::new(CaseSensitivity::Sensitive);
-        for (path, content) in &start {
-            let full = host(&format!("/m/{path}"));
-            if path.ends_with('/') {
-                model.insert_dir(full.trim_end_matches(['/', '\\']), MemMeta::default()).unwrap();
-            } else {
-                model.insert_file(&full, content.clone(), MemMeta::default()).unwrap();
-            }
+        matches_the_model(&steps, format, batched, chained)?;
+    }
+}
+
+/// A folder copied inside a nested archive reads each member by the index of its level while the copy has already
+/// changed that level: the read must not rebuild the level under its own index, or the member comes out with the right
+/// size and other bytes (zeros, in the run that found it).
+#[test]
+fn a_copy_inside_a_nested_archive_has_the_bytes() {
+    for format in WRITABLE {
+        for len in [1, 65, 4096] {
+            let bytes: Vec<u8> = (0..len).map(|n: usize| n as u8 | 1).collect();
+            let steps = [Step::Write(26, bytes), Step::Copy(82, 229)];
+            matches_the_model(&steps, format, false, true).unwrap();
         }
-        let memory = on_memory(ArchiveLimits::default());
-        let name = name_of(format);
-        let bytes = ustar_of(format, &start);
-        // Below a zip and a tar that only pass the change on.
-        let file = if chained {
-            let middle: TreeData = vec![(name.to_owned(), bytes)];
-            let outer: TreeData = vec![("mid.tar".to_owned(), bytes_of(ArchiveFormat::Tar, &middle))];
-            let outermost = memory.put("outer.zip", bytes_of(ArchiveFormat::Zip, &outer));
-            Spec::archive_member(Spec::archive_member(outermost, "mid.tar"), name)
-        } else {
-            memory.put(name, bytes)
-        };
-        let vfs = &*memory.vfs;
-        let in_model = |path: &str| mspec(&format!("/m/{path}"));
-        let in_archive = |path: &str| Spec::archive_member(file.clone(), path);
-        if batched {
-            vfs.begin(&file).unwrap();
-        }
-        for step in &steps {
-            if batched && !matches!(step, Step::Write(..) | Step::Mkdir(_) | Step::Rename(..) | Step::Link(_)) {
-                continue;
-            }
-            let want = run(step, &model, &in_model);
-            let got = run(step, vfs, &in_archive);
-            prop_assert_eq!(&got, &want, "{:?}", step);
-        }
-        if batched {
-            vfs.finish(&file, hikasa_vfs::Finish::Commit).unwrap();
-        }
-        let want = model_view(&model, &mspec("/m"));
-        prop_assert_eq!(walk(vfs, &in_archive("")), want.clone());
-        let dir = tempfile::tempdir().unwrap();
-        let fresh = ArchiveVfs::new(
-            Arc::clone(&memory.mem) as Arc<dyn Vfs>,
-            config(dir.path(), ArchiveLimits::default()),
-        );
-        prop_assert_eq!(walk(&fresh, &in_archive("")), want.clone());
-        let inner = |bytes: &[u8], format, member: &str| match read_plain(format, bytes).remove(member) {
-            Some(Seen::File(bytes)) => bytes,
-            other => panic!("{other:?}"),
-        };
-        let bytes = if chained {
-            let outer = memory.mem.read_back(&host("/outer.zip")).unwrap();
-            let middle = inner(&outer, ArchiveFormat::Zip, "mid.tar");
-            inner(&middle, ArchiveFormat::Tar, name)
-        } else {
-            memory.mem.read_back(&host(&format!("/{name}"))).unwrap().to_vec()
-        };
-        let plain = read_plain(format, &bytes);
-        prop_assert_eq!(plain, want);
     }
 }

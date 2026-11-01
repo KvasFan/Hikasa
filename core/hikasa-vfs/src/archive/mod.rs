@@ -697,6 +697,7 @@ impl Core {
             ctl,
             zone: jiff::tz::TimeZone::UTC,
         };
+        let _kept = self.keep_levels(archive);
         no_panic(&text, || {
             self.forced_panic();
             match (index.format, node.data) {

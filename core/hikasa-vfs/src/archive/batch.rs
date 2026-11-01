@@ -57,7 +57,8 @@ struct State {
     levels: HashMap<Spec, Level>,
     /// `finish` runs: no more changes.
     finishing: bool,
-    /// A nested level is being rebuilt into its member: reading that member must not start it again.
+    /// A nested level is being rebuilt into its member, or an index is being read by (see [`Core::keep_levels`]):
+    /// reading that member must not start a rebuild.
     sealing: bool,
 }
 
@@ -96,6 +97,20 @@ impl Drop for AbortUnlessEnded<'_> {
             let _ = self
                 .core
                 .end_batch(self.batch, Finish::Abort, Ctl::detached());
+        }
+    }
+}
+
+/// Keeps the levels of a batch as they are while it lives (see [`Core::keep_levels`]).
+pub(super) struct KeptLevels {
+    batch: Option<Arc<Batch>>,
+    was: bool,
+}
+
+impl Drop for KeptLevels {
+    fn drop(&mut self) {
+        if let Some(batch) = &self.batch {
+            lock(&batch.state).sealing = self.was;
         }
     }
 }
@@ -140,6 +155,19 @@ impl Core {
     /// The batch on the outermost file `outer`.
     fn batch_of(&self, outer: &Spec) -> Option<Arc<Batch>> {
         lock(&self.batches).get(outer).cloned()
+    }
+
+    /// To hold while the container of `archive` is read by an index of `archive`. An index names places in that
+    /// container as it is now, and opening a nested container as a whole member rebuilds the levels in it: the places
+    /// would then fall on other bytes, which read as a member of the right size and the wrong content.
+    pub(super) fn keep_levels(&self, archive: &Spec) -> KeptLevels {
+        let batch = self
+            .batch_of(outer_of(archive))
+            .filter(|batch| batch.owner == thread::current().id());
+        let was = batch
+            .as_ref()
+            .is_some_and(|batch| std::mem::replace(&mut lock(&batch.state).sealing, true));
+        KeptLevels { batch, was }
     }
 
     /// The level of the archive `archive`, when a batch changed it.

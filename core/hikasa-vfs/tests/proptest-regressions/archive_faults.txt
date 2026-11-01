@@ -8,3 +8,4 @@ cc b1fb3ffe72645ea586d7a0bf9f239814ae9b70487cb8b9defe0823bc15a51185 # shrinks to
 cc 75e04d2c7108b30bb8a7a3a882ba01fc53961ef5d8db5ec2fdfc1b2043fbc69a # shrinks to tree = [("a", [])], format = Tar, fault = ReadAfter(1537)
 cc c37c9553aee40ae677dc29fa76ddd8643245f93e88f0930bf0f9373e03900ccb # shrinks to steps = [Remove(131), Link(71), Move(32, 0)], format = Zip, batched = false
 cc 37bfb1205334f868e52c6213797b7b3bcbe63e2e1d26fb1b7a1383ed3079d3f4 # shrinks to tree = [("a", [])], format = TarZst, fault = WriteAfter(22)
+cc cef109315b28b8f86132f07188f9c7e4997303ae262864f9a3bc7510e86d9ca6 # a folder copied inside a nested tar.gz after a write: zeros
