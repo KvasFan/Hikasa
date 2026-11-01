@@ -891,6 +891,47 @@ fn a_member_over_its_own_archive_fails() {
     }
 }
 
+/// A hard link of the archive is another name to a rewrite: writing it leaves the archive, so it is no holder.
+#[cfg(unix)]
+#[test]
+fn a_member_over_a_hard_link_of_its_archive_is_a_copy() {
+    let s = sandbox();
+    let before = std::fs::read(s.path().join("a.zip")).unwrap();
+    std::fs::hard_link(s.path().join("a.zip"), s.path().join("h.zip")).unwrap();
+    let out = run(
+        &s,
+        &["vfs", "cp", "--overwrite", "always", "a.zip/x", "h.zip"],
+    );
+    assert_eq!(code(&out), 0, "{}", stdout(&out));
+    assert_eq!(std::fs::read(s.path().join("a.zip")).unwrap(), before);
+    assert_eq!(std::fs::read(s.path().join("h.zip")).unwrap(), b"alpha\n");
+}
+
+/// A symbolic link of the archive is the archive, for the refusal too, and a move between two names of it says what is
+/// wrong instead of meeting its own lock.
+#[cfg(unix)]
+#[test]
+fn a_link_of_the_archive_is_the_archive() {
+    let s = sandbox();
+    let before = std::fs::read(s.path().join("a.zip")).unwrap();
+    std::os::unix::fs::symlink("a.zip", s.path().join("l.zip")).unwrap();
+    let out = run(
+        &s,
+        &["vfs", "cp", "--overwrite", "always", "a.zip/x", "l.zip"],
+    );
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("holds the source"),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&s, &["vfs", "mv", "l.zip/x", "a.zip/moved"]);
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    let said = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(said.contains("under another name"), "{said}");
+    assert_eq!(std::fs::read(s.path().join("a.zip")).unwrap(), before);
+}
+
 /// `--dry-run` says what a run would take along with a member, and a run says what it took.
 #[test]
 fn shadowed_members_are_named_before_and_after() {
@@ -912,6 +953,40 @@ fn shadowed_members_are_named_before_and_after() {
     let out = run(&s, &["vfs", "rm", "--yes", "dup.zip/doc"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stderr(&out).contains("1 shadowed"), "{}", stderr(&out));
+}
+
+/// A move to another archive takes the older records along, and the dry run and the run say what happens to them.
+#[test]
+fn shadowed_members_travel_between_archives() {
+    let s = sandbox();
+    let dup = zip_of(&[
+        ZipEntry("d/doc", b"old", 0, 0, MODE),
+        ZipEntry("d/doc", b"new", 0, 0, MODE),
+        ZipEntry("o", b"o", 0, 0, MODE),
+    ]);
+    s.file("dup.zip", &dup);
+    s.file("other.zip", zip_of(&[ZipEntry("x", b"x", 0, 0, MODE)]));
+    for from in ["dup.zip/d/doc", "dup.zip/d"] {
+        let out = run(&s, &["vfs", "mv", "--dry-run", from, "other.zip/moved"]);
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        let said = format!("{}{}", stdout(&out), stderr(&out));
+        assert!(said.contains("1 shadowed"), "{from}: {said}");
+        assert!(said.contains("would move"), "{from}: {said}");
+    }
+    let out = run(&s, &["vfs", "mv", "dup.zip/d/doc", "other.zip/moved"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(cat(&s, "other.zip/moved"), b"new");
+    assert!(!stderr(&out).contains("cannot go"), "{}", stderr(&out));
+    let bytes = std::fs::read(s.path().join("other.zip")).unwrap();
+    let stored = bytes.windows(5).filter(|w| *w == b"moved").count();
+    assert_eq!(stored, 4, "two records, each named twice");
+
+    s.file("dup.zip", &dup);
+    let out = run(&s, &["vfs", "mv", "--dry-run", "dup.zip/d/doc", "plain"]);
+    assert!(stdout(&out).contains("would go") || stderr(&out).contains("would go"));
+    let out = run(&s, &["vfs", "mv", "dup.zip/d/doc", "plain"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stderr(&out).contains("cannot go"), "{}", stderr(&out));
 }
 
 #[test]

@@ -317,6 +317,23 @@ fn one_file(src: &dyn Vfs, dst: &dyn Vfs, a: &Spec, b: &Spec) -> bool {
         && id(src, a).is_some_and(|found| id(dst, b) == Some(found))
 }
 
+/// True when `a` and `b`, two names of one file, are hard links in one folder: a write to one replaces that name and
+/// leaves the other, so one is no archive around the other. Anything less sure stays one file.
+fn hard_linked(src: &dyn Vfs, dst: &dyn Vfs, a: &Spec, b: &Spec) -> bool {
+    let plain = |vfs: &dyn Vfs, spec: &Spec| {
+        vfs.stat(spec, FollowLinks::No)
+            .is_ok_and(|entry| entry.kind == EntryKind::File)
+    };
+    let folder = |vfs: &dyn Vfs, spec: &Spec| {
+        let parent = spec.parent()?;
+        vfs.stat(&parent, FollowLinks::Yes).ok()?.file_id
+    };
+    spec_key(src, a) != spec_key(dst, b)
+        && plain(src, a)
+        && plain(dst, b)
+        && folder(src, a).is_some_and(|found| folder(dst, b) == Some(found))
+}
+
 /// A target that is an archive around the source, or the file behind one: writing it would replace the archive the
 /// source lives in, and take every other member with it → `InvalidTarget` (§1.5.10). `Ok` for two back-ends.
 pub(crate) fn check_holder(
@@ -325,10 +342,40 @@ pub(crate) fn check_holder(
     source: &Spec,
     target: &Spec,
 ) -> Result<(), VfsError> {
-    if same_instance(src, dst) && levels(source).any(|level| one_file(src, dst, level, target)) {
+    let holds =
+        |level: &Spec| one_file(src, dst, level, target) && !hard_linked(src, dst, level, target);
+    if same_instance(src, dst) && levels(source).any(holds) {
         return Err(VfsError::InvalidTarget {
             spec: target.canonical(),
             reason: "is the archive that holds the source",
+        });
+    }
+    Ok(())
+}
+
+/// A move between two names of one archive, one of them a link: both would rewrite one file, and the second waits for
+/// a lock the first holds → `InvalidTarget`, which says so. Hard links are two files to a rewrite, and are let through.
+pub(crate) fn check_same_archive(
+    src: &dyn Vfs,
+    dst: &dyn Vfs,
+    source: &Spec,
+    target: &Spec,
+) -> Result<(), VfsError> {
+    let (Some(from), Some(to)) = (source.outermost_file(), target.outermost_file()) else {
+        return Ok(());
+    };
+    let linked = |vfs: &dyn Vfs, spec: &Spec| {
+        vfs.stat(spec, FollowLinks::No)
+            .is_ok_and(|entry| entry.kind == EntryKind::Symlink)
+    };
+    if same_instance(src, dst)
+        && spec_key(src, from) != spec_key(dst, to)
+        && one_file(src, dst, from, to)
+        && (linked(src, from) || linked(dst, to))
+    {
+        return Err(VfsError::InvalidTarget {
+            spec: target.canonical(),
+            reason: "is in the same archive as the source, under another name: use one name for both",
         });
     }
     Ok(())
