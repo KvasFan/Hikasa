@@ -2,7 +2,15 @@
 # Builds `hikasa` and `hikasa-gui` for the Linux packages: baseline x86-64, linked with zig against an old glibc.
 # check-linux-binaries.sh then prints the measured glibc floor and checks the baseline.
 source "$(dirname "$0")/common.sh"
-require cargo zig objdump
+require cargo objdump tar
+
+# zig is a pinned download too: the same linker on every machine, none needed on the system.
+zig_version=0.17.0
+zig_sha256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+zig_tarball=$(fetch "https://ziglang.org/download/$zig_version/zig-x86_64-linux-$zig_version.tar.xz" \
+    "$zig_sha256" "zig-x86_64-linux-$zig_version.tar.xz")
+[[ -x ${zig_tarball%.tar.xz}/zig ]] || tar -xJf "$zig_tarball" -C "$(dirname "$zig_tarball")"
+export PATH=${zig_tarball%.tar.xz}:$PATH
 
 export CARGO_TARGET_DIR=$target_root/linux
 export HIKASA_GLIBC=$glibc

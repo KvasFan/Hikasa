@@ -4,8 +4,8 @@
 //! [`FolderViewModel::window`]; the scroll position is a row index, so a million-row tree scrolls exactly.
 
 use egui::{
-    Align2, CornerRadius, EventFilter, FontId, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2,
-    pos2, vec2,
+    Align2, Color32, CornerRadius, EventFilter, FontId, Id, Key, Modifiers, Rect, Sense, Stroke,
+    Ui, Vec2, pos2, vec2,
 };
 use hikasa_session::ipc::ViewId;
 
@@ -23,10 +23,18 @@ use hikasa_session::settings::Shortcut;
 const STRIP_H: f32 = 24.0;
 /// Width of the centre mark column.
 const MARK_W: f32 = 34.0;
-/// Width of the size column.
+/// Width of the size column, at least.
 const SIZE_W: f32 = 92.0;
-/// Width of the time column.
+/// Width of the time column, at least.
 const TIME_W: f32 = 136.0;
+/// What the size column has to hold: a thousand gigabytes less a byte.
+const SIZE_SAMPLE: &str = "888\u{202f}888\u{202f}888\u{202f}888";
+/// What the time column has to hold.
+const TIME_SAMPLE: &str = "8888-88-88 88:88:88";
+/// The time column's title.
+const TIME_TITLE: &str = "Modified (UTC)";
+/// Space left of a column's text.
+const COLUMN_GAP: f32 = 8.0;
 /// Width of the scroll bar.
 const BAR_W: f32 = 12.0;
 /// Indentation per tree level.
@@ -57,6 +65,21 @@ impl FolderUi {
     }
 }
 
+/// The widths of the size and time columns in `font`: wider than the fixed ones for a font that needs it, so a large
+/// folder font leaves its columns apart.
+fn column_widths(painter: &egui::Painter, font: &FontId) -> Vec2 {
+    let width = |text: &str| {
+        painter
+            .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    vec2(
+        SIZE_W.max(width(SIZE_SAMPLE) + COLUMN_GAP),
+        TIME_W.max(width(TIME_SAMPLE).max(width(TIME_TITLE)) + COLUMN_GAP),
+    )
+}
+
 /// The id of a view's tree (it takes the keyboard focus).
 pub fn tree_id(view: ViewId) -> Id {
     Id::unique(("hikasa-tree", view.0))
@@ -85,6 +108,7 @@ pub fn show(
     let body_font = FontId::new(tree_size, tree_font.family.clone());
     let small = FontId::new((tree_size - 1.0).max(7.0), tree_font.family.clone());
     let mono_small = FontId::monospace(12.0);
+    let columns = column_widths(&painter, &small);
     let content_right = full.right() - BAR_W;
     let side_w = ((content_right - full.left() - MARK_W) / 2.0)
         .floor()
@@ -130,7 +154,7 @@ pub fn show(
             pal.muted,
         );
         p.text(
-            pos2(right - TIME_W - 8.0, y),
+            pos2(right - columns.y - 8.0, y),
             Align2::RIGHT_CENTER,
             "Size",
             small.clone(),
@@ -139,7 +163,7 @@ pub fn show(
         p.text(
             pos2(right - 6.0, y),
             Align2::RIGHT_CENTER,
-            "Modified (UTC)",
+            TIME_TITLE,
             small.clone(),
             pal.muted,
         );
@@ -327,7 +351,7 @@ pub fn show(
             .enumerate()
         {
             let side = Rect::from_min_max(pos2(side_x[k], y), pos2(side_x[k] + side_w, y + rh));
-            draw_side(&clip, side, row, cell, &body_font, &small, pal);
+            draw_side(&clip, side, row, cell, &body_font, &small, columns, pal);
         }
         clip.text(
             pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0),
@@ -373,6 +397,7 @@ pub fn show(
     run
 }
 
+#[allow(clippy::too_many_arguments)] // the row, its place and its look
 /// One side of a row: indentation, disclosure triangle, colour spot, name, size and time; hatched when the
 /// item does not exist on this side.
 fn draw_side(
@@ -382,6 +407,7 @@ fn draw_side(
     cell: Option<&Cell>,
     font: &FontId,
     small: &FontId,
+    columns: Vec2,
     pal: &Palette,
 ) {
     let Some(cell) = cell else {
@@ -410,10 +436,10 @@ fn draw_side(
         painter.circle_filled(pos2(indent + 20.0, y), 4.5, spot_colour);
     }
     let time_x = rect.right() - 6.0;
-    let size_x = rect.right() - TIME_W - 8.0;
+    let size_x = rect.right() - columns.y - 8.0;
     let name_rect = Rect::from_min_max(
         pos2(indent + 28.0, rect.top()),
-        pos2(size_x - SIZE_W + 8.0, rect.bottom()),
+        pos2(size_x - columns.x + 8.0, rect.bottom()),
     );
     if name_rect.width() > 4.0 {
         painter

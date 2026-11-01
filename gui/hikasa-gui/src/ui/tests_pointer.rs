@@ -664,6 +664,48 @@ fn the_folder_tree_takes_its_clicks() {
     assert_ne!(selected(&mut s), before, "a click selects the row");
 }
 
+/// A large folder font widens the columns: size and time stay apart, on both sides.
+#[test]
+fn a_large_folder_font_keeps_the_columns_apart() {
+    let mut s = Screen::with(World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.folder]\nfamily = \"\"\nsize = 17.0\nuse_system = false\n",
+    )]));
+    s.world.write("work/a/x.txt", "1");
+    s.world.write("work/b/x.txt", "longer");
+    let (a, b) = (s.world.path("work/a"), s.world.path("work/b"));
+    s.world.open(&mut s.app.core, &a, &b);
+    s.settle();
+    s.settle();
+    let drawn = s.drawn();
+    let at = |text: &str| -> Vec<Rect> {
+        drawn
+            .iter()
+            .filter(|d| d.text == text)
+            .map(|d| d.rect)
+            .collect()
+    };
+    let times: Vec<Rect> = drawn
+        .iter()
+        .filter(|d| d.text.len() == 19 && d.text.as_bytes()[4] == b'-')
+        .map(|d| d.rect)
+        .collect();
+    let sizes = [at("1"), at("6")].concat();
+    assert_eq!((sizes.len(), times.len()), (2, 2), "{drawn:?}");
+    for size in sizes {
+        let time = times
+            .iter()
+            .find(|t| (t.top() - size.top()).abs() < 1.0 && t.left() > size.center().x - 200.0)
+            .expect("a time on the row");
+        assert!(
+            size.right() < time.left(),
+            "the size ends at {} and the time starts at {}",
+            size.right(),
+            time.left()
+        );
+    }
+}
+
 // ---- W4 leftovers: the OS close button, the search, the page's reasons -----------------------------------------------
 
 /// D-112: with unapplied edits the OS close button asks like Esc; the answer decides.

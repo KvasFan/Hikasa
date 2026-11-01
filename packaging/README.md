@@ -24,9 +24,9 @@ metainfo file (a version it does not list is added to the packaged copy).
 
 | Script | Result | Needs |
 |---|---|---|
-| `package-targz.sh` | `hikasa-<version>-x86_64-linux.tar.gz` | zig |
-| `package-deb.sh` | `hikasa_<version>-1_amd64.deb` | zig, `xz`; not `dpkg-deb` |
-| `package-appimage.sh` | `Hikasa-<version>-x86_64.AppImage` | zig, two pinned downloads |
+| `package-targz.sh` | `hikasa-<version>-x86_64-linux.tar.gz` | a pinned download (zig) |
+| `package-deb.sh` | `hikasa_<version>-1_amd64.deb` | a pinned download (zig), `xz`; not `dpkg-deb` |
+| `package-appimage.sh` | `Hikasa-<version>-x86_64.AppImage` | three pinned downloads (zig, appimagetool, runtime) |
 | `package-arch.sh [--tag]` | `hikasa-<version>-1-x86_64.pkg.tar.zst` | `makepkg`; `namcap` is optional |
 | `package-windows-zip.sh [x64] [x86]` | `hikasa-<version>-windows-<arch>-portable.zip` | mingw-w64, `zip` |
 | `package-windows-msi.sh [x64] [x86]` | `hikasa-<version>-windows-<arch>.msi` | mingw-w64, msitools (`wixl`, `msiinfo`, `msibuild`) |
@@ -81,9 +81,10 @@ systems) extract it at each start:
 ./Hikasa-<version>-x86_64.AppImage --appimage-extract-and-run [--cli] [arguments]
 ```
 
-Pins, in `package-appimage.sh`: [appimagetool](https://github.com/AppImage/appimagetool) 1.9.1 and the
-[type 2 runtime](https://github.com/AppImage/type2-runtime) 20251108, each with its sha256. appimagetool runs extracted,
-so building needs no FUSE.
+Pins, each with its sha256: [zig](https://ziglang.org) 0.17.0 in `build-linux.sh`, and in `package-appimage.sh`
+[appimagetool](https://github.com/AppImage/appimagetool) 1.9.1 and the
+[type 2 runtime](https://github.com/AppImage/type2-runtime) 20251108. appimagetool runs extracted, so building needs no
+FUSE.
 
 ### .deb
 
