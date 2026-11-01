@@ -63,6 +63,15 @@ mod platform {
             | C::RENAME
     }
     pub(super) fn sync_dir(_dir: &Path) {}
+    pub(super) fn remove_file(path: &Path) -> std::io::Result<()> {
+        std::fs::remove_file(path)
+    }
+    pub(super) fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+        std::fs::rename(from, to)
+    }
+    pub(super) fn hold_through_rename(file: std::fs::File) -> Option<std::fs::File> {
+        Some(file)
+    }
     pub(super) fn make_private(_file: &std::fs::File) -> Option<std::fs::Permissions> {
         None
     }
@@ -98,7 +107,7 @@ mod platform {
 }
 
 use std::ffi::OsStr;
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -383,9 +392,9 @@ impl Vfs for LocalVfs {
         };
         match lock::take(&target) {
             lock::Taken::Held(held) => Ok(Some(Box::new(held))),
-            lock::Taken::Busy => Err(VfsError::Unavailable {
+            lock::Taken::Busy(lock) => Err(VfsError::Unavailable {
                 spec: spec.canonical(),
-                reason: BUSY.to_owned(),
+                reason: format!("{BUSY} (its lock is {})", lock.display()),
             }),
             lock::Taken::Impossible => Ok(None),
         }
@@ -865,7 +874,13 @@ fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf, Option<fs
         let tmp = dir.join(lock::temp_name(&base, attempt));
         match OpenOptions::new().write(true).create_new(true).open(&tmp) {
             Ok(file) => {
-                let _ = file.try_lock();
+                // Before anything else: where nothing shows that a file is new (Windows), a rebuild can look at it now.
+                // It locks first, and the file goes, or it locked and went: either way the next name is free of that.
+                if matches!(file.try_lock(), Err(TryLockError::WouldBlock))
+                    || !lock::still_named(&file, &tmp)
+                {
+                    continue;
+                }
                 let made = platform::make_private(&file);
                 return Ok((file, tmp, made));
             }
@@ -917,14 +932,13 @@ impl LocalWriter {
             .file
             .take()
             .ok_or_else(|| self.fail(io::Error::other("the writer was already committed")))?;
-        {
-            // The handle is closed at the end of this block, before the rename (Windows cannot rename an
-            // open file).
-            let file = writer.into_inner().map_err(|e| self.fail(e.into_error()))?;
-            if !self.synced {
-                file.sync_all().map_err(|e| self.fail(e))?;
-            }
+        let file = writer.into_inner().map_err(|e| self.fail(e.into_error()))?;
+        if !self.synced {
+            file.sync_all().map_err(|e| self.fail(e))?;
         }
+        // Holds the lock of the temporary file until the rename is done, so no rebuild takes it for a dead writer's.
+        // Windows closes it here, which leaves that moment open (`lock`).
+        let _held = platform::hold_through_rename(file);
         // The permissions of the file being replaced, or the ones a new file gets (best effort).
         let old = self.overwrite && self.keep_permissions;
         let old = old.then(|| fs::metadata(&self.target).ok()).flatten();
@@ -935,13 +949,13 @@ impl LocalWriter {
             let _ = fs::set_permissions(&self.tmp, mode);
         }
         if self.overwrite {
-            fs::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
+            platform::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
             self.pending = false;
         } else {
             match fs::hard_link(&self.tmp, &self.target) {
                 Ok(()) => {
                     self.pending = false;
-                    let _ = fs::remove_file(&self.tmp);
+                    let _ = platform::remove_file(&self.tmp);
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                     return Err(VfsError::AlreadyExists {
@@ -956,7 +970,7 @@ impl LocalWriter {
                             spec: self.spec.clone(),
                         });
                     }
-                    fs::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
+                    platform::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
                     self.pending = false;
                 }
             }
@@ -1003,7 +1017,7 @@ impl Drop for LocalWriter {
     fn drop(&mut self) {
         drop(self.file.take());
         if self.pending {
-            let _ = fs::remove_file(&self.tmp);
+            let _ = platform::remove_file(&self.tmp);
         }
     }
 }

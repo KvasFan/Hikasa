@@ -597,6 +597,9 @@ fn dead_temporary_files_go_and_nothing_else_does() {
         }
     };
     private(&dead);
+    // Far past a run of free numbers: they are looked for by listing the folder.
+    let far = ".a.zip.hikasa-tmp-40";
+    private(&disk.dir.join(far));
     // A live one, on the next free name, through the same call a plain save makes.
     let options = WriteOptions {
         overwrite: true,
@@ -619,6 +622,7 @@ fn dead_temporary_files_go_and_nothing_else_does() {
     write_member(&*disk.vfs, &member(&file, "n"), b"n").unwrap();
     let left = siblings(&disk);
     assert!(!left.contains(&".a.zip.hikasa-tmp".to_owned()), "{left:?}");
+    assert!(!left.contains(&far.to_owned()), "{left:?}");
     assert!(left.contains(&live_name.to_owned()), "{left:?}");
     assert_eq!(left.len(), 7, "{left:?}");
     drop(live);
@@ -635,10 +639,26 @@ fn a_link_at_the_name_of_the_lock_is_not_followed() {
     std::os::unix::fs::symlink(&aimed, disk.dir.join(".a.zip.hikasa-lock")).unwrap();
     let result = disk.vfs.begin(&file);
     assert!(
-        matches!(result, Err(VfsError::Unavailable { .. })),
-        "{result:?}"
+        matches!(&result, Err(VfsError::Unavailable { reason, .. }) if reason.contains(".a.zip.hikasa-lock")),
+        "the message names what is in the way: {result:?}"
     );
     assert!(!aimed.exists());
+}
+
+/// What stands at the lock's name when the batch ends is not the lock any more, and stays. A file that took the place
+/// of a removed lock is another writer's.
+#[cfg(unix)]
+#[test]
+fn a_lock_only_removes_itself() {
+    let disk = on_disk(ArchiveLimits::default());
+    let tree: TreeData = vec![("a".into(), b"a".to_vec())];
+    let file = disk.put("a.zip", &bytes_of(ArchiveFormat::Zip, &tree));
+    disk.vfs.begin(&file).unwrap();
+    let lock = disk.dir.join(".a.zip.hikasa-lock");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::write(&lock, b"another writer's").unwrap();
+    disk.vfs.finish(&file, Finish::Abort).unwrap();
+    assert_eq!(std::fs::read(&lock).unwrap(), b"another writer's");
 }
 
 /// A touch rewrites only what changed: a mode field with bits this program does not keep stays.

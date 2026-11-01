@@ -13,12 +13,16 @@
 //!   over and removes it. The OS drops the lock with the process, so a dead holder blocks nobody.
 //! - **Who needs it.** Writers only. A folder that takes no new file is [`Taken::Impossible`], and the write that follows
 //!   gives the error it always gave. A file system without locks is too, and the stamp is then all there is.
-//! - **Temporary files.** Each one is locked by its writer ([`create_temp`](super::create_temp)), so whoever holds the
-//!   writer's lock can tell what a dead writer left from what a live plain write is using, and [`reap`] removes only
-//!   the former. Only exact temporary names are looked at, and on Unix only owner-only files, which is what a live or
-//!   dead writer leaves: nothing the user made under a similar name. On Windows the handle closes before the rename, so
-//!   a plain write of the same file can lose its temporary file to a rebuild in that moment and fail, leaving the
-//!   target as it was.
+//! - **Temporary files.** Each one is locked by its writer ([`create_temp`](super::create_temp)) before anything else
+//!   happens to it, so whoever holds the writer's lock can tell what a dead writer left from what a live plain write is
+//!   using, and [`reap`] removes only the former. A writer on Unix holds its temporary file, and so the lock, until the
+//!   rename is done. Windows closes the handle first, so a plain write of the same file can lose its temporary file to a
+//!   rebuild in that moment, and fails with the target as it was: the one case in which a live writer's file goes. Only
+//!   exact temporary names are looked at, and on Unix only owner-only files, which is what a live or dead writer leaves:
+//!   nothing the user made under a similar name. A file system that cannot show mode 0600 shows no temporary file as a
+//!   writer's, so what a dead writer left on one stays.
+//! - **Sharing violations.** On Windows a virus scanner or an indexer can hold any new file for a moment. Removing and
+//!   renaming go through [`platform::remove_file`] and [`platform::rename`], which wait a bounded time for that.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -34,8 +38,6 @@ use crate::vfs::WriteLock;
 const MAX_EMBEDDED_NAME: usize = 200;
 /// Temporary names tried for one target.
 pub(super) const TEMP_NAMES: u32 = 1000;
-/// A run of free names that ends the look for dead temporary files: they are taken lowest first.
-const FREE_NAMES_SEEN: u32 = 8;
 /// Rounds of "the file at the path is not the file locked" before giving up: each one follows another holder's end.
 const TRIES: u32 = 64;
 
@@ -70,19 +72,22 @@ fn lock_name(name: &OsStr) -> OsString {
     lock
 }
 
-/// A held lock; dropping it removes the file and ends the lock, in that order.
+/// A held lock; dropping it removes the file, while it is still the one locked, and ends the lock, in that order.
 #[derive(Debug)]
 pub(super) struct TargetLock {
     path: PathBuf,
     /// Dropped after the file is gone.
-    _handle: Handle,
+    handle: Handle,
 }
 
 impl WriteLock for TargetLock {}
 
 impl Drop for TargetLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        // Someone may have replaced the file under its name; what stands there now is not this lock to remove.
+        if Handle::from_path(&self.path).is_ok_and(|at| at == self.handle) {
+            let _ = platform::remove_file(&self.path);
+        }
     }
 }
 
@@ -91,8 +96,8 @@ impl Drop for TargetLock {
 pub(super) enum Taken {
     /// The lock is held.
     Held(TargetLock),
-    /// Another writer holds it.
-    Busy,
+    /// Another writer holds it, or the file in its place cannot be used: the path is in the message.
+    Busy(PathBuf),
     /// There is no lock to take here.
     Impossible,
 }
@@ -122,58 +127,80 @@ pub(super) fn take(target: &Path) -> Taken {
     for _ in 0..TRIES {
         // Not a file of ours: nothing is created or locked through a link someone put there.
         if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
-            return Taken::Busy;
+            return Taken::Busy(path);
         }
         let file = match open(&path) {
             Ok(file) => file,
             // There, and not to be opened: marked for deletion by a holder that just ended, or not ours to use.
-            Err(_) if fs::symlink_metadata(&path).is_ok() => return Taken::Busy,
+            Err(_) if fs::symlink_metadata(&path).is_ok() => return Taken::Busy(path),
             Err(_) => return Taken::Impossible,
         };
         match file.try_lock() {
             Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Taken::Busy,
-            Err(TryLockError::Error(_)) => {
-                let _ = fs::remove_file(&path);
-                return Taken::Impossible;
-            }
+            Err(TryLockError::WouldBlock) => return Taken::Busy(path),
+            // No locks on this file system. The file stays: it is not ours to remove, and an empty name does no harm.
+            Err(TryLockError::Error(_)) => return Taken::Impossible,
         }
         let Ok(handle) = Handle::from_file(file) else {
             return Taken::Impossible;
         };
         if Handle::from_path(&path).is_ok_and(|at| at == handle) {
             reap(dir, name);
-            return Taken::Held(TargetLock {
-                path,
-                _handle: handle,
-            });
+            return Taken::Held(TargetLock { path, handle });
         }
     }
-    Taken::Busy
+    Taken::Busy(path)
 }
 
-/// Removes the temporary files of the target `name` that no writer holds.
+/// True when `path` still names `file`, as far as that can be told: false after someone removed it.
+pub(super) fn still_named(file: &File, path: &Path) -> bool {
+    let Ok(held) = file.try_clone().and_then(Handle::from_file) else {
+        return true;
+    };
+    match Handle::from_path(path) {
+        Ok(at) => at == held,
+        Err(error) => error.kind() != io::ErrorKind::NotFound,
+    }
+}
+
+/// True for the name of a temporary file: `base`, or `base-<n>` as [`temp_name`] makes it.
+fn is_temp_name(found: &OsStr, base: &OsStr) -> bool {
+    let Some(rest) = found
+        .as_encoded_bytes()
+        .strip_prefix(base.as_encoded_bytes())
+    else {
+        return false;
+    };
+    let Some(number) = rest.strip_prefix(b"-") else {
+        return rest.is_empty();
+    };
+    std::str::from_utf8(number)
+        .ok()
+        .and_then(|number| number.parse::<u32>().ok())
+        .is_some_and(|attempt| {
+            (1..TEMP_NAMES).contains(&attempt) && temp_name(base, attempt) == found
+        })
+}
+
+/// Removes the temporary files of the target `name` that no writer holds. The folder is listed, so a file past a run
+/// of free numbers is found too.
 fn reap(dir: &Path, name: &OsStr) {
     let base = temp_base(name);
-    let mut free = 0;
-    for attempt in 0..TEMP_NAMES {
-        let path = dir.join(temp_name(&base, attempt));
-        match fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_file() && platform::looks_private(&meta) => {
-                free = 0;
-                if let Ok(file) = OpenOptions::new().write(true).open(&path)
-                    && file.try_lock().is_ok()
-                {
-                    let _ = fs::remove_file(&path);
-                }
-            }
-            Ok(_) => free = 0,
-            Err(_) => {
-                free += 1;
-                if free >= FREE_NAMES_SEEN {
-                    return;
-                }
-            }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !is_temp_name(&entry.file_name(), &base) {
+            continue;
+        }
+        let path = entry.path();
+        if let Ok(meta) = fs::symlink_metadata(&path)
+            && meta.is_file()
+            && platform::looks_private(&meta)
+            && let Ok(file) = OpenOptions::new().write(true).open(&path)
+            && file.try_lock().is_ok()
+        {
+            let _ = platform::remove_file(&path);
         }
     }
 }
