@@ -1170,6 +1170,13 @@ fn drops_fill_fields_open_comparisons_or_explain() {
 
 /// M1: the watch counts the views of an input: closing one of two views of a pair (a duplicate, or two opens of
 /// the same pair) keeps the input watched; a second open keeps a change not polled yet.
+/// The events of a poll without `Sessions`: the session store is saved in the background, so it lands in any poll, and
+/// a test about inputs does not depend on when.
+fn inputs_only(mut events: Vec<WatchEvent>) -> Vec<WatchEvent> {
+    events.retain(|event| !matches!(event, WatchEvent::Sessions));
+    events
+}
+
 #[test]
 fn inputs_stay_watched_while_a_view_of_them_is_open() {
     let world = World::new();
@@ -1180,12 +1187,12 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     let (l, r) = text_pair(&world);
     let first = world.open(&mut app, &l, &r);
     world.settle(&mut app);
-    assert!(watcher.poll_once().expect("polled").is_empty());
+    assert!(inputs_only(watcher.poll_once().expect("polled")).is_empty());
     // A change, then the same pair opens again before the watch polled: the change is still reported.
     std::fs::write(&l, "changed once\n").expect("write");
     let second = world.open(&mut app, &l, &r);
     world.settle(&mut app);
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"
@@ -1195,7 +1202,7 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     app.0.close_tab(root, index, CloseReason::User);
     assert_eq!(app.tracked_inputs().len(), 2, "the second view's inputs");
     std::fs::write(&l, "changed twice\n").expect("write");
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"
@@ -1213,7 +1220,7 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     assert_eq!(app.tracked_inputs().len(), 2);
     watcher.poll_once().expect("polled");
     std::fs::write(&r, "right changed\n").expect("write");
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"

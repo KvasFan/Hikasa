@@ -199,6 +199,70 @@ pub fn tar_bytes(tree: &TreeData) -> Vec<u8> {
     builder.into_inner().unwrap()
 }
 
+/// A tar of `tree` as a POSIX writer lays it out (`git archive`, for one): ustar headers, and a long path split into
+/// `prefix` and `name`. Each file `(path, content)` of a path that cannot be split takes a GNU long name.
+pub fn ustar_bytes(tree: &TreeData) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for (path, content) in tree {
+        let mut header = tar::Header::new_ustar();
+        header.set_mode(0o644);
+        header.set_mtime(1_792_415_520);
+        header.set_uid(1000);
+        header.set_gid(100);
+        if path.ends_with('/') {
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            builder
+                .append_data(&mut header, path, std::io::empty())
+                .unwrap();
+        } else {
+            header.set_size(content.len() as u64);
+            builder
+                .append_data(&mut header, path, content.as_slice())
+                .unwrap();
+        }
+    }
+    builder.into_inner().unwrap()
+}
+
+/// `bytes_of` with ustar headers for the tar family.
+pub fn ustar_of(format: ArchiveFormat, tree: &TreeData) -> Vec<u8> {
+    if format == ArchiveFormat::Zip {
+        return bytes_of(format, tree);
+    }
+    let tar = ustar_bytes(tree);
+    if format == ArchiveFormat::Tar {
+        tar
+    } else {
+        compress(format, &tar)
+    }
+}
+
+/// An archive of `format` inside each next one of `formats`, outermost first: a chain with `leaf` in the deepest,
+/// and one more member at each level. The spec of each level, in that order, with the bytes of the outermost.
+pub fn chain_of(formats: &[ArchiveFormat], leaf: &TreeData) -> (Vec<String>, Vec<u8>) {
+    let mut names = Vec::new();
+    for (at, format) in formats.iter().enumerate() {
+        names.push(format!("l{at}-{}", name_of(*format)));
+    }
+    let mut bytes = Vec::new();
+    for (at, format) in formats.iter().enumerate().rev() {
+        let tree: TreeData = if at + 1 == formats.len() {
+            leaf.clone()
+        } else {
+            vec![
+                (names[at + 1].clone(), std::mem::take(&mut bytes)),
+                (
+                    format!("side{at}"),
+                    format!("side of level {at}").into_bytes(),
+                ),
+            ]
+        };
+        bytes = bytes_of(*format, &tree);
+    }
+    (names, bytes)
+}
+
 /// `data` compressed for a stream format.
 pub fn compress(format: ArchiveFormat, data: &[u8]) -> Vec<u8> {
     match format {

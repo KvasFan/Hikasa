@@ -795,7 +795,8 @@ fn a_folder_named_like_an_archive_stays_a_folder() {
     );
 }
 
-/// `--output` into an archive: a commit outside a batch, one rebuild.
+/// `--output` into an archive: a commit outside a batch. That it is one rebuild is counted in
+/// `hikasa-session/tests/archives.rs` (`output_into_an_archive_rebuilds_once`): a process does not show it.
 #[test]
 fn output_into_an_archive() {
     let s = sandbox();
@@ -818,6 +819,99 @@ fn output_into_an_archive() {
     let page = cat(&s, "a.zip/out.html");
     assert!(String::from_utf8_lossy(&page).contains("left"));
     assert_eq!(cat(&s, "a.zip/x"), b"alpha\n");
+}
+
+/// A chain with a level nothing changes: the member arrives, and the command does not say so without it.
+#[test]
+fn writes_three_levels_down() {
+    let s = sandbox();
+    let deep = zip_of(&[ZipEntry("deep.txt", b"D", 0, 0, MODE)]);
+    let middle = zip_of(&[ZipEntry("c.zip", &deep, 0, 0, MODE)]);
+    s.file("l.zip", zip_of(&[ZipEntry("b.zip", &middle, 0, 0, MODE)]));
+    s.file("l.txt", "left\n");
+    s.file("r.txt", "right\n");
+    s.file("only-copy", "only copy\n");
+    let args = [
+        "text",
+        "compare",
+        "l.txt",
+        "r.txt",
+        "--report",
+        "side-by-side",
+        "--html",
+        "--output",
+        "l.zip/b.zip/c.zip/out.html",
+    ];
+    let out = run(&s, &args);
+    assert_ne!(code(&out), 101, "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&cat(&s, "l.zip/b.zip/c.zip/out.html")).contains("left"));
+    let out = run(&s, &["vfs", "mv", "only-copy", "l.zip/b.zip/c.zip/moved"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!s.path().join("only-copy").exists());
+    assert_eq!(cat(&s, "l.zip/b.zip/c.zip/moved"), b"only copy\n");
+    let out = run(&s, &["vfs", "rm", "--yes", "l.zip/b.zip/c.zip/deep.txt"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let out = run(&s, &["vfs", "cat", "l.zip/b.zip/c.zip/deep.txt"]);
+    assert_ne!(code(&out), 0);
+}
+
+/// §1.5.12: a trailing separator wants a folder, whatever the name looks like.
+#[test]
+fn mkdir_with_a_separator_makes_a_folder() {
+    let s = sandbox();
+    let out = run(&s, &["vfs", "mkdir", "real.zip/"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.path().join("real.zip").is_dir());
+    let out = run(&s, &["vfs", "mkdir", "new.zip"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.path().join("new.zip").is_file());
+    let out = run(&s, &["vfs", "mkdir", "a.zip/folder.zip/"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let listing = run(&s, &["vfs", "stat", "a.zip/folder.zip"]);
+    assert!(stdout(&listing).contains("dir"), "{}", stdout(&listing));
+}
+
+/// A member over the archive that holds it fails its item and leaves the archive.
+#[test]
+fn a_member_over_its_own_archive_fails() {
+    let s = sandbox();
+    let before = std::fs::read(s.path().join("a.zip")).unwrap();
+    for verb in ["cp", "mv"] {
+        let out = run(
+            &s,
+            &["vfs", verb, "--overwrite", "always", "a.zip/x", "a.zip"],
+        );
+        assert_eq!(code(&out), 100, "{}", stdout(&out));
+        assert!(
+            stdout(&out).contains("holds the source"),
+            "{}",
+            stdout(&out)
+        );
+        assert_eq!(std::fs::read(s.path().join("a.zip")).unwrap(), before);
+    }
+}
+
+/// `--dry-run` says what a run would take along with a member, and a run says what it took.
+#[test]
+fn shadowed_members_are_named_before_and_after() {
+    let s = sandbox();
+    s.file(
+        "dup.zip",
+        zip_of(&[
+            ZipEntry("doc", b"old", 0, 0, MODE),
+            ZipEntry("doc", b"new", 0, 0, MODE),
+            ZipEntry("o", b"o", 0, 0, MODE),
+        ]),
+    );
+    let out = run(&s, &["vfs", "rm", "--dry-run", "--json", "dup.zip/doc"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).contains("would go"), "{}", stdout(&out));
+    let out = run(&s, &["vfs", "rm", "--yes", "dup.zip/o"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!stderr(&out).contains("went"), "{}", stderr(&out));
+    let out = run(&s, &["vfs", "rm", "--yes", "dup.zip/doc"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stderr(&out).contains("1 shadowed"), "{}", stderr(&out));
 }
 
 #[test]

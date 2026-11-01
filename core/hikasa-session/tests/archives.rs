@@ -34,6 +34,34 @@ fn read_all(mut reader: Box<dyn ReadSeek>) -> Vec<u8> {
     out
 }
 
+/// A5.18: `--output` into an archive is one rebuild, at any depth; a level between stays what it was.
+#[test]
+fn output_into_an_archive_rebuilds_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let inner = stored(&[("deep.txt", b"D")]);
+    let middle = stored(&[("c.zip", &inner), ("side", b"S")]);
+    write(tmp.path(), "a.zip", &stored(&[("b.zip", &middle)]));
+    let svc = service(tmp.path());
+    let target = tmp.path().join("a.zip/out.html");
+    svc.write_output(target.as_os_str(), b"page").unwrap();
+    assert_eq!(svc.archive_counters().unwrap().rebuilds, 1);
+    let target = tmp.path().join("a.zip/b.zip/c.zip/out.html");
+    svc.write_output(target.as_os_str(), b"deep page").unwrap();
+    assert_eq!(svc.archive_counters().unwrap().rebuilds, 2);
+    let archive = std::fs::read(tmp.path().join("a.zip")).unwrap();
+    let member = |bytes: &[u8], name: &str| {
+        let mut reader = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+        let mut file = reader.by_name(name).unwrap();
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut out).unwrap();
+        out
+    };
+    assert_eq!(member(&archive, "out.html"), b"page");
+    let middle = member(&archive, "b.zip");
+    assert_eq!(member(&middle, "side"), b"S");
+    assert_eq!(member(&member(&middle, "c.zip"), "out.html"), b"deep page");
+}
+
 #[test]
 fn parse_spec_resolves_and_keeps_files() {
     let tmp = tempfile::tempdir().unwrap();

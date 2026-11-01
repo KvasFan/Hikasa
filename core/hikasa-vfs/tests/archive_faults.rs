@@ -1,13 +1,15 @@
 //! M2 W5b acceptance A5.17 and P-ARCH-2 of A5.16 (D-149): a rebuild that meets any fault leaves the archive as it was.
 //!
 //! Property over small trees × format × fault: a failed read of the container, a failed write, a failed `commit`, a
-//! refused `open_write`, cancellation at a random point, a nested rebuild failing at each level. `MemoryVfs::dump()` of
-//! the archive is unchanged, no temporary sibling remains, every done item of the root is `failed` (`not_run` when
+//! refused `open_write`, cancellation at a random point, a nested rebuild failing at each level, also with a level in
+//! the chain that nothing changes. `MemoryVfs::dump()` of the whole tree is unchanged, so no temporary sibling remains
+//! on this back-end (a real disk: `no_temporary_sibling_stays`), every done item of the root is `failed` (`not_run` when
 //! cancelled), the summary matches, and a later retry on the same tree succeeds. The moves: local → archive,
 //! archive → archive, archive → local.
 //!
 //! P-ARCH-2: a random script of operations on `MemoryVfs` and on an archive of the same tree ends in equal listings and
-//! contents, read back by this back-end, by a new one and by the plain crates.
+//! contents, read back by this back-end, by a new one and by the plain crates. The names run past every field of a tar
+//! header, whose archives have ustar headers, and the archive can lie below a level nothing changes.
 //!
 //! 48 cases per property unless `PROPTEST_CASES` says otherwise: trees stay small, so memory and time stay bounded.
 
@@ -19,7 +21,7 @@ use std::sync::Arc;
 
 use common::archives::{
     CancellingBase, OnMemory, Seen, TreeData, bytes_of, config, name_of, on_memory, read_plain,
-    walk,
+    ustar_of, walk,
 };
 use common::{ctl, host, mspec};
 use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, Spec};
@@ -297,18 +299,28 @@ proptest! {
         inner in format_strategy(),
         outer in format_strategy(),
         fault in fault_strategy(),
+        untouched in any::<bool>(),
     ) {
         let cancel = CancelToken::new();
         let memory = back_end(fault, &cancel);
-        let nested: TreeData = vec![
+        let mut nested: TreeData = vec![
             (name_of(inner).to_owned(), bytes_of(inner, &tree)),
             ("side".to_owned(), b"side".to_vec()),
         ];
         let name = name_of(outer);
+        // A level between them that the operation only passes through.
+        if untouched {
+            nested = vec![("mid.tar".to_owned(), bytes_of(ArchiveFormat::Tar, &nested))];
+        }
         let file = memory.put(name, bytes_of(outer, &nested));
         put_sources(&memory);
         let vfs = &*memory.vfs;
-        let chain = Spec::archive_member(file, name_of(inner));
+        let around = if untouched {
+            Spec::archive_member(file, "mid.tar")
+        } else {
+            file
+        };
+        let chain = Spec::archive_member(around, name_of(inner));
         let opts = CopyOptions { recursive: true, preserve: Preserve::default(), ..CopyOptions::default() };
         let before = dump_of(&memory);
         let plan = into_archive_plan(vfs, &chain, &opts);
@@ -349,10 +361,15 @@ fn step_strategy() -> impl Strategy<Value = Step> {
     ]
 }
 
+/// A folder and a name for a path that fits a tar header only split, or not at all.
+const LONG_DIR: &str =
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/";
+const LONG_NAME: &str = "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn";
+
 /// A path from a small set, so steps meet each other.
 fn path_of(selector: u8) -> String {
-    const DIRS: [&str; 4] = ["", "p/", "q/", "p/r/"];
-    const NAMES: [&str; 4] = ["a", "b", "p", "q"];
+    const DIRS: [&str; 5] = ["", "p/", "q/", "p/r/", LONG_DIR];
+    const NAMES: [&str; 5] = ["a", "b", "p", "q", LONG_NAME];
     let dir = DIRS[usize::from(selector >> 4) % DIRS.len()];
     let name = NAMES[usize::from(selector & 15) % NAMES.len()];
     format!("{dir}{name}")
@@ -455,12 +472,15 @@ proptest! {
         steps in prop::collection::vec(step_strategy(), 1..24),
         format in format_strategy(),
         batched in any::<bool>(),
+        chained in any::<bool>(),
     ) {
         let start: TreeData = vec![
             ("a".into(), b"first".to_vec()),
             ("p/b".into(), b"second".to_vec()),
             ("p/r/a".into(), b"third".to_vec()),
             ("q/".into(), Vec::new()),
+            (format!("{LONG_DIR}{LONG_NAME}"), b"fourth".to_vec()),
+            (format!("{LONG_DIR}a"), b"fifth".to_vec()),
         ];
         let model = MemoryVfs::new(CaseSensitivity::Sensitive);
         for (path, content) in &start {
@@ -473,7 +493,16 @@ proptest! {
         }
         let memory = on_memory(ArchiveLimits::default());
         let name = name_of(format);
-        let file = memory.put(name, bytes_of(format, &start));
+        let bytes = ustar_of(format, &start);
+        // Below a zip and a tar that only pass the change on.
+        let file = if chained {
+            let middle: TreeData = vec![(name.to_owned(), bytes)];
+            let outer: TreeData = vec![("mid.tar".to_owned(), bytes_of(ArchiveFormat::Tar, &middle))];
+            let outermost = memory.put("outer.zip", bytes_of(ArchiveFormat::Zip, &outer));
+            Spec::archive_member(Spec::archive_member(outermost, "mid.tar"), name)
+        } else {
+            memory.put(name, bytes)
+        };
         let vfs = &*memory.vfs;
         let in_model = |path: &str| mspec(&format!("/m/{path}"));
         let in_archive = |path: &str| Spec::archive_member(file.clone(), path);
@@ -499,7 +528,17 @@ proptest! {
             config(dir.path(), ArchiveLimits::default()),
         );
         prop_assert_eq!(walk(&fresh, &in_archive("")), want.clone());
-        let bytes = memory.mem.read_back(&host(&format!("/{name}"))).unwrap();
+        let inner = |bytes: &[u8], format, member: &str| match read_plain(format, bytes).remove(member) {
+            Some(Seen::File(bytes)) => bytes,
+            other => panic!("{other:?}"),
+        };
+        let bytes = if chained {
+            let outer = memory.mem.read_back(&host("/outer.zip")).unwrap();
+            let middle = inner(&outer, ArchiveFormat::Zip, "mid.tar");
+            inner(&middle, ArchiveFormat::Tar, name)
+        } else {
+            memory.mem.read_back(&host(&format!("/{name}"))).unwrap().to_vec()
+        };
         let plain = read_plain(format, &bytes);
         prop_assert_eq!(plain, want);
     }

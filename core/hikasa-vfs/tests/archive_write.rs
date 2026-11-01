@@ -448,9 +448,10 @@ fn central_names(zip: &[u8]) -> Vec<String> {
     names
 }
 
-/// Shadowed duplicates go (A5.16), with a warning: nothing leaves an archive without a word.
+/// Shadowed duplicates stay with the member that shadows them (A5.16, D-156): a rebuild that does not touch that member
+/// takes nothing away. Each fate is in `archive_review.rs`.
 #[test]
-fn shadowed_duplicates_go_with_a_warning() {
+fn shadowed_duplicates_stay_through_a_rebuild() {
     let zip = raw_zip(&[
         RawEntry::new(b"a", b"old"),
         RawEntry::new(b"b", b"b"),
@@ -468,12 +469,12 @@ fn shadowed_duplicates_go_with_a_warning() {
         write_member(&*memory.vfs, &member(&file, "c"), b"c").unwrap();
         let warnings = memory.vfs.take_warnings();
         assert!(
-            warnings.iter().any(|w| w.message.contains("were dropped")),
+            !warnings.iter().any(|w| w.message.contains("went")),
             "{warnings:?}"
         );
         assert_eq!(read_member(&*memory.vfs, &member(&file, "a")), b"new");
         let bytes = stored(&memory, name);
-        assert!(!bytes.windows(3).any(|w| w == b"old"), "{name}");
+        assert!(bytes.windows(3).any(|w| w == b"old"), "{name}");
     }
 }
 
@@ -953,7 +954,8 @@ fn a_stamp_change_between_plan_and_rebuild_leaves_the_new_archive() {
     }
 }
 
-/// The same, once the overlay exists: the batch's index would write stale members.
+/// The same, once the overlay exists: the batch's index would write stale members. This change comes before the commit
+/// starts; `a_change_during_the_sync_is_caught_before_the_rename` makes it in the window of the fsync.
 #[test]
 fn a_stamp_change_inside_a_batch_is_caught_at_commit() {
     let memory = on_memory(ArchiveLimits::default());
@@ -1462,6 +1464,40 @@ fn a_chain_is_one_root() {
             .is_err()
     );
     assert_eq!(read_member(vfs, &member(&chain, "d/e")), b"deep");
+}
+
+/// A chain with a level that nothing changes is one root and one rebuild too.
+#[test]
+fn a_chain_with_an_untouched_level_is_one_root() {
+    let memory = on_memory(ArchiveLimits::default());
+    let inner: TreeData = vec![
+        ("c.txt".into(), b"inner".to_vec()),
+        ("k".into(), Vec::new()),
+    ];
+    let middle: TreeData = vec![("c.zip".into(), bytes_of(ArchiveFormat::Zip, &inner))];
+    let outer: TreeData = vec![("b.tar".into(), bytes_of(ArchiveFormat::Tar, &middle))];
+    let file = memory.put("a.zip", bytes_of(ArchiveFormat::Zip, &outer));
+    let deep = member(&member(&file, "b.tar"), "c.zip");
+    memory.mem.set_journal(true);
+    let journal = Journal::new(&*memory.vfs);
+    let report = rm_all(&journal, &[member(&deep, "c.txt")]);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(journal.calls().len(), 2, "{:?}", journal.calls());
+    let commits = memory.mem.journal();
+    let commits = commits.iter().filter(|(op, _)| *op == VfsOp::Commit);
+    assert_eq!(commits.count(), 1);
+    assert_eq!(memory.vfs.counters().rebuilds, 1);
+    let dir = tempfile::tempdir().unwrap();
+    let fresh = ArchiveVfs::new(
+        Arc::clone(&memory.mem) as Arc<dyn Vfs>,
+        config(dir.path(), ArchiveLimits::default()),
+    );
+    assert!(
+        fresh
+            .stat(&member(&deep, "c.txt"), FollowLinks::No)
+            .is_err()
+    );
+    assert!(fresh.stat(&member(&deep, "k"), FollowLinks::No).is_ok());
 }
 
 #[test]
@@ -1991,7 +2027,9 @@ fn siblings(disk: &OnDisk) -> Vec<String> {
     names
 }
 
-/// The temp file lies next to the archive and is gone after a success and after a failure.
+/// The temp file lies next to the archive and is gone after a success, within this process: a killed writer cannot
+/// clean up, and what it leaves goes with the next rebuild (`dead_temporary_files_go_and_nothing_else_does`). The lock
+/// file is covered too. A5.17 asserts the same after faults, on `MemoryVfs`.
 #[test]
 fn no_temporary_sibling_stays() {
     for format in WRITABLE {
@@ -2024,7 +2062,8 @@ fn permissions_of_the_archive_stay() {
     assert_eq!(mode & 0o777, 0o640);
 }
 
-/// A linked archive keeps the link: the file it names is what is replaced (row 21 of §1.5.4).
+/// A symbolic link to an archive stays: the file it names is what is replaced (row 21 of §1.5.4). Hard links are another
+/// matter: `a_hard_linked_archive_loses_the_link_on_rebuild`.
 #[cfg(unix)]
 #[test]
 fn a_linked_archive_keeps_its_link() {
