@@ -370,11 +370,15 @@ pub(crate) fn index_zip(
             bound.saturating_add(1),
         )
     };
+    // The crate's numbers are not the directory's order: it keeps one record per raw name, the last, at the place of
+    // the first. A record's number here is its place among the kept ones in the directory, which is what rule 3 asks
+    // about and what `directory_offsets` gives a rebuild; the crate's own number stays in `DataRef::Zip`.
+    let order = directory_order(&archive).map_err(|e| zip_error(spec, &shared, e))?;
     let mut members = Vec::with_capacity(archive.len());
     let mut budget = NameBudget::new(pass);
     let mut declared_total = 0u64;
-    for index in 0..archive.len() {
-        if index % 1024 == 0 {
+    for (step, &(_, index)) in order.iter().enumerate() {
+        if step % 1024 == 0 {
             pass.ctl.check()?;
         }
         let entry = archive
@@ -416,7 +420,7 @@ pub(crate) fn index_zip(
         budget.member(&member)?;
         members.push(member);
     }
-    for (index, member) in members.iter_mut().enumerate() {
+    for (&(_, index), member) in order.iter().zip(members.iter_mut()) {
         if member.kind == MemberKind::Symlink && !member.encrypted && member.size <= LINK_TARGET_MAX
         {
             pass.ctl.check()?;
@@ -455,16 +459,21 @@ fn hidden_records(
     tree: &mut Tree,
     spec: &str,
 ) {
+    let Ok(order) = directory_order(archive) else {
+        return;
+    };
     let mut numbers: HashMap<u64, u32> = HashMap::with_capacity(archive.len());
     let mut winners: HashMap<Box<[u8]>, u32> = HashMap::with_capacity(archive.len());
-    for at in 0..archive.len() {
+    for (record, &(start, at)) in order.iter().enumerate() {
         let Ok(entry) = archive.by_index_data(at) else {
             return;
         };
-        let number = u32::try_from(at).unwrap_or(u32::MAX);
-        numbers.insert(entry.central_header_start(), number);
+        let number = u32::try_from(record).unwrap_or(u32::MAX);
+        numbers.insert(start, number);
         winners.insert(entry.name_raw().into(), number);
     }
+    // The record that holds a raw name can be shadowed itself, by another spelling: the count goes to the path's winner.
+    let above: HashMap<u32, u32> = tree.shadows.iter().map(|s| (s.record, s.winner)).collect();
     let mut directory: Box<dyn ReadSeek> = Box::new(shared.clone());
     let Ok(headers) = read_central(&mut *directory, start, bytes_max, spec) else {
         return;
@@ -474,12 +483,24 @@ fn hidden_records(
             continue;
         }
         if let Some(&winner) = winners.get(header.name()) {
+            let winner = above.get(&winner).copied().unwrap_or(winner);
             tree.hidden.push((header.at, winner));
             *tree.shadowed.entry(winner).or_insert(0) += 1;
             tree.duplicates += 1;
         }
     }
     tree.hidden.sort_unstable();
+}
+
+/// The entries the crate kept, as `(offset of the central header, the crate's number)`, in the directory's order: the
+/// place in this list is the record's number in the index.
+fn directory_order(archive: &ZipArchive<SharedReader>) -> Result<Vec<(u64, usize)>, ZipError> {
+    let mut order = Vec::with_capacity(archive.len());
+    for at in 0..archive.len() {
+        order.push((archive.by_index_data(at)?.central_header_start(), at));
+    }
+    order.sort_unstable();
+    Ok(order)
 }
 
 /// The most bytes of a central directory an index reads (rule 13).
@@ -531,12 +552,13 @@ impl ZipData {
         self.archive.central_directory_start()
     }
 
-    /// Each entry the crate kept, as `(offset of its central header, its number)`.
+    /// Each entry the crate kept, as `(offset of its central header, its record in the index)`.
     pub(crate) fn directory_offsets(&self) -> impl Iterator<Item = (u64, usize)> {
-        (0..self.archive.len()).filter_map(|at| {
-            let entry = self.archive.by_index_data(at).ok()?;
-            Some((entry.central_header_start(), at))
-        })
+        let order = directory_order(&self.archive).unwrap_or_default();
+        order
+            .into_iter()
+            .enumerate()
+            .map(|(record, (start, _))| (start, record))
     }
 
     /// Bytes of the file.

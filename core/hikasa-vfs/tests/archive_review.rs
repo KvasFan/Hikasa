@@ -1103,6 +1103,61 @@ fn a_shadow_follows_its_winner_to_a_new_path() {
     }
 }
 
+/// Rule 3 is about the central directory's order, also when two spellings of a path take turns: the crate keeps one
+/// record per raw name at the place of its first, so its numbers do not say which came last.
+#[test]
+fn the_last_record_wins_when_spellings_of_a_path_interleave() {
+    let cases: [(&[&[u8]], &[u8]); 4] = [
+        (&[b"a", b"./a", b"a"], b"v3"),
+        (&[b"./a", b"a", b"./a"], b"v3"),
+        (&[b"a", b"./a", b"a", b"./a"], b"v4"),
+        (&[b"a", b"a", b"./a", b"./a", b"a"], b"v5"),
+    ];
+    for (names, last) in cases {
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = names
+            .iter()
+            .enumerate()
+            .map(|(k, name)| (name.to_vec(), format!("v{}", k + 1).into_bytes()))
+            .collect();
+        let raw: Vec<RawEntry> = entries
+            .iter()
+            .map(|(name, data)| RawEntry::new(name, data))
+            .collect();
+        let shadows = (names.len() - 1).to_string();
+        let bytes = raw_zip(&raw);
+        let all: Vec<Vec<u8>> = entries.iter().map(|(_, data)| data.clone()).collect();
+
+        let memory = on_memory(ArchiveLimits::default());
+        let file = memory.put("a.zip", bytes.clone());
+        let vfs = &*memory.vfs;
+        assert_eq!(read_member(vfs, &member(&file, "a")), last, "{names:?}");
+        assert_eq!(vfs.shadows_of(&member(&file, "a")).to_string(), shadows);
+
+        // A move takes every record along and the same one still wins.
+        vfs.rename(&member(&file, "a"), &member(&file, "w"), false)
+            .unwrap();
+        let after = stored(&memory, "a.zip");
+        assert_eq!(versions("a.zip", &after, "w"), all, "{names:?}");
+        assert_eq!(read_member(vfs, &member(&file, "w")), last, "{names:?}");
+        assert_eq!(fresh_view(&memory, &file).get("w"), Some(&file_of(last)));
+
+        // A touch patches the record that won.
+        let memory = on_memory(ArchiveLimits::default());
+        let file = memory.put("a.zip", bytes);
+        let vfs = &*memory.vfs;
+        let at = SetTimes {
+            modified: Some(ft(1_000_000_000)),
+            created: None,
+        };
+        vfs.set_times(&member(&file, "a"), &at).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let again = fresh(&memory, &dir);
+        let entry = again.stat(&member(&file, "a"), FollowLinks::No).unwrap();
+        assert_eq!(entry.mtime, Some(ft(1_000_000_000)), "{names:?}");
+        assert_eq!(read_member(&again, &member(&file, "a")), last, "{names:?}");
+    }
+}
+
 /// A removed or replaced winner takes its shadow with it, and the count is in a warning: what was overwritten must not
 /// live on in an older record.
 #[test]
