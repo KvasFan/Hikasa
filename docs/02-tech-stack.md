@@ -82,7 +82,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `arboard` | M2 W3 (D-100, D-101): `clipboard://` works in the CLI and the window; see the M2 table below. |
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
-| a signal-handling crate | M2: `ctrlc` (D-159), see the M2 table below. In M1 Ctrl-C terminated the CLI; every `--output` file is written atomically, so no partial report appears. |
+| a signal-handling crate | M2: `ctrlc` (D-159), see the M2 table below. In M1 Ctrl-C terminated the CLI, and every `--output` file is written atomically. A cancelled comparison now ends with exit 100 before it renders, so `--output` keeps the report it had. |
 | `tempfile` (dev-only) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). |
 
 Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
@@ -450,7 +450,18 @@ named-font test gave 133.5 (anon 42.0). So **the gate does not hold on this mach
 features**: the W4c figure of 105.4 MiB (anon 41.4) does not reproduce. The anonymous part has not moved; the excess is
 the file-backed part, 80 to 96 MiB against 64 then. It swung by 10 MiB between runs of one binary within minutes, as a
 proportional share does when other processes map the same libraries or leave them, and stripping took off about 2 MiB.
-The cause is not established; the limit is left as it is.
+
+**The cause is the proportional share of the llvmpipe libraries.** PSS divides a file-backed page by the processes that map
+it, and the software renderer's libraries (`libgallium`, LLVM) are most of what this process maps from files. On this
+machine 21 other processes mapped `libgallium`, a number that follows what else runs. For one binary, one configuration:
+RSS 140 to 143 MiB, anonymous 38.5 to 40.6, PSS 108 to 120, and about 137 once no other process shared those libraries.
+**So the gate as defined is not a stable measure on a machine shared with other GUI processes**: the same memory counts
+between 108 and 137 MiB by who else is running, and 105.4 MiB was a good moment, not a better build. The limit stays as it
+is, and the maintainer's run on a GPU, where no renderer library of that size is mapped, decides it.
+
+`memory_settled` also reports a figure that does not move with the neighbours, `own_mib`: anonymous memory plus the resident
+pages of the binary itself, counted whole, without any library, next to `total_pss_mib`. It tells a change of this program
+from a change of its surroundings; it is a measure beside the gate, not a gate.
 
 A named font adds no measurable PSS and at most 1.6 MiB of anonymous memory, in the size of the runs' own noise: the
 enumeration is dropped after the lookup and the font file stays mapped, here 343 KiB. A lookup on this machine (1,247

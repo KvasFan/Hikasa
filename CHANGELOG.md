@@ -6,12 +6,14 @@
 
 ### Added
 - **Ctrl-C in the command line.** The first Ctrl-C cancels a running comparison or `vfs` operation: an archive being
-  rewritten stays as it was, its temporary and lock files go, and the command exits 100. A second Ctrl-C exits 100 at
-  once. Any other command ends at the first Ctrl-C, as before; SIGTERM too.
+  rewritten stays as it was, its temporary and lock files go, the file of `--output` keeps what it had, and the command
+  exits 100. A second Ctrl-C exits 100 at once. Any other command ends at the first Ctrl-C, as before; SIGTERM too. A
+  command started with Ctrl-C ignored, as `cmd &` in a script is, stays that way.
 - **Named fonts.** The four font families of `theme.toml` and the Fonts page are looked up among the system's fonts, off
   the window's thread and only when a family is named. The built-in fonts stay behind them for the glyphs a font lacks,
   then the system's fallback, so icons and CJK keep working. A family that is not found keeps the built-in font, with one
-  notice. Listing and hex fonts load and wait for their views.
+  notice, and so does a font file that is broken: it is tried on a sample off the window's thread first. Listing and hex
+  fonts load and wait for their views.
 - **Writes inside archives.** `hikasa vfs cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members of zip and the
   tar family, nested ones too: `vfs cp -p notes.txt a.zip/docs/`, `vfs mv a.zip/old a.zip/new`. An archive is rewritten
   once per operation, to a temporary file next to it, which replaces it in one step. `vfs mkdir new.zip` makes an empty
@@ -30,8 +32,10 @@
   was, and a move into an archive removes its sources only after the rewrite. An archive that changed since the
   operation was planned is left alone (`changed since the plan was made`). A member cannot be written over the archive
   that holds it, nor a file moved into itself.
-- **Two writers cannot overlap.** A rewrite holds a lock next to the archive, so a second one, in any process, fails at
-  once with `another operation is changing this archive` instead of losing the first one's change.
+- **Two writers cannot overlap.** A rewrite holds a lock next to the archive, so a second one, in any process on this
+  machine, fails at once with `another operation is changing this archive`, which names the lock file, instead of losing
+  the first one's change. It takes a file system with locks: on one without, and between machines on some network mounts,
+  the check that the file did not change since the plan is all there is.
 - **A rewrite keeps what it did not touch** as bytes, in order: encrypted members and methods it cannot decode, refused and
   link members, devices, sparse files, unknown extra fields, comments and raw names. A member hidden by a later one of the
   same name stays with it: it moves with it, also to another archive of any format, and goes when that member is removed

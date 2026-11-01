@@ -34,8 +34,9 @@ A flag that takes a value may be repeated only with the same value.
 ## Ctrl-C
 
 The first Ctrl-C cancels a comparison or a `vfs` operation: an archive being rewritten stays as it was and its temporary
-and lock files go, and the command exits 100. A second Ctrl-C exits 100 at once, as a kill would; the next rewrite of
-that archive removes what is left. Any other command ends at the first Ctrl-C.
+and lock files go, the file of `--output` keeps what it had, and the command exits 100. A second Ctrl-C exits 100 at once,
+as a kill would; the next rewrite of that archive removes what is left. Any other command ends at the first Ctrl-C. A
+command started with Ctrl-C ignored stays that way.
 
 ## See also
 

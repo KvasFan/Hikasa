@@ -186,7 +186,9 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
     temporary and lock files and leaves the archive as it was; a `vfs` operation reports its
     items as usual, those not reached as `not_run`. The command exits **100**. A second
     Ctrl-C exits 100 at once, as a kill would: a rebuild it stops leaves its files, which the
-    next rebuild of that archive removes. A command without a job ends at the first Ctrl-C,
+    next rebuild of that archive removes. A cancelled comparison writes no report, so `--output`
+    keeps what it had, and a process started with Ctrl-C ignored (`cmd &` in a script) stays
+    that way. A command without a job ends at the first Ctrl-C,
     by the signal; SIGTERM always does.
 
 - **CLI-005** (P0): Quick Compare dialog on startup (program option): when launched
