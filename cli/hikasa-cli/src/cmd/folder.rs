@@ -74,6 +74,11 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderComp
     ctx.progress.clear();
     let code = resp.exit_code.code();
     let warnings = resp.warnings.clone();
+    // A scan that was cancelled ends `Ok` with a part of the tree, for the GUI: here it is a failed command. Nothing
+    // is rendered and `--output` keeps the report it had (D-159).
+    if job.cancel.is_cancelled() {
+        return ctx.fail(FOLDER_COMPARE_SCHEMA, &ApiError::Cancelled, op, &warnings);
+    }
     if let Some(target) = &args.output {
         let mut report = Vec::new();
         let written = ctx

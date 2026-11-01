@@ -56,6 +56,10 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &TextCompareArgs, request: &TextCompareR
     ctx.progress.clear();
     let code = resp.exit_code.code();
     let mut warnings = resp.warnings.clone();
+    // A Ctrl-C that came as the comparison ended stops the command the same way: `--output` stays (D-159).
+    if job.cancel.is_cancelled() {
+        return ctx.fail(TEXT_COMPARE_SCHEMA, &ApiError::Cancelled, op, &warnings);
+    }
     if let Some(target) = &args.output {
         let mut report = Vec::new();
         let rendered = ctx
