@@ -356,7 +356,7 @@ pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
     let mut count = 0;
     for item in plan.items.iter().filter(|item| item.error.is_none()) {
         let gone = match item.action {
-            Action::Remove | Action::Trash => src.shadows_of(&item.target),
+            Action::Remove | Action::RemoveDir | Action::Trash => src.shadows_of(&item.target),
             Action::Move => item.source.as_ref().map_or(0, |at| src.shadows_of(at)),
             _ => 0,
         };

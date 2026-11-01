@@ -1138,7 +1138,9 @@ impl Rebuild<'_> {
             to,
             folder: item.kind == MemberKind::Dir,
             time: (item.mtime != node.mtime).then_some(item.mtime),
-            mode: item.attrs.unix().map(|meta| meta.mode),
+            mode: (item.attrs != node.attrs)
+                .then(|| item.attrs.unix().map(|meta| meta.mode))
+                .flatten(),
             body,
         }
     }

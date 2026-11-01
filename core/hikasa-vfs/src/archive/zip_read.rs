@@ -427,7 +427,7 @@ pub(crate) fn index_zip(
     let duplicates = archive.has_duplicate_names();
     let mut tree = build_tree(members, budget, pass)?;
     if fields.len() > archive.len() {
-        hidden_records(&archive, &shared, start, directory_max, &mut tree, spec)?;
+        hidden_records(&archive, &shared, start, directory_max, &mut tree, spec);
     }
     if duplicates && tree.duplicates == 0 {
         tree.duplicates = 1;
@@ -445,7 +445,8 @@ pub(crate) fn index_zip(
 
 /// Finds the records the crate keeps no number for: it holds one per raw name, the last, and a central directory that
 /// states more is read once more here, so an archive without duplicates pays nothing. A refused name is no shadow: a
-/// rebuild keeps those whatever else has that name.
+/// rebuild keeps those whatever else has that name. A directory that cannot be walked again lists as it did, and the
+/// rebuild, which walks it too, gives the error.
 fn hidden_records(
     archive: &ZipArchive<SharedReader>,
     shared: &SharedReader,
@@ -453,19 +454,21 @@ fn hidden_records(
     bytes_max: u64,
     tree: &mut Tree,
     spec: &str,
-) -> Result<(), VfsError> {
+) {
     let mut numbers: HashMap<u64, u32> = HashMap::with_capacity(archive.len());
     let mut winners: HashMap<Box<[u8]>, u32> = HashMap::with_capacity(archive.len());
     for at in 0..archive.len() {
-        let entry = archive
-            .by_index_data(at)
-            .map_err(|e| zip_error(spec, shared, e))?;
+        let Ok(entry) = archive.by_index_data(at) else {
+            return;
+        };
         let number = u32::try_from(at).unwrap_or(u32::MAX);
         numbers.insert(entry.central_header_start(), number);
         winners.insert(entry.name_raw().into(), number);
     }
     let mut directory: Box<dyn ReadSeek> = Box::new(shared.clone());
-    let headers = read_central(&mut *directory, start, bytes_max, spec)?;
+    let Ok(headers) = read_central(&mut *directory, start, bytes_max, spec) else {
+        return;
+    };
     for header in headers.iter().filter(|h| !numbers.contains_key(&h.at)) {
         if check_name(header.name(), NameRules::Zip).is_err() {
             continue;
@@ -477,7 +480,6 @@ fn hidden_records(
         }
     }
     tree.hidden.sort_unstable();
-    Ok(())
 }
 
 /// The most bytes of a central directory an index reads (rule 13).

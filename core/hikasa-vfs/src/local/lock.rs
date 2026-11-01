@@ -120,6 +120,10 @@ pub(super) fn take(target: &Path) -> Taken {
     };
     let path = dir.join(lock_name(name));
     for _ in 0..TRIES {
+        // Not a file of ours: nothing is created or locked through a link someone put there.
+        if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
+            return Taken::Busy;
+        }
         let file = match open(&path) {
             Ok(file) => file,
             // There, and not to be opened: marked for deletion by a holder that just ended, or not ours to use.

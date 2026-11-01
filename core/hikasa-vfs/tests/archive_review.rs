@@ -624,6 +624,38 @@ fn dead_temporary_files_go_and_nothing_else_does() {
     drop(live);
 }
 
+/// A link at the lock's name is not followed: nothing appears where it points.
+#[cfg(unix)]
+#[test]
+fn a_link_at_the_name_of_the_lock_is_not_followed() {
+    let disk = on_disk(ArchiveLimits::default());
+    let tree: TreeData = vec![("a".into(), b"a".to_vec())];
+    let file = disk.put("a.zip", &bytes_of(ArchiveFormat::Zip, &tree));
+    let aimed = disk.dir.join("aimed-at");
+    std::os::unix::fs::symlink(&aimed, disk.dir.join(".a.zip.hikasa-lock")).unwrap();
+    let result = disk.vfs.begin(&file);
+    assert!(
+        matches!(result, Err(VfsError::Unavailable { .. })),
+        "{result:?}"
+    );
+    assert!(!aimed.exists());
+}
+
+/// A touch rewrites only what changed: a mode field with bits this program does not keep stays.
+#[test]
+fn a_touch_leaves_the_mode_field_alone() {
+    let mut record = RawTar::file(b"m", b"m");
+    record.mode = 0o100_644;
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put("a.tar", raw_tar(&[record]));
+    let at = SetTimes {
+        modified: Some(ft(1_000_000_000)),
+        created: None,
+    };
+    memory.vfs.set_times(&member(&file, "m"), &at).unwrap();
+    assert_eq!(&stored(&memory, "a.tar")[100..107], b"0100644");
+}
+
 /// A folder a user keeps a file of that name in: without the mode of a temporary file it is theirs.
 #[cfg(unix)]
 #[test]
