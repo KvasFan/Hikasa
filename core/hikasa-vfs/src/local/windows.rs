@@ -7,6 +7,7 @@ use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use super::AttrFailure;
 use crate::caps::Capabilities;
@@ -69,6 +70,8 @@ const TRIES: u32 = 7;
 
 /// Runs `step`, and again while something else has the file for a moment.
 fn past_others(mut step: impl FnMut() -> io::Result<()>) -> io::Result<()> {
+    // A wait nobody ends, the way this crate waits (T1 keeps the clock and sleeps out of core).
+    let (idle, never) = (Mutex::new(()), Condvar::new());
     let mut pause = std::time::Duration::from_millis(5);
     for _ in 1..TRIES {
         match step() {
@@ -76,7 +79,8 @@ fn past_others(mut step: impl FnMut() -> io::Result<()>) -> io::Result<()> {
                 if e.raw_os_error()
                     .is_some_and(|code| IN_THE_WAY.contains(&code)) =>
             {
-                std::thread::sleep(pause);
+                let guard = idle.lock().unwrap_or_else(PoisonError::into_inner);
+                drop(never.wait_timeout(guard, pause));
                 pause *= 2;
             }
             done => return done,
