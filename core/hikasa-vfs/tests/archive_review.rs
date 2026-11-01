@@ -8,9 +8,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use common::archives::{
-    CancellingBase, OnDisk, OnMemory, RawEntry, RawTar, Seen, TreeData, bytes_of, chain_of, config,
-    decompress, local, name_of, on_disk, on_memory, pax, raw_tar, raw_zip, read_plain, seal,
-    ustar_of, walk,
+    OnDisk, OnMemory, RawEntry, RawTar, Seen, TreeData, bytes_of, chain_of, config, decompress,
+    local, name_of, on_disk, on_memory, pax, raw_tar, raw_zip, read_plain, seal, ustar_of, walk,
 };
 use common::{ctl, ft, host, mspec, read_to_vec};
 use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, Spec, WarningCode};
@@ -410,15 +409,20 @@ fn a_link_and_its_file_share_the_lock() {
     disk.vfs.finish(&file, Finish::Abort).unwrap();
 }
 
-/// A base whose writer runs `on_sync` while it syncs: a change of the file in the window of an fsync.
+type Hook = Arc<dyn Fn() + Send + Sync>;
+
+/// A base whose writer runs `on_sync` while it syncs, a change of the file in the window of an fsync, and `after_commit`
+/// once it is in place.
 struct SyncHook {
     mem: Arc<MemoryVfs>,
-    on_sync: Arc<dyn Fn() + Send + Sync>,
+    on_sync: Hook,
+    after_commit: Hook,
 }
 
 struct HookedWriter {
     inner: Box<dyn AtomicWrite>,
-    on_sync: Arc<dyn Fn() + Send + Sync>,
+    on_sync: Hook,
+    after_commit: Hook,
 }
 
 impl Write for HookedWriter {
@@ -442,7 +446,9 @@ impl AtomicWrite for HookedWriter {
         self.inner.sync()
     }
     fn commit(self: Box<Self>) -> Result<(), VfsError> {
-        self.inner.commit()
+        self.inner.commit()?;
+        (self.after_commit)();
+        Ok(())
     }
 }
 
@@ -472,6 +478,7 @@ impl Vfs for SyncHook {
         Ok(Box::new(HookedWriter {
             inner: self.mem.open_write(spec, opts)?,
             on_sync: Arc::clone(&self.on_sync),
+            after_commit: Arc::clone(&self.after_commit),
         }))
     }
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
@@ -508,6 +515,7 @@ fn a_change_during_the_sync_is_caught_before_the_rename() {
     let base = SyncHook {
         mem: Arc::clone(&mem),
         on_sync,
+        after_commit: Arc::new(|| {}),
     };
     let vfs = ArchiveVfs::new(
         Arc::new(base) as Arc<dyn Vfs>,
@@ -1463,6 +1471,22 @@ fn a_path_that_comes_free_is_reported() {
     );
     assert_eq!(read_member(vfs, &member(&file, "a")), b"FILE-A");
 
+    // Below a link: the link goes, and what it hid comes up.
+    let memory = on_memory(ArchiveLimits::default());
+    let tar = raw_tar(&[
+        RawTar::link(b"lnk", b'2', b"/etc"),
+        RawTar::file(b"lnk/evil", b"EVIL"),
+    ]);
+    let file = memory.put("l.tar", tar);
+    let vfs = &*memory.vfs;
+    drop(vfs.take_warnings());
+    vfs.remove(&member(&file, "lnk")).unwrap();
+    let warnings = vfs.take_warnings();
+    assert!(
+        warnings.iter().any(|w| w.message.contains("came free")),
+        "{warnings:?}"
+    );
+
     let memory = on_memory(ArchiveLimits::default());
     let bytes = raw_zip(&[
         RawEntry::new(b"../x", b"evil"),
@@ -1649,17 +1673,20 @@ fn a_volume_label_is_read_and_stays() {
 
 // ---- several target roots -------------------------------------------------------------------------------------
 
-/// A cancel between two rebuilds: the first went through, so its copies stay, and its sources do too. No item says
-/// done with its source in place.
+/// A cancel between two rebuilds: the first went through, so its copy stays, and so does its source. No item says done
+/// with its source in place.
 #[test]
 fn a_cancel_after_one_rebuild_reports_no_finished_move() {
     let mem = Arc::new(MemoryVfs::new(CaseSensitivity::Sensitive));
     let dir = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
-    let base = CancellingBase {
+    let base = SyncHook {
         mem: Arc::clone(&mem),
-        token: cancel.clone(),
-        after: 100,
+        on_sync: Arc::new(|| {}),
+        after_commit: {
+            let cancel = cancel.clone();
+            Arc::new(move || cancel.cancel())
+        },
     };
     let vfs = ArchiveVfs::new(
         Arc::new(base) as Arc<dyn Vfs>,
@@ -1667,18 +1694,11 @@ fn a_cancel_after_one_rebuild_reports_no_finished_move() {
     );
     let tree: TreeData = vec![("old".into(), vec![1u8; 40])];
     let meta = MemMeta::default();
-    mem.insert_file(
-        &host("/a.zip"),
-        bytes_of(ArchiveFormat::Zip, &tree),
-        meta.clone(),
-    )
-    .unwrap();
-    mem.insert_file(
-        &host("/b.zip"),
-        bytes_of(ArchiveFormat::Zip, &tree),
-        meta.clone(),
-    )
-    .unwrap();
+    let zip = bytes_of(ArchiveFormat::Zip, &tree);
+    for path in ["/a.zip", "/b.zip"] {
+        mem.insert_file(&host(path), zip.clone(), meta.clone())
+            .unwrap();
+    }
     mem.insert_file(&host("/one"), &b"1"[..], meta.clone())
         .unwrap();
     mem.insert_file(&host("/two"), &b"2"[..], meta).unwrap();
@@ -1697,14 +1717,19 @@ fn a_cancel_after_one_rebuild_reports_no_finished_move() {
     .unwrap();
     let report = ops::execute(&vfs, &vfs, plan, &ctl(&cancel));
     assert!(report.cancelled, "{:?}", report.results);
+    assert_eq!(
+        read_member(&vfs, &member(&a, "one")),
+        b"1",
+        "the first rebuild stands"
+    );
+    assert!(
+        vfs.stat(&member(&b, "two"), FollowLinks::No).is_err(),
+        "the second did not run"
+    );
     for (item, result) in report.plan.items.iter().zip(&report.results) {
         let source = item.source.as_ref().unwrap();
-        let kept = vfs.stat(source, FollowLinks::No).is_ok();
-        assert_eq!(
-            result.status == ItemStatus::Done,
-            !kept,
-            "{source:?}: {result:?}"
-        );
+        assert!(vfs.stat(source, FollowLinks::No).is_ok(), "{source:?}");
+        assert_eq!(result.status, ItemStatus::NotRun, "{source:?}");
     }
 }
 

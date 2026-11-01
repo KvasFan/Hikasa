@@ -588,8 +588,8 @@ impl Rebuild<'_> {
         })
     }
 
-    /// A refused member stays in the archive, and one refused only for a conflict with a path that is gone reads as a
-    /// member again: the operation that freed the path has to say so (§1.5.10).
+    /// A refused member stays in the archive, and one refused only for a conflict with a path that is gone, its own or
+    /// a link's above it, reads as a member again: the operation that freed the path has to say so (§1.5.10).
     fn note_freed(&self) {
         let tree = &self.view.index.tree;
         let conflicts = || {
@@ -607,7 +607,11 @@ impl Rebuild<'_> {
             .filter(|node| overlay.get(node.path()).is_none())
             .map(|node| escape_name(node.path().as_bytes()))
             .collect();
-        let back = conflicts().filter(|row| free.contains(&row.name)).count();
+        let freed = |name: &str| {
+            let above = name.match_indices('/').filter_map(|(at, _)| name.get(..at));
+            free.contains(name) || above.into_iter().any(|path| free.contains(path))
+        };
+        let back = conflicts().filter(|row| freed(&row.name)).count();
         if back > 0 {
             self.notes.push(
                 self.spec,
