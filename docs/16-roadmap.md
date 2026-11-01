@@ -67,7 +67,7 @@ Toolbars/Shortcuts/Menus page and the theme editor with live preview, the Export
 GPU run still open, docs/02); wave 5a (archives, read: zip, tar, compressed tar and single streams through
 `ArchiveVfs`, nesting, the temp cache, FC-015 and FC-025 over archive sides, D-135…D-155, reviewed against hostile input: cache sessions, index memory, modes
 on copy-out, rule 12, G4 on the main paths, the scan budget; wave 5b (archives, write: batches, the overlay, rebuilds that
-keep what they did not touch as bytes, `create_archive`, the write capabilities, D-148…D-150; wave 5 complete).
+keep what they did not touch as bytes, `create_archive`, the write capabilities, D-148…D-150, the review's D-156…D-158; wave 5 complete).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.
