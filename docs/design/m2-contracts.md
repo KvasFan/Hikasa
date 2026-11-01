@@ -134,6 +134,9 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-152 | **CLI.** No new subcommand, no new schema: `vfs`, `quick`, `text compare`, `folder compare` work on specs; new `--archives files\|opened\|folders`, `--open-archive`. `hikasa.vfs_op.v1` gains the action `create_archive`. Exit codes unchanged. `quick a.zip b.zip` compares the files. New help topic `archives`; no catalogue status changes. | T10: complete before the GUI; a spec is a spec. | 12 |
 | D-153 | **GUI.** A zipper icon on `ARCHIVE` rows; `Open` on a closed archive row with `once_opened` adds its path and re-runs the view; `infer_view_kind` makes two archives, or an archive and a folder, a Folder Compare; `Service::shutdown` at exit. No new dialog, command or setting. | Archive sides in the existing views only; W9 and W6 refine the re-run. | 14 |
 | D-154 | **Dependencies** (§1.5.15). `zip` 9.2.0 (`deflate`, `deflate64`, `bzip2`, `zstd`, `lzma`, `xz`), `tar` 0.4.46 (no `xattr`), `flate2` 1.1.10 (`zlib-rs`), `bzip2` 0.6.1, `lzma-rust2` **0.23.0** (as `zip`, not the newest 0.24), `zstd` **0.14.3** (as `zip`, not the plan's 0.13; BSD-3-Clause). `deny.toml` gains a crate-scoped exception for `libbz2-rs-sys` (`bzip2-1.0.6`, permissive), pending the maintainer's objection. `zstd-sys` builds C with the `cc` crate: a C compiler per target, nothing else; verified for all packaging targets; `build-linux.sh` pins `CFLAGS` for its target. | One LZMA and one zstd in the tree; plan §5.1's platform risk closed by a real build. | 02 |
+| D-156 | **Shadowed duplicates stay** (W5b review; revises rule 3 of §1.5.7, D-141 and A5.16, which dropped them; the maintainer's decision). A shadow shares its winner's fate: winner kept or touched → the shadow stays as raw bytes; renamed or moved → it moves with it; removed or replaced → it goes, with a warning that names the count, so an overwritten secret does not survive in an older record. Shadows are decided before hard links: a link to a kept shadow stays a link, and a winner that is a link written as a file keeps its shadow. A shadow no rewrite can carry stops its winner's rename at the primitive. | A rebuild keeps what it did not touch: the older version is the user's data, and the rule keeps a member and its history together. | 11 |
+| D-157 | **Writer's lock** (W5b review; extends D-148 and D-149). A batch holds an advisory lock on the sibling `.<name>.hikasa-lock` of the file it replaces, from its first moment to its end, through `Vfs::lock_writer`; a held lock is `Unavailable`, at once. The holder removes the file while it holds the lock; the next writer takes over one a dead process left. Readers never touch it, and a folder or file system that cannot have one falls back on the stamp. `AtomicWrite::sync` splits the commit, so the last look at the stamp comes after the fsync. | Two processes both passed a last look at the file and one lost its write with exit 0, in 24 of 24 runs. The lock cannot lie on the archive: a rename moves it to the old inode, and on Windows it would keep readers out. | 11 |
+| D-158 | **Temporary files of atomic writes** (W5b review; extends SES-053). Owner-only from before the first byte until the rename, when they get the replaced file's mode or the one they were made with; locked by their writer, so whoever holds the writer's lock can remove what a dead writer left and only that (exact temporary names, owner-only, lock free). No signal handler: `ctrlc` of plan §3 is not in the lock file, and D-154 adds no crate in a review, so a killed rebuild leaves its files until the next rebuild of that archive. | A copy of a private archive was world-readable while it was written. A kill leaves an archive-sized hidden file. | 11 |
 | D-155 | **G6** (§1.5.16). List 100,000 zip entries < 1 s; a 10,000-file tree against its zip by CRC < 2 s; the index of a 1 GiB `tar.gz` ≤ 1.3 × the raw decode, CRC included; G2 unchanged; RSS budgets. Headless, release, idle machine, fixtures generated; G4 holds for long decodes. | Plan §5.2 confirmed; the first figure already measured at 15 ms for the crate's part. | 02 |
 
 ### 0.4 Dependencies
@@ -2891,7 +2894,7 @@ index with the total. Nothing can address it, and a rebuild keeps it untouched.
 |---|---|---|
 | 1 | Names | `name.rs`, on raw bytes, before anything else. Zip: `\` is read as `/` (legacy tools), then the rules; tar: a `\` refuses the member. Refused: NUL (`nul`); a leading `/` (`absolute`), so also `\\srv\x` and `\x` in zip; a first component `X:` with one ASCII letter (`drive`: `C:\x`, `C:/x`, `c:x`); a `..` component (`traversal`); over 4,096 bytes (`too_long`). `.` and empty components are dropped, and the drive check runs on what stays (`./C:/x`); a folder or an empty file whose name reduces to nothing (`./`) only gives the root its metadata; a file with data so named is refused (`empty`). A GNU long name loses its trailing NULs only: one inside stays, so `nul` refuses it. Text = UTF-8 flag or valid UTF-8 as it is; zip without the flag as the crate decodes it (CP437); otherwise lossy with the raw bytes kept for a rebuild: `name_lossy` says so, and the name is the member's key |
 | 2 | Tree | A path that is both a file and a parent (`a` and `a/b`): the folder stays, the file `a` is refused (`conflict`). A member below a link member (`lnk` and `lnk/x`) is refused (`conflict`). The result does not depend on archive order |
-| 3 | Duplicates | The same path twice: the last one wins (zip: the last of the central directory, `has_duplicate_names`; tar: the last in the stream), one `archive_duplicate_member` warning per index. A rebuild drops the shadowed ones. Two names that are equal only after a lossy decode are two members: the last stays and the others are refused (`conflict`), so a rebuild keeps them |
+| 3 | Duplicates | The same path twice: the last one wins (zip: the last of the central directory, `has_duplicate_names`; tar: the last in the stream), one `archive_duplicate_member` warning per index. A rebuild gives a shadowed record its winner's fate (D-156): kept while the winner is kept or touched, moved with it, gone with it when it is removed or replaced, with a warning. Two names that are equal only after a lossy decode are two members: the last stays and the others are refused (`conflict`), so a rebuild keeps them |
 | 4 | Case twins | `A.txt` and `a.txt` are two members. Cache names are numeric, so nothing collides. Copied out to a case-insensitive disk the second meets the overwrite policy (D-96, default `fail`) |
 | 5 | Links | A link member is listed with its target text and **never followed**: no read through it, no lookup through it, `stat(Yes)` returns the link. It is never materialized: not in the cache, and a copy **out of** an archive skips it (`SkipReason::Symlink`, one `archive_symlink_skipped` warning per operation), whatever `LinkPolicy` says (revises D-94 rule 6 for archive sources; `plan_copy` decides from the source's and the target's scheme). Between archives it stays a link member |
 | 6 | Hard links | `1` entries become the member they name, which must be a regular member earlier in the archive, addressed by a name that passes rule 1, and must stay in the tree (not refused by rule 2, also through another link); otherwise refused (`hard_link`). A `1` entry has no data of its own whatever its size field says, unless a PAX `size` states it, so it cannot hide the next member |
@@ -3003,8 +3006,12 @@ pub trait Vfs: Send + Sync {
     fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> { Err(op_unsupported(spec, VfsOp::Mkdir)) }
 }
 /// Gains `Seek` (the zip writer patches local headers). `DirectWriter` answers `Unsupported`; `MemWriter` keeps a position.
-pub trait AtomicWrite: Write + Seek + Send { fn commit(self: Box<Self>) -> Result<(), VfsError>; }
+/// `sync` (default: nothing) flushes and syncs without touching the target, so a look at the target can follow the wait.
+pub trait AtomicWrite: Write + Seek + Send { fn sync(&mut self) -> Result<(), VfsError>; fn commit(self: Box<Self>) -> Result<(), VfsError>; }
 ```
+
+`Vfs` also gains `lock_writer(&self, spec) -> Result<Option<Box<dyn WriteLock>>, VfsError>` (D-157; default `Ok(None)`) and
+`shadows_of(&self, spec) -> u64` (the records a member shadows, for `--dry-run`; default 0).
 
 **Batches (D-148).** `begin` and `finish` keep "one rebuild per operation" and stop a write from vanishing: a
 primitive or an `open_write` commit **outside** a batch is its own batch and rebuilds at once, so `--output` into an
@@ -3020,10 +3027,17 @@ archive and W10's save need nothing special. `begin` on an archive with a batch 
    `cancelled`, `finish(root, Abort)`, and a source-only root is aborted too when a target root failed.
 4. `Abort` or a failed `Commit`: the `done` items of that root become `failed` with that error (`cancelled` →
    `not_run`), the summary is recounted, `ok()` is false, exit 100. Nothing is partly written. With an item failed
-   and others done, the done ones are committed (per-item results, ARCH-101).
-5. A guard aborts every open batch if `execute` unwinds.
+   and others done, the done ones are committed (per-item results, ARCH-101). A cancel between two target roots: the
+   rebuild that went through stands, the sources of its moves stay, and those items are `not_run`: no item says done
+   with its source in place.
+5. A guard aborts every open batch if `execute` unwinds; a change outside `execute` has a guard of its own.
 
-Nested archives: `begin(c)` on `a.zip/b.tar` opens the chain up to the outermost file.
+Nested archives: `begin(c)` on `a.zip/b.tar` opens the chain up to the outermost file. **Writers of other back-ends and
+processes (D-157):** a batch takes the writer's lock of its outermost file first and reads the stamp second, so the stamp
+holds for the batch. `Unavailable` as above, at once: a writer that waited would find the archive changed since its plan.
+A rename that would replace an archive around its own source, or a level of its chain, is refused at planning, whatever
+the overwrite policy, also through a link where the file's identity is known: `InvalidTarget "is the archive that holds
+the source"`; so is a move of a file into itself (`"is inside the source"`).
 
 **Overlay (`overlay.rs`).** On the first change of a batch the member tree is cloned into a mutable tree whose nodes
 are `Kept(index)`, `New { cache file, mode, mtime }`, `Dir`, `Link`. Primitives follow the semantics of `MemoryVfs`
@@ -3036,15 +3050,18 @@ Staged content follows the cache rules; `Abort` releases it.
 **Rebuild protocol (normative; D-149).** `finish(at, Commit)`:
 
 1. An overlay with no net change: nothing is written.
-2. Re-stat the container. A stamp other than the index's → every done item fails `InvalidTarget "changed since the plan
-   was made"`, nothing is written. A damaged archive (rule 9) → `ArchiveCorrupt`.
+2. Re-stat the container. A stamp (length, time, and the file's identity where the back-end knows one) other than the
+   batch's → every done item fails `InvalidTarget "changed since the plan was made"`, nothing is written. A damaged archive
+   (rule 9) → `ArchiveCorrupt`.
 3. `w = base.open_write(container, { overwrite: true, create_parents: false, replace_link: false })`: a temporary sibling
    of the file, the file a link names being the target (Q8, `docs/11` "Local writes"). For a nested archive `w` is a cache
    file.
 4. Write the archive (below). Any read, write or cancel error drops `w`: the archive is untouched (INV-VFS-3).
-5. `w.commit()`: `fsync` and atomic rename. For a nested archive the result enters the parent's overlay as a `New` member and
-   step 1 repeats for the parent; only the outermost `commit` touches a real file, so a chain is atomic too.
-6. Drop the index and the cache files of the old stamp.
+5. `w.sync()`, the stamp of step 2 again, `w.commit()`: `fsync`, one last look, atomic rename. For a nested archive the
+   result enters the parent's overlay as a `New` member and step 1 repeats for the parent, also a parent that had no change
+   of its own or no overlay yet, until no level below the outermost has a change; only the outermost `commit` touches a real
+   file, so a chain is atomic too. A change that does not reach the outermost level is an error, never a success.
+6. Drop the index and the cache files of the old stamp. End the writer's lock, which removes its file.
 
 | Format | Kept members | New or changed members | Stream |
 |---|---|---|---|
@@ -3057,8 +3074,18 @@ Staged content follows the cache rules; `Abort` releases it.
 
 - Levels are the formats' usual defaults, constants of `rebuild.rs`, not options. The same inputs give the same bytes (given
   the same crate versions).
-- **A rebuild keeps what it did not touch:** refused, encrypted, sparse and link members go on as raw data; shadowed
-  duplicates go. CRCs of new members come from the writers; kept zip members keep theirs.
+- **A rebuild keeps what it did not touch:** refused, encrypted, sparse and link members go on as raw data; a shadowed
+  duplicate shares its winner's fate (D-156): the warning `<n> shadowed members went with the member that replaced them`
+  names only what really went, and `--dry-run` says the same beforehand. Records keep their order, a rewritten one its place
+  in the pass, and new members come last, so the last record still wins. A replaced member takes its shadows along, so what
+  was overwritten does not live on in an older record. CRCs of new members come from the writers; kept zip members keep
+  theirs.
+- **A renamed or touched tar member keeps what still holds.** With its path unchanged its name blocks (a GNU long name, a
+  PAX `path`) and the name and prefix of its header stay as bytes, so a name that does not decode survives a touch. With a
+  new path the fields are cleared first: a ustar `prefix` left behind would join the new name and write the member to
+  another path. A move onto text made from a name that does not decode (U+FFFD in `to`) is refused.
+- **A refused member stays, whatever goes.** One that was refused only for a path conflict reads as a member once the
+  path is free: the operation that freed it warns (`archive_member_refused`). A name refused by rule 1 stays refused.
 - A zip with a prefix (`ZipArchive::offset() != 0`, a self-extractor) → `Unsupported { what: "rewriting a zip with a
   prefix" }`, nothing written. Signed `.jar`, `.apk` lose their signature's validity when rebuilt (`docs/11` says so).
 - The fresh archive is not re-read before the rename: every path through the writers is covered by round-trip
@@ -3072,7 +3099,8 @@ has `vfs.archive_format(name)` with `writable()` gets the new `Action::CreateArc
 `mkarchive`, `kind: file`), run through `Vfs::create_archive`, which writes an empty archive through `open_write`. An
 existing item: the W3 rules of `mkdir`. Single-stream masks (`x.gz`) stay plain folders. Only the final name counts: a
 missing ancestor is a folder, as in `mkdir -p new.zip/sub`. Inside an archive the same rule makes a nested empty
-archive.
+archive. An argument with a trailing separator wants a folder (§1.5.12): `vfs mkdir new.zip/` makes one, inside an archive
+too.
 
 | Format | Bytes of an empty archive |
 |---|---|
@@ -3423,25 +3451,37 @@ maintainer may want to look at it first.
    batch is open is `Unavailable`, as a second `begin` is. `ops::execute` runs on one thread; W6 must keep it so, or pass
    the batch along.
 7. **"Changed since the plan was made" is checked three times**: `begin` compares the stamp with the last one this back-end
-   saw, which is the plan's; a commit checks the batch's stamp before it writes and again just before the rename. The
-   first is an early answer: a long-lived back-end whose other reads moved that stamp on no longer sees a change before
-   `begin`, and the per-item re-check of D-103 covers the items. What protects the data is the second: the index a rebuild
-   copies from was built after `begin`, so a stale index cannot be written.
-8. **Shadowed duplicates go with a warning.** A5.16 and rule 3 say they go, and the brief of this part said "never drop an
-   entry silently". `archive_duplicate_member` now also counts them at a rebuild. A record of a refused name is kept
-   however many have that name.
+   saw, which is the plan's; a commit checks the batch's stamp before it writes and again after the sync, just before the
+   rename. The first is an early answer: a long-lived back-end whose other reads moved that stamp on no longer sees a change
+   before `begin`, and the per-item re-check of D-103 covers the items. The stamps alone do not protect the data: two
+   processes can each pass the last look and then rename, and they did, in 24 of 24 runs (the review's fsync window). What
+   protects it from another Hikasa is the writer's lock (D-157), held from before the batch's stamp is read, and a
+   change that opens a batch of its own drops any index older than that stamp. The stamps remain the guard against
+   writers that do not take the lock; between the last look and the rename there stays a window of one system call that
+   no check can close, and a file system without locks has only the stamps.
+8. **Shadowed duplicates stay** (D-156). The first version dropped them with a warning, which A5.16 and rule 3 then said; the
+   maintainer decided otherwise. `Tree::shadows` has the numbered ones (another raw name for one path, `./a` and `a`) and
+   `Tree::hidden` the ones the crate gives no number (the same raw name: it keeps one per name), found by reading the central
+   directory once more when it states more records than the crate kept, so an archive without duplicates pays nothing;
+   both name their winner. A tar shadow that moves uses its own record's size: its winner's would be wrong for an older
+   version. A hard-linked shadow whose target goes has no member to become, since a file in its place would win, so it goes
+   and is counted. `check_counts` and the zip's own count bind kept shadows and hidden records, since the next index reads
+   them. A record of a refused name is kept however many have that name.
 9. **Hard links** were not in §1.5.10: a kept `1` record names another record by path, so dropping, moving or replacing that
    member would leave a link rule 6 refuses, and the data with it. A link stays a link while its target stays, under its
-   name, and is otherwise staged and written as a regular member, once, in archive order, so chains resolve. A moved or
-   touched link takes the same way: its data range is its target's, which the forward pass has already left.
+   name, and is otherwise staged and written as a regular member **at its own place**, from its old header, so owner, group,
+   names and PAX records stay, and a link that named it stays one. A moved or touched link takes the same way: its data
+   range is its target's, which the forward pass has already left.
 10. **Tar gaps.** Global headers and volume labels are no longer part of the next member's blocks (`Pending::first`), and the
     pass copies everything no dropped record owns, so removing the first member of a `git archive` tarball keeps its
     `pax_global_header`. Bytes other than zeros after the end of a tar or a zip are kept too (`Tree::tail`, `records_end`).
 11. **A rewritten tar member clones its old header** (owner, names, type, device numbers, link name), and its other PAX
-    records and long link stay; `path` and, when the time changed, `mtime` go. It is written at its place in the pass,
-    with the data as it is. **A sparse member cannot be rewritten:** its map lies in or after its header, so a rename or a
-    touch is `OperationUnsupported`, as is a rename of a folder that holds one, or one that holds a member whose name
-    does not decode (a new raw name would have to be made up). Both fail at the primitive, before anything changes.
+    records and long link stay; with a new path `path` goes, with a new time `mtime`. It is written at its place in the
+    pass, with the data as it is. With its path unchanged the name is not rewritten at all (§1.5.10), which also keeps a
+    `./` spelling. **A sparse member cannot be rewritten:** its map lies in or after its header, so a rename or a touch
+    is `OperationUnsupported`, as is a rename of a folder that holds one, of a member with a sparse shadow, or of a folder
+    that holds a member whose name does not decode (a new raw name would have to be made up); so is a touch of an implicit
+    folder whose name does not decode, which has no record to edit. All fail at the primitive, before anything changes.
 12. **A prefix the offsets count in.** `ZipArchive::offset` is 0 when a self-extractor's writer adjusted the offsets, and the
     stub would go silently, so anything before the first record is refused the same way.
 13. **Limits on output** (rule 11–13 of what is written), checked before the commit: the entries and text of the overlay
@@ -3451,7 +3491,10 @@ maintainer may want to look at it first.
     is its own length plus what is new plus `stream_max`, which only overlapping records can reach.
 14. **A nested archive that changes, and then moves or is read whole, in one batch** is rebuilt into its member first
     (`seal_below`); one that is removed or replaced drops what changed inside. An index read from an overlay is dropped
-    when the member changes and when the batch ends.
+    when the member changes and when the batch ends. `seal_below` and the commit share `fold_changed`, which looks at the
+    levels again after each fold, because a fold makes the level around it: the list of levels taken once missed a level
+    with no change of its own, and a write three levels down was lost behind a success. `put_rebuilt` on a missing
+    member and a commit whose change did not arrive are errors.
 15. **`begin` on a single stream is `OperationUnsupported`** and fails the item, as §1.5.10 wants of the primitives. A `keep_dir`
     item opens a root too, so `mkdir -p x.gz/` fails rather than saying nothing happened, and so a failed rebuild turns it
     into a failed item.
@@ -3466,7 +3509,9 @@ maintainer may want to look at it first.
     does not fail on a new member, which starts with a mode.
 19. **Times of the archive file.** §1.5.10 keeps permissions (the rule of `LocalWriter`) and no times, and §1.5.17 needs a new
     stamp, so the file gets a new modification time. Owner, ACLs and extended attributes of the file are not carried over:
-    `LocalWriter` does not, for any file.
+    `LocalWriter` does not, for any file. A rename replaces a name, so a second hard link to the archive keeps the old
+    bytes, and a read-only archive in a writable folder is rewritten and stays read-only: the folder decides, as for any
+    local write (M1). On Windows that rename fails `permission_denied` and the archive stays. A symbolic link stays.
 20. **`MemoryVfs::clear_faults`** also clears the stream faults, as its text always said.
 21. **Windows.** Reasoned, not run: a rebuild closes every handle it opened on the container before `commit` (`Rebuild::run`
     owns them; §1.5.19 W5a note 1 keeps none between calls), and `LocalWriter` closes its own before the rename. A member
@@ -3477,6 +3522,35 @@ maintainer may want to look at it first.
 
 22. **Green is claimed per part**, as W5a's note 21: W5b's commits are grouped by subject, and an intermediate one is not
     claimed to build or pass on its own. Rebuilds have no gate (§1.5.16), so none was measured.
+23. **The writer's lock** (D-157, `local/lock.rs`). Beside the file a link names, so all spellings share it. It is taken with
+    `try_lock`, compared with the path afterwards, as in the cache, and removed by its holder under the lock. A lock file a
+    process cannot open is busy, a folder that takes no new file or a file system without locks gets no lock, and the write
+    gives the error it always gave. Windows was reasoned, not run: `LockFileEx` on a sibling keeps nobody off the archive,
+    a name marked for deletion refuses opens, which reads as busy, and the OS drops the lock with the process.
+24. **Temporary files** (D-158). A temporary file is created with the default mode, read, and made `0600` before a byte goes
+    in; `commit` sets the replaced file's mode or that first mode: this keeps M1's result without reading the umask. Windows
+    has no such mode: a file's ACL comes from its folder. **A kill leaves files.** There is no signal handler (D-158), so
+    Ctrl-C during a rebuild leaves `.<name>.hikasa-tmp` and the lock file next to the archive, which stays as it was. The next
+    rebuild of that archive removes them. A plain write of the same file that loses its race on Windows, where the handle
+    closes before the rename, fails with the target as it was.
+25. **A path that comes free.** A member refused for a conflict stays, as every refused member does, so after `rm` of the
+    folder that hid it, it reads at that path: `rm` reports done and a warning says so. Dropping it instead would break "a
+    rebuild keeps what it did not touch"; the warning is `archive_member_refused`.
+26. **Times out of range.** `set_times` with a time the format cannot give back (before 1970 in a tar or a 0x5455 field, past
+    2106 in that field) stores the nearest it holds, as §1.5.8 says, with one `capability_missing` warning. A touch keeps the
+    access and change times of a 13-byte local 0x5455 field.
+27. **The ratio of a result** only refuses a rebuild that added content. A remove or a rename cannot fail on it: without
+    the incompressible part an archive's ratio rises, and the operation is what makes it smaller. It warns, since reads now
+    need a higher `ratio_max`. Note 13 stands for what is added; a nested archive rebuilt into its parent counts as added.
+28. **Raw names in a move.** A zip name that is not UTF-8 is another code page, whose CP437 text is only a reading: a
+    rename keeps the bytes of the components it leaves alone and writes new ASCII around them, without the UTF-8 flag.
+    New text that is not ASCII cannot share a name with such bytes, so then the whole name is the UTF-8 of what the
+    listing shows, with the flag: the one case where those bytes go.
+29. **A signature of the central directory** (`PK\x05\x05`) signs what a rebuild changes, so it goes, with a
+    `capability_missing` warning. **A volume label** of GNU tar has an empty size field, which the crate does not read as a
+    number: `tar_walk::entry_size` reads it as 0, and the label stays.
+30. **A panic in a primitive** of a change outside a batch ends its batch (`AbortUnlessEnded`), which would otherwise stay open
+    and busy for good. New for tests and diagnostics: `ArchiveCounters::rebuilds`, `Service::archive_counters`.
 
 *Hooks for W6.* `ops::execute` already gives W6's `OpPlan` batches, the two-phase move and item results. The backup of
 §1.5.17 goes in `ops/roots.rs::finish`, before `end(root, Commit)`. A plan that waits on a confirmation should re-plan or
@@ -3859,9 +3933,10 @@ reads the real clock, zone or home folder (T1). The part of each item is in brac
   comparison of plain files; `reload_settings` applies new masks. D-86: a package with a bzip2 entry is still refused.
   `infer_view_kind` table. Session round trip of a Folder Compare on `a.zip/` and a Text Compare on `a.zip/x`. G6, G2 and
   the budgets of §1.5.16 measured and in `docs/02`.
-- A5.14 **Batches (D-148) [W5b].** `begin`/`finish` calls in `execute` as a journal: one rebuild per operation and archive, nested
-  chains, target roots before source roots. A second `begin` → `Unavailable`. A primitive and an `open_write` commit
-  outside a batch rebuild at once. A panic inside `execute` aborts (guard).
+- A5.14 **Batches (D-148, D-157) [W5b].** `begin`/`finish` calls in `execute` as a journal: one rebuild per operation and archive,
+  nested chains, with a level nothing changes too, target roots before source roots. A second `begin` → `Unavailable`, also from
+  another back-end. A primitive and an `open_write` commit outside a batch rebuild at once. A panic inside `execute`, and one in
+  a change of its own, aborts (guard). Writers that race lose no update: each that reports success is in the file.
 - A5.15 **Overlay [W5b].** The primitive table of A3.1, on members of a zip and a `tar.gz`, as far as it applies: rows for a missing
   item, a file, an empty and a non-empty folder, an implicit folder, a link member, existing targets with and without
   `replace`, a missing parent with and without `parents`, a rename of a subtree, across archives → `CrossDevice`, a
@@ -3869,14 +3944,19 @@ reads the real clock, zone or home folder (T1). The part of each item is in brac
   `stat` and `list` during a batch, and gone after `Abort`.
 - A5.16 **Rebuild (D-149) [W5b].** For zip and each tar format: add, replace, remove, rename, `set_times`, `set_attrs`, a folder, a link.
   Kept zip members are byte-identical compressed (same offsets of data within the raw copy, same CRC, same extra fields);
-  tar members keep their raw blocks; refused, encrypted and sparse members survive; the comment survives; shadowed duplicates
-  go. Written times read back per §1.5.8; new CRCs are right. Two equal rebuilds give equal bytes. A zip with a prefix →
+  tar members keep their raw blocks; refused, encrypted and sparse members survive; the comment survives; a shadowed
+  duplicate takes each fate of D-156 (numbered and hidden records, a link to a shadow, a fresh read, the plain crates). A
+  renamed member keeps nothing of its old name in any ustar shape (`git archive`), a touched one keeps its name as bytes.
+  Written times read back per §1.5.8; new CRCs are right. Two equal rebuilds give equal bytes. A zip with a prefix →
   `Unsupported`, unchanged; a damaged archive → `ArchiveCorrupt`, unchanged; a stamp change between plan and rebuild → items
   failed, unchanged. Property P-ARCH-2: a random script of operations on `MemoryVfs` and on an archive of the same tree ends
-  in equal listings and contents, and re-reading the rebuilt archive with a fresh `ArchiveVfs` gives them too.
+  in equal listings and contents, and re-reading the rebuilt archive with a fresh `ArchiveVfs` gives them too; names run
+  past every field of a tar header, ustar headers included, and the archive can lie below levels nothing changes.
 - A5.17 **Faults (D-149) [W5b].** Property over small trees × format × fault (`inject_read_error_after` on the container,
-  `inject_write_error_after`, `Fault { op: Commit }`, cancellation at a random byte, a nested rebuild failing at each level):
-  `MemoryVfs::dump()` of the archive is unchanged, no temporary sibling remains, every done item of the root is `failed`
+  `inject_write_error_after`, `Fault { op: Commit }`, cancellation at a random byte, a nested rebuild failing at each level,
+  with and without a level that nothing changes): `MemoryVfs::dump()` of the tree is unchanged, so no temporary sibling
+  remains on that back-end (on a disk: after a rebuild that ends, in-process; what a killed one leaves goes with the next, a
+  live writer's and a user's files stay), every done item of the root is `failed`
   (`not_run` when cancelled), the summary matches, exit 100. Moves: local → archive with a failing rebuild keeps all
   sources; archive → archive with a failing target keeps the source archive unchanged; archive → local with a failing
   source rebuild keeps both copies. A later retry on the same tree succeeds.
@@ -3884,7 +3964,8 @@ reads the real clock, zone or home folder (T1). The part of each item is in brac
   a.zip` (the file, `already_exists`), `cp -r d a.tar.gz/`, `mv`, `rm --yes`, `rm --trash`, `touch`, `mkdir` inside, `--dry-run`
   plans and no change, goldens. `vfs mkdir new.zip`, each writable mask, `x.gz` a plain folder, `mkdir -p new.zip/sub` plain folders, an
   existing target; the bytes of §1.5.10; each empty archive opens and lists nothing. `cp -r` of a real folder `x.zip` stays
-  a folder. `--output a.zip/out.html` rebuilds once. Local writes unchanged: `AtomicWrite: Seek` on `LocalWriter`, and
+  a folder. `--output a.zip/out.html` rebuilds once, also three levels down (counted in `hikasa-session/tests/archives.rs`,
+  `ArchiveCounters::rebuilds`: a process does not show it). `vfs mkdir x.zip/` makes a folder. Local writes unchanged: `AtomicWrite: Seek` on `LocalWriter`, and
   `DirectWriter` answers `Unsupported`.
 - A5.19 **GUI (D-153) [W5a].** View-model tests through the catalogue, no window: the flag gives the icon on closed and open rows;
   `Open` on a closed row with `OnceOpened` adds the path and runs once, in `AsFiles` it opens as before; a corrupt archive

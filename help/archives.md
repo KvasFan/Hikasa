@@ -48,12 +48,23 @@ the inside out, as one step.
 **What a rewrite keeps.** Members the operation did not touch stay the same bytes, in their order, with their metadata:
 also members it could not read itself, such as encrypted ones or methods it does not know, refused and link members,
 devices and sparse files. A zip keeps its comment and its members' comments and extra fields. The permissions of the
-archive file stay; it gets a new modification time. A renamed or touched member keeps its data.
+archive file stay; it gets a new modification time. A renamed or touched member keeps its data, and a touch leaves
+its name as it was. A link to the archive stays a link, and a read-only archive in a writable folder is rewritten and
+stays read-only, as any file Hikasa saves.
+
+**What the temporary file means.** While it is written it can be read by you alone. If Hikasa is killed (Ctrl-C
+included) during a rewrite, the archive stays as it was, and `.<name>.hikasa-tmp` and `.<name>.hikasa-lock` stay next
+to it; the next rewrite of that archive removes them, and nothing else with a similar name.
 
 **What a rewrite does not keep.**
 
-- Members hidden by a later one of the same name go, with an `archive_duplicate_member` warning.
-- A signed `.jar` or `.apk` is no longer validly signed.
+- The owner, ACLs and extended attributes of the archive file, as with any file Hikasa saves. A second hard link to it
+  keeps the old content.
+- A member hidden by a later one of the same name shares its fate: it stays while that member stays or is touched,
+  and moves with it. Removing or replacing that member removes the hidden ones too, so what you overwrote does not stay in
+  an older record: `--dry-run` says how many, and so does an `archive_duplicate_member` warning afterwards.
+- A signed `.jar` or `.apk` is no longer validly signed, and a signature of the central directory goes, with a warning.
+- A time the format cannot hold is stored as the nearest it can (a tar holds nothing before 1970), with a warning.
 - A gzip header's stored name and time go: rewrites are repeatable, byte for byte.
 - Its compression becomes the format's usual level (deflate 6, gzip 6, bzip2 9, xz 6, zstd 3) for the tar family;
   kept zip members are not recompressed.
@@ -63,16 +74,24 @@ archive file stay; it gets a new modification time. A renamed or touched member 
 - the archive changed since the operation was planned (`changed since the plan was made`);
 - a damaged archive (`invalid_data`), since what lies past the damage would be lost;
 - a zip with a prefix, such as a self-extractor (`unsupported`);
-- moving or touching a sparse member, or moving a folder that holds a member whose name does not decode
-  (`unsupported`): neither could be written back as it was;
-- a result that would pass the limits below, which nothing could read back (`too_large`);
+- moving or touching a sparse member, moving a member with a sparse older version, or moving a folder that holds a member
+  whose name does not decode (`unsupported`): none could be written back as it was;
+- writing a member over the archive that holds it, or a move of a file into itself (`vfs mv a.zip/x a.zip`), whatever
+  `--overwrite` says, also through a link where that can be told;
+- a result with new content that would pass the limits below, which nothing could read back (`too_large`); a remove or a
+  rename goes through and warns if it raises the ratio past `ratio_max`;
 - `--trash` on a member (`unsupported`).
 
-Another operation on the same archive at the same moment fails with `another operation is changing this archive`. A
+**After a remove.** A member refused because a folder had the same path stays in the archive, as refused members do, so
+it reads at that path once the folder is gone. A warning says so.
+
+Another operation on the same archive at the same moment fails with `another operation is changing this archive`, in
+this process or another; Hikasa never waits, because the archive would then have changed under the plan. A
 hard link inside a tar stays one while the member it names stays; when that member goes or moves, the link becomes a
-regular member with the content it had. New members are stored as Unix mode `0644`, folders `0755`, with the current
+regular member with the content and owner it had. New members are stored as Unix mode `0644`, folders `0755`, with the current
 time; a copy then applies the source's time and mode as for any target. `vfs mkdir` makes an empty archive from any
-writable mask, `x.gz` stays a plain folder, and in `mkdir -p new.zip/sub` only the last name counts.
+writable mask, `x.gz` stays a plain folder, in `mkdir -p new.zip/sub` only the last name counts, and a trailing
+separator wants a folder: `vfs mkdir new.zip/`.
 
 ## Folder comparisons
 

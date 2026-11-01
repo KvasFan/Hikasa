@@ -85,25 +85,42 @@ operation costs **one rebuild per archive**, and a rebuild costs one copy of the
 is the one place an operation ends: it opens a batch on each archive it touches, finishes target archives before
 those that only lose sources, and removes the sources of a move into an archive only after the target's rebuild. A change
 outside a batch rebuilds at once, so a plain `open_write` cannot be lost. A batch belongs to the thread that opened it:
-another thread's change meets `another operation is changing this archive`. A rebuild writes through the base's atomic
+another thread's change meets `another operation is changing this archive`. So does another process or back-end: a batch
+holds an advisory lock on `.<name>.hikasa-lock` beside the file for as long as it runs, so two writers cannot overlap, and the
+second fails at once rather than wait for an archive that will have changed under its plan (D-157). Readers neither take
+nor mind it. Its holder removes it; one left by a crash goes with the next writer. A folder or file system that cannot have
+it goes without, and then only the stamp below stands between two writers. A rebuild writes through the base's atomic
 writer (a temporary sibling, the file a link names being the target, then a rename), so a read error, a full disk, a
 cancel or a failed commit leaves the archive as it was; the done items of that archive then become failed (`not_run` when
-cancelled). The archive must still have the length and time its index read, at the start of the rebuild and again just before
-the rename, else the items fail "changed since the plan was made". Its permissions stay, as for any local write; its
-modification time is new, which is what tells other sessions it changed. A nested archive is rebuilt into the cache
-and enters the archive around it, so a chain commits only at the outermost file.
+cancelled). The archive must still have the length, time and, where known, identity it had when the batch began, at the
+start of the rebuild and again after the sync, right before the rename, else the items fail "changed since the plan was
+made". The temporary file is owner-only until the rename and then gets the archive's mode. Its permissions stay, as for
+any local write, and for the same reason the folder decides what may be written: a read-only archive in a writable folder is
+rewritten and stays read-only (on Windows that rename fails and it stays as it was). Owner, ACLs and extended attributes
+are not carried over, as for any local write, and a second hard link to the archive keeps the old bytes, while a symbolic
+link stays. Its modification time is new, which is what tells other sessions it changed. A nested archive is rebuilt
+into the cache and enters the archive around it, so a chain commits only at the outermost file, however deep the change and
+whether or not the levels between have one of their own. A kill during a rebuild leaves the archive as it was, and the
+temporary file and the lock file next to it: there is no signal handler, and the next rebuild of that archive removes
+what no live writer holds, and nothing else.
 
 What a rebuild keeps is copied as bytes, never decoded: zip records (local header, data, descriptor; the central
 header with its offset changed), so an encrypted member, a method this build does not know, unknown extra fields and raw
 names survive; tar blocks by one forward pass, with whatever lies between members (global headers, volume labels) and
-anything after the end of the archive. Refused members stay. Shadowed duplicates go, with a warning. A renamed or
-touched zip member has those fields edited in its headers, so its data is not decoded either; a renamed or touched tar
-member gets a copy of its header, keeping owner, type, device numbers, link name and its other PAX records. A hard link
-stays one while the member it names stays; otherwise it becomes a regular member with its content. Sparse members
-cannot be moved or touched, and a folder holding a name that does not decode cannot be moved: both are refused.
-A zip with a prefix and a damaged archive are refused, unchanged. A signed `.jar` or `.apk` loses its signature's
-validity. Limits bind what is written: a stream, ratio, entry, text or depth past them is refused, since nothing could
-read it back.
+anything after the end of the archive. Refused members stay; one refused only for a path conflict reads again once that path
+is free, and the operation says so. A shadowed duplicate shares the fate of the member that shadows it (D-156): it stays while
+that member stays or is touched, moves with it, and goes when it is removed or replaced, with a warning that names
+the count, so what was overwritten does not live on in an older record; `--dry-run` says so first. A renamed or
+touched zip member has those fields edited in its headers, so its data is not decoded either, and a name in another code page
+keeps the bytes the rename leaves alone; a renamed or touched tar member gets a copy of its header, keeping owner, type,
+device numbers, link name and its other PAX records, and a touch leaves its name as bytes. A hard link stays one while the
+member it names stays; otherwise it becomes a regular member at its own place, with its content and its header's owner.
+Sparse members cannot be moved or touched, and a folder holding a name that does not decode cannot be moved: both are
+refused, and so is a target that is the archive holding the source, or a level around it. A time the format cannot
+hold is stored as the nearest it can, with a warning. A zip with a prefix and a damaged archive are refused, unchanged. A
+signed `.jar` or `.apk` loses its signature's validity, and the signature record of a central directory goes, with a warning.
+Limits bind what is written: a stream, ratio, entry, text or depth past them is refused, since nothing could read it back;
+only a rebuild that adds content can fail on the ratio.
 
 **Local writes (M1).** Files are written atomically: the content goes to a temporary file
 in the target's folder, which is synced and renamed onto the target, so a failure leaves

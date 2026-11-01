@@ -19,10 +19,16 @@
 ### Safety
 - **A rewrite cannot lose an archive.** A read error, a full disk, Cancel or a failed rename leave it byte for byte as it
   was, and a move into an archive removes its sources only after the rewrite. An archive that changed since the
-  operation was planned is left alone (`changed since the plan was made`).
+  operation was planned is left alone (`changed since the plan was made`). A member cannot be written over the archive
+  that holds it, nor a file moved into itself.
+- **Two writers cannot overlap.** A rewrite holds a lock next to the archive, so a second one, in any process, fails at
+  once with `another operation is changing this archive` instead of losing the first one's change.
 - **A rewrite keeps what it did not touch** as bytes, in order: encrypted members and methods it cannot decode, refused and
-  link members, devices, sparse files, unknown extra fields, comments and raw names. Members hidden by a later one of the
-  same name go, with a warning.
+  link members, devices, sparse files, unknown extra fields, comments and raw names. A member hidden by a later one of the
+  same name stays with it: it moves with it, and goes when that member is removed or replaced, with a warning, so what
+  was overwritten does not live on.
+- **The temporary copy of an archive, and of any file Hikasa saves, is private** until it replaces the file. A kill during a
+  rewrite leaves it next to the archive, and the next rewrite of that archive removes it.
 - Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,
   damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits (`entries_max`,
   `paths_max_mib`, `depth_max`, `stream_max_gib`, `cache_max_gib`, `ratio_max`, `nesting_max`).
