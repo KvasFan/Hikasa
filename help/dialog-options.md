@@ -47,8 +47,9 @@ to its base, Reset All does it for the whole scheme (on a built-in this removes 
 a later version wrote there; resetting the last element one by one keeps such a file).
 
 Every change shows at once in every window; Cancel brings the applied theme back. Default text below 4.5:1 contrast on
-a background is reported as a warning, never refused. The Fonts page sets the four fonts; a family other than the
-built-in font is stored but not used in this version.
+a background is reported as a warning, never refused. The Fonts page sets the four fonts. A family shows as soon as its
+name is complete, and one that is not found keeps the built-in font, with one notice once it is applied. An empty family
+is the built-in font. Listing and Hex fonts wait for their views.
 
 ## Toolbars, Shortcuts, Menus
 

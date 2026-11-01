@@ -198,8 +198,13 @@ selection is `[folder] selection` unless `use_system_selection`. The theme is re
 start, when the system theme changes and when a theme file changes on disk — never per
 frame. The editor font size sets the text panes (the font commands scale from it and are
 remembered per view type), the folder size the tree (`use_system`: the toolkit's default);
-listing and hex sizes wait for their views. A non-empty font family is not looked up in
-W4: the built-in font is used and one warning notice names the family.
+listing and hex sizes wait for their views. *0.1.91 (D-160):* a non-empty font family is
+looked up among the system's fonts off the UI thread, whatever its case, only when a slot
+names it; it applies once, also while it is typed in Options, and a family the views do
+not use yet (listing, hex) is held for them. The folder's family counts only with
+`use_system = false`. The built-in fonts stay behind every named font for the glyphs it
+lacks, then the system's fallback (CJK and the like). A family not found keeps the
+built-in font and raises one warning notice, once it is applied.
 
 ## 3. Status bar, log, notifications
 

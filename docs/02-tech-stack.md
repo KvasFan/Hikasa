@@ -82,7 +82,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `arboard` | M2 W3 (D-100, D-101): `clipboard://` works in the CLI and the window; see the M2 table below. |
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
-| a signal-handling crate | Ctrl-C terminates the CLI (no graceful cancel); every `--output` file is written atomically, so no partial report appears. |
+| a signal-handling crate | M2: `ctrlc` (D-159), see the M2 table below. In M1 Ctrl-C terminated the CLI; every `--output` file is written atomically, so no partial report appears. |
 | `tempfile` (dev-only) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). |
 
 Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
@@ -119,6 +119,8 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 | `bzip2` 0.6.1 (MIT OR Apache-2.0) | W5 | default (`libbz2-rs-sys`, a Rust port; no C) | bzip2 streams |
 | `lzma-rust2` **0.23.0** (Apache-2.0) | W5 | `default-features = false`, `std`, `encoder`, `optimization`, `xz` | xz streams. Not the newest 0.24.0: `zip` 9.2 needs `^0.23`, and one LZMA codec in the tree is the point. Moves when `zip` moves |
 | `zstd` **0.14.3** (BSD-3-Clause) | W5 | `default-features = false` | zstd streams. Not the 0.13 of the plan: `zip` 9.2 needs `^0.14.2`. `zstd-safe` 8.2.0, `zstd-sys` 2.1.2 (BSD-3-Clause), libzstd 1.5.7 |
+| `ctrlc` 3.5.2 (MIT OR Apache-2.0) | 0.1.91 | default (no `termination`: SIGTERM and SIGHUP end the process as before) | Ctrl-C of the CLI (D-159): `hikasa-cli` only, named only in `interrupt.rs`. New in `Cargo.lock`: `ctrlc`; `nix` and the Windows and Apple crates it needs were there |
+| `fontique` 0.11.1 (Apache-2.0 OR MIT) | 0.1.91 | `default-features = false`, `system`, `fontconfig-dlopen`, what eframe's system font fallback already compiles | the theme's named fonts (D-160): `hikasa-gui` only, named only in `fonts.rs`. No new package. On Linux it opens fontconfig at run time, so no build or start-up needs it; without it no family is found |
 
 New crates in `Cargo.lock` with W5 besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`,
 `hybrid-array`, `typenum`, `const-oid`, `crypto-common`, `zstd-safe`, `zstd-sys`, and the build-time `cc`.
@@ -424,12 +426,37 @@ figures are in the history of this file). Medians of three runs; the commands ar
 | Memory | peak RSS of G6 list | ≤ 150 MiB | **125.4 MiB** |
 | Memory | peak RSS of the index of 1 GiB through the binary (a stored stream, nothing spooled) | ≤ 64 MiB | **10.3 MiB** |
 | Memory | an index, on any input | `entries_max` × 216 bytes + `paths_max`, 462 MiB at the defaults (§1.5.5) | the worst shape the default limits allow, 995,000 paths of 250 bytes: **696 MiB** of peak RSS while it is built, 1.45 GiB when all of it is listed. 512 bytes per member holds for paths under about 296 bytes |
-| Cancel | `prepare`, a spool of a 1 GiB stream, a call waiting for an index or a decoder, a tree of 400,000 entries stop | within 100 ms | **under 1 ms** in a release build (load 16 to 40), `archive_cache.rs` |
+| Cancel (G4) | `prepare`, a spool of a 1 GiB stream, a call waiting for an index or a decoder, a tree of 400,000 entries stop | within 100 ms | re-measured for 0.1.91, release build, load about 110, `archive_cache.rs` with `--nocapture`: `prepare` **0.05 ms**, spool **1.2 ms**, a waiter **0.12 ms**, a reader **4.3 ms**, the tree **11 ms** at worst. The earlier "under 1 ms" (load 16 to 40) does not hold at this load; the gate does |
 
 G6 list writes a 39 MB document to a file on the test's disk. At load 250, with the disk busy, that write made the
 median 6.2 s (0.4 s of CPU; the same run to `/dev/null` took 0.30 s), so on a machine that busy the gate reads the disk.
 The first run was over the RSS budget (159 MiB): `write_json` held the whole document in memory, and now streams it
 after one pass to a sink, so a value that cannot be serialised still writes nothing.
+
+### 0.1.91: named fonts and the Options gate (D-160)
+
+Release builds under Xvfb with llvmpipe, one window with Home, `HIKASA_GUI_BENCH=options`, load 110 to 280 from other
+projects on the machine. Three runs each, in turn; PSS and anonymous memory in MiB.
+
+| Binary | PSS | anon | Gate < 120 MiB |
+|---|---|---|---|
+| 0.1.91, no named font | 122.6, 122.8, 121.5 | 40.5, 40.5, 40.6 | **not met** |
+| 0.1.91, editor font `DejaVu Sans Mono` | 122.6, 124.7, 121.5 | 40.1, 42.1, 40.1 | **not met** |
+| 7467fbb, the commit before both features | 120.2, 123.0, 122.8 | 38.5, 40.5, 40.5 | **not met** |
+| the 0.1.90 package (stripped) | 121.8, 120.3, 110.0 | 40.5, 38.5, 38.5 | not met in two of three |
+
+`perf_gate options_memory` itself gave 137.0 MiB (anon 40.5) on an unstripped build at load 215, where one run of the
+named-font test gave 133.5 (anon 42.0). So **the gate does not hold on this machine today, and it did not before these
+features**: the W4c figure of 105.4 MiB (anon 41.4) does not reproduce. The anonymous part has not moved; the excess is
+the file-backed part, 80 to 96 MiB against 64 then. It swung by 10 MiB between runs of one binary within minutes, as a
+proportional share does when other processes map the same libraries or leave them, and stripping took off about 2 MiB.
+The cause is not established; the limit is left as it is.
+
+A named font adds no measurable PSS and at most 1.6 MiB of anonymous memory, in the size of the runs' own noise: the
+enumeration is dropped after the lookup and the font file stays mapped, here 343 KiB. A lookup on this machine (1,247
+font files through fontconfig) takes **221 ms** the first time in a process and **18 ms** after that, on its own thread;
+the window shows the built-in font until it answers. The `ctx.set_fonts` of an apply runs on the UI thread and was not
+timed; it happens once per change of family, never in a frame of its own.
 
 ## 3. Crates explicitly rejected
 

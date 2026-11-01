@@ -68,7 +68,7 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   `--stdin-name`, else `stdin.txt`) and sends that absolute path; with `--wait` the file is
   deleted after the view closes. If the waiting CLI is interrupted (Ctrl-C, a signal), the
   spooled file and its numbered folder stay in `<cache>/stdin/` and may be deleted by hand
-  (the CLI installs no signal handler). *M2 W3 (D-101, revises D-49):* `gui open clipboard://`
+  (`gui open` runs no job, so no handler is armed, D-159). *M2 W3 (D-101, revises D-49):* `gui open clipboard://`
   and `--gui` with `clipboard://` send `clipboard://` verbatim; the GUI reads **its own**
   clipboard when it opens the view (the CLI never reads it, so it may run headless); no or an
   empty clipboard in the GUI is answered `invalid_request` (exit 100). Rules files may still not
@@ -181,6 +181,13 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
     same"); `--help` and `--version` exit 0. A panic is caught and exits **100**, never
     101 (101 means "conflicts, output not written"). A broken pipe on stdout stops the
     output and keeps the exit code that was computed.
+  - *M2, Ctrl-C (D-159):* while a command runs a job (a comparison, `vfs ls`, `cat`, `cp`,
+    `mv`, `rm`, `mkdir`, `touch`), the first Ctrl-C cancels it: a rebuild aborts, removes its
+    temporary and lock files and leaves the archive as it was; a `vfs` operation reports its
+    items as usual, those not reached as `not_run`. The command exits **100**. A second
+    Ctrl-C exits 100 at once, as a kill would: a rebuild it stops leaves its files, which the
+    next rebuild of that archive removes. A command without a job ends at the first Ctrl-C,
+    by the signal; SIGTERM always does.
 
 - **CLI-005** (P0): Quick Compare dialog on startup (program option): when launched
   with two files, show a summary dialog (binary or rules-based) instead of the view;
