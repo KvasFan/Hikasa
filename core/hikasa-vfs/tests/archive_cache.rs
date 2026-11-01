@@ -431,16 +431,20 @@ fn cancel_of_prepare_and_spool_of_a_1_gib_stream() {
     };
     std::thread::scope(|scope| {
         let (vfs, root) = (&memory.vfs, &root);
-        let worker = scope.spawn(move || vfs.prepare(root, &ctl));
+        let worker = scope.spawn(move || (vfs.prepare(root, &ctl), Instant::now()));
         while seen.0.load(Ordering::Relaxed) == 0 && !worker.is_finished() {
             std::thread::yield_now();
         }
+        let asked = Instant::now();
         cancel.cancel();
         let at_cancel = seen.0.load(Ordering::Relaxed);
-        let result = worker.join().unwrap();
+        let (result, stopped) = worker.join().unwrap();
         assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
         let more = seen.0.load(Ordering::Relaxed) - at_cancel;
-        println!("prepare went on for {more} bytes");
+        println!(
+            "prepare went on for {more} bytes, {:?}",
+            stopped.saturating_duration_since(asked)
+        );
         assert!(more <= AFTER_CANCEL, "{more}");
     });
 
@@ -452,20 +456,25 @@ fn cancel_of_prepare_and_spool_of_a_1_gib_stream() {
     let cancel = CancelToken::new();
     std::thread::scope(|scope| {
         let (vfs, member, token) = (&memory.vfs, &member, &cancel);
-        let worker = scope.spawn(move || vfs.open_read_with(member, token).map(drop));
+        let worker = scope.spawn(move || (vfs.open_read_with(member, token).map(drop), Instant::now()));
         // The spool grows in the cache as it goes.
         while memory.vfs.cache_used() == 0 && !worker.is_finished() {
             std::thread::yield_now();
         }
+        let asked = Instant::now();
         cancel.cancel();
         let at_cancel = memory.vfs.cache_used();
         let mut most = at_cancel;
         while !worker.is_finished() {
             most = most.max(memory.vfs.cache_used());
         }
-        let result = worker.join().unwrap();
+        let (result, stopped) = worker.join().unwrap();
         assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
-        println!("the spool went on for {} bytes", most - at_cancel);
+        println!(
+            "the spool went on for {} bytes, {:?}",
+            most - at_cancel,
+            stopped.saturating_duration_since(asked)
+        );
         assert!(most - at_cancel <= AFTER_CANCEL, "{}", most - at_cancel);
     });
     assert_eq!(
