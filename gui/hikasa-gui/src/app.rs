@@ -587,7 +587,12 @@ impl AppCore {
             .spawn(move || {
                 let found = run_guarded(|| Ok(source.load(&asked)))
                     .unwrap_or_else(|_| vec![None; asked.len()]);
-                mailbox.post(UiMsg::Fonts(asked, found));
+                let found = found.into_iter().map(|font| {
+                    font.filter(|font| {
+                        run_guarded(|| Ok(crate::ui::fonts::draws(font))).unwrap_or(false)
+                    })
+                });
+                mailbox.post(UiMsg::Fonts(asked, found.collect()));
             });
         if let Err(e) = started {
             tracing::warn!(target: "hikasa::gui", "cannot start the fonts' thread: {e}");

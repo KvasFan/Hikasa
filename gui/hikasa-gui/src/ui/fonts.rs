@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily};
 
-use crate::fonts::FontLoader;
+use crate::fonts::{FontLoader, LoadedFont};
 use crate::options::theme_page::FontSlot;
 
 /// The egui family of a slot.
@@ -50,6 +50,51 @@ pub fn definitions(loader: &FontLoader) -> FontDefinitions {
     definitions
 }
 
+/// True when `font` draws: a few glyphs of its own in a throwaway egui context, as the window would draw them. egui
+/// parses a font, and panics over one that it cannot take, on the thread that draws with it. So this runs on the fonts'
+/// thread under the panic boundary, and a font that fails stays away from the window. Glyphs not drawn here can still
+/// fail in the window: a file can be broken at any glyph, and only its first use tells (D-160).
+#[must_use]
+pub fn draws(font: &LoadedFont) -> bool {
+    const SAMPLE: &str =
+        "The quick brown fox jumps 0123456789 {}[]()<>/\\|_-+=*&%$#@!?;:'\",.~^ ÄÖüßéñ€…→ fi fl";
+    let name = "sample".to_owned();
+    let family = FontFamily::Name(Arc::from("sample"));
+    let mut definitions = FontDefinitions::empty();
+    definitions.font_data.insert(
+        name.clone(),
+        Arc::new(FontData::from_blob(Arc::clone(&font.bytes), font.index)),
+    );
+    definitions
+        .families
+        .insert(family.clone(), vec![name.clone()]);
+    definitions
+        .families
+        .insert(FontFamily::Proportional, vec![name.clone()]);
+    definitions
+        .families
+        .insert(FontFamily::Monospace, vec![name]);
+    let ctx = egui::Context::default();
+    ctx.set_fonts(definitions);
+    let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        for size in [9.0, 14.0, 21.5] {
+            let id = egui::FontId::new(size, family.clone());
+            ui.painter().text(
+                egui::pos2(1.0, 1.0),
+                egui::Align2::LEFT_TOP,
+                SAMPLE,
+                id.clone(),
+                egui::Color32::WHITE,
+            );
+            ui.label(egui::RichText::new(SAMPLE).font(id));
+        }
+    });
+    out.textures_delta.clear();
+    true
+}
+
 /// The family each slot draws with now.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SlotFonts {
@@ -86,7 +131,7 @@ mod tests {
     use egui::{FontId, RawInput};
 
     use super::*;
-    use crate::fonts::{FontStep, LoadedFont};
+    use crate::fonts::{FontSource as _, FontStep, LoadedFont};
 
     /// A loader whose editor and folder slots show the bundled `Hack`.
     fn with_hack() -> FontLoader {
@@ -110,6 +155,74 @@ mod tests {
     fn pass(ctx: &egui::Context) {
         let mut out = ctx.run_ui(RawInput::default(), |_| {});
         out.textures_delta.clear();
+    }
+
+    /// The fonts of a broken disk: truncated, with bytes changed, with a table's offset or length out of reach. A font
+    /// the lookup takes and `draws` passes then draws in a window's definitions; one that fails does so inside the
+    /// boundary. A panic in this test is a font that got past both.
+    #[test]
+    fn a_mutated_font_stops_at_the_lookup_or_at_the_throwaway_drawing() {
+        let base = crate::fonts::tests::bundled();
+        let directory_end = 12 + 16 * usize::from(u16::from_be_bytes([base[4], base[5]]));
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            usize::try_from(state >> 16).unwrap()
+        };
+        let mut drawn = 0;
+        for round in 0..60 {
+            let mut data = base.clone();
+            match round % 4 {
+                0 => data.truncate((random() % data.len()).max(directory_end)),
+                1 => {
+                    for _ in 0..200 {
+                        let at = random() % data.len();
+                        data[at] = random() as u8;
+                    }
+                }
+                2 => {
+                    for _ in 0..8 {
+                        let at = 12 + random() % (directory_end - 12);
+                        data[at] = random() as u8;
+                    }
+                }
+                _ => {
+                    let table = 12 + 16 * (random() % ((directory_end - 12) / 16));
+                    data[table + 8 + random() % 8] = 0xff;
+                }
+            }
+            let source = crate::fonts::DataFonts::new(vec![data]);
+            let family = "Hack".to_owned();
+            let found = source.load(std::slice::from_ref(&family)).remove(0);
+            let Some(font) = found else { continue };
+            if !hikasa_session::run_guarded(|| Ok(draws(&font))).unwrap_or(false) {
+                continue;
+            }
+            drawn += 1;
+            let mut loader = FontLoader::new(Arc::new(crate::fonts::NoFonts));
+            loader.want([family.clone(), String::new(), String::new(), String::new()]);
+            loader.finish(vec![family], vec![Some(font)]);
+            let ctx = egui::Context::default();
+            ctx.set_fonts(definitions(&loader));
+            pass(&ctx);
+            let mut out = ctx.run_ui(RawInput::default(), |ui| {
+                let id = FontId::new(14.0, slot_family(FontSlot::Editor));
+                ui.label(egui::RichText::new("The quick brown fox").font(id));
+            });
+            out.textures_delta.clear();
+        }
+        assert!(drawn > 0, "some of them are still fonts");
+    }
+
+    #[test]
+    fn the_bundled_font_draws() {
+        let font = LoadedFont {
+            bytes: Arc::new(crate::fonts::tests::bundled()),
+            index: 0,
+        };
+        assert!(draws(&font));
     }
 
     #[test]

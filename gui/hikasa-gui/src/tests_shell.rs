@@ -821,6 +821,58 @@ fn a_font_family_gives_one_notice_and_the_built_in_font() {
     world.settle(&mut app);
 }
 
+/// A font that passes every look at its file and panics where it is drawn: it answers as not found, from the fonts'
+/// thread, and the window keeps the built-in font. Without the throwaway drawing this one kills the window at its first
+/// frame, on every start.
+#[test]
+fn a_font_that_cannot_be_drawn_stays_away_from_the_window() {
+    struct Broken;
+    impl crate::fonts::FontSource for Broken {
+        fn load(&self, families: &[String]) -> Vec<Option<crate::fonts::LoadedFont>> {
+            let bytes: crate::fonts::FontBytes = Arc::new(font_of_no_size());
+            families
+                .iter()
+                .map(|_| {
+                    Some(crate::fonts::LoadedFont {
+                        bytes: Arc::clone(&bytes),
+                        index: 0,
+                    })
+                })
+                .collect()
+        }
+    }
+    let world = World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.editor]\nfamily = \"Broken Mono\"\n",
+    )]);
+    let mut app = world.app_with_fonts(Arc::new(Broken));
+    let root = app.root();
+    let effects = world.settle(&mut app);
+    assert!(!effects.contains(&Effect::ApplyFonts));
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
+    let notices = app.window(root).unwrap().notices.all();
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.text.contains("Broken Mono"))
+            .count(),
+        1
+    );
+}
+
+/// The bundled font with no units per em: what epaint divides by.
+fn font_of_no_size() -> Vec<u8> {
+    let mut data = bundled_font();
+    let tables = usize::from(u16::from_be_bytes([data[4], data[5]]));
+    let head = (0..tables)
+        .map(|table| 12 + 16 * table)
+        .find(|&record| &data[record..record + 4] == b"head")
+        .expect("a head table");
+    let at = u32::from_be_bytes(data[head + 8..head + 12].try_into().unwrap()) as usize;
+    data[at + 18..at + 20].fill(0);
+    data
+}
+
 /// The font egui bundles, as a test's font file: its family is `Hack`.
 fn bundled_font() -> Vec<u8> {
     egui::FontDefinitions::default().font_data["Hack"]

@@ -61,8 +61,27 @@ impl FontSource for SystemFonts {
     }
 }
 
-/// The regular face of each family in `collection`. A file that cannot be read or parsed is a family not found: it
-/// never reaches the window, where a font is parsed on the UI thread.
+/// The units per em of face `index` of the font file `data`, from its `head` table. `None` when there is no such table.
+fn units_per_em(data: &[u8], index: u32) -> Option<u16> {
+    let u16_at = |at: usize| Some(u16::from_be_bytes(data.get(at..at + 2)?.try_into().ok()?));
+    let u32_at = |at: usize| Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?));
+    let face = if data.get(..4)? == b"ttcf" {
+        u32_at(12 + 4 * index as usize)? as usize
+    } else {
+        0
+    };
+    let tables = u16_at(face.checked_add(4)?)?;
+    (0..usize::from(tables)).find_map(|table| {
+        let record = face + 12 + 16 * table;
+        (data.get(record..record + 4)? == b"head")
+            .then(|| u32_at(record + 8))
+            .flatten()
+            .and_then(|head| u16_at(head as usize + 18))
+    })
+}
+
+/// The regular face of each family in `collection`. A file that cannot be read or parsed is a family not found, and so
+/// is a font of no size: every length in a font is a share of its units per em, and the window divides by them.
 fn lookup(mut collection: Collection, families: &[String]) -> Vec<Option<LoadedFont>> {
     let mut cache = SourceCache::new(SourceCacheOptions::default());
     families
@@ -79,8 +98,10 @@ fn lookup(mut collection: Collection, families: &[String]) -> Vec<Option<LoadedF
                 .or_else(|| info.default_font())?;
             fontique::FontInfo::from_source(font.source().clone(), font.index())?;
             let blob: Blob<u8> = font.load(Some(&mut cache))?;
+            let bytes = blob.into_raw_parts().0;
+            units_per_em((*bytes).as_ref(), font.index()).filter(|&units| units > 0)?;
             Some(LoadedFont {
-                bytes: blob.into_raw_parts().0,
+                bytes,
                 index: font.index(),
             })
         })
@@ -281,7 +302,7 @@ impl FontSource for DataFonts {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A font the test harness has without the system's help: the one egui bundles, whose family is `Hack`.
@@ -315,6 +336,26 @@ mod tests {
         assert_eq!((*first.bytes).as_ref(), bundled().as_slice());
         assert!(found[1].is_some(), "family names ignore case");
         assert!(found[2].is_none());
+    }
+
+    /// `bundled()` with its units per em set to `units`.
+    pub(crate) fn with_units(units: u16) -> Vec<u8> {
+        let mut data = bundled();
+        let tables = usize::from(u16::from_be_bytes([data[4], data[5]]));
+        let head = (0..tables)
+            .map(|table| 12 + 16 * table)
+            .find(|&record| &data[record..record + 4] == b"head")
+            .expect("a head table");
+        let at = u32::from_be_bytes(data[head + 8..head + 12].try_into().unwrap()) as usize;
+        data[at + 18..at + 20].copy_from_slice(&units.to_be_bytes());
+        data
+    }
+
+    #[test]
+    fn a_font_of_no_size_is_no_family() {
+        assert_eq!(units_per_em(&bundled(), 0), Some(2048));
+        let source = DataFonts::new(vec![with_units(0)]);
+        assert!(source.load(&["Hack".into()])[0].is_none());
     }
 
     #[test]
