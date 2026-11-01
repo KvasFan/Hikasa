@@ -1535,6 +1535,8 @@ fn debug_events_reach_the_mailbox_only_with_debug_messages() {
     use tracing_subscriber::layer::SubscriberExt as _;
     let world = World::new();
     let mut app = world.app(None);
+    // What the first view's jobs post is not what this looks for.
+    world.settle(&mut app);
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
     app.set_debug_flag(Arc::clone(&flag));
     assert!(
