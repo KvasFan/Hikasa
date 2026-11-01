@@ -45,7 +45,7 @@ Moved to M2 (done in M2 wave 0):
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Version 0.1.90 is a pre-release of 0.2.0 with waves 0–4 and the packages;
+contract `docs/design/m2-contracts.md`. Version 0.1.91 is a pre-release of 0.2.0 with waves 0–5 and the packages;
 0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
 `xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
 typed, versioned and written sparsely with unknown keys kept, change detection by
@@ -67,7 +67,7 @@ Toolbars/Shortcuts/Menus page and the theme editor with live preview, the Export
 GPU run still open, docs/02); wave 5a (archives, read: zip, tar, compressed tar and single streams through
 `ArchiveVfs`, nesting, the temp cache, FC-015 and FC-025 over archive sides, D-135…D-155, reviewed against hostile input: cache sessions, index memory, modes
 on copy-out, rule 12, G4 on the main paths, the scan budget; wave 5b (archives, write: batches, the overlay, rebuilds that
-keep what they did not touch as bytes, `create_archive`, the write capabilities, D-148…D-150, the review's D-156…D-158; wave 5 complete).
+keep what they did not touch as bytes, `create_archive`, the write capabilities, D-148…D-150, the review's D-156…D-158; wave 5 complete); 0.1.91 also brings Ctrl-C in the CLI (D-159) and the theme's named fonts (D-160).
 
 - Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
   theming light/dark, commands catalogue with customizable shortcuts.

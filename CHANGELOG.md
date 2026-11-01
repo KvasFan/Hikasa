@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+## 0.1.91 (2026-11-01, pre-release)
+
 ### Added
+- **Ctrl-C in the command line.** The first Ctrl-C cancels a running comparison or `vfs` operation: an archive being
+  rewritten stays as it was, its temporary and lock files go, and the command exits 100. A second Ctrl-C exits 100 at
+  once. Any other command ends at the first Ctrl-C, as before; SIGTERM too.
+- **Named fonts.** The four font families of `theme.toml` and the Fonts page are looked up among the system's fonts, off
+  the window's thread and only when a family is named. The built-in fonts stay behind them for the glyphs a font lacks,
+  then the system's fallback, so icons and CJK keep working. A family that is not found keeps the built-in font, with one
+  notice. Listing and hex fonts load and wait for their views.
 - **Writes inside archives.** `hikasa vfs cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members of zip and the
   tar family, nested ones too: `vfs cp -p notes.txt a.zip/docs/`, `vfs mv a.zip/old a.zip/new`. An archive is rewritten
   once per operation, to a temporary file next to it, which replaces it in one step. `vfs mkdir new.zip` makes an empty
