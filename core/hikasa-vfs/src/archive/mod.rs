@@ -1626,11 +1626,12 @@ mod tests {
     use hikasa_core::Classify;
 
     fn spec_of(name: &str) -> Spec {
-        Spec::Local(hikasa_core::LocalPath::new(PathBuf::from(name)).unwrap())
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        Spec::Local(hikasa_core::LocalPath::new(PathBuf::from(root).join(name)).unwrap())
     }
 
     fn slot_of(id: u64, members: usize, last_use: u64) -> Arc<Slot> {
-        let outer = spec_of("/a.zip");
+        let outer = spec_of("a.zip");
         Arc::new(Slot {
             id,
             outer,
@@ -1647,7 +1648,7 @@ mod tests {
     fn indexes_are_trimmed_by_the_running_total() {
         let cache = Cache::default();
         let mut indexes = Indexes::default();
-        let spec = |n: u64| spec_of(&format!("/{n}.zip"));
+        let spec = |n: u64| spec_of(&format!("{n}.zip"));
         for n in 0..4 {
             indexes.slots.insert(spec(n), slot_of(n, 10, n));
             indexes.members += 10;

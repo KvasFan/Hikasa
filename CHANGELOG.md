@@ -63,6 +63,7 @@
 
 ### Fixed
 - First run: no more "File formats reloaded" notices for the program's own format files.
+- Writes to a zip on Windows keep the Unix mode of a member, and the same input gives the same archive on every OS.
 - Folder views: a large folder font widens the size and time columns, which ran over each other from about size 16.
 - Home follows a session deleted or changed by the command line at the next 2 s poll, without a focus change.
 - Options search: the page follows the search, and no page shows when nothing matches.

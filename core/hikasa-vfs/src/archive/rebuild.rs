@@ -1363,7 +1363,10 @@ fn file_options(
     now: Option<FileTime>,
     zone: &jiff::tz::TimeZone,
 ) -> Result<FullFileOptions<'static, 'static>, zip::result::ZipError> {
+    // The crate's default host is the one it runs on, and a reader takes a mode only from a Unix host: left to it, a
+    // member written on Windows loses its mode. The same input gives the same archive on every OS.
     let mut options = FullFileOptions::default()
+        .system(zip::System::Unix)
         .compression_method(CompressionMethod::Deflated)
         .compression_level(Some(DEFLATE_LEVEL));
     if let Some(mtime) = item.mtime.or(now) {
