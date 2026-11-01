@@ -63,6 +63,7 @@
 
 ### Fixed
 - First run: no more "File formats reloaded" notices for the program's own format files.
+- Folder views: a large folder font widens the size and time columns, which ran over each other from about size 16.
 - Home follows a session deleted or changed by the command line at the next 2 s poll, without a focus change.
 - Options search: the page follows the search, and no page shows when nothing matches.
 - Dialogs: buttons sit at the bottom of the wizards, lists take the free height, and a dialog moves by its title bar.
