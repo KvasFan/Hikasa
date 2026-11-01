@@ -29,6 +29,7 @@ mod commands;
 mod dialog;
 mod dnd;
 mod folder_view;
+mod fonts;
 mod home;
 mod ipc;
 mod job;
@@ -265,7 +266,13 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
     let deferred =
         Deferred::materialize_formats(&service, watch.as_ref().map(|(_, link)| link.clone()));
-    let mut app = AppCore::new(service, shared, mailbox.clone(), handle);
+    let mut app = AppCore::new(
+        service,
+        shared,
+        mailbox.clone(),
+        handle,
+        Arc::new(fonts::SystemFonts),
+    );
     app.set_debug_flag(debug);
     let mut bench_state = bench.map(|kind| BenchState::new(kind, process_start));
     if bench.is_some_and(|b| b != BenchKind::Options) && initial.is_none() && !named {

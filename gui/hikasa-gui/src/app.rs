@@ -22,7 +22,7 @@ use hikasa_session::settings::{
     ChangeKind, ConfigChange, FileOutcome, LoadMode, Options, Scheme, SettingsChanges,
     SettingsSnapshot, Shortcut, State, ThemeSelection, parse_key,
 };
-use hikasa_session::{ApiError, Service};
+use hikasa_session::{ApiError, Service, run_guarded};
 
 use crate::commands::{CommandId, CommandTables, Ctx, FocusArea, HintTiming, Scope, lookup};
 use crate::dialog::{
@@ -30,6 +30,7 @@ use crate::dialog::{
 };
 use crate::dnd::{DropOutcome, DropTarget, FieldId, decide};
 use crate::folder_view::FolderViewModel;
+use crate::fonts::{FontLoader, FontSource, FontStep, LoadedFont, named_families};
 use crate::home::HomeOpen;
 use crate::job::Job;
 use crate::mailbox::Mailbox;
@@ -92,6 +93,8 @@ pub enum UiMsg {
     Wake,
     /// The watch thread found changes (D-117).
     Watch(Vec<WatchEvent>),
+    /// The fonts' thread answered (D-160): one font or `None` per family asked.
+    Fonts(Vec<String>, Vec<Option<LoadedFont>>),
     /// A `hikasa::*` tracing event at debug level (the log book with `debug_messages`, D-116).
     Debug(String),
 }
@@ -111,8 +114,10 @@ pub enum Effect {
     CloseViewport(WindowId),
     /// Apply this geometry to a window (the root swap, D-106).
     Geometry(WindowId, WindowState),
-    /// The theme changed: recompute the palette, visuals and fonts (never per frame, D-113).
+    /// The theme changed: recompute the palette, visuals and font sizes (never per frame, D-113).
     ApplyTheme,
+    /// The fonts the slots show changed: rebuild egui's font definitions, once (D-160).
+    ApplyFonts,
     /// The command tables were rebuilt (`commands.toml` changed or was written).
     ApplyCommands,
     /// A prompt waits in this window: bring it to the front.
@@ -204,8 +209,8 @@ pub struct AppCore {
     log: LogBook,
     os_dark: bool,
     scheme: Scheme,
-    /// Font families already reported as unavailable (D-113: one notice per family).
-    warned_families: Vec<String>,
+    /// The theme's named fonts (D-160).
+    fonts: FontLoader,
     jobs: Vec<CoreJob>,
     /// The window's settings writes and reloads not started yet: they run one at a time, so two writes of one
     /// file never race between the stamp check and the write, and a reload never finishes after a later write.
@@ -277,6 +282,7 @@ impl AppCore {
         shared: Arc<Shared>,
         mailbox: Mailbox<UiMsg>,
         server: Option<ServerHandle>,
+        fonts: Arc<dyn FontSource>,
     ) -> AppCore {
         let mut problems = Vec::new();
         let settings = match service.settings_snapshot_partial() {
@@ -322,7 +328,7 @@ impl AppCore {
             log,
             os_dark: false,
             scheme,
-            warned_families: Vec::new(),
+            fonts: FontLoader::new(fonts),
             jobs: Vec::new(),
             queued_settings: std::collections::VecDeque::new(),
             settings_issued: 0,
@@ -371,7 +377,8 @@ impl AppCore {
                 LogKind::Warning,
             );
         }
-        app.check_fonts();
+        // A font's effect comes through the mailbox once its lookup answers; the first frames show the built-in font.
+        let _ = app.check_fonts();
         app
     }
 
@@ -460,6 +467,11 @@ impl AppCore {
     }
 
     /// `theme.toml` (fonts).
+    pub fn fonts(&self) -> &FontLoader {
+        &self.fonts
+    }
+
+    /// The `theme.toml` in force: the Options dialog's working copy while it previews (D-130).
     pub fn theme(&self) -> &ThemeSelection {
         match &self.preview {
             Some(preview) => &preview.theme,
@@ -531,30 +543,56 @@ impl AppCore {
         }
     }
 
-    /// D-113: a non-empty font family is not available (no font discovery): one warning notice per family.
-    fn check_fonts(&mut self) {
-        let fonts = &self.settings.theme.value().fonts;
-        let families = [
-            fonts.editor.family.clone(),
-            fonts.listing.family.clone(),
-            fonts.hex.family.clone(),
-            fonts.folder.family.clone(),
-        ];
-        for family in families {
-            if family.is_empty() || self.warned_families.contains(&family) {
-                continue;
+    /// D-160: the families of the theme on screen go to the loader, on their own thread when they need a lookup. The
+    /// Options dialog's preview counts, so a family shows as it is typed; only the applied theme reports one that is
+    /// not found, not the half of a name on its way.
+    fn check_fonts(&mut self) -> Vec<Effect> {
+        let step = self.fonts.want(named_families(&self.theme().fonts));
+        self.font_step(step)
+    }
+
+    fn font_step(&mut self, step: FontStep) -> Vec<Effect> {
+        let effects = match step {
+            FontStep::Stay => Vec::new(),
+            FontStep::Apply => vec![Effect::ApplyFonts],
+            FontStep::Load(families) => {
+                self.load_fonts(families);
+                Vec::new()
             }
-            self.warned_families.push(family.clone());
-            let window = self.focused();
-            let text = format!(
-                "The font family \"{family}\" is not available in this version; the built-in font is used."
-            );
-            self.notify(
-                window,
-                Notice::new(format!("font:{family}"), NoticeKind::Warning, text),
-                "theme",
-                LogKind::Warning,
-            );
+        };
+        if self.preview.is_none() {
+            for family in self.fonts.take_not_found() {
+                let window = self.focused();
+                let text = format!(
+                    "The font family \"{family}\" was not found; the built-in font is used."
+                );
+                self.notify(
+                    window,
+                    Notice::new(format!("font:{family}"), NoticeKind::Warning, text),
+                    "theme",
+                    LogKind::Warning,
+                );
+            }
+        }
+        effects
+    }
+
+    /// Looks `families` up off the UI thread (D-105); a lookup that fails in any way answers "not found".
+    fn load_fonts(&self, families: Vec<String>) {
+        let source = self.fonts.source();
+        let mailbox = self.mailbox.clone();
+        let asked = families.clone();
+        let started = std::thread::Builder::new()
+            .name("hikasa-fonts".into())
+            .spawn(move || {
+                let found = run_guarded(|| Ok(source.load(&asked)))
+                    .unwrap_or_else(|_| vec![None; asked.len()]);
+                mailbox.post(UiMsg::Fonts(asked, found));
+            });
+        if let Err(e) = started {
+            tracing::warn!(target: "hikasa::gui", "cannot start the fonts' thread: {e}");
+            let found = vec![None; families.len()];
+            self.mailbox.post(UiMsg::Fonts(families, found));
         }
     }
 
@@ -619,6 +657,7 @@ impl AppCore {
     /// True while a job of any view or of the core runs.
     pub fn busy(&self) -> bool {
         !self.jobs.is_empty()
+            || self.fonts.running()
             || !self.queued_settings.is_empty()
             || !self.queued_store.is_empty()
             || self.refresh_wanted
@@ -1007,6 +1046,10 @@ impl AppCore {
                 } else {
                     effects.extend(self.load_registered(*load, ids));
                 }
+            }
+            UiMsg::Fonts(asked, found) => {
+                let step = self.fonts.finish(asked, found);
+                effects.extend(self.font_step(step));
             }
             UiMsg::ImportPackage(path) => {
                 if !self.quitting {
@@ -2194,7 +2237,9 @@ impl AppCore {
         self.scheme = scheme;
         self.preview = Some(Preview { base, theme });
         if changed {
-            vec![Effect::ApplyTheme]
+            let mut effects = vec![Effect::ApplyTheme];
+            effects.extend(self.check_fonts());
+            effects
         } else {
             Vec::new()
         }
@@ -2216,7 +2261,7 @@ impl AppCore {
         {
             effects.push(Effect::ApplyTheme);
         }
-        self.check_fonts();
+        effects.extend(self.check_fonts());
         effects
     }
 
@@ -2812,7 +2857,7 @@ impl AppCore {
             }
         }
         effects.extend(self.reapply_theme());
-        self.check_fonts();
+        effects.extend(self.check_fonts());
         effects
     }
 

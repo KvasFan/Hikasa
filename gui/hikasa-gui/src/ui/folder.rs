@@ -73,7 +73,7 @@ pub fn show(
     status: &FolderStatus,
     dispatch: &dyn Fn(&Shortcut) -> Option<CommandId>,
     pal: &Palette,
-    tree_font: f32,
+    tree_font: &FontId,
     keys: bool,
 ) -> Vec<CommandId> {
     let mut run = Vec::new();
@@ -81,9 +81,9 @@ pub fn show(
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
     // The tree's font (`theme.toml [fonts.folder]`, D-113), kept within the fixed row height.
-    let tree_font = tree_font.clamp(8.0, 17.0);
-    let body_font = FontId::proportional(tree_font);
-    let small = FontId::proportional((tree_font - 1.0).max(7.0));
+    let tree_size = tree_font.size.clamp(8.0, 17.0);
+    let body_font = FontId::new(tree_size, tree_font.family.clone());
+    let small = FontId::new((tree_size - 1.0).max(7.0), tree_font.family.clone());
     let mono_small = FontId::monospace(12.0);
     let content_right = full.right() - BAR_W;
     let side_w = ((content_right - full.left() - MARK_W) / 2.0)

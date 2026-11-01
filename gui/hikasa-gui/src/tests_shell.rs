@@ -16,9 +16,11 @@ use crate::app::{AppCore, Effect, OpenTarget};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::ButtonRole;
 use crate::dnd::{DROP_ONE_MORE, DROP_ONE_OR_TWO, DropTarget, FieldId};
+use crate::fonts::DataFonts;
 use crate::ipc::GuiHandler;
 use crate::menus::{MenuContext, menu_bar, render_text, tab_menu};
 use crate::notify::{NoticeAction, NoticeKind};
+use crate::options::theme_page::FontSlot;
 use crate::status::MessageKind;
 use crate::tests::{TestApp, World, folder_pair, text_pair};
 use crate::watch::{WatchEvent, Watcher};
@@ -785,8 +787,20 @@ fn a_font_family_gives_one_notice_and_the_built_in_font() {
         "theme.toml",
         "schema_version = 1\n[fonts.editor]\nfamily = \"Nowhere Mono\"\nsize = 14.0\n[fonts.hex]\nfamily = \"Nowhere Mono\"\n",
     )]);
-    let mut app = world.app(None);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
     let root = app.root();
+    let effects = world.settle(&mut app);
+    assert_eq!(
+        *source.asked.lock(),
+        [["Nowhere Mono".to_owned()]],
+        "one lookup"
+    );
+    assert!(
+        !effects.contains(&Effect::ApplyFonts),
+        "the built-in font stays"
+    );
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
     let notices: Vec<_> = app
         .window(root)
         .unwrap()
@@ -805,6 +819,94 @@ fn a_font_family_gives_one_notice_and_the_built_in_font() {
     };
     assert_eq!(m.font_px(), 14, "the editor size reaches the panes");
     world.settle(&mut app);
+}
+
+/// The font egui bundles, as a test's font file: its family is `Hack`.
+fn bundled_font() -> Vec<u8> {
+    egui::FontDefinitions::default().font_data["Hack"]
+        .bytes()
+        .to_vec()
+}
+
+fn font_apply_count(effects: &[Effect]) -> usize {
+    effects.iter().filter(|e| **e == Effect::ApplyFonts).count()
+}
+
+#[test]
+fn a_family_found_loads_off_the_ui_thread_and_applies_once() {
+    let world = World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.editor]\nfamily = \"hack\"\n[fonts.hex]\nfamily = \"Hack\"\n\
+         [fonts.folder]\nfamily = \"Hack\"\nuse_system = true\n",
+    )]);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
+    assert!(
+        app.fonts().font(FontSlot::Editor).is_none(),
+        "nothing before the answer"
+    );
+    let effects = world.settle(&mut app);
+    assert_eq!(font_apply_count(&effects), 1);
+    assert_eq!(
+        *source.asked.lock(),
+        [["hack".to_owned(), "Hack".to_owned()]]
+    );
+    assert!(app.fonts().font(FontSlot::Editor).is_some());
+    assert!(app.fonts().font(FontSlot::Hex).is_some());
+    assert!(app.fonts().font(FontSlot::Listing).is_none());
+    assert!(
+        app.fonts().font(FontSlot::Folder).is_none(),
+        "use_system wins"
+    );
+    let root = app.root();
+    assert!(
+        app.window(root)
+            .unwrap()
+            .notices
+            .all()
+            .iter()
+            .all(|n| !n.text.contains("ack")),
+        "no notice for a family found"
+    );
+}
+
+#[test]
+fn a_theme_change_applies_the_fonts_once_and_a_colour_change_never() {
+    let world = World::with_files(&[("theme.toml", "schema_version = 1\n")]);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
+    assert_eq!(font_apply_count(&world.settle(&mut app)), 0);
+    assert!(
+        source.asked.lock().is_empty(),
+        "built-in fonts look nothing up"
+    );
+
+    let (mut watcher, _link) = Watcher::new(world.service.clone());
+    let mut apply = |app: &mut TestApp, text: &str| {
+        // A change of size of the file, so that the watch sees it whatever the clock's grain.
+        world.write("config/theme.toml", text);
+        let events = watcher.poll_once().expect("polled");
+        assert!(!events.is_empty());
+        let mut effects = app.on_watch(events);
+        effects.extend(world.settle(app));
+        effects
+    };
+    let theme = "schema_version = 1\n[fonts.editor]\nfamily = \"Hack\"\n";
+    let effects = apply(&mut app, theme);
+    assert_eq!(font_apply_count(&effects), 1, "{effects:?}");
+    assert_eq!(source.asked.lock().len(), 1);
+
+    let effects = apply(&mut app, &format!("{theme}size = 15.0\n"));
+    assert_eq!(font_apply_count(&effects), 0, "the same family");
+    assert_eq!(
+        source.asked.lock().len(),
+        1,
+        "the same family is not looked up again"
+    );
+
+    let effects = apply(&mut app, "schema_version = 1\n");
+    assert_eq!(font_apply_count(&effects), 1, "back to the built-in font");
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
 }
 
 // ---- A4.7 status, jobs, messages, log -------------------------------------------------------------------------

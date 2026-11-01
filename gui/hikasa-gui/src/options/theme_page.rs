@@ -55,6 +55,16 @@ pub enum FontSlot {
     Folder,
 }
 
+impl FontSlot {
+    /// Every slot, in `theme.toml`'s order; a slot's value is its index here.
+    pub const ALL: [FontSlot; 4] = [
+        FontSlot::Editor,
+        FontSlot::Listing,
+        FontSlot::Hex,
+        FontSlot::Folder,
+    ];
+}
+
 impl OptionsDialog {
     /// The scheme files by name, the working copies.
     pub fn scheme_names(&self) -> Vec<String> {

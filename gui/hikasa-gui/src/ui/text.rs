@@ -6,8 +6,8 @@
 
 use egui::text::{ByteIndex, LayoutJob, LayoutSection, TextFormat};
 use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, EventFilter, FontId, Id, Key, Painter, Pos2, Rect,
-    Sense, Stroke, Ui, Vec2, pos2, vec2,
+    Align2, Color32, CornerRadius, CursorIcon, EventFilter, FontFamily, FontId, Id, Key, Painter,
+    Pos2, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2,
 };
 use hikasa_session::ipc::ViewId;
 
@@ -213,6 +213,7 @@ pub fn show(
     st: &mut TextUi,
     status: &TextStatus,
     pal: &Palette,
+    family: &FontFamily,
     dispatch: &dyn Fn(&hikasa_session::settings::Shortcut) -> Option<crate::commands::CommandId>,
     keys: bool,
 ) -> Vec<crate::commands::CommandId> {
@@ -306,7 +307,7 @@ pub fn show(
     );
     painter.rect_filled(body, CornerRadius::ZERO, pal.t_bg);
 
-    let font = FontId::monospace(font_px as f32);
+    let font = FontId::new(font_px as f32, family.clone());
     let lh = (font_px as f32 * 1.4).round().max(4.0);
     let cw = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'M')).max(1.0);
     let page = f64::from((body.height() / lh).floor().max(1.0));

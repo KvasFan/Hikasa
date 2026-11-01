@@ -9,6 +9,7 @@
 
 pub mod dialog;
 pub mod folder;
+pub mod fonts;
 pub mod help;
 pub mod hint;
 pub mod home;
@@ -42,9 +43,11 @@ use crate::commands::{CommandId, CommandTables, FocusArea, Scope};
 use crate::dnd::{DropTarget, FieldId};
 use crate::menus::{MenuContext, ToolItem, ToolbarMenuItem, menu_bar, tab_menu, toolbar_items};
 use crate::notify::NoticeAction;
+use crate::options::theme_page::FontSlot;
 use crate::startup::Deferred;
 use crate::ui::dialog::DialogInput;
 use crate::ui::folder::FolderUi;
+use crate::ui::fonts::SlotFonts;
 use crate::ui::hint::Hint as _;
 use crate::ui::home as ui_home;
 use crate::ui::log::LogAction;
@@ -105,6 +108,10 @@ pub struct HikasaApp {
     deferred: Deferred,
     closing: bool,
     palette: Palette,
+    /// The family of each font slot.
+    slot_fonts: SlotFonts,
+    /// What `slot_fonts` becomes when the definitions of [`Effect::ApplyFonts`] are in use.
+    next_fonts: Option<SlotFonts>,
     os_dark: Option<bool>,
     hover: Hover,
     placements: HashMap<WindowId, Placement>,
@@ -197,6 +204,8 @@ impl HikasaApp {
             deferred,
             closing: false,
             palette,
+            slot_fonts: SlotFonts::default(),
+            next_fonts: None,
             os_dark: None,
             hover: Hover::default(),
             placements: HashMap::new(),
@@ -231,6 +240,11 @@ impl HikasaApp {
                     self.palette =
                         Palette::from_scheme_base(self.core.scheme(), self.core.scheme_base());
                     set_theme(ctx, &self.palette, self.core.scheme());
+                }
+                Effect::ApplyFonts => {
+                    ctx.set_fonts(fonts::definitions(self.core.fonts()));
+                    // From the next frame: egui takes new definitions at the start of a pass.
+                    self.next_fonts = Some(SlotFonts::of(self.core.fonts()));
                 }
                 Effect::Geometry(window, g) => {
                     let target = if window == self.core.root() {
@@ -739,8 +753,10 @@ impl HikasaApp {
         let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
-            if f.use_system { 13.0 } else { f.size as f32 }
+            let size = if f.use_system { 13.0 } else { f.size as f32 };
+            egui::FontId::new(size, self.slot_fonts.family(FontSlot::Folder))
         };
+        let editor_family = self.slot_fonts.family(FontSlot::Editor);
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(background))
             .show(ui, |ui| {
@@ -788,7 +804,7 @@ impl HikasaApp {
                             tables.dispatch(Scope::Folder, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
                         for id in
-                            folder::show(ui, view, m, st, &s, &dispatch, &pal, tree_font, keys)
+                            folder::show(ui, view, m, st, &s, &dispatch, &pal, &tree_font, keys)
                         {
                             invocations.push(Invocation::new(id));
                         }
@@ -799,7 +815,9 @@ impl HikasaApp {
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
                             tables.dispatch(Scope::Text, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
-                        for id in text::show(ui, view, m, st, &s, &pal, &dispatch, keys) {
+                        for id in
+                            text::show(ui, view, m, st, &s, &pal, &editor_family, &dispatch, keys)
+                        {
                             invocations.push(Invocation::new(id));
                         }
                     }
@@ -1049,6 +1067,9 @@ impl HikasaApp {
 
     /// The work of a frame before drawing (eframe's `logic`): the OS theme, the mailbox, the jobs, the bench.
     fn step(&mut self, ctx: &egui::Context) {
+        if let Some(fonts) = self.next_fonts.take() {
+            self.slot_fonts = fonts;
+        }
         self.core.set_now(ctx.input(|i| i.time));
         self.core.set_timer_now(self.clock.elapsed().as_secs_f64());
         hint::set_timing(ctx, self.core.hints());

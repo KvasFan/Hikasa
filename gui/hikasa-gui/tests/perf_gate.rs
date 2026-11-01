@@ -42,7 +42,8 @@
 //!   with the file-backed share of Mesa).
 //!
 //! * `options_memory` (M2 W4c, D-132): one window with Home; `ProgramOptions`, every page shown once, then 60 idle
-//!   frames; the gate is PSS < 120 MiB.
+//!   frames; the gate is PSS < 120 MiB. `options_memory_named_font` (D-160) is the same with the theme's editor
+//!   font set to `HIKASA_PERF_FONT` (default `DejaVu Sans Mono`, a font of the machine): the cost of a named font.
 //!
 //! Every run requires `DISPLAY` and a software renderer (llvmpipe): the benchmarks never use the real display
 //! (D-132).
@@ -487,6 +488,26 @@ fn options_memory() {
         "Options: {} pages, PSS {pss:.1} MiB, anonymous {anonymous:.1} MiB",
         doc["pages"]
     );
+    assert!(pss > 0.0 && pss < 120.0, "memory gate: {pss} MiB");
+}
+
+/// `options_memory` with a named font of the machine (D-160): what one family costs. Same gate.
+#[test]
+#[ignore = "opens a window and needs a font of the machine: run in release with --ignored"]
+fn options_memory_named_font() {
+    let family = std::env::var("HIKASA_PERF_FONT").unwrap_or_else(|_| "DejaVu Sans Mono".into());
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = dir.path().join("config");
+    std::fs::create_dir_all(&config).expect("mkdir");
+    std::fs::write(
+        config.join("theme.toml"),
+        format!("schema_version = 1\n[fonts.editor]\nfamily = \"{family}\"\n"),
+    )
+    .expect("write");
+    let doc = bench_args("options", dir.path(), &[], &[]);
+    let pss = f(&doc["memory_settled"]["total_pss_mib"]);
+    let anonymous = f(&doc["memory_settled"]["gui_pss_anon_mib"]);
+    eprintln!("Options with {family}: PSS {pss:.1} MiB, anonymous {anonymous:.1} MiB");
     assert!(pss > 0.0 && pss < 120.0, "memory gate: {pss} MiB");
 }
 

@@ -110,6 +110,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # GUI toolkit (D-56 amended: egui/eframe, maintainer decision after the ARCH-GUI-003 measurements)
 eframe = "0.37"
 egui = "0.37"
+# Named fonts of the theme (D-160): the version and the feature set eframe's system font fallback already compiles,
+# so no new package. Named only in gui/hikasa-gui/src/fonts.rs.
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
 # --- dev / test ---
 tempfile = "3"

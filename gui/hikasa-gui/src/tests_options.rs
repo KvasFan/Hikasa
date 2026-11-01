@@ -18,6 +18,7 @@ use hikasa_session::settings::{
 use crate::app::{AppCore, Effect};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::{ButtonRole, Prompt};
+use crate::fonts::DataFonts;
 use crate::ipc::GuiHandler;
 use crate::menus::{MenuContext, menu_bar, render_text};
 use crate::notify::NoticeAction;
@@ -951,6 +952,49 @@ fn each_edit_previews_once_and_cancel_restores() {
     let effects = app.0.dialog_button(w, ButtonRole::Cancel);
     assert_eq!(count(&effects), 1, "Cancel restores");
     assert_eq!(*app.scheme(), saved);
+}
+
+/// A family being typed previews, one lookup at a time, and no half of a name raises a notice; Cancel goes back.
+#[test]
+fn a_family_typed_in_the_dialog_previews_without_notices() {
+    let world = World::new();
+    let bundled = egui::FontDefinitions::default().font_data["Hack"]
+        .bytes()
+        .to_vec();
+    let mut app = world.app_with_fonts(Arc::new(DataFonts::new(vec![bundled])));
+    let w = open(&mut app);
+    let applied = |effects: &[Effect]| effects.iter().filter(|e| **e == Effect::ApplyFonts).count();
+    let mut count = 0;
+    for typed in ["Ha", "Hac", "Hack"] {
+        dlg(&mut app, w).set_font_family(FontSlot::Editor, typed);
+        count += applied(&app.0.dialog_edited(w));
+        count += applied(&world.settle(&mut app));
+    }
+    assert_eq!(count, 1, "only the whole name shows");
+    assert!(app.fonts().font(FontSlot::Editor).is_some());
+    let family_notices = |app: &TestApp| {
+        let notices = app.window(w).unwrap().notices.all();
+        notices
+            .iter()
+            .filter(|n| n.text.contains("font family"))
+            .count()
+    };
+    assert_eq!(family_notices(&app), 0);
+
+    // A name that stays wrong is reported when it is applied, not while it is typed.
+    dlg(&mut app, w).set_font_family(FontSlot::Editor, "Nowhere");
+    let effects = app.0.dialog_edited(w);
+    let settled = world.settle(&mut app);
+    assert_eq!(
+        applied(&effects) + applied(&settled),
+        1,
+        "back to the built-in font"
+    );
+    assert_eq!(family_notices(&app), 0);
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
+    assert_eq!(applied(&app.0.dialog_button(w, ButtonRole::Cancel)), 0);
+    world.settle(&mut app);
+    assert_eq!(family_notices(&app), 0, "cancelled: the name never applied");
 }
 
 #[test]

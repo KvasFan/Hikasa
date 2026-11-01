@@ -217,6 +217,18 @@ impl World {
             Arc::clone(&self.shared),
             self.mailbox.clone(),
             server,
+            Arc::new(crate::fonts::NoFonts),
+        ))
+    }
+
+    /// Like [`World::app`], with the fonts of `source`.
+    pub(crate) fn app_with_fonts(&self, source: Arc<dyn crate::fonts::FontSource>) -> TestApp {
+        TestApp(AppCore::new(
+            self.service.clone(),
+            Arc::clone(&self.shared),
+            self.mailbox.clone(),
+            None,
+            source,
         ))
     }
 
