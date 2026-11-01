@@ -696,11 +696,40 @@ pub fn memory() -> Value {
         "gui_peak_rss_mib": mib(own.hwm_kib),
         "gui_pss_mib": mib(own.pss_kib),
         "gui_pss_anon_mib": mib(own.pss_anon_kib),
+        "own_mib": own_memory().map(mib),
         "total_pss_mib": mib(pss),
         "total_rss_mib": mib(rss),
         "total_peak_rss_mib": mib(hwm),
         "processes": children,
     })
+}
+
+/// Anonymous memory plus the pages of this binary, counted whole, from `/proc/self/smaps`. PSS shares a library's pages
+/// out among the processes that map it, so with a software renderer the same memory counts differently by who else runs
+/// (docs/02, 0.1.91); this leaves libraries out and depends on nobody else, which makes it the figure to compare between
+/// two runs. A measure beside the gates, not one of them.
+fn own_memory() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/self/smaps").ok()?;
+    let exe = std::env::current_exe().ok()?;
+    Some(own_of_smaps(&text, &exe.to_string_lossy()))
+}
+
+/// See [`own_memory`]: `exe` is the path of the binary in `smaps`.
+fn own_of_smaps(smaps: &str, exe: &str) -> u64 {
+    let mut total = 0;
+    let mut in_exe = false;
+    for line in smaps.lines() {
+        let mut words = line.split_whitespace();
+        let first = words.next().unwrap_or_default();
+        if first.contains('-') && !first.ends_with(':') {
+            in_exe = words.nth(4) == Some(exe);
+        } else if first == "Anonymous:" {
+            total += kib_field(line, "Anonymous:").unwrap_or(0);
+        } else if first == "Rss:" && in_exe {
+            total += kib_field(line, "Rss:").unwrap_or(0);
+        }
+    }
+    total
 }
 
 /// The largest anonymous regions of this process (`/proc/self/smaps`), to tell the heap from buffers: what a
@@ -855,6 +884,25 @@ mod tests {
             }
         }
         assert!((LIMIT_MIB - 381.47).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_own_figure_counts_anonymous_memory_and_the_binary_and_no_library() {
+        let smaps = "\
+55d0-55e0 r-xp 00000000 00:00 7  /opt/hikasa-gui
+Rss:                 100 kB
+Pss:                  10 kB
+Anonymous:             2 kB
+7f00-7f10 r-xp 00000000 00:00 8  /usr/lib/libgallium.so
+Rss:               90000 kB
+Pss:                 900 kB
+Anonymous:             4 kB
+7f10-7f20 rw-p 00000000 00:00 0
+Rss:                  30 kB
+Pss:                  30 kB
+Anonymous:            30 kB
+";
+        assert_eq!(own_of_smaps(smaps, "/opt/hikasa-gui"), 136);
     }
 
     #[test]

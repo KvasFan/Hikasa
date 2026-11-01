@@ -484,8 +484,9 @@ fn options_memory() {
     let doc = bench_args("options", dir.path(), &[], &[]);
     let pss = f(&doc["memory_settled"]["total_pss_mib"]);
     let anonymous = f(&doc["memory_settled"]["gui_pss_anon_mib"]);
+    let own = f(&doc["memory_settled"]["own_mib"]);
     eprintln!(
-        "Options: {} pages, PSS {pss:.1} MiB, anonymous {anonymous:.1} MiB",
+        "Options: {} pages, PSS {pss:.1} MiB, anonymous {anonymous:.1}, own {own:.1}",
         doc["pages"]
     );
     assert!(pss > 0.0 && pss < 120.0, "memory gate: {pss} MiB");
@@ -507,7 +508,8 @@ fn options_memory_named_font() {
     let doc = bench_args("options", dir.path(), &[], &[]);
     let pss = f(&doc["memory_settled"]["total_pss_mib"]);
     let anonymous = f(&doc["memory_settled"]["gui_pss_anon_mib"]);
-    eprintln!("Options with {family}: PSS {pss:.1} MiB, anonymous {anonymous:.1} MiB");
+    let own = f(&doc["memory_settled"]["own_mib"]);
+    eprintln!("Options with {family}: PSS {pss:.1} MiB, anonymous {anonymous:.1}, own {own:.1}");
     assert!(pss > 0.0 && pss < 120.0, "memory gate: {pss} MiB");
 }
 
