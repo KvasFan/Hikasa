@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-#[cfg(unix)]
 use common::archives::local;
 use common::archives::{
     OnDisk, OnMemory, RawEntry, RawTar, Seen, TreeData, bytes_of, chain_of, config, decompress,
