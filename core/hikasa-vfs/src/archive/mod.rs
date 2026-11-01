@@ -60,7 +60,7 @@ use tar_walk::{Damage, TarItem, TarKind, walk};
 use zip_read::{LINK_TARGET_MAX, ZipData, index_zip};
 
 use crate::caps::Capabilities;
-use crate::entry::{Attrs, Entry, EntryKind, FileName, UnixMeta};
+use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
     AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, ListOptions, Listing, NameOnly,
@@ -149,6 +149,8 @@ pub struct ArchiveCounters {
     pub cache_hits: u64,
     /// Plain tar members read as a range of the container.
     pub range_reads: u64,
+    /// Rebuilds that replaced an outermost file.
+    pub rebuilds: u64,
 }
 
 #[derive(Debug, Default)]
@@ -159,17 +161,30 @@ struct Counters {
     memory_reads: AtomicU64,
     cache_hits: AtomicU64,
     range_reads: AtomicU64,
+    rebuilds: AtomicU64,
 }
 
 fn count(counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
-/// The stamp of an outermost file.
+/// The stamp of an outermost file. The identity tells a file put in its place with the same size and time, where the
+/// back-end knows one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     len: u64,
     mtime: Option<FileTime>,
+    id: Option<FileId>,
+}
+
+impl Stamp {
+    fn of(entry: &Entry) -> Stamp {
+        Stamp {
+            len: entry.size,
+            mtime: entry.mtime,
+            id: entry.file_id,
+        }
+    }
 }
 
 /// The index of one archive at one stamp.
@@ -346,6 +361,7 @@ impl ArchiveVfs {
             memory_reads: get(&c.memory_reads),
             cache_hits: get(&c.cache_hits),
             range_reads: get(&c.range_reads),
+            rebuilds: get(&c.rebuilds),
         }
     }
 
@@ -411,10 +427,12 @@ impl Core {
         if entry.kind != EntryKind::File {
             return Err(corrupt(&outer.canonical(), "not a file"));
         }
-        let stamp = Stamp {
-            len: entry.size,
-            mtime: entry.mtime,
-        };
+        self.note_stamp(outer, Stamp::of(&entry));
+        Ok(config)
+    }
+
+    /// `stamp` is what `outer` is now: another one than the last drops its indexes and cache files.
+    fn note_stamp(&self, outer: &Spec, stamp: Stamp) {
         let mut indexes = lock(&self.indexes);
         if indexes.stamps.insert(outer.clone(), stamp) != Some(stamp) {
             let stale: Vec<Spec> = indexes
@@ -427,7 +445,6 @@ impl Core {
                 indexes.drop_slot(&key, &self.cache);
             }
         }
-        Ok(config)
     }
 
     /// The slot of `container`, created on first use.
@@ -1354,15 +1371,24 @@ impl Vfs for ArchiveVfs {
             return Err(op_unsupported(spec, VfsOp::SetTimes));
         }
         check_not_root(path, spec)?;
-        self.core.change(
-            spec,
-            VfsOp::SetTimes,
-            Below::Stay,
-            |overlay, scope| match times.modified {
-                Some(modified) => overlay.set_mtime(path, modified, scope),
-                None => Ok(()),
-            },
-        )
+        let mut clamped = false;
+        self.core
+            .change(spec, VfsOp::SetTimes, Below::Stay, |overlay, scope| {
+                let Some(modified) = times.modified else {
+                    return Ok(());
+                };
+                clamped = !fits_format(modified, scope.format);
+                overlay.set_mtime(path, modified, scope)
+            })?;
+        if clamped {
+            self.core.warn(
+                WarningCode::CapabilityMissing,
+                "this time does not fit the archive's format: the nearest it holds was stored"
+                    .to_owned(),
+                spec,
+            );
+        }
+        Ok(())
     }
 
     fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
@@ -1463,6 +1489,24 @@ impl Vfs for ArchiveVfs {
         std::mem::take(&mut *lock(&self.core.warnings))
     }
 
+    /// Records of `spec`'s path that it shadows. Asks nothing that a plan did not already ask.
+    fn shadows_of(&self, spec: &Spec) -> u64 {
+        let Spec::ArchiveMember { archive, member } = spec else {
+            return 0;
+        };
+        let config = self.core.config();
+        let Ok((_, index)) = self.core.index_of(archive, &config, Ctl::detached()) else {
+            return 0;
+        };
+        if index.tree.shadowed.is_empty() {
+            return 0;
+        }
+        index.tree.find(member).map_or(0, |node| {
+            let count = index.tree.shadowed.get(&node.record).copied();
+            u64::from(count.unwrap_or(0))
+        })
+    }
+
     fn begin(&self, at: &Spec) -> Result<(), VfsError> {
         self.core.begin(at)
     }
@@ -1477,6 +1521,16 @@ impl Vfs for ArchiveVfs {
 
     fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
         self.core.create_archive(spec)
+    }
+}
+
+/// True when a member's time reads back as `time`, whole seconds aside (§1.5.8): a zip's 0x5455 field and a tar header
+/// hold nothing before 1970, and the field nothing past 2106.
+fn fits_format(time: FileTime, format: ArchiveFormat) -> bool {
+    if format == ArchiveFormat::Zip {
+        time::unix_field(time).is_some()
+    } else {
+        time.unix_seconds() >= 0
     }
 }
 

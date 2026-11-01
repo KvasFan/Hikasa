@@ -10,13 +10,17 @@
 //!
 //! The lock of a batch is held for lookups only, never across I/O: the rebuild reads members through the same paths
 //! as any reader.
+//!
+//! Another process, or another back-end, is kept out by the writer's lock of the base ([`Vfs::lock_writer`]), held from
+//! the first moment of the batch to its end, so a stamp read inside it is the truth about every writer that takes that
+//! lock. The stamp still guards against writers that do not.
 
 use std::collections::HashMap;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
-use hikasa_core::{Ctl, FileTime, Spec};
+use hikasa_core::{Ctl, FileTime, Spec, WarningCode};
 
 use super::cache::{CacheFile, CacheWriter};
 use super::codec::{corrupt, no_panic};
@@ -27,10 +31,8 @@ use super::rebuild::{Rebuild, empty_archive};
 use super::{ArchiveConfig, Core, Index, Slot, Stamp, lock};
 use crate::entry::{Entry, EntryKind};
 use crate::error::{VfsError, VfsOp};
-use crate::vfs::{AtomicWrite, Finish, FollowLinks, WriteOptions, op_unsupported};
+use crate::vfs::{AtomicWrite, BUSY, Finish, FollowLinks, WriteLock, WriteOptions, op_unsupported};
 
-/// The reason of a change that meets another operation's batch (§1.5.10).
-const BUSY: &str = "another operation is changing this archive";
 /// The reason when the archive is not the one the batch started from (§1.5.10).
 const CHANGED: &str = "changed since the plan was made";
 
@@ -59,6 +61,16 @@ struct State {
     sealing: bool,
 }
 
+/// What the rebuilds of a batch have to say: warnings that count only once the archive is in place.
+#[derive(Debug, Default)]
+pub(super) struct Notes(Mutex<Vec<(Spec, WarningCode, String)>>);
+
+impl Notes {
+    pub(super) fn push(&self, spec: &Spec, code: WarningCode, message: String) {
+        lock(&self.0).push((spec.clone(), code, message));
+    }
+}
+
 /// The batch on one outermost file.
 #[derive(Debug)]
 pub(super) struct Batch {
@@ -66,6 +78,26 @@ pub(super) struct Batch {
     stamp: Stamp,
     owner: ThreadId,
     state: Mutex<State>,
+    notes: Notes,
+    /// The writer's lock of the file, until the batch ends.
+    writer_lock: Mutex<Option<Box<dyn WriteLock>>>,
+}
+
+/// Ends the batch of one change if that change does not come back.
+struct AbortUnlessEnded<'a> {
+    core: &'a Core,
+    batch: &'a Batch,
+    armed: bool,
+}
+
+impl Drop for AbortUnlessEnded<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self
+                .core
+                .end_batch(self.batch, Finish::Abort, Ctl::detached());
+        }
+    }
 }
 
 /// What a change does to nested archives kept below the path it names.
@@ -143,25 +175,36 @@ impl Core {
         if entry.kind != EntryKind::File {
             return Err(corrupt(&outer.canonical(), "not a file"));
         }
-        Ok(Stamp {
-            len: entry.size,
-            mtime: entry.mtime,
-        })
+        Ok(Stamp::of(&entry))
     }
 
-    fn open_batch(&self, outer: &Spec, stamp: Stamp) -> Result<Arc<Batch>, VfsError> {
+    /// Opens the batch on `outer`. The writer's lock comes first and the stamp second, so what the stamp says about the
+    /// file holds for the whole batch; `check` looks at it before the batch exists.
+    fn open_batch(
+        &self,
+        outer: &Spec,
+        check: impl FnOnce(Result<Stamp, VfsError>) -> Result<Stamp, VfsError>,
+    ) -> Result<Arc<Batch>, VfsError> {
+        let busy = || VfsError::Unavailable {
+            spec: outer.canonical(),
+            reason: BUSY.to_owned(),
+        };
+        if self.batch_of(outer).is_some() {
+            return Err(busy());
+        }
+        let writer_lock = self.base.lock_writer(outer)?;
+        let stamp = check(self.stamp_now(outer))?;
         let mut batches = lock(&self.batches);
         if batches.contains_key(outer) {
-            return Err(VfsError::Unavailable {
-                spec: outer.canonical(),
-                reason: BUSY.to_owned(),
-            });
+            return Err(busy());
         }
         let batch = Arc::new(Batch {
             outer: outer.clone(),
             stamp,
             owner: thread::current().id(),
             state: Mutex::default(),
+            notes: Notes::default(),
+            writer_lock: Mutex::new(writer_lock),
         });
         batches.insert(outer.clone(), Arc::clone(&batch));
         Ok(batch)
@@ -179,18 +222,18 @@ impl Core {
                 reason: BUSY.to_owned(),
             });
         }
-        let stamp = self.stamp_now(outer).map_err(|error| match error {
-            VfsError::NotFound { .. } => changed(outer),
-            other => other,
-        })?;
-        if lock(&self.indexes)
-            .stamps
-            .get(outer)
-            .is_some_and(|seen| *seen != stamp)
-        {
-            return Err(changed(outer));
-        }
-        self.open_batch(outer, stamp).map(drop)
+        self.open_batch(outer, |stamp| {
+            let stamp = stamp.map_err(|error| match error {
+                VfsError::NotFound { .. } => changed(outer),
+                other => other,
+            })?;
+            let seen = lock(&self.indexes).stamps.get(outer).copied();
+            if seen.is_some_and(|seen| seen != stamp) {
+                return Err(changed(outer));
+            }
+            Ok(stamp)
+        })
+        .map(drop)
     }
 
     /// The level of `archive` in `batch`, made on the first change.
@@ -241,9 +284,22 @@ impl Core {
                     reason: BUSY.to_owned(),
                 });
             }
-            None => (self.open_batch(outer, self.stamp_now(outer)?)?, true),
+            // Another writer may have finished between `enter` and the lock: an index of before it must not be used.
+            None => {
+                let batch = self.open_batch(outer, |stamp| {
+                    stamp.inspect(|stamp| self.note_stamp(outer, *stamp))
+                })?;
+                (batch, true)
+            }
+        };
+        let mut guard = AbortUnlessEnded {
+            core: self,
+            batch: &batch,
+            armed: own,
         };
         let done = self.apply_change(&batch, archive, member, below, &config, apply);
+        guard.armed = false;
+        drop(guard);
         if !own {
             return done;
         }
@@ -332,24 +388,45 @@ impl Core {
         config: &ArchiveConfig,
         ctl: Ctl<'_>,
     ) -> Result<(), VfsError> {
-        let mut inside: Vec<Spec> = lock(&batch.state)
-            .levels
-            .keys()
-            .filter(|spec| is_below(spec, archive, path))
-            .cloned()
-            .collect();
-        inside.sort_by_key(|spec| std::cmp::Reverse(spec.archive_depth()));
         lock(&batch.state).sealing = true;
-        let mut result = Ok(());
-        for spec in inside {
-            result = self.fold_level(batch, &spec, config, ctl);
-            if result.is_err() {
-                break;
-            }
+        let below = |spec: &Spec| is_below(spec, archive, path);
+        let result = self.fold_changed(batch, config, ctl, &below);
+        let mut state = lock(&batch.state);
+        state.sealing = false;
+        if result.is_ok() {
+            state.levels.retain(|spec, _| !below(spec));
+        }
+        result
+    }
+
+    /// Rebuilds the changed levels `wanted` picks into the levels around them, deepest first, until none is left. A
+    /// level with no change of its own gets one here, or comes into being, when a level inside it folds: so the set is
+    /// looked at again after each one.
+    fn fold_changed(
+        &self,
+        batch: &Batch,
+        config: &ArchiveConfig,
+        ctl: Ctl<'_>,
+        wanted: &dyn Fn(&Spec) -> bool,
+    ) -> Result<(), VfsError> {
+        loop {
+            let mut levels: Vec<Spec> = lock(&batch.state)
+                .levels
+                .keys()
+                .filter(|spec| wanted(spec))
+                .cloned()
+                .collect();
+            levels.sort_by_key(|spec| std::cmp::Reverse(spec.archive_depth()));
+            let next = levels.into_iter().find(|spec| {
+                self.level_of(batch, spec)
+                    .is_some_and(|view| view.overlay.changed(&view.index.tree))
+            });
+            let Some(spec) = next else {
+                return Ok(());
+            };
+            self.fold_level(batch, &spec, config, ctl)?;
             lock(&batch.state).levels.remove(&spec);
         }
-        lock(&batch.state).sealing = false;
-        result
     }
 
     /// A whole member is read: what changed inside it counts.
@@ -397,7 +474,7 @@ impl Core {
         if !view.overlay.changed(&view.index.tree) {
             return Ok(());
         }
-        let file = self.rebuild_to_stage(spec, &view, config, ctl)?;
+        let file = self.rebuild_to_stage(batch, spec, &view, config, ctl)?;
         self.ensure_level(batch, archive, config)?;
         let mut state = lock(&batch.state);
         let Some(parent) = state.levels.get_mut(&**archive) else {
@@ -412,7 +489,9 @@ impl Core {
             limits: config.limits,
             now: FileTime::from_unix(now.as_second(), now.subsec_nanosecond().unsigned_abs()),
         };
-        Arc::make_mut(&mut parent.overlay).put_rebuilt(member, file, &scope);
+        if !Arc::make_mut(&mut parent.overlay).put_rebuilt(member, file, &scope) {
+            return Err(corrupt(&spec.canonical(), "inconsistent batch"));
+        }
         drop(state);
         self.forget_below(archive, member);
         Ok(())
@@ -440,6 +519,7 @@ impl Core {
 
     fn rebuild_to_stage(
         &self,
+        batch: &Batch,
         spec: &Spec,
         view: &LevelView,
         config: &ArchiveConfig,
@@ -457,6 +537,7 @@ impl Core {
                 view,
                 config,
                 ctl,
+                notes: &batch.notes,
             }
             .run(&mut stage)
         })?;
@@ -471,12 +552,12 @@ impl Core {
         ctl: Ctl<'_>,
     ) -> Result<bool, VfsError> {
         let outer = &batch.outer;
-        let mut nested: Vec<Spec> = {
+        let levels: Vec<Spec> = {
             let mut state = lock(&batch.state);
             state.finishing = true;
             state.levels.keys().cloned().collect()
         };
-        let any_change = nested.iter().any(|spec| {
+        let any_change = levels.iter().any(|spec| {
             self.level_of(batch, spec)
                 .is_some_and(|view| view.overlay.changed(&view.index.tree))
         });
@@ -484,16 +565,12 @@ impl Core {
             return Ok(false);
         }
         self.check_stamp(batch)?;
-        nested.retain(|spec| spec != outer);
-        nested.sort_by_key(|spec| std::cmp::Reverse(spec.archive_depth()));
-        for spec in &nested {
-            self.fold_level(batch, spec, config, ctl)?;
-        }
-        let Some(view) = self.level_of(batch, outer) else {
-            return Ok(false);
-        };
+        self.fold_changed(batch, config, ctl, &|spec| spec != outer)?;
+        // A change reached this level, or it was made here: anything else would lose it behind a success.
+        let lost = || corrupt(&outer.canonical(), "inconsistent batch");
+        let view = self.level_of(batch, outer).ok_or_else(lost)?;
         if !view.overlay.changed(&view.index.tree) {
-            return Ok(false);
+            return Err(lost());
         }
         Core::check_rebuildable(&view, outer)?;
         let options = WriteOptions {
@@ -510,12 +587,17 @@ impl Core {
                 view: &view,
                 config,
                 ctl,
+                notes: &batch.notes,
             }
             .run(&mut *writer)
         })?;
         ctl.check()?;
+        // The sync can take long, and the look at the file must be the last thing before the rename.
+        writer.sync()?;
+        ctl.check()?;
         self.check_stamp(batch)?;
         writer.commit()?;
+        super::count(&self.counters.rebuilds);
         Ok(true)
     }
 
@@ -553,6 +635,12 @@ impl Core {
         drop(indexes);
         if wrote && let Ok(stamp) = self.stamp_now(outer) {
             lock(&self.indexes).stamps.insert(outer.clone(), stamp);
+        }
+        drop(lock(&batch.writer_lock).take());
+        if wrote {
+            for (spec, code, message) in std::mem::take(&mut *lock(&batch.notes.0)) {
+                self.warn(code, message, &spec);
+            }
         }
         result.map(drop)
     }
@@ -757,5 +845,52 @@ impl AtomicWrite for MemberWriter {
                 scope,
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::{ArchiveLimits, ArchiveMasks, ArchiveVfs};
+    use crate::memory::{MemMeta, MemoryVfs};
+    use crate::vfs::Vfs;
+    use hikasa_core::CaseSensitivity;
+    use std::path::PathBuf;
+
+    /// A panic in a primitive must not leave a batch nobody ends: every later change would be refused as busy.
+    #[test]
+    fn a_change_that_panics_ends_its_batch() {
+        let mem = Arc::new(MemoryVfs::new(CaseSensitivity::Sensitive));
+        let path = if cfg!(windows) { "C:\\a.zip" } else { "/a.zip" };
+        let empty = super::super::rebuild::empty_archive(ArchiveFormat::Zip).unwrap();
+        mem.insert_file(path, empty, MemMeta::default()).unwrap();
+        let masks = ArchiveFormat::ORDER.map(|format| {
+            let mask = if format == ArchiveFormat::Zip {
+                "*.zip"
+            } else {
+                ""
+            };
+            (format, mask.to_owned())
+        });
+        let vfs = ArchiveVfs::new(
+            Arc::clone(&mem) as Arc<dyn Vfs>,
+            crate::archive::ArchiveConfig {
+                masks: ArchiveMasks::new(masks).unwrap(),
+                limits: ArchiveLimits::default(),
+                clock: Arc::new(|| jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC)),
+                cache_root: PathBuf::from("unused"),
+            },
+        );
+        let file = Spec::Local(hikasa_core::LocalPath::new(PathBuf::from(path)).unwrap());
+        let spec = Spec::archive_member(file.clone(), "m");
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            vfs.core
+                .change(&spec, VfsOp::Mkdir, Below::Stay, |_, _| -> Result<(), _> {
+                    std::panic::resume_unwind(Box::new("a bug in a primitive"))
+                })
+        }));
+        assert!(panicked.is_err());
+        assert!(vfs.core.batch_of(&file).is_none(), "the batch ended");
+        vfs.create_dir(&spec, false).unwrap();
     }
 }
