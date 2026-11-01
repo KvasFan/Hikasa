@@ -3,7 +3,8 @@
 //! exactly one page (`pages.rs`); widgets follow `ValueKind`; values are checked live with the schemas' `validate`
 //! and Apply is disabled while a problem remains. Apply hands the changed files to the window's settings queue
 //! (`settings_save`, `IfUnchanged` per file); a `Conflict` asks *Overwrite* / *Reload this file (discard my edits)* /
-//! *Cancel*. Toolkit-free; `ui/options/` draws it.
+//! *Cancel*. A file the program cannot read (a newer `schema_version`) is never overwritten: the page says why and
+//! only *Reload* and *Cancel* are offered. Toolkit-free; `ui/options/` draws it.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -202,6 +203,20 @@ impl OptionsDialog {
         &self.problems
     }
 
+    /// What the page says about the files that cannot be read.
+    pub fn unreadable_notes(&self) -> Vec<String> {
+        self.snapshot
+            .unreadable
+            .iter()
+            .map(|(id, why)| {
+                format!(
+                    "{} cannot be read, so it is left as it is and this dialog cannot overwrite it: {why}",
+                    id.relative_path()
+                )
+            })
+            .collect()
+    }
+
     /// The value of a field, for the drawing layer.
     pub fn field(&self, path: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.path == path)
@@ -297,6 +312,21 @@ impl OptionsDialog {
         page.fields.iter().any(|def| {
             has(def.label) || has(def.path) || self.field(def.path).is_some_and(|f| has(f.opt))
         })
+    }
+
+    /// The search text changed: a page it does not match gives way to the first one that it does, so the page
+    /// shown is one the tree lists for this search (no match: the page stays, the drawing layer hides it).
+    pub fn search_changed(&mut self) {
+        let needle = self.search.trim().to_lowercase();
+        if needle.is_empty() {
+            return;
+        }
+        if page_of(self.page).is_some_and(|p| self.page_matches(p, &needle)) {
+            return;
+        }
+        if let Some(first) = PAGES.iter().find(|p| self.page_matches(p, &needle)) {
+            self.show_page(first.id);
+        }
     }
 
     /// Shows a page.
@@ -523,6 +553,7 @@ impl OptionsDialog {
     /// Every file without unapplied edits takes `fresh` (its stamp too, so a later edit of it meets no false
     /// `Conflict`).
     fn follow_now(&mut self, fresh: &SettingsSnapshot) {
+        self.snapshot.unreadable = fresh.unreadable.clone();
         let mut ids = Self::files_of(fresh);
         ids.extend(
             self.snapshot
@@ -553,6 +584,7 @@ impl OptionsDialog {
 
     fn on_saved(&mut self, dto: &SettingsSaveDto) {
         let mut conflicts = Vec::new();
+        let mut unreadable = BTreeMap::new();
         let mut errors = Vec::new();
         for (id, _, outcome) in &dto.files {
             match outcome {
@@ -560,6 +592,9 @@ impl OptionsDialog {
                     self.adopt_file(id, &dto.snapshot);
                 }
                 FileOutcome::Conflict => conflicts.push(id.clone()),
+                FileOutcome::Unreadable(why) => {
+                    unreadable.insert(id.clone(), why.clone());
+                }
                 FileOutcome::Invalid(problems) => {
                     for p in problems {
                         errors.push(format!("{id}: {}: {}", p.key, p.message));
@@ -570,7 +605,14 @@ impl OptionsDialog {
         }
         self.follow_now(&dto.snapshot);
         self.after_adopt();
-        if let Some(e) = &dto.reread_error {
+        let refused: Vec<FileId> = unreadable.keys().cloned().collect();
+        self.snapshot.unreadable.extend(unreadable);
+        // A file the page already names as unreadable fails every read back: nothing new to say, and OK may close.
+        if let Some(e) = dto
+            .reread_error
+            .as_ref()
+            .filter(|_| self.snapshot.unreadable.is_empty())
+        {
             errors.push(format!(
                 "The files above are saved, but reading the settings back failed: {e}"
             ));
@@ -580,7 +622,12 @@ impl OptionsDialog {
             self.close_after = false;
             self.message = Some(errors.join("\n"));
         }
-        if !conflicts.is_empty() {
+        if !refused.is_empty() {
+            // First: *Overwrite* must not be on offer for these. A plain conflict beside them meets the prompt at the
+            // next Apply, its edits intact.
+            self.close_after = false;
+            self.ask_unreadable(refused);
+        } else if !conflicts.is_empty() {
             let names: Vec<String> = conflicts.iter().map(FileId::relative_path).collect();
             let text = format!(
                 "{} changed on disk since this dialog read it.",
@@ -611,6 +658,31 @@ impl OptionsDialog {
         }
     }
 
+    /// Files that cannot be read met an Apply: they are not overwritten, whatever is answered.
+    fn ask_unreadable(&mut self, files: Vec<FileId>) {
+        let names: Vec<String> = files.iter().map(FileId::relative_path).collect();
+        let text = format!(
+            "{} cannot be read by this version of Hikasa, so it cannot be overwritten from this dialog. The page says \
+             why.\n\nReload discards the edits of it; Cancel keeps them, unsaved.",
+            names.join(", ")
+        );
+        self.conflicted = files;
+        self.requests.push(DialogRequest::Ask(Box::new(Prompt::ask(
+            "Settings Cannot Be Read",
+            text,
+            ButtonRole::Cancel,
+            vec![
+                (
+                    ButtonRole::Other(2),
+                    "Reload (discard my edits)",
+                    vec![Followup::Options(ConflictAnswer::Reload)],
+                ),
+                (ButtonRole::Cancel, "Cancel", Vec::new()),
+            ],
+            "dialog-options",
+        ))));
+    }
+
     /// The answer to the conflict prompt.
     pub fn answer(&mut self, answer: ConflictAnswer) {
         let files = std::mem::take(&mut self.conflicted);
@@ -636,7 +708,7 @@ impl OptionsDialog {
         self.requests.push(DialogRequest::Settings {
             title: "read the settings".to_owned(),
             body: Box::new(move |svc: &Service| -> Result<Vec<PathBuf>, ApiError> {
-                let outcome = match svc.settings_snapshot() {
+                let outcome = match svc.settings_snapshot_partial() {
                     Ok(snapshot) => Outcome::Reloaded(Box::new(snapshot), files),
                     Err(e) => Outcome::Failed(e.to_string()),
                 };
@@ -683,6 +755,14 @@ impl DialogModel for OptionsDialog {
             button("OK", ButtonRole::Ok, free && valid, false),
             button("Cancel", ButtonRole::Cancel, free, false),
         ]
+    }
+
+    fn on_close(&mut self) -> bool {
+        let ask = self.dirty();
+        if ask {
+            self.ask_discard();
+        }
+        ask
     }
 
     fn on_button(&mut self, role: ButtonRole, _svc: &Service) -> DialogStep {

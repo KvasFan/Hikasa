@@ -217,6 +217,18 @@ impl World {
             Arc::clone(&self.shared),
             self.mailbox.clone(),
             server,
+            Arc::new(crate::fonts::NoFonts),
+        ))
+    }
+
+    /// Like [`World::app`], with the fonts of `source`.
+    pub(crate) fn app_with_fonts(&self, source: Arc<dyn crate::fonts::FontSource>) -> TestApp {
+        TestApp(AppCore::new(
+            self.service.clone(),
+            Arc::clone(&self.shared),
+            self.mailbox.clone(),
+            None,
+            source,
         ))
     }
 
@@ -1568,7 +1580,7 @@ fn startup_path_leaves_the_format_files_to_the_deferred_work() {
         world.mailbox.clone(),
     );
     let handle = server.spawn(Arc::new(handler)).expect("spawn");
-    let mut deferred = crate::startup::Deferred::materialize_formats(&world.service);
+    let mut deferred = crate::startup::Deferred::materialize_formats(&world.service, None);
     let mut app = world.app(Some(handle));
     let (left, right) = text_pair(&world);
     world.open(&mut app, &left, &right);

@@ -59,6 +59,7 @@ fn whole_comparison_errors() {
         observer: &NullObserver,
         now: &now,
         content_budget: 1 << 20,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let rules = FolderRules::default();
     // A missing base → BaseNotLoadable (exit 107 at the CLI).
@@ -167,6 +168,7 @@ fn live_model_is_readable_during_the_scan() {
                 observer: &observer,
                 now: &now,
                 content_budget: 1 << 20,
+                archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
             };
             compare_into(&model, &env).map(|c| c.verdict(false))
         })

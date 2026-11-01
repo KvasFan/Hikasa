@@ -7,6 +7,7 @@ use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+use std::sync::{Condvar, Mutex, PoisonError};
 
 use super::AttrFailure;
 use crate::caps::Capabilities;
@@ -59,6 +60,60 @@ pub(super) fn capabilities() -> Capabilities {
 
 /// Folders cannot be synced on Windows; `MoveFileEx` is already durable enough for M1.
 pub(super) fn sync_dir(_dir: &Path) {}
+
+/// `ERROR_ACCESS_DENIED`, `ERROR_SHARING_VIOLATION`, `ERROR_LOCK_VIOLATION`: what a virus scanner or an indexer with the
+/// file open for a moment looks like.
+const IN_THE_WAY: [i32; 3] = [5, 32, 33];
+/// Tries of a remove or a rename, with a pause that doubles from 5 ms: about a third of a second in all, which is what
+/// a scanner takes over a new file. A file that is really held fails with the error it always had, that much later.
+const TRIES: u32 = 7;
+
+/// Runs `step`, and again while something else has the file for a moment.
+fn past_others(mut step: impl FnMut() -> io::Result<()>) -> io::Result<()> {
+    // A wait nobody ends, the way this crate waits (T1 keeps the clock and sleeps out of core).
+    let (idle, never) = (Mutex::new(()), Condvar::new());
+    let mut pause = std::time::Duration::from_millis(5);
+    for _ in 1..TRIES {
+        match step() {
+            Err(e)
+                if e.raw_os_error()
+                    .is_some_and(|code| IN_THE_WAY.contains(&code)) =>
+            {
+                let guard = idle.lock().unwrap_or_else(PoisonError::into_inner);
+                drop(never.wait_timeout(guard, pause));
+                pause *= 2;
+            }
+            done => return done,
+        }
+    }
+    step()
+}
+
+/// `fs::remove_file`, past a scanner or an indexer.
+pub(super) fn remove_file(path: &Path) -> io::Result<()> {
+    past_others(|| fs::remove_file(path))
+}
+
+/// `fs::rename`, past a scanner or an indexer.
+pub(super) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    past_others(|| fs::rename(from, to))
+}
+
+/// The handle closes before the rename: a rename needs every handle to share deletion, and not all paths here can
+/// promise that of a file another program opened.
+pub(super) fn hold_through_rename(_file: std::fs::File) -> Option<std::fs::File> {
+    None
+}
+
+/// A file's ACL comes from its folder: there is no owner-only mode to give it.
+pub(super) fn make_private(_file: &std::fs::File) -> Option<std::fs::Permissions> {
+    None
+}
+
+/// No mode to go by: the reserved name and the lock decide.
+pub(super) fn looks_private(_meta: &Metadata) -> bool {
+    true
+}
 
 /// Sets the creation time through a handle opened for `FILE_WRITE_ATTRIBUTES` (folders with backup semantics).
 pub(super) fn set_created(path: &Path, time: std::time::SystemTime) -> Option<io::Result<()>> {

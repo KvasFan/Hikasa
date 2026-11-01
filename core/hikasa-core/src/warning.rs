@@ -67,6 +67,19 @@ pub enum WarningCode {
     /// A settings import kept a locked session instead of replacing or deleting it (M2 W2, D-90; `--force`
     /// replaces it).
     SessionLocked,
+    /// An archive holds members that were refused and left out of the tree (M2 W5, D-141): one per index, with
+    /// the total.
+    ArchiveMemberRefused,
+    /// An archive holds the same path twice; the last one wins (M2 W5, D-141).
+    ArchiveDuplicateMember,
+    /// An archive holds encrypted members, which are listed and not read (M2 W5, D-144).
+    ArchiveEncrypted,
+    /// A copy out of an archive skipped its link members (M2 W5, D-142).
+    ArchiveSymlinkSkipped,
+    /// A scan stopped opening archives: later ones stay files (M2 W5, D-151).
+    ArchiveScanLimit,
+    /// NUL bytes followed a compressed stream and were ignored, as `gzip` does (M2 W5, §1.5.7 rule 9).
+    ArchiveTrailingZeros,
 }
 
 impl WarningCode {
@@ -95,6 +108,12 @@ impl WarningCode {
             WarningCode::SpecNotSaved => "spec_not_saved",
             WarningCode::SessionMissing => "session_missing",
             WarningCode::SessionLocked => "session_locked",
+            WarningCode::ArchiveMemberRefused => "archive_member_refused",
+            WarningCode::ArchiveDuplicateMember => "archive_duplicate_member",
+            WarningCode::ArchiveEncrypted => "archive_encrypted",
+            WarningCode::ArchiveSymlinkSkipped => "archive_symlink_skipped",
+            WarningCode::ArchiveScanLimit => "archive_scan_limit",
+            WarningCode::ArchiveTrailingZeros => "archive_trailing_zeros",
         }
     }
 }
@@ -135,6 +154,12 @@ mod tests {
             WarningCode::SpecNotSaved,
             WarningCode::SessionMissing,
             WarningCode::SessionLocked,
+            WarningCode::ArchiveMemberRefused,
+            WarningCode::ArchiveDuplicateMember,
+            WarningCode::ArchiveEncrypted,
+            WarningCode::ArchiveSymlinkSkipped,
+            WarningCode::ArchiveScanLimit,
+            WarningCode::ArchiveTrailingZeros,
         ];
         for code in all {
             assert_eq!(

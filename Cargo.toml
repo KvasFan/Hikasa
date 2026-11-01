@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.90"
+version = "0.1.91"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KvasFan/Hikasa"
@@ -33,19 +33,19 @@ rust-version = "1.97"
 
 [workspace.dependencies]
 # --- internal crates ---
-hikasa-core = { path = "core/hikasa-core", version = "0.1.90" }
-hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.90" }
-hikasa-diff = { path = "core/hikasa-diff", version = "0.1.90" }
-hikasa-formats = { path = "core/hikasa-formats", version = "0.1.90" }
-hikasa-folder = { path = "core/hikasa-folder", version = "0.1.90" }
-hikasa-text = { path = "core/hikasa-text", version = "0.1.90" }
-hikasa-table = { path = "core/hikasa-table", version = "0.1.90" }
-hikasa-hex = { path = "core/hikasa-hex", version = "0.1.90" }
-hikasa-picture = { path = "core/hikasa-picture", version = "0.1.90" }
-hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.90" }
-hikasa-report = { path = "core/hikasa-report", version = "0.1.90" }
-hikasa-script = { path = "core/hikasa-script", version = "0.1.90" }
-hikasa-session = { path = "core/hikasa-session", version = "0.1.90" }
+hikasa-core = { path = "core/hikasa-core", version = "0.1.91" }
+hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.91" }
+hikasa-diff = { path = "core/hikasa-diff", version = "0.1.91" }
+hikasa-formats = { path = "core/hikasa-formats", version = "0.1.91" }
+hikasa-folder = { path = "core/hikasa-folder", version = "0.1.91" }
+hikasa-text = { path = "core/hikasa-text", version = "0.1.91" }
+hikasa-table = { path = "core/hikasa-table", version = "0.1.91" }
+hikasa-hex = { path = "core/hikasa-hex", version = "0.1.91" }
+hikasa-picture = { path = "core/hikasa-picture", version = "0.1.91" }
+hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.91" }
+hikasa-report = { path = "core/hikasa-report", version = "0.1.91" }
+hikasa-script = { path = "core/hikasa-script", version = "0.1.91" }
+hikasa-session = { path = "core/hikasa-session", version = "0.1.91" }
 
 # --- third-party (approved in docs/02-tech-stack.md) ---
 serde = { version = "1", features = ["derive"] }
@@ -81,19 +81,38 @@ clap_complete = "4"
 directories = "6"
 interprocess = "2"
 jiff = "0.2"
-# Settings packages (D-63, D-86): pure-Rust deflate only (zlib-rs + zopfli); no AES, no other codecs.
-zip = { version = "9", default-features = false, features = ["deflate"] }
+# Archives (D-154, contract M2 §1.5.15). Named only under core/hikasa-vfs/src/archive/ (`zip` also in the
+# settings packages of hikasa-session, whose import still accepts only stored and deflate entries, D-86).
+# No `aes-crypto`, `time`, `ppmd`, `rayon`, `legacy-zip`: encryption is reported, not implemented (D-144).
+zip = { version = "9.2.0", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma", "xz"] }
+# No `xattr`: `Header`, `PaxExtensions` and `Builder` only; reading is the in-house `tar_walk.rs` (D-139).
+tar = { version = "0.4.46", default-features = false }
+# The pure-Rust back-end `zip` already enables; the features unify.
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+# `libbz2-rs-sys`, a Rust port, what `zip` uses; no C.
+bzip2 = "0.6.1"
+# Not the newest 0.24: `zip` 9.2 needs ^0.23 and one LZMA codec in the tree is the point. Moves when `zip` moves.
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "encoder", "optimization", "xz"] }
+# Not the 0.13 of the plan: `zip` 9.2 needs ^0.14.2. `zstd-sys` builds libzstd with the target's C compiler,
+# the only C in Hikasa's binaries.
+zstd = { version = "0.14.3", default-features = false }
 # Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
 # Called only from core/hikasa-vfs/src/local/trash.rs.
 trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }
 # Clipboard (D-63, D-100): the feature set Cargo.lock already compiles through egui-winit; named only in
 # core/hikasa-session/src/host.rs.
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+# Ctrl-C of the CLI (D-63, D-159): the handler lives in the adapter. No `termination`: SIGTERM and SIGHUP still end
+# the process as they always did. Named only in cli/hikasa-cli/src/interrupt.rs.
+ctrlc = "3.5.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # GUI toolkit (D-56 amended: egui/eframe, maintainer decision after the ARCH-GUI-003 measurements)
 eframe = "0.37"
 egui = "0.37"
+# Named fonts of the theme (D-160): the version and the feature set eframe's system font fallback already compiles,
+# so no new package. Named only in gui/hikasa-gui/src/fonts.rs.
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
 # --- dev / test ---
 tempfile = "3"

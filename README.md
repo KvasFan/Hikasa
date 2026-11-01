@@ -10,17 +10,17 @@
 <p align="center"><b>A folder and file compare tool for the desktop and the command line.</b></p>
 
 <p align="center">
-  Compare two folder trees or two text files, see what changed down to the character, keep the setup as a session
-  and run it again from the window or from a script. Written in Rust, with an egui window and a <code>hikasa</code>
-  command that does the same comparisons without one. Editing, merging and sync are not there yet: see
-  <a href="#what-works-today">what works today</a>.
+  Compare two folder trees or two text files, inside zip and tar archives too, see what changed down to the character,
+  keep the setup as a session and run it again from the window or from a script. Written in Rust, with an egui window and
+  a <code>hikasa</code> command that does the same comparisons without one. Editing, merging and sync are not there yet:
+  see <a href="#what-works-today">what works today</a>.
 </p>
 
 <p align="center">
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-1e2a44?style=flat-square&logo=rust">
   <img alt="Runs on Linux · Windows" src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Windows-1e2a44?style=flat-square&logo=linux&logoColor=white">
   <img alt="License MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1e2a44?style=flat-square">
-  <img alt="Status 0.1.90 pre-release" src="https://img.shields.io/badge/status-0.1.90%20pre--release-6aa0ff?style=flat-square">
+  <img alt="Status 0.1.91 pre-release" src="https://img.shields.io/badge/status-0.1.91%20pre--release-6aa0ff?style=flat-square">
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@
 
 ## What works today
 
-This page describes version 0.1.90, a pre-release of 0.2.0 with the first part of milestone M2 on top of 0.1.0 (M1); 0.2.0 stays reserved for M2 complete. Of the 15 waves of M2 ([plan](docs/design/m2-plan.md#2-waves)), W0–W4 are in this version and W5–W14 are not. In the [command catalogue](docs/reference/commands.md), 98 of 475 commands are implemented; the rest are planned and stay out of the menus.
+This page describes version 0.1.91, a pre-release of 0.2.0 with the first part of milestone M2 on top of 0.1.0 (M1); 0.2.0 stays reserved for M2 complete. Of the 15 waves of M2 ([plan](docs/design/m2-plan.md#2-waves)), W0–W5 are in this version and W6–W14 are not. In the [command catalogue](docs/reference/commands.md), 98 of 475 commands are implemented; the rest are planned and stay out of the menus.
 
 | Area | Status |
 |---|---|
@@ -83,12 +83,14 @@ This page describes version 0.1.90, a pre-release of 0.2.0 with the first part o
 | Reports: plain text, side-by-side HTML, patches, summaries, statistics, JSON | Works from the command line; no report dialog yet (M1) |
 | Settings store: typed TOML files with unknown keys kept, `hikasa settings` | Works; some options are stored now and only used by later waves (W1) |
 | Sessions, auto-save, locks, session folders, workspaces, settings packages | Works, in the window and with `hikasa session`, `workspace` and `settings export\|import` (W2, W4) |
-| File operations on the command line: `hikasa vfs cp\|mv\|rm\|mkdir\|touch`, with `--dry-run` | Works (W3) |
+| File operations on the command line: `hikasa vfs cp\|mv\|rm\|mkdir\|touch`, with `--dry-run` | Works; Ctrl-C cancels a running one, a second Ctrl-C exits at once (W3, 0.1.91) |
 | Clipboard as an input: `clipboard://` | Works on the command line and in the window (W3) |
 | Window: several windows, tabs, menus and shortcuts from the catalogue, status bar, log panel, notices, drag and drop, help on F1 | Works under Xvfb and in tests; tree dragging, shortcut capture and colour pickers still await a check on a real desktop (W4) |
 | Options dialog, theme editor with live preview, Toolbars/Shortcuts/Menus page, Export, Import and Restore wizards | Works under Xvfb and in tests (W4) |
+| The theme's four fonts by family name | Editor and folder fonts work under Xvfb and in tests; listing and hex fonts load and wait for their views; a family that is not found keeps the built-in font, with a notice (0.1.91) |
 | Packages for Linux and Windows | Built from `packaging/` and smoke tested, see [Downloads](#downloads) |
-| Archives (zip, tar) | Not yet (W5) |
+| Archives, read: zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams, nested too, in `quick`, `text compare`, `folder compare` and `vfs` | Works on the command line, and in the window as a side of a comparison; encrypted members are listed and reported, not decrypted; no 7z (W5, M3) |
+| Archives, write: `hikasa vfs cp\|mv\|rm\|mkdir\|touch` and `--output` on members of zip and the tar family | Works on the command line only; each operation rewrites the archive into a temporary file and replaces it in one step; single streams stay read-only; on Windows the replace of an archive another program holds open is reasoned, not tested (W5) |
 | Folder operations and Folder Sync in the window | Not yet (W6, W9) |
 | Script language | Not yet (W8); the crate is empty |
 | Report dialog, XML reports | Not yet (W7, W13) |
@@ -96,14 +98,14 @@ This page describes version 0.1.90, a pre-release of 0.2.0 with the first part o
 | Table, Hex and Picture Compare | Not yet (W12, W13); the crates are empty |
 | Text Merge, Folder Merge, remote back-ends, snapshots, media, version and registry views | Not yet (M3) |
 
-CI is green at 0.1.90 on Linux, Windows and macOS: clippy, the tests and the doc tests on all three. The tests that open a window are not part of CI; they run locally on Linux, with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
+CI runs clippy, the tests and the doc tests on Linux, Windows and macOS. The tests that open a window are not part of CI; they run locally on Linux, with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
 
 ## Quick start
 
 You need Rust 1.97 or newer and a C compiler. On Linux the window needs an X11 or Wayland session at run time; building needs no GUI development packages.
 
 ```sh
-git clone --branch v0.1.90 https://github.com/KvasFan/Hikasa.git
+git clone --branch v0.1.91 https://github.com/KvasFan/Hikasa.git
 cd Hikasa
 cargo build --release
 target/release/hikasa --help
@@ -186,23 +188,23 @@ The screenshots on this page are real captures of `hikasa-gui` on a virtual disp
 
 ## Roadmap
 
-0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. M2, for 0.2.0, is the usable tool. 0.1.90 is its pre-release with W0–W4 done, and next come archives (W5), folder operations and the sync engine (W6), reports (W7), scripts (W8), Folder Compare and Sync in the window (W9), text editing (W10, W11), Table, Hex and Picture Compare (W12, W13) and release hardening (W14). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, 7z, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
+0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. M2, for 0.2.0, is the usable tool. 0.1.91 is its pre-release with W0–W5 done, and next come folder operations and the sync engine (W6), reports (W7), scripts (W8), Folder Compare and Sync in the window (W9), text editing (W10, W11), Table, Hex and Picture Compare (W12, W13) and release hardening (W14). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, 7z, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
 
 ## Downloads
 
-Version 0.1.90 is a pre-release: the packages are on its [release page](https://github.com/KvasFan/Hikasa/releases/tag/v0.1.90), with `SHA256SUMS`. They are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine.
+Version 0.1.91 is a pre-release: the packages are on its [release page](https://github.com/KvasFan/Hikasa/releases/tag/v0.1.91), with `SHA256SUMS`. They are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine.
 
 | Format | File | Status |
 |---|---|---|
 | Source | `cargo build --release` | See [Quick start](#quick-start) |
-| Linux x86-64 `.tar.gz` | `hikasa-0.1.90-x86_64-linux.tar.gz` | Smoke tested |
-| Linux x86-64 AppImage | `Hikasa-0.1.90-x86_64.AppImage` | Smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
-| Debian and Ubuntu `.deb` (amd64) | `hikasa_0.1.90-1_amd64.deb` | Smoke tested |
-| Arch Linux package | `hikasa-0.1.90-1-x86_64.pkg.tar.zst` | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
-| Windows x64 MSI | `hikasa-0.1.90-windows-x64.msi` | Tested under wine only, not on real Windows |
-| Windows x86 MSI | `hikasa-0.1.90-windows-x86.msi` | Tested under wine only, not on real Windows |
-| Windows x64 portable zip | `hikasa-0.1.90-windows-x64-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
-| Windows x86 portable zip | `hikasa-0.1.90-windows-x86-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Linux x86-64 `.tar.gz` | `hikasa-0.1.91-x86_64-linux.tar.gz` | Smoke tested |
+| Linux x86-64 AppImage | `Hikasa-0.1.91-x86_64.AppImage` | Smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
+| Debian and Ubuntu `.deb` (amd64) | `hikasa_0.1.91-1_amd64.deb` | Smoke tested |
+| Arch Linux package | `hikasa-0.1.91-1-x86_64.pkg.tar.zst` | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
+| Windows x64 MSI | `hikasa-0.1.91-windows-x64.msi` | Tested under wine only, not on real Windows |
+| Windows x86 MSI | `hikasa-0.1.91-windows-x86.msi` | Tested under wine only, not on real Windows |
+| Windows x64 portable zip | `hikasa-0.1.91-windows-x64-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Windows x86 portable zip | `hikasa-0.1.91-windows-x86-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
 
 The `.tar.gz`, AppImage and `.deb` are linked against glibc 2.31 (the newest symbol they use is `GLIBC_2.30`), so they should run on distributions of that age, but they have not been run on one yet. The x86 `hikasa.exe` sometimes hangs at exit under wine (one run in 160 in a stress test), and the cause is not known yet. There is no macOS package.
 

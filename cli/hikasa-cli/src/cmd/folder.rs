@@ -13,8 +13,8 @@ use hikasa_report::{FolderColumns, FolderLayout, FolderReportOptions, OutputForm
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_COMPARE_SCHEMA, GUI_OPEN_SCHEMA};
 use hikasa_session::api::{
-    ApiOp, FolderCompareRequest, GuiOpenRequest, ReportSettings, ViewWords, parse_content_method,
-    resolve_folder_display,
+    ApiOp, FolderCompareRequest, GuiOpenRequest, ReportSettings, ViewWords, parse_archive_handling,
+    parse_content_method, resolve_folder_display,
 };
 
 use super::{Ctx, gui, importance_patch, tri};
@@ -59,11 +59,11 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderComp
         Ok(plan) => plan,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
-    let prepared = match ctx.service.folder_prepare(request) {
+    let job = ctx.job(JobKind::FolderCompare);
+    let prepared = match ctx.service.folder_prepare_in(request, &job) {
         Ok(prepared) => prepared,
         Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
     };
-    let job = ctx.job(JobKind::FolderCompare);
     let resp = match ctx.service.folder_run(&prepared, &job, &NullObserver) {
         Ok(resp) => resp,
         Err(e) => {
@@ -74,6 +74,11 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderComp
     ctx.progress.clear();
     let code = resp.exit_code.code();
     let warnings = resp.warnings.clone();
+    // A scan that was cancelled ends `Ok` with a part of the tree, for the GUI: here it is a failed command. Nothing
+    // is rendered and `--output` keeps the report it had (D-159).
+    if job.cancel.is_cancelled() {
+        return ctx.fail(FOLDER_COMPARE_SCHEMA, &ApiError::Cancelled, op, &warnings);
+    }
     if let Some(target) = &args.output {
         let mut report = Vec::new();
         let written = ctx
@@ -157,6 +162,12 @@ fn request(ctx: &Ctx<'_>, args: &FolderCompareArgs) -> Result<FolderCompareReque
         follow_symlinks: args.follow_symlinks.then_some(true),
         flatten: args.flatten.then_some(true),
         scan_orphan_folders: args.no_scan_orphans.then_some(false),
+        archives: args
+            .archives
+            .as_deref()
+            .map(parse_archive_handling)
+            .transpose()?,
+        open_archives: (!args.open_archive.is_empty()).then(|| args.open_archive.clone()),
         ..FolderRulesPatch::default()
     };
     Ok(FolderCompareRequest {

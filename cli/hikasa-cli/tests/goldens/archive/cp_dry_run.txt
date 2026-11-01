@@ -1,0 +1,2 @@
+copy <TMP>/plain/x -> <TMP>/a.zip/planned
+would copy 1 items

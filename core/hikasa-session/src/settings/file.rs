@@ -444,6 +444,31 @@ impl<T: SettingsSchema> SettingsFile<T> {
         &self.raw
     }
 
+    /// Drops the kept unknown key at `path` and the tables that leaves empty (`settings unset`). False when the
+    /// file keeps nothing there.
+    pub fn forget_unknown(&mut self, path: &[KeySegment]) -> bool {
+        let mut root = Value::Table(std::mem::take(&mut self.raw));
+        let removed = tree::remove(&mut root, path).is_some();
+        if removed {
+            for end in (1..path.len()).rev() {
+                let empty =
+                    matches!(tree::get(&root, &path[..end]), Some(Value::Table(t)) if t.is_empty());
+                if !empty {
+                    break;
+                }
+                tree::remove(&mut root, &path[..end]);
+            }
+            let name = tree::display_path(path);
+            self.loaded
+                .ignored_keys
+                .retain(|k| *k != name && !k.starts_with(&format!("{name}.")));
+        }
+        if let Value::Table(table) = root {
+            self.raw = table;
+        }
+        removed
+    }
+
     /// The stamp of the bytes last read or written.
     pub fn stamp(&self) -> &ChangeStamp {
         &self.loaded.stamp

@@ -1,0 +1,46 @@
+{
+  "schema": "hikasa.vfs_list.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "spec": "<TMP>/a.zip/",
+    "entries": [
+      {
+        "name": "inner",
+        "name_lossy": false,
+        "kind": "dir",
+        "size": 0,
+        "mtime": null,
+        "ctime": null,
+        "attrs": null,
+        "mode": null,
+        "permissions": null,
+        "uid": null,
+        "gid": null,
+        "link_target": null,
+        "followed": false,
+        "crc32": null
+      },
+      {
+        "name": "x",
+        "name_lossy": false,
+        "kind": "file",
+        "size": 6,
+        "mtime": "2026-10-19T13:12:00Z",
+        "ctime": null,
+        "attrs": null,
+        "mode": 420,
+        "permissions": "-rw-r--r--",
+        "uid": 0,
+        "gid": 0,
+        "link_target": null,
+        "followed": false,
+        "crc32": "9f606eec"
+      }
+    ],
+    "errors": []
+  },
+  "warnings": [],
+  "error": null
+}

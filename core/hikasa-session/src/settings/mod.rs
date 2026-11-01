@@ -301,6 +301,10 @@ pub struct SettingsSnapshot {
     pub openwith: SettingsFile<OpenWith>,
     /// `archives.toml`.
     pub archives: SettingsFile<ArchiveTypes>,
+    /// The files that could not be read, each with why (`Service::settings_snapshot_partial`; always empty from
+    /// `Service::settings_snapshot`). Such a file above is its defaults with the stamp `Absent`; on disk it stays as
+    /// it is: `settings_save` refuses to replace it (`FileOutcome::Unreadable`).
+    pub unreadable: BTreeMap<FileId, String>,
 }
 
 impl SettingsSnapshot {
@@ -357,6 +361,9 @@ pub enum FileOutcome {
     Deleted,
     /// The file changed on disk since the snapshot (not written; save again with `force` to overwrite).
     Conflict,
+    /// The file on disk cannot be read (a newer `schema_version`, broken TOML, no access): it is not written, not
+    /// even with `force`, because its content would be lost (T13). Holds why.
+    Unreadable(String),
     /// The value fails its schema's checks (not written).
     Invalid(Vec<Problem>),
     /// Writing failed.

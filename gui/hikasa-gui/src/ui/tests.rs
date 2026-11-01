@@ -12,7 +12,7 @@ use crate::startup::Deferred;
 use crate::tests::{World, text_pair};
 use crate::window::ViewModel;
 
-fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
+pub(super) fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
     let core = world.app(None).0;
     HikasaApp::with_context(
         ctx,
@@ -24,7 +24,7 @@ fn new_app(world: &World, ctx: &egui::Context) -> HikasaApp {
     )
 }
 
-fn raw(time: f64) -> RawInput {
+pub(super) fn raw(time: f64) -> RawInput {
     RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -35,8 +35,50 @@ fn raw(time: f64) -> RawInput {
     }
 }
 
+/// A named font goes from the theme to the panes through the real frames: the lookup's answer, one apply, and the
+/// slot's family bound when it is first drawn with.
+#[test]
+fn a_named_font_reaches_the_text_panes() {
+    let world = World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.editor]\nfamily = \"Hack\"\n",
+    )]);
+    let ctx = egui::Context::default();
+    let bundled = egui::FontDefinitions::default().font_data["Hack"]
+        .bytes()
+        .to_vec();
+    let source = std::sync::Arc::new(crate::fonts::DataFonts::new(vec![bundled]));
+    let core = world.app_with_fonts(source).0;
+    let mut app = HikasaApp::with_context(
+        &ctx,
+        core,
+        world.mailbox.clone(),
+        None,
+        Deferred::new(|| {}),
+        None,
+    );
+    let (l, r) = text_pair(&world);
+    world.open(&mut app.core, &l, &r);
+    let editor = crate::options::theme_page::FontSlot::Editor;
+    let began = std::time::Instant::now();
+    let mut time = 1.0;
+    while app.slot_fonts.family(editor) == egui::FontFamily::Monospace {
+        frame(&mut app, &ctx, raw(time));
+        time += 0.02;
+        assert!(began.elapsed().as_secs() < 30, "the font never arrived");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    for _ in 0..3 {
+        frame(&mut app, &ctx, raw(time));
+        time += 0.02;
+    }
+    let family = app.slot_fonts.family(editor);
+    let chain = ctx.fonts(|f| f.definitions().families[&family].clone());
+    assert_eq!(chain[0], "theme:Hack");
+}
+
 /// One frame: the logic, then the drawing (what eframe does).
-fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullOutput {
+pub(super) fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullOutput {
     let mut out = ctx.run_ui(raw, |ui| {
         app.step(ui.ctx());
         app.draw(ui);
@@ -45,14 +87,14 @@ fn frame(app: &mut HikasaApp, ctx: &egui::Context, raw: RawInput) -> egui::FullO
     out
 }
 
-fn root_commands(out: &egui::FullOutput) -> Vec<ViewportCommand> {
+pub(super) fn root_commands(out: &egui::FullOutput) -> Vec<ViewportCommand> {
     out.viewport_output
         .get(&ViewportId::ROOT)
         .map(|v| v.commands.clone())
         .unwrap_or_default()
 }
 
-fn close_root(time: f64) -> RawInput {
+pub(super) fn close_root(time: f64) -> RawInput {
     let mut r = raw(time);
     r.viewports.insert(
         ViewportId::ROOT,
@@ -468,7 +510,7 @@ fn toolbar_frame(
     result
 }
 
-fn pointer_button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Event {
+pub(super) fn pointer_button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> Event {
     Event::PointerButton {
         pos,
         button,

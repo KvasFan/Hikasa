@@ -1,0 +1,103 @@
+{
+  "schema": "hikasa.vfs_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 100,
+  "result": {
+    "op": "copy",
+    "dry_run": false,
+    "cancelled": false,
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "source": "<TMP>/odd.zip/",
+        "target": "<TMP>/out/odd.zip",
+        "size": null,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "other",
+        "source": "<TMP>/odd.zip/<refused-1>",
+        "target": "<TMP>/out/odd.zip/<refused-1>",
+        "size": null,
+        "replaces": false,
+        "status": "failed",
+        "reason": null,
+        "error": {
+          "kind": "invalid_data",
+          "message": "refused member \"../evil\": traversal",
+          "spec": "<TMP>/odd.zip/",
+          "causes": []
+        }
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/odd.zip/crypt",
+        "target": "<TMP>/out/odd.zip/crypt",
+        "size": 6,
+        "replaces": false,
+        "status": "failed",
+        "reason": null,
+        "error": {
+          "kind": "unsupported",
+          "message": "<TMP>/odd.zip/crypt: the member is encrypted and cannot be read",
+          "spec": "<TMP>/odd.zip/crypt",
+          "causes": []
+        }
+      },
+      {
+        "action": "skip",
+        "kind": "symlink",
+        "source": "<TMP>/odd.zip/lnk",
+        "target": "<TMP>/out/odd.zip/lnk",
+        "size": null,
+        "replaces": false,
+        "status": "skipped",
+        "reason": "symlink",
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "source": "<TMP>/odd.zip/ok",
+        "target": "<TMP>/out/odd.zip/ok",
+        "size": 5,
+        "replaces": false,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "summary": {
+      "planned": 5,
+      "done": 2,
+      "skipped": 1,
+      "failed": 2,
+      "bytes": 5
+    }
+  },
+  "warnings": [
+    {
+      "code": "archive_symlink_skipped",
+      "message": "<TMP>/odd.zip/lnk: link members of an archive are not copied out of it",
+      "spec": "<TMP>/odd.zip/lnk"
+    },
+    {
+      "code": "archive_member_refused",
+      "message": "1 archive members were refused",
+      "spec": "<TMP>/odd.zip"
+    },
+    {
+      "code": "archive_encrypted",
+      "message": "1 encrypted archive members are listed but cannot be read",
+      "spec": "<TMP>/odd.zip"
+    }
+  ],
+  "error": null
+}

@@ -96,6 +96,11 @@
   fill both); a window opens two dropped paths like the command line and explains one or
   three.
 
+*M2 W5a (§1.5.14, D-153):* a row of the folder tree whose name is an archive shows the in-house zipper icon in the
+place of its colour spot, on closed and opened rows. With *As folders once opened*, Open (double-click, Enter) on a
+closed archive row adds its path to the view's `open_archives` and runs the comparison again; the new folder row is shown
+expanded. Two archives, or an archive and a folder, open a Folder Compare. Members open in a read-only Text Compare.
+
 *M2 W4b (§1.4.9–§1.4.12):* the Session menu gains New Session ▸ (one item per type the GUI opens), Open Session, Load
 Workspace ▸ (saved workspaces, then Manage Workspaces…), Save Workspace As… and, in session views, Go to Home, Save
 Session, Save Session As…, Session Settings… and Locked; the toolbar gains the Sessions drop-down; Home's View menu
@@ -193,8 +198,13 @@ selection is `[folder] selection` unless `use_system_selection`. The theme is re
 start, when the system theme changes and when a theme file changes on disk — never per
 frame. The editor font size sets the text panes (the font commands scale from it and are
 remembered per view type), the folder size the tree (`use_system`: the toolkit's default);
-listing and hex sizes wait for their views. A non-empty font family is not looked up in
-W4: the built-in font is used and one warning notice names the family.
+listing and hex sizes wait for their views. *0.1.91 (D-160):* a non-empty font family is
+looked up among the system's fonts off the UI thread, whatever its case, only when a slot
+names it; it applies once, also while it is typed in Options, and a family the views do
+not use yet (listing, hex) is held for them. The folder's family counts only with
+`use_system = false`. The built-in fonts stay behind every named font for the glyphs it
+lacks, then the system's fallback (CJK and the like). A family not found keeps the
+built-in font and raises one warning notice, once it is applied.
 
 ## 3. Status bar, log, notifications
 
@@ -237,7 +247,8 @@ windows, "File changed on disk" prompts, Script status window.
 
 *M2 W4a (D-112):* dialogs are drawn inside their window, modal to it (a dimmed backdrop
 takes the window's input; never a separate native window), one stack per window; Esc is
-Cancel, Enter the default button, F1 the dialog's help topic. A prompt (message, buttons,
+Cancel, as is the window's close button, Enter the default button, F1 the dialog's help topic
+(its panel stands over the dialog). The title bar moves a dialog. A prompt (message, buttons,
 default, optional "Do not ask again" bound to an option key) serves the close warnings and
 later waves' questions. About is a dialog.
 

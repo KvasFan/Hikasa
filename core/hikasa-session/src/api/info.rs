@@ -3,14 +3,14 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 
-use hikasa_core::{ErrorReport, Phase, Progress, Side, Unit};
+use hikasa_core::{ErrorReport, Phase, Progress, Side, Spec, Unit};
 use hikasa_formats::{
     DetectReason, Detection, EnabledOverrides, FormatError, LineState, Origin, ShadowStatus,
     to_toml, tokenize_all,
 };
 use hikasa_report::json::{DetectReasonJson, FormatJson};
 use hikasa_text::{LineIdx, load_document};
-use hikasa_vfs::{FollowLinks, ListOptions, Vfs, VfsError, VfsOp};
+use hikasa_vfs::{FollowLinks, ListOptions, SpecUse, Vfs, VfsError, VfsOp};
 
 use super::dto::{
     EncodingDto, FileFormatDto, FormatDetectDto, FormatListDto, FormatListItemDto, FormatRefDto,
@@ -248,7 +248,8 @@ impl Service {
         job: &JobControl,
     ) -> Result<VfsListDto, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
+            // `vfs ls a.zip` lists the members (§1.5.13).
+            let spec = self.parse_spec_in(spec, SpecUse::Folder, &job.cancel)?;
             let options = ListOptions {
                 follow,
                 prefilter: None,
@@ -275,15 +276,32 @@ impl Service {
 
     /// `vfs stat`.
     pub fn vfs_stat(&self, spec: &OsStr, follow: FollowLinks) -> Result<VfsStatDto, ApiError> {
+        run_guarded(|| self.stat_dto(&self.parse_spec(spec)?, follow))
+    }
+
+    /// `vfs stat` inside a job: indexing an archive stops with it.
+    pub fn vfs_stat_in(
+        &self,
+        spec: &OsStr,
+        follow: FollowLinks,
+        job: &JobControl,
+    ) -> Result<VfsStatDto, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
-            let entry = self.vfs().stat(&spec, follow).map_err(ApiError::from_vfs)?;
-            let caps = self.vfs().capabilities(&spec).map_err(ApiError::from_vfs)?;
-            Ok(VfsStatDto {
-                spec: spec.canonical(),
-                entry: VfsEntryDto::new(&entry),
-                capabilities: VfsStatDto::capability_names(caps),
-            })
+            let spec = self.parse_spec_in(spec, self.use_of(spec), &job.cancel)?;
+            self.vfs()
+                .prepare(&spec, &job.ctl())
+                .map_err(ApiError::from_vfs)?;
+            self.stat_dto(&spec, follow)
+        })
+    }
+
+    fn stat_dto(&self, spec: &Spec, follow: FollowLinks) -> Result<VfsStatDto, ApiError> {
+        let entry = self.vfs().stat(spec, follow).map_err(ApiError::from_vfs)?;
+        let caps = self.vfs().capabilities(spec).map_err(ApiError::from_vfs)?;
+        Ok(VfsStatDto {
+            spec: spec.canonical(),
+            entry: VfsEntryDto::new(&entry),
+            capabilities: VfsStatDto::capability_names(caps),
         })
     }
 
@@ -298,14 +316,21 @@ impl Service {
         job: &JobControl,
     ) -> Result<u64, ApiError> {
         run_guarded(|| {
-            let spec = self.parse_spec(spec)?;
+            let spec = self.parse_spec_in(spec, self.use_of(spec), &job.cancel)?;
             let canonical = spec.canonical();
+            // Indexing runs here, where it can be cancelled; `stat` below cannot.
+            self.vfs()
+                .prepare(&spec, &job.ctl())
+                .map_err(ApiError::from_vfs)?;
             let total = self
                 .vfs()
                 .stat(&spec, FollowLinks::Yes)
                 .ok()
                 .map(|e| e.size);
-            let mut reader = self.vfs().open_read(&spec).map_err(ApiError::from_vfs)?;
+            let mut reader = self
+                .vfs()
+                .open_read_with(&spec, &job.cancel)
+                .map_err(ApiError::from_vfs)?;
             let mut buffer = vec![0u8; CAT_BUFFER];
             let mut copied: u64 = 0;
             let ctl = job.ctl();

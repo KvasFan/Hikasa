@@ -9,8 +9,8 @@ use hikasa_core::{Ctl, ErrorKind, Spec, Warning};
 use super::plan::{report, report_with};
 use super::{
     Action, CopyOptions, Decision, Exec, LinkPolicy, OpKind, Outcome, OverwritePolicy, Plan,
-    PlanItem, PlanOptions, SkipReason, check_item, check_nesting, decide, lstat_target,
-    same_instance, scanning, warn_missing, warn_no_mtime,
+    PlanItem, PlanOptions, SkipReason, check_holder, check_item, check_nesting, decide,
+    lstat_target, same_instance, scanning, warn_archive_link, warn_missing, warn_no_mtime,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, DosAttrs, Entry, EntryKind, FileName};
@@ -90,7 +90,14 @@ impl Planner<'_> {
                 SkipReason::SpecialFile,
             )),
             EntryKind::Symlink => {
-                if self.links == LinkPolicy::Skip {
+                // A link from a hostile archive must not appear on disk, whatever the policy says (D-142);
+                // between archives it stays a link.
+                let out_of_archive = matches!(source, Spec::ArchiveMember { .. })
+                    && !matches!(target, Spec::ArchiveMember { .. });
+                if out_of_archive {
+                    warn_archive_link(&mut self.warned, &mut self.warnings, source);
+                }
+                if self.links == LinkPolicy::Skip || out_of_archive {
                     self.items.push(PlanItem::skipped(
                         EntryKind::Symlink,
                         Some(source.clone()),
@@ -173,6 +180,10 @@ impl Planner<'_> {
         if entry.kind == EntryKind::File {
             item.size = Some(entry.size);
         }
+        let holder = match existing {
+            Some(_) => check_holder(self.src, self.dst, source, target),
+            None => Ok(()),
+        };
         match existing {
             None => self.items.push(item),
             Some(found) if found.kind == EntryKind::Dir => {
@@ -180,6 +191,12 @@ impl Planner<'_> {
                     spec: target.canonical(),
                 };
                 self.fail(action, entry.kind, source, target, depth, &error);
+            }
+            // Below a root too: a member of `a.zip` copied out next to it can have the archive's own name.
+            Some(_) if holder.is_err() => {
+                if let Err(error) = holder {
+                    self.fail(action, entry.kind, source, target, depth, &error);
+                }
             }
             Some(found) => match decide(self.overwrite, entry, found, target) {
                 Decision::Replace => {
@@ -401,6 +418,12 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         _ => None,
     };
     if item.action == Action::KeepDir {
+        if matches!(exec.options, PlanOptions::Move(_))
+            && let Some(source) = &item.source
+            && exec.defers_removal(source, &item.target)
+        {
+            exec.two_phase = true;
+        }
         let follow = if mkdir_parents.is_some() {
             FollowLinks::Yes
         } else {
@@ -416,6 +439,13 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         };
     }
     let parents = mkdir_parents.unwrap_or_else(|| exec.create_parents(item.depth));
+    // An empty source folder of a move into an archive waits for the rebuild too (D-148).
+    if matches!(exec.options, PlanOptions::Move(_))
+        && let Some(source) = &item.source
+        && exec.defers_removal(source, &item.target)
+    {
+        exec.two_phase = true;
+    }
     let replaced = if item.replaces {
         match lstat_target(exec.dst, &item.target) {
             Ok(Some(found)) if found.kind == EntryKind::Dir => {
@@ -445,7 +475,10 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
         let preserve = exec.preserve();
         if preserve.times || preserve.attrs {
             match exec.src.stat(source, FollowLinks::No) {
-                Ok(entry) => exec.defer_dir(item.depth, index, item.target.clone(), entry),
+                Ok(mut entry) => {
+                    narrow_archive_mode(exec, source, &item.target, &mut entry);
+                    exec.defer_dir(item.depth, index, item.target.clone(), entry);
+                }
                 Err(e) => return Outcome::Failed(e),
             }
         }
@@ -460,7 +493,8 @@ pub(crate) fn run_copy(exec: &mut Exec<'_>, item: &PlanItem) -> Result<u64, VfsE
         .as_ref()
         .ok_or_else(|| source_changed(&item.target))?;
     let bytes = copy_content(exec, source, &item.target, item.replaces, item.depth)?;
-    let entry = source_file(exec, source, item.depth)?;
+    let mut entry = source_file(exec, source, item.depth)?;
+    narrow_archive_mode(exec, source, &item.target, &mut entry);
     apply_metadata(exec, &item.target, &entry)?;
     Ok(bytes)
 }
@@ -502,7 +536,7 @@ pub(crate) fn copy_content(
         return Ok(bytes);
     }
     let mut writer = exec.dst.open_write(target, &opts)?;
-    let mut reader = exec.src.open_read(source)?;
+    let mut reader = exec.src.open_read_with(source, exec.ctl.cancel)?;
     let mut buffer = vec![0u8; StreamOptions::default().effective_buffer_size()];
     let mut copied: u64 = 0;
     loop {
@@ -657,6 +691,31 @@ fn replace_with(
             }
             Err(e)
         }
+    }
+}
+
+/// §1.5.7 rule 18: the mode of a member stands for what an archive asks, and an archive is hostile. Outside an archive
+/// it keeps `rwx` bits only, and only those the platform gave the new `target`: a file created with the default mode
+/// has the umask (and any default ACL) in it, so the umask needs no call and no environment (T1). Such a file was
+/// created without `x`, so a reader's `r` stands for its `x`. A target that shows no mode counts as umask 022.
+pub(crate) fn narrow_archive_mode(
+    exec: &Exec<'_>,
+    source: &Spec,
+    target: &Spec,
+    entry: &mut Entry,
+) {
+    if !matches!(source, Spec::ArchiveMember { .. }) || matches!(target, Spec::ArchiveMember { .. })
+    {
+        return;
+    }
+    if let Attrs::Unix { meta } = &mut entry.attrs {
+        let created = exec
+            .dst
+            .stat(target, FollowLinks::No)
+            .ok()
+            .and_then(|entry| entry.attrs.unix())
+            .map_or(0o755, |created| created.mode);
+        meta.mode &= 0o777 & (created | ((created & 0o444) >> 2));
     }
 }
 

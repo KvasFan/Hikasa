@@ -12,8 +12,9 @@ use std::time::{Duration, Instant};
 
 use hikasa_core::{CompareVerdict, JobKind, Side};
 use hikasa_folder::{
-    Category, ChannelObserver, ColourClass, DisplayOptions, EntryView, FolderDisplayFilter,
-    FolderMode, FolderToggles, NodeId, TreeRead, VisibleRow,
+    ArchiveHandling, Category, ChannelObserver, ColourClass, DisplayOptions, EntryView,
+    FolderDisplayFilter, FolderMode, FolderToggles, NodeFlags, NodeId, NodeView, TreeRead,
+    VisibleRow,
 };
 use hikasa_session::api::{
     FolderCompareRequest, FolderCompareResponse, PreparedFolderCompare, TextCompareRequest,
@@ -69,6 +70,10 @@ pub struct RowView {
     pub open: bool,
     /// A folder whose children are known.
     pub has_children: bool,
+    /// An archive by its name, closed or opened (the zipper icon, D-153).
+    pub archive: bool,
+    /// `Open` opens this closed archive as a folder (`OnceOpened`, FC-015).
+    pub opens_archive: bool,
     /// Left cell.
     pub left: Option<Cell>,
     /// Right cell.
@@ -178,6 +183,8 @@ pub struct FolderViewModel {
     log_height: f64,
     /// What the log learns when a job ends (D-116), taken by the app.
     notes: Vec<LogNote>,
+    /// An archive `Open` just added: its folder row is shown expanded when it appears (D-153).
+    expand_archive: Option<String>,
 }
 
 /// The cached availability of next/previous difference.
@@ -231,6 +238,7 @@ impl FolderViewModel {
             show_log: false,
             log_height: LOG_HEIGHT,
             notes: Vec::new(),
+            expand_archive: None,
         }
     }
 
@@ -246,7 +254,7 @@ impl FolderViewModel {
             "prepare folder comparison".into(),
             wake,
             move |svc, job| {
-                let prepared = svc.folder_prepare(&request);
+                let prepared = svc.folder_prepare_in(&request, job);
                 // Stop while preparing: no scan may start (the UI also drops this job's result).
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
@@ -476,6 +484,7 @@ impl FolderViewModel {
 
     /// Rebuilds the visible rows from the model (O(visible), §1.6.4).
     pub fn rebuild(&mut self) {
+        self.open_pending_archive();
         let began = Instant::now();
         let Some(prepared) = self.prepared() else {
             self.rows.clear();
@@ -598,6 +607,58 @@ impl FolderViewModel {
         node.is_folder().then(|| (id, self.is_open(id)))
     }
 
+    /// The path of the selected row when `Open` opens it as a folder: a closed archive with `OnceOpened`.
+    fn selected_closed_archive(&self) -> Option<String> {
+        let id = self.selected?;
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let node = read.node(id)?;
+        opens_archive(&read, &node).then(|| read.path(id).as_str().to_owned())
+    }
+
+    /// Adds `path` to the view's `rules.open_archives` and runs the comparison again (W9 and W6 refine it).
+    fn open_archive(&mut self, service: &Service, path: String) {
+        let mut open = self
+            .prepared()
+            .map_or_else(Vec::new, |prepared| prepared.rules().open_archives.clone());
+        open.push(path.clone());
+        self.request.patch.open_archives = Some(open);
+        self.expand_archive = Some(path);
+        self.refresh(service);
+    }
+
+    /// Prepares and runs the comparison again.
+    fn refresh(&mut self, service: &Service) {
+        self.cancel();
+        self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
+        self.rows.clear();
+        self.seen_generation = u64::MAX;
+        self.started = Instant::now();
+        self.finished_after = None;
+        self.events.store(0, Ordering::Relaxed);
+    }
+
+    /// Opens the row of the archive `Open` added, and the folders around it, once it is in the tree.
+    fn open_pending_archive(&mut self) {
+        let Some(path) = self.expand_archive.as_deref() else {
+            return;
+        };
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let read = model.read();
+        let found = read.preorder().map(|(id, _)| id).find(|&id| {
+            read.path(id).as_str() == path && read.node(id).is_some_and(|n| n.is_folder())
+        });
+        if let Some(id) = found {
+            for folder in read.ancestors(id).into_iter().chain([id]) {
+                self.set_open(folder, true);
+            }
+            self.expand_archive = None;
+        }
+    }
+
     /// The selected file pair's specs (FC-062: both sides present, not folders).
     fn selected_pair(&self) -> Option<(NodeId, hikasa_core::Spec, hikasa_core::Spec)> {
         let id = self.selected?;
@@ -682,7 +743,8 @@ impl FolderViewModel {
             ctx.open_folder_selected = open;
             ctx.closed_folder_selected = !open;
         }
-        ctx.pair_selected = self.selected_pair().is_some();
+        ctx.pair_selected =
+            self.selected_pair().is_some() || self.selected_closed_archive().is_some();
         (ctx.next_difference, ctx.prev_difference) = self.differences_around();
     }
 
@@ -716,15 +778,7 @@ impl FolderViewModel {
     ) -> Option<Option<(TextCompareRequest, ViewOptions)>> {
         match id {
             CommandId::Stop => self.cancel(),
-            CommandId::FullRefresh => {
-                self.cancel();
-                self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
-                self.rows.clear();
-                self.seen_generation = u64::MAX;
-                self.started = Instant::now();
-                self.finished_after = None;
-                self.events.store(0, Ordering::Relaxed);
-            }
+            CommandId::FullRefresh => self.refresh(service),
             CommandId::Expand | CommandId::Collapse => {
                 if let Some((node, _)) = self.selected_folder() {
                     self.set_open(node, id == CommandId::Expand);
@@ -751,7 +805,13 @@ impl FolderViewModel {
                 self.collapsed.clear();
                 self.rebuild();
             }
-            CommandId::Open => return Some(self.open_request()),
+            CommandId::Open => {
+                if let Some(path) = self.selected_closed_archive() {
+                    self.open_archive(service, path);
+                    return Some(None);
+                }
+                return Some(self.open_request());
+            }
             CommandId::DiffNext | CommandId::DiffPrev => {
                 if let Some(index) = self.difference_from(id == CommandId::DiffNext) {
                     self.select(index);
@@ -1110,6 +1170,13 @@ fn mark(category: Category) -> (&'static str, &'static str) {
     }
 }
 
+/// True when `Open` on this row opens a closed archive: the flag and the rules (D-153).
+fn opens_archive(read: &TreeRead<'_>, node: &NodeView<'_>) -> bool {
+    node.flags.contains(NodeFlags::ARCHIVE)
+        && !node.is_folder()
+        && read.rules().handling.archives == ArchiveHandling::OnceOpened
+}
+
 fn row_view(
     read: &TreeRead<'_>,
     row: &VisibleRow,
@@ -1119,6 +1186,8 @@ fn row_view(
 ) -> Option<RowView> {
     let node = read.node(row.node)?;
     let folder = node.is_folder();
+    let archive = node.flags.contains(NodeFlags::ARCHIVE);
+    let opens_archive = opens_archive(read, &node);
     let totals = read.totals(row.node);
     let cell = |entry: Option<&EntryView<'_>>, side: Side| {
         entry.map(|e| {
@@ -1160,6 +1229,8 @@ fn row_view(
         folder,
         open,
         has_children: folder && node.scan == hikasa_folder::ScanStatus::Scanned,
+        archive,
+        opens_archive,
         left: cell(node.left.as_ref(), Side::Left),
         right: cell(node.right.as_ref(), Side::Right),
         mark,

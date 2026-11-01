@@ -23,6 +23,8 @@ Every subcommand ends with one of these codes:
   be loaded is 107.
 - Display filters never change the exit code; `--ignore-unimportant` does (12 becomes 2).
 - A broken pipe on stdout stops the output and keeps the computed code.
+- Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once
+  ([Using the command line](topic:cli)).
 - `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
 
 See [hikasa quick](topic:quick), [hikasa folder compare](topic:folder-compare) and [Contents](topic:index).

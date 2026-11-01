@@ -11,10 +11,11 @@
 //! 34) → for `gui open`, `parse_open_args` on the arguments exactly as written after `open` (D-51) and the merge
 //! of its output flags with the global ones → logging (`--log`, `--verbose`) → `Service::new` with a lazy
 //! standard-input source → the command inside the panic boundary (a panic exits 100, D-35) → exit code. A broken
-//! pipe on stdout stops the output and keeps the computed code.
+//! pipe on stdout stops the output and keeps the computed code. Ctrl-C during a job: `interrupt` (D-159).
 
 mod args;
 mod cmd;
+mod interrupt;
 mod launcher;
 mod output;
 mod progress;
@@ -38,6 +39,7 @@ use hikasa_session::{
 use hikasa_vfs::{VfsError, VfsOp};
 
 use crate::args::{Cli, Command, FormatCmd, GlobalArgs, GuiCmd, TextCmd};
+use crate::interrupt::Interrupt;
 use crate::output::{Output, colour_enabled, stderr_line};
 use crate::progress::ProgressLine;
 
@@ -159,6 +161,7 @@ fn execute(
         return cmd::fail(out, schema, &e, ApiOp::Other, &[], &[]);
     }
     let progress = ProgressLine::new(globals.quiet);
+    let interrupt = Interrupt::new(progress.clone());
     let code = match cmd::run_without_service(out, command) {
         Some(code) => code,
         None => {
@@ -189,17 +192,20 @@ fn execute(
                             service: &service,
                             out: &mut *out,
                             progress: &progress,
+                            interrupt: &interrupt,
                             matches: leaf_matches(matches),
                         };
                         Ok(cmd::dispatch(&mut ctx, command, open))
                     });
-                    match dispatched {
+                    let code = match dispatched {
                         Ok(code) => code,
                         Err(e) => {
                             progress.clear();
                             cmd::fail(out, schema, &e, op, service.startup_warnings(), &[])
                         }
-                    }
+                    };
+                    service.shutdown();
+                    code
                 }
                 Err(e) => cmd::fail(out, schema, &e, ApiOp::Other, &[], &[]),
             }

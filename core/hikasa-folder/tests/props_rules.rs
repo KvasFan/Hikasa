@@ -6,9 +6,9 @@ mod common;
 use common::config;
 use hikasa_core::{ContentMethod, FileTime, NameFilterLists, Side};
 use hikasa_folder::{
-    CaseMode, Change, Cmp, ContentRule, Criteria, DateCutoff, DateFilter, FilterRules, FolderRules,
-    FolderRulesPatch, Handling, NameAlignment, OtherFilters, SizeFilter, TimeRelation,
-    TimestampRule, TzOffset, UnixCriteria, compare_times,
+    ArchiveHandling, CaseMode, Change, Cmp, ContentRule, Criteria, DateCutoff, DateFilter,
+    FilterRules, FolderRules, FolderRulesPatch, Handling, NameAlignment, OtherFilters, SizeFilter,
+    TimeRelation, TimestampRule, TzOffset, UnixCriteria, compare_times,
 };
 use hikasa_vfs::DosAttrs;
 use proptest::prelude::*;
@@ -144,6 +144,7 @@ fn rules() -> impl Strategy<Value = FolderRules> {
             follow_symlinks,
             flatten,
             scan_orphan_folders,
+            archives: ArchiveHandling::default(),
         },
     );
     (0u32..=1, criteria, alignment, filters, handling).prop_map(
@@ -153,6 +154,7 @@ fn rules() -> impl Strategy<Value = FolderRules> {
             alignment,
             filters,
             handling,
+            open_archives: Vec::new(),
         },
     )
 }

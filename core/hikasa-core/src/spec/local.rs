@@ -4,7 +4,7 @@
 //! units on Windows hosts. It only inspects and produces ASCII units (`/`, `\`, `.`, `~`, `:` and drive
 //! letters), so valid UTF-8 stays valid UTF-8 and non-UTF-8 OS strings survive unchanged.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 
 use super::{PathStyle, SpecError};
@@ -700,6 +700,31 @@ impl LocalPath {
     pub fn parent(&self) -> Option<LocalPath> {
         let units = os::units(self.0.as_os_str());
         parent_units(&units, PathStyle::HOST).map(|p| LocalPath(PathBuf::from(os::from_units(p))))
+    }
+
+    /// [`LocalPath::parent`] for an explicit path style, so the Windows rules of archive resolution run on every
+    /// platform (D-138).
+    pub fn parent_in(&self, style: PathStyle) -> Option<LocalPath> {
+        let units = os::units(self.0.as_os_str());
+        parent_units(&units, style).map(|p| LocalPath(PathBuf::from(os::from_units(p))))
+    }
+
+    /// [`LocalPath::file_name`] for an explicit path style (a final `..` is the name `..`; `None` for a root).
+    pub fn file_name_in(&self, style: PathStyle) -> Option<OsString> {
+        let units = os::units(self.0.as_os_str());
+        let root = root_len(&units, style);
+        if units.len() <= root {
+            return None;
+        }
+        let sep = match style {
+            PathStyle::Unix => b'/',
+            PathStyle::Windows => b'\\',
+        };
+        let name = units
+            .iter()
+            .rposition(|&u| is(u, sep))
+            .map_or(root, |at| (at + 1).max(root));
+        Some(os::from_units(units.get(name..).unwrap_or(&[]).to_vec()))
     }
 }
 

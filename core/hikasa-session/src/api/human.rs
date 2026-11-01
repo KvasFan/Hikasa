@@ -351,13 +351,14 @@ pub fn settings_import_lines(dto: &SettingsImportDto) -> Vec<String> {
 }
 
 /// The word of a `vfs` write item (§1.3.7): `mkdir`, `exists`, `copy`, `replace`, `link`, `rename`, `move`,
-/// `remove`, `rmdir`, `trash`, `touch`, `create`, `skip`.
+/// `remove`, `rmdir`, `trash`, `touch`, `create`, `skip`, `mkarchive`.
 fn vfs_op_word(item: &VfsOpItemDto) -> &'static str {
     match item.action {
         "create_dir" => "mkdir",
         "keep_dir" => "exists",
         "copy" if item.replaces => "replace",
         "remove_dir" => "rmdir",
+        "create_archive" => "mkarchive",
         other => other,
     }
 }

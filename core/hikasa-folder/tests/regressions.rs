@@ -193,6 +193,7 @@ fn scan(
         observer: &NullObserver,
         now: &now,
         content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
     let model = FolderModel::new(mspec("/l"), mspec("/r"), rules.clone()).unwrap();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| compare_into(&model, &env)));

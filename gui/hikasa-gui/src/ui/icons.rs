@@ -160,6 +160,8 @@ pub enum IconId {
     Restore,
     /// The `Help` icon.
     Help,
+    /// The `Zipper` icon: an archive row of the folder tree (D-153).
+    Zipper,
 }
 
 impl IconId {
@@ -229,6 +231,7 @@ impl IconId {
         IconId::Import,
         IconId::Restore,
         IconId::Help,
+        IconId::Zipper,
     ];
 
     /// The icon's operations.
@@ -687,6 +690,15 @@ impl IconId {
                 Op::FilledPolygon(&[[3.65, 1.34], [7.45, 3.15], [4.65, 5.34]]),
                 Op::FilledCircle([8.0, 8.5], 1.2),
             ],
+            IconId::Zipper => &[
+                Op::Polygon(&[[3.0, 1.5], [13.0, 1.5], [13.0, 14.5], [3.0, 14.5]]),
+                Op::Line([8.0, 1.5], [8.0, 3.0]),
+                Op::Line([6.5, 3.0], [8.0, 3.0]),
+                Op::Line([8.0, 4.5], [9.5, 4.5]),
+                Op::Line([6.5, 6.0], [8.0, 6.0]),
+                Op::Line([8.0, 7.5], [9.5, 7.5]),
+                Op::Rect([6.5, 9.0], [9.5, 12.5]),
+            ],
             IconId::Help => &[
                 Op::Circle([8.0, 8.0], 6.5),
                 Op::Polyline(&[
@@ -781,7 +793,7 @@ mod tests {
     /// A4.6: the inventory, operations inside the grid, no two icons alike.
     #[test]
     fn the_inventory_is_complete_and_original() {
-        assert_eq!(IconId::ALL.len(), 63);
+        assert_eq!(IconId::ALL.len(), 64);
         for (i, id) in IconId::ALL.iter().enumerate() {
             assert!(!id.ops().is_empty(), "{id:?}");
             for op in id.ops() {

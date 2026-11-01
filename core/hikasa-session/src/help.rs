@@ -38,6 +38,7 @@ topics!(
     "session",
     "workspace",
     "vfs",
+    "archives",
     "gui",
     "completions",
     "version",

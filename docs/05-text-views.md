@@ -10,8 +10,8 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   saved-edit flag, bookmarks. The source encoding (detected: BOM → `chardetng` →
   format default → "current locale"; overridable per pane) and line-ending style are
   preserved on save unless converted.
-- **TC-002** (P0): Loading: specs may be local files, archive members, remote files,
-  HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
+- **TC-002** (P0): Loading: specs may be local files, archive members (M2 W5; read-only, the title shows the
+  canonical spec), remote files, HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
   (`10-file-formats.md` §4) before being shown; a converted document is read-only
   unless the format defines a save conversion.
 - **TC-003** (P0): Binary content detection warns "contains binary data, edit anyway?".

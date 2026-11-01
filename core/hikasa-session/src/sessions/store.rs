@@ -7,6 +7,7 @@
 //! configuration folder (folders created on demand). The methods return [`ApiError`] (W2 note: the store reports
 //! `not_found`, `already_exists` and `invalid_input`, which `SessionError` has no variants for).
 
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{Warning, WarningCode};
@@ -19,6 +20,7 @@ use crate::api::ApiError;
 use crate::error::SessionError;
 use crate::paths::ConfigLocation;
 use crate::settings::keys::KeySegment;
+use crate::settings::stamp::modified_ns;
 use crate::settings::{LoadMode, Loaded, Options, Overwrite, SettingsFile, tree};
 
 /// The folder of the defaults files.
@@ -114,6 +116,35 @@ impl KeyEdits {
         }
         doc
     }
+}
+
+/// A stamp of everything below `<config>/sessions`: paths, lengths and modification times, no content. It changes when
+/// a session or folder is added, removed or rewritten, by this process or another one; the GUI's watch polls it to keep
+/// the Home tree current (D-124).
+pub(crate) fn store_stamp(config: &ConfigLocation) -> u64 {
+    fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64, Option<i128>)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let path = entry.path();
+            if meta.is_dir() {
+                walk(&path, out);
+                out.push((path, 0, None));
+            } else {
+                out.push((path, meta.len(), modified_ns(&meta)));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&config.dir.join("sessions"), &mut files);
+    files.sort();
+    let mut hasher = DefaultHasher::new();
+    files.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The sessions of one configuration folder.

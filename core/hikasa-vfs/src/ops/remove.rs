@@ -212,8 +212,18 @@ fn tree(
     Ok(())
 }
 
-/// `remove`, `remove_dir` (skipped `children_failed` when a child failed or was skipped) and `trash`.
-pub(crate) fn run_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
+/// `remove`, `remove_dir` (skipped `children_failed` when a child failed or was skipped) and `trash`. In a move into
+/// an archive a `remove_dir` waits for the rebuild, like the sources in it (D-148).
+pub(crate) fn run_remove(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
+    if item.action == Action::RemoveDir && exec.two_phase {
+        exec.deferred.push((index, None));
+        return Outcome::Deferred;
+    }
+    finish_remove(exec, item)
+}
+
+/// `run_remove` without the wait.
+pub(crate) fn finish_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     if item.action == Action::RemoveDir {
         // The folder is still the one planned (a link swapped in is never removed in its place).
         if let Err(e) = exec.check_folder(&item.target, item.seen, FollowLinks::No) {
@@ -223,6 +233,11 @@ pub(crate) fn run_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
             return Outcome::Skipped(SkipReason::ChildrenFailed);
         }
     }
+    remove_now(exec, item)
+}
+
+/// The removal itself.
+fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     let result = match item.action {
         Action::Trash => exec.src.move_to_trash(&item.target),
         _ => exec.src.remove(&item.target),

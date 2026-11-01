@@ -58,10 +58,11 @@ pub fn run(ctx: &mut Ctx<'_>, cmd: &VfsCmd) -> u8 {
                 Err(e) => ctx.fail(VFS_LIST_SCHEMA, &e, op, &[]),
             }
         }
-        VfsCmd::Stat(args) => match ctx
-            .service
-            .vfs_stat(&args.spec, follow(args.follow_symlinks))
-        {
+        VfsCmd::Stat(args) => match ctx.service.vfs_stat_in(
+            &args.spec,
+            follow(args.follow_symlinks),
+            &ctx.job(JobKind::VfsList),
+        ) {
             Ok(dto) => {
                 if ctx.out.json() {
                     ctx.json_success(VFS_STAT_SCHEMA, OK, dto, &[], op)

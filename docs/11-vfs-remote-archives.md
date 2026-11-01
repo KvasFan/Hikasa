@@ -30,12 +30,98 @@ scripts, command line, Copy to Folder targets, reports).
   cache on demand (streaming for tar/gz); writes rebuild the archive atomically
   (temp + rename) and update CRCs. "New Folder" with an archive extension creates an
   empty archive. Archive **type masks** are configurable in options (Archive Types page;
-  empty mask disables a type).
+  empty mask disables a type). *M2 W5a (read; contract §1.5):* `ArchiveVfs` is stacked on a base `Vfs` and serves
+  zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst`, and the single streams gz, bz2, xz and zst (one member named
+  after the file without its last extension). A format is chosen by mask, never by content. Listing and CRC tests
+  never write to disk; a zip member up to 1 MiB decodes to memory, a larger one to a cache file; a plain tar member is
+  a range of the file; the first read of a compressed tar spools its member and a second distinct read writes the
+  whole stream to the cache once. *M2 W5b (write; §1.5.10):* zip and the tar family are written through a batch and a
+  rebuild, below; a primitive on a single stream, or below one, is `unsupported`.
+
+**Archives in user terms (M2 W5).**
+
+| Format | Reported besides read, list, seek, modification time, case-sensitive names |
+|---|---|
+| zip | stored CRC, DOS attributes, Unix mode, symbolic links; write, mkdir, remove, rename, set times, set attributes (`Mode`, and `Dos` with the `R` bit only), create links |
+| tar family | Unix mode and owner, symbolic links; the same writes (`Mode` only) |
+| single streams | nothing more |
+
+A member of a nested archive gets the bits of the innermost format, and the write bits only when every archive around
+it can be written.
+
+- *Names.* Members are checked on their raw bytes: NUL, absolute names, drive letters, `..` and names over 4,096 bytes
+  are refused, left out of the tree and shown as `<refused-N>` rows (at most 1,000), kept by a rebuild. A zip reads
+  `\` as `/`; a tar refuses it. A file that is also a parent, and anything below a link member, is refused whatever
+  the order. The last of two equal paths wins; `A.txt` and `a.txt` are two members.
+- *Kinds.* A link member is listed and never followed or materialized: a copy out of an archive skips it, whatever the
+  link policy. A hard link becomes the earlier regular member it names, else it is refused. Devices and FIFOs are
+  `other`; sparse members are listed and not read.
+- *Damage.* A tar or stream keeps what lies before the damage and adds a `<damaged>` row. A zip without a central
+  directory, or a mask match with other content, is `invalid_data` when entered; the file stays a normal file. A
+  decoder panic is `invalid_data` too.
+- *Limits* (`archives.limits.*`, OPT-010): 1,000,000 entries, folders that only exist through members included; 256 MiB of
+  paths and link targets per index; 256 folders of depth; 64 GiB per decoding pass and over overlapping zip members; 8 GiB
+  of cache; ratio 2,000:1 past 64 MiB; nesting 8; xz and zstd windows of 1 GiB. Listing needs no declared-size limit:
+  limits bind what is decoded, and a plain tar decodes nothing. A limit fails the archive, never the process.
+- *Modes.* Copied out, a member keeps its `rwx` bits within what the platform gives a new file; never `setuid`, `setgid` or
+  sticky.
+- *Encrypted members* are listed, without a CRC; reading one is `unsupported`. No password is asked or tried.
+- *Times.* Zip: the NTFS field, then 0x5455, then the DOS wall time in the injected zone (a time in a gap moves forward,
+  a fold takes the earlier instant). Tar: PAX `mtime`, then the header. Streams: gzip `MTIME` when set, else the file.
+- *Cache.* `<cache>/archives/s<n>/`, a random number, numeric names only, `0700`; `cache_max` evicts the least recently used
+  files no reader holds; a new stamp of the archive drops its files. Created by the first spool, removed at exit with any
+  folder that leaves empty; a held lock marks a live session, so a later session sweeps what a crash left, without
+  process ids or clocks. Concurrent sessions share the folder safely: a lock counts only for the file at its path, and
+  each cache file is checked when opened. The cache root and its parent must belong to the user or the system.
 - **VFS-003** (P1): Remote listings are cached per session; "Refresh" invalidates.
   Transfers show per-file progress and throughput; connection limits and bandwidth
   limits come from the profile.
 - **VFS-004** (P1): Remote files opened in file views are downloaded to a temp cache
   and uploaded on save; the cache is cleared on exit.
+
+**Rebuilds (M2 W5b, D-148, D-149).** A member write never touches the archive. Primitives change an overlay of the
+member tree, which every reader of the back-end sees; a batch holds them for one operation and is finished once, so an
+operation costs **one rebuild per archive**, and a rebuild costs one copy of the archive, however small the change. `ops::execute`
+is the one place an operation ends: it opens a batch on each archive it touches, finishes target archives before
+those that only lose sources, and removes the sources of a move into an archive only after the target's rebuild. A change
+outside a batch rebuilds at once, so a plain `open_write` cannot be lost. A batch belongs to the thread that opened it:
+another thread's change meets `another operation is changing this archive`. So does another process or back-end: a batch
+holds an advisory lock on `.<name>.hikasa-lock` beside the file for as long as it runs, so two writers cannot overlap, and the
+second fails at once rather than wait for an archive that will have changed under its plan (D-157). Readers neither take
+nor mind it. Its holder removes it; one left by a crash goes with the next writer. A folder or file system that cannot have
+it goes without, and then only the stamp below stands between two writers. A rebuild writes through the base's atomic
+writer (a temporary sibling, the file a link names being the target, then a rename), so a read error, a full disk, a
+cancel or a failed commit leaves the archive as it was; the done items of that archive then become failed (`not_run` when
+cancelled). The archive must still have the length, time and, where known, identity it had when the batch began, at the
+start of the rebuild and again after the sync, right before the rename, else the items fail "changed since the plan was
+made". The temporary file is owner-only until the rename and then gets the archive's mode. Its permissions stay, as for
+any local write, and for the same reason the folder decides what may be written: a read-only archive in a writable folder is
+rewritten and stays read-only (on Windows that rename fails and it stays as it was). Owner, ACLs and extended attributes
+are not carried over, as for any local write, and a second hard link to the archive keeps the old bytes, while a symbolic
+link stays. Its modification time is new, which is what tells other sessions it changed. A nested archive is rebuilt
+into the cache and enters the archive around it, so a chain commits only at the outermost file, however deep the change and
+whether or not the levels between have one of their own. A kill during a rebuild leaves the archive as it was, and the
+temporary file and the lock file next to it: there is no signal handler, and the next rebuild of that archive removes
+what no live writer holds, and nothing else.
+
+What a rebuild keeps is copied as bytes, never decoded: zip records (local header, data, descriptor; the central
+header with its offset changed), so an encrypted member, a method this build does not know, unknown extra fields and raw
+names survive; tar blocks by one forward pass, with whatever lies between members (global headers, volume labels) and
+anything after the end of the archive. Refused members stay; one refused only for a path conflict reads again once that path
+is free, and the operation says so. A shadowed duplicate shares the fate of the member that shadows it (D-156): it stays while
+that member stays or is touched, moves with it, also to another archive of any writable format, and goes when it is removed
+or replaced, with a warning that names the count, so what was overwritten does not live on in an older record; `--dry-run`
+says so first. A plain file holds one version, so a move out of the archive ends them, with the same kind of warning. A renamed or
+touched zip member has those fields edited in its headers, so its data is not decoded either, and a name in another code page
+keeps the bytes the rename leaves alone; a renamed or touched tar member gets a copy of its header, keeping owner, type,
+device numbers, link name and its other PAX records, and a touch leaves its name as bytes. A hard link stays one while the
+member it names stays; otherwise it becomes a regular member at its own place, with its content and its header's owner.
+Sparse members cannot be moved or touched, and a folder holding a name that does not decode cannot be moved: both are
+refused, and so is a target that is the archive holding the source, or a level around it. A time the format cannot
+hold is stored as the nearest it can, with a warning. A zip with a prefix and a damaged archive are refused, unchanged. A
+signed `.jar` or `.apk` loses its signature's validity, and the signature record of a central directory goes, with a warning.
+Limits bind what is written: a stream, ratio, entry, text or depth past them is refused, since nothing could read it back;
+only a rebuild that adds content can fail on the ratio.
 
 **Local writes (M1).** Files are written atomically: the content goes to a temporary file
 in the target's folder, which is synced and renamed onto the target, so a failure leaves
@@ -101,6 +187,14 @@ profile:MyProfile              profile:MyProfile?folder/file.ext
 http://www.example.com/page.html
 clipboard://        -            mtp://MyPhone/DCIM
 ```
+
+**Archive specs (M2 W5a, D-137, D-138).** `Spec::parse` is unchanged; resolution then maps the path to the item, using
+only the `Vfs`: a real item wins, the deepest existing prefix decides, and only a regular file whose name matches a
+mask opens a way in. `/x/a.zip/inner/x` is a member, `/x/a.zip/` (canonical, with the trailing `/`) the archive as a
+folder, `/x/a.zip` the file; nesting wraps (`a.zip/b.tar.gz/c.txt`). A command that wants a folder (`vfs ls`, `folder
+compare`, an input ending in a separator) gets the root. Masks ignore case, members never do; the prefix on disk
+follows the file system; `..` never enters. On Windows the canonical form is `C:\x\a.zip/inner/x`, which parses back
+to the local path and resolves to the same spec.
 
 - **VFS-010** (P0): Spec parsing is platform-aware (drive letters, UNC, `~`), supports
   relative paths resolved against the current directory on the command line, and

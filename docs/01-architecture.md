@@ -73,7 +73,7 @@ The product is organised in three strictly layered groups of crates:
 
 ```
 Hikasa/
-├── Cargo.toml                 # workspace, version 0.1.90
+├── Cargo.toml                 # workspace, version 0.1.91
 ├── core/                      # layer 1: libraries only
 │   ├── hikasa-core/           # shared types: Side, Spec, errors, cancellation, progress, settings schema, localization
 │   ├── hikasa-vfs/            # virtual file system: local, archive, snapshot, remote back-ends, clipboard, http
@@ -130,7 +130,7 @@ A `Spec` identifies a file or folder on any back-end:
 ```
 enum Spec {
     Local(PathBuf),                                  // /home/u/x, C:\x, \\server\share\x, ~/x
-    ArchiveMember { archive: Box<Spec>, path: String }, // x.zip/inner/file
+    ArchiveMember { archive: Box<Spec>, member: String }, // x.zip/inner/file; member "" is the root, x.zip/
     Snapshot { file: PathBuf, path: String },        // snapshot.hksnap/inner
     Remote { profile: ProfileRef, path: String },    // ftp://u@h/p, sftp://, ftps://, dav(s)://, s3://bucket/key, profile:Name?path
     Http(Url),                                       // single files only
@@ -141,7 +141,9 @@ enum Spec {
 
 - **ARCH-020** (P0): Specs round-trip to a canonical string form used in sessions,
   on the command line and in scripts (`11-vfs-remote-archives.md` §2).
-- **ARCH-021** (P0): Archive members nest (`a.zip/b.tar.gz/c.txt`).
+- **ARCH-021** (P0): Archive members nest (`a.zip/b.tar.gz/c.txt`). *M2 W5 (D-137):* `Spec::parse` never yields
+  `ArchiveMember`: members appear through resolution (`hikasa_vfs::archive::resolve_spec`), `Vfs::child` and
+  `Spec::archive_member`. `member` is `/`-separated on every platform; `member: ""` is the archive as a folder.
 
 ### 3.2 VFS (hikasa-vfs)
 
@@ -150,7 +152,19 @@ trait Vfs {
     fn stat(&self, spec:&Spec) -> Result<Entry>;
     fn list(&self, dir:&Spec, cancel:&Cancel) -> Result<Box<dyn Iterator<Item=Result<Entry>>>>;
     fn open_read(&self, spec:&Spec) -> Result<Box<dyn ReadSeek>>;   // streaming
-    fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn Write>>;
+    fn open_read_with(&self, spec:&Spec, cancel:&CancelToken) -> Result<Box<dyn ReadSeek>>;  // M2 W5: cancellable decode
+    fn prepare(&self, spec:&Spec, ctl:&Ctl) -> Result<()>;          // M2 W5: the index of every archive around spec
+    fn archive_format(&self, name:&str) -> Option<ArchiveFormat>;   // M2 W5: per the masks
+    fn take_warnings(&self) -> Vec<Warning>;                        // M2 W5: raised since the last call
+    fn begin(&self, at:&Spec) -> Result<()>;                        // M2 W5b: a batch on an archive, its whole chain
+    fn finish(&self, at:&Spec, how:Finish) -> Result<()>;           // M2 W5b: Commit rebuilds once, Abort drops the overlay
+    fn finish_with(&self, at:&Spec, how:Finish, ctl:&Ctl) -> Result<()>; // M2 W5b: finish with cancellation and progress
+    fn create_archive(&self, spec:&Spec) -> Result<()>;             // M2 W5b: an empty archive, by its mask
+    fn lock_writer(&self, spec:&Spec) -> Result<Option<Box<dyn WriteLock>>>; // M2 W5b: keeps other writers off a file
+    fn shadows_of(&self, spec:&Spec) -> u64;                        // M2 W5b: records a member shadows (`--dry-run`)
+    fn shadows_below(&self, spec:&Spec) -> u64;                     // M2 W5b: the same for a folder's members
+    fn carry_older(&self, source:&Spec, target:&Spec, ctl:&Ctl) -> Result<u64>; // M2 W5b: older records follow a copy (D-156)
+    fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn AtomicWrite>>;  // Write + Seek (M2 W5b) + commit
     fn capabilities(&self) -> Caps; // timestamps writable? attrs? unix mode? recycle bin? locks? crc provided?
     // M2 W3 (D-92): single-item mutating primitives, each behind a capability, default "unsupported";
     // they never follow the final link (D-94)

@@ -24,6 +24,7 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 jiff.workspace = true
+ctrlc.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

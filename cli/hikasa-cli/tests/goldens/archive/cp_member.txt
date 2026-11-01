@@ -1,0 +1,2 @@
+copy <TMP>/plain/x -> <TMP>/a.zip/new/x
+copied 1 of 1 items (0 skipped, 0 failed)

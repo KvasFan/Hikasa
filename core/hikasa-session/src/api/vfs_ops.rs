@@ -9,8 +9,8 @@ use std::ffi::{OsStr, OsString};
 
 use hikasa_core::{ErrorReport, FileTime, Spec, Warning};
 use hikasa_vfs::ops::{
-    self, CopyOptions, ItemStatus, LinkPolicy, MoveOptions, OpReport, OverwritePolicy, Plan,
-    RemoveOptions, SkipReason, Summary, TouchOptions,
+    self, Action, CopyOptions, ItemStatus, LinkPolicy, MoveOptions, OpReport, OverwritePolicy,
+    Plan, RemoveOptions, SkipReason, Summary, TouchOptions,
 };
 use hikasa_vfs::{EntryKind, FollowLinks, SetTimes, Vfs, VfsError};
 use serde::Serialize;
@@ -82,7 +82,7 @@ pub enum VfsOpRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VfsOpItemDto {
     /// The action (`create_dir`, `keep_dir`, `copy`, `link`, `rename`, `move`, `remove`, `remove_dir`, `trash`,
-    /// `touch`, `create`, `skip`).
+    /// `touch`, `create`, `skip`, `create_archive`).
     pub action: &'static str,
     /// The item's kind.
     pub kind: EntryKind,
@@ -219,7 +219,9 @@ impl Service {
     /// The plan of a write command, as `--dry-run` prints it (nothing is written; T12).
     pub fn vfs_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpDto, ApiError> {
         run_guarded(|| {
-            let plan = self.build_plan(req, job)?;
+            let mut plan = self.build_plan(req, job)?;
+            let router = self.router();
+            ops::note_shadow_drops(&*router, &*router, &mut plan);
             Ok(VfsOpDto::from_report(ops::dry_run(plan), true))
         })
     }
@@ -234,9 +236,11 @@ impl Service {
         })
     }
 
-    /// A spec that is written, removed or touched: parsed without reading standard input or the clipboard.
-    fn write_spec(&self, raw: &OsStr) -> Result<Spec, ApiError> {
-        Ok(Spec::parse_os(raw, &self.spec_context())?)
+    /// A spec that is written, removed or touched: parsed without reading standard input or the clipboard, then
+    /// resolved (§1.5.12): a trailing separator wants a folder.
+    pub(crate) fn write_spec(&self, raw: &OsStr) -> Result<Spec, ApiError> {
+        let spec = Spec::parse_os(raw, &self.spec_context())?;
+        self.resolve(spec, self.use_of(raw))
     }
 
     fn build_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<Plan, ApiError> {
@@ -248,7 +252,7 @@ impl Service {
                 target,
                 options,
             } => {
-                let pairs = self.pairs(sources, target, options.create_parents, platform)?;
+                let pairs = self.pairs(sources, target, options.create_parents, platform, job)?;
                 let router = self.router();
                 ops::plan_copy(&*router, &*router, &pairs, options, &job.ctl()).map_err(cancelled)
             }
@@ -258,7 +262,7 @@ impl Service {
                 options,
             } => {
                 refuse_dot_names(sources, platform)?;
-                let pairs = self.pairs(sources, target, options.create_parents, platform)?;
+                let pairs = self.pairs(sources, target, options.create_parents, platform, job)?;
                 let router = self.router();
                 ops::plan_move(&*router, &*router, &pairs, options, &job.ctl()).map_err(cancelled)
             }
@@ -269,8 +273,17 @@ impl Service {
                 ops::plan_remove(&*router, &specs, options, &job.ctl()).map_err(cancelled)
             }
             VfsOpRequest::Mkdir { specs, parents } => {
-                let specs = self.write_specs(specs)?;
-                Ok(ops::plan_mkdir(&*self.router(), &specs, *parents))
+                let raw = specs;
+                let specs = self.write_specs(raw)?;
+                let mut plan = ops::plan_mkdir(&*self.router(), &specs, *parents);
+                // A trailing separator wants a folder (§1.5.12), whatever the name looks like.
+                for (item, raw) in plan.items.iter_mut().zip(raw) {
+                    if item.action == Action::CreateArchive && ends_with_separator(raw, platform) {
+                        item.action = Action::CreateDir;
+                        item.kind = EntryKind::Dir;
+                    }
+                }
+                Ok(plan)
             }
             VfsOpRequest::Touch {
                 specs,
@@ -321,14 +334,23 @@ impl Service {
         target: &OsStr,
         create_parents: bool,
         platform: Platform,
+        job: &JobControl,
     ) -> Result<Vec<(Spec, Spec)>, ApiError> {
         let sources = sources
             .iter()
-            .map(|s| self.parse_spec(s))
+            .map(|s| self.parse_spec_in(s, self.use_of(s), &job.cancel))
             .collect::<Result<Vec<_>, _>>()?;
         let target_spec = self.write_spec(target)?;
         let into = ends_with_separator(target, platform);
         let router = self.router();
+        // Indexing runs here, where it can be cancelled; `stat` cannot. Any other failure is its item's error.
+        for source in &sources {
+            if let Err(error) = router.prepare(source, &job.ctl())
+                && error.is_cancelled()
+            {
+                return Err(ApiError::Cancelled);
+            }
+        }
         ops::resolve_targets(
             &*router as &dyn Vfs,
             &sources,

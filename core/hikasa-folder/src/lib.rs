@@ -33,6 +33,7 @@
 //!     observer: &NullObserver,
 //!     now: &now,
 //!     content_budget: 1 << 30,
+//!     archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
 //! };
 //! let cmp = compare_folders(&spec("/l"), &spec("/r"), &FolderRules::default(), &env)?;
 //! let read = cmp.read();
@@ -104,11 +105,14 @@ pub use model::{
 };
 pub use quick::{DiffFlags, quick_tests};
 pub use rules::{
-    CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec, DateCutoff, DateFilter,
-    FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules, FolderRulesPatch, Handling,
+    ArchiveHandling, CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec, DateCutoff,
+    DateFilter, FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules, FolderRulesPatch, Handling,
     NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset, UnixCriteria,
 };
-pub use scan::{ContentEngines, FolderEnv, MAX_FOLLOW_DEPTH, compare_folders, compare_into};
+pub use scan::{
+    ContentEngines, FolderEnv, MAX_FOLLOW_DEPTH, SCAN_ARCHIVE_ENTRIES_MAX, compare_folders,
+    compare_into,
+};
 pub use state::{Category, CompareState};
 pub use stats::{ContentCounts, FolderStats};
 pub use time_cmp::{TimeRelation, compare_times};

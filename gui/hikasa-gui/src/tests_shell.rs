@@ -16,9 +16,11 @@ use crate::app::{AppCore, Effect, OpenTarget};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::ButtonRole;
 use crate::dnd::{DROP_ONE_MORE, DROP_ONE_OR_TWO, DropTarget, FieldId};
+use crate::fonts::DataFonts;
 use crate::ipc::GuiHandler;
 use crate::menus::{MenuContext, menu_bar, render_text, tab_menu};
 use crate::notify::{NoticeAction, NoticeKind};
+use crate::options::theme_page::FontSlot;
 use crate::status::MessageKind;
 use crate::tests::{TestApp, World, folder_pair, text_pair};
 use crate::watch::{WatchEvent, Watcher};
@@ -785,8 +787,20 @@ fn a_font_family_gives_one_notice_and_the_built_in_font() {
         "theme.toml",
         "schema_version = 1\n[fonts.editor]\nfamily = \"Nowhere Mono\"\nsize = 14.0\n[fonts.hex]\nfamily = \"Nowhere Mono\"\n",
     )]);
-    let mut app = world.app(None);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
     let root = app.root();
+    let effects = world.settle(&mut app);
+    assert_eq!(
+        *source.asked.lock(),
+        [["Nowhere Mono".to_owned()]],
+        "one lookup"
+    );
+    assert!(
+        !effects.contains(&Effect::ApplyFonts),
+        "the built-in font stays"
+    );
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
     let notices: Vec<_> = app
         .window(root)
         .unwrap()
@@ -805,6 +819,146 @@ fn a_font_family_gives_one_notice_and_the_built_in_font() {
     };
     assert_eq!(m.font_px(), 14, "the editor size reaches the panes");
     world.settle(&mut app);
+}
+
+/// A font that passes every look at its file and panics where it is drawn: it answers as not found, from the fonts'
+/// thread, and the window keeps the built-in font. Without the throwaway drawing this one kills the window at its first
+/// frame, on every start.
+#[test]
+fn a_font_that_cannot_be_drawn_stays_away_from_the_window() {
+    struct Broken;
+    impl crate::fonts::FontSource for Broken {
+        fn load(&self, families: &[String]) -> Vec<Option<crate::fonts::LoadedFont>> {
+            let bytes: crate::fonts::FontBytes = Arc::new(font_of_no_size());
+            families
+                .iter()
+                .map(|_| {
+                    Some(crate::fonts::LoadedFont {
+                        bytes: Arc::clone(&bytes),
+                        index: 0,
+                    })
+                })
+                .collect()
+        }
+    }
+    let world = World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.editor]\nfamily = \"Broken Mono\"\n",
+    )]);
+    let mut app = world.app_with_fonts(Arc::new(Broken));
+    let root = app.root();
+    let effects = world.settle(&mut app);
+    assert!(!effects.contains(&Effect::ApplyFonts));
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
+    let notices = app.window(root).unwrap().notices.all();
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.text.contains("Broken Mono"))
+            .count(),
+        1
+    );
+}
+
+/// The bundled font with no units per em: what epaint divides by.
+fn font_of_no_size() -> Vec<u8> {
+    let mut data = bundled_font();
+    let tables = usize::from(u16::from_be_bytes([data[4], data[5]]));
+    let head = (0..tables)
+        .map(|table| 12 + 16 * table)
+        .find(|&record| &data[record..record + 4] == b"head")
+        .expect("a head table");
+    let at = u32::from_be_bytes(data[head + 8..head + 12].try_into().unwrap()) as usize;
+    data[at + 18..at + 20].fill(0);
+    data
+}
+
+/// The font egui bundles, as a test's font file: its family is `Hack`.
+fn bundled_font() -> Vec<u8> {
+    egui::FontDefinitions::default().font_data["Hack"]
+        .bytes()
+        .to_vec()
+}
+
+fn font_apply_count(effects: &[Effect]) -> usize {
+    effects.iter().filter(|e| **e == Effect::ApplyFonts).count()
+}
+
+#[test]
+fn a_family_found_loads_off_the_ui_thread_and_applies_once() {
+    let world = World::with_files(&[(
+        "theme.toml",
+        "schema_version = 1\n[fonts.editor]\nfamily = \"hack\"\n[fonts.hex]\nfamily = \"Hack\"\n\
+         [fonts.folder]\nfamily = \"Hack\"\nuse_system = true\n",
+    )]);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
+    assert!(
+        app.fonts().font(FontSlot::Editor).is_none(),
+        "nothing before the answer"
+    );
+    let effects = world.settle(&mut app);
+    assert_eq!(font_apply_count(&effects), 1);
+    assert_eq!(
+        *source.asked.lock(),
+        [["hack".to_owned(), "Hack".to_owned()]]
+    );
+    assert!(app.fonts().font(FontSlot::Editor).is_some());
+    assert!(app.fonts().font(FontSlot::Hex).is_some());
+    assert!(app.fonts().font(FontSlot::Listing).is_none());
+    assert!(
+        app.fonts().font(FontSlot::Folder).is_none(),
+        "use_system wins"
+    );
+    let root = app.root();
+    assert!(
+        app.window(root)
+            .unwrap()
+            .notices
+            .all()
+            .iter()
+            .all(|n| !n.text.contains("ack")),
+        "no notice for a family found"
+    );
+}
+
+#[test]
+fn a_theme_change_applies_the_fonts_once_and_a_colour_change_never() {
+    let world = World::with_files(&[("theme.toml", "schema_version = 1\n")]);
+    let source = Arc::new(DataFonts::new(vec![bundled_font()]));
+    let mut app = world.app_with_fonts(source.clone());
+    assert_eq!(font_apply_count(&world.settle(&mut app)), 0);
+    assert!(
+        source.asked.lock().is_empty(),
+        "built-in fonts look nothing up"
+    );
+
+    let (mut watcher, _link) = Watcher::new(world.service.clone());
+    let mut apply = |app: &mut TestApp, text: &str| {
+        // A change of size of the file, so that the watch sees it whatever the clock's grain.
+        world.write("config/theme.toml", text);
+        let events = watcher.poll_once().expect("polled");
+        assert!(!events.is_empty());
+        let mut effects = app.on_watch(events);
+        effects.extend(world.settle(app));
+        effects
+    };
+    let theme = "schema_version = 1\n[fonts.editor]\nfamily = \"Hack\"\n";
+    let effects = apply(&mut app, theme);
+    assert_eq!(font_apply_count(&effects), 1, "{effects:?}");
+    assert_eq!(source.asked.lock().len(), 1);
+
+    let effects = apply(&mut app, &format!("{theme}size = 15.0\n"));
+    assert_eq!(font_apply_count(&effects), 0, "the same family");
+    assert_eq!(
+        source.asked.lock().len(),
+        1,
+        "the same family is not looked up again"
+    );
+
+    let effects = apply(&mut app, "schema_version = 1\n");
+    assert_eq!(font_apply_count(&effects), 1, "back to the built-in font");
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
 }
 
 // ---- A4.7 status, jobs, messages, log -------------------------------------------------------------------------
@@ -1170,6 +1324,13 @@ fn drops_fill_fields_open_comparisons_or_explain() {
 
 /// M1: the watch counts the views of an input: closing one of two views of a pair (a duplicate, or two opens of
 /// the same pair) keeps the input watched; a second open keeps a change not polled yet.
+/// The events of a poll without `Sessions`: the session store is saved in the background, so it lands in any poll, and
+/// a test about inputs does not depend on when.
+fn inputs_only(mut events: Vec<WatchEvent>) -> Vec<WatchEvent> {
+    events.retain(|event| !matches!(event, WatchEvent::Sessions));
+    events
+}
+
 #[test]
 fn inputs_stay_watched_while_a_view_of_them_is_open() {
     let world = World::new();
@@ -1180,12 +1341,12 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     let (l, r) = text_pair(&world);
     let first = world.open(&mut app, &l, &r);
     world.settle(&mut app);
-    assert!(watcher.poll_once().expect("polled").is_empty());
+    assert!(inputs_only(watcher.poll_once().expect("polled")).is_empty());
     // A change, then the same pair opens again before the watch polled: the change is still reported.
     std::fs::write(&l, "changed once\n").expect("write");
     let second = world.open(&mut app, &l, &r);
     world.settle(&mut app);
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"
@@ -1195,7 +1356,7 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     app.0.close_tab(root, index, CloseReason::User);
     assert_eq!(app.tracked_inputs().len(), 2, "the second view's inputs");
     std::fs::write(&l, "changed twice\n").expect("write");
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"
@@ -1213,7 +1374,7 @@ fn inputs_stay_watched_while_a_view_of_them_is_open() {
     assert_eq!(app.tracked_inputs().len(), 2);
     watcher.poll_once().expect("polled");
     std::fs::write(&r, "right changed\n").expect("write");
-    let events = watcher.poll_once().expect("polled");
+    let events = inputs_only(watcher.poll_once().expect("polled"));
     assert!(
         matches!(events.as_slice(), [WatchEvent::Inputs(c)] if c.len() == 1),
         "{events:?}"
@@ -1374,6 +1535,8 @@ fn debug_events_reach_the_mailbox_only_with_debug_messages() {
     use tracing_subscriber::layer::SubscriberExt as _;
     let world = World::new();
     let mut app = world.app(None);
+    // What the first view's jobs post is not what this looks for.
+    world.settle(&mut app);
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
     app.set_debug_flag(Arc::clone(&flag));
     assert!(
@@ -1569,4 +1732,297 @@ fn drop_errors_reach_the_log() {
             .map(|e| e.text.clone())
             .collect::<Vec<_>>()
     );
+}
+
+/// D-117: the first-run format files are the program's own writes: no poll reports them, however the writes and the
+/// polls interleave (they run on one thread); a file someone else adds afterwards is reported as usual.
+#[test]
+fn the_first_run_format_files_raise_no_notice() {
+    use crate::startup::Deferred;
+    use crate::watch::WatchEvent;
+    // The cause: written behind the watch's back, each file is a change on disk.
+    let world = World::new();
+    let (mut watcher, _link) = Watcher::new(world.service.clone());
+    hikasa_session::FormatStore::new(world.service.config())
+        .materialize()
+        .expect("materialize");
+    let events = watcher.poll_once().expect("polled");
+    assert!(
+        matches!(events.as_slice(), [WatchEvent::Config(c)] if c.len() > 1),
+        "{events:?}"
+    );
+
+    let world = World::new();
+    let (mut watcher, link) = Watcher::new(world.service.clone());
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let mut deferred = Deferred::materialize_formats(&world.service, Some(link));
+    deferred.start().expect("started").join().expect("sent");
+    let events = watcher.poll_once().expect("polled");
+    assert_eq!(events, [], "the program's own files");
+    assert!(world.path("config/formats/order.toml").is_file());
+    assert_eq!(app.on_watch(events), []);
+    world.settle(&mut app);
+    let root = app.root();
+    let now = app.window_mut(root).map(|w| w.notices.visible(0.0).len());
+    assert_eq!(now, Some(0), "no notice");
+    assert!(watcher.poll_once().expect("polled").is_empty(), "nor later");
+
+    world.write("config/formats/mine.toml", "x = 1\n");
+    let events = watcher.poll_once().expect("polled");
+    assert!(
+        matches!(events.as_slice(), [WatchEvent::Config(_)]),
+        "{events:?}"
+    );
+}
+
+/// A stored zip of `(name, data)`, written by hand: the GUI crate has no zip dependency (§6.5: fixtures are generated).
+pub(crate) fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let crc32 = |data: &[u8]| {
+        let mut crc = u32::MAX;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    };
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in files {
+        let offset = out.len() as u32;
+        let crc = crc32(data);
+        let fields = |buf: &mut Vec<u8>| {
+            buf.extend_from_slice(&20u16.to_le_bytes());
+            buf.extend_from_slice(&[0u8; 4]);
+            buf.extend_from_slice(&0x6000u16.to_le_bytes());
+            buf.extend_from_slice(&0x5cefu16.to_le_bytes());
+            buf.extend_from_slice(&crc.to_le_bytes());
+            buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            buf.extend_from_slice(&[0u8; 2]);
+        };
+        out.extend_from_slice(b"PK\x03\x04");
+        fields(&mut out);
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        central.extend_from_slice(b"PK\x01\x02");
+        central.extend_from_slice(&20u16.to_le_bytes());
+        fields(&mut central);
+        central.extend_from_slice(&[0u8; 10]);
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let start = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(b"PK\x05\x06\0\0\0\0");
+    out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&start.to_le_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
+/// Two trees that hold `a.zip` (different members), a plain file and a corrupt `bad.zip`.
+fn archive_trees(world: &World) -> (std::path::PathBuf, std::path::PathBuf) {
+    let put = |rel: &str, bytes: &[u8]| {
+        let path = world.path(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    put(
+        "l/a.zip",
+        &stored_zip(&[("x.txt", b"left\n"), ("kept.txt", b"kept text\n")]),
+    );
+    put(
+        "r/a.zip",
+        &stored_zip(&[("x.txt", b"right\n"), ("kept.txt", b"kept text\n")]),
+    );
+    put("l/bad.zip", b"not an archive");
+    put("r/bad.zip", b"not an archive either");
+    put("l/plain.txt", b"left\n");
+    put("r/plain.txt", b"right\n");
+    (world.path("l"), world.path("r"))
+}
+
+/// The row of `name` and its index.
+fn archive_row(
+    app: &mut AppCore,
+    view: hikasa_session::ipc::ViewId,
+    name: &str,
+) -> (usize, crate::folder_view::RowView) {
+    let window = {
+        let m = crate::tests::folder_model(app, view);
+        m.set_scroll(0, 200);
+        m.window()
+    };
+    window
+        .rows
+        .iter()
+        .find(|r| {
+            [&r.left, &r.right]
+                .into_iter()
+                .flatten()
+                .any(|cell| cell.name == name)
+        })
+        .map(|r| (r.index as usize, r.clone()))
+        .unwrap_or_else(|| panic!("no row {name}"))
+}
+
+/// A5.19: the flag gives the icon on closed and open rows; `Open` on a closed row adds the path and runs once; a
+/// corrupt archive shows the error row; a Text Compare on a member loads.
+#[test]
+fn open_on_a_closed_archive_row() {
+    let world = World::new();
+    let (left, right) = archive_trees(&world);
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &left, &right);
+    world.settle(&mut app);
+    app.execute(CommandId::ExpandAll);
+    let (index, row) = archive_row(&mut app, view, "a.zip");
+    assert!(row.archive && row.opens_archive, "{row:?}");
+    assert!(!row.folder, "closed");
+    let (_, plain) = archive_row(&mut app, view, "plain.txt");
+    assert!(!plain.archive && !plain.opens_archive);
+
+    crate::tests::folder_model(&mut app, view).select(index);
+    assert!(app.enabled(CommandId::Open));
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), 1, "no text view opened");
+    assert_eq!(app.scope(), Scope::Folder);
+    let (_, row) = archive_row(&mut app, view, "a.zip");
+    assert!(row.folder && row.open && row.archive, "{row:?}");
+    assert!(!row.opens_archive);
+    let (member, differs) = archive_row(&mut app, view, "x.txt");
+    assert!(differs.left.is_some() && differs.right.is_some());
+    let rules = crate::tests::folder_model(&mut app, view)
+        .prepared()
+        .expect("prepared")
+        .rules()
+        .clone();
+    assert_eq!(rules.open_archives, ["a.zip"]);
+
+    // Open on a member: a Text Compare that loads through the VFS.
+    crate::tests::folder_model(&mut app, view).select(member);
+    assert!(app.enabled(CommandId::Open));
+    app.execute(CommandId::Open);
+    assert_eq!(app.tabs().len(), 2);
+    assert_eq!(app.scope(), Scope::Text);
+    world.settle(&mut app);
+    let opened = app.active_tab().expect("tab").id;
+    let request = crate::tests::text_model(&mut app, opened).request().clone();
+    let text = request.left.to_string_lossy().replace('\\', "/");
+    assert!(text.ends_with("a.zip/x.txt"), "{text}");
+    assert!(!crate::tests::text_model(&mut app, opened).busy());
+}
+
+#[test]
+fn open_in_as_files_opens_the_files() {
+    let world = World::new();
+    let (left, right) = archive_trees(&world);
+    let mut app = world.app(None);
+    let target = app.open_target();
+    let request = hikasa_session::api::FolderCompareRequest {
+        left: left.clone().into_os_string(),
+        right: right.clone().into_os_string(),
+        patch: hikasa_folder::FolderRulesPatch {
+            archives: Some(hikasa_folder::ArchiveHandling::AsFiles),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let view = hikasa_session::api::ViewRequest::Folder {
+        request,
+        display: hikasa_folder::DisplayOptions {
+            filter: hikasa_session::api::vocab::DEFAULT_FOLDER_FILTER,
+            folders: hikasa_session::api::vocab::DEFAULT_FOLDER_MODE,
+            suppress_filters: false,
+            ignore_unimportant: false,
+        },
+        expand_all: false,
+    };
+    let specs = vec![
+        left.to_string_lossy().into_owned(),
+        right.to_string_lossy().into_owned(),
+    ];
+    let view = app.open_local(
+        hikasa_session::ipc::ViewKind::FolderCompare,
+        view,
+        &Default::default(),
+        specs,
+        target,
+    );
+    world.settle(&mut app);
+    let (index, row) = archive_row(&mut app, view, "a.zip");
+    assert!(row.archive, "the icon stays");
+    assert!(!row.opens_archive);
+    crate::tests::folder_model(&mut app, view).select(index);
+    app.execute(CommandId::Open);
+    assert_eq!(app.scope(), Scope::Text, "as before: the pair opens");
+    world.settle(&mut app);
+}
+
+#[test]
+fn a_corrupt_archive_shows_the_error_row() {
+    let world = World::new();
+    let (left, right) = archive_trees(&world);
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &left, &right);
+    world.settle(&mut app);
+    let (index, row) = archive_row(&mut app, view, "bad.zip");
+    assert!(row.opens_archive);
+    crate::tests::folder_model(&mut app, view).select(index);
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    let (_, row) = archive_row(&mut app, view, "bad.zip");
+    assert!(row.folder, "{row:?}");
+    assert!(row.errors.contains("not a valid archive"), "{row:?}");
+    let (_, plain) = archive_row(&mut app, view, "plain.txt");
+    assert!(plain.left.is_some(), "the rest is complete");
+}
+
+#[test]
+fn two_archives_open_as_a_folder_compare() {
+    let world = World::new();
+    let (left, right) = archive_trees(&world);
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &left.join("a.zip"), &right.join("a.zip"));
+    assert_eq!(app.scope(), Scope::Folder);
+    world.settle(&mut app);
+    app.execute(CommandId::ExpandAll);
+    let (_, row) = archive_row(&mut app, view, "x.txt");
+    assert!(row.left.is_some() && row.right.is_some());
+}
+
+/// A5.19: `Service::shutdown` runs at exit.
+#[test]
+fn shutdown_removes_the_archive_cache() {
+    let world = World::new();
+    let big = vec![9u8; (1 << 20) + 1];
+    let path = world.path("big.zip");
+    std::fs::write(&path, stored_zip(&[("m", &big)])).unwrap();
+    let spec = world
+        .service
+        .parse_spec(path.join("m").as_os_str())
+        .unwrap();
+    use hikasa_vfs::Vfs as _;
+    drop(world.service.vfs().open_read(&spec).unwrap());
+    let cache = world.service.config().cache_dir.join("archives");
+    assert_eq!(
+        std::fs::read_dir(&cache).unwrap().count(),
+        2,
+        "s<n>, its lock"
+    );
+    let mut app = world.app(None);
+    let effects = app.0.shutdown();
+    assert_eq!(effects, vec![Effect::Exit]);
+    assert!(!cache.exists());
 }

@@ -123,6 +123,11 @@ pub trait DialogModel: Any {
     fn on_key(&mut self, key: &Shortcut) -> Option<ButtonRole> {
         default_key(&self.buttons(), key)
     }
+    /// The OS close button with this dialog on top; true when the dialog stays because it asks first (the question
+    /// is one of its requests), false for a plain Cancel.
+    fn on_close(&mut self) -> bool {
+        false
+    }
     /// Polls the dialog's jobs; true when it changed.
     fn poll(&mut self, _svc: &Service) -> bool {
         false
@@ -131,7 +136,7 @@ pub trait DialogModel: Any {
     fn busy(&self) -> bool {
         false
     }
-    /// The size of the dialog's body (`None`: a small dialog that follows its content).
+    /// The width of the dialog and the height of its body (`None`: a small dialog that follows its content).
     fn size(&self) -> Option<(f32, f32)> {
         None
     }

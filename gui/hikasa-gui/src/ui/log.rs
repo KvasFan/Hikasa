@@ -26,11 +26,11 @@ pub fn show(ui: &mut Ui, log: &LogBook, pal: &Palette) -> Option<LogAction> {
             ui.set_min_size(ui.available_size());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Log").strong().size(12.0).color(pal.fg));
-                ui.label(
-                    RichText::new(format!("{} entries", log.len()))
-                        .size(11.0)
-                        .color(pal.muted),
-                );
+                let count = match log.len() {
+                    1 => "1 entry".to_owned(),
+                    n => format!("{n} entries"),
+                };
+                ui.label(RichText::new(count).size(11.0).color(pal.muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("×").hint("Hide the log").clicked() {
                         out = Some(LogAction::Hide);

@@ -1,6 +1,6 @@
 //! Draws the menus, context menus and toolbars that `menus.rs` assembles (D-110), with hints (UI-007).
 
-use egui::{AtomExt as _, Button, ComboBox, Response, Sense, Ui, vec2};
+use egui::{Atom, AtomExt as _, Button, ComboBox, Response, Sense, TextStyle, Ui, vec2};
 
 use crate::commands::{CommandId, CommandTables, HintTiming, Scope, hint_text, lookup};
 use crate::menus::{Check, Menu, MenuItem, ToolItem, ToolbarMenuItem, display_filter};
@@ -66,6 +66,12 @@ impl Hover {
     }
 }
 
+/// The mark column of a menu entry: as high as a row of text, or the atom's text starts at the middle of the row.
+fn mark_atom(ui: &Ui, mark: &'static str) -> Atom<'static> {
+    let height = ui.text_style_height(&TextStyle::Button);
+    mark.atom_size(vec2(16.0, height))
+}
+
 /// Draws menu items; pushes the invocation of the clicked one; `status_hint` gets the hovered item's hint.
 pub fn items(
     ui: &mut Ui,
@@ -101,7 +107,7 @@ pub fn items(
                     Check::Radio(on) => Some(if *on { "●" } else { "" }),
                 };
                 let mut button = match mark {
-                    Some(m) => Button::new((m.atom_size(vec2(16.0, 0.0)), caption.as_str())),
+                    Some(m) => Button::new((mark_atom(ui, m), caption.as_str())),
                     None => Button::new(caption.as_str()),
                 };
                 if let Some(s) = shortcut {
@@ -385,10 +391,7 @@ pub fn toolbar(
                 _ => (None, false),
             };
             let button = match mark {
-                Some(m) => Button::new((
-                    (if on { m } else { "" }).atom_size(vec2(16.0, 0.0)),
-                    entry.caption(),
-                )),
+                Some(m) => Button::new((mark_atom(ui, if on { m } else { "" }), entry.caption())),
                 None => Button::new(entry.caption()),
             };
             if ui.add(button).clicked() {

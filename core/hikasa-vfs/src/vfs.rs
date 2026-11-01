@@ -13,9 +13,10 @@ use std::fmt;
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
-use hikasa_core::{CancelToken, ErrorReport, FileTime, Spec};
+use hikasa_core::{CancelToken, Ctl, ErrorReport, FileTime, Spec, Warning};
 use serde::{Deserialize, Serialize};
 
+use crate::archive::ArchiveFormat;
 use crate::caps::Capabilities;
 use crate::entry::{DosAttrs, Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
@@ -207,10 +208,32 @@ impl<T: Read + Seek + Send> ReadSeek for T {}
 /// An atomic writer: nothing is visible at the target until `commit`; dropping without `commit` discards the
 /// temporary file (SES-053, INV-VFS-3). Exception (contract §1.2.7 item 12): a local target that is not a regular
 /// file (a FIFO, a character or block device) is written to directly and is never replaced, so such a write is
-/// not atomic.
-pub trait AtomicWrite: Write + Send {
+/// not atomic. `Seek` is for writers that patch what they wrote, as the zip writer does (M2 W5b, §1.5.10); a writer on a
+/// target that cannot seek answers `Unsupported`.
+pub trait AtomicWrite: Write + Seek + Send {
+    /// Flushes and syncs what was written, without touching the target, so that a look at the target can come after
+    /// the wait and right before `commit`. Default: nothing.
+    fn sync(&mut self) -> Result<(), VfsError> {
+        Ok(())
+    }
+
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;
+}
+
+/// The reason of [`VfsError::Unavailable`] when another operation holds a file or an archive (§1.5.10).
+pub(crate) const BUSY: &str = "another operation is changing this archive";
+
+/// A writer's hold on a file ([`Vfs::lock_writer`]), released when dropped.
+pub trait WriteLock: Send + Sync + fmt::Debug {}
+
+/// How a batch ends (M2 W5b, D-148).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    /// Rebuild the archive, once, with every change of the batch.
+    Commit,
+    /// Drop every change: the archive stays as it is.
+    Abort,
 }
 
 /// A virtual file system back-end (VFS-001). Implementations are `Send + Sync` and stateless per call
@@ -315,6 +338,86 @@ pub trait Vfs: Send + Sync {
         _cancel: &CancelToken,
     ) -> Result<Option<u64>, VfsError> {
         Ok(None)
+    }
+
+    // ---- archives (M2 W5, D-136, D-139, D-145; contract §1.5.3) -------------------------------------------
+
+    /// Does the slow part of reaching `spec` now, with cancellation and progress: for a spec inside an archive, the
+    /// index of every archive around it (D-139). Default: nothing.
+    fn prepare(&self, _spec: &Spec, _ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// [`Vfs::prepare`], then the members of the archive that directly holds `spec`, the folders it synthesizes
+    /// included; `None` when `spec` is not inside an archive. A scan budgets by this before it opens one (D-151).
+    fn archive_entries(&self, _spec: &Spec, _ctl: &Ctl<'_>) -> Result<Option<u64>, VfsError> {
+        Ok(None)
+    }
+
+    /// `open_read` that can be cancelled while an archive member is decoded (`Cancelled`). Default: `open_read`.
+    fn open_read_with(
+        &self,
+        spec: &Spec,
+        _cancel: &CancelToken,
+    ) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.open_read(spec)
+    }
+
+    /// The archive format of a file name per the masks; `None` on back-ends without archives.
+    fn archive_format(&self, _name: &str) -> Option<ArchiveFormat> {
+        None
+    }
+
+    /// Warnings raised since the last call (D-145). Default: none.
+    fn take_warnings(&self) -> Vec<Warning> {
+        Vec::new()
+    }
+
+    // ---- archive batches (M2 W5b, D-148, D-150; contract §1.5.10) --------------------------------------------
+
+    /// Opens a batch on the archive `at`: until `finish` the primitives on its members only change an overlay, which
+    /// every reader of this back-end sees. The batch covers the whole chain up to the outermost file: `a.zip/b.tar`
+    /// and `a.zip` are one batch. Another batch on it → `Unavailable`. Default: nothing.
+    fn begin(&self, _at: &Spec) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// Ends the batch: `Commit` rebuilds `at` (the W3 hook, §1.3.10), `Abort` drops the overlay. Default: nothing.
+    fn finish(&self, _at: &Spec, _how: Finish) -> Result<(), VfsError> {
+        Ok(())
+    }
+
+    /// `finish` that a job can cancel, with `Phase::Writing` progress in bytes of the archive. Default: `finish`.
+    fn finish_with(&self, at: &Spec, how: Finish, _ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.finish(at, how)
+    }
+
+    /// Keeps other writers that ask the same off the file `spec` until the result is dropped: a rebuild reads a file
+    /// and replaces it, and two at once would lose one. Another holder → `Unavailable`, at once. `Ok(None)` when the
+    /// back-end has no such thing, or this file cannot have one. Readers never ask, and never wait. Default: `Ok(None)`.
+    fn lock_writer(&self, _spec: &Spec) -> Result<Option<Box<dyn WriteLock>>, VfsError> {
+        Ok(None)
+    }
+
+    /// Older records of the path of the member `spec` that it shadows, which go if it goes (§1.5.7 rule 3). Default: 0.
+    fn shadows_of(&self, _spec: &Spec) -> u64 {
+        0
+    }
+
+    /// [`Vfs::shadows_of`] of `spec` and of every member below it. Default: 0.
+    fn shadows_below(&self, _spec: &Spec) -> u64 {
+        0
+    }
+
+    /// The member `target`, just written in this batch as the copy of `source`, takes the older records of `source`
+    /// along, so that they travel with it to another archive (D-156). Returns how many cannot go. Default: all of them.
+    fn carry_older(&self, source: &Spec, _target: &Spec, _ctl: &Ctl<'_>) -> Result<u64, VfsError> {
+        Ok(self.shadows_of(source))
+    }
+
+    /// Creates an empty archive at `spec`, whose name matches a writable mask. Default: `OperationUnsupported`.
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
+        Err(op_unsupported(spec, VfsOp::Mkdir))
     }
 }
 

@@ -223,6 +223,8 @@ trait Handle {
     fn warnings(&self) -> Vec<Warning>;
     /// The kept unknown keys.
     fn unknown(&self) -> &Table;
+    /// Drops a kept unknown key.
+    fn forget_unknown(&mut self, path: &[KeySegment]) -> bool;
     /// Every key with its value (a scheme: its built-in overlaid by the file).
     fn effective(&self) -> Value;
     /// The defaults.
@@ -278,6 +280,10 @@ impl<T: SettingsSchema + 'static> Handle for Typed<T> {
 
     fn unknown(&self) -> &Table {
         self.file.unknown()
+    }
+
+    fn forget_unknown(&mut self, path: &[KeySegment]) -> bool {
+        self.file.forget_unknown(path)
     }
 
     fn effective(&self) -> Value {
@@ -410,6 +416,13 @@ fn find(handle: &dyn Handle, path: &[KeySegment]) -> Option<Found> {
         return kept();
     }
     let value = tree::get(&effective, path).cloned();
+    // An entry `set_aside` keeps (the override of a known command that this build cannot read) is what the file
+    // says, not the default the key would have.
+    if value.is_none()
+        && let Some(found) = kept()
+    {
+        return Some(found);
+    }
     let default = tree::get(&defaults, path)
         .cloned()
         .or_else(|| template_default(id, path));
@@ -598,15 +611,21 @@ impl Service {
         })
     }
 
-    /// `settings unset`: the key back to its default (an entry of a map is removed).
+    /// `settings unset`: the key back to its default (an entry of a map is removed); a kept unknown key, or a
+    /// whole kept view or command of `commands.toml`, leaves the file (§1.4.20).
     pub fn settings_unset(&self, key: &SettingsKey) -> Result<SettingsSetDto, ApiError> {
         run_guarded(|| {
             let store = self.settings_store();
-            let handle = open(&store, &key.file)?;
+            let mut handle = open(&store, &key.file)?;
             let found = match find(&*handle, &key.path) {
-                Some(found) if !found.unknown && !key.path.is_empty() => found,
+                Some(found) if !key.path.is_empty() => found,
                 _ => return Err(unknown_key(&store, key)),
             };
+            if found.unknown {
+                handle.forget_unknown(&key.path);
+                let effective = handle.effective();
+                return self.finish_change(&store, handle, key, found, effective, false);
+            }
             let mut effective = handle.effective();
             match tree::get(&handle.defaults(), &key.path) {
                 Some(default) => {
@@ -1233,14 +1252,33 @@ fn save_copy<T: SettingsSchema + Clone + PartialEq>(
     if !problems.is_empty() {
         return (FileOutcome::Invalid(problems), None);
     }
-    let mut copy = file.clone();
+    // `Force` writes over the file as it is now: its unknown keys are today's, not the snapshot's, and one that
+    // cannot be read is not replaced. `IfUnchanged` after that read: a change in between is a `Conflict` again.
+    let mut copy = match overwrite {
+        Overwrite::IfUnchanged => file.clone(),
+        Overwrite::Force => match read_current::<T>(file.path()) {
+            Ok(current) => current,
+            Err(outcome) => return (outcome, None),
+        },
+    };
     *copy.value_mut() = value.clone();
-    match copy.save(overwrite) {
+    match copy.save(Overwrite::IfUnchanged) {
         Ok(true) => (FileOutcome::Written, Some(copy)),
         Ok(false) => (FileOutcome::Unchanged, Some(copy)),
-        Err(SessionError::Conflict { .. }) => (FileOutcome::Conflict, None),
+        Err(SessionError::Conflict { .. }) => {
+            let outcome = read_current::<T>(file.path())
+                .err()
+                .unwrap_or(FileOutcome::Conflict);
+            (outcome, None)
+        }
         Err(e) => (FileOutcome::Failed(e.to_string()), None),
     }
+}
+
+/// The file as it is on disk now; `Unreadable` when it cannot be read.
+fn read_current<T: SettingsSchema>(path: &Path) -> Result<SettingsFile<T>, FileOutcome> {
+    SettingsFile::<T>::load(path, LoadMode::Lenient)
+        .map_err(|e| FileOutcome::Unreadable(e.to_string()))
 }
 
 /// Deletes the file of a scheme change of `None`.
@@ -1248,6 +1286,11 @@ fn delete_scheme_file(file: &SettingsFile<SchemeFile>, force: bool) -> FileOutco
     let path = file.path();
     if !path.exists() {
         return FileOutcome::Unchanged;
+    }
+    if (force || !matches!(file.changed_on_disk(), Ok(false)))
+        && let Err(outcome) = read_current::<SchemeFile>(path)
+    {
+        return outcome;
     }
     match file.changed_on_disk() {
         Ok(true) if !force => return FileOutcome::Conflict,
@@ -1281,15 +1324,54 @@ impl Service {
                 filters: store.file::<FilterPresets>(mode)?,
                 openwith: store.file::<OpenWith>(mode)?,
                 archives: store.file::<ArchiveTypes>(mode)?,
+                unreadable: BTreeMap::new(),
+            })
+        })
+    }
+
+    /// [`Service::settings_snapshot`] for a window that starts whatever one file holds: each file is read on its
+    /// own, and one that cannot be read (a newer `schema_version`, broken TOML, no access) is its defaults and is
+    /// named in [`SettingsSnapshot::unreadable`]. The other files stay what they are, and a save over the
+    /// unreadable one is refused ([`FileOutcome::Unreadable`]).
+    pub fn settings_snapshot_partial(&self) -> Result<SettingsSnapshot, ApiError> {
+        fn read<T: SettingsSchema>(
+            store: &SettingsStore,
+            id: FileId,
+            unreadable: &mut BTreeMap<FileId, String>,
+        ) -> SettingsFile<T> {
+            let path = store.path(id.clone());
+            SettingsFile::load(&path, LoadMode::Lenient).unwrap_or_else(|e| {
+                unreadable.insert(id, e.to_string());
+                SettingsFile::new_default(&path)
+            })
+        }
+        run_guarded(|| {
+            let store = self.settings_store();
+            let mut bad = BTreeMap::new();
+            let mut schemes = BTreeMap::new();
+            for name in store.scheme_names() {
+                let id = FileId::Themes(name.clone());
+                schemes.insert(name, read(&store, id, &mut bad));
+            }
+            Ok(SettingsSnapshot {
+                options: read(&store, FileId::Options, &mut bad),
+                commands: read(&store, FileId::Commands, &mut bad),
+                theme: read(&store, FileId::Theme, &mut bad),
+                schemes,
+                filters: read(&store, FileId::Filters, &mut bad),
+                openwith: read(&store, FileId::OpenWith, &mut bad),
+                archives: read(&store, FileId::Archives, &mut bad),
+                unreadable: bad,
             })
         })
     }
 
     /// Writes the changed files of a settings dialog (D-128): in `FileId::every` order, each independently — a
     /// value equal to its snapshot is `Unchanged`, a value that fails its checks `Invalid` (not written), else
-    /// the snapshot's `SettingsFile` saves it sparsely with `IfUnchanged` (`Force` with `force`): `Written` or
-    /// `Conflict`. A scheme change of `None` deletes `themes/<name>.toml` (`Deleted`). The same `SettingsFile`
-    /// path as `settings set`. Returns the outcomes and a fresh snapshot; files already written are never reported
+    /// the snapshot's `SettingsFile` saves it sparsely with `IfUnchanged`: `Written` or `Conflict`. With `force`
+    /// the file is read again first and saved with the value given and the unknown keys it holds now. A file on
+    /// disk that cannot be read is `Unreadable`, `force` or not, and stays as it is. A scheme change of `None`
+    /// deletes `themes/<name>.toml` (`Deleted`). The same `SettingsFile` path as `settings set`. Returns the outcomes and a fresh snapshot; files already written are never reported
     /// as a failure of the whole call: when the files cannot be read back, the snapshot is the given one with the
     /// saved files in it and `reread_error` says why.
     pub fn settings_save(
@@ -1448,15 +1530,21 @@ impl Service {
         else {
             return InputState::Unwatched;
         };
-        let hikasa_core::Spec::Local(path) = &parsed else {
+        let Ok(parsed) = self.resolve(parsed, hikasa_vfs::SpecUse::Any) else {
             return InputState::Unwatched;
         };
-        // Standard input given to the GUI is spooled to `<cache>/stdin/<n>/…` (a blob that never changes).
-        if path
-            .as_path()
-            .starts_with(self.config().cache_dir.join("stdin"))
-        {
-            return InputState::Unwatched;
+        match &parsed {
+            // Standard input given to the GUI is spooled to `<cache>/stdin/<n>/…` (a blob that never changes).
+            hikasa_core::Spec::Local(path)
+                if path
+                    .as_path()
+                    .starts_with(self.config().cache_dir.join("stdin")) =>
+            {
+                return InputState::Unwatched;
+            }
+            // A member's `stat` re-stats the archive: no content is read (§1.5.14).
+            hikasa_core::Spec::Local(_) | hikasa_core::Spec::ArchiveMember { .. } => {}
+            _ => return InputState::Unwatched,
         }
         match self.vfs().stat(&parsed, FollowLinks::Yes) {
             Ok(entry) => InputState::Present(InputStamp {

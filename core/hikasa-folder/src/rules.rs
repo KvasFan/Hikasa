@@ -39,6 +39,9 @@ pub struct FolderRules {
     pub filters: FilterRules,
     /// Handling.
     pub handling: Handling,
+    /// FC-015: archives opened as folders with [`ArchiveHandling::OnceOpened`]: paths relative to the bases,
+    /// `/`-separated, also through an archive (`a.zip/b.tar.gz`).
+    pub open_archives: Vec<String>,
 }
 
 impl Default for FolderRules {
@@ -49,6 +52,7 @@ impl Default for FolderRules {
             alignment: NameAlignment::default(),
             filters: FilterRules::default(),
             handling: Handling::default(),
+            open_archives: Vec::new(),
         }
     }
 }
@@ -437,6 +441,21 @@ pub struct Handling {
     pub flatten: bool,
     /// Scan orphan subfolders (headless: always useful for complete statistics). Default true.
     pub scan_orphan_folders: bool,
+    /// FC-015: how archives inside a tree are treated. Default [`ArchiveHandling::OnceOpened`].
+    pub archives: ArchiveHandling,
+}
+
+/// How an archive inside a tree is treated (FC-015, D-151). A base may be an archive in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveHandling {
+    /// A file, always: size, time, content tests of the file.
+    AsFiles,
+    /// A file, until its path is in [`FolderRules::open_archives`]; then a folder.
+    #[default]
+    OnceOpened,
+    /// A folder.
+    Always,
 }
 
 impl Default for Handling {
@@ -445,6 +464,7 @@ impl Default for Handling {
             follow_symlinks: false,
             flatten: false,
             scan_orphan_folders: true,
+            archives: ArchiveHandling::default(),
         }
     }
 }
@@ -551,6 +571,12 @@ pub struct FolderRulesPatch {
     /// `handling.scan_orphan_folders`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scan_orphan_folders: Option<bool>,
+    /// `handling.archives` (`--archives`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archives: Option<ArchiveHandling>,
+    /// `open_archives` (`--open-archive`, the whole list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_archives: Option<Vec<String>>,
 }
 
 /// Mask options used to validate and convert name filters. Mask syntax does not depend on case sensitivity;
@@ -634,6 +660,10 @@ impl FolderRules {
         set(&mut h.follow_symlinks, patch.follow_symlinks);
         set(&mut h.flatten, patch.flatten);
         set(&mut h.scan_orphan_folders, patch.scan_orphan_folders);
+        set(&mut h.archives, patch.archives);
+        if let Some(paths) = &patch.open_archives {
+            next.open_archives.clone_from(paths);
+        }
         next.validate()?;
         *self = next;
         Ok(())
@@ -689,6 +719,7 @@ fn known_keys(path: &str) -> Option<&'static [&'static str]> {
             "alignment",
             "filters",
             "handling",
+            "open_archives",
         ],
         "criteria" => &[
             "size",
@@ -720,7 +751,12 @@ fn known_keys(path: &str) -> Option<&'static [&'static str]> {
         "filters.other.size" => &["cmp", "bytes"],
         "filters.other.date" => &["cmp", "cutoff"],
         "filters.other.date.cutoff" => &["type", "at", "days"],
-        "handling" => &["follow_symlinks", "flatten", "scan_orphan_folders"],
+        "handling" => &[
+            "follow_symlinks",
+            "flatten",
+            "scan_orphan_folders",
+            "archives",
+        ],
         _ => return None,
     })
 }

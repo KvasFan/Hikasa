@@ -280,6 +280,12 @@ impl Service {
         SessionStore::new(self.config(), &self.fresh_options())
     }
 
+    /// A stamp of the session store (paths, lengths, times): another value means the store changed (D-124). Reads no
+    /// session and no option, so it is cheap to poll.
+    pub fn sessions_stamp(&self) -> u64 {
+        crate::sessions::store::store_stamp(self.config())
+    }
+
     /// The workspace store of this configuration.
     pub fn workspace_store(&self) -> WorkspaceStore {
         WorkspaceStore::new(self.config())
@@ -288,7 +294,10 @@ impl Service {
     /// A spec as a session stores it (D-80, §1.2.1): canonical absolute; `-` and `clipboard://` are not stored
     /// (`""` and warning `spec_not_saved`). Standard input is never read.
     pub fn stored_spec(&self, text: &str) -> Result<(String, Option<Warning>), ApiError> {
-        let spec = Spec::parse_os(OsStr::new(text), &self.spec_context())?;
+        let raw = OsStr::new(text);
+        let spec = Spec::parse_os(raw, &self.spec_context())?;
+        // An archive member or root is stored as what it is (§1.5.12), without reading anything else.
+        let spec = self.resolve(spec, self.use_of(raw))?;
         match spec {
             Spec::Stdin | Spec::Clipboard => Ok((
                 String::new(),

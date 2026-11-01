@@ -102,15 +102,18 @@ impl FormatStore {
     /// Writes the built-ins and `order.toml` when absent (GUI first run; D-21). Never overwrites.
     ///
     /// Each built-in is written as `formats/<id>.toml` (its canonical TOML, `to_toml`); `order.toml` lists the
-    /// loaded registry's order and enabled flags (so a disabled built-in stays disabled, D-27).
-    pub fn materialize(&self) -> Result<(), SessionError> {
+    /// loaded registry's order and enabled flags (so a disabled built-in stays disabled, D-27). Returns the files
+    /// it wrote (a watch acknowledges them, D-117).
+    pub fn materialize(&self) -> Result<Vec<PathBuf>, SessionError> {
         let builtin = FormatRegistry::builtin()?;
         std::fs::create_dir_all(&self.dir).map_err(|e| SessionError::io(&self.dir, e))?;
+        let mut written = Vec::new();
         for entry in builtin.entries() {
             let path = self.dir.join(format!("{}.toml", entry.id()));
             if !exists(&path)? {
                 write_atomic(&path, to_toml(&entry.format).as_bytes())
                     .map_err(|e| SessionError::io(&path, e))?;
+                written.push(path);
             }
         }
         let order_path = self.dir.join(ORDER_FILE);
@@ -119,8 +122,9 @@ impl FormatStore {
             let order = FormatOrder::from_registry(&registry);
             write_atomic(&order_path, order.to_toml().as_bytes())
                 .map_err(|e| SessionError::io(&order_path, e))?;
+            written.push(order_path);
         }
-        Ok(())
+        Ok(written)
     }
 
     /// `formats/<id>.toml` (it may not exist). Additive (M2 W1, D-75).

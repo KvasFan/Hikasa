@@ -37,6 +37,7 @@ use crate::args::{
     Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SessionCmd, SettingsCmd, TextCmd,
     VfsCmd, WorkspaceCmd,
 };
+use crate::interrupt::Interrupt;
 use crate::output::{Output, WriteError};
 use crate::progress::ProgressLine;
 
@@ -49,20 +50,27 @@ pub struct Ctx<'a> {
     pub out: &'a mut Output,
     /// Progress on stderr.
     pub progress: &'a ProgressLine,
+    /// Ctrl-C.
+    pub interrupt: &'a Interrupt,
     /// clap's matches of the leaf subcommand.
     pub matches: &'a ArgMatches,
 }
 
 impl Ctx<'_> {
-    /// A job control for a blocking service call, reporting to the progress line.
+    /// A job control for a blocking service call, reporting to the progress line and cancelled by Ctrl-C (D-159).
     pub fn job(&self, kind: JobKind) -> JobControl {
-        self.service.job(kind, self.progress.sink())
+        JobControl {
+            cancel: self.interrupt.token(),
+            ..self.service.job(kind, self.progress.sink())
+        }
     }
 
-    /// The warnings of an envelope: the startup warnings, then the command's own (§1.8.7 item 8).
+    /// The warnings of an envelope: the startup warnings, the command's own (§1.8.7 item 8), then what the
+    /// back-ends raised (D-145).
     pub fn warnings(&self, own: &[Warning]) -> Vec<Warning> {
         let mut all = self.service.startup_warnings().to_vec();
         all.extend_from_slice(own);
+        all.extend(self.service.take_warnings());
         all
     }
 
@@ -108,6 +116,7 @@ impl Ctx<'_> {
         match written {
             Ok(()) | Err(WriteError::BrokenPipe) => {
                 self.out.warnings(own);
+                self.out.warnings(&self.service.take_warnings());
                 code
             }
             Err(WriteError::Other(e)) => self.fail(schema, &e, op, own),
@@ -119,7 +128,9 @@ impl Ctx<'_> {
     pub fn fail(&mut self, schema: &'static str, err: &ApiError, op: ApiOp, own: &[Warning]) -> u8 {
         self.progress.clear();
         let startup = self.service.startup_warnings();
-        fail(self.out, schema, err, op, startup, own)
+        let mut own = own.to_vec();
+        own.extend(self.service.take_warnings());
+        fail(self.out, schema, err, op, startup, &own)
     }
 }
 

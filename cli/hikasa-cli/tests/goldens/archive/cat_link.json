@@ -1,0 +1,25 @@
+{
+  "schema": "hikasa.vfs_cat.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": false,
+  "exit_code": 100,
+  "result": null,
+  "warnings": [
+    {
+      "code": "archive_member_refused",
+      "message": "1 archive members were refused",
+      "spec": "<TMP>/odd.zip"
+    },
+    {
+      "code": "archive_encrypted",
+      "message": "1 encrypted archive members are listed but cannot be read",
+      "spec": "<TMP>/odd.zip"
+    }
+  ],
+  "error": {
+    "kind": "unsupported",
+    "message": "<TMP>/odd.zip/lnk: open is not supported here",
+    "spec": "<TMP>/odd.zip/lnk",
+    "causes": []
+  }
+}

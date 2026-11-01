@@ -60,6 +60,34 @@ pub(super) fn capabilities() -> Capabilities {
         | Capabilities::LOCAL_PATH
 }
 
+/// Makes `file`, still empty, readable by its owner alone. The result is the mode it had.
+pub(super) fn make_private(file: &File) -> Option<Permissions> {
+    let made = file.metadata().ok()?.permissions();
+    file.set_permissions(Permissions::from_mode(0o600)).ok()?;
+    Some(made)
+}
+
+/// True when a file with these metadata can be a temporary file of this program: owner-only, as `make_private` left
+/// it. A file of the user that happens to have the name is not touched for it.
+pub(super) fn looks_private(meta: &Metadata) -> bool {
+    meta.mode() & 0o777 == 0o600
+}
+
+/// `fs::remove_file`: only Windows has others in the way.
+pub(super) fn remove_file(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+/// `fs::rename`: only Windows has others in the way.
+pub(super) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    fs::rename(from, to)
+}
+
+/// The handle stays open through a rename: nothing here keeps an open file from being renamed.
+pub(super) fn hold_through_rename(file: File) -> Option<File> {
+    Some(file)
+}
+
 /// Makes a rename in `dir` durable (best effort: `fsync` of the folder).
 pub(super) fn sync_dir(dir: &Path) {
     if let Ok(handle) = File::open(dir) {

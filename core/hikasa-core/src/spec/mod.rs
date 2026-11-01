@@ -78,7 +78,8 @@ impl SpecContext {
 pub enum Spec {
     /// Local file system path.
     Local(LocalPath),
-    /// Archive member (reserved: never produced by `parse` in M1; the M2 VFS resolver creates it).
+    /// Archive member (D-137): never produced by `parse`; resolution, `Vfs::child` and
+    /// [`Spec::archive_member`] create it. `member: ""` is the archive as a folder (its root).
     ArchiveMember {
         /// The archive.
         archive: Box<Spec>,
@@ -244,6 +245,44 @@ impl Spec {
             .map(Spec::Local)
     }
 
+    /// `ArchiveMember { archive, member }` (D-137). `member` is stored as given: `/`-separated on every platform,
+    /// without a leading, trailing or doubled `/` and without `.` or `..` components; `""` is the root, the
+    /// archive as a folder, whose canonical form keeps a trailing `/`. [`Spec::parse`] never yields this kind.
+    pub fn archive_member(archive: Spec, member: impl Into<String>) -> Spec {
+        Spec::ArchiveMember {
+            archive: Box::new(archive),
+            member: member.into(),
+        }
+    }
+
+    /// The spec of the archive that directly holds this member (`None` for anything but `ArchiveMember`).
+    pub fn container(&self) -> Option<&Spec> {
+        match self {
+            Spec::ArchiveMember { archive, .. } => Some(archive),
+            _ => None,
+        }
+    }
+
+    /// The file outside every archive (`a.zip` for `a.zip/b.tar/c`); `None` for anything but `ArchiveMember`.
+    pub fn outermost_file(&self) -> Option<&Spec> {
+        let mut spec = self.container()?;
+        while let Some(outer) = spec.container() {
+            spec = outer;
+        }
+        Some(spec)
+    }
+
+    /// Levels of archives around this spec: 0 for a local path, 2 for `a.zip/b.tar/c`.
+    pub fn archive_depth(&self) -> u32 {
+        let mut depth = 0;
+        let mut spec = self;
+        while let Some(outer) = spec.container() {
+            depth += 1;
+            spec = outer;
+        }
+        depth
+    }
+
     /// Canonical string (same as `Display`); never contains a password.
     pub fn canonical(&self) -> String {
         self.to_string()
@@ -296,6 +335,8 @@ impl Spec {
             Spec::Local(path) => path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned()),
+            // The root of an archive is named after the archive (§1.5.2).
+            Spec::ArchiveMember { archive, member } if member.is_empty() => archive.file_name(),
             Spec::ArchiveMember { member, .. } => last_segment(member),
             Spec::Snapshot { file, member } => {
                 if member.is_empty() {
@@ -317,13 +358,21 @@ impl Spec {
         }
     }
 
-    /// The parent of a local path (`None` for a root); `None` for every other spec kind (M2 W3, additive;
-    /// archive members follow in W5). Operations reach parent folders through this and `Vfs::child` only.
+    /// The parent of a local path (`None` for a root) or of an archive spec (M2 W3, W5; D-137): member `x/y` →
+    /// member `x`, member `x` → the root of its archive, a root → the parent of the archive file, so `parent`
+    /// walks out of an archive into the folder that holds it. `None` for every other spec kind. Operations reach
+    /// parent folders through this and `Vfs::child` only.
     pub fn parent(&self) -> Option<Spec> {
         match self {
             Spec::Local(path) => path.parent().map(Spec::Local),
-            Spec::ArchiveMember { .. }
-            | Spec::Snapshot { .. }
+            Spec::ArchiveMember { archive, member } => {
+                if member.is_empty() {
+                    return archive.parent();
+                }
+                let parent = member.rsplit_once('/').map_or("", |(parent, _)| parent);
+                Some(Spec::archive_member((**archive).clone(), parent))
+            }
+            Spec::Snapshot { .. }
             | Spec::Remote(_)
             | Spec::Profile { .. }
             | Spec::Http(_)
@@ -360,7 +409,8 @@ impl fmt::Display for Spec {
     /// The canonical form (§2.1): `Local` → the stored path (lossy for non-UTF-8 paths); `Stdin` → `-`;
     /// `Clipboard` → `clipboard://`; `Profile` → `profile:<name>[?<path>]`; `Remote` →
     /// `<scheme>://[<user>@]<host>[:<port>]<path>`; `Http` → `http[s]://[<user>@]<host>[:<port>]<rest>` (never a
-    /// password); the reserved `ArchiveMember`/`Snapshot` → `<container>/<member>`.
+    /// password); `ArchiveMember` and the reserved `Snapshot` → `<container>/<member>` (the root of an archive
+    /// keeps the trailing `/` that tells it from the file).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Spec::Local(path) => f.write_str(&path.as_path().to_string_lossy()),
@@ -441,6 +491,95 @@ mod tests {
         assert_eq!(archive.scheme_name(), "archive");
         assert_eq!(archive.canonical(), "/a.zip/x/y.txt");
         assert_eq!(archive.file_name().as_deref(), Some("y.txt"));
+    }
+
+    /// §1.5.2 and A5.1: every archive helper for a root, a member, a nested member and a nested root, in both
+    /// path styles.
+    #[test]
+    fn archive_specs() {
+        let styles = [
+            (unix_ctx(), "/w/a.zip"),
+            (
+                SpecContext {
+                    style: PathStyle::Windows,
+                    cwd: None,
+                    home: None,
+                },
+                r"C:\w\a.zip",
+            ),
+        ];
+        for (ctx, file) in styles {
+            let a = Spec::parse(file, &ctx).unwrap();
+            let root = Spec::archive_member(a.clone(), "");
+            let x = Spec::archive_member(a.clone(), "x");
+            let xy = Spec::archive_member(a.clone(), "x/y");
+            let b = Spec::archive_member(a.clone(), "b.tar");
+            let nested_root = Spec::archive_member(b.clone(), "");
+            let nested = Spec::archive_member(b.clone(), "c/d.txt");
+
+            assert_eq!(root.canonical(), format!("{file}/"));
+            assert_eq!(xy.canonical(), format!("{file}/x/y"));
+            assert_eq!(nested.canonical(), format!("{file}/b.tar/c/d.txt"));
+            assert_eq!(nested_root.canonical(), format!("{file}/b.tar/"));
+
+            assert_eq!(xy.parent(), Some(x.clone()));
+            assert_eq!(x.parent(), Some(root.clone()));
+            assert_eq!(root.parent(), a.parent());
+            assert_eq!(b.parent(), Some(root.clone()));
+            assert_eq!(nested_root.parent(), Some(root.clone()));
+            assert_eq!(nested.parent().unwrap().parent(), Some(nested_root.clone()));
+
+            assert_eq!(xy.file_name().as_deref(), Some("y"));
+            assert_eq!(x.file_name().as_deref(), Some("x"));
+            assert_eq!(root.file_name(), a.file_name());
+            assert_eq!(nested_root.file_name().as_deref(), Some("b.tar"));
+
+            assert_eq!(xy.container(), Some(&a));
+            assert_eq!(nested.container(), Some(&b));
+            assert_eq!(a.container(), None);
+            assert_eq!(nested.outermost_file(), Some(&a));
+            assert_eq!(root.outermost_file(), Some(&a));
+            assert_eq!(a.outermost_file(), None);
+            assert_eq!(a.archive_depth(), 0);
+            assert_eq!(root.archive_depth(), 1);
+            assert_eq!(nested.archive_depth(), 2);
+            assert_eq!(nested_root.archive_depth(), 2);
+        }
+    }
+
+    #[test]
+    fn styled_path_parts() {
+        let unix = Spec::parse("/w/a.zip/../x", &unix_ctx()).unwrap();
+        let Spec::Local(path) = &unix else {
+            panic!("{unix:?}")
+        };
+        assert_eq!(
+            path.file_name_in(PathStyle::Unix).as_deref(),
+            Some(OsStr::new("x"))
+        );
+        let up = path.parent_in(PathStyle::Unix).unwrap();
+        assert_eq!(up.as_path().to_string_lossy(), "/w/a.zip/..");
+        assert_eq!(
+            up.file_name_in(PathStyle::Unix).as_deref(),
+            Some(OsStr::new(".."))
+        );
+        let ctx = SpecContext::absolute_only(PathStyle::Windows);
+        let win = Spec::parse(r"\\srv\share\a.zip\x", &ctx).unwrap();
+        let Spec::Local(path) = &win else {
+            panic!("{win:?}")
+        };
+        assert_eq!(
+            path.file_name_in(PathStyle::Windows).as_deref(),
+            Some(OsStr::new("x"))
+        );
+        let a = path.parent_in(PathStyle::Windows).unwrap();
+        assert_eq!(
+            a.file_name_in(PathStyle::Windows).as_deref(),
+            Some(OsStr::new("a.zip"))
+        );
+        let share = a.parent_in(PathStyle::Windows).unwrap();
+        assert_eq!(share.file_name_in(PathStyle::Windows), None);
+        assert_eq!(share.parent_in(PathStyle::Windows), None);
     }
 
     #[test]

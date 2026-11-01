@@ -11,7 +11,8 @@
 //!    hikasa-session, and `capture_env`/`SystemClock` referenced nowhere under `core/` except their definition
 //!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
 //!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
-//!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test. Imports are expanded first, so grouped and aliased forms are caught as
+//!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test; 0.1.91 confines `ctrlc` to
+//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
 //!    `.elapsed()` counts as a clock read;
 //! 3. every dependency of every workspace member is `workspace = true` and listed in `[workspace.dependencies]`,
@@ -1059,6 +1060,28 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
 /// `SystemClipboard` (tests never touch the real clipboard, A3.9).
 fn check_confined_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
+    // D-159, D-160: the two crates of the adapters, each behind one file.
+    for (top, token, home) in [
+        ("cli", "ctrlc", "cli/hikasa-cli/src/interrupt.rs"),
+        ("gui", "fontique", "gui/hikasa-gui/src/fonts.rs"),
+    ] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            let Ok(raw) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if rel == home {
+                continue;
+            }
+            let code = code_only(&raw);
+            for at in find_token(&code, token) {
+                violations.push(format!(
+                    "{rel}:{}: the `{token}` crate is named only in {home}",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
     for file in rust_files(&root.join("core")) {
         let rel = relative(root, &file);
         let Ok(raw) = fs::read_to_string(&file) else {
@@ -1083,6 +1106,32 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
                     "{rel}:{}: the `arboard` crate is named only in core/hikasa-session/src/host.rs",
                     line_of(&code, at)
                 ));
+            }
+        }
+        // M2 W5 (§1.5.15): the archive crates only behind `ArchiveVfs`, in library code; `zip` also in the settings
+        // packages (D-86). Tests write their fixtures with them.
+        if rel.contains("/src/") && !rel.starts_with("core/hikasa-vfs/src/archive/") {
+            for token in [
+                "zip::",
+                "tar::",
+                "flate2::",
+                "bzip2::",
+                "lzma_rust2::",
+                "zstd::",
+            ] {
+                if token == "zip::" && rel.starts_with("core/hikasa-session/src/package/") {
+                    continue;
+                }
+                for at in find_token(&code, token) {
+                    let before = code[..at].trim_end();
+                    if before.ends_with("::") {
+                        continue;
+                    }
+                    violations.push(format!(
+                        "{rel}:{}: `{token}` is called only from core/hikasa-vfs/src/archive/",
+                        line_of(&code, at)
+                    ));
+                }
             }
         }
     }
@@ -1233,6 +1282,13 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "bitflags",
             "same-file",
             "trash",
+            "zip",
+            "tar",
+            "flate2",
+            "bzip2",
+            "lzma-rust2",
+            "zstd",
+            "jiff",
         ],
         &["tempfile", "proptest", "pretty_assertions", "criterion"],
     ),
@@ -1392,6 +1448,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tracing",
             "tracing-subscriber",
             "jiff",
+            "ctrlc",
         ],
         &[
             "assert_cmd",
@@ -1414,6 +1471,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-session",
             "eframe",
             "egui",
+            "fontique",
             "anyhow",
             "serde",
             "serde_json",
@@ -3120,6 +3178,38 @@ fn check_2_refuses_renamed_reexports_of_the_adapter_only_functions() {
     assert!(violations[0].contains("another name"), "{violations:?}");
 }
 
+/// D-159, D-160: `ctrlc` and `fontique` stay behind one file of their adapter.
+#[test]
+fn check_2_confines_the_crates_of_the_adapters() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "cli/hikasa-cli/src/interrupt.rs",
+        "fn a() { ctrlc::set_handler(|| {}); }\n",
+    );
+    put(
+        root,
+        "gui/hikasa-gui/src/fonts.rs",
+        "fn b() { fontique::Collection::default(); }\n",
+    );
+    assert!(check_confined_crates(root).is_empty());
+    put(
+        root,
+        "cli/hikasa-cli/src/main.rs",
+        "// ctrlc in a comment is fine\nfn c() { ctrlc::set_handler(|| {}); }\n",
+    );
+    put(
+        root,
+        "gui/hikasa-gui/src/ui/fonts.rs",
+        "use fontique::Collection;\n",
+    );
+    let violations = check_confined_crates(root);
+    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert!(violations[0].contains("`ctrlc`"), "{violations:?}");
+    assert!(violations[1].contains("`fontique`"), "{violations:?}");
+}
+
 /// M2 W3 (§1.3.9): `trash::` and `arboard` are confined to one file each; no test names `SystemClipboard`.
 #[test]
 fn check_2_confines_trash_and_arboard() {
@@ -3150,8 +3240,43 @@ fn check_2_confines_trash_and_arboard() {
         "cli/hikasa-cli/tests/clip.rs",
         "fn e() { let _ = hikasa_session::SystemClipboard; }\n",
     );
+    put(
+        root,
+        "core/hikasa-vfs/src/archive/zip_read.rs",
+        "fn f() { zip::ZipArchive::new(); tar::Header::new_gnu(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/package/mod.rs",
+        "fn g() { zip::ZipArchive::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-vfs/src/source.rs",
+        "fn h() { self::zip::x(); zstd::encode(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/compare.rs",
+        "fn i() { zip::ZipArchive::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-vfs/tests/archive_read.rs",
+        "fn j() { zip::ZipWriter::new(); }\n",
+    );
     let violations = check_confined_crates(root);
-    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert_eq!(violations.len(), 5, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-vfs/src/source.rs:1"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("core/hikasa-session/src/api/compare.rs:1"))
+    );
     assert!(
         violations
             .iter()

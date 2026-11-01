@@ -44,6 +44,16 @@ impl ProgressLine {
             sink.clear();
         }
     }
+
+    /// One line for the person at the terminal, in place of the progress line; nothing where progress is off.
+    pub fn note(&self, text: &str) {
+        if let ProgressLine::Terminal(sink) = self {
+            sink.clear();
+            let mut err = io::stderr().lock();
+            let _ = writeln!(err, "{text}");
+            let _ = err.flush();
+        }
+    }
 }
 
 /// [`ProgressSink`] drawing one line on stderr (`\r` + text + padding).

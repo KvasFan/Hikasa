@@ -64,8 +64,10 @@ button (two open as that type). Drop two files or two folders on a window to com
 
 ## Colours and fonts
 
-The colours come from the scheme of `theme.toml` (light and dark, following the system by default); the font
-sizes of `theme.toml` set the text panes and the folder tree.
+The colours come from the scheme of `theme.toml` (light and dark, following the system by default); the fonts of
+`theme.toml` set the text panes and the folder tree. A font family is looked up among the fonts of the system; glyphs it
+lacks come from the built-in fonts, then from the system. A family that is not found keeps the built-in font, with one
+notice.
 
 ## Starting the window
 

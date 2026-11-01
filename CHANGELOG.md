@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+## 0.1.91 (2026-11-01, pre-release)
+
+### Added
+- **Ctrl-C in the command line.** The first Ctrl-C cancels a running comparison or `vfs` operation: an archive being
+  rewritten stays as it was, its temporary and lock files go, the file of `--output` keeps what it had, and the command
+  exits 100. A second Ctrl-C exits 100 at once. Any other command ends at the first Ctrl-C, as before; SIGTERM too. A
+  command started with Ctrl-C ignored, as `cmd &` in a script is, stays that way.
+- **Named fonts.** The four font families of `theme.toml` and the Fonts page are looked up among the system's fonts, off
+  the window's thread and only when a family is named. The built-in fonts stay behind them for the glyphs a font lacks,
+  then the system's fallback, so icons and CJK keep working. A family that is not found keeps the built-in font, with one
+  notice, and so does a font file that is broken: it is tried on a sample off the window's thread first. Listing and hex
+  fonts load and wait for their views.
+- **Writes inside archives.** `hikasa vfs cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members of zip and the
+  tar family, nested ones too: `vfs cp -p notes.txt a.zip/docs/`, `vfs mv a.zip/old a.zip/new`. An archive is rewritten
+  once per operation, to a temporary file next to it, which replaces it in one step. `vfs mkdir new.zip` makes an empty
+  archive for each writable mask. Single gz, bz2, xz and zst streams stay read-only.
+- **Archives.** zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams work
+  wherever a file does: `hikasa vfs ls a.zip`, `vfs cat a.zip/inner/x.txt`, `quick a.zip/x b/x`, `text compare`,
+  `folder compare a.zip b/`, nested as `a.zip/b.tar.gz/c.txt`, and copies out with `vfs cp -r a.zip/ out/`. Masks and limits
+  are in `archives.toml` (`hikasa help archives`).
+- **Archives inside folder comparisons.** `--archives files|opened|folders` and `--open-archive <PATH>`; the default
+  leaves results as they were. `--content crc` uses a zip's stored CRC without decoding.
+- The window shows a zipper icon on archive rows; Open on a closed one opens it as a folder; two archives open a Folder
+  Compare.
+
+### Safety
+- **A rewrite cannot lose an archive.** A read error, a full disk, Cancel or a failed rename leave it byte for byte as it
+  was, and a move into an archive removes its sources only after the rewrite. An archive that changed since the
+  operation was planned is left alone (`changed since the plan was made`). A member cannot be written over the archive
+  that holds it, nor a file moved into itself.
+- **Two writers cannot overlap.** A rewrite holds a lock next to the archive, so a second one, in any process on this
+  machine, fails at once with `another operation is changing this archive`, which names the lock file, instead of losing
+  the first one's change. It takes a file system with locks: on one without, and between machines on some network mounts,
+  the check that the file did not change since the plan is all there is.
+- **A rewrite keeps what it did not touch** as bytes, in order: encrypted members and methods it cannot decode, refused and
+  link members, devices, sparse files, unknown extra fields, comments and raw names. A member hidden by a later one of the
+  same name stays with it: it moves with it, also to another archive of any format, and goes when that member is removed
+  or replaced, with a warning, so what was overwritten does not live on. A plain file holds one version, so a move out of
+  the archive ends the older ones, and says so.
+- **The temporary copy of an archive, and of any file Hikasa saves, is private** until it replaces the file. A kill during a
+  rewrite leaves it next to the archive, and the next rewrite of that archive removes it.
+- Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,
+  damage keeps what lies before it, encrypted members are reported, and bombs stop at the limits (`entries_max`,
+  `paths_max_mib`, `depth_max`, `stream_max_gib`, `cache_max_gib`, `ratio_max`, `nesting_max`).
+- A member copied out never brings `setuid`, `setgid` or sticky bits, nor more than the umask gives.
+- `--json` escapes DEL, C1 controls and bidirectional controls, so a hostile name cannot act on a terminal.
+
+### Data safety
+- **A settings file this version cannot read is never overwritten from the Options dialog.** A newer `schema_version` or
+  broken TOML used to show defaults, and Overwrite replaced the file with them. The page now says why, the prompt holds
+  only Reload and Cancel, and `settings_save` refuses such a file even with `force` (new outcome `Unreadable`). One such
+  file also no longer turns the other settings files into defaults at start
+  (`Service::settings_snapshot_partial`).
+- **Overwrite keeps the unknown keys on disk.** It read them when the dialog opened, so keys added since were lost; it
+  now reads the file again first.
+- **The window's close button asks** when the Options dialog has unapplied edits, as Esc does.
+- **`hikasa settings unset` removes a key kept without being known**, such as a view or command of a newer version, which
+  it used to answer `not_found`; `settings get` of a key inside a kept command override shows its value.
+
+### Fixed
+- First run: no more "File formats reloaded" notices for the program's own format files.
+- Writes to a zip on Windows keep the Unix mode of a member, and the same input gives the same archive on every OS.
+- Folder views: a large folder font widens the size and time columns, which ran over each other from about size 16.
+- Home follows a session deleted or changed by the command line at the next 2 s poll, without a focus change.
+- Options search: the page follows the search, and no page shows when nothing matches.
+- Dialogs: buttons sit at the bottom of the wizards, lists take the free height, and a dialog moves by its title bar.
+- A notice raised while a dialog was open could not be clicked if an earlier notice was on screen, and the help of a
+  dialog (F1) could be neither scrolled nor closed: both now stand above the dialog.
+- Menu marks sit on the line of their label; the Menu column of the shortcuts page is straight; the log panel says
+  "1 entry"; the help of Text Compare puts the thumbnail on the left.
+
 ## 0.1.90 (2026-10-31, pre-release)
 
 A pre-release of 0.2.0 with the first part of M2: waves W0–W4 and the packages. 0.2.0 stays reserved for M2 complete;

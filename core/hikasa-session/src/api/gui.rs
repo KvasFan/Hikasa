@@ -1161,6 +1161,11 @@ pub fn infer_view_kind(
         )),
         _ => service.vfs().stat(spec, FollowLinks::Yes),
     };
+    let is_archive = |spec: &Spec| {
+        spec.file_name()
+            .and_then(|name| service.vfs().archive_format(&name))
+            .is_some()
+    };
     let kinds = match (stat(left), stat(right)) {
         (Ok(l), Ok(r)) => (l.kind, r.kind),
         (Ok(l), Err(_)) => (l.kind, l.kind),
@@ -1175,6 +1180,12 @@ pub fn infer_view_kind(
     };
     match kinds {
         (EntryKind::Dir, EntryKind::Dir) => Ok(ViewKind::FolderCompare),
+        // Two archives by name, or an archive and a folder, are folders (§1.5.12).
+        (EntryKind::Dir, EntryKind::File) if is_archive(right) => Ok(ViewKind::FolderCompare),
+        (EntryKind::File, EntryKind::Dir) if is_archive(left) => Ok(ViewKind::FolderCompare),
+        (EntryKind::File, EntryKind::File) if is_archive(left) && is_archive(right) => {
+            Ok(ViewKind::FolderCompare)
+        }
         (EntryKind::Dir, _) | (_, EntryKind::Dir) => Err(ApiError::InvalidArgument(
             "cannot compare a folder with a file".into(),
         )),

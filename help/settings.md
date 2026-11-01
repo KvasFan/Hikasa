@@ -12,7 +12,7 @@ per-user folder). Every value has a key `<file>.<path>`:
 | `themes.<scheme>` | one colour scheme (`themes/<scheme>.toml`; `light` and `dark` are built in) |
 | `filters` | name filter presets (`filters.toml`) |
 | `openwith` | Open With applications (`openwith.toml`) |
-| `archives` | archive type masks (`archives.toml`) |
+| `archives` | archive type masks and [limits](topic:archives) (`archives.toml`) |
 
 The path is the TOML key path: `options.text_editing.auto_indent`, `openwith.app.0.command`; a segment that is
 not a plain name is written in double quotes, an array position as a number.
@@ -21,7 +21,7 @@ not a plain name is written in double quotes, an array position as a number.
 |---|---|
 | `hikasa settings get <key>` | the value (a table as TOML) |
 | `hikasa settings set <key> <value>` | changes the value; `(file unchanged)` when nothing was written |
-| `hikasa settings unset <key>` | puts the value back to its default |
+| `hikasa settings unset <key>` | puts the value back to its default; a key Hikasa keeps without knowing it (a view or command of a newer version) leaves the file |
 | `hikasa settings list [<key>] [--changed]` | every key with its value; `# default: …` after changed ones |
 | `hikasa settings restore-defaults (--all \| --file <file>…) (--dry-run \| --yes)` | deletes settings files |
 | `hikasa settings restore-defaults --category <cat>… [--delete-sessions [--force]] [--delete-workspaces] (--dry-run \| --yes)` | restores factory defaults by category |

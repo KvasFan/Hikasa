@@ -2,13 +2,24 @@
 # Builds `hikasa` and `hikasa-gui` for the Linux packages: baseline x86-64, linked with zig against an old glibc.
 # check-linux-binaries.sh then prints the measured glibc floor and checks the baseline.
 source "$(dirname "$0")/common.sh"
-require cargo zig objdump
+require cargo objdump tar
+
+# zig is a pinned download too: the same linker on every machine, none needed on the system.
+zig_version=0.17.0
+zig_sha256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+zig_tarball=$(fetch "https://ziglang.org/download/$zig_version/zig-x86_64-linux-$zig_version.tar.xz" \
+    "$zig_sha256" "zig-x86_64-linux-$zig_version.tar.xz")
+[[ -x ${zig_tarball%.tar.xz}/zig ]] || tar -xJf "$zig_tarball" -C "$(dirname "$zig_tarball")"
+export PATH=${zig_tarball%.tar.xz}:$PATH
 
 export CARGO_TARGET_DIR=$target_root/linux
 export HIKASA_GLIBC=$glibc
 export ZIG_GLOBAL_CACHE_DIR=$work/zig-cache ZIG_LOCAL_CACHE_DIR=$work/zig-cache
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$repo/packaging/zig-cc.sh
 export RUSTFLAGS="-C target-cpu=x86-64 $base_rustflags"
+# zstd-sys compiles libzstd with the host `cc`: RUSTFLAGS does not reach it, and a machine-wide CFLAGS with
+# -march=native would (check-linux-binaries.sh checks the result).
+export CFLAGS_x86_64_unknown_linux_gnu="-march=x86-64 -mtune=generic"
 
 cd "$repo"
 nice -n 10 cargo build --locked --release --jobs "$jobs" --target "$linux_target" -p hikasa-cli -p hikasa-gui

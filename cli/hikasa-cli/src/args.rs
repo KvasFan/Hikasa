@@ -302,10 +302,17 @@ pub enum FolderCmd {
 /// `hikasa folder compare <left> <right>`.
 #[derive(Debug, clap::Args)]
 pub struct FolderCompareArgs {
-    /// Left base folder.
+    /// Left base folder, or an archive.
     pub left: OsString,
-    /// Right base folder.
+    /// Right base folder, or an archive.
     pub right: OsString,
+    /// Archives inside the trees: files (always), opened (files, until named by --open-archive; default),
+    /// folders (always).
+    #[arg(long, value_name = "MODE")]
+    pub archives: Option<String>,
+    /// An archive to open as a folder: its path relative to the bases, `/`-separated (repeatable).
+    #[arg(long = "open-archive", value_name = "PATH")]
+    pub open_archive: Vec<String>,
     /// Name filter (masks separated by `;`, `-` excludes).
     #[arg(long, value_name = "MASKS")]
     pub filters: Option<String>,

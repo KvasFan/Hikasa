@@ -126,7 +126,8 @@ close, and Yes writes a new auto-saved file.
 *M2 W4b (D-124):* the tree shows *New* (one entry per type the GUI opens), the named sessions (folders first, then
 favorites, then the rest, each sorted case-insensitively) and *Auto-saved* in the four D-83 groups, newest first.
 Search is a case-insensitive substring of the name, folder path or description; matches show with their ancestors.
-The tree refreshes when Home becomes visible, when a window gains focus and after the GUI's own writes. The Web
+The tree refreshes when Home becomes visible, when a window gains focus, after the GUI's own writes and at the 2 s poll
+when the session store changed. The Web
 Resources panel stays `planned` (D-133).
 
 ## 4. Workspaces
@@ -169,7 +170,7 @@ restores the same way.
   - `workspaces/<name>.toml`
   - `filters.toml` — name-filter presets
   - `openwith.toml` — "Open With" external applications
-  - `archives.toml` — archive type masks
+  - `archives.toml` — archive type masks and `[limits]`
 - **SES-052** (P0): Every file carries `schema_version`. Loading newer-major files
   fails with a clear message; older files are migrated in memory and written back on
   next save.
@@ -198,7 +199,9 @@ any other folder gets its own endpoint and single-instance lock (D-47,
 For the per-user configuration it is `$XDG_CACHE_HOME/hikasa` (absolute values only),
 else `~/.cache/hikasa` (Linux and other Unix systems), `~/Library/Caches/Hikasa`
 (macOS), `%LOCALAPPDATA%\Hikasa\cache` (Windows); when the needed folder is unknown,
-`<temp>/hikasa-cache-<uid>` (a per-user name). M1 uses it for one thing: `hikasa gui open -`
+`<temp>/hikasa-cache-<uid>` (a per-user name). M2 W5 keeps archive members and, while an operation runs, what it writes into an archive in `<cache>/archives/s<n>/` (numeric names
+only, `0700` on Unix; created on the first spooled member, removed at exit, swept by the next session after a crash;
+`11-vfs-remote-archives.md`). M1 uses it for one thing more: `hikasa gui open -`
 spools standard input to `<cache>/stdin/<n>/<name>` (`<name>` is the file name of
 `--stdin-name`, else `stdin.txt`; `<n>` is the first free number, so concurrent
 invocations never share a file) and sends that absolute path to the GUI, which has

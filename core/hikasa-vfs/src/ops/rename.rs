@@ -2,16 +2,17 @@
 
 use std::collections::BTreeSet;
 
-use hikasa_core::{Ctl, Spec};
+use hikasa_core::{Ctl, Spec, Warning, WarningCode};
 
 use super::copy::{
-    Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy, source_changed,
+    Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy,
+    narrow_archive_mode, source_changed,
 };
 use super::plan::report;
 use super::{
     Action, Decision, Exec, LinkPolicy, MoveOptions, OpKind, Outcome, Plan, PlanItem, PlanOptions,
-    check_item, check_nesting, decide, is_blob, is_respelling, lstat_target, same_instance,
-    scanning,
+    check_item, check_move_inside, check_nesting, check_same_archive, decide, is_blob,
+    is_respelling, lstat_target, same_instance, scanning,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind};
@@ -118,7 +119,10 @@ pub fn plan_move(
             planner.items.push(rename);
             continue;
         }
-        if let Err(e) = check_nesting(src, dst, source, &entry, target) {
+        let inside = check_nesting(src, dst, source, &entry, target)
+            .and_then(|()| check_move_inside(src, dst, source, target))
+            .and_then(|()| check_same_archive(src, dst, source, target));
+        if let Err(e) = inside {
             fail(&mut planner, entry.kind, &e);
             continue;
         }
@@ -218,8 +222,9 @@ pub(crate) fn run_rename(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
 
 /// `move`: copy the file or link, then remove the source; when the removal fails the copy is removed again
 /// unless it replaced a target (D-97), or the source is no longer the item copied (gone, or another item in its
-/// place): then the copy is kept and the item fails "changed during the move; the copy was kept".
-pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
+/// place): then the copy is kept and the item fails "changed during the move; the copy was kept". A move into an
+/// archive stops after the copy: the source goes only after the rebuild, in [`remove_moved`] (D-148).
+pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
@@ -229,7 +234,11 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     };
     let copied = match entry.kind {
         EntryKind::File => copy_content(exec, source, &item.target, item.replaces, item.depth)
-            .and_then(|bytes| apply_metadata(exec, &item.target, &entry).map(|()| bytes)),
+            .and_then(|bytes| {
+                let mut entry = entry.clone();
+                narrow_archive_mode(exec, source, &item.target, &mut entry);
+                apply_metadata(exec, &item.target, &entry).map(|()| bytes)
+            }),
         EntryKind::Symlink => {
             create_link_copy(exec, source, &item.target, item.replaces, item.depth).map(|()| 0)
         }
@@ -239,6 +248,17 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
         Ok(bytes) => bytes,
         Err(e) => return Outcome::Failed(e),
     };
+    if let Err(e) = carry_shadows(exec, source, &item.target) {
+        if !item.replaces {
+            let _ = exec.dst.remove(&item.target);
+        }
+        return Outcome::Failed(e);
+    }
+    if exec.defers_removal(source, &item.target) {
+        exec.two_phase = true;
+        exec.deferred.push((index, Some(entry)));
+        return Outcome::Done(bytes);
+    }
     match exec.src.remove(source) {
         Ok(()) => Outcome::Done(bytes),
         Err(e) => {
@@ -259,5 +279,56 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
             }
             Outcome::Failed(e)
         }
+    }
+}
+
+/// The older records of a moved member (D-156): they go along to another archive, and what cannot (a plain file holds
+/// one version) is said, because it ends with the removal of the source.
+fn carry_shadows(exec: &mut Exec<'_>, source: &Spec, target: &Spec) -> Result<(), VfsError> {
+    let shadows = exec.src.shadows_of(source);
+    if shadows == 0 {
+        return Ok(());
+    }
+    let left = if same_instance(exec.src, exec.dst) {
+        exec.dst.carry_older(source, target, exec.ctl)?
+    } else {
+        shadows
+    };
+    if left > 0 {
+        exec.warnings.push(Warning {
+            code: WarningCode::ArchiveDuplicateMember,
+            message: format!(
+                "{left} shadowed members of {} cannot go to {} and end with this move",
+                source.canonical(),
+                target.canonical()
+            ),
+            spec: Some(source.canonical()),
+        });
+    }
+    Ok(())
+}
+
+/// The second phase of a move into an archive (D-148): the target's rebuild succeeded, so the source goes. It must
+/// still be what was copied: anything else is kept, with the copy, and the item fails. A failed removal fails its item
+/// and the copy stays: taking it back would need another rebuild.
+pub(crate) fn remove_moved(exec: &mut Exec<'_>, item: &PlanItem, copied: &Entry) -> Outcome {
+    let Some(source) = item.source.as_ref() else {
+        return Outcome::Failed(source_changed(&item.target));
+    };
+    let same = exec.src.stat(source, FollowLinks::No).is_ok_and(|now| {
+        now.kind == copied.kind
+            && now.size == copied.size
+            && now.mtime == copied.mtime
+            && now.file_id == copied.file_id
+    });
+    if !same {
+        return Outcome::Failed(VfsError::InvalidTarget {
+            spec: source.canonical(),
+            reason: "changed during the move; the copy was kept",
+        });
+    }
+    match exec.src.remove(source) {
+        Ok(()) => Outcome::Done(0),
+        Err(e) => Outcome::Failed(e),
     }
 }

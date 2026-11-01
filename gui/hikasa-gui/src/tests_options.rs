@@ -18,6 +18,7 @@ use hikasa_session::settings::{
 use crate::app::{AppCore, Effect};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::{ButtonRole, Prompt};
+use crate::fonts::DataFonts;
 use crate::ipc::GuiHandler;
 use crate::menus::{MenuContext, menu_bar, render_text};
 use crate::notify::NoticeAction;
@@ -953,6 +954,49 @@ fn each_edit_previews_once_and_cancel_restores() {
     assert_eq!(*app.scheme(), saved);
 }
 
+/// A family being typed previews, one lookup at a time, and no half of a name raises a notice; Cancel goes back.
+#[test]
+fn a_family_typed_in_the_dialog_previews_without_notices() {
+    let world = World::new();
+    let bundled = egui::FontDefinitions::default().font_data["Hack"]
+        .bytes()
+        .to_vec();
+    let mut app = world.app_with_fonts(Arc::new(DataFonts::new(vec![bundled])));
+    let w = open(&mut app);
+    let applied = |effects: &[Effect]| effects.iter().filter(|e| **e == Effect::ApplyFonts).count();
+    let mut count = 0;
+    for typed in ["Ha", "Hac", "Hack"] {
+        dlg(&mut app, w).set_font_family(FontSlot::Editor, typed);
+        count += applied(&app.0.dialog_edited(w));
+        count += applied(&world.settle(&mut app));
+    }
+    assert_eq!(count, 1, "only the whole name shows");
+    assert!(app.fonts().font(FontSlot::Editor).is_some());
+    let family_notices = |app: &TestApp| {
+        let notices = app.window(w).unwrap().notices.all();
+        notices
+            .iter()
+            .filter(|n| n.text.contains("font family"))
+            .count()
+    };
+    assert_eq!(family_notices(&app), 0);
+
+    // A name that stays wrong is reported when it is applied, not while it is typed.
+    dlg(&mut app, w).set_font_family(FontSlot::Editor, "Nowhere");
+    let effects = app.0.dialog_edited(w);
+    let settled = world.settle(&mut app);
+    assert_eq!(
+        applied(&effects) + applied(&settled),
+        1,
+        "back to the built-in font"
+    );
+    assert_eq!(family_notices(&app), 0);
+    assert!(app.fonts().font(FontSlot::Editor).is_none());
+    assert_eq!(applied(&app.0.dialog_button(w, ButtonRole::Cancel)), 0);
+    world.settle(&mut app);
+    assert_eq!(family_notices(&app), 0, "cancelled: the name never applied");
+}
+
 #[test]
 fn the_font_preview_shows_through_the_theme_accessor() {
     let world = World::new();
@@ -982,7 +1026,10 @@ fn closing_the_window_ends_the_preview() {
     dlg(&mut app, w).select_scheme("light");
     dlg(&mut app, w).set_element_colour(SchemeGroup::Folder, "orphan", RED);
     app.0.dialog_edited(w);
-    let effects = app.close_window(w);
+    // The edit is unapplied: the OS close asks first, and the preview ends with the answer.
+    app.close_window(w);
+    assert_ne!(*app.scheme(), saved, "still previewing");
+    let effects = app.0.dialog_button(w, ButtonRole::Other(1));
     assert!(effects.contains(&Effect::ApplyTheme));
     assert_eq!(*app.scheme(), saved);
 }
@@ -1398,8 +1445,11 @@ fn the_restore_wizard_equals_restore_defaults_by_category() {
     let names = |w: &World| -> Vec<String> { files(w).into_keys().collect() };
     assert_eq!(names(&world), names(&twin));
     assert_eq!(names(&world), ["options.toml", "sessions/keep.toml"]);
-    // The settings reload with no notice for the GUI's own writes.
-    assert_eq!(watcher.poll_once().expect("alive"), Vec::new());
+    // The settings reload with no notice for the GUI's own writes (the deleted sessions refresh Home, as any change
+    // of the store does).
+    let mut events = watcher.poll_once().expect("alive");
+    events.retain(|e| *e != crate::watch::WatchEvent::Sessions);
+    assert_eq!(events, Vec::new());
     assert!(!app.tables().view(Scope::Home).custom.large_buttons);
     assert_eq!(app.theme().light_scheme, "light");
     assert!(app.options().tabs.hide_tab_bar_if_single_tab, "not chosen");

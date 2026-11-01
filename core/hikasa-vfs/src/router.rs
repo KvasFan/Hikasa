@@ -20,6 +20,12 @@
 //! | `Stdin`, `Clipboard` | `OperationUnsupported` | `OperationUnsupported` | `Ok(None)` |
 //! | archive, snapshot, remote, profile, HTTP | `Unsupported{what:"<scheme> specs"}` | same | `Ok(None)` |
 //! | mixed kinds | — | `OperationUnsupported` | `Ok(None)` |
+//!
+//! Archives (M2 W5, contract §1.5.3): with [`VfsRouter::with_archives`] an `ArchiveMember` goes to the
+//! [`ArchiveVfs`] for every read method, `child`, `capabilities`, the primitives, `prepare` and `open_read_with`;
+//! `rename` needs both specs inside one archive (two archives → `CrossDevice`, mixed kinds →
+//! `OperationUnsupported`); `copy_file_fast` is `Ok(None)`, `local_path` `None`. Without archives it stays the M1
+//! row above. `archive_format` and `take_warnings` ask the `ArchiveVfs`.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -28,15 +34,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hikasa_core::spec::RemoteScheme;
-use hikasa_core::{CancelToken, FileTime, Spec};
+use hikasa_core::{CancelToken, Ctl, FileTime, Spec, Warning};
 
+use crate::archive::{ArchiveFormat, ArchiveVfs};
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::local::LocalVfs;
 use crate::vfs::{
-    AtomicWrite, AttrChange, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
-    WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, Finish, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
+    WriteLock, WriteOptions, op_unsupported,
 };
 
 /// In-memory content injected by an adapter (stdin bytes read once; clipboard text).
@@ -106,6 +113,7 @@ pub struct VfsRouter {
     stdin: Option<Blob>,
     clipboard: Option<Blob>,
     clipboard_failure: Option<BlobFailure>,
+    archives: Option<Arc<ArchiveVfs>>,
 }
 
 /// Capabilities of a blob spec.
@@ -162,6 +170,8 @@ enum Route<'a> {
     MissingBlob,
     /// A capture that failed.
     FailedBlob(&'a BlobFailure),
+    /// An archive spec, archives set.
+    Archive(&'a ArchiveVfs),
     Unsupported,
 }
 
@@ -173,7 +183,21 @@ impl VfsRouter {
             stdin: None,
             clipboard: None,
             clipboard_failure: None,
+            archives: None,
         }
+    }
+
+    /// Serves archive specs through `archives` (M2 W5, §1.5.3).
+    pub fn with_archives(self, archives: Arc<ArchiveVfs>) -> VfsRouter {
+        VfsRouter {
+            archives: Some(archives),
+            ..self
+        }
+    }
+
+    /// The archive back-end, when set.
+    pub fn archives(&self) -> Option<&Arc<ArchiveVfs>> {
+        self.archives.as_ref()
     }
 
     /// Makes `Spec::Stdin` readable.
@@ -225,6 +249,10 @@ impl VfsRouter {
                 (None, Some(failure)) => Route::FailedBlob(failure),
                 (None, None) => Route::MissingBlob,
             },
+            Spec::ArchiveMember { .. } => self
+                .archives
+                .as_deref()
+                .map_or(Route::Unsupported, Route::Archive),
             _ => Route::Unsupported,
         }
     }
@@ -257,6 +285,7 @@ impl Vfs for VfsRouter {
         match self.route(at) {
             Route::Local => self.local.capabilities(at),
             Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => Ok(BLOB_CAPS),
+            Route::Archive(archive) => archive.capabilities(at),
             Route::Unsupported => Err(unsupported(at)),
         }
     }
@@ -266,6 +295,7 @@ impl Vfs for VfsRouter {
             Route::Local => self.local.stat(spec, follow),
             Route::Blob(blob) => Ok(blob_entry(spec, blob)),
             Route::FailedBlob(failure) => Err(failure.error(spec)),
+            Route::Archive(archive) => archive.stat(spec, follow),
             Route::MissingBlob | Route::Unsupported => Err(unsupported(spec)),
         }
     }
@@ -283,6 +313,7 @@ impl Vfs for VfsRouter {
                     spec: dir.canonical(),
                 })
             }
+            Route::Archive(archive) => archive.list(dir, opts, cancel),
             Route::Unsupported => Err(unsupported(dir)),
         }
     }
@@ -292,6 +323,7 @@ impl Vfs for VfsRouter {
             Route::Local => self.local.open_read(spec),
             Route::Blob(blob) => Ok(Box::new(Cursor::new(Arc::clone(&blob.bytes)))),
             Route::FailedBlob(failure) => Err(failure.error(spec)),
+            Route::Archive(archive) => archive.open_read(spec),
             Route::MissingBlob | Route::Unsupported => Err(unsupported(spec)),
         }
     }
@@ -303,6 +335,7 @@ impl Vfs for VfsRouter {
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         match self.route(spec) {
             Route::Local => self.local.open_write(spec, opts),
+            Route::Archive(archive) => archive.open_write(spec, opts),
             Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => {
                 Err(write_unsupported(spec))
             }
@@ -317,6 +350,7 @@ impl Vfs for VfsRouter {
                     spec: dir.canonical(),
                 })
             }
+            Route::Archive(archive) => archive.child(dir, name),
             Route::Unsupported => Err(unsupported(dir)),
         }
     }
@@ -324,21 +358,37 @@ impl Vfs for VfsRouter {
     fn local_path(&self, spec: &Spec) -> Option<PathBuf> {
         match self.route(spec) {
             Route::Local => self.local.local_path(spec),
-            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => None,
+            Route::Blob(_)
+            | Route::MissingBlob
+            | Route::FailedBlob(_)
+            | Route::Archive(_)
+            | Route::Unsupported => None,
         }
     }
 
     fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
-        self.mutate(spec, VfsOp::Mkdir, |l| l.create_dir(spec, parents))
+        self.mutate(spec, VfsOp::Mkdir, |l: &dyn Vfs| {
+            l.create_dir(spec, parents)
+        })
     }
 
     fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
-        self.mutate(spec, VfsOp::Remove, |l| l.remove(spec))
+        self.mutate(spec, VfsOp::Remove, |l: &dyn Vfs| l.remove(spec))
     }
 
     fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
         match (self.route(from), self.route(to)) {
             (Route::Local, Route::Local) => self.local.rename(from, to, replace),
+            (Route::Archive(archive), Route::Archive(_)) => {
+                if from.container() == to.container() {
+                    archive.rename(from, to, replace)
+                } else {
+                    Err(VfsError::CrossDevice {
+                        from: from.canonical(),
+                        to: to.canonical(),
+                    })
+                }
+            }
             (Route::Unsupported, _) => Err(unsupported(from)),
             (_, Route::Unsupported) => Err(unsupported(to)),
             _ => Err(op_unsupported(from, VfsOp::Rename)),
@@ -346,11 +396,15 @@ impl Vfs for VfsRouter {
     }
 
     fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
-        self.mutate(spec, VfsOp::SetTimes, |l| l.set_times(spec, times))
+        self.mutate(spec, VfsOp::SetTimes, |l: &dyn Vfs| {
+            l.set_times(spec, times)
+        })
     }
 
     fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
-        self.mutate(spec, VfsOp::SetAttrs, |l| l.set_attrs(spec, change))
+        self.mutate(spec, VfsOp::SetAttrs, |l: &dyn Vfs| {
+            l.set_attrs(spec, change)
+        })
     }
 
     fn create_symlink(
@@ -359,13 +413,13 @@ impl Vfs for VfsRouter {
         target: &OsStr,
         target_is_dir: bool,
     ) -> Result<(), VfsError> {
-        self.mutate(spec, VfsOp::Symlink, |l| {
+        self.mutate(spec, VfsOp::Symlink, |l: &dyn Vfs| {
             l.create_symlink(spec, target, target_is_dir)
         })
     }
 
     fn move_to_trash(&self, spec: &Spec) -> Result<(), VfsError> {
-        self.mutate(spec, VfsOp::Trash, |l| l.move_to_trash(spec))
+        self.mutate(spec, VfsOp::Trash, |l: &dyn Vfs| l.move_to_trash(spec))
     }
 
     fn copy_file_fast(
@@ -380,6 +434,86 @@ impl Vfs for VfsRouter {
             _ => Ok(None),
         }
     }
+
+    fn prepare(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        match self.route(spec) {
+            Route::Archive(archive) => archive.prepare(spec, ctl),
+            _ => Ok(()),
+        }
+    }
+
+    fn archive_entries(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<Option<u64>, VfsError> {
+        match self.route(spec) {
+            Route::Archive(archive) => archive.archive_entries(spec, ctl),
+            _ => Ok(None),
+        }
+    }
+
+    fn open_read_with(
+        &self,
+        spec: &Spec,
+        cancel: &CancelToken,
+    ) -> Result<Box<dyn ReadSeek>, VfsError> {
+        match self.route(spec) {
+            Route::Archive(archive) => archive.open_read_with(spec, cancel),
+            _ => self.open_read(spec),
+        }
+    }
+
+    fn archive_format(&self, name: &str) -> Option<ArchiveFormat> {
+        self.archives.as_ref()?.archive_format(name)
+    }
+
+    fn take_warnings(&self) -> Vec<Warning> {
+        self.archives
+            .as_ref()
+            .map_or_else(Vec::new, |archive| archive.take_warnings())
+    }
+
+    fn lock_writer(&self, spec: &Spec) -> Result<Option<Box<dyn WriteLock>>, VfsError> {
+        match spec {
+            Spec::Local(_) => self.local.lock_writer(spec),
+            _ => Ok(None),
+        }
+    }
+
+    fn shadows_of(&self, spec: &Spec) -> u64 {
+        self.archives.as_ref().map_or(0, |vfs| vfs.shadows_of(spec))
+    }
+
+    fn shadows_below(&self, spec: &Spec) -> u64 {
+        self.archives
+            .as_ref()
+            .map_or(0, |vfs| vfs.shadows_below(spec))
+    }
+
+    fn carry_older(&self, source: &Spec, target: &Spec, ctl: &Ctl<'_>) -> Result<u64, VfsError> {
+        self.archives
+            .as_ref()
+            .map_or(Ok(0), |vfs| vfs.carry_older(source, target, ctl))
+    }
+
+    fn begin(&self, at: &Spec) -> Result<(), VfsError> {
+        self.archives.as_ref().map_or(Ok(()), |a| a.begin(at))
+    }
+
+    fn finish(&self, at: &Spec, how: Finish) -> Result<(), VfsError> {
+        self.archives.as_ref().map_or(Ok(()), |a| a.finish(at, how))
+    }
+
+    fn finish_with(&self, at: &Spec, how: Finish, ctl: &Ctl<'_>) -> Result<(), VfsError> {
+        self.archives
+            .as_ref()
+            .map_or(Ok(()), |a| a.finish_with(at, how, ctl))
+    }
+
+    /// `ArchiveVfs` makes the file, on the same `LocalVfs`, or the member. Without archives no plan asks for it.
+    fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
+        match (&self.archives, self.route(spec)) {
+            (Some(archives), Route::Local | Route::Archive(_)) => archives.create_archive(spec),
+            _ => Err(op_unsupported(spec, VfsOp::Mkdir)),
+        }
+    }
 }
 
 impl VfsRouter {
@@ -388,10 +522,11 @@ impl VfsRouter {
         &self,
         spec: &Spec,
         op: VfsOp,
-        local: impl FnOnce(&LocalVfs) -> Result<T, VfsError>,
+        call: impl FnOnce(&dyn Vfs) -> Result<T, VfsError>,
     ) -> Result<T, VfsError> {
         match self.route(spec) {
-            Route::Local => local(&self.local),
+            Route::Local => call(&self.local),
+            Route::Archive(archive) => call(archive),
             Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => {
                 Err(op_unsupported(spec, op))
             }
