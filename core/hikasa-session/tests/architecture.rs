@@ -11,7 +11,8 @@
 //!    hikasa-session, and `capture_env`/`SystemClock` referenced nowhere under `core/` except their definition
 //!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
 //!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
-//!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test. Imports are expanded first, so grouped and aliased forms are caught as
+//!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test; 0.1.91 confines `ctrlc` to
+//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
 //!    `.elapsed()` counts as a clock read;
 //! 3. every dependency of every workspace member is `workspace = true` and listed in `[workspace.dependencies]`,
@@ -1059,6 +1060,28 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
 /// `SystemClipboard` (tests never touch the real clipboard, A3.9).
 fn check_confined_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
+    // D-159, D-160: the two crates of the adapters, each behind one file.
+    for (top, token, home) in [
+        ("cli", "ctrlc", "cli/hikasa-cli/src/interrupt.rs"),
+        ("gui", "fontique", "gui/hikasa-gui/src/fonts.rs"),
+    ] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            let Ok(raw) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if rel == home {
+                continue;
+            }
+            let code = code_only(&raw);
+            for at in find_token(&code, token) {
+                violations.push(format!(
+                    "{rel}:{}: the `{token}` crate is named only in {home}",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
     for file in rust_files(&root.join("core")) {
         let rel = relative(root, &file);
         let Ok(raw) = fs::read_to_string(&file) else {
@@ -3153,6 +3176,38 @@ fn check_2_refuses_renamed_reexports_of_the_adapter_only_functions() {
     let violations = check_adapter_only(root);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("another name"), "{violations:?}");
+}
+
+/// D-159, D-160: `ctrlc` and `fontique` stay behind one file of their adapter.
+#[test]
+fn check_2_confines_the_crates_of_the_adapters() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "cli/hikasa-cli/src/interrupt.rs",
+        "fn a() { ctrlc::set_handler(|| {}); }\n",
+    );
+    put(
+        root,
+        "gui/hikasa-gui/src/fonts.rs",
+        "fn b() { fontique::Collection::default(); }\n",
+    );
+    assert!(check_confined_crates(root).is_empty());
+    put(
+        root,
+        "cli/hikasa-cli/src/main.rs",
+        "// ctrlc in a comment is fine\nfn c() { ctrlc::set_handler(|| {}); }\n",
+    );
+    put(
+        root,
+        "gui/hikasa-gui/src/ui/fonts.rs",
+        "use fontique::Collection;\n",
+    );
+    let violations = check_confined_crates(root);
+    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert!(violations[0].contains("`ctrlc`"), "{violations:?}");
+    assert!(violations[1].contains("`fontique`"), "{violations:?}");
 }
 
 /// M2 W3 (§1.3.9): `trash::` and `arboard` are confined to one file each; no test names `SystemClipboard`.
