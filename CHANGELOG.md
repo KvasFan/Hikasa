@@ -34,8 +34,9 @@
   once with `another operation is changing this archive` instead of losing the first one's change.
 - **A rewrite keeps what it did not touch** as bytes, in order: encrypted members and methods it cannot decode, refused and
   link members, devices, sparse files, unknown extra fields, comments and raw names. A member hidden by a later one of the
-  same name stays with it: it moves with it, and goes when that member is removed or replaced, with a warning, so what
-  was overwritten does not live on.
+  same name stays with it: it moves with it, also to another archive of any format, and goes when that member is removed
+  or replaced, with a warning, so what was overwritten does not live on. A plain file holds one version, so a move out of
+  the archive ends the older ones, and says so.
 - **The temporary copy of an archive, and of any file Hikasa saves, is private** until it replaces the file. A kill during a
   rewrite leaves it next to the archive, and the next rewrite of that archive removes it.
 - Archives are treated as hostile input: bad names are refused and listed, links are never followed or written to disk,

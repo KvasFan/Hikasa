@@ -109,8 +109,9 @@ header with its offset changed), so an encrypted member, a method this build doe
 names survive; tar blocks by one forward pass, with whatever lies between members (global headers, volume labels) and
 anything after the end of the archive. Refused members stay; one refused only for a path conflict reads again once that path
 is free, and the operation says so. A shadowed duplicate shares the fate of the member that shadows it (D-156): it stays while
-that member stays or is touched, moves with it, and goes when it is removed or replaced, with a warning that names
-the count, so what was overwritten does not live on in an older record; `--dry-run` says so first. A renamed or
+that member stays or is touched, moves with it, also to another archive of any writable format, and goes when it is removed
+or replaced, with a warning that names the count, so what was overwritten does not live on in an older record; `--dry-run`
+says so first. A plain file holds one version, so a move out of the archive ends them, with the same kind of warning. A renamed or
 touched zip member has those fields edited in its headers, so its data is not decoded either, and a name in another code page
 keeps the bytes the rename leaves alone; a renamed or touched tar member gets a copy of its header, keeping owner, type,
 device numbers, link name and its other PAX records, and a touch leaves its name as bytes. A hard link stays one while the

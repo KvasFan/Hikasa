@@ -100,6 +100,34 @@ struct New<'a> {
     file: Option<Arc<CacheFile>>,
 }
 
+impl<'a> New<'a> {
+    /// The older records that came with it from another archive, oldest first (D-156).
+    fn older(&self) -> impl Iterator<Item = New<'a>> {
+        let path = self.path;
+        self.item
+            .older
+            .iter()
+            .flat_map(|older| older.iter())
+            .map(move |item| New {
+                path,
+                item,
+                file: match &item.origin {
+                    Origin::Staged(file) => Some(Arc::clone(file)),
+                    _ => None,
+                },
+            })
+    }
+}
+
+/// What the new members bring, older records included.
+fn new_bytes(new: &[New<'_>]) -> u64 {
+    new.iter()
+        .flat_map(|member| {
+            std::iter::once(member.item.size).chain(member.older().map(|o| o.item.size))
+        })
+        .sum()
+}
+
 /// The output stream of a rebuild: counts bytes, looks at `ctl` each 1 MiB, and tells its own failures from those of
 /// the reading side.
 struct Output<'a> {
@@ -449,7 +477,16 @@ impl Rebuild<'_> {
             .fold((0u64, 0u64), |(count, text), shadow| {
                 (count + 1, text + u64::from(shadow.path_len))
             });
-        let entries = self.view.overlay.len() as u64 + tree.refused_total + shadows;
+        let older = self.view.overlay.items().map(|(path, item)| {
+            item.older.as_ref().map_or((0, 0), |older| {
+                (older.len() as u64, (path.len() * older.len()) as u64)
+            })
+        });
+        let (older, older_text) = older.fold((0, 0), |(count, text), (n, bytes)| {
+            (count + n, text + bytes)
+        });
+        let shadow_text = shadow_text + older_text;
+        let entries = self.view.overlay.len() as u64 + tree.refused_total + shadows + older;
         if entries > limits.entries_max {
             return Err(limit(text, "entries", limits.entries_max));
         }
@@ -770,7 +807,7 @@ impl Rebuild<'_> {
             .map(|tail| (tail, data.container_len() - tail));
         // Records are bytes, not decoded output, so a sound zip of any size can be rewritten. The limit is there for
         // records that overlap: each would be written whole.
-        let staged: u64 = new.iter().map(|member| member.item.size).sum();
+        let staged = new_bytes(new);
         let output_max = data
             .container_len()
             .saturating_add(staged)
@@ -875,8 +912,7 @@ impl Rebuild<'_> {
         text: &str,
     ) -> Result<(), VfsError> {
         // The members are in the cache already: this file is their second copy, and must not fail for that.
-        let staged: u64 = new.iter().map(|member| member.item.size).sum();
-        let room = self.config.limits.cache_max.saturating_add(staged);
+        let room = self.config.limits.cache_max.saturating_add(new_bytes(new));
         let stage = self.core.cache.stage(&self.config.cache_root, room, text)?;
         let now = (self.config.clock)();
         let zone = now.time_zone().clone();
@@ -886,40 +922,25 @@ impl Rebuild<'_> {
             zip::result::ZipError::Io(error) => VfsError::from_io(text, VfsOp::Write, error),
             other => corrupt(text, other.to_string()),
         };
+        // `ZipWriter` refuses a name twice, so an older record goes in under a name of its own and gets its path as it is
+        // carried over. The name is not ASCII, so the record says UTF-8 whatever its path turns out to be.
+        let mut aliases: HashMap<Vec<u8>, &str> = HashMap::new();
         let mut buffer = vec![0u8; codec::BUFFER];
         for member in new {
-            self.ctl.check()?;
-            let options = file_options(member.item, now, &zone).map_err(fail)?;
-            let name = member.path;
-            match member.item.kind {
-                MemberKind::Dir => writer.add_directory(name, options).map_err(fail)?,
-                MemberKind::Symlink => {
-                    let target = member.item.link_target.as_deref().unwrap_or_default();
-                    writer.add_symlink(name, target, options).map_err(fail)?;
-                }
-                _ => {
-                    let large = member.item.size >= LARGE_FILE;
-                    writer
-                        .start_file(name, options.large_file(large))
-                        .map_err(fail)?;
-                    let Some(file) = &member.file else {
-                        return Err(corrupt(text, "inconsistent overlay"));
-                    };
-                    let mut reader = file.reader()?;
-                    loop {
-                        self.ctl.check()?;
-                        let n = match reader.read(&mut buffer) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                            Err(e) => return Err(VfsError::from_io(text, VfsOp::Read, e)),
-                        };
-                        writer
-                            .write_all(buffer.get(..n).unwrap_or_default())
-                            .map_err(|e| VfsError::from_io(text, VfsOp::Write, e))?;
-                    }
-                }
+            for older in member.older() {
+                let alias = format!("\0\u{e9}{}", aliases.len());
+                self.add_new(&mut writer, &alias, &older, now, &zone, &mut buffer, text)?;
+                aliases.insert(alias.into_bytes(), older.path);
             }
+            self.add_new(
+                &mut writer,
+                member.path,
+                member,
+                now,
+                &zone,
+                &mut buffer,
+                text,
+            )?;
         }
         let stage = writer.finish().map_err(fail)?;
         let staged = stage.finish_staged()?;
@@ -931,7 +952,63 @@ impl Rebuild<'_> {
         let headers = read_central(&mut *input, start, staged.len(), text)?;
         let starts = record_starts(&headers);
         for header in &headers {
-            zip.record(&mut *input, header, &Patch::default(), &starts, start)?;
+            let patch = Patch {
+                name: aliases
+                    .get(header.name())
+                    .map(|path| path.as_bytes().to_vec()),
+                ..Patch::default()
+            };
+            zip.record(&mut *input, header, &patch, &starts, start)?;
+        }
+        Ok(())
+    }
+
+    /// One new member, as `name`.
+    #[allow(clippy::too_many_arguments)]
+    fn add_new(
+        &self,
+        writer: &mut ZipWriter<CacheWriter>,
+        name: &str,
+        member: &New<'_>,
+        now: Option<FileTime>,
+        zone: &jiff::tz::TimeZone,
+        buffer: &mut [u8],
+        text: &str,
+    ) -> Result<(), VfsError> {
+        let fail = |e: zip::result::ZipError| match e {
+            zip::result::ZipError::Io(error) => VfsError::from_io(text, VfsOp::Write, error),
+            other => corrupt(text, other.to_string()),
+        };
+        self.ctl.check()?;
+        let options = file_options(member.item, now, zone).map_err(fail)?;
+        match member.item.kind {
+            MemberKind::Dir => writer.add_directory(name, options).map_err(fail)?,
+            MemberKind::Symlink => {
+                let target = member.item.link_target.as_deref().unwrap_or_default();
+                writer.add_symlink(name, target, options).map_err(fail)?;
+            }
+            _ => {
+                let large = member.item.size >= LARGE_FILE;
+                writer
+                    .start_file(name, options.large_file(large))
+                    .map_err(fail)?;
+                let Some(file) = &member.file else {
+                    return Err(corrupt(text, "inconsistent overlay"));
+                };
+                let mut reader = file.reader()?;
+                loop {
+                    self.ctl.check()?;
+                    let n = match reader.read(buffer) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) => return Err(VfsError::from_io(text, VfsOp::Read, e)),
+                    };
+                    writer
+                        .write_all(buffer.get(..n).unwrap_or_default())
+                        .map_err(|e| VfsError::from_io(text, VfsOp::Write, e))?;
+                }
+            }
         }
         Ok(())
     }
@@ -1106,6 +1183,9 @@ impl Rebuild<'_> {
         .run(&mut guard, &mut builder, rest, true)?;
         for member in new {
             self.ctl.check()?;
+            for older in member.older() {
+                self.append_tar(&mut builder, &older, &fail, text)?;
+            }
             self.append_tar(&mut builder, member, &fail, text)?;
         }
         let mut stream_out = builder.into_inner().map_err(fail)?;

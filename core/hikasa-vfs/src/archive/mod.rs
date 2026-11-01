@@ -23,6 +23,7 @@ mod codec;
 mod format;
 mod index;
 pub mod name;
+mod older;
 mod overlay;
 mod rebuild;
 mod resolve;
@@ -1505,6 +1506,55 @@ impl Vfs for ArchiveVfs {
             let count = index.tree.shadowed.get(&node.record).copied();
             u64::from(count.unwrap_or(0))
         })
+    }
+
+    /// The records of the members at or below `spec` that those members shadow.
+    fn shadows_below(&self, spec: &Spec) -> u64 {
+        let Spec::ArchiveMember { archive, member } = spec else {
+            return 0;
+        };
+        let config = self.core.config();
+        let Ok((_, index)) = self.core.index_of(archive, &config, Ctl::detached()) else {
+            return 0;
+        };
+        let tree = &index.tree;
+        if tree.shadowed.is_empty() {
+            return 0;
+        }
+        let member: &str = member;
+        let below = |path: &str| {
+            member.is_empty()
+                || path == member
+                || path
+                    .strip_prefix(member)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        let counted = tree.nodes.iter().filter(|node| below(node.path()));
+        counted
+            .filter_map(|node| tree.shadowed.get(&node.record))
+            .map(|count| u64::from(*count))
+            .sum()
+    }
+
+    /// `target` was just written from `source`: its older records join it, and what cannot leave is counted.
+    fn carry_older(&self, source: &Spec, target: &Spec, ctl: &Ctl<'_>) -> Result<u64, VfsError> {
+        let (Spec::ArchiveMember { archive, member }, Some(path)) = (source, member_of(target))
+        else {
+            return Ok(self.shadows_of(source));
+        };
+        let config = self.core.config();
+        let (_, index) = self.core.index_of(archive, &config, *ctl)?;
+        let Some(node) = index.tree.find(member) else {
+            return Ok(0);
+        };
+        let older = self.core.older_of(archive, &index, node, &config, *ctl)?;
+        if !older.items.is_empty() {
+            self.core
+                .change(target, VfsOp::Write, Below::Stay, |overlay, scope| {
+                    overlay.put_older(path, older.items, scope)
+                })?;
+        }
+        Ok(older.left)
     }
 
     fn begin(&self, at: &Spec) -> Result<(), VfsError> {

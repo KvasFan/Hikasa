@@ -162,6 +162,8 @@ trait Vfs {
     fn create_archive(&self, spec:&Spec) -> Result<()>;             // M2 W5b: an empty archive, by its mask
     fn lock_writer(&self, spec:&Spec) -> Result<Option<Box<dyn WriteLock>>>; // M2 W5b: keeps other writers off a file
     fn shadows_of(&self, spec:&Spec) -> u64;                        // M2 W5b: records a member shadows (`--dry-run`)
+    fn shadows_below(&self, spec:&Spec) -> u64;                     // M2 W5b: the same for a folder's members
+    fn carry_older(&self, source:&Spec, target:&Spec, ctl:&Ctl) -> Result<u64>; // M2 W5b: older records follow a copy (D-156)
     fn open_write(&self, spec:&Spec, opts:WriteOpts) -> Result<Box<dyn AtomicWrite>>;  // Write + Seek (M2 W5b) + commit
     fn capabilities(&self) -> Caps; // timestamps writable? attrs? unix mode? recycle bin? locks? crc provided?
     // M2 W3 (D-92): single-item mutating primitives, each behind a capability, default "unsupported";

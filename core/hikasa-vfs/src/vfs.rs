@@ -404,6 +404,17 @@ pub trait Vfs: Send + Sync {
         0
     }
 
+    /// [`Vfs::shadows_of`] of `spec` and of every member below it. Default: 0.
+    fn shadows_below(&self, _spec: &Spec) -> u64 {
+        0
+    }
+
+    /// The member `target`, just written in this batch as the copy of `source`, takes the older records of `source`
+    /// along, so that they travel with it to another archive (D-156). Returns how many cannot go. Default: all of them.
+    fn carry_older(&self, source: &Spec, _target: &Spec, _ctl: &Ctl<'_>) -> Result<u64, VfsError> {
+        Ok(self.shadows_of(source))
+    }
+
     /// Creates an empty archive at `spec`, whose name matches a writable mask. Default: `OperationUnsupported`.
     fn create_archive(&self, spec: &Spec) -> Result<(), VfsError> {
         Err(op_unsupported(spec, VfsOp::Mkdir))

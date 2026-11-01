@@ -52,17 +52,22 @@ archive file stay; it gets a new modification time. A renamed or touched member 
 its name as it was. A link to the archive stays a link, and a read-only archive in a writable folder is rewritten and
 stays read-only, as any file Hikasa saves.
 
-**What the temporary file means.** While it is written it can be read by you alone. If Hikasa is killed (Ctrl-C
-included) during a rewrite, the archive stays as it was, and `.<name>.hikasa-tmp` and `.<name>.hikasa-lock` stay next
-to it; the next rewrite of that archive removes them, and nothing else with a similar name.
+**What the temporary file means.** While it is written it can be read by you alone. The first Ctrl-C stops a rewrite
+and removes both files. If Hikasa is killed, or a second Ctrl-C ends it at once, the archive stays as it was, and
+`.<name>.hikasa-tmp` and `.<name>.hikasa-lock` stay next to it; the next rewrite of that archive removes them, and nothing
+else with a similar name. A lock that a rewrite cannot take over, say because of a folder or another user's file with
+that name, is named in the error: remove it yourself.
 
 **What a rewrite does not keep.**
 
 - The owner, ACLs and extended attributes of the archive file, as with any file Hikasa saves. A second hard link to it
   keeps the old content.
 - A member hidden by a later one of the same name shares its fate: it stays while that member stays or is touched,
-  and moves with it. Removing or replacing that member removes the hidden ones too, so what you overwrote does not stay in
-  an older record: `--dry-run` says how many, and so does an `archive_duplicate_member` warning afterwards.
+  and moves with it, also to another archive, of any format, where it comes right before that member. Removing or
+  replacing that member removes the hidden ones too, so what you overwrote does not stay in an older record: `--dry-run`
+  says how many, and so does an `archive_duplicate_member` warning afterwards. Moving it out to a plain file ends them,
+  since a file holds one version, and so does a move to another archive for what has no content to take along, an
+  encrypted record or a tar hard link: the warning says how many.
 - A signed `.jar` or `.apk` is no longer validly signed, and a signature of the central directory goes, with a warning.
 - A time the format cannot hold is stored as the nearest it can (a tar holds nothing before 1970), with a warning.
 - A gzip header's stored name and time go: rewrites are repeatable, byte for byte.

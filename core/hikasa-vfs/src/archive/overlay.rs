@@ -56,6 +56,8 @@ pub(crate) struct Item {
     pub(crate) attrs: Attrs,
     crc32: Option<u32>,
     pub(crate) link_target: Option<Box<str>>,
+    /// Older records that came with this member from another archive, oldest first (D-156).
+    pub(crate) older: Option<Arc<Vec<Item>>>,
 }
 
 impl Item {
@@ -79,6 +81,30 @@ impl Item {
             attrs: node.attrs,
             crc32: node.crc32,
             link_target: node.link_target.clone(),
+            older: None,
+        }
+    }
+
+    /// An older record that comes from another archive.
+    pub(crate) fn older(
+        kind: MemberKind,
+        origin: Origin,
+        size: u64,
+        mtime: Option<FileTime>,
+        attrs: Attrs,
+        link_target: Option<Box<str>>,
+    ) -> Item {
+        Item {
+            origin,
+            kind,
+            lossy: false,
+            size,
+            mtime,
+            ctime: None,
+            attrs,
+            crc32: None,
+            link_target,
+            older: None,
         }
     }
 
@@ -99,6 +125,7 @@ impl Item {
             },
             crc32: None,
             link_target: None,
+            older: None,
         }
     }
 
@@ -327,6 +354,24 @@ impl Overlay {
             });
         }
         self.nodes.insert(path.into(), item);
+        Ok(())
+    }
+
+    /// Gives the new member `path` the older records that came with it. They are written before it, so only a member
+    /// that is written after the kept ones can have them.
+    pub(crate) fn put_older(
+        &mut self,
+        path: &str,
+        older: Vec<Item>,
+        scope: &Scope<'_>,
+    ) -> Result<(), VfsError> {
+        let Some(item) = self.nodes.get_mut(path) else {
+            return Err(scope.missing(path));
+        };
+        if !matches!(item.origin, Origin::Fresh | Origin::Staged(_)) {
+            return Err(scope.unsupported(path, VfsOp::Write));
+        }
+        item.older = Some(Arc::new(older));
         Ok(())
     }
 

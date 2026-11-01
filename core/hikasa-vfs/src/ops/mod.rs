@@ -350,31 +350,55 @@ pub(crate) fn check_move_inside(
     Ok(())
 }
 
-/// The warning of `--dry-run` for what a plan would take along: older records that share a path with a member that
-/// goes or is replaced (§1.5.7 rule 3). A run says the same when its rebuild is in place.
+/// True when `source` and `target` are members of two archives: a move between them is a copy and a removal, and the
+/// older records of what moves travel with it (D-156).
+fn between_archives(source: &Spec, target: &Spec) -> bool {
+    matches!(source, Spec::ArchiveMember { .. })
+        && matches!(target, Spec::ArchiveMember { .. })
+        && source.container() != target.container()
+}
+
+/// The warnings of `--dry-run` for the older records that share a path with what a plan moves or removes (§1.5.7
+/// rule 3): the ones that go with a member, and the ones that travel with it to another archive. A run says the same
+/// when its rebuild is in place. A record that turns out not to be able to leave (an encrypted one, a hard link) is
+/// only known when the run takes it out.
 pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
-    let mut count = 0;
+    let mut gone = 0;
+    let mut travel = 0;
     for item in plan.items.iter().filter(|item| item.error.is_none()) {
-        let gone = match item.action {
-            Action::Remove | Action::RemoveDir | Action::Trash => src.shadows_of(&item.target),
-            Action::Move => item.source.as_ref().map_or(0, |at| src.shadows_of(at)),
-            _ => 0,
-        };
-        let replaced = if item.replaces {
-            dst.shadows_of(&item.target)
-        } else {
-            0
-        };
-        count += gone + replaced;
+        match (item.action, item.source.as_ref()) {
+            (Action::Remove | Action::RemoveDir | Action::Trash, _) => {
+                gone += src.shadows_of(&item.target);
+            }
+            (Action::Move, Some(at)) if between_archives(at, &item.target) => {
+                travel += src.shadows_of(at);
+            }
+            (Action::Move, Some(at)) => gone += src.shadows_of(at),
+            (Action::Rename, Some(at)) if between_archives(at, &item.target) => {
+                travel += src.shadows_below(at);
+            }
+            _ => {}
+        }
+        if item.replaces {
+            gone += dst.shadows_of(&item.target);
+        }
     }
-    if count > 0 {
+    let mut note = |message: String| {
         plan.warnings.push(Warning {
             code: WarningCode::ArchiveDuplicateMember,
-            message: format!(
-                "{count} shadowed members would go with the members they share a path with"
-            ),
+            message,
             spec: None,
         });
+    };
+    if gone > 0 {
+        note(format!(
+            "{gone} shadowed members would go with the members they share a path with"
+        ));
+    }
+    if travel > 0 {
+        note(format!(
+            "{travel} shadowed members would move to the other archive with the members they share a path with"
+        ));
     }
 }
 

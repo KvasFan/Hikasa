@@ -994,6 +994,13 @@ fn format_of(name: &str) -> ArchiveFormat {
 /// The records of `doc` in the plain reading of `bytes`, oldest first: the crates list every record.
 fn versions(name: &str, bytes: &[u8], path: &str) -> Vec<Vec<u8>> {
     let wanted = |text: &str| text.trim_start_matches("./") == path;
+    if name.ends_with(".tar.gz") {
+        let mut plain = Vec::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_end(&mut plain)
+            .unwrap();
+        return versions("a.tar", &plain, path);
+    }
     if format_of(name) == ArchiveFormat::Zip {
         let mut out = Vec::new();
         let mut at = 0;
@@ -1012,7 +1019,17 @@ fn versions(name: &str, bytes: &[u8], path: &str) -> Vec<Vec<u8>> {
             let text = String::from_utf8_lossy(&bytes[start + 30..start + 30 + name_len]);
             let data = start + 30 + name_len + extra;
             if wanted(&text) {
-                out.push(bytes[data..data + size].to_vec());
+                let method = u16::from_le_bytes(bytes[start + 8..start + 10].try_into().unwrap());
+                let stored = &bytes[data..data + size];
+                out.push(if method == 8 {
+                    let mut plain = Vec::new();
+                    flate2::read::DeflateDecoder::new(stored)
+                        .read_to_end(&mut plain)
+                        .unwrap();
+                    plain
+                } else {
+                    stored.to_vec()
+                });
             }
             at = data + size;
         }
@@ -1156,6 +1173,211 @@ fn the_last_record_wins_when_spellings_of_a_path_interleave() {
         assert_eq!(entry.mtime, Some(ft(1_000_000_000)), "{names:?}");
         assert_eq!(read_member(&again, &member(&file, "a")), last, "{names:?}");
     }
+}
+
+/// A move to another archive is a copy and a removal, and the older records go along whatever the two formats are:
+/// the member still wins, and they are at their place behind it, also on the way back.
+#[test]
+fn a_shadow_travels_with_its_winner_to_another_archive() {
+    for (name, bytes) in dup_cases() {
+        for other in ["b.zip", "b.tar", "b.tar.gz"] {
+            let memory = on_memory(ArchiveLimits::default());
+            let file = memory.put(name, bytes.clone());
+            let format = if other.ends_with(".zip") {
+                ArchiveFormat::Zip
+            } else if other.ends_with(".gz") {
+                ArchiveFormat::TarGz
+            } else {
+                ArchiveFormat::Tar
+            };
+            let target = memory.put(other, bytes_of(format, &leaf()));
+            let vfs = &*memory.vfs;
+            let (from, to) = (member(&file, "doc"), member(&target, "moved/doc"));
+            vfs.create_dir(&member(&target, "moved"), false).unwrap();
+
+            let report = mv(vfs, &from, &to, OverwritePolicy::Fail);
+            assert!(report.ok(), "{name} -> {other}: {report:?}");
+            let plain = stored(&memory, other);
+            assert_eq!(
+                versions(other, &plain, "moved/doc"),
+                [OLD, NEW],
+                "{name} -> {other}"
+            );
+            assert_eq!(
+                fresh_view(&memory, &target).get("moved/doc"),
+                Some(&file_of(NEW)),
+                "{name} -> {other}"
+            );
+            let source = stored(&memory, name);
+            assert!(!has(&source, OLD), "{name} -> {other}");
+            assert!(!fresh_view(&memory, &file).contains_key("doc"));
+
+            // And back, into the format it came from.
+            let report = mv(vfs, &to, &from, OverwritePolicy::Fail);
+            assert!(report.ok(), "{other} -> {name}: {report:?}");
+            let source = stored(&memory, name);
+            assert_eq!(
+                versions(name, &source, "doc"),
+                [OLD, NEW],
+                "{other} -> {name}"
+            );
+            assert_eq!(
+                fresh_view(&memory, &file).get("doc"),
+                Some(&file_of(NEW)),
+                "{other} -> {name}"
+            );
+        }
+    }
+}
+
+/// The members of a folder keep theirs; the older records of a replaced target go, as any replaced member's do.
+#[test]
+fn a_folder_and_a_replaced_target_keep_the_records_that_are_theirs() {
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put(
+        "a.zip",
+        raw_zip(&[
+            RawEntry::new(b"d/doc", OLD),
+            RawEntry::new(b"d/plain", b"plain"),
+            RawEntry::new(b"d/doc", NEW),
+        ]),
+    );
+    let target = memory.put("b.tar", raw_tar(&[RawTar::file(b"e/x", b"x")]));
+    let vfs = &*memory.vfs;
+    let report = mv(
+        vfs,
+        &member(&file, "d"),
+        &member(&target, "f"),
+        OverwritePolicy::Fail,
+    );
+    assert!(report.ok(), "{report:?}");
+    let plain = stored(&memory, "b.tar");
+    assert_eq!(versions("b.tar", &plain, "f/doc"), [OLD, NEW]);
+    assert_eq!(versions("b.tar", &plain, "f/plain"), [b"plain"]);
+
+    let replaced = memory.put(
+        "c.tar",
+        raw_tar(&[
+            RawTar::file(b"doc", b"gone1"),
+            RawTar::file(b"doc", b"gone2"),
+        ]),
+    );
+    let report = mv(
+        vfs,
+        &member(&target, "f/doc"),
+        &member(&replaced, "doc"),
+        OverwritePolicy::Always,
+    );
+    assert!(report.ok(), "{report:?}");
+    let plain = stored(&memory, "c.tar");
+    assert_eq!(versions("c.tar", &plain, "doc"), [OLD, NEW]);
+    assert!(!has(&plain, b"gone1") && !has(&plain, b"gone2"));
+}
+
+/// Two archives inside one file: one rebuild takes the member, its older records and the removal.
+#[test]
+fn a_shadow_travels_between_two_archives_in_one_file() {
+    let outer = bytes_of_raw_zip(&[
+        (b"one.zip", dup_zip()),
+        (b"two.tar", raw_tar(&[RawTar::file(b"x", b"x")])),
+        (b"keep", b"keep".to_vec()),
+    ]);
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put("a.zip", outer);
+    let vfs = &*memory.vfs;
+    let one = Spec::archive_member(file.clone(), "one.zip");
+    let two = Spec::archive_member(file.clone(), "two.tar");
+    let report = mv(
+        vfs,
+        &member(&one, "doc"),
+        &member(&two, "doc"),
+        OverwritePolicy::Fail,
+    );
+    assert!(report.ok(), "{report:?}");
+    let dir = tempfile::tempdir().unwrap();
+    let again = fresh(&memory, &dir);
+    assert_eq!(read_member(&again, &member(&two, "doc")), NEW);
+    assert_eq!(read_member(&again, &member(&file, "keep")), b"keep");
+    let inner = read_member(&again, &member(&file, "two.tar"));
+    assert_eq!(versions("two.tar", &inner, "doc"), [OLD, NEW]);
+    let inner = read_member(&again, &member(&file, "one.zip"));
+    assert!(!has(&inner, OLD) && !has(&inner, NEW));
+}
+
+fn bytes_of_raw_zip(members: &[(&[u8], Vec<u8>)]) -> Vec<u8> {
+    let raw: Vec<RawEntry> = members
+        .iter()
+        .map(|(name, data)| RawEntry::new(name, data))
+        .collect();
+    raw_zip(&raw)
+}
+
+/// What a plain file cannot hold, and a record that has no content of its own, are said, not lost in silence.
+#[test]
+fn what_cannot_travel_is_said() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &dup_zip());
+    let vfs = &*disk.vfs;
+    let out = local(&disk.dir.join("out"));
+    let report = mv(vfs, &member(&file, "doc"), &out, OverwritePolicy::Fail);
+    assert!(report.ok(), "{report:?}");
+    let said: Vec<_> = report.warnings.iter().map(|w| &w.message).collect();
+    assert!(
+        said.iter()
+            .any(|m| m.contains("1 shadowed") && m.contains("cannot go")),
+        "{said:?}"
+    );
+    assert_eq!(std::fs::read(disk.dir.join("out")).unwrap(), NEW);
+
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put(
+        "a.tar",
+        raw_tar(&[
+            RawTar::file(b"base", b"base"),
+            RawTar::link(b"doc", b'1', b"base"),
+            RawTar::file(b"doc", NEW),
+        ]),
+    );
+    let target = memory.put("b.zip", raw_zip(&[RawEntry::new(b"x", b"x")]));
+    let vfs = &*memory.vfs;
+    let report = mv(
+        vfs,
+        &member(&file, "doc"),
+        &member(&target, "doc"),
+        OverwritePolicy::Fail,
+    );
+    assert!(report.ok(), "{report:?}");
+    let said: Vec<_> = report.warnings.iter().map(|w| &w.message).collect();
+    assert!(
+        said.iter()
+            .any(|m| m.contains("1 shadowed") && m.contains("cannot go")),
+        "{said:?}"
+    );
+    assert_eq!(fresh_view(&memory, &target).get("doc"), Some(&file_of(NEW)));
+}
+
+/// `--dry-run` says what the run will do with them.
+#[test]
+fn a_dry_run_says_which_shadows_travel() {
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put("a.zip", dup_zip());
+    let target = memory.put("b.zip", raw_zip(&[RawEntry::new(b"x", b"x")]));
+    let vfs = &*memory.vfs;
+    let opts = MoveOptions::default();
+    let dry = |from: Spec, to: Spec| {
+        let mut plan = ops::plan_move(vfs, vfs, &[(from, to)], &opts, &Ctl::detached()).unwrap();
+        ops::note_shadow_drops(vfs, vfs, &mut plan);
+        let said: Vec<String> = plan.warnings.iter().map(|w| w.message.clone()).collect();
+        said
+    };
+    let said = dry(member(&file, "doc"), member(&target, "doc"));
+    assert!(
+        said.iter()
+            .any(|m| m.contains("1 shadowed") && m.contains("would move")),
+        "{said:?}"
+    );
+    let said = dry(member(&file, "doc"), member(&file, "renamed"));
+    assert!(said.is_empty(), "{said:?}");
 }
 
 /// A removed or replaced winner takes its shadow with it, and the count is in a warning: what was overwritten must not

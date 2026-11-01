@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use hikasa_core::{Ctl, Spec};
+use hikasa_core::{Ctl, Spec, Warning, WarningCode};
 
 use super::copy::{
     Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy,
@@ -247,6 +247,12 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Ou
         Ok(bytes) => bytes,
         Err(e) => return Outcome::Failed(e),
     };
+    if let Err(e) = carry_shadows(exec, source, &item.target) {
+        if !item.replaces {
+            let _ = exec.dst.remove(&item.target);
+        }
+        return Outcome::Failed(e);
+    }
     if exec.defers_removal(source, &item.target) {
         exec.two_phase = true;
         exec.deferred.push((index, Some(entry)));
@@ -273,6 +279,32 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Ou
             Outcome::Failed(e)
         }
     }
+}
+
+/// The older records of a moved member (D-156): they go along to another archive, and what cannot (a plain file holds
+/// one version) is said, because it ends with the removal of the source.
+fn carry_shadows(exec: &mut Exec<'_>, source: &Spec, target: &Spec) -> Result<(), VfsError> {
+    let shadows = exec.src.shadows_of(source);
+    if shadows == 0 {
+        return Ok(());
+    }
+    let left = if same_instance(exec.src, exec.dst) {
+        exec.dst.carry_older(source, target, exec.ctl)?
+    } else {
+        shadows
+    };
+    if left > 0 {
+        exec.warnings.push(Warning {
+            code: WarningCode::ArchiveDuplicateMember,
+            message: format!(
+                "{left} shadowed members of {} cannot go to {} and end with this move",
+                source.canonical(),
+                target.canonical()
+            ),
+            spec: Some(source.canonical()),
+        });
+    }
+    Ok(())
 }
 
 /// The second phase of a move into an archive (D-148): the target's rebuild succeeded, so the source goes. It must

@@ -481,6 +481,18 @@ impl Vfs for VfsRouter {
         self.archives.as_ref().map_or(0, |vfs| vfs.shadows_of(spec))
     }
 
+    fn shadows_below(&self, spec: &Spec) -> u64 {
+        self.archives
+            .as_ref()
+            .map_or(0, |vfs| vfs.shadows_below(spec))
+    }
+
+    fn carry_older(&self, source: &Spec, target: &Spec, ctl: &Ctl<'_>) -> Result<u64, VfsError> {
+        self.archives
+            .as_ref()
+            .map_or(Ok(0), |vfs| vfs.carry_older(source, target, ctl))
+    }
+
     fn begin(&self, at: &Spec) -> Result<(), VfsError> {
         self.archives.as_ref().map_or(Ok(()), |a| a.begin(at))
     }
