@@ -60,20 +60,25 @@ fn nodes() -> impl Strategy<Value = Vec<Node>> {
         0..NAMES.len(),
         proptest::option::weighted(0.75, 0u8..2),
         proptest::option::weighted(0.75, 0u8..2),
-        (proptest::bool::weighted(0.12), proptest::bool::weighted(0.35)),
+        (
+            proptest::bool::weighted(0.12),
+            proptest::bool::weighted(0.35),
+        ),
         (0u8..3, 0u8..3),
         (0u8..3, 0u8..3),
     )
-        .prop_map(|(name, left, right, (link, upper), (cl, cr), (ml, mr))| Node {
-            name,
-            left,
-            right,
-            link,
-            upper,
-            content: [cl, cr],
-            mtime: [ml, mr],
-            children: Vec::new(),
-        });
+        .prop_map(
+            |(name, left, right, (link, upper), (cl, cr), (ml, mr))| Node {
+                name,
+                left,
+                right,
+                link,
+                upper,
+                content: [cl, cr],
+                mtime: [ml, mr],
+                children: Vec::new(),
+            },
+        );
     let tree = leaf.prop_recursive(3, 24, 4, |inner| {
         (inner.clone(), proptest::collection::vec(inner, 0..4)).prop_map(|(mut node, children)| {
             node.children = children;
@@ -121,11 +126,16 @@ fn insert(vfs: &MemoryVfs, dir: &str, nodes: &[Node], side: usize, protect: &BTr
         match [node.left, node.right][side] {
             Some(_) if node.link => {
                 let target = format!("t{}", node.content[side]);
-                vfs.insert_symlink(&host(&path), &target, meta(secs)).unwrap();
+                vfs.insert_symlink(&host(&path), &target, meta(secs))
+                    .unwrap();
             }
             Some(0) => {
-                vfs.insert_file(&host(&path), data(NAMES[node.name], node.content[side]), meta(secs))
-                    .unwrap();
+                vfs.insert_file(
+                    &host(&path),
+                    data(NAMES[node.name], node.content[side]),
+                    meta(secs),
+                )
+                .unwrap();
             }
             Some(_) => {
                 let attrs = protect.contains(&path).then_some(Attrs::Dos {
@@ -231,7 +241,11 @@ struct Ask {
 impl Ask {
     /// A path as the comparison aligns it.
     fn key(&self, path: &str) -> String {
-        if self.fold { path.to_lowercase() } else { path.to_owned() }
+        if self.fold {
+            path.to_lowercase()
+        } else {
+            path.to_owned()
+        }
     }
 
     /// True when `rel` is `path` or below it, as aligned.
@@ -305,7 +319,11 @@ impl Model<'_> {
                     _ => true,
                 };
                 if (tl - tr).abs() > 2 {
-                    if tl > tr { Situation::NewerLeft } else { Situation::NewerRight }
+                    if tl > tr {
+                        Situation::NewerLeft
+                    } else {
+                        Situation::NewerRight
+                    }
                 } else if differ {
                     Situation::Different
                 } else {
@@ -318,11 +336,21 @@ impl Model<'_> {
     /// Rules 4–6 for a row that reads the matrix: the situation (Ignored is `same`), an override that names it or a folder
     /// above it, else the matrix; a read-only side leaves it. Returns the action and whether it is a conflict.
     fn by_matrix(&self, row: &MRow) -> (SyncAction, bool) {
-        let ignored = self.ask.ignored.as_ref().is_some_and(|p| self.ask.at_or_below(&row.rel, p));
-        let situation = if ignored { Situation::Same } else { self.situation(row) };
-        let over = self.ask.over.as_ref().and_then(|(path, action)| {
-            self.ask.at_or_below(&row.rel, path).then_some(*action)
-        });
+        let ignored = self
+            .ask
+            .ignored
+            .as_ref()
+            .is_some_and(|p| self.ask.at_or_below(&row.rel, p));
+        let situation = if ignored {
+            Situation::Same
+        } else {
+            self.situation(row)
+        };
+        let over = self
+            .ask
+            .over
+            .as_ref()
+            .and_then(|(path, action)| self.ask.at_or_below(&row.rel, path).then_some(*action));
         let (action, overridden) = match over {
             Some(action) if situation.allows(action) => (action, true),
             _ => (self.ask.matrix.get(situation), false),
@@ -338,7 +366,13 @@ impl Model<'_> {
     }
 
     /// The rows below the folder at `paths` (present on `on`), decided, in post-order; returns their actions.
-    fn folder(&mut self, rel: &str, paths: &[String; 2], on: [bool; 2], above: Above) -> Vec<SyncAction> {
+    fn folder(
+        &mut self,
+        rel: &str,
+        paths: &[String; 2],
+        on: [bool; 2],
+        above: Above,
+    ) -> Vec<SyncAction> {
         // Children by aligned key, per side: (actual name, kind class) where class 0 file or link, 1 folder.
         let mut keys: BTreeMap<String, [Option<(String, u8)>; 2]> = BTreeMap::new();
         // A listing that failed on a side: the comparison has nothing below the folder, on either side.
@@ -357,12 +391,14 @@ impl Model<'_> {
         }
         let mut out = Vec::new();
         for (key, sides) in keys {
-            let same_class = matches!((&sides[0], &sides[1]), (Some((_, a)), Some((_, b))) if a == b);
-            let groups: Vec<[Option<(String, u8)>; 2]> = if same_class || sides.iter().filter(|s| s.is_some()).count() == 1 {
-                vec![sides]
-            } else {
-                vec![[sides[0].clone(), None], [None, sides[1].clone()]]
-            };
+            let same_class =
+                matches!((&sides[0], &sides[1]), (Some((_, a)), Some((_, b))) if a == b);
+            let groups: Vec<[Option<(String, u8)>; 2]> =
+                if same_class || sides.iter().filter(|s| s.is_some()).count() == 1 {
+                    vec![sides]
+                } else {
+                    vec![[sides[0].clone(), None], [None, sides[1].clone()]]
+                };
             for group in groups {
                 let name = |side: usize| {
                     group[side]
@@ -371,7 +407,10 @@ impl Model<'_> {
                         .map(|(n, _)| n.clone())
                         .unwrap_or_default()
                 };
-                let row_paths = [format!("{}/{}", paths[0], name(0)), format!("{}/{}", paths[1], name(1))];
+                let row_paths = [
+                    format!("{}/{}", paths[0], name(0)),
+                    format!("{}/{}", paths[1], name(1)),
+                ];
                 let row_on = [group[0].is_some(), group[1].is_some()];
                 let folder = group.iter().flatten().any(|(_, class)| *class == 1);
                 let child_rel = format!("{rel}/{key}");
@@ -381,7 +420,14 @@ impl Model<'_> {
         out
     }
 
-    fn row(&mut self, rel: &str, folder: bool, paths: [String; 2], on: [bool; 2], above: Above) -> SyncAction {
+    fn row(
+        &mut self,
+        rel: &str,
+        folder: bool,
+        paths: [String; 2],
+        on: [bool; 2],
+        above: Above,
+    ) -> SyncAction {
         let mut row = MRow {
             rel: rel.to_owned(),
             folder,
@@ -390,7 +436,8 @@ impl Model<'_> {
             paths,
             on,
         };
-        let failed = above.failed || (0..2).any(|s| on[s] && self.ask.failed.contains(&row.paths[s]));
+        let failed =
+            above.failed || (0..2).any(|s| on[s] && self.ask.failed.contains(&row.paths[s]));
         let protected_here = (0..2).any(|s| on[s] && self.ask.protected.contains(&row.paths[s]));
         let below = Above {
             failed,
@@ -402,7 +449,11 @@ impl Model<'_> {
         } else {
             Vec::new()
         };
-        let in_scope = self.ask.scope.as_ref().is_none_or(|p| self.ask.at_or_below(rel, p));
+        let in_scope = self
+            .ask
+            .scope
+            .as_ref()
+            .is_none_or(|p| self.ask.at_or_below(rel, p));
         let pair_of_folders = folder && on == [true, true];
         // A name filter hides both sides of a file-like row at once; a size filter one side; the protected attributes a
         // folder on its side.
@@ -484,7 +535,12 @@ fn expected(before: &Tree, ask: &Ask) -> (Tree, Vec<MRow>) {
         ask,
         rows: Vec::new(),
     };
-    model.folder("", &["/l".to_owned(), "/r".to_owned()], [true, true], Above::default());
+    model.folder(
+        "",
+        &["/l".to_owned(), "/r".to_owned()],
+        [true, true],
+        Above::default(),
+    );
     let rows = model.rows;
     let mut tree = before.clone();
     // Rows were pushed children first: deletes in that order, of what is there.
@@ -503,11 +559,18 @@ fn expected(before: &Tree, ask: &Ask) -> (Tree, Vec<MRow>) {
     for action in [SyncAction::CopyRight, SyncAction::CopyLeft] {
         let mut copies: Vec<&MRow> = rows.iter().filter(|r| r.action == action).collect();
         copies.sort_by_key(|r| r.rel.matches('/').count());
-        let (from, to) = if action == SyncAction::CopyRight { (0, 1) } else { (1, 0) };
+        let (from, to) = if action == SyncAction::CopyRight {
+            (0, 1)
+        } else {
+            (1, 0)
+        };
         // A folder that could not be made: nothing below it runs (execution cuts it).
         let mut cut: Vec<String> = Vec::new();
         for row in copies {
-            if cut.iter().any(|dir| row.paths[to].starts_with(&format!("{dir}/"))) {
+            if cut
+                .iter()
+                .any(|dir| row.paths[to].starts_with(&format!("{dir}/")))
+            {
                 continue;
             }
             if !row.on[from] {
@@ -559,12 +622,19 @@ fn expected(before: &Tree, ask: &Ask) -> (Tree, Vec<MRow>) {
 /// A base holds a file the filters let through (a folder whose listing fails proves none).
 fn holds_file(tree: &Tree, ask: &Ask, base: &str) -> bool {
     let prefix = format!("{base}/");
-    let protected = |path: &str| ask.protected.iter().any(|p| path.starts_with(&format!("{p}/")));
+    let protected = |path: &str| {
+        ask.protected
+            .iter()
+            .any(|p| path.starts_with(&format!("{p}/")))
+    };
     // Nothing below a folder whose listing failed is seen; below the other side of its pair, only what it holds itself.
     let dark = |path: &str| {
-        ask.failed.iter().any(|p| path.starts_with(&format!("{p}/")))
+        ask.failed
+            .iter()
+            .any(|p| path.starts_with(&format!("{p}/")))
             || ask.dark.iter().any(|p| {
-                path.strip_prefix(&format!("{p}/")).is_some_and(|rest| rest.contains('/'))
+                path.strip_prefix(&format!("{p}/"))
+                    .is_some_and(|rest| rest.contains('/'))
             })
     };
     tree.iter().any(|(path, it)| {
@@ -758,11 +828,18 @@ fn rel_of(read: &TreeRead<'_>, node: NodeId, ask: &Ask) -> String {
 }
 
 /// The plan's decisions, keyed as the model keys its rows (aligned path, folder): action and conflict.
-fn decisions(read: &TreeRead<'_>, rows: &[hikasa_folder::sync::SyncRow], ask: &Ask) -> BTreeMap<(String, bool), (SyncAction, bool)> {
+fn decisions(
+    read: &TreeRead<'_>,
+    rows: &[hikasa_folder::sync::SyncRow],
+    ask: &Ask,
+) -> BTreeMap<(String, bool), (SyncAction, bool)> {
     rows.iter()
         .map(|row| {
             let view = read.node(row.node).unwrap();
-            ((rel_of(read, row.node, ask), view.is_folder()), (row.action, row.conflict))
+            (
+                (rel_of(read, row.node, ask), view.is_folder()),
+                (row.action, row.conflict),
+            )
         })
         .collect()
 }
@@ -1182,18 +1259,32 @@ fn p_sync_the_tree_is_what_the_model_says() {
     // A property that runs nothing proves nothing: shares of what it must exercise.
     let at_least = |counter: &AtomicU32, percent: u32, what: &str| {
         let n = share(counter);
-        assert!(n * 100 >= cases * percent, "only {n} of {cases} cases {what}");
+        assert!(
+            n * 100 >= cases * percent,
+            "only {n} of {cases} cases {what}"
+        );
     };
     // Of the plans that were not refused (an empty source, a comparison that did not finish), one in three runs an item.
     let (ran, executed) = (share(&seen.ran), share(&seen.executed).max(1));
-    assert!(ran * 3 >= executed, "only {ran} of {executed} plans that ran ran an item");
+    assert!(
+        ran * 3 >= executed,
+        "only {ran} of {executed} plans that ran ran an item"
+    );
     at_least(&seen.deleted, 10, "deleted");
     at_least(&seen.one_side_hidden, 3, "hid one side of a pair");
     at_least(&seen.links, 15, "held links");
     at_least(&seen.failed, 3, "had a failed listing");
     at_least(&seen.scoped, 3, "had a scope");
     at_least(&seen.ignored, 4, "had an Ignored path");
-    at_least(&seen.second_custom, 10, "checked a second run of a custom matrix, an override or no-to-all");
+    at_least(
+        &seen.second_custom,
+        10,
+        "checked a second run of a custom matrix, an override or no-to-all",
+    );
     at_least(&seen.folded, 3, "aligned two spellings");
-    at_least(&seen.incomplete_refused, 3, "refused a sync on a comparison that did not finish");
+    at_least(
+        &seen.incomplete_refused,
+        3,
+        "refused a sync on a comparison that did not finish",
+    );
 }

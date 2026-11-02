@@ -228,7 +228,10 @@ fn a6_27_rule2_a_folder_that_failed_on_the_source_deletes_nothing_below_it() {
     let options = preset(SyncPreset::MirrorRight);
     let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
     let err = plan_sync(&cmp.read(), &vfs, &request(&options), &Ctl::detached()).unwrap_err();
-    assert!(matches!(err, FolderError::EmptySource { side: Side::Left }), "{err:?}");
+    assert!(
+        matches!(err, FolderError::EmptySource { side: Side::Left }),
+        "{err:?}"
+    );
     // With a file of its own elsewhere, the left base is no empty source.
     let vfs = memory(CaseSensitivity::Sensitive);
     file(&vfs, "/l/keep.txt", b"keep", 10);
@@ -779,12 +782,16 @@ fn a6_27_a_whole_trash_checks_what_lies_below_it_before_it_moves() {
     type Change = fn(&MemoryVfs);
     let changes: [(&str, Change); 6] = [
         ("unchanged", |_| {}),
-        ("a file added", |vfs| file(vfs, "/r/w/new.txt", b"precious", 30)),
+        ("a file added", |vfs| {
+            file(vfs, "/r/w/new.txt", b"precious", 30)
+        }),
         ("a file rewritten", |vfs| {
             file(vfs, "/r/w/sub/x.txt", b"rewritten since the plan", 30);
         }),
         ("a file touched", |vfs| file(vfs, "/r/w/y.txt", b"y", 30)),
-        ("a file gone", |vfs| vfs.remove(&mspec("/r/w/y.txt")).unwrap()),
+        ("a file gone", |vfs| {
+            vfs.remove(&mspec("/r/w/y.txt")).unwrap()
+        }),
         ("a folder added", |vfs| dir(vfs, "/r/w/sub/new")),
     ];
     for fallback in [false, true] {
@@ -1004,7 +1011,11 @@ fn a6_27_with_filename_case_the_target_takes_the_sources_spelling() {
         assert_eq!(read(&vfs, "/r/a.txt").unwrap(), b"left content");
         let cmp = sync_compare(&vfs, &rules, &options);
         let again = plan(&vfs, &cmp, &request(&options));
-        assert!(again.op.plan.items.is_empty(), "{case:?} {:?}", items(&again));
+        assert!(
+            again.op.plan.items.is_empty(),
+            "{case:?} {:?}",
+            items(&again)
+        );
         // Without `filename_case` the spelling is no difference, and nothing is renamed.
         let vfs = memory(case);
         file(&vfs, "/l/a.txt", b"left content", 20);
@@ -1012,7 +1023,11 @@ fn a6_27_with_filename_case_the_target_takes_the_sources_spelling() {
         rules.criteria.filename_case = false;
         let cmp = sync_compare(&vfs, &rules, &options);
         let out = plan(&vfs, &cmp, &request(&options));
-        assert!(!items(&out).iter().any(|l| l.starts_with("rename")), "{:?}", items(&out));
+        assert!(
+            !items(&out).iter().any(|l| l.starts_with("rename")),
+            "{:?}",
+            items(&out)
+        );
     }
 }
 
@@ -1044,7 +1059,10 @@ fn a6_27_two_source_names_of_one_key_are_left_as_ambiguous() {
         1,
         "{ambiguous:?}"
     );
-    assert!(ambiguous.iter().any(|p| p == "Sub/x" || p == "SUB/y"), "{ambiguous:?}");
+    assert!(
+        ambiguous.iter().any(|p| p == "Sub/x" || p == "SUB/y"),
+        "{ambiguous:?}"
+    );
     assert_eq!(out.counts.ambiguous as usize, ambiguous.len());
     assert_eq!(row(&cmp, &out, "a.txt").action, SyncAction::CopyRight);
     let lines = items(&out);
@@ -1055,7 +1073,11 @@ fn a6_27_two_source_names_of_one_key_are_left_as_ambiguous() {
     assert!(!exists(&vfs, "/r/A.TXT"));
     let cmp = sync_compare(&vfs, &rules, &options);
     let again = plan(&vfs, &cmp, &request(&options));
-    assert!(!items(&again).iter().any(|l| l.contains("a.txt")), "{:?}", items(&again));
+    assert!(
+        !items(&again).iter().any(|l| l.contains("a.txt")),
+        "{:?}",
+        items(&again)
+    );
     assert_eq!(again.counts.ambiguous, out.counts.ambiguous);
 }
 
@@ -1190,9 +1212,21 @@ fn a6_27_a_source_with_no_file_after_filters_is_empty() {
     });
     type Left = fn(&MemoryVfs);
     let cases: [(&str, Left, &FolderRules); 3] = [
-        ("lost+found", |vfs| dir(vfs, "/l/lost+found"), &FolderRules::default()),
-        ("filtered file", |vfs| file(vfs, "/l/.junk", b"x", 10), &small),
-        ("folder of hidden files", |vfs| file(vfs, "/l/d/tiny", b"x", 10), &small),
+        (
+            "lost+found",
+            |vfs| dir(vfs, "/l/lost+found"),
+            &FolderRules::default(),
+        ),
+        (
+            "filtered file",
+            |vfs| file(vfs, "/l/.junk", b"x", 10),
+            &small,
+        ),
+        (
+            "folder of hidden files",
+            |vfs| file(vfs, "/l/d/tiny", b"x", 10),
+            &small,
+        ),
     ];
     let options = preset(SyncPreset::MirrorRight);
     for (what, left, rules) in cases {

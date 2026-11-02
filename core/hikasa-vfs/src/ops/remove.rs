@@ -329,7 +329,9 @@ fn check_below(exec: &Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
         exec.ctl.check()?;
         let listing = vfs.list(&dir, &NO_FOLLOW, exec.ctl.cancel)?;
         if let Some(failed) = listing.errors.first() {
-            let child = vfs.child(&dir, &failed.name).unwrap_or_else(|_| dir.clone());
+            let child = vfs
+                .child(&dir, &failed.name)
+                .unwrap_or_else(|_| dir.clone());
             return Err(changed(&child));
         }
         for entry in &listing.entries {

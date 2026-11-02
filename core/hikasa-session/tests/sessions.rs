@@ -131,13 +131,20 @@ fn a6_30_a_folder_sync_file_of_the_old_shape() {
     let tmp = tempfile::tempdir().unwrap();
     let store = store(tmp.path(), 200);
     std::fs::create_dir_all(store.dir()).unwrap();
-    let old = std::fs::read_to_string(fixtures("sessions").join("folder-sync-before-w6.toml")).unwrap();
-    assert!(old.contains("mode = \"mirror\"") && old.contains("names = \"*.c\""), "{old}");
+    let old =
+        std::fs::read_to_string(fixtures("sessions").join("folder-sync-before-w6.toml")).unwrap();
+    assert!(
+        old.contains("mode = \"mirror\"") && old.contains("names = \"*.c\""),
+        "{old}"
+    );
     std::fs::write(store.dir().join("old.toml"), &old).unwrap();
     let err = store.load(&r("old"), LoadMode::Strict).unwrap_err();
     assert!(matches!(err, ApiError::InvalidData(_)), "{err:?}");
     let text = err.to_string();
-    assert!(text.contains("rules.mode") && text.contains("rules.sync.preset"), "{text}");
+    assert!(
+        text.contains("rules.mode") && text.contains("rules.sync.preset"),
+        "{text}"
+    );
     // Without `mode`: the rest reads as it means.
     let read = old.replace("mode = \"mirror\"\n", "").replace(
         "[rules.filters]\nnames = \"*.c\"\n",
@@ -158,10 +165,14 @@ fn a6_30_a_folder_sync_file_of_the_old_shape() {
     // A value whose type is not its key's now fails, naming the key.
     std::fs::write(
         store.dir().join("old.toml"),
-        old.replace("mode = \"mirror\"\n", "").replace("names = \"*.c\"", "names = 3"),
+        old.replace("mode = \"mirror\"\n", "")
+            .replace("names = \"*.c\"", "names = 3"),
     )
     .unwrap();
-    let err = store.load(&r("old"), LoadMode::Strict).unwrap_err().to_string();
+    let err = store
+        .load(&r("old"), LoadMode::Strict)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("rules.filters.names"), "{err}");
 }
 

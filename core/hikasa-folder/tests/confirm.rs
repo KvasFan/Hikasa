@@ -888,9 +888,16 @@ fn a6_17_a_whole_trash_of_folder_op_checks_what_lies_below_it() {
                 file(&vfs, "/l/d/x", b"rewritten", meta(20));
             }
             let report = run(&vfs, out);
-            assert_eq!(report.results[0].status, ItemStatus::Failed, "{listed} {added}");
+            assert_eq!(
+                report.results[0].status,
+                ItemStatus::Failed,
+                "{listed} {added}"
+            );
             let message = &report.results[0].error.as_ref().unwrap().message;
-            assert!(message.contains("changed since the plan was made"), "{message}");
+            assert!(
+                message.contains("changed since the plan was made"),
+                "{message}"
+            );
             assert!(vfs.trashed().is_empty(), "{:?}", vfs.trashed());
             assert_eq!(read(&vfs, "/l/d/e/y").unwrap(), b"2");
         }

@@ -1173,7 +1173,7 @@ impl Service {
             .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
         let loaded = store.load(&actual, LoadMode::Strict)?;
         let session = &loaded.value;
-        let known_table = match Value::try_from(&session.full_doc()) {
+        let known_table = match Value::try_from(session.full_doc()) {
             Ok(Value::Table(table)) => table,
             _ => Table::new(),
         };

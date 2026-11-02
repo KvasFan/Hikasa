@@ -229,7 +229,12 @@ fn a3_6_rule6_a_copied_link_keeps_its_time() {
             assert_eq!(copied.mtime, old.modified, "{} {target}", fx.label());
             assert_eq!(copied.link_target.as_deref(), Some("pointed"));
         }
-        assert_eq!(fx.lstat("pointed").unwrap().mtime, pointed, "{}", fx.label());
+        assert_eq!(
+            fx.lstat("pointed").unwrap().mtime,
+            pointed,
+            "{}",
+            fx.label()
+        );
         assert_targets_intact(&fx, fx.label());
     }
 }

@@ -753,7 +753,10 @@ fn no_row(path: &str) -> ApiError {
 
 /// `left side`, `right side`, `left or right side`.
 fn side_words(sides: SideSet) -> &'static str {
-    match (sides.contains(SideSet::LEFT), sides.contains(SideSet::RIGHT)) {
+    match (
+        sides.contains(SideSet::LEFT),
+        sides.contains(SideSet::RIGHT),
+    ) {
         (true, false) => "left side",
         (false, true) => "right side",
         _ => "left or right side",

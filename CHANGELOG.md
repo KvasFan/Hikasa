@@ -65,6 +65,7 @@
   unless its own `--include-hidden` says otherwise.
 - **`folder sync --session` of a folder-compare session needs a preset flag**, and `--path` naming a row that is not on its
   side is an error (`not_found`) instead of selecting nothing.
+- **`session edit --set rules.sync.overrides."<path>"=<action>`** sets a per-row override of a folder-sync session.
 - **Syncs settle.** A copied link keeps its time; under `--case-insensitive --filename-case` a sync gives the target the
   source's spelling; two source names that align to one are left as `ambiguous_name` and counted, so a second run plans
   nothing new.

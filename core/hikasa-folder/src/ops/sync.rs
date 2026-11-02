@@ -245,10 +245,14 @@ impl<'a, 'r> Planner<'a, 'r> {
         while let Some(folder) = folders.pop() {
             let mut seen: HashMap<(u8, String), NodeId> = HashMap::new();
             for child in read.children(folder) {
-                let Some(view) = read.node(child) else { continue };
+                let Some(view) = read.node(child) else {
+                    continue;
+                };
                 let mut own = 0u8;
                 for side in [Side::Left, Side::Right] {
-                    let Some(entry) = view.side(side) else { continue };
+                    let Some(entry) = view.side(side) else {
+                        continue;
+                    };
                     let key = (bit(side), path_key(&align, entry.name).into_owned());
                     if let Some(&other) = seen.get(&key) {
                         own |= bit(side);
@@ -281,12 +285,14 @@ impl<'a, 'r> Planner<'a, 'r> {
             };
             let from_above = bits.get(parent.0 as usize).copied().unwrap_or(0);
             for side in [Side::Left, Side::Right] {
-                let one_sided = parent_view.side(side).is_some()
-                    && parent_view.side(side.opposite()).is_none();
-                if one_sided && from_above & bit(side) != 0 && view.side(side).is_some() {
-                    if let Some(slot) = bits.get_mut(id.0 as usize) {
-                        *slot |= bit(side);
-                    }
+                let one_sided =
+                    parent_view.side(side).is_some() && parent_view.side(side.opposite()).is_none();
+                if one_sided
+                    && from_above & bit(side) != 0
+                    && view.side(side).is_some()
+                    && let Some(slot) = bits.get_mut(id.0 as usize)
+                {
+                    *slot |= bit(side);
                 }
             }
         }
@@ -664,7 +670,9 @@ impl<'a, 'r> Planner<'a, 'r> {
             let i = index as usize;
             let hidden_above = self.hidden_above.get(i).copied().unwrap_or(0);
             for side in [Side::Left, Side::Right] {
-                let Some(entry) = view.side(side) else { continue };
+                let Some(entry) = view.side(side) else {
+                    continue;
+                };
                 // A folder the comparison could not read proves no file: an unreadable mount is the case to refuse.
                 let a_file = !view.is_folder()
                     || entry.followed

@@ -225,8 +225,11 @@ fn old_sync_shape(rules: &mut Table, now: &Value) -> Result<(), ApiError> {
             let name = path.join(".");
             match (&mut *value, known) {
                 (Value::Table(inner), Value::Table(known_inner)) => walk(path, inner, known_inner)?,
-                (Value::String(text), Value::Array(_)) => *value = Value::Array(vec![Value::String(text.clone())]),
-                (found, known) if std::mem::discriminant(&*found) != std::mem::discriminant(known)
+                (Value::String(text), Value::Array(_)) => {
+                    *value = Value::Array(vec![Value::String(text.clone())])
+                }
+                (found, known)
+                    if std::mem::discriminant(&*found) != std::mem::discriminant(known)
                     // A map of the new shape (overrides, matrix, format overrides) holds what it likes.
                     && !matches!(known, Value::Table(t) if t.is_empty()) =>
                 {

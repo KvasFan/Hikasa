@@ -75,7 +75,6 @@ fn state(s: &Sandbox) -> (Tree, Tree) {
     (tree(&s.join("l")), tree(&s.join("r")))
 }
 
-
 fn read(s: &Sandbox, rel: &str) -> String {
     std::fs::read_to_string(s.join(rel)).unwrap()
 }
@@ -591,11 +590,17 @@ fn a6_31_gui_sends_the_sync_and_the_answer_is_unsupported() {
     assert_eq!(*kind, hikasa_session::ipc::ViewKind::FolderSync);
     assert!(!wait);
     assert_eq!(specs.len(), 2, "{specs:?}");
-    assert!(specs[0].ends_with("l") && specs[1].ends_with("r"), "{specs:?}");
+    assert!(
+        specs[0].ends_with("l") && specs[1].ends_with("r"),
+        "{specs:?}"
+    );
     let words = options.sync.as_ref().expect("the sync in words");
     assert_eq!(words.preset.as_deref(), Some("mirror_right"), "{words:?}");
     assert_eq!(words.orphans.as_deref(), Some("deleted"), "{words:?}");
-    assert!(words.custom.is_none() && !words.recycle && words.overrides.is_empty(), "{words:?}");
+    assert!(
+        words.custom.is_none() && !words.recycle && words.overrides.is_empty(),
+        "{words:?}"
+    );
     // The words are checked before any contact: a bad word is 100 with its own message, and the GUI got nothing more.
     let before = gui.requests().len();
     let out = sync(&s, &["--custom", "same=sideways", "--gui", "--json"]);
@@ -789,9 +794,14 @@ fn a6_30_an_old_folder_sync_file_reads_as_it_is() {
         })
         .collect();
     let paths: Vec<&str> = items.iter().map(|(_, p)| p.as_str()).collect();
-    assert!(paths.contains(&"left-only.txt") && paths.contains(&"newer-left.txt"), "{items:?}");
     assert!(
-        items.iter().all(|(action, _)| action == "copy" || action == "replace"),
+        paths.contains(&"left-only.txt") && paths.contains(&"newer-left.txt"),
+        "{items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|(action, _)| action == "copy" || action == "replace"),
         "Update Right only copies: {items:?}"
     );
     assert_eq!(result["counts"]["delete_right"], 0);
@@ -823,12 +833,7 @@ fn a6_31_the_include_hidden_preference_does_not_reach_a_sync() {
     let s = fresh();
     let out = sync(
         &s,
-        &[
-            "--mirror-right",
-            "--size-filter=>10",
-            "--yes",
-            "--json",
-        ],
+        &["--mirror-right", "--size-filter=>10", "--yes", "--json"],
     );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(
@@ -892,7 +897,10 @@ fn a6_31_a_folder_compare_session_needs_a_preset() {
     compare.arg(s.join("l")).arg("--right").arg(s.join("r"));
     assert_eq!(code(&compare.output().unwrap()), 0);
     let before = state(&s);
-    for extra in [&["--yes", "--json"][..], &["--gui", "--no-launch", "--json"]] {
+    for extra in [
+        &["--yes", "--json"][..],
+        &["--gui", "--no-launch", "--json"],
+    ] {
         let mut command = s.cmd();
         command.args(["folder", "sync", "--session", "cmp"]);
         command.args(extra);
@@ -1098,7 +1106,12 @@ fn a6_31_case_insensitive_alignment_settles() {
     }
     let out = sync(
         &s,
-        &["--mirror-right", "--case-insensitive", "--dry-run", "--json"],
+        &[
+            "--mirror-right",
+            "--case-insensitive",
+            "--dry-run",
+            "--json",
+        ],
     );
     assert_eq!(json(&out)["result"]["counts"]["ambiguous"], 1);
 }
@@ -1190,9 +1203,27 @@ fn session_file(s: &Sandbox, name: &str, kind: &str, extra_specs: &str, rules: &
 #[test]
 fn a6_30_unknown_keys_of_a_sync_session_are_refused_and_others_warned() {
     let cases = [
-        ("ro", "read_only = true", "[rules.sync]\npreset = \"mirror_right\"\n", "specs.read_only", "specs.read_only_"),
-        ("typo", "", "[rules.sync]\npreset = \"mirror_right\"\npresett = \"update_right\"\n", "rules.sync.presett", "rules.sync.preset`"),
-        ("rule", "", "[rules]\nfutur_filter = 1\n[rules.sync]\npreset = \"mirror_right\"\n", "rules.futur_filter", "nearest known key"),
+        (
+            "ro",
+            "read_only = true",
+            "[rules.sync]\npreset = \"mirror_right\"\n",
+            "specs.read_only",
+            "specs.read_only_",
+        ),
+        (
+            "typo",
+            "",
+            "[rules.sync]\npreset = \"mirror_right\"\npresett = \"update_right\"\n",
+            "rules.sync.presett",
+            "rules.sync.preset`",
+        ),
+        (
+            "rule",
+            "",
+            "[rules]\nfutur_filter = 1\n[rules.sync]\npreset = \"mirror_right\"\n",
+            "rules.futur_filter",
+            "nearest known key",
+        ),
     ];
     for (name, specs, rules, key, near) in cases {
         let s = sandbox();
@@ -1213,8 +1244,18 @@ fn a6_30_unknown_keys_of_a_sync_session_are_refused_and_others_warned() {
     }
     // An unknown section of a sync session, and an unknown key of a folder-compare session: a warning, always.
     let s = sandbox();
-    session_file(&s, "later", "folder-sync", "", "[rules.sync]\npreset = \"update_right\"\n\n[gui_layout]\nzoom = 2\n");
-    let out = s.cmd().args(["session", "run", "later", "--dry-run", "--json"]).output().unwrap();
+    session_file(
+        &s,
+        "later",
+        "folder-sync",
+        "",
+        "[rules.sync]\npreset = \"update_right\"\n\n[gui_layout]\nzoom = 2\n",
+    );
+    let out = s
+        .cmd()
+        .args(["session", "run", "later", "--dry-run", "--json"])
+        .output()
+        .unwrap();
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let warnings = json(&out)["warnings"].clone();
     assert!(

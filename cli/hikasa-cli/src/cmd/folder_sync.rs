@@ -3,6 +3,8 @@
 //! `ok: true` and exits 100; a bad word, nothing selected, unanswered questions and an empty source are whole-command
 //! failures, with nothing written. `--gui` sends the sync to the GUI instead, after its words were checked here.
 
+use std::io::Write as _;
+
 use hikasa_core::{JobKind, Warning};
 use hikasa_folder::DisplayOptions;
 use hikasa_folder::NullObserver;
@@ -11,13 +13,11 @@ use hikasa_folder::select::SideSet;
 use hikasa_folder::sync::SyncOptions;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_SYNC_SCHEMA, GUI_OPEN_SCHEMA};
-use std::io::Write as _;
-
 use hikasa_session::api::folder_ops::emptied_text;
 use hikasa_session::api::{
-    ApiOp, EmptiedDto, FolderCompareRequest, FolderSyncRequest, GuiOpenRequest, OpOverrides, SessionRunRequest,
-    ViewWords, human, parse_confirm_mode, parse_sides, resolve_folder_display, sync_options,
-    sync_words_of,
+    ApiOp, EmptiedDto, FolderCompareRequest, FolderSyncRequest, GuiOpenRequest, OpOverrides,
+    SessionRunRequest, ViewWords, human, parse_confirm_mode, parse_sides, resolve_folder_display,
+    sync_options, sync_words_of,
 };
 use hikasa_session::ipc::SyncWords;
 use hikasa_session::sessions::SessionRef;

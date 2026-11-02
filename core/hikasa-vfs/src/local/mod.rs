@@ -821,11 +821,13 @@ impl Vfs for LocalVfs {
                 if not_a_file && stamped {
                     return Err(changed_source(from));
                 }
-                return Err(if not_a_file || fs::metadata(from_path.as_path()).is_err() {
-                    VfsError::from_io(from.canonical(), VfsOp::Read, e)
-                } else {
-                    written(e)
-                });
+                return Err(
+                    if not_a_file || fs::metadata(from_path.as_path()).is_err() {
+                        VfsError::from_io(from.canonical(), VfsOp::Read, e)
+                    } else {
+                        written(e)
+                    },
+                );
             }
         };
         platform::set_mode(&file, meta.mode).map_err(written)?;
@@ -1561,15 +1563,17 @@ mod tests {
             names.sort();
             names
         };
-        let assert_changed = |result: Result<Option<u64>, VfsError>, from: &Path, label: &str| {
-            match result {
-                Err(VfsError::InvalidTarget { spec: named, reason }) => {
+        let assert_changed =
+            |result: Result<Option<u64>, VfsError>, from: &Path, label: &str| match result {
+                Err(VfsError::InvalidTarget {
+                    spec: named,
+                    reason,
+                }) => {
                     assert_eq!(named, spec(from).canonical(), "{label}");
                     assert_eq!(reason, "changed since the plan was made", "{label}");
                 }
                 other => panic!("{label}: {other:?}"),
-            }
-        };
+            };
         fs::write(root.join("grew"), b"0123456789").unwrap();
         fs::write(root.join("shrank"), b"01").unwrap();
         for (name, size) in [("grew", 3), ("shrank", 3)] {
