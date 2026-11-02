@@ -469,6 +469,25 @@ the noise of a shared machine; the gate keeps no margin, as before.
 of 640 bytes), and a `Spec` was 112 bytes because of the URL variants no plan holds. The builder now gives back what it did
 not use, and `Spec::Remote` and `Spec::Http` are boxed: a `Spec` is 56 bytes and a `PlanItem` 472.
 
+### M2 W6d: the folder gate again (ARCH-GUI-003)
+
+A6.34 asks the M1 folder gate again once the view runs operations. `env -u WAYLAND_DISPLAY xvfb-run -a cargo test
+--release -p hikasa-gui --test perf_gate -- --ignored --nocapture --test-threads 1 folder_scan` (2026-11-02, the same
+desktop, Mesa llvmpipe over GL, shared machine), three runs of W6d and, for comparison, two of the commit before it (the
+end of W6c), alternating as the load fell:
+
+| Build | Load | Scan | UI work p95 / max | PSS | GUI RSS |
+|---|---|---|---|---|---|
+| W6d | 3–11 | 481 ms | 3.38 / 3.38 ms | 164.9 MiB | 170.1 MiB |
+| W6d | 2.8 | 194 ms | 2.72 / 2.72 ms | 149.2 MiB | 169.6 MiB |
+| W6d | 2.6 | 189 ms | 2.18 / 2.18 ms | 149.4 MiB | 169.8 MiB |
+| W6c end | 2.7 | 494 ms | 3.08 / 3.08 ms | 165.3 MiB | 169.7 MiB |
+| W6c end | 3.2 | 195 ms | 2.45 / 2.45 ms | 149.8 MiB | 168.9 MiB |
+
+**Met**, and unchanged by W6d: no frame above 16.7 ms, the same figures as the build before it. Both builds show the same
+two modes (about 149 and 165 MiB; here the first run of each build was the upper one). The PSS is above W4c's 130.7 MiB with
+the parts in between (W5, W6a–c), not with this one.
+
 ### 0.1.91: named fonts and the Options gate (D-160)
 
 Release builds under Xvfb with llvmpipe, one window with Home, `HIKASA_GUI_BENCH=options`, load 110 to 280 from other
