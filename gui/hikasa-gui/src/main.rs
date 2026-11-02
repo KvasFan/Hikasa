@@ -55,6 +55,8 @@ mod tests;
 #[cfg(test)]
 mod tests_folder_ops;
 #[cfg(test)]
+mod tests_folder_ops_fixes;
+#[cfg(test)]
 mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;

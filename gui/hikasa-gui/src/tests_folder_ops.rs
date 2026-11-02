@@ -29,7 +29,7 @@ use crate::tests::{TestApp, World, folder_model};
 // ---- helpers ------------------------------------------------------------------------------------------------------
 
 /// Sets a file's modification time to `secs` after the epoch (whole seconds, §6.6 "Times").
-fn touch(path: &Path, secs: u64) {
+pub(crate) fn touch(path: &Path, secs: u64) {
     let file = std::fs::File::options()
         .write(true)
         .open(path)
@@ -39,17 +39,21 @@ fn touch(path: &Path, secs: u64) {
 }
 
 /// Writes `work/<side>/<rel>` with `text` at time `secs`.
-fn put(world: &World, side: &str, rel: &str, text: &str, secs: u64) {
+pub(crate) fn put(world: &World, side: &str, rel: &str, text: &str, secs: u64) {
     let path = world.write(&format!("work/{side}/{rel}"), text);
     touch(&path, secs);
 }
 
-fn read(world: &World, side: &str, rel: &str) -> Option<String> {
+pub(crate) fn read(world: &World, side: &str, rel: &str) -> Option<String> {
     std::fs::read_to_string(world.path(&format!("work/{side}/{rel}"))).ok()
 }
 
 /// Opens `work/l` against `work/r` with `tune` applied to the open options (read-only sides, `--nobackups`).
-fn open_with(world: &World, app: &mut AppCore, tune: impl FnOnce(&mut OpenOptions)) -> ViewId {
+pub(crate) fn open_with(
+    world: &World,
+    app: &mut AppCore,
+    tune: impl FnOnce(&mut OpenOptions),
+) -> ViewId {
     let (left, right) = (world.path("work/l"), world.path("work/r"));
     for side in ["work/l", "work/r"] {
         std::fs::create_dir_all(world.path(side)).expect("mkdir");
@@ -79,12 +83,12 @@ fn open_with(world: &World, app: &mut AppCore, tune: impl FnOnce(&mut OpenOption
     id
 }
 
-fn open(world: &World, app: &mut AppCore) -> ViewId {
+pub(crate) fn open(world: &World, app: &mut AppCore) -> ViewId {
     open_with(world, app, |_| {})
 }
 
 /// The node of the row at `path` (a folder when `folder`).
-fn node_of(app: &mut AppCore, view: ViewId, path: &str) -> Option<NodeId> {
+pub(crate) fn node_of(app: &mut AppCore, view: ViewId, path: &str) -> Option<NodeId> {
     let m = folder_model(app, view);
     let model = Arc::clone(m.prepared()?.model());
     let read = model.read();
@@ -94,7 +98,7 @@ fn node_of(app: &mut AppCore, view: ViewId, path: &str) -> Option<NodeId> {
 }
 
 /// Selects the visible row at `path`.
-fn select(app: &mut AppCore, view: ViewId, path: &str) {
+pub(crate) fn select(app: &mut AppCore, view: ViewId, path: &str) {
     let m = folder_model(app, view);
     let model = Arc::clone(m.prepared().expect("prepared").model());
     let index = {
@@ -108,7 +112,7 @@ fn select(app: &mut AppCore, view: ViewId, path: &str) {
 }
 
 /// The selected row's path.
-fn selected_path(app: &mut AppCore, view: ViewId) -> Option<String> {
+pub(crate) fn selected_path(app: &mut AppCore, view: ViewId) -> Option<String> {
     let m = folder_model(app, view);
     let id = m.selected()?;
     let model = Arc::clone(m.prepared()?.model());
@@ -117,7 +121,7 @@ fn selected_path(app: &mut AppCore, view: ViewId) -> Option<String> {
 }
 
 /// What the view shows: (path, category) of every visible row.
-fn shown(app: &mut AppCore, view: ViewId) -> Vec<(String, Category)> {
+pub(crate) fn shown(app: &mut AppCore, view: ViewId) -> Vec<(String, Category)> {
     let m = folder_model(app, view);
     let model = Arc::clone(m.prepared().expect("prepared").model());
     let read = model.read();
@@ -132,17 +136,17 @@ fn shown(app: &mut AppCore, view: ViewId) -> Vec<(String, Category)> {
         .collect()
 }
 
-fn dialogs(app: &TestApp) -> usize {
+pub(crate) fn dialogs(app: &TestApp) -> usize {
     app.window(app.win()).map_or(0, |w| w.dialogs.len())
 }
 
-fn top_title(app: &TestApp) -> Option<String> {
+pub(crate) fn top_title(app: &TestApp) -> Option<String> {
     app.window(app.win())
         .and_then(|w| w.dialogs.top())
         .map(|d| d.title())
 }
 
-fn confirm_dialog(app: &mut TestApp) -> &mut PlanConfirmDialog {
+pub(crate) fn confirm_dialog(app: &mut TestApp) -> &mut PlanConfirmDialog {
     let w = app.win();
     app.0
         .window_mut(w)
@@ -150,7 +154,7 @@ fn confirm_dialog(app: &mut TestApp) -> &mut PlanConfirmDialog {
         .expect("a confirmation dialog")
 }
 
-fn delete_dialog(app: &mut TestApp) -> &mut DeleteDialog {
+pub(crate) fn delete_dialog(app: &mut TestApp) -> &mut DeleteDialog {
     let w = app.win();
     app.0
         .window_mut(w)
@@ -158,13 +162,13 @@ fn delete_dialog(app: &mut TestApp) -> &mut DeleteDialog {
         .expect("a Delete dialog")
 }
 
-fn press(world: &World, app: &mut TestApp, role: ButtonRole) {
+pub(crate) fn press(world: &World, app: &mut TestApp, role: ButtonRole) {
     let w = app.win();
     app.0.dialog_button(w, role);
     world.settle(app);
 }
 
-fn key(world: &World, app: &mut TestApp, text: &str) {
+pub(crate) fn key(world: &World, app: &mut TestApp, text: &str) {
     let w = app.win();
     let shortcut = Shortcut::parse(text).expect("a key");
     app.0.dialog_key(w, &shortcut);
@@ -172,7 +176,7 @@ fn key(world: &World, app: &mut TestApp, text: &str) {
 }
 
 /// The log's entries of a kind.
-fn logged(app: &TestApp, kind: LogKind) -> Vec<String> {
+pub(crate) fn logged(app: &TestApp, kind: LogKind) -> Vec<String> {
     app.log()
         .entries()
         .filter(|e| e.kind == kind)
@@ -181,7 +185,7 @@ fn logged(app: &TestApp, kind: LogKind) -> Vec<String> {
 }
 
 /// The window's notices (oldest first): (kind, text, actions).
-fn notices(app: &TestApp) -> Vec<(NoticeKind, String, Vec<NoticeAction>)> {
+pub(crate) fn notices(app: &TestApp) -> Vec<(NoticeKind, String, Vec<NoticeAction>)> {
     app.window(app.win())
         .map(|w| {
             w.notices
@@ -193,17 +197,21 @@ fn notices(app: &TestApp) -> Vec<(NoticeKind, String, Vec<NoticeAction>)> {
         .unwrap_or_default()
 }
 
-fn gate(open: bool) -> Gate {
+pub(crate) fn gate(open: bool) -> Gate {
     Arc::new((std::sync::Mutex::new(open), std::sync::Condvar::new()))
 }
 
-fn set_gate(gate: &Gate, open: bool) {
+pub(crate) fn set_gate(gate: &Gate, open: bool) {
     *gate.0.lock().expect("gate") = open;
     gate.1.notify_all();
 }
 
 /// Polls the window until `done` holds (bounded by count, not by a clock: §6.6 "No timers").
-fn poll_until(world: &World, app: &mut AppCore, mut done: impl FnMut(&mut AppCore) -> bool) {
+pub(crate) fn poll_until(
+    world: &World,
+    app: &mut AppCore,
+    mut done: impl FnMut(&mut AppCore) -> bool,
+) {
     for _ in 0..20_000 {
         for msg in world.mailbox.drain() {
             app.handle(msg);
@@ -313,7 +321,8 @@ fn a6_33_predicates_follow_the_row_and_its_sides() {
     for id in four {
         assert!(!app.enabled(id), "{id:?} while a dialog is open");
     }
-    // A second operation is refused while one waits for its dialog.
+    // A second operation is refused while one waits for its dialog: no plan's job starts (a copy hands back no dialog
+    // either way, so the job list and the dialog stack say whether it started), and none asks afterwards.
     let (service, w) = (world.service.clone(), app.win());
     let again = folder_model(&mut app, view).start_operation(
         &service,
@@ -323,8 +332,13 @@ fn a6_33_predicates_follow_the_row_and_its_sides() {
         false,
     );
     assert!(again.is_none());
+    assert!(app.jobs(w).is_empty(), "{:?}", app.jobs(w));
+    world.settle(&mut app);
     assert_eq!(app.window(w).map(|w| w.dialogs.len()), Some(1));
+    assert_eq!(top_title(&app).as_deref(), Some("Delete"));
     press(&world, &mut app, ButtonRole::Cancel);
+    world.settle(&mut app);
+    assert_eq!(dialogs(&app), 0, "no question of the refused copy");
     assert!(app.enabled(CommandId::CopyLeft));
 }
 
@@ -373,15 +387,13 @@ fn a6_33_commands_are_off_for_a_read_only_side() {
     assert!(!d.enabled(SideChoice::Right) && !d.enabled(SideChoice::Both));
     assert_eq!(
         d.choice(),
-        Some(SideChoice::Left),
-        "the one side it may lose"
+        None,
+        "a pair has no preset, even with one side read-only"
     );
     d.set_choice(SideChoice::Right);
-    assert_eq!(
-        d.choice(),
-        Some(SideChoice::Left),
-        "a greyed side is not taken"
-    );
+    assert_eq!(d.choice(), None, "a greyed side is not taken");
+    d.set_choice(SideChoice::Left);
+    assert_eq!(d.choice(), Some(SideChoice::Left));
     press(&world, &mut app, ButtonRole::Cancel);
     // Both sides read-only (`--ro`): nothing writes.
     let both = open_with(&world, &mut app, |o| o.read_only.all = true);
@@ -654,10 +666,22 @@ fn a6_33_delete_dialog_model() {
     assert_eq!(d.choice(), None, "a side without the row is greyed");
     d.set_choice(SideChoice::Right);
     assert!(ok(&d));
-    // A read-only side is greyed.
+    // A read-only side is greyed; a pair stays without a preset all the same (OK off until a side is chosen).
     let d = DeleteDialog::new(view, "a.txt", both(), [false, true], false, false);
     assert!(!d.enabled(SideChoice::Left) && !d.enabled(SideChoice::Both));
-    assert_eq!(d.choice(), Some(SideChoice::Right));
+    assert_eq!(d.choice(), None);
+    assert!(!ok(&d));
+    // A one-sided row on a read-only side: nothing to preset, nothing to choose.
+    let d = DeleteDialog::new(
+        view,
+        "b.txt",
+        [Some("a file".to_owned()), None],
+        [false, true],
+        false,
+        false,
+    );
+    assert_eq!(d.choice(), None);
+    assert!(SideChoice::ALL.iter().all(|c| !d.enabled(*c)));
     // The check boxes, and what OK hands back.
     let mut d = DeleteDialog::new(view, "a.txt", both(), [true, true], false, false);
     d.set_choice(SideChoice::Left);
@@ -1114,7 +1138,7 @@ fn a6_34_expand_on_a_not_scanned_folder() {
 }
 
 /// Opens `work/l` against `work/r` with folder rules patched by `patch`.
-fn open_folder_with_rules(
+pub(crate) fn open_folder_with_rules(
     world: &World,
     app: &mut AppCore,
     patch: impl FnOnce(&mut hikasa_folder::FolderRulesPatch),
@@ -1171,7 +1195,7 @@ fn a6_34_expanded_on_load() {
 }
 
 /// The content result of a row.
-fn content_of(app: &mut AppCore, view: ViewId, path: &str) -> Option<ContentKind> {
+pub(crate) fn content_of(app: &mut AppCore, view: ViewId, path: &str) -> Option<ContentKind> {
     let id = node_of(app, view, path)?;
     let m: &mut FolderViewModel = folder_model(app, view);
     let model = Arc::clone(m.prepared()?.model());
