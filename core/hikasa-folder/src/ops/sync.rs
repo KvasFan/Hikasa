@@ -14,7 +14,7 @@ use crate::error::FolderError;
 use crate::model::store::path_key;
 use crate::model::{NodeFlags, NodeId, NodeView, ScanStatus, TreeRead};
 use crate::select::{Include, Resolved, SideSet, resolve};
-use crate::state::{Category, base_state};
+use crate::state::Category;
 use crate::sync::{
     LeaveReason, OrphanReading, Situation, SyncAction, SyncCounts, SyncMatrix, SyncPlan,
     SyncRequest, SyncRow, override_path,
@@ -267,28 +267,13 @@ impl<'a, 'r> Planner<'a, 'r> {
             return Some(Situation::Same);
         }
         match (view.left.is_some(), view.right.is_some()) {
-            (true, true) => {
-                let category = if category == Category::Filtered {
-                    // Both sides hidden, and `--include-hidden`: the quick tests ran when both were stat'ed.
-                    let named_only = [view.left, view.right]
-                        .iter()
-                        .flatten()
-                        .any(|entry| entry.stat_skipped);
-                    if named_only {
-                        return None;
-                    }
-                    base_state(view.diffs, view.time).category()
-                } else {
-                    category
-                };
-                match category {
-                    Category::Same => Some(Situation::Same),
-                    Category::LeftNewer => Some(Situation::NewerLeft),
-                    Category::RightNewer => Some(Situation::NewerRight),
-                    Category::Different => Some(Situation::Different),
-                    _ => None,
-                }
-            }
+            (true, true) => match category {
+                Category::Same => Some(Situation::Same),
+                Category::LeftNewer => Some(Situation::NewerLeft),
+                Category::RightNewer => Some(Situation::NewerRight),
+                Category::Different => Some(Situation::Different),
+                _ => None,
+            },
             (true, false) => Some(match self.request.options.orphans {
                 OrphanReading::Added => Situation::AddedLeft,
                 OrphanReading::Deleted => Situation::DeletedRight,
@@ -442,8 +427,13 @@ impl<'a, 'r> Planner<'a, 'r> {
             // A pair of folders has no row of its own in the matrix: its rows have.
             return row;
         }
-        // Rule 3.
-        if self.hidden(id, view) && !self.request.include_hidden {
+        // Rule 3. A row every present side of which a filter hides is no row, as for the display: `--include-hidden` brings
+        // the hidden side of a pair, never an item the filters hide altogether.
+        let all_hidden = [view.left, view.right]
+            .iter()
+            .flatten()
+            .all(|entry| entry.filtered);
+        if all_hidden || (self.hidden(id, view) && !self.request.include_hidden) {
             row.reason = Some(LeaveReason::Filtered);
             return row;
         }
