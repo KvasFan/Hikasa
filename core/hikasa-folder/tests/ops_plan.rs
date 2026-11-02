@@ -247,6 +247,16 @@ fn a6_15_rule2_an_orphan_goes_under_the_other_sides_own_folder() {
     assert_eq!(lines(&out), ["copy /l/Dir/x > /r/dir/x @0"]);
 }
 
+/// `EILSEQ` ("illegal byte sequence"): what a file system that keeps names as UTF-8 answers a name that is not.
+#[cfg(unix)]
+const EILSEQ: i32 = if cfg!(target_os = "linux") {
+    84
+} else if cfg!(target_vendor = "apple") {
+    92
+} else {
+    86
+};
+
 #[cfg(unix)]
 #[test]
 fn a6_15_rule2_a_name_that_is_not_utf8_survives_on_disk() {
@@ -258,7 +268,15 @@ fn a6_15_rule2_a_name_that_is_not_utf8_survives_on_disk() {
     std::fs::create_dir(&l).unwrap();
     std::fs::create_dir(&r).unwrap();
     let raw = OsStr::from_bytes(b"caf\xe9");
-    std::fs::write(l.join(raw), b"x").unwrap();
+    // APFS and other file systems that keep names as UTF-8 refuse this one (`EILSEQ`); where names are bytes it runs.
+    match std::fs::write(l.join(raw), b"x") {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(EILSEQ) => {
+            eprintln!("skipped: this file system refuses a name that is not UTF-8 ({e})");
+            return;
+        }
+        Err(e) => panic!("{e}"),
+    }
     let spec = |path: &std::path::Path| {
         Spec::Local(hikasa_core::LocalPath::new(path.to_path_buf()).unwrap())
     };
