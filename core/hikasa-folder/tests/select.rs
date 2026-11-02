@@ -332,11 +332,15 @@ fn a6_14_all_files_invert_restrict() {
 
 #[test]
 fn a6_14_iu_reads_the_category_of_the_mask() {
-    // An unimportant-only pair is `same` under `iu`, and a difference without.
+    // Differences a content test calls unimportant: `exact` under `iu`, a difference without.
     let vfs = bases();
-    file(&vfs, "/l/a.txt", b"x", 10);
-    file(&vfs, "/r/a.txt", b"x", 10);
-    let rules = FolderRules::default();
+    file(&vfs, "/l/a.txt", b"al pha\n", 10);
+    file(&vfs, "/r/a.txt", b"alpha\n", 10);
+    file(&vfs, "/l/b.txt", b"left\n", 10);
+    file(&vfs, "/r/b.txt", b"other\n", 10);
+    let mut rules = FolderRules::default();
+    rules.criteria.size = false;
+    rules.criteria.content.method = hikasa_core::ContentMethod::Rules;
     let cmp = compared(&vfs, &rules);
     let read = cmp.read();
     let shown = all();
@@ -344,17 +348,21 @@ fn a6_14_iu_reads_the_category_of_the_mask() {
         display: &shown,
         expanded: None,
     };
-    for iu in [false, true] {
+    let picked_with = |word: &str, iu: bool| {
         let mut sel = Selection::default();
         select(
             &read,
             &scope,
-            &[SelectMask::parse("exact").unwrap()],
+            &[SelectMask::parse(word).unwrap()],
             iu,
             &mut sel,
         );
-        assert_eq!(words(&read, &sel), ["a.txt:lr"]);
-    }
+        words(&read, &sel)
+    };
+    assert_eq!(picked_with("exact.files", false), Vec::<String>::new());
+    assert_eq!(picked_with("exact.files", true), ["a.txt:lr"]);
+    assert_eq!(picked_with("diff.files", false), ["a.txt:lr", "b.txt:lr"]);
+    assert_eq!(picked_with("diff.files", true), ["b.txt:lr"]);
 }
 
 fn filtered_rules() -> FolderRules {
