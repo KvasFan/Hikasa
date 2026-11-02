@@ -2,13 +2,20 @@
 
 mod common;
 
-use common::{compared, host, mspec};
-use hikasa_core::{CaseSensitivity, CompareVerdict, ContentMethod, ErrorKind, FileTime, Side};
+use common::{compared, engines, host, mspec, with_env};
+use hikasa_core::{
+    CancelToken, CaseSensitivity, CompareVerdict, ContentMethod, ErrorKind, FileTime, RelPath,
+    Side, Spec,
+};
 use hikasa_folder::{
     CaseMode, Category, CompareState, DisplayOptions, FolderComparison, FolderDisplayFilter,
-    FolderMode, FolderRules, NodeFlags, NodeId, check_tree_invariants,
+    FolderMode, FolderModel, FolderRules, NodeFlags, NodeId, check_tree_invariants, compare_into,
+    refresh_into,
 };
-use hikasa_vfs::{Fault, MemMeta, MemoryVfs, VfsOp};
+use hikasa_vfs::{
+    AtomicWrite, Capabilities, Entry, Fault, FileName, FollowLinks, ListOptions, Listing, MemMeta,
+    MemoryVfs, ReadSeek, Vfs, VfsError, VfsOp, WriteOptions,
+};
 
 fn meta(secs: i64) -> MemMeta {
     MemMeta {
@@ -221,4 +228,136 @@ fn a6_9_sides_stay() {
         cmp.read().spec(id(&cmp, "only"), Side::Left),
         Some(mspec("/l/only"))
     );
+}
+
+/// A file named `!x` is a name, not an exception: its mark round-trips through a new scan (A6.9). The list spells it
+/// `./!x`, which no earlier list held as a path, so old lists read as they did.
+#[test]
+fn a6_9_a_name_that_starts_with_a_bang() {
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    file(&vfs, "/l/!x", b"left", 10);
+    file(&vfs, "/r/!x", b"right side", 20);
+    file(&vfs, "/l/d/!y", b"left", 10);
+    file(&vfs, "/r/d/!y", b"right side", 20);
+    let cmp = compared(&vfs, &FolderRules::default());
+    let list = cmp.model().set_ignored(&[id(&cmp, "!x")], true);
+    assert_eq!(list, ["./!x"]);
+    let list = cmp.model().set_ignored(&[id(&cmp, "d/!y")], true);
+    assert_eq!(list, ["./!x", "d/!y"], "only a leading `!` needs it");
+    assert_eq!(cmp.verdict(false), CompareVerdict::NoDifferences);
+    let again = compared(
+        &vfs,
+        &FolderRules {
+            ignored: list,
+            ..FolderRules::default()
+        },
+    );
+    assert_eq!(again.verdict(false), CompareVerdict::NoDifferences);
+    assert_eq!(again.to_canonical(), cmp.to_canonical());
+
+    // An exception of such a name, inside a marked folder: `!` and the path, whatever the path starts with.
+    let marks = marked(&["d", "!d/!y"]);
+    let cmp = compared(&vfs, &marks);
+    assert!(!flagged(&cmp, "d/!y"));
+    let cmp = compared(&vfs, &marked(&["!!x"]));
+    assert!(!flagged(&cmp, "!x"));
+    // `./` before anything else is what it always was: a path no row has.
+    let cmp = compared(&vfs, &marked(&["./d"]));
+    assert!(!flagged(&cmp, "d"));
+}
+
+/// The back-end `inner`, whose listing of `folder` runs `hook` first: what happens while a scan is under way.
+struct DuringList<'a, F> {
+    inner: &'a MemoryVfs,
+    folder: Spec,
+    hook: F,
+}
+
+impl<F: Fn() + Send + Sync> Vfs for DuringList<'_, F> {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        if *dir == self.folder {
+            (self.hook)();
+        }
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+}
+
+/// A mark set while a scan runs reaches what the scan inserts after it: the rows below a folder that had none yet, down
+/// the whole subtree, with the same counters as a scan that had the mark from the start.
+#[test]
+fn a6_9_a_mark_set_during_a_scan() {
+    let vfs = tree();
+    file(&vfs, "/l/a/deep/er", b"left", 10);
+    file(&vfs, "/r/a/deep/er", b"right", 20);
+    let model = FolderModel::new(mspec("/l"), mspec("/r"), FolderRules::default()).unwrap();
+    let hooked = DuringList {
+        inner: &vfs,
+        folder: mspec("/l/a"),
+        hook: || {
+            let row = model
+                .read()
+                .node_at(&RelPath::parse("a").unwrap())
+                .unwrap();
+            assert_eq!(model.set_ignored(&[row], true), ["a"]);
+        },
+    };
+    let engines = engines(1 << 30);
+    let cmp = with_env(&hooked, &engines, &CancelToken::new(), |env| {
+        compare_into(&model, env).unwrap()
+    });
+    assert!(flagged(&cmp, "a/x"));
+    assert!(flagged(&cmp, "a/deep/er"));
+    let fresh = compared(&vfs, &marked(&["a"]));
+    assert_eq!(cmp.to_canonical(), fresh.to_canonical());
+    assert_eq!(cmp.stats(false), fresh.stats(false));
+    check_tree_invariants(&cmp.read()).unwrap();
+}
+
+/// The same while a refresh runs: a refresh works from a copy of the list too.
+#[test]
+fn a6_9_a_mark_set_during_a_refresh() {
+    let vfs = tree();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let a = id(&cmp, "a");
+    file(&vfs, "/l/a/new", b"n", 10);
+    let hooked = DuringList {
+        inner: &vfs,
+        folder: mspec("/l/a"),
+        hook: || {
+            cmp.model().set_ignored(&[a], true);
+        },
+    };
+    let engines = engines(1 << 30);
+    with_env(&hooked, &engines, &CancelToken::new(), |env| {
+        refresh_into(cmp.model(), &[a], env).unwrap()
+    });
+    assert!(flagged(&cmp, "a/new"));
+    assert!(flagged(&cmp, "a/x"));
+    let fresh = compared(&vfs, &marked(&["a"]));
+    assert_eq!(cmp.to_canonical(), fresh.to_canonical());
+    assert_eq!(cmp.stats(false), fresh.stats(false));
 }

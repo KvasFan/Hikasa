@@ -757,13 +757,18 @@ pub(crate) struct IgnoredMarks {
 }
 
 impl IgnoredMarks {
-    /// The marks of a list of `path` and `!path`.
+    /// The marks of a list of `path` and `!path`. A name that starts with `!` is written `./!name`, which no path was.
     pub(crate) fn parse(list: &[String], align: &AlignOptions) -> IgnoredMarks {
         let mut marks = BTreeMap::new();
         for text in list {
             let (path, on) = match text.strip_prefix('!') {
                 Some(path) => (path, false),
-                None => (text.as_str(), true),
+                None => (
+                    text.strip_prefix("./")
+                        .filter(|path| path.starts_with('!'))
+                        .unwrap_or(text),
+                    true,
+                ),
             };
             marks.insert(path_key(align, path).into_owned(), (path.to_owned(), on));
         }
@@ -816,12 +821,10 @@ impl IgnoredMarks {
     fn list(&self) -> Vec<String> {
         self.marks
             .values()
-            .map(|(text, on)| {
-                if *on {
-                    text.clone()
-                } else {
-                    format!("!{text}")
-                }
+            .map(|(text, on)| match (*on, text.starts_with('!')) {
+                (true, false) => text.clone(),
+                (true, true) => format!("./{text}"),
+                (false, _) => format!("!{text}"),
             })
             .collect()
     }
@@ -893,6 +896,8 @@ pub(crate) struct Store {
     pub(crate) align: Option<AlignOptions>,
     /// The Ignored marks: here, because the rules of a model are immutable.
     pub(crate) ignored: IgnoredMarks,
+    /// How many times `ignored` was set, so that a scan can tell its copy is old.
+    pub(crate) marks_set: u32,
     /// Paths of archives opened after the scan (`FolderModel::open_archive`), for what a refresh opens.
     pub(crate) opened: Vec<String>,
     /// Records a refresh left behind: a view may re-run when they pass half the arena.
@@ -922,6 +927,7 @@ impl Store {
             flatten,
             align: None,
             ignored: IgnoredMarks::default(),
+            marks_set: 0,
             opened: Vec::new(),
             garbage: 0,
         };
@@ -1027,11 +1033,8 @@ impl Store {
 
     /// Sets or clears the mark on `nodes` and everything below them; the counters of every ancestor follow.
     pub(crate) fn set_ignored(&mut self, nodes: &[NodeId], on: bool) -> Vec<String> {
-        let align = self.align.unwrap_or(AlignOptions {
-            case: CaseSensitivity::Sensitive,
-            align_extensions: false,
-            align_normalization: false,
-        });
+        let align = self.marks_align();
+        self.marks_set = self.marks_set.wrapping_add(1);
         for &id in nodes {
             if self.node(id).is_none() {
                 continue;
@@ -1062,6 +1065,38 @@ impl Store {
         }
         self.ignored.minimize();
         self.ignored.list()
+    }
+
+    /// How marks are keyed.
+    fn marks_align(&self) -> AlignOptions {
+        self.align.unwrap_or(AlignOptions {
+            case: CaseSensitivity::Sensitive,
+            align_extensions: false,
+            align_normalization: false,
+        })
+    }
+
+    /// Marks the children of `folder` by the list as it is now, when it changed since `seen`: a mark set while a scan runs
+    /// finds in the tree what was there, and this reaches what comes later. Under the lock of the insertion, so no row
+    /// falls between the two.
+    pub(crate) fn remark_children(&mut self, folder: NodeId, seen: u32) {
+        if self.marks_set == seen {
+            return;
+        }
+        let align = self.marks_align();
+        let children: Vec<u32> = self
+            .node(folder)
+            .map_or_else(Vec::new, |node| node.children().collect());
+        for child in children {
+            let text = self.path_text(NodeId(child));
+            let on = self.ignored.decides(&path_key(&align, &text));
+            let has = self
+                .node(NodeId(child))
+                .is_some_and(|node| node.flags().contains(NodeFlags::IGNORED));
+            if on != has {
+                self.set_flag(child, NodeFlags::IGNORED, on);
+            }
+        }
     }
 
     /// Sets or clears a flag on a node; the ancestors' counters follow a change of its category.

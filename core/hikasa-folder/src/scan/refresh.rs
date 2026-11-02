@@ -164,6 +164,7 @@ impl<'a> Scan<'a> {
                 .map(|path| path_key(&align, path).into_owned())
                 .collect(),
             ignored: IgnoredMarks::clone(&store.ignored),
+            marks_seen: store.marks_set,
             archive_entries: 0,
         };
         drop(read);
@@ -396,7 +397,10 @@ impl<'a> Scan<'a> {
             for w in warnings.drain(..) {
                 s.warn(w);
             }
-            s.replace_children(node, status, folder_flags, folder_errors, staged, &rows)
+            let replaced =
+                s.replace_children(node, status, folder_flags, folder_errors, staged, &rows);
+            s.remark_children(node, self.marks_seen);
+            replaced
         });
         report.renumbered.extend(renumbered);
         self.folders_done

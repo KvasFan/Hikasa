@@ -229,6 +229,7 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         follow,
         open_archives,
         ignored: ignored.clone(),
+        marks_seen: 0,
         archive_entries: base_entries(env, specs),
     };
     let scan = Scan::new(env, model, start);
@@ -557,6 +558,8 @@ pub(crate) struct Scan<'a> {
     open_archives: HashSet<String>,
     /// The Ignored marks.
     ignored: IgnoredMarks,
+    /// `Store::marks_set` when `ignored` was copied.
+    marks_seen: u32,
     /// The method of the content tasks: the rules', or the one asked for on demand (§1.6.8).
     content_method: ContentMethod,
     /// Entries listed inside archives (D-151).
@@ -573,6 +576,7 @@ struct ScanStart {
     follow: FollowLinks,
     open_archives: HashSet<String>,
     ignored: IgnoredMarks,
+    marks_seen: u32,
     archive_entries: u64,
 }
 
@@ -602,6 +606,7 @@ impl<'a> Scan<'a> {
             flat_deferred: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
             open_archives: start.open_archives,
             ignored: start.ignored,
+            marks_seen: start.marks_seen,
             content_method: rules.criteria.content.method,
             archive_entries: AtomicU64::new(start.archive_entries),
             archive_limit_warned: AtomicBool::new(false),
@@ -2026,7 +2031,9 @@ impl<'a> Scan<'a> {
             for w in warnings.drain(..) {
                 s.warn(w);
             }
-            s.insert_staged(node, status, folder_flags, folder_errors, batch)
+            let inserted = s.insert_staged(node, status, folder_flags, folder_errors, batch);
+            s.remark_children(node, self.marks_seen);
+            inserted
         });
         drop(unused);
         Some(self.tasks_of(detached, first, depth))
