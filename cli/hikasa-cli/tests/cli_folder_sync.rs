@@ -1043,6 +1043,72 @@ fn a6_31_case_insensitive_alignment_settles() {
     assert_eq!(json(&out)["result"]["counts"]["ambiguous"], 1);
 }
 
+/// An empty source is one with no file once the filters are applied: only an empty folder (`lost+found` of a mount point
+/// that failed) or only a file a filter hides is refused without `--allow-empty-source`, and nothing is written. A source
+/// folder with no file while the sync deletes the files of its counterpart is not refused: it is shown as *emptied
+/// entirely* in the dry run, before the question and in the JSON.
+#[test]
+fn a6_31_an_empty_source_after_filters_and_folders_emptied_entirely() {
+    let fresh = || {
+        let s = Sandbox::new();
+        s.dir("l");
+        s.file_at("r/r.txt", "right\n", 1_000_000);
+        s.file_at("r/d/f.txt", "inside\n", 1_000_000);
+        s
+    };
+    let cases: [(&str, &[&str]); 2] = [("l/lost+found", &[]), ("l/.junk", &["--filters=-.junk"])];
+    for (left, extra) in cases {
+        let s = fresh();
+        if left.ends_with("found") {
+            s.dir(left);
+        } else {
+            s.file_at(left, "junk\n", 1_000_000);
+        }
+        let before = state(&s);
+        let mut args = vec!["--mirror-right", "--yes", "--json"];
+        args.extend_from_slice(extra);
+        let out = sync(&s, &args);
+        assert_eq!(code(&out), 100, "{left}: {}", stdout(&out));
+        let doc = json(&out);
+        assert_eq!(doc["error"]["kind"], "invalid_input", "{doc}");
+        assert!(
+            doc["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("the left side is empty"),
+            "{doc}"
+        );
+        assert_eq!(state(&s), before, "{left}");
+        // Allowed: it runs.
+        args.push("--allow-empty-source");
+        let out = sync(&s, &args);
+        assert_eq!(code(&out), 0, "{left}: {}", stderr(&out));
+        assert!(!s.join("r/r.txt").exists());
+    }
+    // A nested folder empty on the left: shown, not refused.
+    let s = fresh();
+    s.file_at("l/r.txt", "right\n", 1_000_000);
+    s.dir("l/d");
+    let dry = sync(&s, &["--mirror-right", "--dry-run"]);
+    assert_eq!(code(&dry), 0, "{}", stderr(&dry));
+    let line = "# emptied entirely: d on the right (the left holds no file there)";
+    assert!(stdout(&dry).contains(line), "{}", stdout(&dry));
+    let doc = json(&sync(&s, &["--mirror-right", "--dry-run", "--json"]));
+    assert_eq!(
+        doc["result"]["emptied"],
+        serde_json::json!([{"path": "d", "empty": "left", "emptied": "right"}])
+    );
+    // The question comes after it: without a terminal the questions are refused, and the line was shown first.
+    let before = state(&s);
+    let ask = sync(&s, &["--mirror-right"]);
+    assert_eq!(code(&ask), 100, "{}", stdout(&ask));
+    assert!(stderr(&ask).contains(line), "{}", stderr(&ask));
+    assert_eq!(state(&s), before);
+    let run = sync(&s, &["--mirror-right", "--yes"]);
+    assert_eq!(code(&run), 0, "{}", stderr(&run));
+    assert!(!s.join("r/d/f.txt").exists());
+}
+
 /// A session file as text, in `<config>/sessions/<name>.toml`, with the sandbox's sides.
 fn session_file(s: &Sandbox, name: &str, kind: &str, extra_specs: &str, rules: &str) {
     let sessions = s.config().join("sessions");

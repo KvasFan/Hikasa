@@ -222,6 +222,7 @@
       "bytes_left": 0,
       "ambiguous": 0
     },
+    "emptied": [],
     "backups": [],
     "summary": {
       "planned": 7,

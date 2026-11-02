@@ -11,8 +11,11 @@ use hikasa_folder::select::SideSet;
 use hikasa_folder::sync::SyncOptions;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_SYNC_SCHEMA, GUI_OPEN_SCHEMA};
+use std::io::Write as _;
+
+use hikasa_session::api::folder_ops::emptied_text;
 use hikasa_session::api::{
-    ApiOp, FolderCompareRequest, FolderSyncRequest, GuiOpenRequest, OpOverrides, SessionRunRequest,
+    ApiOp, EmptiedDto, FolderCompareRequest, FolderSyncRequest, GuiOpenRequest, OpOverrides, SessionRunRequest,
     ViewWords, human, parse_confirm_mode, parse_sides, resolve_folder_display, sync_options,
     sync_words_of,
 };
@@ -302,6 +305,19 @@ fn execute(ctx: &mut Ctx<'_>, run: SyncRun) -> Result<u8, Failure> {
     let outcome = if run.dry_run {
         ctx.service.folder_sync_dry_run(plan)
     } else {
+        // The question comes after what a failed nested mount would cost: the folders emptied entirely.
+        if run.mode == ConfirmMode::Prompt && !plan.emptied.is_empty() {
+            let read = prepared.model().read();
+            let mut stderr = std::io::stderr();
+            for &(node, empty) in &plan.emptied {
+                let folder = EmptiedDto {
+                    path: read.path(node).as_str().to_owned(),
+                    empty: empty.as_str(),
+                    emptied: empty.opposite().as_str(),
+                };
+                let _ = writeln!(stderr, "# {}", emptied_text(&folder));
+            }
+        }
         let stand_in = empty_op(&plan.op);
         let op = std::mem::replace(&mut plan.op, stand_in);
         plan.op = folder_op::answered(ctx, op, run.mode, &job.cancel)

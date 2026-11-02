@@ -15,7 +15,8 @@ a run does exactly what the plan says.
 | `--mirror-left` | Mirror to Left | the left becomes what the right is |
 | `--custom <MATRIX>` | Custom | your own matrix |
 
-Exactly one is needed, unless `--session` names a folder-sync session, which holds its own. *Update* never deletes and never
+Exactly one is needed, unless `--session` names a folder-sync session, which holds its own; a folder-compare session holds
+none. *Update* never deletes and never
 overwrites a newer file. A pair that differs with no time difference is a **conflict** under *Update*: nothing says which
 side wins, so it is left and marked `<!>`. A mirror overwrites; that is what it is for.
 
@@ -67,14 +68,22 @@ by the matrix) stays. An **empty** folder on one side reads the matrix as a file
 | `--read-only left\|right\|both` | the rows that would write that side are left, with a `read_only_side` warning; the other side goes on |
 | `--just-selection` with `--select`, `--path` | only the selection; without it, `--select` and `--path` are refused, as a sync ignores the selection |
 | `--visible` | only the rows `--display` shows |
-| `--include-hidden` | the side of a pair a filter hides is synced too; a row hidden on every side never is |
+| `--include-hidden` | the side of a pair a filter hides is synced too; a row hidden on every side never is. `[file_operations] include_hidden_by_default` is not read by a sync |
 | `--allow-empty-source` | see below |
 | `--all-rows` | the output shows every row, `same` ones and folders too |
 
 ## What protects your files
 
-- **An empty source.** A sync that would delete on one side while the other has nothing at all is refused (exit 100): an empty
-  side is usually a mount that failed. `--allow-empty-source` lets it run; `--yes` does not.
+- **An empty source.** A sync that would delete on one side while the other holds no file is refused (exit 100): only empty
+  folders, only files a filter hides, or folders that cannot be read count as empty, as an empty side is usually a mount
+  that failed. `--allow-empty-source` lets it run; `--yes` does not. A folder whose source side holds no file while the sync
+  deletes the files of its counterpart is not refused: the dry run, the question and the JSON (`emptied`) say *emptied
+  entirely*, so a sub-mount that failed shows before you answer.
+- **A folder goes to the recycle bin as the plan saw it.** Right before one `trash` of a whole folder, what lies below it
+  must be what the plan saw: a file added or changed since fails the item, and nothing moves.
+- **Names that align to one.** With `--case-insensitive`, two names of one side that differ only in case cannot both have
+  the one name on the other side: the one without a counterpart is left (`ambiguous_name`), and the `#` line counts it.
+  With `--filename-case` too, a copy gives the other side the source's spelling.
 - **A comparison that did not finish deletes nothing.** A sync that deletes is refused on it.
 - **What could not be compared is left.** A row that failed, and everything below a folder that failed or was not read, is
   left (`compare_error`), with a `sync_incomplete` warning and exit 100; nothing below it is an orphan.
@@ -95,7 +104,9 @@ without `--yes`, exit 100 and nothing touched.
 ## Sessions and the GUI
 
 A folder-sync session keeps the options in `[rules.sync]` (`preset`, `orphans`, `create_empty`, `within_archives`,
-`recycle`, `recycle_fallback`, `[rules.sync.matrix]`, `[rules.sync.overrides]`). `hikasa session run <REF>` runs it, with
+`recycle`, `recycle_fallback`, `[rules.sync.matrix]`, `[rules.sync.overrides]`). A key this version does not know is a
+warning when a session runs; in `[specs]` or `[rules]` of a folder-sync session it stops the run, naming the nearest known
+key. `hikasa session run <REF>` runs it, with
 `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows`; flags of `folder sync` go on top with `folder sync
 --session <REF>`. `folder sync --gui` checks the words here, then asks the GUI for a Folder Sync view, which this version
 cannot show yet (exit 100).

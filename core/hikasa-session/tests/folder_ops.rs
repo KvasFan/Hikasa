@@ -725,6 +725,7 @@ fn a6_24_golden_lines_and_the_summary_of_one_function() {
             preset: hikasa_folder::sync::SyncPreset::UpdateRight,
             matrix: hikasa_folder::sync::SyncMatrix::default(),
             orphans: hikasa_folder::sync::OrphanReading::Added,
+            emptied: Vec::new(),
         },
         &time(),
         "tab",

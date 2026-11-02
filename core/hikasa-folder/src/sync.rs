@@ -644,6 +644,10 @@ pub struct SyncPlan {
     pub orphans: OrphanReading,
     /// Each folder's counts, its children's added up.
     pub(crate) folders: HashMap<NodeId, SyncCounts>,
+    /// Folders *emptied entirely* (additive, W6c review): a pair of folders whose side (the second) holds no file once the
+    /// filters are applied while the plan deletes files below its counterpart: a nested mount that failed looks like this.
+    /// Outermost first, in tree order; a dry run, the question and the JSON show them.
+    pub emptied: Vec<(NodeId, hikasa_core::Side)>,
 }
 
 impl SyncPlan {

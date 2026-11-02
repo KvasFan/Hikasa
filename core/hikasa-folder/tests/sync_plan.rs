@@ -217,6 +217,22 @@ fn a6_27_rule1_just_selection_and_visible_keep_the_rest() {
 #[test]
 fn a6_27_rule2_a_folder_that_failed_on_the_source_deletes_nothing_below_it() {
     let vfs = memory(CaseSensitivity::Sensitive);
+    // A left base whose only folder cannot be read holds no file it can show: a sync that deletes is refused.
+    dir(&vfs, "/l/d");
+    file(&vfs, "/r/gone.txt", b"orphan", 10);
+    vfs.inject(Fault {
+        path: host("/l/d"),
+        op: VfsOp::List,
+        kind: ErrorKind::PermissionDenied,
+    });
+    let options = preset(SyncPreset::MirrorRight);
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+    let err = plan_sync(&cmp.read(), &vfs, &request(&options), &Ctl::detached()).unwrap_err();
+    assert!(matches!(err, FolderError::EmptySource { side: Side::Left }), "{err:?}");
+    // With a file of its own elsewhere, the left base is no empty source.
+    let vfs = memory(CaseSensitivity::Sensitive);
+    file(&vfs, "/l/keep.txt", b"keep", 10);
+    file(&vfs, "/r/keep.txt", b"keep", 10);
     dir(&vfs, "/l/d");
     file(&vfs, "/l/d/x.txt", b"left", 10);
     dir(&vfs, "/r/d");
@@ -519,6 +535,36 @@ fn a6_27_rule6_a_read_only_side_is_left_row_by_row() {
     assert_eq!(out.counts.delete_right, 0);
     execute(&vfs, &out);
     assert!(exists(&vfs, "/r/z.txt"));
+}
+
+/// Rule 6: a side that cannot remove leaves the row the matrix deletes (`capability`, at planning), and the copies that
+/// side can take go on.
+#[test]
+fn a6_27_rule6_a_side_that_cannot_remove_leaves_its_deletes() {
+    let vfs = memory(CaseSensitivity::Sensitive);
+    file(&vfs, "/l/new.txt", b"new", 20);
+    file(&vfs, "/r/orphan.txt", b"keep", 10);
+    dir(&vfs, "/r/gone");
+    file(&vfs, "/r/gone/inner.txt", b"keep too", 10);
+    let caps = vfs.capabilities(&mspec("/r")).unwrap();
+    vfs.set_capabilities(caps - hikasa_vfs::Capabilities::REMOVE - hikasa_vfs::Capabilities::TRASH);
+    let options = preset(SyncPreset::MirrorRight);
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    for path in ["orphan.txt", "gone/inner.txt"] {
+        let decided = row(&cmp, &out, path);
+        assert_eq!(
+            (decided.action, decided.reason),
+            (SyncAction::Leave, Some(LeaveReason::Capability)),
+            "{path}"
+        );
+    }
+    assert_eq!(out.counts.delete_right, 0);
+    assert_eq!(row(&cmp, &out, "new.txt").action, SyncAction::CopyRight);
+    assert_clean(&execute(&vfs, &out));
+    assert_eq!(read(&vfs, "/r/orphan.txt").unwrap(), b"keep");
+    assert_eq!(read(&vfs, "/r/gone/inner.txt").unwrap(), b"keep too");
+    assert_eq!(read(&vfs, "/r/new.txt").unwrap(), b"new");
 }
 
 #[test]
@@ -1125,6 +1171,75 @@ fn a6_27_an_empty_source_is_refused_unless_allowed() {
     let out = plan(&vfs, &cmp, &request(&options));
     assert_clean(&execute(&vfs, &out));
     assert_eq!(read(&vfs, "/l/d/b.txt").unwrap(), b"b");
+}
+
+/// A base is empty when, the filters applied, it holds no file: only empty folders (a `lost+found` of a mount point that
+/// failed), only entries a filter hides. Refused unless allowed. A source folder with no file while its counterpart holds
+/// files the sync deletes is not refused: it is *emptied entirely*, outermost only, and the plan names it.
+#[test]
+fn a6_27_a_source_with_no_file_after_filters_is_empty() {
+    let right = |vfs: &MemoryVfs| {
+        file(vfs, "/r/a.txt", b"right file a", 10);
+        file(vfs, "/r/d/b.txt", b"right file b", 10);
+    };
+    // Only an empty folder; only a file the size filter hides; only a folder holding a hidden file.
+    let mut small = FolderRules::default();
+    small.filters.other.size = Some(SizeFilter {
+        cmp: Cmp::Greater,
+        bytes: 5,
+    });
+    type Left = fn(&MemoryVfs);
+    let cases: [(&str, Left, &FolderRules); 3] = [
+        ("lost+found", |vfs| dir(vfs, "/l/lost+found"), &FolderRules::default()),
+        ("filtered file", |vfs| file(vfs, "/l/.junk", b"x", 10), &small),
+        ("folder of hidden files", |vfs| file(vfs, "/l/d/tiny", b"x", 10), &small),
+    ];
+    let options = preset(SyncPreset::MirrorRight);
+    for (what, left, rules) in cases {
+        let vfs = memory(CaseSensitivity::Sensitive);
+        right(&vfs);
+        left(&vfs);
+        let before = vfs.dump();
+        let cmp = sync_compare(&vfs, rules, &options);
+        let err = plan_sync(&cmp.read(), &vfs, &request(&options), &Ctl::detached()).unwrap_err();
+        assert!(
+            matches!(err, FolderError::EmptySource { side: Side::Left }),
+            "{what}: {err:?}"
+        );
+        assert_eq!(vfs.dump(), before, "{what}");
+        let mut req = request(&options);
+        req.allow_empty_source = true;
+        let out = plan(&vfs, &cmp, &req);
+        assert!(out.counts.delete_right > 0, "{what}");
+    }
+    // A left base with a file the filters let through is not empty, even when everything on the right goes.
+    let vfs = memory(CaseSensitivity::Sensitive);
+    right(&vfs);
+    file(&vfs, "/l/keep.txt", b"keep it", 10);
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+    plan(&vfs, &cmp, &request(&options));
+    // A nested folder empty on the left whose right counterpart holds files: shown, not refused; only the outermost.
+    let vfs = memory(CaseSensitivity::Sensitive);
+    file(&vfs, "/l/keep.txt", b"keep it", 10);
+    file(&vfs, "/r/keep.txt", b"keep it", 10);
+    dir(&vfs, "/l/mnt/sub");
+    file(&vfs, "/r/mnt/sub/x", b"x", 10);
+    file(&vfs, "/r/mnt/y", b"y", 10);
+    dir(&vfs, "/l/other");
+    dir(&vfs, "/r/other");
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    let read_ = cmp.read();
+    let emptied: Vec<(String, Side)> = out
+        .emptied
+        .iter()
+        .map(|&(node, side)| (read_.path(node).as_str().to_owned(), side))
+        .collect();
+    assert_eq!(emptied, [("mnt".to_owned(), Side::Left)]);
+    // Update Right deletes nothing: nothing is emptied.
+    let update = preset(SyncPreset::UpdateRight);
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &update);
+    assert!(plan(&vfs, &cmp, &request(&update)).emptied.is_empty());
 }
 
 #[test]

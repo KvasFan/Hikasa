@@ -58,7 +58,7 @@ use parking_lot::{Mutex, RwLock};
 
 pub use error::ApiError;
 pub use folder_ops::{
-    ContentsDto, ContentsKind, ContentsRequest, ExpandWords, FolderOpDto, FolderOpOutcome,
+    ContentsDto, ContentsKind, ContentsRequest, EmptiedDto, ExpandWords, FolderOpDto, FolderOpOutcome,
     FolderOpRequest, FolderSyncDto, FolderSyncOutcome, FolderSyncRequest, OpOverrides, OpRequest,
     OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
 };

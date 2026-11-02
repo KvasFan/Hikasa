@@ -456,6 +456,12 @@ pub fn folder_sync_lines(dto: &FolderSyncDto) -> Vec<String> {
         }
         lines.push(line);
     }
+    // Before the items: a nested mount that failed must be seen before anything else (W6c review).
+    lines.extend(
+        dto.emptied
+            .iter()
+            .map(|folder| format!("# {}", super::folder_ops::emptied_text(folder))),
+    );
     lines.extend(dto.items.iter().map(|item| item_line(item, dto.dry_run)));
     lines.push(summary_text(OpVerb::Sync, dto.dry_run, &dto.summary, None));
     if dto.cancelled {

@@ -4623,7 +4623,8 @@ Nothing a copy reads is deleted, since a row has one action.
 
 **Empty sources.** A mirror from a side with nothing on it deletes everything on the other: usually a mount that failed.
 `plan_sync` returns `FolderError::EmptySource { side }` (`invalid_input`, exit 100) when the plan would delete on one
-side and the other base has no item at all, unless `allow_empty_source`; `--yes` does not answer it. **A comparison that
+side and the other base holds no file once the filters are applied (W6c review; folders emptied entirely are shown, not
+refused: §1.6.25 *W6c after review* 6), unless `allow_empty_source`; `--yes` does not answer it. **A comparison that
 did not finish is refused** (`is_complete() == false` → `InvalidRules "the comparison is not complete"`) for any plan
 with deletes. Error rows do not refuse, they are `compare_error`: warning `sync_incomplete` with the count, exit 100.
 
@@ -5336,8 +5337,9 @@ text was silent.
    an entry of another row: Update Right of a left folder `y` onto a right file `y` (two rows, D-20), or of `b.txt` onto a
    `B.txt` that a case-sensitive comparison keeps apart on a file system that folds, fails `already_exists`, and the file
    stays: Update never removes. Found by P-SYNC's model.
-9. **Refusals.** "The other base has no item at all" counts every entry, filtered or not, and refuses only a plan that
-   deletes on the other side. An unfinished comparison refuses a plan that deletes; one that only copies plans, its rows not
+9. **Refusals.** ~~"The other base has no item at all" counts every entry, filtered or not~~ (rejected by the review: a
+   base is empty when it holds no file after filters, *after review* 6), and refuses only a plan that deletes on the other
+   side. An unfinished comparison refuses a plan that deletes; one that only copies plans, its rows not
    reached being `compare_error`. The stored `[rules.sync.matrix]` is validated whatever the preset, so `session edit` and an
    import refuse a bad cell before `custom` could put it in effect.
 10. **Words.** `--custom`'s base is the stored matrix, else all `leave`; `custom` is no base word. `--recycle-fallback` needs
@@ -5415,6 +5417,39 @@ text was silent.
    counted in `SyncCounts::ambiguous` (additive in `counts`), and the `#` line ends `, <n> left as ambiguous names (two
    names align to one)` when there are any. No item is planned, so nothing is skipped at execution, and a second run is
    the same. The pair the comparison aligned goes on as usual.
+6. **Empty sources, wider (note 9 rejected).** A source base is empty when, the filters applied, it holds no file at all:
+   only empty folders (a `lost+found` of a mount point that failed), only entries a filter hides (name filters never reach
+   the model; size, date, attribute filters mark them; a folder hidden on that side hides its contents). A followed link
+   and an opened archive count as files; a folder the comparison could not read counts as holding files (it is unknown,
+   not empty, and its rows are left by rule 2). `EmptySource` then refuses a plan that deletes on the other side, unless
+   `allow_empty_source`. **Folders emptied entirely**: a pair of folders whose source side holds no such file while the
+   plan deletes files below the other side's is not refused but listed (`SyncPlan::emptied`, outermost only, tree order),
+   in the human output before the items (`# emptied entirely: <path> on the <side> (the <side> holds no file there)`), on
+   stderr before the CLI's question, and in JSON as `result.emptied: [{path, empty, emptied}]` (additive). The confirmation
+   model (`Confirmation`) does not carry it: W9's dialog renders `SyncPlan` and shows it there.
+7. **Unknown keys of a session that runs** (`Service::session_run_request`, so `session run`, `folder sync --session`,
+   `folder op --session`): each key this version does not know, found against the session's full document (the typed
+   rules keep their own table, so `ignored_keys` alone does not see them), is one `unknown_config_key` warning naming the
+   nearest known key, always, not only with `--verbose`. In a **folder-sync** session a key in `[specs]` or `[rules]`
+   (the sync's rules, folder and `[rules.sync]`) refuses the run instead, `invalid_data`, exit 100, naming the key and the
+   nearest known one: `[specs] read_only = true` meant to protect a side, or `presett`, would otherwise run another sync.
+   Other sections and other session types warn only (T13); the keys stay in the file (D-70).
+8. **The fast path of a new file trusts no more than the stamp** (note 17's `HandleMeta::size`). `LocalVfs::copy_new_file`
+   reads the opened source through `take(size + 1)`: what is not the file the caller's `lstat` saw (a link to a FIFO a
+   writer feeds, a file that grew or shrank) cannot stream past it, and a count other than the stamp's is "changed since
+   the plan was made", naming the source, the temporary file removed. A read that fails on what is not a regular file (a
+   folder swapped in) names the source too, by an `fstat` of the handle on that error path only. Nothing is added to the
+   path that succeeds, so G7 is unchanged within its noise (§1.6.22 figures in `docs/02`). Without a size the back-end
+   stats the source as before. Not covered: a FIFO swapped in between the stamp's check and the `open`, with no writer,
+   blocks that `open` (as on the stream path); a no-follow, non-blocking open needs flags this workspace has no crate for.
+9. **P-SYNC after review.** The generator now makes pairs with one side hidden by a size filter, a pair folder hidden on
+   one side (protected attributes), links, folders whose listing fails on one side, a case-insensitive alignment with two
+   spellings, an Ignored path, *Just selection* of a path, and comparisons stopped part-way; the model knows each rule
+   (rule 1 scope, rule 2 failures, rule 3 both ways, Ignored as `same`, conflicts) and the empty-source rule of *after
+   review* 6. The second-run check is the model on the tree the first run left, for custom matrices, overrides and
+   no-to-all too; presets still plan nothing that runs. It asserts shares of cases that ran (a third of the plans not
+   refused), deleted, hid one side, held links, aligned two spellings, failed a listing, had a scope or an Ignored path,
+   and refused an unfinished comparison. The mutations of the review fail it (see the review's report).
 
 ### 1.7–1.14 W7–W14
 

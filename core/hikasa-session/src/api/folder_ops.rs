@@ -273,6 +273,8 @@ pub struct FolderSyncOutcome {
     pub matrix: SyncMatrix,
     /// How orphans were read (additive).
     pub orphans: OrphanReading,
+    /// The folders emptied entirely, with the side that holds no file (`SyncPlan::emptied`; additive).
+    pub emptied: Vec<(NodeId, Side)>,
 }
 
 impl FolderSyncOutcome {
@@ -326,11 +328,42 @@ impl FolderSyncOutcome {
             rows,
             items: op.items,
             counts: self.counts,
+            emptied: self
+                .emptied
+                .iter()
+                .map(|&(node, empty)| EmptiedDto {
+                    path: read.path(node).as_str().to_owned(),
+                    empty: empty.as_str(),
+                    emptied: empty.opposite().as_str(),
+                })
+                .collect(),
             backups: op.backups,
             summary: op.summary,
             warnings: op.warnings,
         }
     }
+}
+
+/// A folder emptied entirely by a sync (W6c review): its `empty` side holds no file once the filters are applied, and the
+/// sync deletes the files below the `emptied` side's. Usually a nested mount that failed: shown, not refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EmptiedDto {
+    /// Its path below the bases.
+    pub path: String,
+    /// The side with no file: `left`, `right`.
+    pub empty: &'static str,
+    /// The side whose files below it the sync deletes.
+    pub emptied: &'static str,
+}
+
+/// The line of a folder emptied entirely, for the human output and the question (T11).
+pub fn emptied_text(folder: &EmptiedDto) -> String {
+    format!(
+        "emptied entirely: {} on the {} (the {} holds no file there)",
+        escape_controls(&folder.path),
+        folder.emptied,
+        folder.empty
+    )
 }
 
 /// One row of `hikasa.folder_sync.v1`.
@@ -375,6 +408,8 @@ pub struct FolderSyncDto {
     pub items: Vec<FolderOpItemDto>,
     /// The counts of the rows.
     pub counts: SyncCounts,
+    /// The folders emptied entirely (additive).
+    pub emptied: Vec<EmptiedDto>,
     /// The backups of archives.
     pub backups: Vec<BackupDto>,
     /// The counts of the items.
@@ -1137,6 +1172,7 @@ impl Service {
             preset,
             matrix,
             orphans,
+            emptied,
             ..
         } = plan;
         let mut op = self.folder_op_dry_run(op);
@@ -1148,6 +1184,7 @@ impl Service {
             preset,
             matrix,
             orphans,
+            emptied,
         }
     }
 
@@ -1165,6 +1202,7 @@ impl Service {
             preset,
             matrix,
             orphans,
+            emptied,
             ..
         } = plan;
         let mut op = self.folder_op_execute(op, job)?;
@@ -1176,6 +1214,7 @@ impl Service {
             preset,
             matrix,
             orphans,
+            emptied,
         })
     }
 

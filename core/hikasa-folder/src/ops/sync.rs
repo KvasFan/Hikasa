@@ -134,7 +134,7 @@ pub(crate) fn plan(
     };
     planner.prepare(include)?;
     let (counts, folders) = planner.decide(ctl)?;
-    planner.refuse(&counts)?;
+    let emptied = planner.refuse(&counts)?;
     planner.unused_overrides();
     if counts.unresolved > 0 {
         planner.warnings.push(Warning {
@@ -157,6 +157,7 @@ pub(crate) fn plan(
         matrix,
         orphans: options.orphans,
         folders,
+        emptied,
     })
 }
 
@@ -636,8 +637,11 @@ impl<'a, 'r> Planner<'a, 'r> {
         Ok((counts, folders))
     }
 
-    /// `EmptySource` and an incomplete comparison: what a sync that deletes must not run on.
-    fn refuse(&self, counts: &SyncCounts) -> Result<(), FolderError> {
+    /// `EmptySource` and an incomplete comparison: what a sync that deletes must not run on. A base is empty when, the
+    /// filters applied, it holds no file at all: only empty folders, a `lost+found`, entries a filter hides. Returns the
+    /// folders emptied entirely: a pair of folders whose side holds no such file while the plan deletes files below the
+    /// other side's; not refused, shown.
+    fn refuse(&self, counts: &SyncCounts) -> Result<Vec<(NodeId, Side)>, FolderError> {
         let read = self.read;
         let deletes = counts.delete_left + counts.delete_right > 0;
         if deletes && !read.is_complete() {
@@ -646,24 +650,84 @@ impl<'a, 'r> Planner<'a, 'r> {
                     .to_owned(),
             ));
         }
-        if self.request.allow_empty_source {
-            return Ok(());
+        if !deletes {
+            return Ok(Vec::new());
         }
-        let empty = |side: Side| {
-            read.children(NodeId::ROOT).all(|child| {
-                read.node(child)
-                    .is_none_or(|view| view.side(side).is_none())
-            })
-        };
-        for (deleted, source) in [
-            (counts.delete_right, Side::Left),
-            (counts.delete_left, Side::Right),
-        ] {
-            if deleted > 0 && empty(source) {
-                return Err(FolderError::EmptySource { side: source });
+        // Per row: the sides below it (itself included) that hold a file the filters let through, and the sides on which
+        // the plan deletes a file there. Post-order, so a folder adds up its children.
+        let len = read.len() as usize;
+        let mut files = vec![0u8; len];
+        let mut deleted = vec![0u8; len];
+        for index in read.store().post_order() {
+            let id = NodeId(index);
+            let Some(view) = read.node(id) else { continue };
+            let i = index as usize;
+            let hidden_above = self.hidden_above.get(i).copied().unwrap_or(0);
+            for side in [Side::Left, Side::Right] {
+                let Some(entry) = view.side(side) else { continue };
+                // A folder the comparison could not read proves no file: an unreadable mount is the case to refuse.
+                let a_file = !view.is_folder()
+                    || entry.followed
+                    || view.flags.contains(NodeFlags::archive_root(side));
+                if a_file && !entry.filtered && hidden_above & bit(side) == 0 {
+                    files[i] |= bit(side);
+                }
+            }
+            if let Some(row) = self.decided(id)
+                && row.action.deletes()
+                && !view.is_folder()
+                && let Some(side) = row.action.writes()
+            {
+                deleted[i] |= bit(side);
+            }
+            if id != NodeId::ROOT {
+                let parent = view.parent.unwrap_or(NodeId::ROOT).0 as usize;
+                let (f, d) = (files[i], deleted[i]);
+                if let Some(slot) = files.get_mut(parent) {
+                    *slot |= f;
+                }
+                if let Some(slot) = deleted.get_mut(parent) {
+                    *slot |= d;
+                }
             }
         }
-        Ok(())
+        let root = NodeId::ROOT.0 as usize;
+        if !self.request.allow_empty_source {
+            // Any delete counts here, an empty folder's too.
+            for (deletes_there, source) in [
+                (counts.delete_right, Side::Left),
+                (counts.delete_left, Side::Right),
+            ] {
+                if deletes_there > 0 && files[root] & bit(source) == 0 {
+                    return Err(FolderError::EmptySource { side: source });
+                }
+            }
+        }
+        let mut emptied = Vec::new();
+        let mut stack: Vec<(NodeId, u8)> = read.children(NodeId::ROOT).map(|c| (c, 0)).collect();
+        stack.reverse();
+        while let Some((id, reported)) = stack.pop() {
+            let Some(view) = read.node(id) else { continue };
+            if !view.is_folder() || view.left.is_none() || view.right.is_none() {
+                continue;
+            }
+            let i = id.0 as usize;
+            let mut now = reported;
+            for source in [Side::Left, Side::Right] {
+                let other = source.opposite();
+                if reported & bit(source) == 0
+                    && files[i] & bit(source) == 0
+                    && deleted[i] & bit(other) != 0
+                {
+                    emptied.push((id, source));
+                    now |= bit(source);
+                }
+            }
+            let mut children: Vec<(NodeId, u8)> = read.children(id).map(|c| (c, now)).collect();
+            children.reverse();
+            stack.extend(children);
+        }
+        Ok(emptied)
     }
 
     /// One `switch_ignored` for an override that named no row.

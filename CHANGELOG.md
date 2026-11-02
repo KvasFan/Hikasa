@@ -52,6 +52,22 @@
   read-only side keeps its rows; a followed link that a mirror removes goes as the link, never what it leads to.
 - **Update never removes.** A sync replaces only a row's own counterpart: a folder copied by *Update* does not replace a file
   of its name, nor `b.txt` a `B.txt` that a case-sensitive comparison keeps apart on a file system that folds.
+- **An empty source is one with no file.** A source holding only empty folders (a `lost+found`), only files a filter hides,
+  or only folders that cannot be read, is refused as an empty one. A source folder with no file whose counterpart's files
+  a sync deletes is shown as *emptied entirely* in the dry run, before the question and in JSON (`emptied`).
+- **A folder goes to the recycle bin whole only as the plan saw it.** A file added to it, or one changed, since the plan
+  fails the item, and nothing moves.
+- **A session's unknown keys are said.** Each one is a warning when the session runs, naming the nearest known key; in a
+  folder-sync session one in `[specs]` or `[rules]` stops the run, as it may be what protects a side.
+- **A copy reads no more than the plan saw.** A new file's source swapped for a FIFO, or for a file of another size, fails
+  "changed since the plan was made" and leaves nothing behind.
+- **The folder-op preference `include_hidden_by_default` no longer reaches a sync**, which leaves a side a filter hides
+  unless its own `--include-hidden` says otherwise.
+- **`folder sync --session` of a folder-compare session needs a preset flag**, and `--path` naming a row that is not on its
+  side is an error (`not_found`) instead of selecting nothing.
+- **Syncs settle.** A copied link keeps its time; under `--case-insensitive --filename-case` a sync gives the target the
+  source's spelling; two source names that align to one are left as `ambiguous_name` and counted, so a second run plans
+  nothing new.
 
 ### Changed
 - **A new copy makes two system calls fewer per file.** It no longer stats its source a second time, and a target that
