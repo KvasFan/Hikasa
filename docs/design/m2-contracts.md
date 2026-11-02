@@ -5456,6 +5456,9 @@ text was silent.
     `filters.names` as a filter text (`"*.c;-obj\\"`), a string where a list is expected as that one item. What has none
     fails at load, `invalid_data`, naming the key: `rules.mode` (no preset can be told from `"mirror"`), and a value whose
     type is not its key's now.
+11. **`IpcHandler::seen`** (additive, default nothing): the server shows a handler every request after the handshake,
+    also those it answers itself (an `OpenView` of a kind it does not serve), so a test records the wire of `folder sync
+    --gui` instead of reading it back from an error message.
 
 ### 1.7–1.14 W7–W14
 

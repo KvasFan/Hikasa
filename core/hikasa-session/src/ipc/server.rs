@@ -69,6 +69,12 @@ pub trait IpcHandler: Send + Sync + 'static {
     /// name, `Error{unsupported_request}` from a handler that does not serve them); `LoadSession { wait: true }`
     /// gets a waiter like `OpenView`. A handler panic is answered with `Error{internal}`.
     fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response;
+
+    /// Sees every request after the handshake, before the server answers it itself or passes it to
+    /// [`IpcHandler::handle`]: a log, or a test's record of the wire. Must not block. Default: nothing (additive).
+    fn seen(&self, request: &Request) {
+        let _ = request;
+    }
 }
 
 /// What a connection's writer thread receives.
@@ -804,6 +810,7 @@ fn dispatch(
 ) -> Result<(), IpcError> {
     let id = envelope.id;
     let mut gate = None;
+    handler.seen(&envelope.body);
     let response = match envelope.body {
         Request::Unknown => Response::error(
             IpcErrorCode::UnsupportedRequest,

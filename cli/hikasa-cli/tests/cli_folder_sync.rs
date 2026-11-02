@@ -565,7 +565,6 @@ fn a6_31_gui_sends_the_sync_and_the_answer_is_unsupported() {
     let doc = json(&out);
     assert_eq!(doc["schema"], "hikasa.gui_open.v1");
     assert_eq!(doc["error"]["kind"], "unsupported");
-    // The answer names the Folder Sync view: what the server got was `OpenView { kind: folder_sync }`.
     assert!(
         doc["error"]["message"]
             .as_str()
@@ -573,12 +572,37 @@ fn a6_31_gui_sends_the_sync_and_the_answer_is_unsupported() {
             .contains("cannot show a Folder Sync view yet"),
         "{doc}"
     );
-    // The words are checked before any contact: a bad word is 100 with its own message, and the GUI got nothing.
+    // What the GUI received on the wire: one `OpenView { kind: folder_sync }` with the two sides and the sync in words.
+    let opened: Vec<hikasa_session::ipc::Request> = gui
+        .requests()
+        .into_iter()
+        .filter(|r| matches!(r, hikasa_session::ipc::Request::OpenView { .. }))
+        .collect();
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    let hikasa_session::ipc::Request::OpenView {
+        kind,
+        specs,
+        options,
+        wait,
+    } = &opened[0]
+    else {
+        unreachable!()
+    };
+    assert_eq!(*kind, hikasa_session::ipc::ViewKind::FolderSync);
+    assert!(!wait);
+    assert_eq!(specs.len(), 2, "{specs:?}");
+    assert!(specs[0].ends_with("l") && specs[1].ends_with("r"), "{specs:?}");
+    let words = options.sync.as_ref().expect("the sync in words");
+    assert_eq!(words.preset.as_deref(), Some("mirror_right"), "{words:?}");
+    assert_eq!(words.orphans.as_deref(), Some("deleted"), "{words:?}");
+    assert!(words.custom.is_none() && !words.recycle && words.overrides.is_empty(), "{words:?}");
+    // The words are checked before any contact: a bad word is 100 with its own message, and the GUI got nothing more.
+    let before = gui.requests().len();
     let out = sync(&s, &["--custom", "same=sideways", "--gui", "--json"]);
     assert_eq!(code(&out), 100);
     let message = json(&out)["error"]["message"].as_str().unwrap().to_owned();
     assert!(message.contains("sideways"), "{message}");
-    assert!(gui.requests().is_empty(), "{:?}", gui.requests());
+    assert_eq!(gui.requests().len(), before, "{:?}", gui.requests());
     server.shutdown().unwrap();
     assert!(state(&s).1.iter().any(|(n, _)| n == "right-only.txt"));
 }
