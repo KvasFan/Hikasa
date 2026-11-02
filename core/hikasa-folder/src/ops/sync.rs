@@ -455,6 +455,8 @@ impl<'a, 'r> Planner<'a, 'r> {
             let mut link = row;
             self.by_matrix(id, view, &mut link);
             if link.action.deletes() {
+                // The link goes as one item: the folder above may go whole with it.
+                self.set_whole(id, true);
                 return link;
             }
         }

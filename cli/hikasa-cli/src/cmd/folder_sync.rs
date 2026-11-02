@@ -14,6 +14,7 @@ use hikasa_session::api::dto::{FOLDER_SYNC_SCHEMA, GUI_OPEN_SCHEMA};
 use hikasa_session::api::{
     ApiOp, FolderCompareRequest, FolderSyncRequest, GuiOpenRequest, OpOverrides, SessionRunRequest,
     ViewWords, human, parse_confirm_mode, parse_sides, resolve_folder_display, sync_options,
+    sync_words_of,
 };
 use hikasa_session::ipc::SyncWords;
 use hikasa_session::sessions::SessionRef;
@@ -210,14 +211,24 @@ fn mode_of(yes: bool, confirm: Option<&str>) -> Result<ConfirmMode, ApiError> {
 
 /// `folder sync --gui` (D-190): the words are checked here, as `folder compare --gui` checks its own (D-50), then sent.
 fn gui_request(ctx: &Ctx<'_>, args: &FolderSyncArgs) -> Result<GuiOpenRequest, ApiError> {
-    let (compare, base, _) = base_of(ctx, args)?;
-    sync_of(ctx, args, &base)?;
-    let words = words(args);
+    let (compare, base, mut read_only) = base_of(ctx, args)?;
+    // The session's sync with the flags on top travels whole, in words the GUI reads back with the same parser.
+    let options = sync_of(ctx, args, &base)?;
+    let words = sync_words_of(&options, args.allow_empty_source);
     let view = ViewWords {
         display: args.common.select.display.clone(),
         ..ViewWords::default()
     };
-    Ok(GuiOpenRequest::for_sync(&compare, &words, &view, args.wait))
+    if let Some(word) = &args.confirm.read_only {
+        let named = parse_sides(word)?;
+        read_only.left |= named.contains(SideSet::LEFT);
+        read_only.right |= named.contains(SideSet::RIGHT);
+    }
+    let mut open = GuiOpenRequest::for_sync(&compare, &words, &view, args.wait);
+    open.options.read_only.left = read_only.left;
+    open.options.read_only.right = read_only.right;
+    open.options.no_backups = args.no_backup;
+    Ok(open)
 }
 
 /// `session run` of a folder-sync session: its specs, rules, `[rules.sync]` and read-only sides, with `--dry-run`, `--yes`,

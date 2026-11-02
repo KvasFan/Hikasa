@@ -5354,6 +5354,10 @@ text was silent.
     the GUI answer `unsupported_view`, "this window cannot show a Folder Sync view yet" (`ipc::unserved_view`); the error kind is
     `unsupported`, exit 100. The GUI's arms of `ViewRequest::Sync` are never reached; were one, it would show the comparison of
     the bases, which writes nothing. W9 replaces them. `--sync` and `--nobackups` are no longer forwarded with `switch_ignored`.
+    `folder sync --gui` sends the sync in effect (a session's `[rules.sync]` with the flags on top) as words,
+    `api::sync_words_of`, which `sync_options` reads back to the same options, and `--read-only`, `--no-backup` in
+    `OpenOptions`. An `OpenView` carries no base rules, so with `--session` the session's folder rules do not travel (as for
+    `folder compare --gui`); W9's view should open a session by `LoadSession`.
 15. **Log.** `sync_log_entries` adds, after the operation's summary, a second `Summary`: the counts, `sync_counts_text`, the
     text of the human `#` line (T11).
 16. **Archives.** Within archives, a member of a single stream that differs is `leave`/`capability`; a single-stream archive on

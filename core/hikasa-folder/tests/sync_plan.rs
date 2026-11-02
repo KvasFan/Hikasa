@@ -566,6 +566,34 @@ fn a6_27_rule6_below_a_followed_folder_nothing_is_written() {
     assert_eq!(read(&vfs, "/outside/x.txt").unwrap(), b"outside");
 }
 
+#[test]
+fn a6_27_a_folder_whose_last_row_is_a_followed_link_goes_with_it() {
+    // A right-only folder holding a file and a link the comparison follows: a mirror removes the file, the link (not what
+    // it leads to) and then the folder, as its row says.
+    let vfs = memory(CaseSensitivity::Sensitive);
+    dir(&vfs, "/outside");
+    file(&vfs, "/outside/x.txt", b"outside", 10);
+    file(&vfs, "/l/a.txt", b"a", 10);
+    dir(&vfs, "/r/w");
+    file(&vfs, "/r/w/f.txt", b"f", 10);
+    vfs.insert_symlink(&host("/r/w/link"), &host("/outside"), meta(1))
+        .unwrap();
+    let mut rules = FolderRules::default();
+    rules.handling.follow_symlinks = true;
+    let options = preset(SyncPreset::MirrorRight);
+    let cmp = sync_compare(&vfs, &rules, &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    assert_eq!(row(&cmp, &out, "w/").action, SyncAction::DeleteRight);
+    assert!(
+        items(&out).contains(&"remove_dir /r/w".to_owned()),
+        "{:?}",
+        items(&out)
+    );
+    assert_clean(&execute(&vfs, &out));
+    assert!(!exists(&vfs, "/r/w"));
+    assert_eq!(read(&vfs, "/outside/x.txt").unwrap(), b"outside");
+}
+
 // ---- conflicts -----------------------------------------------------------------------------------------------------
 
 #[test]

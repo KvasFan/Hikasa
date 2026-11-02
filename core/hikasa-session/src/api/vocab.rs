@@ -327,6 +327,42 @@ pub fn sync_options(
     Ok(options)
 }
 
+/// The words of `options`, which [`sync_options`] reads back to them over the defaults: what `folder sync --gui` sends, so a
+/// session's sync and the flags on top of it reach the GUI whole (D-190). `custom` sends its eight cells.
+pub fn sync_words_of(options: &SyncOptions, allow_empty_source: bool) -> SyncWords {
+    let (preset, custom) = match options.preset {
+        SyncPreset::Custom => {
+            let cells: Vec<String> = hikasa_folder::sync::Situation::ALL
+                .into_iter()
+                .map(|situation| {
+                    format!(
+                        "{}={}",
+                        situation.as_str(),
+                        options.matrix.get(situation).as_str()
+                    )
+                })
+                .collect();
+            (None, Some(cells.join(",")))
+        }
+        preset => (Some(preset.as_str().to_owned()), None),
+    };
+    SyncWords {
+        preset,
+        custom,
+        orphans: Some(options.orphans.as_str().to_owned()),
+        create_empty: options.create_empty,
+        within_archives: options.within_archives,
+        recycle: options.recycle,
+        recycle_fallback: options.recycle_fallback,
+        overrides: options
+            .overrides
+            .iter()
+            .map(|(path, action)| format!("{path}={}", action.as_str()))
+            .collect(),
+        allow_empty_source,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

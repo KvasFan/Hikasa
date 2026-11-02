@@ -465,5 +465,23 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     )
     .unwrap();
     assert!(windows.overrides.contains_key("a/b.txt"));
+    // A sync in words and back, as `folder sync --gui` sends a session's: the same options.
+    let mut full = SyncOptions {
+        preset: SyncPreset::Custom,
+        orphans: OrphanReading::Deleted,
+        within_archives: true,
+        recycle: true,
+        recycle_fallback: true,
+        ..SyncOptions::default()
+    };
+    full.matrix.newer_left = SyncAction::CopyRight;
+    full.matrix.added_right = SyncAction::DeleteRight;
+    full.overrides.insert("x/y".into(), SyncAction::Leave);
+    for options in [full.clone(), mirror_right(), SyncOptions::default()] {
+        let words = hikasa_session::api::sync_words_of(&options, true);
+        assert!(words.allow_empty_source);
+        let back = sync_options(&words, &SyncOptions::default(), false).unwrap();
+        assert_eq!(back, options);
+    }
     let _ = OpOverrides::default();
 }
