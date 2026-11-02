@@ -141,17 +141,34 @@ pub(super) fn looks_private(_meta: &Metadata) -> bool {
     true
 }
 
-/// Sets the creation time through a handle opened for `FILE_WRITE_ATTRIBUTES` (folders with backup semantics).
-pub(super) fn set_created(path: &Path, time: std::time::SystemTime) -> Option<io::Result<()>> {
+/// Sets the modification and creation times through one handle opened for `FILE_WRITE_ATTRIBUTES` only, which a file
+/// with `R` allows (an open for writing is refused there); folders open with backup semantics, and a link is opened
+/// itself, not its target. With a modification time the access time `meta` read is set again, as it was.
+pub(super) fn set_times(
+    path: &Path,
+    meta: &Metadata,
+    modified: Option<std::time::SystemTime>,
+    created: Option<std::time::SystemTime>,
+) -> io::Result<()> {
     use std::os::windows::fs::FileTimesExt;
-    let times = fs::FileTimes::new().set_created(time);
-    Some(
-        OpenOptions::new()
-            .access_mode(FILE_WRITE_ATTRIBUTES)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
-            .and_then(|file| file.set_times(times)),
-    )
+    let mut times = fs::FileTimes::new();
+    if let Some(modified) = modified {
+        times = times.set_modified(modified);
+        if let Ok(accessed) = meta.accessed() {
+            times = times.set_accessed(accessed);
+        }
+    }
+    if let Some(created) = created {
+        times = times.set_created(created);
+    }
+    if modified.is_none() && created.is_none() {
+        return Ok(());
+    }
+    OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?
+        .set_times(times)
 }
 
 /// `Dos` with `R` only → `Permissions::set_readonly`; other bits are refused (they need Win32 calls, D-99);

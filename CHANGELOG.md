@@ -108,6 +108,10 @@
 - **A copy never replaces a file that appears while it runs.** A new file takes its name by a rename that cannot replace,
   so a program that creates the target during a `vfs cp` keeps its file and the copy fails `already_exists`. This holds
   where the file system has that rename or hard links.
+- **Windows: times can be set on a read-only file.** `vfs touch` of a file with `R`, and a folder operation that sets the
+  time of one (Touch, or the time of the other side), failed `permission_denied`: the modification time was set through an
+  open for writing, which `R` refuses. All times are now set through one handle that asks only to write attributes, on
+  files, folders and links alike.
 
 ### Internal
 - `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder

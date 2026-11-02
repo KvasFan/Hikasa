@@ -625,17 +625,30 @@ impl Vfs for LocalVfs {
             }
             None => None,
         };
-        if let Some(modified) = times.modified {
-            let mtime = filetime_of(modified);
-            let atime = filetime::FileTime::from_last_access_time(&meta);
-            filetime::set_symlink_file_times(path.as_path(), atime, mtime).map_err(fail)?;
-        }
-        if let Some(created) = created
-            && let Some(result) = platform::set_created(path.as_path(), created)
+        // Windows: one handle opened for `FILE_WRITE_ATTRIBUTES` only. `filetime` opens for writing, which a file with
+        // `R` refuses (`hikasa vfs touch` of such a file, a sync keeping times on one).
+        #[cfg(windows)]
         {
-            result.map_err(fail)?;
+            let modified = match times.modified {
+                Some(modified) => Some(system_time(modified).ok_or_else(|| fail(out_of_range()))?),
+                None => None,
+            };
+            platform::set_times(path.as_path(), &meta, modified, created).map_err(fail)
         }
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            if let Some(modified) = times.modified {
+                let mtime = filetime_of(modified);
+                let atime = filetime::FileTime::from_last_access_time(&meta);
+                filetime::set_symlink_file_times(path.as_path(), atime, mtime).map_err(fail)?;
+            }
+            if let Some(created) = created
+                && let Some(result) = platform::set_created(path.as_path(), created)
+            {
+                result.map_err(fail)?;
+            }
+            Ok(())
+        }
     }
 
     fn set_attrs(&self, spec: &Spec, change: &AttrChange) -> Result<(), VfsError> {
@@ -1292,6 +1305,7 @@ impl AtomicWrite for DirectWriter {
 }
 
 /// The `filetime` value of a [`FileTime`].
+#[cfg(not(windows))]
 fn filetime_of(t: FileTime) -> filetime::FileTime {
     filetime::FileTime::from_unix_time(t.unix_seconds(), t.subsec_nanos())
 }
