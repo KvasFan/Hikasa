@@ -99,7 +99,7 @@ pub use folder::{
     render_folder_report_with,
 };
 pub use json::{folder_compare_json, text_compare_json};
-pub use links::{PairLink, PairLinks, href};
+pub use links::{PairLink, PairLinks, href, linked_rows};
 pub use meta::ReportMeta;
 pub use options::{
     DisplayMode, HtmlStyle, OutputFormat, Wrap, folder_mode_word, parse_folder_mode,

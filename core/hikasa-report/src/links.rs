@@ -4,7 +4,10 @@
 
 use std::fmt::Write as _;
 
-use hikasa_folder::NodeId;
+use hikasa_folder::select::Selection;
+use hikasa_folder::{Category, FolderComparison, NodeId, NodeKind};
+
+use crate::folder::{FolderLayout, FolderReportOptions, scoped};
 
 /// What a row of a folder report links to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +35,38 @@ impl PairLink {
 pub trait PairLinks {
     /// The link of the row `node`; `None` for a row that gets no pair report.
     fn link(&self, node: NodeId) -> Option<PairLink>;
+}
+
+/// The rows of a folder report that get a pair report (§1.7.8), in report order: every row the report shows that is
+/// a file pair (both sides present; a followed link counts as a file) whose category under the report's
+/// ignore-unimportant is left newer, right newer or different. Orphans, folders, links shown as links, same, unknown,
+/// error and filtered rows get none. The `n`-th of them (1-based) is pair report `n`. Empty unless the layout is
+/// side-by-side.
+pub fn linked_rows(
+    cmp: &FolderComparison,
+    options: &FolderReportOptions,
+    scope: Option<&Selection>,
+) -> Vec<NodeId> {
+    if options.layout != FolderLayout::SideBySide {
+        return Vec::new();
+    }
+    let iu = options.display.ignore_unimportant;
+    let rows = scoped(cmp, &options.display, scope);
+    let read = cmp.read();
+    rows.iter()
+        .filter(|row| {
+            read.node(row.node).is_some_and(|node| {
+                node.kind == NodeKind::File
+                    && node.left.is_some()
+                    && node.right.is_some()
+                    && matches!(
+                        read.category(row.node, iu),
+                        Category::LeftNewer | Category::RightNewer | Category::Different
+                    )
+            })
+        })
+        .map(|row| row.node)
+        .collect()
 }
 
 /// True for the RFC 3986 unreserved bytes, which an href keeps.

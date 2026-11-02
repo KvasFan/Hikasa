@@ -33,6 +33,7 @@ pub mod human;
 mod info;
 pub mod package;
 mod report;
+pub mod report_write;
 pub mod requests;
 pub mod responses;
 pub mod sessions;
