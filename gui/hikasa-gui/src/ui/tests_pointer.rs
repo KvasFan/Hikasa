@@ -1082,8 +1082,7 @@ fn a_double_click_opens_an_archive_row() {
     s.world.settle(&mut s.app.core);
     s.settle();
     let model = crate::tests::folder_model(&mut s.app.core, view);
-    let rules = model.prepared().expect("prepared").rules().clone();
-    assert_eq!(rules.open_archives, ["a.zip"]);
+    assert_eq!(model.open_archives(), Some(&["a.zip".to_owned()][..]));
     s.settle();
     s.find("member.txt");
 }

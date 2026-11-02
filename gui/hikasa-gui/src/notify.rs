@@ -35,6 +35,8 @@ pub enum NoticeAction {
     ShowTab(ViewId),
     /// Opens the Options dialog (W4c).
     OpenOptions,
+    /// Shows the log panel of a folder view (an operation with failed items, M2 W6d).
+    ShowLog(ViewId),
     /// Hides the notice.
     Dismiss,
 }
@@ -48,6 +50,7 @@ impl NoticeAction {
             NoticeAction::KeepMine => "Keep my edits",
             NoticeAction::ShowTab(_) => "Show",
             NoticeAction::OpenOptions => "Options…",
+            NoticeAction::ShowLog(_) => "Show log",
             NoticeAction::Dismiss => "Dismiss",
         }
     }

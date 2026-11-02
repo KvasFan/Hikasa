@@ -36,6 +36,7 @@ mod job;
 mod mailbox;
 mod menus;
 mod notify;
+mod op_dialogs;
 mod options;
 mod session_dialog;
 mod shared;
@@ -51,6 +52,8 @@ mod workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_folder_ops;
 #[cfg(test)]
 mod tests_options;
 #[cfg(test)]

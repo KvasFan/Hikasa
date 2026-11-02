@@ -405,7 +405,7 @@ menu = "Actions"
 caption = "Copy to Right"
 shortcut = "Ctrl+R"
 description = "Copies selected items from left to right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyLeft"
@@ -413,7 +413,7 @@ menu = "Actions"
 caption = "Copy to Left"
 shortcut = "Ctrl+L"
 description = "Copies selected items from right to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyPrompt"
@@ -487,15 +487,17 @@ status = "planned"
 id = "Delete"
 menu = "Actions"
 caption = "Delete"
+shortcut = "Del"
 description = "Deletes selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "PermanentDelete"
 menu = "Actions"
+caption = "Delete Permanently"
 shortcut = "Shift+Del"
 description = "Deletes selected items without moving them to the recycle bin."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Rename"

@@ -18,6 +18,7 @@ pub mod keys;
 pub mod log;
 pub mod menus;
 pub mod notify;
+pub mod op_dialogs;
 pub mod options;
 pub mod scroll;
 pub mod session_dialog;

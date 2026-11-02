@@ -28,6 +28,7 @@ use hikasa_session::{ApiError, Service};
 use super::{AppCore, CoreJob, Effect, OpenTarget};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::{ButtonRole, Followup, Prompt};
+use crate::folder_view::ChildTicket;
 use crate::home::{HomeModel, PanelMode, PanelTarget, RenameEdit, TreeNode};
 use crate::job::Job;
 use crate::notify::{Notice, NoticeKind};
@@ -222,7 +223,11 @@ pub enum StoreDone {
     /// A pending tab or a `SessionsCombo` could not be opened.
     OpenFailed(ViewId, String),
     /// A child view (FC-062) is ready.
-    Child(Box<OpenedSession>, OpenTarget),
+    Child(
+        Box<OpenedSession>,
+        OpenTarget,
+        Option<(ViewId, ChildTicket)>,
+    ),
     /// A workspace was read; `then` loads it.
     Workspace(Box<WorkspaceLoadDto>),
     /// The Session Settings dialog can open.
@@ -587,9 +592,13 @@ impl AppCore {
                 self.refresh_sessions();
             }
             StoreDone::Opened(opened, how) => return self.finish_open(*opened, how),
-            StoreDone::Child(opened, target) => {
+            StoreDone::Child(opened, target, child) => {
                 let before = self.window_ids();
+                self.last_opened = None;
                 self.finish_open(*opened, OpenHow::Target(target));
+                if let (Some((parent, ticket)), Some(opened)) = (child, self.last_opened.take()) {
+                    self.adopt_child(opened, parent, ticket);
+                }
                 return self.new_viewports(&before);
             }
             StoreDone::OpenFailed(view, text) => self.open_failed(view, text),
@@ -1595,7 +1604,8 @@ impl AppCore {
         }
         let kind = view.kind;
         let specs = view.specs;
-        let model = self.build_model_with([None, None], request, &session.view);
+        let mut model = self.build_model_with([None, None], request, &session.view);
+        super::set_write(&mut model, session_write(&session));
         let toolbar = self.session_toolbar(&session, model.scope());
         match how {
             OpenHow::Pending(id) => {
@@ -1632,6 +1642,7 @@ impl AppCore {
             }
             OpenHow::Target(target) => {
                 let id = self.register_view(kind, specs);
+                self.last_opened = Some(id);
                 self.adopt_slot(id, &origin);
                 let mut tab = Tab::live(id, model, toolbar);
                 tab.session = Some(vs);
@@ -1663,7 +1674,8 @@ impl AppCore {
             title,
             ..
         } = opened;
-        let model = self.build_model_with([None, None], session_view.request, &session.view);
+        let mut model = self.build_model_with([None, None], session_view.request, &session.view);
+        super::set_write(&mut model, session_write(&session));
         let toolbar = self.session_toolbar(&session, model.scope());
         let mut tab = Tab::live(view, model, toolbar);
         tab.session = Some(vs);
@@ -1759,6 +1771,7 @@ impl AppCore {
         request: ViewRequest,
         parent: ParentLink,
         target: OpenTarget,
+        child: Option<(ViewId, ChildTicket)>,
     ) {
         self.store("open the pair", None, move |svc, _| {
             let (mut session, _) = svc.session_for_view(
@@ -1775,7 +1788,7 @@ impl AppCore {
             {
                 *view = wanted.clone();
             }
-            Ok(StoreDone::Child(Box::new(opened), target))
+            Ok(StoreDone::Child(Box::new(opened), target, child))
         });
     }
 
@@ -2552,7 +2565,8 @@ impl AppCore {
                 apply_folder_display(&session.display, display)
             }
         }
-        let model = self.build_model_with([None, None], request, &session.view);
+        let mut model = self.build_model_with([None, None], request, &session.view);
+        super::set_write(&mut model, session_write(&session));
         let specs = opened.specs;
         if let Some(tab) = self.tab_mut(view) {
             if let Some(m) = tab.model_mut() {
@@ -3097,6 +3111,17 @@ fn rename_folder_prompt(path: &str, to: &str, locked: &[String]) -> Prompt {
 }
 
 /// A session with its specs in stored form (D-80; a typed relative path becomes absolute).
+/// Disable editing of a session (`[specs] read_only_left`, `read_only_right`; FC-003).
+fn session_write(session: &Session) -> crate::folder_view::WritePolicy {
+    crate::folder_view::WritePolicy {
+        read_only: hikasa_folder::ops::ReadOnlySides {
+            left: session.specs.read_only_left,
+            right: session.specs.read_only_right,
+        },
+        no_backups: false,
+    }
+}
+
 fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
     for slot in [&mut session.specs.left, &mut session.specs.right] {
         if !slot.is_empty() {

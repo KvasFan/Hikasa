@@ -66,8 +66,8 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `AlignWith` | Actions |  | F6 | Marks item for manual realignment. | planned |
 | `Compare` | Actions | Compare Contents |  | Determines overall comparison state for selected items. | planned |
 | `Merge` | Actions | Merge... |  | Performs automated merge of selected items. | planned |
-| `CopyRight` | Actions | Copy to Right | Ctrl+R | Copies selected items from left to right. | planned |
-| `CopyLeft` | Actions | Copy to Left | Ctrl+L | Copies selected items from right to left. | planned |
+| `CopyRight` | Actions | Copy to Right | Ctrl+R | Copies selected items from left to right. | implemented |
+| `CopyLeft` | Actions | Copy to Left | Ctrl+L | Copies selected items from right to left. | implemented |
 | `CopyPrompt` | Actions | Copy to Side... |  | Prompts which side to copy selected items to. | planned |
 | `CopySide` | Actions |  |  | Copies selected items to other side. | planned |
 | `CopyToOutput` | Actions | Copy to Output... |  | Copies selected items to output folder. | planned |
@@ -78,8 +78,8 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `MoveBoth` | Actions | Exchange |  | Moves selected items to other side. | planned |
 | `CopyTo` | Actions | Copy to Folder... |  | Copies selected items to another folder. | planned |
 | `MoveTo` | Actions | Move to Folder... |  | Moves selected items to another folder. | planned |
-| `Delete` | Actions | Delete |  | Deletes selected items. | planned |
-| `PermanentDelete` | Actions |  | Shift+Del | Deletes selected items without moving them to the recycle bin. | planned |
+| `Delete` | Actions | Delete | Del | Deletes selected items. | implemented |
+| `PermanentDelete` | Actions | Delete Permanently | Shift+Del | Deletes selected items without moving them to the recycle bin. | implemented |
 | `Rename` | Actions | Rename | F2 | Renames selected items. | planned |
 | `Attributes` | Actions | Attributes... |  | Sets the DOS attributes of selected files. | planned |
 | `Touch` | Actions | Touch... |  | Sets timestamps of selected items. | planned |

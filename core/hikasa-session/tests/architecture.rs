@@ -29,8 +29,8 @@
 //!    the core vocabularies (`--display`, `--folders`, `--criteria`, `--unimportant`, the legacy `gui open`
 //!    switches): those parsers live in core (T11); and (M2 W4a, §1.4.16 rule 4) the GUI's model files —
 //!    `app.rs`, `window.rs`, `commands.rs`, `menus.rs`, `dialog.rs`, `status.rs`, `notify.rs`,
-//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs` and `options/*.rs` in
-//!    `gui/hikasa-gui/src` — name no `egui` or `eframe` in code.
+//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d) and
+//!    `options/*.rs` in `gui/hikasa-gui/src` — name no `egui` or `eframe` in code.
 //!
 //! The checks look at code only: comments, string literals and char literals are blanked first, so prose that
 //! mentions a banned token never fails the build, and the patterns below can be written as plain strings
@@ -2545,6 +2545,7 @@ const GUI_MODEL_FILES: &[&str] = &[
     "workspace.rs",
     "session_dialog.rs",
     "wizards.rs",
+    "op_dialogs.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
