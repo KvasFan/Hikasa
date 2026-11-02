@@ -351,6 +351,63 @@ impl ArchiveVfs {
         self.core.cache.cleanup();
     }
 
+    /// A real path of the member `spec`, for a program that needs a name and an extension (D-186, §1.6.18):
+    /// `s<n>/x<k>/<safe name>` in the session's cache, read-only, valid for the session. Same member, same stamp: the same
+    /// path. It counts in the cache and is never evicted, so a member that does not fit `cache_max` is `ArchiveLimit`.
+    /// Links, encrypted and sparse members give the errors of `open_read`. An edit is not written back.
+    pub fn extract_to_cache(&self, spec: &Spec, cancel: &CancelToken) -> Result<PathBuf, VfsError> {
+        let Spec::ArchiveMember { archive, member } = spec else {
+            return Err(VfsError::Unsupported {
+                spec: spec.canonical(),
+                what: "extracting what is not a member",
+            });
+        };
+        let config = self.core.enter(spec)?;
+        let entry = self.stat(spec, FollowLinks::No)?;
+        let text = spec.canonical();
+        let progress = NullProgress;
+        let ctl = Ctl {
+            cancel,
+            progress: &progress,
+        };
+        let (slot, _) = self.core.index_of(archive, &config, ctl)?;
+        // A staged member of an open batch has the archive's stamp: its own tells it apart.
+        let time = entry
+            .mtime
+            .map(|time| (time.unix_seconds(), time.subsec_nanos()));
+        let key = format!("{member}\0{}\0{time:?}", entry.size);
+        if entry.kind == EntryKind::File
+            && let Some(path) = self.core.cache.extracted(slot.id, &key)
+        {
+            return Ok(path);
+        }
+        if entry.size > config.limits.cache_max {
+            return Err(VfsError::ArchiveLimit {
+                spec: text,
+                limit: "cache",
+                value: config.limits.cache_max,
+            });
+        }
+        let mut reader = self.open_read_with(spec, cancel)?;
+        if entry.kind != EntryKind::File {
+            return Err(op_unsupported(spec, VfsOp::Open));
+        }
+        let name = entry.name.as_str();
+        let path = self.core.cache.extract(
+            &config.cache_root,
+            config.limits.cache_max,
+            &text,
+            (slot.id, &key),
+            &name::safe_name(name),
+            entry.size,
+            &mut reader,
+            cancel,
+        )?;
+        drop(reader);
+        self.core.cache.trim(config.limits.cache_max);
+        Ok(path)
+    }
+
     /// What this back-end has done so far.
     pub fn counters(&self) -> ArchiveCounters {
         let c = &self.core.counters;

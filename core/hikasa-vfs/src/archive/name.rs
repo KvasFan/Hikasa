@@ -2,6 +2,9 @@
 //! never reaches a tree, a cache path or a disk.
 
 use std::borrow::Cow;
+use std::ffi::OsStr;
+
+use crate::entry::FileName;
 
 /// The longest member name accepted, in bytes.
 pub(crate) const NAME_MAX: usize = 4096;
@@ -161,9 +164,55 @@ pub fn windows_name_problem(name: &str) -> Option<&'static str> {
     None
 }
 
+/// The longest name [`safe_name`] keeps: what a file system takes in one component.
+const SAFE_NAME_MAX: usize = 255;
+
+/// True when `name` can be the name of an extracted file: rules 1–4 and 17 of §1.5.7, on every platform.
+fn fits_on_disk(name: &str) -> bool {
+    name.len() <= SAFE_NAME_MAX
+        && windows_name_problem(name).is_none()
+        && check_name(name.as_bytes(), NameRules::Tar).is_ok_and(|clean| clean == name.as_bytes())
+}
+
+/// The name of an extracted file (D-186): the member's final name if it fits, else `member` plus its extension if that
+/// fits, else `member`.
+pub(crate) fn safe_name(name: &str) -> String {
+    if fits_on_disk(name) {
+        return name.to_owned();
+    }
+    let with_extension = FileName::from_os(OsStr::new(name))
+        .extension()
+        .map(|extension| format!("member.{extension}"));
+    with_extension
+        .filter(|name| fits_on_disk(name))
+        .unwrap_or_else(|| "member".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracted_names() {
+        let long = "x".repeat(SAFE_NAME_MAX + 1) + ".txt";
+        let rows = [
+            ("report.pdf", "report.pdf"),
+            (".hidden", ".hidden"),
+            ("a:b.txt", "member.txt"),
+            ("CON.txt", "member.txt"),
+            ("nul", "member"),
+            ("trailing.", "member"),
+            ("spaced ", "member"),
+            ("back\\slash.txt", "member.txt"),
+            ("what?.t*t", "member"),
+            ("tab\tname.txt", "member.txt"),
+            (long.as_str(), "member.txt"),
+            ("..", "member"),
+        ];
+        for (name, safe) in rows {
+            assert_eq!(safe_name(name), safe, "{name}");
+        }
+    }
 
     #[test]
     fn rule_1_table() {

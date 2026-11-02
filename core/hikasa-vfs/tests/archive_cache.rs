@@ -665,3 +665,339 @@ fn a_read_of_a_compressed_tar_is_cancelled_before_it_starts() {
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Cancelled);
 }
+
+// ---- A6.13 `extract_to_cache` (D-186) ----------------------------------------------------------------------------
+
+/// Where the session's extractions are: `<session>/x<k>/<name>`.
+fn inside_session(vfs: &ArchiveVfs, path: &Path) -> String {
+    let session = vfs.cache_dir().unwrap();
+    let rest = path.strip_prefix(&session).unwrap();
+    let mut parts = rest.iter().map(|part| part.to_string_lossy().into_owned());
+    let folder = parts.next().unwrap();
+    assert!(folder.starts_with('x'), "{folder}");
+    assert!(folder[1..].bytes().all(|b| b.is_ascii_digit()), "{folder}");
+    let name = parts.next().unwrap();
+    assert_eq!(parts.next(), None);
+    name
+}
+
+#[test]
+fn a6_13_names_and_extensions() {
+    let disk = on_disk(ArchiveLimits::default());
+    let tar = common::archives::raw_tar(&[
+        RawTar::file(b"plain.txt", b"plain"),
+        RawTar::file(b"dir/report.final.pdf", b"pdf"),
+        RawTar::file(b"ab:c.txt", b"colon"),
+        RawTar::file(b"CON.txt", b"device"),
+        RawTar::file(b"nul", b"bare device"),
+        RawTar::file(b"trailing.", b"dot"),
+    ]);
+    let file = disk.put("a.tar", &tar);
+    let rows = [
+        ("plain.txt", "plain.txt", &b"plain"[..]),
+        ("dir/report.final.pdf", "report.final.pdf", b"pdf"),
+        ("ab:c.txt", "member.txt", b"colon"),
+        ("CON.txt", "member.txt", b"device"),
+        ("nul", "member", b"bare device"),
+        ("trailing.", "member", b"dot"),
+    ];
+    let cancel = CancelToken::new();
+    for (member, name, bytes) in rows {
+        let spec = Spec::archive_member(file.clone(), member);
+        let path = disk.vfs.extract_to_cache(&spec, &cancel).unwrap();
+        assert_eq!(inside_session(&disk.vfs, &path), name, "{member}");
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{member}");
+        let meta = fs::metadata(&path).unwrap();
+        assert!(meta.permissions().readonly(), "{member}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(meta.permissions().mode() & 0o777, 0o400, "{member}");
+        }
+    }
+}
+
+/// The same member twice is one file; a new stamp is a new file, and the old one stays for the session.
+#[test]
+fn a6_13_same_member_one_file_new_stamp_new_file() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(2, 100));
+    let spec = Spec::archive_member(file.clone(), "m1");
+    let cancel = CancelToken::new();
+    let first = disk.vfs.extract_to_cache(&spec, &cancel).unwrap();
+    let again = disk.vfs.extract_to_cache(&spec, &cancel).unwrap();
+    assert_eq!(first, again);
+    assert_eq!(disk.vfs.cache_used(), 100);
+    let time = FileTime::from_unix(1_000_000, 0);
+    disk.put("a.zip", &stored(2, 200));
+    let vfs: &dyn Vfs = &*disk.vfs;
+    vfs.set_times(
+        &file,
+        &hikasa_vfs::SetTimes {
+            modified: time,
+            created: None,
+        },
+    )
+    .unwrap();
+    let new = disk.vfs.extract_to_cache(&spec, &cancel).unwrap();
+    assert_ne!(new, first);
+    assert_eq!(fs::read(&new).unwrap().len(), 200);
+    assert_eq!(
+        fs::read(&first).unwrap().len(),
+        100,
+        "valid for the session"
+    );
+}
+
+/// Never evicted under pressure; a member over `cache_max` leaves nothing, and a member that only fits once its spool
+/// is gone is taken.
+#[test]
+fn a6_13_never_evicted_and_over_the_limit() {
+    let limits = ArchiveLimits {
+        cache_max: 4 * MIB as u64,
+        ..ArchiveLimits::default()
+    };
+    let disk = on_disk(limits);
+    let file = disk.put("a.zip", &stored(3, 2 * MIB));
+    let cancel = CancelToken::new();
+    let member = |name: &str| Spec::archive_member(file.clone(), name);
+    let kept = disk.vfs.extract_to_cache(&member("m0"), &cancel).unwrap();
+    assert!(disk.vfs.cache_used() <= 4 * MIB as u64 + 2 * STAMP);
+    // Reads go through the cache and must evict their own spools, never the extraction.
+    for name in ["m1", "m2", "m1", "m2"] {
+        read(&*disk.vfs, &member(name));
+        assert!(kept.is_file(), "{name}");
+    }
+    let session = disk.vfs.cache_dir().unwrap();
+    let big = disk.put("big.zip", &stored(1, 5 * MIB));
+    let error = disk
+        .vfs
+        .extract_to_cache(&Spec::archive_member(big, "m0"), &cancel)
+        .unwrap_err();
+    assert!(
+        matches!(error, VfsError::ArchiveLimit { limit: "cache", .. }),
+        "{error}"
+    );
+    let folders = fs::read_dir(&session)
+        .unwrap()
+        .filter(|item| {
+            let item = item.as_ref().unwrap();
+            item.file_name().to_string_lossy().starts_with('x')
+        })
+        .count();
+    assert_eq!(folders, 1, "the first extraction and nothing else");
+    // The limit stands again: what was spooled for a member goes with its reader.
+    assert!(disk.vfs.cache_used() <= 4 * MIB as u64);
+}
+
+/// A member that fills the cache alone: its own spool does not stop it.
+#[test]
+fn a6_13_a_member_of_the_whole_cache() {
+    let limits = ArchiveLimits {
+        cache_max: 3 * MIB as u64,
+        ..ArchiveLimits::default()
+    };
+    let disk = on_disk(limits);
+    let file = disk.put("a.zip", &stored(1, 3 * MIB));
+    let spec = Spec::archive_member(file, "m0");
+    let path = disk
+        .vfs
+        .extract_to_cache(&spec, &CancelToken::new())
+        .unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().len(), 3 * MIB as u64);
+    assert_eq!(disk.vfs.cache_used(), 3 * MIB as u64);
+}
+
+/// `cleanup` removes it, on Windows after the read-only bit is cleared.
+#[test]
+fn a6_13_cleanup_removes_it() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(1, 100));
+    let spec = Spec::archive_member(file, "m0");
+    let path = disk
+        .vfs
+        .extract_to_cache(&spec, &CancelToken::new())
+        .unwrap();
+    let session = disk.vfs.cache_dir().unwrap();
+    disk.vfs.cleanup();
+    assert!(!path.exists());
+    assert!(!session.exists());
+    assert_eq!(disk.vfs.cache_used(), 0);
+    // A later call works, in a new session.
+    let again = disk
+        .vfs
+        .extract_to_cache(&spec, &CancelToken::new())
+        .unwrap();
+    assert!(again.is_file());
+}
+
+/// A crashed session's extraction goes with its folder, on Windows too.
+#[test]
+fn a6_13_a_sweep_takes_read_only_files() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put("a.zip", &stored(1, 100));
+    let spec = Spec::archive_member(file, "m0");
+    let root = disk.cache.clone();
+    fs::create_dir_all(root.join("s7/x1")).unwrap();
+    let left = root.join("s7/x1/report.pdf");
+    fs::write(&left, b"left over").unwrap();
+    let mut permissions = fs::metadata(&left).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&left, permissions).unwrap();
+    fs::write(root.join("s7.lock"), b"").unwrap();
+    disk.vfs
+        .extract_to_cache(&spec, &CancelToken::new())
+        .unwrap();
+    assert!(!root.join("s7").exists(), "swept with the first extraction");
+    assert!(!root.join("s7.lock").exists());
+}
+
+/// Links, encrypted and sparse members give the errors of `open_read`.
+#[test]
+fn a6_13_what_cannot_be_read() {
+    let disk = on_disk(ArchiveLimits::default());
+    let tar = common::archives::raw_tar(&[
+        RawTar::link(b"lnk", b'2', b"target"),
+        RawTar::typed(b"sparse", b'S'),
+        RawTar::typed(b"dev", b'3'),
+        RawTar::file(b"dir/x", b"x"),
+    ]);
+    let file = disk.put("a.tar", &tar);
+    let cancel = CancelToken::new();
+    let spec = |name: &str| Spec::archive_member(file.clone(), name);
+    for name in ["lnk", "sparse", "dev"] {
+        let error = disk.vfs.extract_to_cache(&spec(name), &cancel).unwrap_err();
+        let read = (&*disk.vfs as &dyn Vfs).open_read(&spec(name)).err();
+        assert_eq!(Some(error.kind()), read.map(|e| e.kind()), "{name}");
+    }
+    let folder = disk
+        .vfs
+        .extract_to_cache(&spec("dir"), &cancel)
+        .unwrap_err();
+    assert_eq!(folder.kind(), ErrorKind::IsADirectory);
+    let plain = disk.put("plain.txt", b"x");
+    let error = disk.vfs.extract_to_cache(&plain, &cancel).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Unsupported);
+    assert_eq!(disk.vfs.cache_dir(), None, "nothing was created");
+}
+
+#[test]
+fn a6_13_an_encrypted_member() {
+    let disk = on_disk(ArchiveLimits::default());
+    let file = disk.put(
+        "a.zip",
+        &common::archives::raw_zip(&[{
+            let mut entry = RawEntry::new(b"s", b"secret");
+            entry.flags |= 1;
+            entry
+        }]),
+    );
+    let spec = Spec::archive_member(file, "s");
+    let error = disk
+        .vfs
+        .extract_to_cache(&spec, &CancelToken::new())
+        .unwrap_err();
+    assert!(
+        matches!(error, VfsError::ArchiveEncrypted { .. }),
+        "{error}"
+    );
+}
+
+/// A base whose readers cancel a token after a number of bytes.
+struct CancelAfter {
+    inner: Arc<dyn Vfs>,
+    token: CancelToken,
+    bytes: u64,
+}
+
+struct CancellingReader {
+    inner: Box<dyn hikasa_vfs::ReadSeek>,
+    token: CancelToken,
+    left: u64,
+}
+
+impl Read for CancellingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.left = self.left.saturating_sub(n as u64);
+        if self.left == 0 {
+            self.token.cancel();
+        }
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for CancellingReader {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(to)
+    }
+}
+
+impl Vfs for CancelAfter {
+    fn capabilities(&self, at: &Spec) -> Result<hikasa_vfs::Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(
+        &self,
+        spec: &Spec,
+        follow: hikasa_vfs::FollowLinks,
+    ) -> Result<hikasa_vfs::Entry, VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<hikasa_vfs::Listing, VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn hikasa_vfs::ReadSeek>, VfsError> {
+        Ok(Box::new(CancellingReader {
+            inner: self.inner.open_read(spec)?,
+            token: self.token.clone(),
+            left: self.bytes,
+        }))
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &hikasa_vfs::WriteOptions,
+    ) -> Result<Box<dyn hikasa_vfs::AtomicWrite>, VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &hikasa_vfs::FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+}
+
+/// Cancel mid-stream leaves nothing.
+#[test]
+fn a6_13_cancel_mid_stream_leaves_nothing() {
+    let keep = tempfile::tempdir().unwrap();
+    let root = keep.path().canonicalize().unwrap();
+    let path = root.join("a.tar");
+    let member = vec![5u8; 8 * MIB];
+    fs::write(
+        &path,
+        common::archives::raw_tar(&[RawTar::file(b"big.bin", &member)]),
+    )
+    .unwrap();
+    let file = common::archives::local(&path);
+    let reading = CancelToken::new();
+    let base = Arc::new(CancelAfter {
+        inner: Arc::new(LocalVfs::default()),
+        token: reading.clone(),
+        bytes: (3 * MIB) as u64,
+    });
+    let vfs = ArchiveVfs::new(
+        base as Arc<dyn Vfs>,
+        config(&root.join("cache"), ArchiveLimits::default()),
+    );
+    let spec = Spec::archive_member(file, "big.bin");
+    let error = vfs.extract_to_cache(&spec, &reading).unwrap_err();
+    assert!(error.is_cancelled(), "{error}");
+    let session = vfs.cache_dir().unwrap();
+    assert_eq!(fs::read_dir(&session).unwrap().count(), 0);
+    assert_eq!(vfs.cache_used(), 0);
+}
