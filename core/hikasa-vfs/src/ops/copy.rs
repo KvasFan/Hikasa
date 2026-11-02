@@ -733,9 +733,16 @@ pub(crate) fn copy_content(
     exec.ctl.check()?;
     match &item.backup {
         Some(backup) => {
-            commit_with_backup(exec, writer, target, backup)?;
-            // The writer keeps the mode of a file it replaces, and this one has gone aside.
-            if let Some(Attrs::Unix { meta }) = replaced.map(|found| found.attrs)
+            with_backup(exec, target, backup, item.clear_read_only, || {
+                writer.commit()
+            })?;
+            // The writer keeps the mode of a regular file it replaces, and this one has gone aside. What a link or a
+            // special file has for a mode is no mode for a file: the new one has the default, as without a backup.
+            if let Some(Entry {
+                kind: EntryKind::File,
+                attrs: Attrs::Unix { meta },
+                ..
+            }) = replaced
                 && !exec.preserve().attrs
             {
                 exec.dst
@@ -753,29 +760,34 @@ pub(crate) fn copy_content(
     Ok(copied)
 }
 
-/// The end of a replacing copy with a backup (§1.6.5): the old file is renamed to its backup just before the commit, and
-/// back when the commit fails. The target is missing for one rename only. On another disk the backup is a copy, made
-/// while the target is intact. **A failed backup fails the item and the target stays.**
-fn commit_with_backup(
+/// What replaces the target, with a backup of the old one (§1.6.5): the old item is renamed to its backup just before
+/// `commit`, and back when it fails. The target is missing for one rename only. On another disk the backup is a copy, made
+/// while the target is intact, and then the target is still there for `commit` to replace, so `clear` takes its `R` first
+/// and a failure gives it back. **A failed backup fails the item and the target stays.**
+pub(crate) fn with_backup(
     exec: &Exec<'_>,
-    writer: Box<dyn AtomicWrite>,
     target: &Spec,
     backup: &Spec,
+    clear: bool,
+    commit: impl FnOnce() -> Result<(), VfsError>,
 ) -> Result<(), VfsError> {
     let dst = exec.dst;
     if let Some(parent) = backup.parent() {
         dst.create_dir(&parent, true)?;
     }
     match dst.rename(target, backup, true) {
-        Ok(()) => writer
-            .commit()
-            .map_err(|e| match dst.rename(backup, target, true) {
-                Ok(()) => e,
-                Err(back) => kept_as(target, backup, &e, &back),
-            }),
+        Ok(()) => commit().map_err(|e| match dst.rename(backup, target, true) {
+            Ok(()) => e,
+            Err(back) => kept_as(target, backup, &e, &back),
+        }),
         Err(VfsError::CrossDevice { .. } | VfsError::OperationUnsupported { .. }) => {
             write_backup(dst, target, backup, exec.ctl)?;
-            writer.commit()
+            let cleared = clear && clear_read_only_of(dst, target)?;
+            commit().inspect_err(|_| {
+                if cleared {
+                    restore_read_only(dst, target);
+                }
+            })
         }
         Err(e) => Err(e),
     }

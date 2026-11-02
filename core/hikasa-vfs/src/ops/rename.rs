@@ -7,13 +7,14 @@ use hikasa_core::{Ctl, Spec, Warning, WarningCode};
 use super::copy::{
     Mode, Planner, TargetState, apply_preserved, clear_read_only_of, copy_content,
     create_link_copy, narrow_archive_mode, restore_read_only, source_changed, source_file,
+    with_backup,
 };
 use super::guard::Seen;
 use super::plan::report;
 use super::{
-    Action, Decision, Exec, Later, LinkPolicy, MoveOptions, OpKind, Outcome, Plan, PlanItem,
-    PlanOptions, Preserve, check_item, check_move_inside, check_nesting, check_same_archive,
-    decide, is_blob, is_respelling, lstat_target, same_instance, scanning,
+    Action, Decision, Exec, Later, LinkPolicy, MoveOptions, OpKind, Outcome, OverwritePolicy, Plan,
+    PlanItem, PlanOptions, Preserve, check_item, check_move_inside, check_nesting,
+    check_same_archive, decide, is_blob, is_respelling, lstat_target, same_instance, scanning,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind};
@@ -182,60 +183,89 @@ pub fn plan_move(
     })
 }
 
-/// `rename`: one call; `CrossDevice` expands the root in place (D-97).
+/// `rename`: one call; `CrossDevice` expands the root in place (D-97). A replaced target goes to its backup first, as in
+/// a copy (§1.6.5), and comes back when the rename fails.
 pub(crate) fn run_rename(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
-    let cleared = if item.clear_read_only && item.replaces {
-        match clear_read_only_of(exec.dst, &item.target) {
-            Ok(cleared) => cleared,
-            Err(e) => return Outcome::Failed(e),
-        }
-    } else {
-        false
-    };
-    let outcome = rename_item(exec, item, source);
-    if cleared && matches!(outcome, Outcome::Failed(_)) {
-        restore_read_only(exec.dst, &item.target);
-    }
-    outcome
-}
-
-/// [`run_rename`] once a read-only target is out of the way.
-fn rename_item(exec: &mut Exec<'_>, item: &PlanItem, source: &Spec) -> Outcome {
-    if exec.create_parents(item.depth)
-        && let Some(parent) = item.target.parent()
-        && let Err(e) = exec.dst.create_dir(&parent, true)
-    {
+    if let Err(e) = parents_of(exec, item) {
         return Outcome::Failed(e);
     }
-    match exec.src.rename(source, &item.target, item.replaces) {
+    let renamed = match item.backup.as_ref().filter(|_| item.replaces) {
+        Some(backup) => with_backup(exec, &item.target, backup, item.clear_read_only, || {
+            exec.src.rename(source, &item.target, true)
+        }),
+        None => clearing_read_only(exec, item, || {
+            exec.src.rename(source, &item.target, item.replaces)
+        }),
+    };
+    match renamed {
         Ok(()) => Outcome::Done(0),
-        Err(VfsError::CrossDevice { .. }) => {
-            let opts = match exec.options {
-                PlanOptions::Move(opts) => opts,
-                _ => MoveOptions::default(),
-            };
-            let entry = match exec.src.stat(source, FollowLinks::No) {
-                Ok(entry) => entry,
-                Err(e) => return Outcome::Failed(e),
-            };
-            let mut planner = expander(exec.src, exec.dst, &opts, exec.ctl);
-            if let Err(e) = planner.node(
-                source,
-                &entry,
-                &item.target,
-                TargetState::Unknown,
-                item.depth,
-            ) {
-                return Outcome::Failed(e);
-            }
-            exec.warnings.extend(planner.warnings);
-            Outcome::Expand(planner.items)
-        }
+        Err(VfsError::CrossDevice { .. }) => expand(exec, item, source),
         Err(e) => Outcome::Failed(e),
     }
+}
+
+/// The missing parents of a root target.
+fn parents_of(exec: &Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
+    if exec.create_parents(item.depth)
+        && let Some(parent) = item.target.parent()
+    {
+        exec.dst.create_dir(&parent, true)?;
+    }
+    Ok(())
+}
+
+/// Runs `rename` with the `R` of a replaced target off, and gives it back when it fails.
+fn clearing_read_only(
+    exec: &Exec<'_>,
+    item: &PlanItem,
+    rename: impl FnOnce() -> Result<(), VfsError>,
+) -> Result<(), VfsError> {
+    let cleared =
+        item.clear_read_only && item.replaces && clear_read_only_of(exec.dst, &item.target)?;
+    rename().inspect_err(|_| {
+        if cleared {
+            restore_read_only(exec.dst, &item.target);
+        }
+    })
+}
+
+/// The expansion of a `rename` that met `CrossDevice`: a replacing item keeps its decision, its backup and its `R`.
+fn expand(exec: &mut Exec<'_>, item: &PlanItem, source: &Spec) -> Outcome {
+    let opts = match exec.options {
+        PlanOptions::Move(opts) => opts,
+        // A batch decided at planning, and the item says what it decided.
+        _ if item.replaces => MoveOptions {
+            overwrite: OverwritePolicy::Always,
+            ..MoveOptions::default()
+        },
+        _ => MoveOptions::default(),
+    };
+    let entry = match exec.src.stat(source, FollowLinks::No) {
+        Ok(entry) => entry,
+        Err(e) => return Outcome::Failed(e),
+    };
+    let mut planner = expander(exec.src, exec.dst, &opts, exec.ctl);
+    if let Err(e) = planner.node(
+        source,
+        &entry,
+        &item.target,
+        TargetState::Unknown,
+        item.depth,
+    ) {
+        return Outcome::Failed(e);
+    }
+    exec.warnings.extend(planner.warnings);
+    let mut items = planner.items;
+    for expanded in items.iter_mut().filter(|expanded| {
+        expanded.replaces && expanded.target == item.target && expanded.error.is_none()
+    }) {
+        expanded.backup.clone_from(&item.backup);
+        expanded.clear_read_only = item.clear_read_only;
+    }
+    Outcome::Expand(items)
 }
 
 /// `move`: copy the file or link, then remove the source; when the removal fails the copy is removed again

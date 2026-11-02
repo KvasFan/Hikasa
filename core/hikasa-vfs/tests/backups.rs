@@ -8,7 +8,7 @@ use common::{ft, host, mspec, read_to_vec};
 use hikasa_core::{CaseSensitivity, Ctl, ErrorKind, RelPath, Spec};
 use hikasa_vfs::ops::{
     self, Action, BackupNames, BackupPolicy, BackupStyle, BatchOptions, ExecOptions, ItemStatus,
-    OpKind, OpReport, Plan, PlanItem, PlanOptions, write_backup,
+    OpKind, OpReport, Plan, PlanItem, PlanOptions, Preserve, write_backup,
 };
 use hikasa_vfs::{
     ArchiveFormat, ArchiveLimits, Attrs, EntryKind, Fault, LocalVfs, MemDump, MemMeta, MemoryVfs,
@@ -565,6 +565,115 @@ fn a6_6_a_backup_onto_itself_on_disk() {
     assert!(!report.ok());
     assert_eq!(std::fs::read(root.join("right/x")).unwrap(), b"old");
     assert_eq!(std::fs::read(root.join("s")).unwrap(), b"new");
+}
+
+fn rename_with_backup() -> PlanItem {
+    let mut item = copy_with_backup();
+    item.action = Action::Rename;
+    item
+}
+
+/// `rename` that replaces keeps what it replaces, as a copy does; a failure puts all of it back.
+#[test]
+fn a6_6_a_rename_honours_its_backup() {
+    let vfs = replaced();
+    let report = run(&vfs, batch(vec![rename_with_backup()]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/t.bak"), b"old");
+    assert_eq!(content(&vfs, "/t"), b"new content");
+    assert!(vfs.read_back(&host("/s")).is_none());
+
+    let vfs = replaced();
+    let before = vfs.dump();
+    vfs.inject(Fault {
+        path: host("/s"),
+        op: VfsOp::Rename,
+        kind: ErrorKind::Io,
+    });
+    let report = run(&vfs, batch(vec![rename_with_backup()]));
+    assert_eq!(report.results[0].status, ItemStatus::Failed);
+    assert_eq!(vfs.dump(), before);
+}
+
+/// The backup on another disk is a copy, made first; a failed rename leaves the target where it was.
+#[test]
+fn a6_6_a_rename_with_a_backup_on_another_disk() {
+    let vfs = replaced();
+    vfs.insert_dir(&host("/other"), MemMeta::default()).unwrap();
+    vfs.set_device(&host("/other"), 2);
+    let mut item = rename_with_backup();
+    item.backup = Some(mspec("/other/t"));
+    let report = run(&vfs, batch(vec![item]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/other/t"), b"old");
+    assert_eq!(content(&vfs, "/t"), b"new content");
+}
+
+/// A `rename` that met another disk expands to a `move` that keeps the backup, and replaces in a batch too.
+#[test]
+fn a6_6_a_rename_expanded_keeps_its_backup() {
+    let vfs = replaced();
+    vfs.insert_dir(&host("/far"), MemMeta::default()).unwrap();
+    vfs.set_device(&host("/far"), 2);
+    vfs.insert_file(&host("/far/t"), &b"old far"[..], meta(100))
+        .unwrap();
+    let mut item = rename_with_backup();
+    item.target = mspec("/far/t");
+    item.backup = Some(mspec("/far/t.bak"));
+    let report = run(&vfs, batch(vec![item]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(report.plan.items[0].action, Action::Move);
+    assert_eq!(content(&vfs, "/far/t.bak"), b"old far");
+    assert_eq!(content(&vfs, "/far/t"), b"new content");
+    assert!(vfs.read_back(&host("/s")).is_none());
+}
+
+/// A link replaced with a backup and `--no-preserve`: the new file has the default mode, as without a backup, not the
+/// `0777` of the link's own `lstat`.
+#[cfg(unix)]
+#[test]
+fn a6_6_replacing_a_link_takes_no_mode_from_it() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("s"), b"new").unwrap();
+    std::fs::write(root.join("elsewhere"), b"pointed").unwrap();
+    symlink("elsewhere", root.join("t")).unwrap();
+    symlink("elsewhere", root.join("plain")).unwrap();
+    let vfs = LocalVfs::default();
+    let item = |target: &str, backup: Option<&str>| {
+        let mut item = PlanItem::planned(
+            Action::Copy,
+            EntryKind::File,
+            Some(common::lspec_new(&root.join("s"))),
+            common::lspec_new(&root.join(target)),
+            0,
+        );
+        item.replaces = true;
+        item.backup = backup.map(|name| common::lspec_new(&root.join(name)));
+        item
+    };
+    let plan = Plan {
+        op: OpKind::Batch,
+        options: PlanOptions::Batch(BatchOptions {
+            preserve: Preserve::NONE,
+            ..BatchOptions::default()
+        }),
+        items: vec![item("t", Some("t.bak")), item("plain", None)],
+        warnings: Vec::new(),
+    };
+    let report = run(&vfs, plan);
+    assert!(report.ok(), "{:?}", report.results);
+    let mode = |name: &str| {
+        std::fs::metadata(root.join(name))
+            .unwrap()
+            .permissions()
+            .mode()
+    };
+    assert_eq!(mode("t"), mode("plain"), "with a backup as without");
+    assert_ne!(mode("t") & 0o777, 0o777);
+    let kept = std::fs::symlink_metadata(root.join("t.bak")).unwrap();
+    assert!(kept.is_symlink());
 }
 
 /// A move: the same path; `folder` parents are not items.
