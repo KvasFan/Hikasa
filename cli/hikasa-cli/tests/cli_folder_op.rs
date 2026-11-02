@@ -309,6 +309,38 @@ fn a6_25_an_unknown_path_is_100_not_found() {
     assert_eq!(json(&out)["error"]["kind"], "not_found");
 }
 
+/// D-185: `--path` names one row. No spelling of an empty shell variable reaches the base, on any entry that takes it.
+#[test]
+fn a6_25_no_spelling_of_path_reaches_the_base() {
+    let s = sandbox();
+    let before = state(&s);
+    for word in [
+        "", ".", "/", "//", "./", "..", "../", "left:", "right:", "left:.", "right:/", "left:./",
+    ] {
+        for verb in [
+            &["delete", "--side", "both", "--yes"][..],
+            &["copy", "--to", "right", "--yes"][..],
+            &["touch", "--side", "left"][..],
+            &["crc", "--side", "left"][..],
+            &["exclude", "--dry-run"][..],
+            &["ignored", "--dry-run"][..],
+            &["open-with", "--associated", "--dry-run"][..],
+        ] {
+            let mut args = verb.to_vec();
+            args.extend(["--path", word, "--json"]);
+            let out = op(&s, &args);
+            assert_eq!(code(&out), 100, "{verb:?} --path {word:?}");
+            assert_eq!(json(&out)["error"]["kind"], "invalid_input", "{word:?}");
+        }
+    }
+    assert_eq!(state(&s), before);
+    // A name of dots is a name, and a trailing separator still names its row.
+    s.file_at("l/.../x", "x", 1_000_000);
+    let out = op(&s, &["copy", "--to", "right", "--path", ".../", "--yes"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("r/.../x").exists());
+}
+
 #[test]
 fn a6_25_path_prefixes_name_a_side() {
     let s = sandbox();

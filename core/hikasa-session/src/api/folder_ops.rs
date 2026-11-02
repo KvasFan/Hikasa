@@ -501,6 +501,30 @@ fn row_of(read: &TreeRead<'_>, path: &str, windows: bool) -> Result<NodeId, ApiE
     read.node_at(&rel).ok_or_else(unknown)
 }
 
+/// The row `--path` names: one row, never the base. An empty path, and any spelling that comes to the base, is
+/// `invalid_input`: a shell's empty variable must not reach a whole tree (D-185). The base takes an explicit `--select`.
+fn named_row(read: &TreeRead<'_>, path: &str, windows: bool) -> Result<NodeId, ApiError> {
+    let separator = |c: char| c == '/' || (windows && c == '\\');
+    let to_the_base = path
+        .split(separator)
+        .all(|name| name.is_empty() || name == "." || name == "..");
+    if to_the_base {
+        return Err(no_row(path));
+    }
+    let row = row_of(read, path, windows)?;
+    if row == NodeId::ROOT {
+        return Err(no_row(path));
+    }
+    Ok(row)
+}
+
+/// The error of a `--path` that names no row.
+fn no_row(path: &str) -> ApiError {
+    ApiError::InvalidArgument(format!(
+        "--path `{path}` names no row: it needs a path below the bases, and the whole tree needs --select"
+    ))
+}
+
 /// A file and a folder of one name are two rows (D-20): `row`, or its sibling of that name which has `sides`.
 fn row_on(read: &TreeRead<'_>, row: NodeId, sides: SideSet) -> NodeId {
     let has = |id: NodeId| {
@@ -555,7 +579,7 @@ impl Service {
         let mut selection = req.selection.clone().unwrap_or_default();
         select(read, &scope, &masks, req.iu, &mut selection);
         for (path, sides) in &req.paths {
-            let row = row_of(read, path, windows)?;
+            let row = named_row(read, path, windows)?;
             let sides = if sides.is_empty() { verb } else { *sides };
             selection.insert(row_on(read, row, sides), sides);
         }
@@ -1037,7 +1061,7 @@ impl Service {
             let read = model.read();
             let mut items = Vec::new();
             for (path, own) in paths {
-                let row = row_of(&read, path, windows)?;
+                let row = named_row(&read, path, windows)?;
                 let on = if own.is_empty() { sides } else { *own };
                 for side in on.sides() {
                     if let (Some(spec), Some(base)) =
