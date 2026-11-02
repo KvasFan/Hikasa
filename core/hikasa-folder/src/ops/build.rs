@@ -295,7 +295,9 @@ pub(super) fn plan(
             structure,
             overwrite,
         } => {
-            builder.copy_to(&rows, *sides, target, *folder, *structure, *overwrite, false)?;
+            builder.copy_to(
+                &rows, *sides, target, *folder, *structure, *overwrite, false,
+            )?;
             OpVerb::CopyTo
         }
         FolderOp::MoveTo {
@@ -824,7 +826,7 @@ impl<'a, 'r> Builder<'a, 'r> {
 
     /// What stands at a folder this plan makes: the folder, for what comes after it.
     pub(super) fn made_here(&mut self, spec: &Spec) -> Option<Found> {
-        self.is_made(spec).then(|| Found {
+        self.is_made(spec).then_some(Found {
             kind: EntryKind::Dir,
             stamp: ItemStamp {
                 kind: EntryKind::Dir,
@@ -1564,7 +1566,16 @@ impl<'a, 'r> Builder<'a, 'r> {
             }
             Err(e) => {
                 let kind = EntryKind::File;
-                self.fail_row(id, action, kind, Some(file), target, depth, report(&e), side);
+                self.fail_row(
+                    id,
+                    action,
+                    kind,
+                    Some(file),
+                    target,
+                    depth,
+                    report(&e),
+                    side,
+                );
             }
         }
     }
@@ -1953,13 +1964,8 @@ impl<'a, 'r> Builder<'a, 'r> {
                         size: None,
                         mtime: None,
                     };
-                    let mut item = PlanItem::planned(
-                        Action::RemoveDir,
-                        EntryKind::Dir,
-                        None,
-                        spec,
-                        at,
-                    );
+                    let mut item =
+                        PlanItem::planned(Action::RemoveDir, EntryKind::Dir, None, spec, at);
                     item.expect = Some(Expect {
                         source: None,
                         target: Some(stamp),
@@ -1967,16 +1973,14 @@ impl<'a, 'r> Builder<'a, 'r> {
                     out.push(item);
                     continue;
                 }
-                _ if entry.followed => {
-                    (spec, EntryKind::Symlink, Ok(stamp_of(&entry, false)))
-                }
+                _ if entry.followed => (spec, EntryKind::Symlink, Ok(stamp_of(entry, false))),
                 _ => {
                     let stamp = if entry.stat_skipped {
                         self.vfs
                             .stat(&spec, FollowLinks::No)
                             .map(|stat| stamp_of_stat(&stat))
                     } else {
-                        Ok(stamp_of(&entry, true))
+                        Ok(stamp_of(entry, true))
                     };
                     (spec, view.kind.entry_kind(), stamp)
                 }

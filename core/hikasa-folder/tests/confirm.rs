@@ -774,7 +774,12 @@ fn a6_17_the_fallback_deletes_only_what_the_plan_saw() {
     let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
     assert_eq!(out.plan.items.len(), 1);
     assert_eq!(out.plan.items[0].fallback.len(), 2);
-    assert!(out.plan.items[0].fallback.iter().all(|i| i.expect.is_some()));
+    assert!(
+        out.plan.items[0]
+            .fallback
+            .iter()
+            .all(|i| i.expect.is_some())
+    );
     file(&vfs, "/l/d/precious", b"new work", meta(20));
     vfs.inject(Fault {
         path: host("/l/d"),

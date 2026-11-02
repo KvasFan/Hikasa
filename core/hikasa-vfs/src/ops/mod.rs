@@ -755,7 +755,9 @@ impl Cut {
                 || self.source.as_ref().is_some_and(|source| {
                     // What comes from below its source: a move's items, and the `remove_dir` of a folder in it. A target
                     // below the source is no such thing: a `create_dir`'s source can be the other side's folder.
-                    item.source.as_ref().is_some_and(|spec| lies_below(spec, source))
+                    item.source
+                        .as_ref()
+                        .is_some_and(|spec| lies_below(spec, source))
                         || (item.action == Action::RemoveDir && lies_below(&item.target, source))
                 }))
     }

@@ -11,7 +11,8 @@ use hikasa_vfs::{Capabilities, EntryKind, FileName, FollowLinks, Vfs, VfsError};
 use super::ItemMeta;
 use super::PathStructure;
 use super::build::{
-    Builder, Found, Open, Placed, Transfer, found_of_stat, key_of, nothing_on, report, view_of_entry,
+    Builder, Found, Open, Placed, Transfer, found_of_stat, key_of, nothing_on, report,
+    view_of_entry,
 };
 use super::conflict::Conflicts;
 use super::unlisted::Walk;
@@ -83,13 +84,12 @@ impl Builder<'_, '_> {
                     at = view.and_then(|view| view.parent);
                 }
                 // In a flat comparison the folders of a row are no rows.
-                let dir = self.read.node(row.node).and_then(|view| view.side(side)?.dir);
+                let dir = self
+                    .read
+                    .node(row.node)
+                    .and_then(|view| view.side(side)?.dir);
                 let folders = dir.iter().flat_map(|dir| dir.rsplit('/'));
-                names.extend(
-                    folders
-                        .filter(|name| !name.is_empty())
-                        .map(OsString::from),
-                );
+                names.extend(folders.filter(|name| !name.is_empty()).map(OsString::from));
                 names.reverse();
                 Source {
                     row: *row,
@@ -134,8 +134,9 @@ impl Builder<'_, '_> {
             Some(_) => Err(not_folder()),
             None => {
                 self.target_chain(on_disk, below)?;
-                let archive =
-                    !folder && writes_archive && (file.is_some() || matches!(target, Spec::Local(_)));
+                let archive = !folder
+                    && writes_archive
+                    && (file.is_some() || matches!(target, Spec::Local(_)));
                 let action = if archive {
                     Action::CreateArchive
                 } else {
@@ -258,7 +259,8 @@ impl Builder<'_, '_> {
     /// paths stays.
     fn claim_rows(&mut self, id: NodeId, side: Side, target: &Spec) {
         let read = self.read;
-        let mut stack: Vec<(NodeId, Spec)> = read.children(id).map(|row| (row, target.clone())).collect();
+        let mut stack: Vec<(NodeId, Spec)> =
+            read.children(id).map(|row| (row, target.clone())).collect();
         while let Some((row, dir)) = stack.pop() {
             let Some(view) = read.node(row) else { continue };
             let (Some(_), Some(name)) = (view.side(side), read.raw_name(row, side)) else {
@@ -351,7 +353,11 @@ impl Builder<'_, '_> {
                 }
                 None => {
                     // What stands there: nothing, a folder, or a file that rule 8 replaces or keeps.
-                    let stood = if new_parent { None } else { lstat(self.vfs, &at)? };
+                    let stood = if new_parent {
+                        None
+                    } else {
+                        lstat(self.vfs, &at)?
+                    };
                     let made = !stood.as_ref().is_some_and(|it| it.kind == EntryKind::Dir);
                     let known = if made {
                         let at_item = self.items.len();
@@ -359,7 +365,11 @@ impl Builder<'_, '_> {
                         let found = stood.as_ref().map(found_of_stat);
                         self.folder_on_the_way(tr, source, first + index, &at, found, depth);
                         // A folder that cannot be made is no folder for the next source: it meets the same refusal.
-                        if self.items.get(at_item).is_some_and(|item| item.error.is_some()) {
+                        if self
+                            .items
+                            .get(at_item)
+                            .is_some_and(|item| item.error.is_some())
+                        {
                             return Err(VfsError::NotADirectory { spec: key });
                         }
                         Some(depth)
@@ -681,7 +691,11 @@ impl Builder<'_, '_> {
             self.cover(id);
             return Ok(());
         }
-        if tr.moving && whole && found.is_none() && made.is_none() && self.can_rename(&from, &target)
+        if tr.moving
+            && whole
+            && found.is_none()
+            && made.is_none()
+            && self.can_rename(&from, &target)
         {
             self.claim_rows(id, tr.from, &target);
             self.push_folder_rename(id, from, target, depth, None);
@@ -713,7 +727,11 @@ impl Builder<'_, '_> {
                     self.create_dir(placed, tr);
                     self.depths.insert(id, depth);
                     // A folder that cannot be made is no folder for the next source: it meets the same refusal.
-                    if self.items.get(first).is_some_and(|item| item.error.is_some()) {
+                    if self
+                        .items
+                        .get(first)
+                        .is_some_and(|item| item.error.is_some())
+                    {
                         below.folders.remove(&key);
                     }
                 }

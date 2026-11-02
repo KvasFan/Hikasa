@@ -196,7 +196,13 @@ fn a6_25_goldens_of_the_other_verbs() {
     let target = |s: &Sandbox| s.join("out").to_str().unwrap().to_owned();
     golden_in("copyto", &nothing, &|s| {
         let mut list = words(&["copyto", "--side", "left", "--path", "sub/inner.txt"]);
-        list.extend(["--target".to_owned(), target(s), "--structure".into(), "base".into(), "--yes".into()]);
+        list.extend([
+            "--target".to_owned(),
+            target(s),
+            "--structure".into(),
+            "base".into(),
+            "--yes".into(),
+        ]);
         list
     });
     golden_in("moveto", &nothing, &|s| {
@@ -211,10 +217,24 @@ fn a6_25_goldens_of_the_other_verbs() {
         words(&["crc", "--side", "both", "--select", "all.files"])
     });
     golden_in("exclude", &nothing, &|_| {
-        words(&["exclude", "--what", "items", "--select", "left.orphan", "--dry-run"])
+        words(&[
+            "exclude",
+            "--what",
+            "items",
+            "--select",
+            "left.orphan",
+            "--dry-run",
+        ])
     });
     golden_in("ignored", &nothing, &|_| {
-        words(&["ignored", "--path", "only.txt", "--path", "sub", "--dry-run"])
+        words(&[
+            "ignored",
+            "--path",
+            "only.txt",
+            "--path",
+            "sub",
+            "--dry-run",
+        ])
     });
     let app = |s: &Sandbox| {
         std::fs::create_dir_all(s.config()).unwrap();
@@ -225,7 +245,16 @@ fn a6_25_goldens_of_the_other_verbs() {
         .unwrap();
     };
     golden_in("open-with", &app, &|_| {
-        words(&["open-with", "--path", "changed.txt", "--side", "both", "--app", "view", "--dry-run"])
+        words(&[
+            "open-with",
+            "--path",
+            "changed.txt",
+            "--side",
+            "both",
+            "--app",
+            "view",
+            "--dry-run",
+        ])
     });
 }
 
@@ -492,7 +521,10 @@ fn a6_15_a_skipped_folder_cuts_nothing_of_its_neighbours() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let doc = json(&out);
     let items = doc["result"]["items"].as_array().unwrap();
-    assert!(items.iter().all(|item| item["status"] != "not_run"), "{doc}");
+    assert!(
+        items.iter().all(|item| item["status"] != "not_run"),
+        "{doc}"
+    );
     assert_eq!(std::fs::read(s.join("r/B/x")).unwrap(), b"bx");
     assert!(!s.join("l/B").exists());
     assert!(s.join("l/A").exists());
@@ -501,7 +533,12 @@ fn a6_15_a_skipped_folder_cuts_nothing_of_its_neighbours() {
 /// A zip at `rel` with `members`.
 fn zip_at(s: &Sandbox, rel: &str, members: &[&str]) {
     let archive = s.join(rel);
-    let made = s.cmd().args(["vfs", "mkdir"]).arg(&archive).output().unwrap();
+    let made = s
+        .cmd()
+        .args(["vfs", "mkdir"])
+        .arg(&archive)
+        .output()
+        .unwrap();
     assert_eq!(code(&made), 0, "{}", stderr(&made));
     for name in members {
         let file = s.file(&format!("zip-input/{name}"), *name);
@@ -517,7 +554,12 @@ fn zip_at(s: &Sandbox, rel: &str, members: &[&str]) {
 }
 
 fn zip_members(s: &Sandbox, rel: &str) -> String {
-    let listed = s.cmd().args(["vfs", "ls"]).arg(s.join(rel)).output().unwrap();
+    let listed = s
+        .cmd()
+        .args(["vfs", "ls"])
+        .arg(s.join(rel))
+        .output()
+        .unwrap();
     assert_eq!(code(&listed), 0, "{}", stderr(&listed));
     stdout(&listed)
 }
@@ -634,7 +676,15 @@ fn a6_15_a_flat_comparison_uses_real_parents() {
     let out = op(
         &s,
         &[
-            "rename", "--side", "left", "--select", "all", "--flatten", "--mask", "q*", "--yes",
+            "rename",
+            "--side",
+            "left",
+            "--select",
+            "all",
+            "--flatten",
+            "--mask",
+            "q*",
+            "--yes",
         ],
     );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
@@ -647,7 +697,15 @@ fn a6_15_a_flat_comparison_uses_real_parents() {
     let out = op(
         &s,
         &[
-            "rename", "--side", "left", "--select", "all", "--flatten", "--mask", "q*", "--yes",
+            "rename",
+            "--side",
+            "left",
+            "--select",
+            "all",
+            "--flatten",
+            "--mask",
+            "q*",
+            "--yes",
             "--json",
         ],
     );
@@ -661,7 +719,14 @@ fn a6_15_a_flat_comparison_uses_real_parents() {
     let out = op(
         &s,
         &[
-            "copy", "--to", "right", "--select", "all", "--flatten", "--yes", "--json",
+            "copy",
+            "--to",
+            "right",
+            "--select",
+            "all",
+            "--flatten",
+            "--yes",
+            "--json",
         ],
     );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
@@ -716,7 +781,11 @@ fn a6_15_a_move_onto_itself_is_refused() {
             .output()
             .unwrap();
         assert_eq!(code(&out), 100, "{}", stdout(&out));
-        assert!(stdout(&out).contains("is the source itself"), "{}", stdout(&out));
+        assert!(
+            stdout(&out).contains("is the source itself"),
+            "{}",
+            stdout(&out)
+        );
         assert_eq!(tree(&s.join("l")), before);
     }
 }
@@ -733,14 +802,21 @@ fn a6_16_a_backup_over_a_file_of_nobody_asks() {
     args.extend(flags);
     args.push("--dry-run");
     let out = op(&s, &args);
-    assert!(stdout(&out).contains("[overwrite_backup]"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("[overwrite_backup]"),
+        "{}",
+        stdout(&out)
+    );
     let mut args = vec!["copy"];
     args.extend(flags);
     args.extend(["--confirm", "no-to-all"]);
     let out = op(&s, &args);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(std::fs::read(s.join("r/x.txt")).unwrap(), b"old");
-    assert_eq!(std::fs::read(s.join("r/x.txt.bak")).unwrap(), b"my own notes");
+    assert_eq!(
+        std::fs::read(s.join("r/x.txt.bak")).unwrap(),
+        b"my own notes"
+    );
     let mut args = vec!["copy"];
     args.extend(flags);
     args.push("--yes");
@@ -850,7 +926,10 @@ fn a6_25_select_all_over_a_failed_folder_is_not_a_success() {
     common::set_mode(&s.join("l/A"), 0o000);
     // Only a process the mode stops can see this.
     if std::fs::read_dir(s.join("l/A")).is_err() {
-        let out = op(&s, &["copy", "--to", "right", "--select", "all", "--dry-run"]);
+        let out = op(
+            &s,
+            &["copy", "--to", "right", "--select", "all", "--dry-run"],
+        );
         assert_eq!(code(&out), 100, "{}", stdout(&out));
         assert!(stdout(&out).contains("compare_error"), "{}", stdout(&out));
     }
@@ -913,7 +992,11 @@ fn a6_23_open_with_refusals() {
     // Neither `--app` nor `--associated`: a usage error, before anything is compared.
     let out = op(&s, &["open-with", "--path", "only.txt", "--json"]);
     assert_eq!(code(&out), 100);
-    assert!(stdout(&out).contains("hikasa.usage_error.v1"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("hikasa.usage_error.v1"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 /// `mkdir --name 'x\\'` is no `x`: off Windows the name is refused, and nothing is made.
@@ -922,7 +1005,12 @@ fn a6_23_open_with_refusals() {
 fn a6_19_a_trailing_backslash_is_refused() {
     let s = sandbox();
     let before = state(&s);
-    let out = op(&s, &["mkdir", "--side", "left", "--name", "x\\", "--yes", "--json"]);
+    let out = op(
+        &s,
+        &[
+            "mkdir", "--side", "left", "--name", "x\\", "--yes", "--json",
+        ],
+    );
     assert_eq!(code(&out), 100, "{}", stdout(&out));
     assert_eq!(json(&out)["error"]["kind"], "invalid_input");
     assert_eq!(state(&s), before);
@@ -1001,7 +1089,10 @@ fn a6_21_a_read_only_target_seen_through_links_and_a_session() {
         let mut command = s.cmd();
         command.args(["folder", "op", "moveto"]).args([left, right]);
         command.args(["--side", "left", "--select", "all", "--read-only", "right"]);
-        command.arg("--target").arg(target).args(["--yes", "--json"]);
+        command
+            .arg("--target")
+            .arg(target)
+            .args(["--yes", "--json"]);
         command.output().unwrap()
     };
     let (l, r) = (s.join("l"), s.join("r"));
@@ -1022,7 +1113,13 @@ fn a6_21_a_read_only_target_seen_through_links_and_a_session() {
     new.arg(&l).arg("--right").arg(&r);
     assert_eq!(code(&new.output().unwrap()), 0);
     let mut edit = s.cmd();
-    edit.args(["session", "edit", "s", "--set", "specs.read_only_right=true"]);
+    edit.args([
+        "session",
+        "edit",
+        "s",
+        "--set",
+        "specs.read_only_right=true",
+    ]);
     assert_eq!(code(&edit.output().unwrap()), 0);
     for target in [s.join("r/sub"), s.join("way")] {
         let mut command = s.cmd();
@@ -1041,12 +1138,7 @@ fn a6_21_a_read_only_target_seen_through_links_and_a_session() {
 fn a6_21_a_member_of_a_read_only_side_is_refused() {
     let s = sandbox();
     let empty = s.join("empty.zip");
-    let made = s
-        .cmd()
-        .args(["vfs", "mkdir"])
-        .arg(&empty)
-        .output()
-        .unwrap();
+    let made = s.cmd().args(["vfs", "mkdir"]).arg(&empty).output().unwrap();
     assert_eq!(code(&made), 0, "{}", stderr(&made));
     let moved = s.join("r/a.zip");
     std::fs::rename(&empty, &moved).unwrap();

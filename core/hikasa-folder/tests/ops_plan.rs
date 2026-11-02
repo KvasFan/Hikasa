@@ -14,9 +14,9 @@ use hikasa_folder::ops::{
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{
-    CaseMode, Change, Cmp, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
-    FolderModel, FolderRules, FolderRulesPatch, NodeId, ScanStatus, SizeFilter, TreeRead,
-    compare_into,
+    CaseMode, Change, Cmp, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError,
+    FolderMode, FolderModel, FolderRules, FolderRulesPatch, NodeId, ScanStatus, SizeFilter,
+    TreeRead, compare_into,
 };
 use hikasa_vfs::ops::{
     self, Action, BackupPolicy, BackupStyle, Expect, ItemStamp, ItemStatus, LinkPolicy, OpReport,
@@ -602,7 +602,10 @@ fn a6_15_rule6_conflicts_are_those_of_a_row() {
         (out.plan.items[index].replaces, out.meta[index].conflicts)
     };
     let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
-    assert_eq!(at(&out), (true, Conflicts::READ_ONLY | Conflicts::OVERWRITE_NEWER));
+    assert_eq!(
+        at(&out),
+        (true, Conflicts::READ_ONLY | Conflicts::OVERWRITE_NEWER)
+    );
     let out = plan(&vfs, &cmp, &[("sub", L)], &MOVE_RIGHT);
     assert_eq!(
         at(&out),
@@ -625,7 +628,11 @@ fn a6_15_rule6_conflicts_are_those_of_a_row() {
         overwrite: OverwritePolicy::Newer,
     };
     let out = plan(&vfs, &cmp, &[("sub", L)], &newer);
-    let index = out.meta.iter().position(|m| m.path == "sub/deep/x").unwrap();
+    let index = out
+        .meta
+        .iter()
+        .position(|m| m.path == "sub/deep/x")
+        .unwrap();
     assert_eq!(out.plan.items[index].skip, Some(SkipReason::NotNewer));
 }
 
@@ -654,7 +661,10 @@ fn a6_15_rule6_a_folder_onto_a_file_is_rule_8() {
         line.iter().any(|line| line.contains("!already_exists")),
         "{line:?}"
     );
-    assert!(!line.iter().any(|line| line.contains("/deep/x")), "{line:?}");
+    assert!(
+        !line.iter().any(|line| line.contains("/deep/x")),
+        "{line:?}"
+    );
 }
 
 /// D-176: what the filters hide is not touched, and a folder goes as one only when nothing below it stays.

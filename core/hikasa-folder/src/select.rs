@@ -654,7 +654,12 @@ fn whole_sides(
 
 /// The sides on which what hides a row leaves it out of the folder above it. A row selected by itself counts whatever
 /// hides it, but an item that took that folder along whole would take what the plan keeps (`skip filtered`).
-fn hidden_sides(read: &TreeRead<'_>, id: NodeId, view: &NodeView<'_>, include: &Include) -> SideSet {
+fn hidden_sides(
+    read: &TreeRead<'_>,
+    id: NodeId,
+    view: &NodeView<'_>,
+    include: &Include,
+) -> SideSet {
     if include.hidden {
         return SideSet::empty();
     }

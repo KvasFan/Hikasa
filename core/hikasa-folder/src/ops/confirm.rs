@@ -455,7 +455,9 @@ fn below(item: &PlanItem, refused: &Refused) -> bool {
     item.target == refused.target
         || lies_below(&item.target, &refused.target)
         || refused.source.as_ref().is_some_and(|source| {
-            item.source.as_ref().is_some_and(|spec| lies_below(spec, source))
+            item.source
+                .as_ref()
+                .is_some_and(|spec| lies_below(spec, source))
                 || (item.action == Action::RemoveDir && lies_below(&item.target, source))
         })
 }

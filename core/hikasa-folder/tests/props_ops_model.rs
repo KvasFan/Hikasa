@@ -50,7 +50,10 @@ fn nodes() -> impl Strategy<Value = Vec<Node>> {
         proptest::option::weighted(0.8, 0u8..2),
         any::<[u8; 2]>(),
         any::<[u8; 2]>(),
-        (proptest::bool::weighted(0.15), proptest::bool::weighted(0.15)),
+        (
+            proptest::bool::weighted(0.15),
+            proptest::bool::weighted(0.15),
+        ),
     )
         .prop_map(|(name, left, right, content, mtime, (l, r))| Node {
             name,
@@ -133,7 +136,10 @@ fn snapshot(vfs: &MemoryVfs) -> Tree {
         let it = match entry.kind {
             EntryKind::Dir => It::Dir,
             _ => It::File {
-                data: vfs.read_back(&entry.path).map(|b| b.to_vec()).unwrap_or_default(),
+                data: vfs
+                    .read_back(&entry.path)
+                    .map(|b| b.to_vec())
+                    .unwrap_or_default(),
                 mtime: entry.mtime.map_or(0, |t| t.unix_seconds()),
                 ro: matches!(entry.attrs, Attrs::Unix { meta } if meta.mode & 0o222 == 0),
             },
@@ -289,9 +295,7 @@ impl Model {
                 match self.tree.get(to).cloned() {
                     Some(It::Dir) => return false,
                     Some(It::File {
-                        mtime: theirs,
-                        ro,
-                        ..
+                        mtime: theirs, ro, ..
                     }) => {
                         let replace = match policy {
                             OverwritePolicy::Fail | OverwritePolicy::Skip => false,
@@ -340,7 +344,8 @@ impl Model {
                 for name in self.children(from) {
                     let child = format!("{from}/{name}");
                     let listed = !self.unlisted.contains(&child);
-                    gone &= self.transfer(&child, &format!("{to}/{name}"), moving, policy) && listed;
+                    gone &=
+                        self.transfer(&child, &format!("{to}/{name}"), moving, policy) && listed;
                 }
                 if moving && gone {
                     self.tree.remove(from);
@@ -562,26 +567,59 @@ fn operation(which: u8, mkdir_parent: NodeId, mkdir_name: &str) -> FolderOp {
     };
     use OverwritePolicy::{Always, Fail, Newer, Skip};
     match which % 19 {
-        0 => FolderOp::Copy { to: Side::Right, overwrite: Always },
-        1 => FolderOp::Copy { to: Side::Left, overwrite: Newer },
-        2 => FolderOp::Copy { to: Side::Right, overwrite: Skip },
-        3 => FolderOp::Copy { to: Side::Left, overwrite: Fail },
-        4 => FolderOp::Move { to: Side::Right, overwrite: Always },
-        5 => FolderOp::Move { to: Side::Left, overwrite: Fail },
-        6 => FolderOp::Move { to: Side::Right, overwrite: Newer },
-        7 => FolderOp::Delete { sides: SideSet::LEFT, recycle: Recycle::default() },
+        0 => FolderOp::Copy {
+            to: Side::Right,
+            overwrite: Always,
+        },
+        1 => FolderOp::Copy {
+            to: Side::Left,
+            overwrite: Newer,
+        },
+        2 => FolderOp::Copy {
+            to: Side::Right,
+            overwrite: Skip,
+        },
+        3 => FolderOp::Copy {
+            to: Side::Left,
+            overwrite: Fail,
+        },
+        4 => FolderOp::Move {
+            to: Side::Right,
+            overwrite: Always,
+        },
+        5 => FolderOp::Move {
+            to: Side::Left,
+            overwrite: Fail,
+        },
+        6 => FolderOp::Move {
+            to: Side::Right,
+            overwrite: Newer,
+        },
+        7 => FolderOp::Delete {
+            sides: SideSet::LEFT,
+            recycle: Recycle::default(),
+        },
         8 => FolderOp::Delete {
             sides: SideSet::all(),
-            recycle: Recycle { use_bin: true, fallback: false },
+            recycle: Recycle {
+                use_bin: true,
+                fallback: false,
+            },
         },
         9 => FolderOp::Exchange,
         10 => FolderOp::Rename {
             sides: SideSet::LEFT,
-            mask: RenameMask::Regex { old: "(.)(.*)".into(), new: "$2$1".into() },
+            mask: RenameMask::Regex {
+                old: "(.)(.*)".into(),
+                new: "$2$1".into(),
+            },
         },
         11 => FolderOp::Rename {
             sides: SideSet::all(),
-            mask: RenameMask::Regex { old: "(.*)".into(), new: "a".into() },
+            mask: RenameMask::Regex {
+                old: "(.*)".into(),
+                new: "a".into(),
+            },
         },
         12 => FolderOp::Touch {
             sides: SideSet::all(),
@@ -659,7 +697,12 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
             let from = to.opposite();
             for row in rows.iter().filter(|r| r.sides.contains(SideSet::of(from))) {
                 if let Some(path) = on(model, base(from), row) {
-                    model.transfer(&path, &format!("{}{}", base(*to), row.rel), moving, *overwrite);
+                    model.transfer(
+                        &path,
+                        &format!("{}{}", base(*to), row.rel),
+                        moving,
+                        *overwrite,
+                    );
                 }
             }
         }
@@ -698,10 +741,15 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
         FolderOp::Touch { sides, .. } => {
             for side in sides.sides() {
                 for row in rows.iter().filter(|r| r.sides.contains(SideSet::of(side))) {
-                    let Some(path) = on(model, base(side), row) else { continue };
+                    let Some(path) = on(model, base(side), row) else {
+                        continue;
+                    };
                     for p in model.subtree(&path) {
                         // Rule 14 touches rows: what a folder the model never listed holds is no row (§1.6.25).
-                        let unlisted = model.unlisted.iter().any(|u| p.starts_with(&format!("{u}/")));
+                        let unlisted = model
+                            .unlisted
+                            .iter()
+                            .any(|u| p.starts_with(&format!("{u}/")));
                         let hidden = model.hidden(&p) || unlisted;
                         if let Some(It::File { mtime, .. }) = model.tree.get_mut(&p)
                             && !hidden
@@ -717,21 +765,34 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
             for side in sides.sides() {
                 let target = format!("{}{parent}/{name}", base(side));
                 let source = format!("{}{parent}", base(side.opposite()));
-                if !parent.is_empty() && !matches!(model.tree.get(&format!("{}{parent}", base(side))), Some(It::Dir)) {
+                if !parent.is_empty()
+                    && !matches!(
+                        model.tree.get(&format!("{}{parent}", base(side))),
+                        Some(It::Dir)
+                    )
+                {
                     // Rule 3's chain from the side that has the parent.
                     if !matches!(model.tree.get(&source), Some(It::Dir))
-                        || !model.parents(&format!("{target}"), OverwritePolicy::Fail, false)
+                        || !model.parents(&target, OverwritePolicy::Fail, false)
                     {
                         continue;
                     }
                 }
-                if !model.tree.contains_key(&target) {
-                    model.tree.insert(target, It::Dir);
-                }
+                model.tree.entry(target).or_insert(It::Dir);
             }
         }
-        FolderOp::CopyTo { sides, structure, overwrite, .. }
-        | FolderOp::MoveTo { sides, structure, overwrite, .. } => {
+        FolderOp::CopyTo {
+            sides,
+            structure,
+            overwrite,
+            ..
+        }
+        | FolderOp::MoveTo {
+            sides,
+            structure,
+            overwrite,
+            ..
+        } => {
             let moving = matches!(op, FolderOp::MoveTo { .. });
             model.taken = Some(BTreeSet::new());
             for side in sides.sides() {
@@ -739,13 +800,26 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
                     .iter()
                     .filter(|r| r.sides.contains(SideSet::of(side)))
                     .filter_map(|r| on(model, base(side), r).map(|p| (p, r.rel.clone())))
-                    .map(|(p, rel)| (p, rel.split('/').filter(|n| !n.is_empty()).map(str::to_owned).collect()))
+                    .map(|(p, rel)| {
+                        (
+                            p,
+                            rel.split('/')
+                                .filter(|n| !n.is_empty())
+                                .map(str::to_owned)
+                                .collect(),
+                        )
+                    })
                     .collect();
                 let parents: Vec<&[String]> = mine.iter().map(|(_, n)| &n[..n.len() - 1]).collect();
                 let common = match parents.first() {
                     Some(first) => parents
                         .iter()
-                        .map(|p| p.iter().zip(first.iter()).take_while(|(a, b)| a == b).count())
+                        .map(|p| {
+                            p.iter()
+                                .zip(first.iter())
+                                .take_while(|(a, b)| a == b)
+                                .count()
+                        })
                         .min()
                         .unwrap_or(0),
                     None => 0,
@@ -756,7 +830,11 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
                             model.flat(path, moving, *overwrite);
                         }
                         _ => {
-                            let drop = if *structure == PathStructure::Base { 0 } else { common };
+                            let drop = if *structure == PathStructure::Base {
+                                0
+                            } else {
+                                common
+                            };
                             let to = format!("/o/t/{}", names[drop..].join("/"));
                             model.transfer(path, &to, moving, *overwrite);
                         }

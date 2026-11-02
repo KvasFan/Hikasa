@@ -464,22 +464,73 @@ fn hunted(which: u8) -> FolderOp {
     let target = common::mspec("/o/t");
     use OverwritePolicy::{Always, Fail, Skip};
     match which % 14 {
-        0 => FolderOp::Copy { to: Side::Right, overwrite: Always },
-        1 => FolderOp::Move { to: Side::Right, overwrite: Always },
-        2 => FolderOp::Move { to: Side::Left, overwrite: Fail },
-        3 => FolderOp::Delete { sides: SideSet::LEFT, recycle: Recycle::default() },
-        4 => FolderOp::Delete { sides: SideSet::all(), recycle: Recycle { use_bin: true, fallback: false } },
+        0 => FolderOp::Copy {
+            to: Side::Right,
+            overwrite: Always,
+        },
+        1 => FolderOp::Move {
+            to: Side::Right,
+            overwrite: Always,
+        },
+        2 => FolderOp::Move {
+            to: Side::Left,
+            overwrite: Fail,
+        },
+        3 => FolderOp::Delete {
+            sides: SideSet::LEFT,
+            recycle: Recycle::default(),
+        },
+        4 => FolderOp::Delete {
+            sides: SideSet::all(),
+            recycle: Recycle {
+                use_bin: true,
+                fallback: false,
+            },
+        },
         5 => FolderOp::Exchange,
-        6 => FolderOp::Rename { sides: SideSet::all(), mask: RenameMask::Dos("?.*".to_owned()) },
-        7 => FolderOp::Rename { sides: SideSet::LEFT, mask: RenameMask::Dos("b*".to_owned()) },
+        6 => FolderOp::Rename {
+            sides: SideSet::all(),
+            mask: RenameMask::Dos("?.*".to_owned()),
+        },
+        7 => FolderOp::Rename {
+            sides: SideSet::LEFT,
+            mask: RenameMask::Dos("b*".to_owned()),
+        },
         8 => FolderOp::Rename {
             sides: SideSet::RIGHT,
-            mask: RenameMask::Regex { old: "(.)(.*)".to_owned(), new: "$2$1".to_owned() },
+            mask: RenameMask::Regex {
+                old: "(.)(.*)".to_owned(),
+                new: "$2$1".to_owned(),
+            },
         },
-        9 => FolderOp::CopyTo { sides: SideSet::all(), target, folder: false, structure: PathStructure::None, overwrite: Skip },
-        10 => FolderOp::MoveTo { sides: SideSet::LEFT, target, folder: false, structure: PathStructure::Relative, overwrite: Fail },
-        11 => FolderOp::MoveTo { sides: SideSet::all(), target, folder: false, structure: PathStructure::Base, overwrite: Always },
-        12 => FolderOp::MoveTo { sides: SideSet::all(), target, folder: false, structure: PathStructure::None, overwrite: Fail },
+        9 => FolderOp::CopyTo {
+            sides: SideSet::all(),
+            target,
+            folder: false,
+            structure: PathStructure::None,
+            overwrite: Skip,
+        },
+        10 => FolderOp::MoveTo {
+            sides: SideSet::LEFT,
+            target,
+            folder: false,
+            structure: PathStructure::Relative,
+            overwrite: Fail,
+        },
+        11 => FolderOp::MoveTo {
+            sides: SideSet::all(),
+            target,
+            folder: false,
+            structure: PathStructure::Base,
+            overwrite: Always,
+        },
+        12 => FolderOp::MoveTo {
+            sides: SideSet::all(),
+            target,
+            folder: false,
+            structure: PathStructure::None,
+            overwrite: Fail,
+        },
         _ => FolderOp::Touch {
             sides: SideSet::all(),
             from: TouchFrom::At(FileTime::from_unix(1_790_000_000, 0).unwrap()),

@@ -313,7 +313,15 @@ impl Builder<'_, '_> {
         if self.outside.is_some() && self.taken.contains(&key) {
             let source = Some(folder.spec.clone());
             let reason = SkipReason::DuplicateTarget;
-            self.skip_row(id, EntryKind::Dir, source, target.clone(), depth, reason, side);
+            self.skip_row(
+                id,
+                EntryKind::Dir,
+                source,
+                target.clone(),
+                depth,
+                reason,
+                side,
+            );
             self.relabel(first, path);
             return Ok(());
         }
@@ -359,7 +367,11 @@ impl Builder<'_, '_> {
         }
         for (spec, error) in &folder.failures {
             let first = self.items.len();
-            let action = if tr.moving { Action::Move } else { Action::Copy };
+            let action = if tr.moving {
+                Action::Move
+            } else {
+                Action::Copy
+            };
             self.fail_row(
                 id,
                 action,
@@ -388,7 +400,11 @@ impl Builder<'_, '_> {
                 Ok(pair) => pair,
                 Err(e) => {
                     let first = self.items.len();
-                    let action = if tr.moving { Action::Move } else { Action::Copy };
+                    let action = if tr.moving {
+                        Action::Move
+                    } else {
+                        Action::Copy
+                    };
                     self.fail_row(
                         id,
                         action,
@@ -456,7 +472,16 @@ impl Builder<'_, '_> {
             Err(e) => {
                 let kind = EntryKind::Dir;
                 let (source, root) = (Some(source.clone()), root.clone());
-                self.fail_row(walk.id, Action::Copy, kind, source, root, depth, report(&e), None);
+                self.fail_row(
+                    walk.id,
+                    Action::Copy,
+                    kind,
+                    source,
+                    root,
+                    depth,
+                    report(&e),
+                    None,
+                );
                 return Ok(());
             }
         };
@@ -482,12 +507,25 @@ impl Builder<'_, '_> {
     ) -> Result<(), FolderError> {
         self.ctl.check()?;
         let Walk { tr, id, side } = walk;
-        let action = if tr.moving { Action::Move } else { Action::Copy };
+        let action = if tr.moving {
+            Action::Move
+        } else {
+            Action::Copy
+        };
         if let Some(error) = &folder.error {
             let first = self.items.len();
             let source = Some(folder.spec.clone());
             let kind = EntryKind::Dir;
-            self.fail_row(id, action, kind, source, root.clone(), depth, error.clone(), side);
+            self.fail_row(
+                id,
+                action,
+                kind,
+                source,
+                root.clone(),
+                depth,
+                error.clone(),
+                side,
+            );
             self.relabel(first, path);
             return Ok(());
         }
@@ -495,7 +533,16 @@ impl Builder<'_, '_> {
             let first = self.items.len();
             let source = Some(spec.clone());
             let kind = EntryKind::Other;
-            self.fail_row(id, action, kind, source, root.clone(), depth + 1, error.clone(), side);
+            self.fail_row(
+                id,
+                action,
+                kind,
+                source,
+                root.clone(),
+                depth + 1,
+                error.clone(),
+                side,
+            );
             self.relabel(first, path);
         }
         for child in &folder.children {
@@ -527,7 +574,16 @@ impl Builder<'_, '_> {
                 Err(e) => {
                     let source = Some(child.spec.clone());
                     let kind = child.entry.kind;
-                    self.fail_row(id, action, kind, source, root.clone(), depth + 1, report(&e), side);
+                    self.fail_row(
+                        id,
+                        action,
+                        kind,
+                        source,
+                        root.clone(),
+                        depth + 1,
+                        report(&e),
+                        side,
+                    );
                     self.relabel(first, &below);
                 }
             }

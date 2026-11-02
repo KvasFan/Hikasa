@@ -268,7 +268,10 @@ mod tests {
         assert_eq!(parse_mkdir_name("x", false).unwrap(), ("x".into(), false));
         assert_eq!(parse_mkdir_name("x/", false).unwrap(), ("x".into(), true));
         assert_eq!(parse_mkdir_name("x\\", true).unwrap(), ("x".into(), true));
-        assert_eq!(parse_mkdir_name("a\\b", false).unwrap(), ("a\\b".into(), false));
+        assert_eq!(
+            parse_mkdir_name("a\\b", false).unwrap(),
+            ("a\\b".into(), false)
+        );
         assert!(parse_mkdir_name("x\\", false).is_err());
         assert!(parse_mkdir_name("x\\/", false).unwrap().0.ends_with('\\'));
     }

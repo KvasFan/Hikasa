@@ -390,13 +390,9 @@ fn guarded(value: OsString) -> OsString {
 /// `value` with each `/` and `\\` replaced by `delimiter`, and the rest as it is.
 fn with_delimiter(value: &OsStr, delimiter: char) -> OsString {
     if let Some(text) = value.to_str() {
-        let swapped = text.chars().map(|c| {
-            if c == '/' || c == '\\' {
-                delimiter
-            } else {
-                c
-            }
-        });
+        let swapped = text
+            .chars()
+            .map(|c| if c == '/' || c == '\\' { delimiter } else { c });
         return OsString::from(swapped.collect::<String>());
     }
     #[cfg(unix)]
@@ -433,7 +429,9 @@ fn with_delimiter(value: &OsStr, delimiter: char) -> OsString {
 
 /// The last component of a path.
 fn name(path: &Path) -> OsString {
-    path.file_name().map(OsStr::to_os_string).unwrap_or_default()
+    path.file_name()
+        .map(OsStr::to_os_string)
+        .unwrap_or_default()
 }
 
 /// A name split at its last `.` (a leading `.` starts no extension: `.bashrc` has none).
@@ -691,7 +689,8 @@ mod tests {
             base: PathBuf::from("/w"),
         };
         c.working_folder = PathBuf::from("/w");
-        let at = |template: &str, c: &ExpandContext| expand_command(template, c).unwrap()[1].clone();
+        let at =
+            |template: &str, c: &ExpandContext| expand_command(template, c).unwrap()[1].clone();
         assert_eq!(at("x %f", &c), raw);
         assert_eq!(at("x %n", &c).as_bytes(), b"caf\xe9.t\xe9t");
         assert_eq!(at("x %F", &c).as_bytes(), b"caf\xe9.t\xe9t");
