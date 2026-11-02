@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.92 (2026-11-02, pre-release)
 
 ### Added
 - **Copy and delete in the Folder Compare view.** Select one row, then Actions ▸ Copy to Right (Ctrl+R), Copy to Left
