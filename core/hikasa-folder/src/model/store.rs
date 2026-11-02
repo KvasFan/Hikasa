@@ -1844,6 +1844,13 @@ impl Store {
         }
     }
 
+    /// The folder `id` owes no listing after all.
+    pub(crate) fn settle_unlisted(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+            node.internal &= !internal::UNLISTED;
+        }
+    }
+
     /// True when a live node still owes something: a listing or a content test, or the root, which nothing listed yet.
     pub(crate) fn unfinished(&self) -> bool {
         let owes = internal::UNLISTED | internal::CONTENT_PENDING;

@@ -74,8 +74,9 @@ pub fn refresh_into(
             stopped_at = Some(node);
             break;
         }
-        // A folder an earlier refresh of this call dropped, or one no scan would list.
+        // A folder an earlier refresh of this call dropped, or one no scan would list: it owes nothing.
         let Some((sides, depth)) = scan.sides_of(node) else {
+            model.mutate(|s| s.settle_unlisted(node));
             continue;
         };
         let listings = scan.list_pair(&sides);

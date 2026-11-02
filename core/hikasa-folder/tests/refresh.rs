@@ -504,6 +504,25 @@ fn a6_11_cancel_and_a_refresh_of_another_subtree() {
     assert_fresh(&cmp, &vfs, &rules);
 }
 
+/// A folder a stop left owing a listing, which no scan lists: it owes nothing, or the verdict would never come back.
+#[test]
+fn a6_11_what_no_scan_lists_owes_nothing() {
+    let vfs = tree();
+    let mut rules = FolderRules::default();
+    let patch = hikasa_folder::FolderRulesPatch {
+        name_filter: Some(r"-a\".into()),
+        ..hikasa_folder::FolderRulesPatch::default()
+    };
+    rules.apply(&patch).unwrap();
+    let cmp = compared(&vfs, &rules);
+    let hidden = id(&cmp, "a");
+    refresh_cancelled(&cmp, &vfs, &[hidden]);
+    assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
+    refresh(&cmp, &vfs, &[hidden]);
+    assert!(cmp.read().is_complete());
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
 /// A scan stopped deep in the tree leaves folders it never listed, below rows a refresh keeps: it goes to them.
 #[test]
 fn a6_11_a_cancelled_scan_is_repaired() {
