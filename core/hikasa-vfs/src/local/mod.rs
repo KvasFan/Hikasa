@@ -129,7 +129,7 @@ mod platform {
 
 use std::ffi::OsStr;
 use std::fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError};
-use std::io::{self, BufWriter, Seek, SeekFrom, Write};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{CancelToken, CaseSensitivity, ErrorReport, FileTime, LocalPath, Spec};
@@ -799,13 +799,35 @@ impl Vfs for LocalVfs {
         let temporary = NewTemp {
             path: tmp.as_path(),
         };
-        let copied = io::copy(&mut source, &mut file).map_err(|e| {
-            if fs::metadata(from_path.as_path()).is_err() {
-                VfsError::from_io(from.canonical(), VfsOp::Read, e)
-            } else {
-                written(e)
+        // The source is read through the handle, which may no longer be the file the caller's `lstat` saw: a folder or a
+        // FIFO swapped in since. With the caller's size, at most one byte more than it is read, so nothing streams
+        // without end, and another count is "changed since the plan was made", naming the source, the temporary file
+        // gone. A read that fails on what is not a regular file names the source too. No call is added when all is well.
+        let stamped = meta.size.is_some();
+        let result = if stamped {
+            io::copy(&mut (&mut source).take(len.saturating_add(1)), &mut file)
+        } else {
+            io::copy(&mut source, &mut file)
+        };
+        let copied = match result {
+            Ok(copied) if stamped && copied != len => {
+                drop(file);
+                return Err(changed_source(from));
             }
-        })?;
+            Ok(copied) => copied,
+            Err(e) => {
+                let not_a_file = source.metadata().map_or(true, |found| !found.is_file());
+                drop(file);
+                if not_a_file && stamped {
+                    return Err(changed_source(from));
+                }
+                return Err(if not_a_file || fs::metadata(from_path.as_path()).is_err() {
+                    VfsError::from_io(from.canonical(), VfsOp::Read, e)
+                } else {
+                    written(e)
+                });
+            }
+        };
         platform::set_mode(&file, meta.mode).map_err(written)?;
         if modified.is_some() || created.is_some() {
             let mut times = FileTimes::new();
@@ -829,6 +851,14 @@ impl Vfs for LocalVfs {
         })?;
         std::mem::forget(temporary);
         Ok(Some(copied))
+    }
+}
+
+/// "Changed since the plan was made", naming the source of a copy.
+fn changed_source(from: &Spec) -> VfsError {
+    VfsError::InvalidTarget {
+        spec: from.canonical(),
+        reason: "changed since the plan was made",
     }
 }
 
@@ -1508,6 +1538,106 @@ mod tests {
             .unwrap();
         assert_eq!(result, None);
         assert!(!to.exists());
+    }
+
+    /// W6c review: with the caller's size (`HandleMeta::size`), a source that is no longer the file the caller's `lstat`
+    /// saw fails "changed since the plan was made", naming the source, and leaves no temporary file and no target: one
+    /// that grew or shrank, a folder, a link to a FIFO a writer feeds (which would otherwise stream without end). The same
+    /// size copies.
+    #[test]
+    fn a_source_that_is_not_the_stamped_file_fails_naming_the_source() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        let vfs = LocalVfs::default();
+        let stamped = |path: &Path, size: u64| HandleMeta {
+            size: Some(size),
+            ..meta_of(path, 5)
+        };
+        let sources = |root: &Path| -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(root)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let assert_changed = |result: Result<Option<u64>, VfsError>, from: &Path, label: &str| {
+            match result {
+                Err(VfsError::InvalidTarget { spec: named, reason }) => {
+                    assert_eq!(named, spec(from).canonical(), "{label}");
+                    assert_eq!(reason, "changed since the plan was made", "{label}");
+                }
+                other => panic!("{label}: {other:?}"),
+            }
+        };
+        fs::write(root.join("grew"), b"0123456789").unwrap();
+        fs::write(root.join("shrank"), b"01").unwrap();
+        for (name, size) in [("grew", 3), ("shrank", 3)] {
+            let from = root.join(name);
+            let result = vfs.copy_new_file(
+                &spec(&from),
+                &spec(&root.join(format!("t-{name}"))),
+                &stamped(&from, size),
+                &CancelToken::new(),
+            );
+            assert_changed(result, &from, name);
+        }
+        let mut expected = vec!["grew".to_owned(), "shrank".to_owned()];
+        assert_eq!(sources(&root), expected);
+        #[cfg(unix)]
+        {
+            fs::create_dir(root.join("folder")).unwrap();
+            let from = root.join("folder");
+            let result = vfs.copy_new_file(
+                &spec(&from),
+                &spec(&root.join("t-folder")),
+                &stamped(&from, 3),
+                &CancelToken::new(),
+            );
+            assert_changed(result, &from, "folder");
+            let fifo = root.join("fifo");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .is_ok_and(|status| status.success());
+            if made {
+                std::os::unix::fs::symlink(&fifo, root.join("link")).unwrap();
+                let writer = {
+                    let fifo = fifo.clone();
+                    std::thread::spawn(move || {
+                        // The reader stops early: the writer's end breaks, which is the point.
+                        if let Ok(mut pipe) = fs::OpenOptions::new().write(true).open(fifo) {
+                            let _ = pipe.write_all(&vec![b'z'; 1 << 20]);
+                        }
+                    })
+                };
+                let from = root.join("link");
+                let result = vfs.copy_new_file(
+                    &spec(&from),
+                    &spec(&root.join("t-fifo")),
+                    &stamped(&from, 3),
+                    &CancelToken::new(),
+                );
+                writer.join().unwrap();
+                assert_changed(result, &from, "fifo");
+                expected.extend(["fifo".to_owned(), "link".to_owned()]);
+            }
+            expected.push("folder".to_owned());
+            expected.sort();
+            assert_eq!(sources(&root), expected);
+        }
+        // The size the caller saw: copied.
+        let from = root.join("grew");
+        let copied = vfs
+            .copy_new_file(
+                &spec(&from),
+                &spec(&root.join("t-same")),
+                &stamped(&from, 10),
+                &CancelToken::new(),
+            )
+            .unwrap();
+        assert_eq!(copied, Some(10));
+        assert_eq!(fs::read(root.join("t-same")).unwrap(), b"0123456789");
     }
 
     /// What `execute` syncs for `items` of a move plan.
