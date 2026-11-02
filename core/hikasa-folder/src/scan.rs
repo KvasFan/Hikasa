@@ -1968,7 +1968,12 @@ impl<'a> Scan<'a> {
                 .dir()
                 .and_then(|d| dirs[side].get(d as usize))
                 .map_or("", |d| d.text.as_str());
-            let path = join_text(&join_text(parent.as_str(), dir), entry.name.as_str());
+            let folder = if dir.is_empty() {
+                parent.as_str().to_owned()
+            } else {
+                join_text(parent.as_str(), dir)
+            };
+            let path = join_text(&folder, entry.name.as_str());
             if self.ignored.decides(&self.path_key(&path)) {
                 p.flags |= NodeFlags::IGNORED;
             }

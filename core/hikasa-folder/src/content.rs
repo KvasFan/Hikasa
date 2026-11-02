@@ -13,7 +13,6 @@ use hikasa_vfs::{Entry, FollowLinks, StreamOptions, VfsSource, crc32_source};
 
 use super::{Scan, Task};
 use crate::error::FolderError;
-use crate::model::store::NONE;
 use crate::model::{FolderModel, NodeId, NodeKind};
 use crate::resolve::side_index;
 use crate::scan::FolderEnv;
@@ -224,9 +223,7 @@ impl FolderModel {
                             && stamp.mtime.is_none_or(|time| entry.mtime == Some(time))
                     })
                 };
-                view.parent.map_or(0, |p| p.0) != NONE
-                    && same(view.left.as_ref(), &stamps.left)
-                    && same(view.right.as_ref(), &stamps.right)
+                same(view.left.as_ref(), &stamps.left) && same(view.right.as_ref(), &stamps.right)
             })
         };
         if holds {

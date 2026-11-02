@@ -719,3 +719,86 @@ fn rules_round_trip_with_the_new_keys() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(ArchiveHandling::default(), ArchiveHandling::OnceOpened);
 }
+
+// ---- A6.11, A6.12: refresh and contents with archives ------------------------------------------------------------
+
+/// `open_archive` makes a closed row a folder in place of a re-run; a rebuilt archive is re-read through the new stamp.
+#[test]
+fn a6_11_archives() {
+    let world = world();
+    world.put("/l/a.zip", &zip_of(&[("x", b"one"), ("y", b"two")]));
+    world.put("/r/a.zip", &zip_of(&[("x", b"one"), ("y", b"other")]));
+    let rules = FolderRules::default();
+    let cmp = world.compare(mspec("/l"), mspec("/r"), &rules);
+    let contents = engines(1 << 20);
+    let refresh = |nodes: &[NodeId]| {
+        common::with_env(&world.vfs, &contents, &CancelToken::new(), |env| {
+            hikasa_folder::refresh_into(cmp.model(), nodes, env).unwrap()
+        })
+    };
+    let at = |path: &str| {
+        cmp.read()
+            .node_at(&hikasa_core::RelPath::parse(path).unwrap())
+    };
+    let row = at("a.zip").unwrap();
+    assert_eq!(cmp.read().node(row).unwrap().kind, NodeKind::File);
+    cmp.model().open_archive("a.zip");
+    assert!(refresh(&[row]).complete);
+    cmp.check_invariants().unwrap();
+    let opened = at("a.zip").unwrap();
+    assert_eq!(cmp.read().node(opened).unwrap().kind, NodeKind::Folder);
+    assert_eq!(cmp.read().children(opened).len(), 2);
+    assert!(at("a.zip/y").is_some());
+    // The archive changes behind the row: the refresh of its parent sees the new stamp, and goes in.
+    let meta = MemMeta {
+        mtime: FileTime::from_unix(1_800_000_000, 0),
+        ..MemMeta::default()
+    };
+    let third = zip_of(&[("x", b"one"), ("z", b"new")]);
+    world
+        .mem
+        .insert_file(&common::host("/l/a.zip"), third, meta)
+        .unwrap();
+    assert!(refresh(&[NodeId::ROOT]).complete);
+    cmp.check_invariants().unwrap();
+    assert!(at("a.zip/z").is_some());
+    // A refresh inside: one level, through the archive.
+    let meta = MemMeta {
+        mtime: FileTime::from_unix(1_800_000_100, 0),
+        ..MemMeta::default()
+    };
+    let fourth = zip_of(&[("x", b"changed"), ("y", b"two")]);
+    world
+        .mem
+        .insert_file(&common::host("/l/a.zip"), fourth, meta)
+        .unwrap();
+    let report = refresh(&[at("a.zip").unwrap()]);
+    assert!(report.complete);
+    assert!(at("a.zip/z").is_none());
+    cmp.check_invariants().unwrap();
+}
+
+/// `compute_crcs` takes a zip's CRC with nothing decoded.
+#[test]
+fn a6_12_a_zip_crc_is_not_read() {
+    let world = world();
+    world.put("/l/a.zip", &zip_of(&[("x", b"one")]));
+    world.put("/r/a.zip", &zip_of(&[("x", b"two")]));
+    let rules = FolderRules::default();
+    let cmp = world.compare(
+        Spec::archive_member(mspec("/l/a.zip"), ""),
+        Spec::archive_member(mspec("/r/a.zip"), ""),
+        &rules,
+    );
+    let row = cmp
+        .read()
+        .node_at(&hikasa_core::RelPath::parse("x").unwrap())
+        .unwrap();
+    let before = world.vfs.counters();
+    let contents = engines(1 << 20);
+    let results = common::with_env(&world.vfs, &contents, &CancelToken::new(), |env| {
+        hikasa_folder::compute_crcs(cmp.model(), &[(row, hikasa_core::Side::Left)], env).unwrap()
+    });
+    assert_eq!(results[0].2.as_ref().copied().unwrap(), crc32(b"one"));
+    assert_eq!(world.vfs.counters(), before, "nothing decoded");
+}

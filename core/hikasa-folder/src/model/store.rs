@@ -1882,7 +1882,7 @@ impl Store {
     }
 
     pub(crate) fn content_outcome(&self, id: NodeId) -> Option<ContentOutcome> {
-        let node = self.node(id)?;
+        let node = self.node(id).filter(|n| n.internal & internal::GONE == 0)?;
         let summary = node.content()?;
         if let Some(outcome) = self.outcomes.get(&id.0) {
             return Some(outcome.clone());

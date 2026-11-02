@@ -35,13 +35,14 @@ pub(crate) fn check(tree: &TreeRead<'_>) -> Result<(), InvariantViolation> {
     monotonicity(store)
 }
 
+/// The nodes reachable from the root, each after its parent, the root first (ids say nothing: a refresh can move a
+/// folder above its children).
 fn nodes(store: &Store) -> impl Iterator<Item = (u32, &Node)> + '_ {
-    (0..store.len()).filter_map(|id| {
-        store
-            .node(NodeId(id))
-            .filter(|n| n.internal & super::store::internal::GONE == 0)
-            .map(|n| (id, n))
-    })
+    store
+        .post_order()
+        .into_iter()
+        .rev()
+        .filter_map(|id| store.node(NodeId(id)).map(|n| (id, n)))
 }
 
 /// INV-FOLDER-1: parent and child links agree; the root has no parent.
@@ -84,7 +85,10 @@ fn structure(store: &Store) -> Result<(), InvariantViolation> {
 /// INV-FOLDER-1, the other way: every live node is reachable from the root, once.
 fn reachable(store: &Store) -> Result<(), InvariantViolation> {
     let reached = store.post_order().len();
-    let live = nodes(store).count();
+    let live = (0..store.len())
+        .filter_map(|id| store.node(NodeId(id)))
+        .filter(|node| node.internal & super::store::internal::GONE == 0)
+        .count();
     if reached != live {
         return fail(
             "INV-FOLDER-1",
@@ -317,7 +321,7 @@ fn filters(store: &Store) -> Result<(), InvariantViolation> {
     let Some(rules) = store.resolved.as_ref() else {
         return Ok(());
     };
-    // Path and verdict of every folder side (top-down: parents have smaller ids).
+    // Path and verdict of every folder side (top-down).
     let mut folders: BTreeMap<u32, [Option<(RelPath, FolderVerdict)>; 2]> = BTreeMap::new();
     folders.insert(
         0,

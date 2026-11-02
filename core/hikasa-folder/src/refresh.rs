@@ -259,8 +259,9 @@ impl<'a> Scan<'a> {
             return false;
         }
         for (side, rec) in old.sides.iter().enumerate() {
+            // The key says the same sides are there.
             let Some((entry, f)) = items[side].get(p.sides[side]) else {
-                return false;
+                continue;
             };
             let flag = |bit: u8, new: bool| rec.has(bit) == new;
             if !flag(bits::FILTERED, f.filtered)

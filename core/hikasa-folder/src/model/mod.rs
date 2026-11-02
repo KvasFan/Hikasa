@@ -254,23 +254,29 @@ impl TreeRead<'_> {
         RelPath::parse(&text).unwrap_or_default()
     }
 
-    /// The node at `path`: each component is the name of a row on either side, exact, or by the comparison's case when it
-    /// is not case-sensitive (FC-040 tests, `--path` of later waves). The root for the empty path.
+    /// The node at `path`: each component is the name of a row on either side, exact first, then by the comparison's case
+    /// when it is not case-sensitive. The root for the empty path.
     pub fn node_at(&self, path: &RelPath) -> Option<NodeId> {
         let insensitive = self.store.case == Some(CaseSensitivity::Insensitive);
-        let same = |a: &str, b: &str| {
-            a == b || (insensitive && hikasa_core::case::fold(a) == hikasa_core::case::fold(b))
+        let named = |id: NodeId, same: &dyn Fn(&str) -> bool| {
+            self.node(id).is_some_and(|view| {
+                [view.left, view.right]
+                    .iter()
+                    .flatten()
+                    .any(|entry| same(entry.name))
+            })
         };
         let mut at = NodeId::ROOT;
         for component in path.components() {
-            at = self.children(at).find(|&child| {
-                self.node(child).is_some_and(|view| {
-                    [view.left, view.right]
-                        .iter()
-                        .flatten()
-                        .any(|entry| same(entry.name, component))
-                })
-            })?;
+            let folded = hikasa_core::case::fold(component);
+            let exact = self
+                .children(at)
+                .find(|&child| named(child, &|name| name == component));
+            let by_case = || {
+                self.children(at)
+                    .find(|&child| named(child, &|name| hikasa_core::case::fold(name) == folded))
+            };
+            at = exact.or_else(|| if insensitive { by_case() } else { None })?;
         }
         Some(at)
     }
