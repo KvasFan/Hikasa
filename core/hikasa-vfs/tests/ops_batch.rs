@@ -1625,7 +1625,7 @@ fn a6_5_a_link_in_a_base_is_refused() {
             "{}",
             failure(&report, 0)
         );
-        assert!(failure(&report, 0).contains("/base/sub"));
+        assert!(failure(&report, 0).contains(&mspec("/base/sub").canonical()));
         assert_eq!(vfs.dump(), before, "{row:?}");
     }
 }
