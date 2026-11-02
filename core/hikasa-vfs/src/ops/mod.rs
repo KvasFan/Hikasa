@@ -1340,8 +1340,9 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
             Err(e) => return Outcome::Failed(e),
         }
     }
-    // The execution re-check (D-103): an item planned without a target never replaces one that appeared.
-    if item.action.needs_absent_target() && !item.replaces {
+    // The execution re-check (D-103): an item planned without a target never replaces one that appeared. A copy makes it
+    // in `run_copy`, where a new file's rename that cannot replace makes it at no cost.
+    if item.action.needs_absent_target() && !item.replaces && item.action != Action::Copy {
         let found = match seen.target.take() {
             Some(found) => Ok(found),
             None => lstat_target(exec.dst_for(item.action), &item.target),

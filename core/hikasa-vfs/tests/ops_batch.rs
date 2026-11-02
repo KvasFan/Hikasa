@@ -2589,3 +2589,63 @@ fn a6_cr_a_read_only_hidden_copy_goes_on_disk() {
     assert_eq!(std::fs::read(&left).unwrap(), b"left");
     assert!(std::fs::metadata(&left).unwrap().permissions().readonly());
 }
+
+/// D-103 on the copy path of a new file (M2 W6c): the target that appeared since the plan is not replaced, by the stream path
+/// on `MemoryVfs` and by the rename that cannot replace on disk, and the item fails as it did when `run_item` looked first.
+#[test]
+fn a6_3_a_target_that_appeared_since_the_plan_stays() {
+    // `MemoryVfs` has no new-file path: the check runs before the copy.
+    let vfs = memory();
+    file(&vfs, "/l/a", b"source", 100);
+    file(&vfs, "/r/a", b"appeared", 200);
+    let report = run(&vfs, batch(vec![copy_item("/l/a", "/r/a", 0)]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert!(
+        failure(&report, 0).contains(CHANGED),
+        "{}",
+        failure(&report, 0)
+    );
+    assert_eq!(content(&vfs, "/r/a"), b"appeared");
+    // On disk the copy takes its name by a rename that cannot replace.
+    let disk = tempfile::tempdir().unwrap();
+    let root = disk.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("r")).unwrap();
+    std::fs::write(root.join("source"), b"source").unwrap();
+    std::fs::write(root.join("r").join("a"), b"appeared").unwrap();
+    let local = LocalVfs::default();
+    let spec = |p: &std::path::Path| common::lspec(p);
+    let entry = local
+        .stat(&spec(&root.join("source")), FollowLinks::No)
+        .unwrap();
+    let mut one = PlanItem::planned(
+        Action::Copy,
+        EntryKind::File,
+        Some(spec(&root.join("source"))),
+        spec(&root.join("r").join("a")),
+        0,
+    );
+    one.expect = Some(Expect {
+        source: Some(ItemStamp {
+            kind: entry.kind,
+            size: Some(entry.size),
+            mtime: entry.mtime,
+        }),
+        target: None,
+    });
+    let report = run(&local, batch(vec![one]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert!(
+        failure(&report, 0).contains(CHANGED),
+        "{}",
+        failure(&report, 0)
+    );
+    assert_eq!(
+        std::fs::read(root.join("r").join("a")).unwrap(),
+        b"appeared"
+    );
+    let names: Vec<_> = std::fs::read_dir(root.join("r"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "a temporary file was left: {names:?}");
+}

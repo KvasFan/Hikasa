@@ -174,6 +174,9 @@ pub struct HandleMeta {
     pub created: Option<FileTime>,
     /// The Unix mode.
     pub mode: Option<u32>,
+    /// The source's size as the caller's `lstat` saw it just before, a regular file (M2 W6c, additive): the back-end
+    /// need not `stat` it once more. `None`: it does.
+    pub size: Option<u64>,
 }
 
 /// What [`Vfs::set_times`] changes; `None` keeps the current value. The access time is never changed (D-99).

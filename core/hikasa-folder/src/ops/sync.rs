@@ -688,6 +688,7 @@ impl<'a, 'r> Planner<'a, 'r> {
             self.builder.close_open(&mut open, 0);
         }
         let op = self.builder.finish(OpVerb::Sync, true, false);
+        self.rows.shrink_to_fit();
         Ok((op, self.rows, self.warnings))
     }
 

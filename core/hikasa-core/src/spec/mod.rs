@@ -93,8 +93,9 @@ pub enum Spec {
         /// `/`-separated member path inside the snapshot.
         member: String,
     },
-    /// Remote URL (parsed, unsupported in M1).
-    Remote(RemoteUrl),
+    /// Remote URL (parsed, unsupported in M1). Boxed (M2 W6c): a spec is in every item of a plan, and the URLs, which no
+    /// plan holds, would double its size (§1.6.22's memory budget).
+    Remote(Box<RemoteUrl>),
     /// `profile:Name[?path]` (parsed, unsupported in M1).
     Profile {
         /// Profile name (non-empty, without `?`).
@@ -102,8 +103,8 @@ pub enum Spec {
         /// Path inside the profile's root, verbatim.
         path: Option<String>,
     },
-    /// `http(s)://…` single file (parsed, unsupported in M1).
-    Http(HttpUrl),
+    /// `http(s)://…` single file (parsed, unsupported in M1). Boxed, as `Remote`.
+    Http(Box<HttpUrl>),
     /// `clipboard://`.
     Clipboard,
     /// `-` (standard input).
@@ -194,10 +195,11 @@ impl Spec {
         match scheme_step(bytes, ctx.style) {
             (SchemeStep::Local, _) => {}
             (SchemeStep::Http { secure }, len) => {
-                return url::parse_http(input, len, secure).map(Spec::Http);
+                return url::parse_http(input, len, secure).map(|url| Spec::Http(Box::new(url)));
             }
             (SchemeStep::Remote(scheme), len) => {
-                return url::parse_remote(input, len, scheme).map(Spec::Remote);
+                return url::parse_remote(input, len, scheme)
+                    .map(|url| Spec::Remote(Box::new(url)));
             }
             (SchemeStep::Unknown(scheme), _) => return Err(SpecError::UnknownScheme { scheme }),
         }
@@ -384,14 +386,14 @@ impl Spec {
     /// Returns a copy with every secret removed (`RemoteUrl::password = None`, `HttpUrl::password = None`).
     pub fn without_secrets(&self) -> Spec {
         match self {
-            Spec::Remote(url) => Spec::Remote(RemoteUrl {
+            Spec::Remote(url) => Spec::Remote(Box::new(RemoteUrl {
                 password: None,
-                ..url.clone()
-            }),
-            Spec::Http(url) => Spec::Http(HttpUrl {
+                ..(**url).clone()
+            })),
+            Spec::Http(url) => Spec::Http(Box::new(HttpUrl {
                 password: None,
-                ..url.clone()
-            }),
+                ..(**url).clone()
+            })),
             Spec::ArchiveMember { archive, member } => Spec::ArchiveMember {
                 archive: Box::new(archive.without_secrets()),
                 member: member.clone(),

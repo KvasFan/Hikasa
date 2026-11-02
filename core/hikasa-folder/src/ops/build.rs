@@ -2262,6 +2262,9 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.assign_backups(policy, &mut exec);
         }
         let refresh = super::refresh_nodes(self.read, &self.meta);
+        // A plan is held across a confirmation and a dialog: it keeps what it holds, not what its growth reserved (§1.6.22).
+        self.items.shrink_to_fit();
+        self.meta.shrink_to_fit();
         let plan = Plan {
             op: OpKind::Batch,
             options: PlanOptions::Batch(BatchOptions {

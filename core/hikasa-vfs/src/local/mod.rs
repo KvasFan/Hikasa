@@ -770,9 +770,19 @@ impl Vfs for LocalVfs {
             },
             None => None,
         };
-        let size = fs::metadata(from_path.as_path())
-            .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
-        if !size.is_file() || size.len() > FAST_COPY_MAX {
+        // The caller's `lstat` of a regular file, a moment ago, says what a `stat` here would.
+        let len = match meta.size {
+            Some(len) => len,
+            None => {
+                let found = fs::metadata(from_path.as_path())
+                    .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
+                if !found.is_file() {
+                    return Ok(None);
+                }
+                found.len()
+            }
+        };
+        if len > FAST_COPY_MAX {
             return Ok(None);
         }
         let (Some(dir), Some(name)) = (to_path.as_path().parent(), to_path.as_path().file_name())
@@ -1361,6 +1371,8 @@ mod tests {
             } else {
                 None
             },
+            // The back-end stats the source itself.
+            size: None,
         }
     }
 
@@ -1696,6 +1708,8 @@ mod tests {
             modified: source.mtime,
             created: None,
             mode: source.attrs.unix().map(|unix| unix.mode),
+            // What the caller's `lstat` saw: no second `stat`.
+            size: Some(source.size),
         };
         vfs.copy_new_file(&spec(&from), &spec(&to), &meta, &CancelToken::new())
             .unwrap();

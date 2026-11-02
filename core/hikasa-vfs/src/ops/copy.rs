@@ -531,10 +531,16 @@ pub(crate) fn run_copy(
         && !exec.create_parents(item.depth)
     {
         let meta = handle_meta(exec, &item.target, &entry, preserve);
-        if let Some(bytes) = exec
+        // D-103's re-check is the commit itself here: the new file takes its name by a rename that cannot replace, so a
+        // target that appeared since the plan stays, and the item fails as the `lstat` of `run_item` would have failed it.
+        let fast = match exec
             .dst
-            .copy_new_file(source, &item.target, &meta, exec.ctl.cancel)?
+            .copy_new_file(source, &item.target, &meta, exec.ctl.cancel)
         {
+            Err(VfsError::AlreadyExists { .. }) => return Err(target_appeared(&item.target)),
+            other => other?,
+        };
+        if let Some(bytes) = fast {
             exec.progress(bytes, &item.target);
             // Set on the handle but for `R`, which a rename could not carry on Windows.
             if entry
@@ -547,6 +553,9 @@ pub(crate) fn run_copy(
             return Ok(bytes);
         }
     }
+    if !item.replaces && known_target(exec.dst, &item.target, seen)?.is_some() {
+        return Err(target_appeared(&item.target));
+    }
     let durability = if item.replaces {
         Durability::FileOnly
     } else {
@@ -556,6 +565,14 @@ pub(crate) fn run_copy(
     narrow_archive_mode(exec, source, &item.target, &mut entry);
     apply_metadata(exec, &item.target, &entry)?;
     Ok(bytes)
+}
+
+/// D-103: an item planned without a target never replaces one that appeared since.
+pub(crate) fn target_appeared(target: &Spec) -> VfsError {
+    VfsError::InvalidTarget {
+        spec: target.canonical(),
+        reason: "changed since the plan was made",
+    }
 }
 
 /// The source entry of a file copy: seen by the stamp check, or read now. A link the comparison followed is read through
@@ -593,7 +610,10 @@ fn handle_meta(
     if preserve.times && source.mtime.is_none() {
         warn_no_mtime(&mut exec.warned, &mut exec.warnings, target);
     }
-    let mut meta = HandleMeta::default();
+    let mut meta = HandleMeta {
+        size: (source.kind == EntryKind::File).then_some(source.size),
+        ..HandleMeta::default()
+    };
     if preserve.times && source.mtime.is_some() {
         if caps.contains(Capabilities::SET_TIMES) {
             meta.modified = source.mtime;
