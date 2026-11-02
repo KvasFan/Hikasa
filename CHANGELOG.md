@@ -3,93 +3,96 @@
 ## Unreleased
 
 ### Added
+- **Copy and delete in the Folder Compare view.** Select one row, then Actions ▸ Copy to Right (Ctrl+R), Copy to Left
+  (Ctrl+L), Delete (Del) or Delete Permanently (Shift+Del). The Delete dialog chooses the sides and the recycle bin; a
+  confirmation dialog asks the operation's questions one at a time (Yes, No, Yes to All, No to All, Cancel, and "Do not
+  ask again"). The job can be stopped; its summary and failures go to the log, a notice sums it up (*Show log* when an
+  item failed), and the rows it wrote are read again, with the open folders and the selected row kept. The rest of the
+  Actions menu, and selecting more than one row, come later.
+- **The Folder Compare view reads less again.** Open on a closed archive opens it in place instead of comparing
+  everything again; a folder that was not compared yet (`--no-auto-scan`) is read when it is opened; `expand_on_load` and
+  `expand_differences_only` open folders when a comparison ends; a Text Compare opened from a row gives its result back
+  to the row.
 - **`folder compare` flags.** `--attrib-filter` and `--unixtype-filter` hide items by DOS attribute and by Unix type;
   `--no-auto-scan` scans only the bases, and the orphan folders in a base with their subtrees; `--expand-on-load` and
   `--expand-differences` say what a view opens; `--ignored <PATH>` (with `!<PATH>` for an exception) marks rows whose
   differences count as same, while errors stay; `--format-on` and `--format-off` turn a file format on or off for one
   comparison. Rules files take the same keys, and old ones read as before.
-
 - **`hikasa folder op`.** Compares, then copies, moves, exchanges, deletes, renames, touches, makes folders and archives, copies
   or moves out of the comparison, runs content tests and CRCs, adds to a session's exclude lists and Ignored marks, or opens
   rows with an application. A selection is a mask (`left.diff.files`, `newer`, `all`) or a path; nothing selected acts on
-  nothing. `--dry-run` prints the plan. Schemas `hikasa.folder_op.v1`, `hikasa.folder_contents.v1`.
+  nothing. `--dry-run` prints the plan. Ctrl-C at a question ends it at once. Schemas `hikasa.folder_op.v1`,
+  `hikasa.folder_contents.v1`.
 - **Rename masks.** DOS masks and regular expressions over the whole name; a chain is ordered and a cycle goes through a
   hidden name.
 - **`hikasa folder sync`.** Update Left, Right or Both, Mirror to Left or Right, or a custom matrix of eight situations ×
   five actions (`--custom mirror-right,different=leave`); `--orphans deleted` reads an item on one side as deleted on the
   other; per-path `--override`s; `--create-empty`, `--within-archives`, `--recycle`, `--just-selection`, `--visible`,
-  `--all-rows`. `--dry-run` prints each row's decision and every item. Schema `hikasa.folder_sync.v1`.
+  `--all-rows`. `--dry-run` prints each row's decision and every item. Schema `hikasa.folder_sync.v1`. Syncs settle: a
+  second run of a preset plans nothing new (a copied link keeps its time; under `--case-insensitive --filename-case` the
+  target takes the source's spelling; two source names that align to one are left as `ambiguous_name` and counted).
 - **Folder-sync sessions.** `session new --type folder-sync` keeps the sync in `[rules.sync]`; `session run` runs it, with
-  `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`. A folder-sync file of an earlier version reads as before.
-- **`--sync` and `--nobackups`** of `gui open` and `hikasa-gui` are understood, and `folder sync --gui` sends the sync to the
-  GUI, which says it cannot show a Folder Sync view yet (exit 100).
+  `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`; `session edit --set rules.sync.overrides."<path>"=<action>`
+  sets a per-row override. A folder-sync file of an earlier version reads as before.
+- **`--sync` and `--nobackups`** of `gui open` and `hikasa-gui` are understood. `--nobackups` turns backups off for the
+  operations of that view; `folder sync --gui` sends the sync to the GUI, which says it cannot show a Folder Sync view yet
+  (exit 100).
 
 ### Data safety
+- **Nothing is written before you confirm.** An operation is planned first, and its questions are asked before anything
+  runs: read-only and system targets, a newer target, a move that replaces, an item with no recycle bin, a folder that
+  replaces a file, a change in a read-only archive, a backup over a file the plan did not make. What lies in a folder
+  answered no stays with it. `folder op delete` asks whatever `confirm_delete` says; without a terminal or `--yes` nothing
+  is touched and the command exits 100. In the window, a dialog closed with a question open is a Cancel, and "Do not ask
+  again" counts only with a yes.
 - **A plan keeps what it saw.** A file changed since the comparison is not overwritten or deleted, and the rest go on. Nothing
   below a followed link, and nothing outside the base folders, is written or deleted; a row whose comparison failed is
   never touched. A rename never replaces. A folder is removed or sent to the recycle bin whole only when nothing below it
-  is left out.
-- **Questions are asked of what cannot be undone:** read-only and system targets, a newer target, a move that replaces, an
-  item with no recycle bin. `folder op delete` asks whatever `confirm_delete` says; without a terminal or `--yes` nothing is
-  touched and the command exits 100. A failing recycle bin fails the item unless `--recycle-fallback` was given.
-- **Disable editing** per side, `specs.read_only_left`, `read_only_right` and `--read-only`, is enforced before anything is
-  planned, also for a `copyto` or `moveto` whose target leads into that side, by `..` or through a link.
+  is left out, and only as the plan saw it. A copy reads no more than the plan saw: a source swapped for a FIFO, or for a
+  file of another size, fails "changed since the plan was made" and leaves nothing behind. In the window, a plan whose
+  comparison changed before it ran does not run.
+- **Disable editing** per side (`--ro`, `--ro1`, `--ro2`, `--read-only`, a session's `read_only_left`, `read_only_right`)
+  is enforced before anything is planned, also for a `copyto` or `moveto` whose target leads into that side, by `..` or
+  through a link. In the window the commands that would write such a side are off, `Del` included, and the Delete dialog
+  greys it.
+- **The recycle bin is what you chose.** A failing recycle bin fails the item unless `--recycle-fallback` (in the window,
+  *If the recycle bin fails, delete permanently*) was given, and then deletes only what the plan saw: a file that came
+  into a folder since, or changed, stays, and so does its folder. The Delete dialog never chooses both sides for you.
 - **`--path` never means the whole tree.** An empty `--path` (a shell variable that came out empty), `.`, `/` or `left:` is an
-  error; the whole tree takes `--select all`.
+  error, and a `--path` that is not on its side is `not_found`; the whole tree takes `--select all`.
 - **Filters win in folders the comparison did not list.** Such a folder is listed when the plan is made, through the same
   filters: what they hide is not touched, a folder that keeps something stays, and its files are stamped and asked about
   as rows are, so a file edited while a question is open is not deleted.
-- **`--recycle-fallback` deletes only what the plan saw.** A file that came into a folder since, or changed, stays, and so
-  does its folder.
-- **More questions:** a folder that replaces a file, a change in a read-only archive, and a backup over a file the plan did
-  not make each ask, and `--confirm no-to-all` keeps them. What lies in a folder answered no stays with it.
-- **A plan runs what it shows.** An item that does not run, with no cancel, is no success (exit 100), and a summary says how
-  many did not run; a folder that cannot go no longer stops its neighbours.
-- **A sync never deletes on the strength of what it could not see.** A sync that would delete while the other side has
-  nothing at all (a mount that failed) is refused unless `--allow-empty-source`, which `--yes` does not imply; a comparison
-  that did not finish deletes nothing; a row that failed, and everything below a folder that could not be read, is left and
-  the sync exits 100; a side a filter hides is left, and so is what lies below a folder a filter hides on either side; a
-  read-only side keeps its rows; a followed link that a mirror removes goes as the link, never what it leads to.
+- **What would undo itself is refused when planned:** a move of a folder onto itself, a rename of a folder into itself, a
+  `copyto` of an archive into itself; a refused `moveto` leaves no new folder, and a move of an archive opened on both
+  sides replaces the file whole. Open With gives a name that starts with `-` as `./-…`, so a program never reads it as an
+  option.
+- **A plan runs what it shows.** An item that does not run, with no cancel, is no success (exit 100, a warning notice in the
+  window), and a summary says how many did not run; a folder that cannot go no longer stops its neighbours.
+- **A sync never deletes on the strength of what it could not see.** A sync that would delete while the other side holds no
+  file (a mount that failed, only empty folders, only files a filter hides) is refused unless `--allow-empty-source`, which
+  `--yes` does not imply; a source folder with no file whose counterpart's files a sync deletes is shown as *emptied
+  entirely*. A comparison that did not finish deletes nothing; a row that failed, and everything below a folder that could
+  not be read, is left and the sync exits 100; a side a filter hides is left, and so is what lies below a folder a filter
+  hides on either side; a read-only side keeps its rows; a followed link that a mirror removes goes as the link, never what
+  it leads to. `folder sync --session` of a folder-compare session needs a preset flag.
 - **Update never removes.** A sync replaces only a row's own counterpart: a folder copied by *Update* does not replace a file
   of its name, nor `b.txt` a `B.txt` that a case-sensitive comparison keeps apart on a file system that folds.
-- **An empty source is one with no file.** A source holding only empty folders (a `lost+found`), only files a filter hides,
-  or only folders that cannot be read, is refused as an empty one. A source folder with no file whose counterpart's files
-  a sync deletes is shown as *emptied entirely* in the dry run, before the question and in JSON (`emptied`).
-- **A folder goes to the recycle bin whole only as the plan saw it.** A file added to it, or one changed, since the plan
-  fails the item, and nothing moves.
 - **A session's unknown keys are said.** Each one is a warning when the session runs, naming the nearest known key; in a
   folder-sync session one in `[specs]` or `[rules]` stops the run, as it may be what protects a side.
-- **A copy reads no more than the plan saw.** A new file's source swapped for a FIFO, or for a file of another size, fails
-  "changed since the plan was made" and leaves nothing behind.
-- **The folder-op preference `include_hidden_by_default` no longer reaches a sync**, which leaves a side a filter hides
-  unless its own `--include-hidden` says otherwise.
-- **`folder sync --session` of a folder-compare session needs a preset flag**, and `--path` naming a row that is not on its
-  side is an error (`not_found`) instead of selecting nothing.
-- **`session edit --set rules.sync.overrides."<path>"=<action>`** sets a per-row override of a folder-sync session.
-- **Syncs settle.** A copied link keeps its time; under `--case-insensitive --filename-case` a sync gives the target the
-  source's spelling; two source names that align to one are left as `ambiguous_name` and counted, so a second run plans
-  nothing new.
 
 ### Changed
-- **A new copy makes two system calls fewer per file.** It no longer stats its source a second time, and a target that
-  appeared since the plan is caught by the rename that cannot replace it; the item fails as before. A copy of 10,000 small
-  files through `folder op` now takes about 1.4 times a plain copy.
 - **`include_hidden_by_default` is now false.** Operations honour the filters unless a dialog or `--include-hidden` says
-  otherwise. An explicit value in `options.toml` keeps working.
-- **A new copy no longer syncs to disk.** `vfs cp`, and every copy that creates its target, writes a file with its final
-  time and mode under a temporary name and renames it. Copying 10,000 small files took 26 times a plain copy, and now takes
-  about 1.5 times. A power cut just after a copy can lose files the copy created. It does not lose a file that existed: a
-  copy that replaces still syncs the file before the rename, and a move syncs the file, its folder and the name of every
-  folder it made before the source goes.
+  otherwise. An explicit value in `options.toml` keeps working. It is a preference of folder operations only: a sync leaves
+  a side a filter hides unless its own `--include-hidden` says otherwise.
+- **A new copy no longer syncs to disk** (`fsync`). `vfs cp`, and every copy that creates its target, writes a file with its
+  final time and mode under a temporary name and renames it, with two system calls fewer per file than before. Copying
+  10,000 small files took 26 times a plain copy, and now takes about 1.4 to 1.5 times. A power cut just after a copy can
+  lose files the copy created. It does not lose a file that existed: a copy that replaces still syncs the file before the
+  rename, and a move syncs the file, its folder and the name of every folder it made before the source goes.
+- **Full Refresh keeps the open folders and the selected row** of the Folder Compare view, found again by their paths.
 
 ### Fixed
-- **`folder op` (unreleased) after review.** Ctrl-C at a question ends it at once. A move of an archive opened on both sides
-  replaces the file instead of failing. A move of a folder onto itself, and a rename of a folder into itself, are refused
-  when planned. In a flat comparison, names in two folders no longer collide and a missing folder is made. `copyto` of an
-  archive into itself is refused, and a refused `moveto` leaves no new folder. `--target x.zip/` makes a folder. `--select
-  all` over a folder that could not be read exits 100. Open With gives a name that starts with `-` as `./-…`, carries names
-  that are not Unicode, and refuses a row missing on the side asked for. `mkdir --name 'x\'` is refused rather than making
-  `x`.
 - **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
   `a/../copy`) never ended and could not be cancelled; this goes back to 0.1.90. A `..` keeps the meaning the OS gives it
   through links, so a folder still cannot be copied below itself by spelling.
@@ -101,6 +104,8 @@
 - `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder
   operations, with subtree refresh, contents on demand and `ArchiveVfs::extract_to_cache`.
 - `open` 5.4.5 for the associated application; `hikasa-folder` gains `hikasa-formats`, for one regular expression policy.
+- The window's dialogs of file operations are toolkit-free models, tested without a window; the commands
+  `CopyRight`, `CopyLeft`, `Delete` and `PermanentDelete` are implemented in the catalogue.
 
 ## 0.1.91 (2026-11-01, pre-release)
 

@@ -20,7 +20,7 @@ its case.
 | `hikasa session lock <ref>` / `unlock <ref>` | a locked session is used but never saved, deleted or renamed without `--force` |
 | `hikasa session delete <ref> [--force]` | deletes it |
 | `hikasa session mkdir <folder>` / `rmdir <folder> [--recursive] [--force]` | session folders; a folder holding locked sessions needs `--force` |
-| `hikasa session run <ref> [output flags]` | runs a Folder Compare or Text Compare session here |
+| `hikasa session run <ref> [output flags]` | runs a Folder Compare, Folder Sync or Text Compare session here |
 
 Types: `folder-compare`, `folder-sync`, `text-compare`, `text-edit`, `table-compare`, `hex-compare`,
 `picture-compare`.
@@ -49,7 +49,12 @@ Standard input (`-`) and the clipboard are never stored in a session: that side 
 `hikasa session run <ref>` compares exactly as `hikasa folder compare` or `hikasa text compare` would with the
 session's inputs and rules: the same output, the same JSON and the same [exit codes](topic:exit-codes). It
 takes their output flags (`--report`, `--display`, `--output`, `--html`, `--title`, `--ignore-unimportant`, …).
-Other session types cannot run here yet (exit 100, `unsupported`).
+A Folder Sync session runs its sync (`[rules.sync]`) as [hikasa folder sync](topic:folder-sync) does, with
+`--dry-run`, `--yes`, `--confirm` and `--allow-empty-source`; without a terminal and without `--yes` it writes nothing
+and exits 100. Other session types cannot run here yet (exit 100, `unsupported`).
+
+`specs.read_only_left` and `specs.read_only_right` (*Disable editing*) protect a side: no folder operation or sync of
+the session writes it, and the window turns off the commands that would.
 
 `hikasa gui session <ref> [--wait]` opens it in the window, and so does `hikasa gui open <ref>` when no file of
 that name exists (see [hikasa gui](topic:gui)). See also [hikasa workspace](topic:workspace) and

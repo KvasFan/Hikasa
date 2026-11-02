@@ -5460,6 +5460,65 @@ text was silent.
     also those it answers itself (an `OpenView` of a kind it does not serve), so a test records the wire of `folder sync
     --gui` instead of reading it back from an error message.
 
+**W6d.** Where the implementation interpreted or extended §1.6.20 and §1.6.24, and why. Safety won where the text was
+silent.
+
+1. **Predicates.** `Ctx` gains `row_selected` (one row selected in a comparison that has finished or stopped, with no
+   job of the view and no operation under way), `row_on` (the row has an item on the left, on the right) and `writable`
+   (Disable editing). `SideWritable(side)` holds when that side is writable and the row has an item on the other side (a
+   copy needs a source); `RowSelected` when the row has an item on a writable side. `Busy` covers an operation's jobs,
+   so Stop cancels them. `FullRefresh` while an operation is under way does nothing: its outcome and its refresh come
+   first.
+2. **One task per view.** *Choosing* (the Delete dialog), *Planning* (one job: `folder_op_plan`, then
+   `folder_confirmation`, which reads `options.toml`, D-105), *Asking* (the view keeps the plan, the dialog only the
+   `Confirmation`), *Executing* (`JobKind::FolderOp`), *Refreshing* (`JobKind::FolderRefresh`). The four commands are off
+   for all of it, and `start_operation` refuses by itself as well, so neither a second dialog nor a second job can start.
+   A plan with no question left (the keys off) runs at once.
+3. **A stale plan does not run.** The view keeps the model (`Arc`) and its generation from the command on; the plan runs
+   only if both still hold after planning and after the dialog, else a warning notice says so and nothing is written. A
+   child's result and an Expand refresh wait for the task, so they cannot move the generation under a question.
+4. **Delete dialog presets.** A row on one writable side has that side chosen; a pair on two writable sides has none (OK
+   stays off until one is chosen): *Both* is never a default, nor is one side of a pair picked for the user.
+   `require_side_selection_in_delete` presets nothing ever. A side the row has nothing on is greyed like a read-only one.
+   Delete Permanently plans `recycle: Recycle::default()` whatever the dialog holds.
+5. **Confirmation dialog.** Enter is Yes for the operation question and No for an item's. "Do not ask again" counts with
+   Yes and Yes to All only (the key's `false` means "proceed"), is written by `Followup::DisableOption` once the last
+   question is answered and only when the operation was not cancelled, and changes the next operation, not the questions
+   of this one. The recycle bin's question and a sync's (`sync_confirmations`) have no box. A dialog that leaves with a
+   question open (the window's close button) is a Cancel. The counts under the question are per action, items and bytes
+   (bytes only where items carry a size: a removal has none), then what the plan leaves and what cannot run.
+6. **Notices.** Key `op:<view>`. Information when `FolderOpOutcome::ok()`; a warning with the new `NoticeAction::ShowLog`
+   (it brings the view's tab and opens its log panel) otherwise, and when stopped (`<caption>: stopped; …`). A plan the
+   Service refuses is a warning notice with its log entry. The outcome's entries are `op_log_entries` with the tab's
+   caption as source; the notice is not logged again, the summary entry stands for it (D-117). When a plan's dialog
+   appears, the view's tab comes to the front: the question is about its row. An operation's notice stays when its tab
+   closes (what happened on disk is still true).
+7. **Rows a refresh replaced.** `renumbered` moves the open folders and the selection; a row whose facts changed gets a new
+   record, which is no renumbering (a copied orphan becomes a pair), so the open folders and the selected row are also
+   found again by path. A refresh that answers flat (`report: None`), or fails after an operation, runs the comparison
+   again; so does one that leaves `garbage() > len() / 2`.
+8. **Full re-runs keep what is open by path.** `FullRefresh` and the re-run of note 7 find the open folders and the
+   selected row again by path once the new comparison ends; before, the old ids were kept and could name other rows of the
+   new model. "A `FullRefresh` is unchanged" is read as: it still runs the comparison again.
+9. **Open on a closed archive** runs `folder_open_archive` as a job; the path joins the view's
+   `request.patch.open_archives`, which `duplicate()` gives the session, and the row opens by path once it is a folder.
+10. **FC-012.** `expanded_on_load` is applied when a run ends (not with *expand all*, nor after a re-run that restores
+    paths). Expand, or the disclosure triangle, on a `NotScanned` folder refreshes it, then opens it.
+11. **FC-029(c).** The ticket is the row's path and both stamps, not its id: ids move and records are replaced. The result
+    goes to the live file row at that path, through `apply_child_result`'s stamps, once per child (its first result), with
+    `ContentMethod::Rules` and the child's `verdict(false)`; it waits while the view's task runs; a child closed first
+    gives none; a re-run forgets the tickets. A child opened through its parent's session (a store job) is adopted when
+    `finish_open` has its id.
+12. **Disable editing and `--nobackups`.** From `OpenOptions` on every `open_view` (IPC and the command line; `--ro` is
+    both sides), from the session's `[specs] read_only_*` on every session open, and copied by `TabDuplicate`.
+    `--nobackups` comes from `OpenOptions` only: a session has no such key.
+13. **Tests.** `FolderViewModel::gate` (`cfg(test)`) holds the plan and execute jobs, so Stop and the busy states are
+    tested without timers. No test calls a recycle bin: a delete to the bin is checked by its plan and cancelled, the
+    no-bin question on an archive member is answered No, and the pointer test unticks the bin and checks the model before
+    OK. The child's result is tested with a CRLF pair (`rules_same`): a plain text file's inner whitespace is important.
+14. **Architecture.** `op_dialogs.rs` is in check 7's list of model files. `folder_view.rs` names no toolkit either, but
+    stays out of the list as before.
+
 ### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

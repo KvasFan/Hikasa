@@ -42,13 +42,15 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
 - A view's message line shows hints about what just happened (for example a drop it cannot use); close it with
   ×.
 - Notices appear in the top-right corner: settings changed on disk and reloaded, a compared file changed on disk
-  (reloaded automatically, or with a Reload button), a comparison in a background tab that failed. Information
-  notices disappear after a few seconds; the others stay until dismissed.
+  (reloaded automatically, or with a Reload button), a comparison in a background tab that failed, the end of a
+  file operation (a warning with *Show log* when an item failed or it was stopped). Information notices disappear
+  after a few seconds; the others stay until dismissed.
 
 ## Dialogs
 
 Dialogs open inside their window and take its input until they close. Enter presses the default button, Esc
-cancels, F1 opens the dialog's help topic. "Do not ask again" turns the warning off in `options.toml`.
+cancels, F1 opens the dialog's help topic. "Do not ask again" turns the warning off in `options.toml`. File
+operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
 Help ▸ About shows the version.
 
 ## Drag and drop

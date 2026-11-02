@@ -138,9 +138,9 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
 | `--expandall` | Expand all subfolders in the initial folder comparison. |
 | `--filters=<masks>` | Name filter for the initial folder comparison. |
 | `--fv=<type>`, `--fileviewer=<type>` | Force the view type: `Text Compare`, `Text Merge`, `Table Compare`, `Hex Compare`, `Media Compare`, `Picture Compare`, `Registry Compare`, `Version Compare`, `Folder Compare`, `Folder Merge`, `Folder Sync`, `Text Edit`, `Text Patch`. |
-| `--nobackups` | Do not create backup files. *M2 W6c:* `OpenOptions::no_backups` (additive, left out of the wire while off); W6d's view operations honour it. |
+| `--nobackups` | Do not create backup files. *M2 W6c:* `OpenOptions::no_backups` (additive, left out of the wire while off). *M2 W6d:* the operations of that view keep no backups, whatever `[backups]` says. |
 | `--qc[=size|crc|binary]`, `--quickcompare[=…]` | Quick compare two files and set the exit code; no type = rules-based. |
-| `--ro`, `--readonly` / `--ro1`, `--lro`, `--leftreadonly` / `--ro2`, `--rro`, `--rightreadonly` | Disable editing on all / left / right side. |
+| `--ro`, `--readonly` / `--ro1`, `--lro`, `--leftreadonly` / `--ro2`, `--rro`, `--rightreadonly` | Disable editing on all / left / right side. *M2 W6d:* a Folder Compare view turns off the file operations that would write such a side, and the Service refuses them too. |
 | `--savetarget=<file>` | Save command writes to this file instead of the original. |
 | `--solo` | Force a new instance. |
 | `--title1=` … `--title4=` (`--lefttitle`, `--righttitle`, `--centertitle`, `--outputtitle`) | Description shown in the path edit of the respective pane. |

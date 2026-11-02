@@ -29,5 +29,6 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
   [Workspaces](topic:dialog-workspaces).
 - [Options](topic:dialog-options), and the settings wizards [Export](topic:wizard-export),
   [Import](topic:wizard-import) and [Restore Factory Defaults](topic:wizard-restore).
-- [The Folder Compare view](topic:view-folder-compare).
+- [The Folder Compare view](topic:view-folder-compare), with its file operations: [Confirm an
+  operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
 - [The Text Compare view](topic:view-text-compare).
