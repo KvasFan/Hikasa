@@ -5114,6 +5114,79 @@ numbered per part.
 37. **`./!x`** was chosen over a backslash escape because `.` is no file name: no list that exists holds such a path, so old
     lists read as they did. Only a first name starting with `!` takes it; `a/!x` needs none.
 
+**W6b.** Where the implementation interpreted or extended §1.6.9–§1.6.13, §1.6.15–§1.6.19 and §1.6.21, and why.
+
+1. **`Resolved::depth` and rows of `resolve`.** `Resolved` gains `depth` (additive): post-order, and the `remove_dir` of a folder
+   after its contents, come from one pre-order pass over the list. The list holds every row a selection contributes, not
+   only roots. The root is never a row: selected, it passes its rows down, so no `keep_dir` or `touch` of a base can be planned
+   (note W6a 7). A row selected by itself counts whatever hides it; the builder gives a filtered one `skip filtered`.
+2. **Rule 2 of §1.6.9 reads as docs/04 §8 has it: "some of its children".** A folder selected with all it shows on that side
+   selected too is the folder. Read literally, `--select all` (which selects each row) would make every folder "a folder
+   with a row below it", so `delete --select all` and `move --select all` would leave the empty folders behind, and
+   `--include-hidden` would change nothing. What is hidden does not count for "all", and `whole` still decides what may be
+   one item. `whole` of a folder is off for a hidden, filtered, failed or `NotScanned` row present **on that side**; a row only
+   on the other side leaves nothing out here.
+3. **Matching a folder: rows the side does not have play no part.** "On the same side … every shown row below it matches" is read
+   per side. Read as every row, `left.all` would refuse a folder with one right orphan, and a collapsed folder could not be
+   selected by `all`. A folder with no row of its own side shown is empty: `all`, `orphan`, `exact`.
+4. **`diff` of §1.6.9** takes `UnimportantOnly`, `ImportantDifferences`, `BinaryDifferent` as "a content result that differs".
+5. **`--path` and a same-named row.** A file and a folder of one name are two rows (D-20), and `node_at` finds the first. `--path`
+   takes the sibling that has the side asked for.
+6. **Depths.** A folder that exists gets no item (rule 3), but a move's `remove_dir` must see what failed below it, so the items
+   below a source folder that goes are one level deeper than its `remove_dir`, with no `keep_dir`. `exec.block` then does its
+   work, and rule 4 holds as written.
+7. **A skipped folder with a source holds items.** `Confirmation::finish` turns a declined `create_dir` into `Action::Skip`, and
+   `run_item`'s cut looked at the action, so what lay below ran into a folder that was not made. `execute_with` now cuts below
+   a `Skip` of kind `Dir` with a source (`holds_items`); a skipped `remove_dir` has none, and what follows it is no child of it.
+8. **`same_file`.** A replacing item also runs `check_nesting` (with `check_move_inside`, `check_same_archive` for a move): one
+   `stat` of the source, on items that sync a file anyway. The model cannot see that two bases are one folder, through a link
+   too, and a move onto itself would lose the file. `check_nesting`, `check_move_inside`, `check_same_archive`, `spec_key`
+   became public for this and for rule 16.
+9. **Rule 13 and rule 5, followed rows and link members.** An exchange skips a pair with a followed side (`followed_link`): there
+   is no file to swap on a side that is a link to elsewhere. A pair of links with a member on a side is `skip symlink`, with
+   `archive_symlink_skipped`, or a hostile archive's link would land on a disk (D-142). A move of a followed folder is `skip
+   followed_link`: its contents cannot go (fence rule 1). Rule 5 as written skips every link member, where W3's planner keeps
+   a link between two archives; the rule stands, and only rule-6 expansions keep W3's reading.
+10. **An opened archive that goes whole goes as the file it is.** A row of an opened archive, `whole`, with no target: `copy`,
+    `move`, `remove`, `trash` or `rename` of the file, stamped by one `stat`. As a folder it would copy its members to a
+    folder of that name, and `check_item` refuses to remove an archive's root.
+11. **Rename order and `Action::Rename` for folders only in a move.** Folders of a rename go deepest first, or a folder renamed
+    before its rows would take their paths along (rule 2 above lets both be selected). A file `move` stays `Action::Move`, as
+    rule 13 says, also on one disk: it is a copy and a removal, so a large file on one disk is slower than a `rename` would
+    be. A later part may plan `rename` under D-97's conditions: `run_rename` keeps the backup, W6a note 10.
+12. **`.<a>.hikasa-ren`** falls back to `.hikasa-ren[-n]` for a name near 255 bytes (W6a note 30's lesson). The hidden name is
+    numbered around every name of the folder and every target.
+13. **Confirmation.** A plan where nothing runs asks no operation question. `finish` declines an item whose question is still
+    open, and `Err(Declined)` with the operation's open: what was not answered does not run. `folder_confirmation_strict`
+    carries D-77: `confirm_delete` as `true`, for adapters that must not depend on a settings file.
+14. **`ConfirmPolicy::from_options`** is the free function `api::folder_ops::confirm_policy`: the type is `hikasa_folder`'s and
+    `Options` the session's. `OpPlan` gains `refresh` (the parents of the rows it names): `folder_op_execute` has no model.
+15. **`OpReport::expanded`** (additive): where an item grew at execution, so `meta` follows without a clone of each item's spec.
+16. **`trash_fallback`.** One warning per operation names the items planned for a permanent delete. `NotFound` and a stop do not
+    fall back. `clear_read_only` of the root goes to each expanded item. Its `plan_remove` lists at execution, so a file added
+    to a `whole` folder since the comparison is in the expansion: with the bin it would have gone along too.
+17. **`escape_mask` and `!`.** `[!]` is no set (`!` after `[` negates), and no one-character set can hold `!`, so a leading `!` stays
+    literal: it has no meaning in a mask, and the property holds. `escape_mask` also takes `\\`, `/`, a trailing blank and a
+    trailing `.` (which would mean "no extension"). `;` in a set needed lists split outside sets: `mask::split_items`, in
+    `MaskList::parse`, `NameFilter::parse` and `from_lists`. A base-level folder is `.\\x\\`: `x\\` would match at any depth.
+18. **`folder_contents`** takes `ContentsRequest::text_rules` (additive): the comparison's, else the defaults, as `model` has none.
+    `compare_contents` keeps its signature and reads `resolve` with `Include::visible()`.
+19. **`FolderSyncOutcome`** holds `op` only until W6c adds `rows` and `counts`, and `sync_log_entries` is `op_log_entries`.
+20. **Flat comparisons.** A row's folder is no row, so an orphan's target is `<base>/<dir>/<name>`, with no chain: a missing folder
+    fails the item at execution. `folder_refresh` gives `report: None`.
+21. **Conflicts of rule 6's items.** They come from no row: only `replace_during_move` and, in a delete, `no_recycle_bin` are
+    known. `copyto` and `moveto` read the target by `lstat`, as it is no row.
+22. **`--target x.zip/`.** `FolderOp::CopyTo` has no `folder` flag, so a missing target with a writable mask is an archive even with
+    a trailing separator. `folder op mkdir` has it. Noted for W8.
+23. **`hikasa folder op open-with --associated --dry-run`** prints `associated <spec>` per item; `commands` of the JSON the same.
+24. **Session keys.** `read_only_left`, `read_only_right` are always written, as the contract's example has them, so
+    `session edit --set specs.read_only_right=true` finds its key. `session_add_excludes`, `session_set_ignored` are the Service's
+    writes of `exclude` and `ignored`; `SessionWriteDto` gains `masks`, `ignored`.
+25. **`parse_side`, `parse_sides`, `parse_structure`, `parse_confirm_mode`, `parse_exclude_what`, `parse_select_path`, `Reply::parse`,
+    `ConfirmMode::parse`** hold the words in core, for check 7.
+26. **Architecture.** `check_confined_crates` also keeps `execute_with` and `plan_op` to `api/folder_ops.rs`, `ops::execute` to
+    `vfs_ops.rs`, in `hikasa-session`; `op_dialogs.rs` joins check 7 with W6d, which adds the file.
+
 ### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

@@ -484,7 +484,10 @@ impl Service {
             }
             None => None,
         };
-        Ok(ContentEngines::with_stream_options(stream, rules_comparator))
+        Ok(ContentEngines::with_stream_options(
+            stream,
+            rules_comparator,
+        ))
     }
 
     fn folder_run_inner(

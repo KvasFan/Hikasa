@@ -196,9 +196,9 @@ pub fn parse_sides(word: &str) -> Result<SideSet, ApiError> {
     if word.trim().eq_ignore_ascii_case("both") {
         return Ok(SideSet::all());
     }
-    parse_side(word)
-        .map(SideSet::of)
-        .map_err(|_| ApiError::InvalidArgument(format!("unknown side {word:?} (valid: left, right, both)")))
+    parse_side(word).map(SideSet::of).map_err(|_| {
+        ApiError::InvalidArgument(format!("unknown side {word:?} (valid: left, right, both)"))
+    })
 }
 
 /// Parses `--structure relative|base|none`.
@@ -256,8 +256,14 @@ mod tests {
         assert_eq!(parse_sides("right").unwrap(), SideSet::RIGHT);
         assert!(parse_side("both").is_err());
         assert!(parse_sides("up").is_err());
-        assert_eq!(parse_select_path("left:a/b"), ("a/b".to_owned(), SideSet::LEFT));
-        assert_eq!(parse_select_path("a/b"), ("a/b".to_owned(), SideSet::empty()));
+        assert_eq!(
+            parse_select_path("left:a/b"),
+            ("a/b".to_owned(), SideSet::LEFT)
+        );
+        assert_eq!(
+            parse_select_path("a/b"),
+            ("a/b".to_owned(), SideSet::empty())
+        );
     }
 
     #[test]

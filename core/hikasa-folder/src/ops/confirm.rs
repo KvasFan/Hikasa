@@ -259,7 +259,8 @@ impl Confirmation {
                 .is_some_and(|item| item.error.is_none() && item.skip.is_none())
         };
         let any_runs = (0..plan.plan.items.len()).any(runs);
-        let ask_operation = any_runs && mode == ConfirmMode::Prompt && policy.asks_operation(plan.verb);
+        let ask_operation =
+            any_runs && mode == ConfirmMode::Prompt && policy.asks_operation(plan.verb);
         if ask_operation {
             questions.push(Question {
                 kind: QuestionKind::Operation,

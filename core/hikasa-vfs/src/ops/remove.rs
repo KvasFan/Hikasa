@@ -253,7 +253,12 @@ fn fall_back(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
         recursive: true,
         trash: false,
     };
-    let plan = match plan_remove(exec.src, std::slice::from_ref(&item.target), &options, exec.ctl) {
+    let plan = match plan_remove(
+        exec.src,
+        std::slice::from_ref(&item.target),
+        &options,
+        exec.ctl,
+    ) {
         Ok(plan) => plan,
         Err(e) => return Outcome::Failed(e),
     };

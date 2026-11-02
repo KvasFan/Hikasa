@@ -8,13 +8,16 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hikasa_core::{ContentKind, ContentMethod, ErrorReport, ExitCode, RelPath, Side, Spec, Warning};
+use hikasa_core::{
+    ContentKind, ContentMethod, ErrorReport, ExitCode, RelPath, Side, Spec, Warning,
+};
 use hikasa_folder::ops::{
-    ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, ItemMeta, OpPlan,
-    OpScope, OpSettings, OpVerb, PathStructure, QuestionKind, ReadOnlySides, TouchFrom, plan_op,
+    ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, ItemMeta, OpPlan, OpScope, OpSettings,
+    OpVerb, PathStructure, QuestionKind, ReadOnlySides, TouchFrom, plan_op,
 };
 use hikasa_folder::select::{
-    ExcludeWhat, Include, SelectMask, SelectScope, Selection, SideSet, exclude_masks, resolve, select,
+    ExcludeWhat, Include, SelectMask, SelectScope, Selection, SideSet, exclude_masks, resolve,
+    select,
 };
 use hikasa_folder::{
     DisplayOptions, FolderDisplayFilter, FolderEnv, FolderError, FolderMode, FolderModel, NodeId,
@@ -373,7 +376,9 @@ pub struct ContentsDto {
 impl ContentsDto {
     /// No row failed and nothing was cancelled.
     pub fn ok(&self) -> bool {
-        !self.cancelled && self.counts.error == 0 && self.items.iter().all(|item| item.error.is_none())
+        !self.cancelled
+            && self.counts.error == 0
+            && self.items.iter().all(|item| item.error.is_none())
     }
 }
 
@@ -499,15 +504,17 @@ fn row_of(read: &TreeRead<'_>, path: &str, windows: bool) -> Result<NodeId, ApiE
 /// A file and a folder of one name are two rows (D-20): `row`, or its sibling of that name which has `sides`.
 fn row_on(read: &TreeRead<'_>, row: NodeId, sides: SideSet) -> NodeId {
     let has = |id: NodeId| {
-        read.node(id).is_some_and(|view| {
-            sides.sides().any(|side| view.side(side).is_some())
-        })
+        read.node(id)
+            .is_some_and(|view| sides.sides().any(|side| view.side(side).is_some()))
     };
     if has(row) {
         return row;
     }
     let path = read.path(row);
-    let parent = read.node(row).and_then(|view| view.parent).unwrap_or(NodeId::ROOT);
+    let parent = read
+        .node(row)
+        .and_then(|view| view.parent)
+        .unwrap_or(NodeId::ROOT);
     read.children(parent)
         .find(|&child| has(child) && read.path(child) == path)
         .unwrap_or(row)
@@ -552,9 +559,11 @@ impl Service {
             let sides = if sides.is_empty() { verb } else { *sides };
             selection.insert(row_on(read, row, sides), sides);
         }
-        let hidden = req
-            .include_hidden
-            .unwrap_or_else(|| self.fresh_options().file_operations.include_hidden_by_default);
+        let hidden = req.include_hidden.unwrap_or_else(|| {
+            self.fresh_options()
+                .file_operations
+                .include_hidden_by_default
+        });
         Ok((selection, Include { hidden, display }))
     }
 
@@ -854,7 +863,8 @@ impl Service {
         let rules = match text_rules {
             Some(rules) => Some(rules),
             None => {
-                defaults = self.text_rules_from(None, None, &TextRulesPatch::default(), &mut warnings)?;
+                defaults =
+                    self.text_rules_from(None, None, &TextRulesPatch::default(), &mut warnings)?;
                 Some(&defaults)
             }
         };
@@ -936,9 +946,7 @@ impl Service {
                 ContentsKind::Crc(sides) => {
                     let wanted: Vec<(NodeId, Side)> = method_rows
                         .iter()
-                        .flat_map(|(id, on)| {
-                            (*on & sides).sides().map(move |side| (*id, side))
-                        })
+                        .flat_map(|(id, on)| (*on & sides).sides().map(move |side| (*id, side)))
                         .collect();
                     let results =
                         compute_crcs(model, &wanted, &env).map_err(ApiError::from_folder)?;
@@ -1205,9 +1213,9 @@ fn command_of(
     let words = expand_command(&app.command, &context)
         .map_err(|e| ApiError::InvalidArgument(format!("`{}`: {e}", app.description)))?;
     let mut words = words.into_iter();
-    let program = words
-        .next()
-        .ok_or_else(|| ApiError::InvalidArgument(format!("`{}` has no command", app.description)))?;
+    let program = words.next().ok_or_else(|| {
+        ApiError::InvalidArgument(format!("`{}` has no command", app.description))
+    })?;
     Ok(OpenCommand {
         program: OsString::from(program),
         args: words.map(OsString::from).collect(),

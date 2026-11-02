@@ -262,12 +262,9 @@ impl Pattern {
             return Ok(None);
         }
         match &self.engine {
-            Engine::Standard(re) => Ok(re.captures_at(haystack, start).map(|found| {
-                found
-                    .iter()
-                    .map(|group| group.map(|m| m.range()))
-                    .collect()
-            })),
+            Engine::Standard(re) => Ok(re
+                .captures_at(haystack, start)
+                .map(|found| found.iter().map(|group| group.map(|m| m.range())).collect())),
             Engine::Fancy(re) => match re.captures_from_pos(haystack, start) {
                 Ok(found) => Ok(found.map(|found| {
                     (0..found.len())

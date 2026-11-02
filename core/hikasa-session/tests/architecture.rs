@@ -1124,7 +1124,10 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
         // M2 W6 (T11, §1.6.21): one way into execution and planning of folder operations.
         if rel.starts_with("core/hikasa-session/src/") {
             let confined: [(&str, &[&str]); 3] = [
-                ("execute_with", &["core/hikasa-session/src/api/folder_ops.rs"]),
+                (
+                    "execute_with",
+                    &["core/hikasa-session/src/api/folder_ops.rs"],
+                ),
                 ("plan_op", &["core/hikasa-session/src/api/folder_ops.rs"]),
                 ("ops::execute", &["core/hikasa-session/src/api/vfs_ops.rs"]),
             ];

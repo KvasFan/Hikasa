@@ -5,7 +5,9 @@ mod common;
 use std::sync::Arc;
 
 use common::{compared, default_now, engines, host, mspec};
-use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, NullProgress, RelPath, Side, Spec};
+use hikasa_core::{
+    CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, NullProgress, RelPath, Side, Spec,
+};
 use hikasa_folder::ops::{
     FolderOp, OpPlan, OpScope, OpSettings, PathStructure, ReadOnlySides, TouchFrom, plan_op,
 };
@@ -35,7 +37,8 @@ fn memory() -> MemoryVfs {
 }
 
 fn file(vfs: &MemoryVfs, path: &str, content: &[u8], secs: i64) {
-    vfs.insert_file(&host(path), content.to_vec(), meta(secs)).unwrap();
+    vfs.insert_file(&host(path), content.to_vec(), meta(secs))
+        .unwrap();
 }
 
 fn read(vfs: &MemoryVfs, path: &str) -> Option<Vec<u8>> {
@@ -55,7 +58,10 @@ fn plan_of(
     let read = cmp.read();
     let mut selection = Selection::default();
     for (path, sides) in rows {
-        selection.insert(read.node_at(&RelPath::parse(path).unwrap()).unwrap(), *sides);
+        selection.insert(
+            read.node_at(&RelPath::parse(path).unwrap()).unwrap(),
+            *sides,
+        );
     }
     let scope = OpScope {
         selection,
@@ -63,7 +69,14 @@ fn plan_of(
         iu: false,
         read_only: ReadOnlySides::default(),
     };
-    plan_op(&read, vfs, &scope, op, &OpSettings::default(), &Ctl::detached())
+    plan_op(
+        &read,
+        vfs,
+        &scope,
+        op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
 }
 
 fn run(vfs: &dyn Vfs, plan: OpPlan) -> OpReport {
@@ -80,7 +93,12 @@ fn lines(plan: &OpPlan) -> Vec<String> {
         .items
         .iter()
         .map(|item| {
-            let mut line = format!("{} {} @{}", item.action.as_str(), short(&item.target), item.depth);
+            let mut line = format!(
+                "{} {} @{}",
+                item.action.as_str(),
+                short(&item.target),
+                item.depth
+            );
             if let Some(reason) = item.skip {
                 line.push_str(&format!(" !{}", reason.as_str()));
             }
@@ -107,12 +125,25 @@ fn a6_19_touch_at_every_row_folders_too() {
     };
     let out = plan_of(&vfs, &cmp, &[("d", L)], &op).unwrap();
     assert_eq!(lines(&out), ["touch /l/d @0", "touch /l/d/x @0"]);
-    assert!(out.plan.items.iter().all(|item| item.times.unwrap().modified == Some(at)));
-    assert!(out.plan.items.iter().all(|item| item.times.unwrap().created.is_none()));
+    assert!(
+        out.plan
+            .items
+            .iter()
+            .all(|item| item.times.unwrap().modified == Some(at))
+    );
+    assert!(
+        out.plan
+            .items
+            .iter()
+            .all(|item| item.times.unwrap().created.is_none())
+    );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     for path in ["/l/d", "/l/d/x"] {
-        assert_eq!(vfs.stat(&mspec(path), FollowLinks::No).unwrap().mtime, Some(at));
+        assert_eq!(
+            vfs.stat(&mspec(path), FollowLinks::No).unwrap().mtime,
+            Some(at)
+        );
     }
 }
 
@@ -182,7 +213,10 @@ fn a6_19_mkdir_on_both_sides() {
         folder: false,
     };
     let out = plan_of(&vfs, &cmp, &[], &op).unwrap();
-    assert_eq!(lines(&out), ["create_dir /l/d/new @0", "create_dir /r/d/new @0"]);
+    assert_eq!(
+        lines(&out),
+        ["create_dir /l/d/new @0", "create_dir /r/d/new @0"]
+    );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(
@@ -205,7 +239,11 @@ fn a6_19_mkdir_with_a_parent_missing_on_a_side_gets_its_chain() {
     let out = plan_of(&vfs, &cmp, &[], &op).unwrap();
     assert_eq!(
         lines(&out),
-        ["create_dir /r/a @0", "create_dir /r/a/b @1", "create_dir /r/a/b/new @2"]
+        [
+            "create_dir /r/a @0",
+            "create_dir /r/a/b @1",
+            "create_dir /r/a/b/new @2"
+        ]
     );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
@@ -228,7 +266,10 @@ fn a6_19_mkdir_names_that_exist_or_are_bad() {
     );
     for bad in ["", "..", "a/b"] {
         let out = plan_of(&vfs, &cmp, &[], &mk(bad)).unwrap();
-        assert_eq!(out.plan.items[0].error.as_ref().unwrap().kind, ErrorKind::InvalidInput);
+        assert_eq!(
+            out.plan.items[0].error.as_ref().unwrap().kind,
+            ErrorKind::InvalidInput
+        );
     }
 }
 
@@ -300,7 +341,11 @@ fn a6_19_mkdir_of_archive_names() {
     let report = run(&world.vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(
-        world.mem.stat(&mspec("/l/x.zip"), FollowLinks::No).unwrap().kind,
+        world
+            .mem
+            .stat(&mspec("/l/x.zip"), FollowLinks::No)
+            .unwrap()
+            .kind,
         EntryKind::File
     );
     let out = plan_of(&world.vfs, &cmp, &[], &mk("y.zip", true)).unwrap();
@@ -366,7 +411,10 @@ fn a6_19_copyto_relative_drops_the_common_folders() {
     );
     // One folder selected keeps its own name.
     let out = plan_of(&vfs, &cmp, &[("a/b", L)], &op).unwrap();
-    assert_eq!(lines(&out), ["create_dir /out/b @0", "copy /out/b/x.txt @1"]);
+    assert_eq!(
+        lines(&out),
+        ["create_dir /out/b @0", "copy /out/b/x.txt @1"]
+    );
 }
 
 #[test]
@@ -448,7 +496,10 @@ fn a6_19_copyto_the_overwrite_policy_looks_at_the_target() {
     assert_eq!(out.plan.items[0].skip, Some(SkipReason::Exists));
     let out = plan_of(&vfs, &cmp, &[("x", L)], &with(OverwritePolicy::Always)).unwrap();
     assert!(out.plan.items[0].replaces);
-    assert_eq!(out.plan.items[0].expect.unwrap().target.unwrap().size, Some(3));
+    assert_eq!(
+        out.plan.items[0].expect.unwrap().target.unwrap().size,
+        Some(3)
+    );
 }
 
 #[test]
@@ -507,7 +558,11 @@ fn a6_19_a_target_inside_a_selected_source_is_an_item_error() {
         .unwrap_or_else(|| panic!("{:?}", lines(&out)));
     assert!(error.message.contains("inside the source"), "{error:?}");
     let report = run(&vfs, out);
-    assert!(read(&vfs, "/l/a/inner/a/x").is_none(), "{:?}", report.results);
+    assert!(
+        read(&vfs, "/l/a/inner/a/x").is_none(),
+        "{:?}",
+        report.results
+    );
 }
 
 #[test]
@@ -526,7 +581,11 @@ fn a6_19_moveto_as_one_rename_then_row_by_row_across_devices() {
     let out = plan_of(&vfs, &cmp, &[("a/b", L)], &op).unwrap();
     assert_eq!(
         lines(&out),
-        ["create_dir /out/b @0", "move /out/b/x.txt @1", "remove_dir /l/a/b @0"]
+        [
+            "create_dir /out/b @0",
+            "move /out/b/x.txt @1",
+            "remove_dir /l/a/b @0"
+        ]
     );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
@@ -574,8 +633,15 @@ fn a6_19_script_example_four() {
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
-    let out = plan_op(&read_tree, &world.vfs, &scope, &op, &OpSettings::default(), &Ctl::detached())
-        .unwrap();
+    let out = plan_op(
+        &read_tree,
+        &world.vfs,
+        &scope,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     drop(read_tree);
     let report = run(&world.vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
@@ -621,7 +687,10 @@ fn a6_19_members_are_copied_out_of_an_archive() {
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
-    let report = run(&world.vfs, plan_of(&world.vfs, &cmp, &[("x.txt", L)], &copy).unwrap());
+    let report = run(
+        &world.vfs,
+        plan_of(&world.vfs, &cmp, &[("x.txt", L)], &copy).unwrap(),
+    );
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     let cmp = world.compared(&rules);
     let out = copy_to(L, "/out", PathStructure::Relative);

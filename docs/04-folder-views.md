@@ -15,7 +15,10 @@ replaces free-form actions with a planned operation per item.
   an MRU dropdown; a Browse button opens the folder picker (local or "Browse Using
   Profile"); Enter accepts. Typing a non-existent folder offers to create it.
 - **FC-003** (P0): "Disable editing" per session makes every file operation and
-  child-session editing read-only.
+  child-session editing read-only. *M2 W6b (D-184):* per side (`specs.read_only_left`, `read_only_right`, `--read-only`), and
+  enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
+  planned, so no view or script can pass it by. `copyto` out of it is allowed, as `ignored` and `exclude` are: they change a
+  session, not a file.
 - **FC-004** (P0): "Up One Level" (Left/Right/Both/All), "Set as Base Folder(s)",
   "Set as Base on Other Side", "Compare Parent Folders", "Merge Base Folders",
   "Sync Base Folders", "Compare Base Folders" (from Sync), "Compare to Output"
@@ -240,7 +243,9 @@ folders and bytes of each side, and the content-test results.
   depth). Simple masks apply to any item whose parent is included; the base folder is
   always included; folders containing included files are included.
 - **FC-052** (P0): **Exclude** action: offers to exclude the selected item(s), or all
-  files of that type (`-*.ext`), adding to the session's exclude lists.
+  files of that type (`-*.ext`), adding to the session's exclude lists. *M2 W6b:* `select::exclude_masks` writes anchored
+  masks (`a\\b.txt`, `.\\b.txt` in the base, `a\\b\\` for a folder) with every name escaped so it matches that name and no
+  other; `folder op exclude --session` rewrites `[rules]`, and the comparison re-runs: rules are immutable in a model.
 
 **Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
 is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
@@ -378,17 +383,22 @@ Orphans = every atom except the two orphan atoms; …).
   sides); Shift+Left/Right restricts a selection to one side; Space marks an item for
   a two-item "Open" or "Compare To". Edit ▸ Select All, Select All Files, Select Newer
   (Left/Right/Both), Select Orphans (Left/Right/Both), Invert Selection; Expand All /
-  Collapse All; Open/Close Folder; Open/Close Subfolders.
+  Collapse All; Open/Close Folder; Open/Close Subfolders. *M2 W6b (D-175):* `hikasa_folder::select` owns the words of the
+  script `select`: `<side>.<state>.<kind>`, OR-ed, `diff` = differences other than the time, a folder matching only if what
+  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row.
 - **FC-061** (P0): Search ▸ Next/Previous Difference (Ctrl+N/P) move to the next item
   that is not "same"; Alt+Up/Down move skipping gaps; **Find Filename** (Ctrl+F; case,
-  whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3).
+  whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3). *M2 W6b:* `select::Finder` is the pure
+  part; the panel is W9.
 - **FC-062** (P0): Double-click / Enter / **Open** opens the item pair in the file
   view chosen by file formats (two selected items anywhere → compare them; one item →
   with its counterpart). **Open With** submenu: a specific view type (Text, Table,
   Hex, Picture, Media, Version, Registry, Text Edit, Text Patch), the associated
   application, or a user-defined external application (`15-options-reference.md` Open
   With). **Quick Compare** shows a dialog with the content-comparison result instead of
-  opening a view. **Compare To** (F7) compares two arbitrary items in a new view.
+  opening a view. **Compare To** (F7) compares two arbitrary items in a new view. *M2 W6b (D-186):* `folder op open-with`
+  expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
+  `select::open_pair` says what a command compares.
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
   copies the selected paths.
@@ -400,10 +410,18 @@ Orphans = every atom except the two orphan atoms; …).
 
 All operations: honour the session's filters by default (folders contribute only
 their *visible* contents; if a folder and some of its children are selected, only the
-children count), can include hidden items ("Include hidden items by default" option,
+children count; with all that it shows selected, it is the folder), can include hidden items ("Include hidden items by default" option,
 overridable in each dialog), run as cancellable jobs with progress and a log, continue
 after per-item errors, and optionally back up overwritten files (`15-options-reference.md`
 Backups). Confirmation dialogs can be disabled per operation.
+
+*M2 W6b (D-176…D-180):* every operation is one plan built by one builder (`hikasa_folder::ops`), from the model, with
+directory I/O only where the model has no contents; a dry run prints that value and execution takes it. Targets are the
+counterpart's own spec, so aligned pairs stay aligned. Items carry what the plan saw, so a file changed since the comparison
+is never overwritten or deleted on the strength of an old row. One `rename`, `trash` or `remove_dir` stands for a subtree only
+when nothing below it is left out (`whole`). Questions are data (`Confirmation`): an operation question, then per item
+read-only, system, newer, replace during move, no recycle bin; *yes to all* as a reply is per class. `delete` in the command
+line asks whatever `confirm_delete` says. `folder op` is the headless form; see `12-cli-and-scripting.md` §4.
 
 - **FC-070** (P0): **Copy to Right / Left** (Ctrl+R / Ctrl+L), **Copy to Side…**
   (prompt), dynamic **Copy to Other Side**; overwrite semantics; preserves timestamps,
@@ -500,7 +518,8 @@ Backups). Confirmation dialogs can be disabled per operation.
 
 - **FC-100** (P0): View ▸ Log toggles a panel listing operation summaries, details,
   warnings/errors, remote protocol traces and debug messages according to the Log
-  options; capped at N messages; optional auto-save to a file.
+  options; capped at N messages; optional auto-save to a file. *M2 W6b (D-188):* `log::op_log_entries` gives one summary,
+  every failure, and up to `LOG_DETAILS_MAX` = 10,000 details per operation.
   *M2 W4a (D-116):* one log book per GUI process (`hikasa_session::log::LogBook`), shared by
   every window: entries have a time (the injected clock), a kind (summary, detail, warning,
   error, debug), a source (a tab caption, `settings`, `files`) and a text; warnings keep

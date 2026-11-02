@@ -19,7 +19,9 @@ use hikasa_folder::{
     ArchiveHandling, FolderComparison, FolderEnv, FolderModel, FolderRules, NullObserver,
     compare_into,
 };
-use hikasa_vfs::ops::{self, Action, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy, SkipReason};
+use hikasa_vfs::ops::{
+    self, Action, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy, SkipReason,
+};
 use hikasa_vfs::{
     ArchiveConfig, ArchiveFormat, ArchiveLimits, ArchiveMasks, ArchiveVfs, FollowLinks, MemMeta,
     MemoryVfs, Vfs,
@@ -43,7 +45,8 @@ fn memory() -> MemoryVfs {
 }
 
 fn file(vfs: &MemoryVfs, path: &str, content: &[u8], secs: i64) {
-    vfs.insert_file(&host(path), content.to_vec(), meta(secs)).unwrap();
+    vfs.insert_file(&host(path), content.to_vec(), meta(secs))
+        .unwrap();
 }
 
 fn read(vfs: &MemoryVfs, path: &str) -> Option<Vec<u8>> {
@@ -154,7 +157,9 @@ fn plan_with(
     let view = cmp.read();
     let mut selection = Selection::default();
     for (path, sides) in rows {
-        let row = view.node_at(&RelPath::parse(path).unwrap()).unwrap_or_else(|| panic!("{path}"));
+        let row = view
+            .node_at(&RelPath::parse(path).unwrap())
+            .unwrap_or_else(|| panic!("{path}"));
         selection.insert(row, *sides);
     }
     let scope = OpScope {
@@ -201,11 +206,19 @@ fn a6_15_rule17_a_copy_within_opened_archives_rebuilds_once_with_one_backup() {
     let world = world();
     world
         .mem
-        .insert_file(&host("/l/a.tar"), tar_of(&[("x", b"new1"), ("y", b"new2")]), meta(20))
+        .insert_file(
+            &host("/l/a.tar"),
+            tar_of(&[("x", b"new1"), ("y", b"new2")]),
+            meta(20),
+        )
         .unwrap();
     world
         .mem
-        .insert_file(&host("/r/a.tar"), tar_of(&[("x", b"old1"), ("y", b"old2"), ("z", b"keep")]), meta(10))
+        .insert_file(
+            &host("/r/a.tar"),
+            tar_of(&[("x", b"old1"), ("y", b"old2"), ("z", b"keep")]),
+            meta(10),
+        )
         .unwrap();
     let cmp = world.tree();
     let out = plan_with(
@@ -236,7 +249,10 @@ fn a6_19_a_move_into_a_tar_removes_its_sources_after_the_rebuild() {
     file(&world.mem, "/l/d/x", b"1", 10);
     file(&world.mem, "/l/d/y", b"2", 10);
     let tar = tar_of(&[("keep", b"k")]);
-    world.mem.insert_file(&host("/out.tar"), tar, meta(10)).unwrap();
+    world
+        .mem
+        .insert_file(&host("/out.tar"), tar, meta(10))
+        .unwrap();
     let cmp = world.tree();
     let op = FolderOp::MoveTo {
         sides: L,
@@ -269,7 +285,15 @@ fn a6_19_a_move_into_a_tar_removes_its_sources_after_the_rebuild() {
         },
         other => other,
     };
-    let out = plan_op(&view, &world.vfs, &scope, &op, &OpSettings::default(), &Ctl::detached()).unwrap();
+    let out = plan_op(
+        &view,
+        &world.vfs,
+        &scope,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     drop(view);
     let report = run(&world.vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
@@ -284,7 +308,11 @@ fn a6_19_a_move_out_of_an_archive_takes_the_member_out_of_it() {
     let world = world();
     world
         .mem
-        .insert_file(&host("/l/a.tar"), tar_of(&[("x", b"1"), ("y", b"2")]), meta(20))
+        .insert_file(
+            &host("/l/a.tar"),
+            tar_of(&[("x", b"1"), ("y", b"2")]),
+            meta(20),
+        )
         .unwrap();
     let cmp = world.tree();
     let out = plan(&world.vfs, &cmp, &[("a.tar/x", L)], &MOVE);
@@ -299,7 +327,10 @@ fn a6_19_a_move_out_of_an_archive_takes_the_member_out_of_it() {
 fn a6_15_an_opened_archive_that_goes_whole_goes_as_the_file_it_is() {
     let world = world();
     let bytes = tar_of(&[("x", b"1")]);
-    world.mem.insert_file(&host("/l/a.tar"), bytes.clone(), meta(20)).unwrap();
+    world
+        .mem
+        .insert_file(&host("/l/a.tar"), bytes.clone(), meta(20))
+        .unwrap();
     let cmp = world.tree();
     let out = plan(&world.vfs, &cmp, &[("a.tar", L)], &COPY);
     assert_eq!(out.plan.items.len(), 1, "{:?}", out.plan.items);
@@ -323,7 +354,10 @@ fn a6_15_rule11_a_single_stream_archive_is_read_only_with_one_warning() {
     // A stream holds one member: what would write it is `skip capability`.
     let world = world();
     let tar = tar_of(&[("x", b"1")]);
-    world.mem.insert_file(&host("/l/a.tar"), tar, meta(20)).unwrap();
+    world
+        .mem
+        .insert_file(&host("/l/a.tar"), tar, meta(20))
+        .unwrap();
     let mut gz = Vec::new();
     {
         // A stored deflate block in a gzip frame.
@@ -335,13 +369,23 @@ fn a6_15_rule11_a_single_stream_archive_is_read_only_with_one_warning() {
         gz.extend_from_slice(&crc.to_le_bytes());
         gz.extend_from_slice(&(data.len() as u32).to_le_bytes());
     }
-    world.mem.insert_file(&host("/r/s.gz"), gz, meta(20)).unwrap();
+    world
+        .mem
+        .insert_file(&host("/r/s.gz"), gz, meta(20))
+        .unwrap();
     file(&world.mem, "/l/one", b"1", 10);
     file(&world.mem, "/l/two", b"2", 10);
-    let cmp = world.compared(mspec("/l"), Spec::archive_member(mspec("/r/s.gz"), ""), &FolderRules::default());
+    let cmp = world.compared(
+        mspec("/l"),
+        Spec::archive_member(mspec("/r/s.gz"), ""),
+        &FolderRules::default(),
+    );
     let out = plan(&world.vfs, &cmp, &[("one", L), ("two", L)], &COPY);
     assert!(
-        out.plan.items.iter().all(|item| item.skip == Some(SkipReason::Capability)),
+        out.plan
+            .items
+            .iter()
+            .all(|item| item.skip == Some(SkipReason::Capability)),
         "{:?}",
         out.plan.items
     );
@@ -381,7 +425,10 @@ fn a6_15_rule13_members_of_two_archives_are_not_exchanged() {
         .unwrap();
     let cmp = world.tree();
     let out = plan(&world.vfs, &cmp, &[("a.tar/x", L)], &FolderOp::Exchange);
-    assert_eq!(out.plan.items[0].error.as_ref().unwrap().kind, ErrorKind::Unsupported);
+    assert_eq!(
+        out.plan.items[0].error.as_ref().unwrap().kind,
+        ErrorKind::Unsupported
+    );
     let report = run(&world.vfs, out);
     assert_eq!(report.summary.failed, 1);
     assert_eq!(world.member("/l/a.tar", "x").unwrap(), b"1");
@@ -413,9 +460,15 @@ fn a6_15_a_folder_swapped_for_a_link_after_the_plan_is_not_written_through() {
     let out = plan(&vfs, &cmp, &[("d/x", L)], &COPY);
     vfs.remove(&mspec("/r/d/x")).unwrap();
     vfs.remove(&mspec("/r/d")).unwrap();
-    vfs.insert_symlink(&host("/r/d"), &host("/outside"), meta(10)).unwrap();
+    vfs.insert_symlink(&host("/r/d"), &host("/outside"), meta(10))
+        .unwrap();
     let report = run(&vfs, out);
-    assert_eq!(report.results[0].status, ItemStatus::Failed, "{:?}", report.results);
+    assert_eq!(
+        report.results[0].status,
+        ItemStatus::Failed,
+        "{:?}",
+        report.results
+    );
     assert_eq!(read(&vfs, "/outside/x").unwrap(), b"outside");
 }
 
@@ -431,7 +484,12 @@ fn a6_15_a_folder_and_its_child_on_both_sides() {
         recycle: Recycle::default(),
     };
     // The left has more than the row selected: only that row goes there. The right has only it: its folder goes too.
-    let out = plan(&vfs, &cmp, &[("d", SideSet::all()), ("d/x", SideSet::all())], &delete);
+    let out = plan(
+        &vfs,
+        &cmp,
+        &[("d", SideSet::all()), ("d/x", SideSet::all())],
+        &delete,
+    );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert!(read(&vfs, "/l/d/x").is_none());

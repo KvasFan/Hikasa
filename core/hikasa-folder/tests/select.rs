@@ -4,6 +4,7 @@
 mod common;
 
 use common::{compared, host};
+use hikasa_core::filter::NameFilterLists;
 use hikasa_core::{CaseSensitivity, FileTime, RelPath, Side};
 use hikasa_folder::select::{
     FindQuery, Finder, Include, SelKind, SelSide, SelState, SelectMask, SelectScope, Selection,
@@ -13,7 +14,6 @@ use hikasa_folder::{
     Criteria, DisplayOptions, FilterRules, FolderComparison, FolderDisplayFilter, FolderError,
     FolderMode, FolderRules, NodeId, ScanStatus, TreeRead,
 };
-use hikasa_core::filter::NameFilterLists;
 use hikasa_vfs::{MemMeta, MemoryVfs};
 
 fn meta(secs: i64) -> MemMeta {
@@ -61,8 +61,10 @@ fn tree() -> MemoryVfs {
     vfs.insert_dir(&host("/r/emptyboth"), meta(1)).unwrap();
     vfs.insert_dir(&host("/l/emptyleft"), meta(1)).unwrap();
     vfs.insert_dir(&host("/l/hollow/sub"), meta(1)).unwrap();
-    vfs.insert_symlink(&host("/l/link"), "same", meta(10)).unwrap();
-    vfs.insert_symlink(&host("/r/link"), "same", meta(10)).unwrap();
+    vfs.insert_symlink(&host("/l/link"), "same", meta(10))
+        .unwrap();
+    vfs.insert_symlink(&host("/r/link"), "same", meta(10))
+        .unwrap();
     vfs
 }
 
@@ -92,7 +94,13 @@ fn picked(cmp: &FolderComparison, word: &str) -> Vec<String> {
         expanded: None,
     };
     let mut sel = Selection::default();
-    select(&read, &scope, &[SelectMask::parse(word).unwrap()], false, &mut sel);
+    select(
+        &read,
+        &scope,
+        &[SelectMask::parse(word).unwrap()],
+        false,
+        &mut sel,
+    );
     words(&read, &sel)
 }
 
@@ -100,7 +108,10 @@ fn words(read: &TreeRead<'_>, sel: &Selection) -> Vec<String> {
     let mut out: Vec<String> = sel
         .iter()
         .map(|(node, sides)| {
-            let side = match (sides.contains(SideSet::LEFT), sides.contains(SideSet::RIGHT)) {
+            let side = match (
+                sides.contains(SideSet::LEFT),
+                sides.contains(SideSet::RIGHT),
+            ) {
                 (true, true) => "lr",
                 (true, false) => "l",
                 _ => "r",
@@ -134,7 +145,16 @@ fn a6_14_the_words_of_the_table() {
     }
     assert_eq!(parse("newer.folders"), result(S::All, T::Newer, K::Folders));
     assert_eq!(parse("Empty.Folders"), SelectMask::EmptyFolders);
-    for word in ["left.left", "files.left", "bogus", "", "left.", "all.left", "all.all.all.all", "empty"] {
+    for word in [
+        "left.left",
+        "files.left",
+        "bogus",
+        "",
+        "left.",
+        "all.left",
+        "all.all.all.all",
+        "empty",
+    ] {
         match SelectMask::parse(word) {
             Err(FolderError::InvalidRules(text)) => assert!(text.contains(word), "{text}"),
             other => panic!("{word}: {other:?}"),
@@ -147,7 +167,12 @@ fn a6_14_the_words_of_the_table() {
 
 #[test]
 fn a6_14_display_is_the_canonical_word() {
-    for word in ["left.diff.files", "all.all.all", "right.older.folders", "empty.folders"] {
+    for word in [
+        "left.diff.files",
+        "all.all.all",
+        "right.older.folders",
+        "empty.folders",
+    ] {
         let mask = SelectMask::parse(word).unwrap();
         assert_eq!(mask.to_string(), word);
         assert_eq!(SelectMask::parse(&mask.to_string()).unwrap(), mask);
@@ -166,7 +191,10 @@ fn a6_14_matching_table_files() {
         ["mixed/other:r", "newer:r", "older:l", "timeonly:r"]
     );
     assert_eq!(picked(&cmp, "left.older.files"), ["older:l"]);
-    assert_eq!(picked(&cmp, "orphan.files"), ["lfolder/f:l", "lonly:l", "ronly:r"]);
+    assert_eq!(
+        picked(&cmp, "orphan.files"),
+        ["lfolder/f:l", "lonly:l", "ronly:r"]
+    );
     assert_eq!(
         picked(&cmp, "left.orphan.files"),
         ["lfolder/f:l", "lonly:l"]
@@ -175,7 +203,10 @@ fn a6_14_matching_table_files() {
     let diff = picked(&cmp, "diff.files");
     assert!(diff.contains(&"newer:lr".to_owned()), "{diff:?}");
     assert!(diff.contains(&"diffsame:lr".to_owned()), "{diff:?}");
-    assert!(!diff.iter().any(|row| row.starts_with("timeonly")), "{diff:?}");
+    assert!(
+        !diff.iter().any(|row| row.starts_with("timeonly")),
+        "{diff:?}"
+    );
     assert!(!diff.iter().any(|row| row.starts_with("same")), "{diff:?}");
     let exact = picked(&cmp, "exact.files");
     assert!(exact.contains(&"same:lr".to_owned()));
@@ -190,14 +221,20 @@ fn a6_14_folders_match_only_if_their_contents_do() {
     assert!(exact.contains(&"alls:lr".to_owned()), "{exact:?}");
     assert!(exact.contains(&"emptyboth:lr".to_owned()), "{exact:?}");
     // One child that does not match.
-    assert!(!exact.iter().any(|row| row.starts_with("mixed")), "{exact:?}");
+    assert!(
+        !exact.iter().any(|row| row.starts_with("mixed")),
+        "{exact:?}"
+    );
     let orphans = picked(&cmp, "orphan.folders");
     assert!(orphans.contains(&"lfolder:l".to_owned()), "{orphans:?}");
     assert!(orphans.contains(&"emptyleft:l".to_owned()), "{orphans:?}");
     // An empty folder is no `newer`, nor `diff`.
     assert_eq!(picked(&cmp, "newer.folders"), Vec::<String>::new());
     let everything = picked(&cmp, "all.folders");
-    assert!(everything.contains(&"mixed:lr".to_owned()), "{everything:?}");
+    assert!(
+        everything.contains(&"mixed:lr".to_owned()),
+        "{everything:?}"
+    );
     assert!(everything.contains(&"emptyboth:lr".to_owned()));
 }
 
@@ -209,7 +246,10 @@ fn a6_14_empty_folders() {
     assert!(found.contains(&"emptyleft:l".to_owned()), "{found:?}");
     assert!(found.contains(&"hollow:l".to_owned()), "{found:?}");
     assert!(found.contains(&"hollow/sub:l".to_owned()), "{found:?}");
-    assert!(!found.iter().any(|row| row.starts_with("alls")), "{found:?}");
+    assert!(
+        !found.iter().any(|row| row.starts_with("alls")),
+        "{found:?}"
+    );
 }
 
 #[test]
@@ -245,12 +285,21 @@ fn a6_14_a_collapsed_folder_is_one_row() {
         expanded: Some(&closed),
     };
     let mut sel = Selection::default();
-    select(&read, &scope, &[SelectMask::parse("exact").unwrap()], false, &mut sel);
+    select(
+        &read,
+        &scope,
+        &[SelectMask::parse("exact").unwrap()],
+        false,
+        &mut sel,
+    );
     let found = words(&read, &sel);
     assert!(found.contains(&"alls:lr".to_owned()), "{found:?}");
     assert!(!found.contains(&"alls/a:lr".to_owned()), "{found:?}");
     // Its match still reads what is below it.
-    assert!(!found.iter().any(|row| row.starts_with("mixed")), "{found:?}");
+    assert!(
+        !found.iter().any(|row| row.starts_with("mixed")),
+        "{found:?}"
+    );
 }
 
 #[test]
@@ -297,7 +346,13 @@ fn a6_14_iu_reads_the_category_of_the_mask() {
     };
     for iu in [false, true] {
         let mut sel = Selection::default();
-        select(&read, &scope, &[SelectMask::parse("exact").unwrap()], iu, &mut sel);
+        select(
+            &read,
+            &scope,
+            &[SelectMask::parse("exact").unwrap()],
+            iu,
+            &mut sel,
+        );
         assert_eq!(words(&read, &sel), ["a.txt:lr"]);
     }
 }
@@ -409,7 +464,13 @@ fn a6_14_resolve_a_folder_with_all_it_shows_selected_is_the_folder() {
         expanded: None,
     };
     let mut sel = Selection::default();
-    select(&read, &scope, &[SelectMask::parse("all").unwrap()], false, &mut sel);
+    select(
+        &read,
+        &scope,
+        &[SelectMask::parse("all").unwrap()],
+        false,
+        &mut sel,
+    );
     assert_eq!(
         rows(&read, &sel, &include(false, FolderDisplayFilter::All)),
         ["a:l:l", "a/b:l:l", "a/b/x:l:l", "a/y:l:l"]
@@ -433,11 +494,19 @@ fn a6_14_resolve_a_hidden_row_is_left_out_and_ends_whole() {
     let mut sel = Selection::default();
     sel.insert(id(&read, "a"), SideSet::LEFT);
     assert_eq!(
-        rows(&read, &sel, &include(false, FolderDisplayFilter::Differences)),
+        rows(
+            &read,
+            &sel,
+            &include(false, FolderDisplayFilter::Differences)
+        ),
         ["a:l:-", "a/only:l:l"]
     );
     assert_eq!(
-        rows(&read, &sel, &include(true, FolderDisplayFilter::Differences)),
+        rows(
+            &read,
+            &sel,
+            &include(true, FolderDisplayFilter::Differences)
+        ),
         ["a:l:l", "a/only:l:l", "a/same:l:l"]
     );
 }

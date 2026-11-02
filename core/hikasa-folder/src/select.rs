@@ -365,7 +365,9 @@ fn result_matches(
                 let mut any_row = false;
                 let mut all_match = true;
                 for child in read.children(node_id) {
-                    let shown = store.node(child).is_some_and(|node| is_visible(store, node, display));
+                    let shown = store
+                        .node(child)
+                        .is_some_and(|node| is_visible(store, node, display));
                     let here = read.node(child).is_some_and(|v| v.side(side).is_some());
                     if shown && here {
                         any_row = true;
@@ -403,7 +405,10 @@ fn empty_folders(read: &TreeRead<'_>) -> Vec<SideSet> {
         let present = present_sides(Some(&view));
         let below = if view.is_folder() {
             read.children(node_id).fold(SideSet::empty(), |all, child| {
-                all | files_below.get(child.0 as usize).copied().unwrap_or_default()
+                all | files_below
+                    .get(child.0 as usize)
+                    .copied()
+                    .unwrap_or_default()
             })
         } else {
             present
@@ -434,11 +439,9 @@ pub fn select(
     for mask in masks {
         let (found, side, kind) = match *mask {
             SelectMask::EmptyFolders => (empty_folders(read), SelSide::All, SelKind::Folders),
-            SelectMask::Result { side, state, kind } => (
-                result_matches(read, scope.display, state, iu),
-                side,
-                kind,
-            ),
+            SelectMask::Result { side, state, kind } => {
+                (result_matches(read, scope.display, state, iu), side, kind)
+            }
         };
         let sides = match side {
             SelSide::Left => SideSet::LEFT,
@@ -607,7 +610,10 @@ fn row_failed(read: &TreeRead<'_>, id: NodeId, view: &NodeView<'_>, side: Side) 
         return view.scan == ScanStatus::Failed;
     }
     matches!(view.state, CompareState::Unknown | CompareState::Error)
-        || matches!(read.category(id, false), Category::Unknown | Category::Error)
+        || matches!(
+            read.category(id, false),
+            Category::Unknown | Category::Error
+        )
 }
 
 /// A step of the walk of [`resolve`].
@@ -652,7 +658,10 @@ pub fn resolve(read: &TreeRead<'_>, sel: &Selection, include: &Include) -> Vec<R
     let store = read.store();
     let mut below = selected_below(read, sel);
     // A selected folder with something selected below it: only a choice among its rows narrows it.
-    if sel.iter().any(|(node, sides)| below.get(&node).is_some_and(|set| set.intersects(sides))) {
+    if sel
+        .iter()
+        .any(|(node, sides)| below.get(&node).is_some_and(|set| set.intersects(sides)))
+    {
         let full = fully_selected(read, sel, include);
         for (node, sides) in sel.iter() {
             let whole = full.get(node.0 as usize).copied().unwrap_or_default() & sides;

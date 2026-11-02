@@ -61,8 +61,10 @@ mod tests {
             mtime: hikasa_core::FileTime::from_unix(secs, 0),
             ..MemMeta::default()
         };
-        vfs.insert_file(&path("/l/x"), b"a".to_vec(), at(10)).unwrap();
-        vfs.insert_file(&path("/r/x"), b"b".to_vec(), at(20)).unwrap();
+        vfs.insert_file(&path("/l/x"), b"a".to_vec(), at(10))
+            .unwrap();
+        vfs.insert_file(&path("/r/x"), b"b".to_vec(), at(20))
+            .unwrap();
         let spec = |p: &str| {
             hikasa_core::Spec::Local(
                 hikasa_core::LocalPath::new(std::path::PathBuf::from(path(p))).unwrap(),
@@ -95,14 +97,26 @@ mod tests {
             to: Side::Right,
             overwrite: OverwritePolicy::Always,
         };
-        plan_op(&read, &vfs, &scope, &op, &OpSettings::default(), &Ctl::detached()).unwrap()
+        plan_op(
+            &read,
+            &vfs,
+            &scope,
+            &op,
+            &OpSettings::default(),
+            &Ctl::detached(),
+        )
+        .unwrap()
     }
 
     fn after(lines: &str) -> (Result<OpPlan, hikasa_folder::ops::Declined>, String) {
         let plan = plan();
         let mut machine = Confirmation::new(&plan, &ConfirmPolicy::ALL, ConfirmMode::Prompt);
         let mut output = Vec::new();
-        ask(&mut machine, &mut Cursor::new(lines.to_owned()), &mut output);
+        ask(
+            &mut machine,
+            &mut Cursor::new(lines.to_owned()),
+            &mut output,
+        );
         (machine.finish(plan), String::from_utf8(output).unwrap())
     }
 
@@ -111,7 +125,10 @@ mod tests {
         let (done, text) = after("y\ny\n");
         assert!(done.unwrap().plan.items[0].skip.is_none());
         assert_eq!(text.lines().count(), 2);
-        assert!(text.contains("[y]es [n]o [a]ll [s]kip all [c]ancel"), "{text}");
+        assert!(
+            text.contains("[y]es [n]o [a]ll [s]kip all [c]ancel"),
+            "{text}"
+        );
         let (done, _) = after("y\nn\n");
         assert_eq!(done.unwrap().plan.items[0].skip, Some(SkipReason::Declined));
         let (done, _) = after("n\n");

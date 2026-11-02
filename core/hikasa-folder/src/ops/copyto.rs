@@ -4,15 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 
 use hikasa_core::{Side, Spec};
-use hikasa_vfs::ops::{
-    self, Action, Expect, ItemStamp, OverwritePolicy, PlanItem, SkipReason,
-};
+use hikasa_vfs::ops::{self, Action, Expect, ItemStamp, OverwritePolicy, PlanItem, SkipReason};
 use hikasa_vfs::{Capabilities, EntryKind, FileName, FollowLinks, Vfs, VfsError};
 
+use super::ItemMeta;
 use super::PathStructure;
 use super::build::{Builder, Found, Open, Placed, Transfer, nothing_on, report, stamp_of_stat};
 use super::conflict::Conflicts;
-use super::ItemMeta;
 use crate::error::FolderError;
 use crate::model::{NodeId, ScanStatus};
 use crate::select::{Resolved, SideSet};
@@ -93,16 +91,16 @@ impl Builder<'_, '_> {
     /// The target folder: existing, or its chain at depth 0, ending in `create_archive` when its final name has a writable
     /// mask (D-150). What children go into: an archive's root for an archive.
     fn target_root(&mut self, target: &Spec, below: &mut Below) -> Result<Spec, FolderError> {
-        let not_folder = || {
-            FolderError::InvalidRules(format!("{}: is not a folder", target.canonical()))
-        };
+        let not_folder =
+            || FolderError::InvalidRules(format!("{}: is not a folder", target.canonical()));
         // A member's root: the file around it says what there is.
         let file = match target {
             Spec::ArchiveMember { archive, member } if member.is_empty() => Some(&**archive),
             _ => None,
         };
         let on_disk = file.unwrap_or(target);
-        let found = lstat(self.vfs, on_disk).map_err(|e| FolderError::InvalidRules(e.to_string()))?;
+        let found =
+            lstat(self.vfs, on_disk).map_err(|e| FolderError::InvalidRules(e.to_string()))?;
         let writes_archive = on_disk
             .file_name()
             .and_then(|name| self.vfs.archive_format(&name))
@@ -119,12 +117,12 @@ impl Builder<'_, '_> {
             Some(_) => Err(not_folder()),
             None => {
                 self.target_chain(on_disk, below)?;
-                let action = if writes_archive && (file.is_some() || matches!(target, Spec::Local(_)))
-                {
-                    Action::CreateArchive
-                } else {
-                    Action::CreateDir
-                };
+                let action =
+                    if writes_archive && (file.is_some() || matches!(target, Spec::Local(_))) {
+                        Action::CreateArchive
+                    } else {
+                        Action::CreateDir
+                    };
                 let kind = if action == Action::CreateArchive {
                     EntryKind::File
                 } else {
@@ -286,10 +284,14 @@ impl Builder<'_, '_> {
         let read = self.read;
         let mut id = source.row.node;
         for _ in level + 1..source.names.len() {
-            id = read.node(id).and_then(|view| view.parent).unwrap_or(NodeId::ROOT);
+            id = read
+                .node(id)
+                .and_then(|view| view.parent)
+                .unwrap_or(NodeId::ROOT);
         }
         let Some(view) = read.node(id) else { return };
-        let (Some(entry), Some(from)) = (view.side(tr.from).copied(), read.spec(id, tr.from)) else {
+        let (Some(entry), Some(from)) = (view.side(tr.from).copied(), read.spec(id, tr.from))
+        else {
             return;
         };
         let placed = Placed {
@@ -324,7 +326,8 @@ impl Builder<'_, '_> {
         if self.is_covered(&view) {
             return Ok(());
         }
-        let (Some(entry), Some(from)) = (view.side(tr.from).copied(), read.spec(id, tr.from)) else {
+        let (Some(entry), Some(from)) = (view.side(tr.from).copied(), read.spec(id, tr.from))
+        else {
             return Ok(());
         };
         let kind = view.kind.entry_kind();
@@ -337,7 +340,16 @@ impl Builder<'_, '_> {
         let (target, depth, under_new) = match self.path_below(tr, source, root, drop, below) {
             Ok(path) => path,
             Err(e) => {
-                self.fail_row(id, Action::Copy, kind, Some(from), root.clone(), 0, report(&e), None);
+                self.fail_row(
+                    id,
+                    Action::Copy,
+                    kind,
+                    Some(from),
+                    root.clone(),
+                    0,
+                    report(&e),
+                    None,
+                );
                 self.cover(id);
                 return Ok(());
             }
@@ -364,7 +376,16 @@ impl Builder<'_, '_> {
                 } else {
                     Action::Copy
                 };
-                self.fail_row(id, action, kind, Some(from), target, depth, report(&e), None);
+                self.fail_row(
+                    id,
+                    action,
+                    kind,
+                    Some(from),
+                    target,
+                    depth,
+                    report(&e),
+                    None,
+                );
                 self.cover(id);
                 return Ok(());
             }
@@ -382,7 +403,9 @@ impl Builder<'_, '_> {
             return Ok(());
         }
         if view.is_folder() && !flat {
-            return self.copy_to_folder(tr, source, &view, &entry, from, target, depth, under_new, below, open);
+            return self.copy_to_folder(
+                tr, source, &view, &entry, from, target, depth, under_new, below, open,
+            );
         }
         if view.is_folder() {
             // Flat: a folder is no item, and goes only when all of it has.
@@ -421,7 +444,16 @@ impl Builder<'_, '_> {
                     row: None,
                 }),
                 Err(e) => {
-                    self.fail_row(id, Action::Copy, kind, Some(from), target, depth, report(&e), None);
+                    self.fail_row(
+                        id,
+                        Action::Copy,
+                        kind,
+                        Some(from),
+                        target,
+                        depth,
+                        report(&e),
+                        None,
+                    );
                     return Ok(());
                 }
             }

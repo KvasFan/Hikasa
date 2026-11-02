@@ -9,7 +9,27 @@
   differences count as same, while errors stay; `--format-on` and `--format-off` turn a file format on or off for one
   comparison. Rules files take the same keys, and old ones read as before.
 
+- **`hikasa folder op`.** Compares, then copies, moves, exchanges, deletes, renames, touches, makes folders and archives, copies
+  or moves out of the comparison, runs content tests and CRCs, adds to a session's exclude lists and Ignored marks, or opens
+  rows with an application. A selection is a mask (`left.diff.files`, `newer`, `all`) or a path; nothing selected acts on
+  nothing. `--dry-run` prints the plan. Schemas `hikasa.folder_op.v1`, `hikasa.folder_contents.v1`.
+- **Rename masks.** DOS masks and regular expressions over the whole name; a chain is ordered and a cycle goes through a
+  hidden name.
+
+### Data safety
+- **A plan keeps what it saw.** A file changed since the comparison is not overwritten or deleted, and the rest go on. Nothing
+  below a followed link, and nothing outside the base folders, is written or deleted; a row whose comparison failed is
+  never touched. A rename never replaces. A folder is removed or sent to the recycle bin whole only when nothing below it
+  is left out.
+- **Questions are asked of what cannot be undone:** read-only and system targets, a newer target, a move that replaces, an
+  item with no recycle bin. `folder op delete` asks whatever `confirm_delete` says; without a terminal or `--yes` nothing is
+  touched and the command exits 100. A failing recycle bin fails the item unless `--recycle-fallback` was given.
+- **Disable editing** per side, `specs.read_only_left`, `read_only_right` and `--read-only`, is enforced before anything is
+  planned.
+
 ### Changed
+- **`include_hidden_by_default` is now false.** Operations honour the filters unless a dialog or `--include-hidden` says
+  otherwise. An explicit value in `options.toml` keeps working.
 - **A new copy no longer syncs to disk.** `vfs cp`, and every copy that creates its target, writes a file with its final
   time and mode under a temporary name and renames it. Copying 10,000 small files took 26 times a plain copy, and now takes
   about 1.5 times. A power cut just after a copy can lose files the copy created. It does not lose a file that existed: a
@@ -26,8 +46,8 @@
 
 ### Internal
 - `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder
-  operations of the next parts, with subtree refresh, contents on demand and `ArchiveVfs::extract_to_cache`; no command
-  reaches them yet.
+  operations, with subtree refresh, contents on demand and `ArchiveVfs::extract_to_cache`.
+- `open` 5.4.5 for the associated application; `hikasa-folder` gains `hikasa-formats`, for one regular expression policy.
 
 ## 0.1.91 (2026-11-01, pre-release)
 

@@ -27,4 +27,8 @@ Every subcommand ends with one of these codes:
   ([Using the command line](topic:cli)).
 - `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
 
+- `folder op`: 0 when every item is done or skipped; 100 for a failed item, a stop, a row that failed in the comparison, or a
+  command that plans nothing (a bad word, nothing selected, unanswered questions, a read-only side); 107 for a base that
+  cannot be loaded. See [hikasa folder op](topic:folder-op).
+
 See [hikasa quick](topic:quick), [hikasa folder compare](topic:folder-compare) and [Contents](topic:index).

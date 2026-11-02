@@ -5,11 +5,11 @@
 use std::io::{self, IsTerminal, Write};
 
 use hikasa_core::{ExitCode, JobKind, Warning};
+use hikasa_folder::NullObserver;
 use hikasa_folder::ops::{
     ConfirmMode, FolderOp, OpPlan, ReadOnlySides, Recycle, RenameMask, TouchFrom,
 };
 use hikasa_folder::select::{ExcludeWhat, SideSet};
-use hikasa_folder::NullObserver;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_CONTENTS_SCHEMA, FOLDER_OP_SCHEMA, SESSION_WRITE_SCHEMA};
 use hikasa_session::api::folder_ops::{ContentsDto, FolderOpDto, confirm_words, op_word};
@@ -208,7 +208,14 @@ fn run_verb(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> Result<u8, Failure> {
             associated,
             side,
             dry_run,
-        } => open_with(ctx, common, app.as_deref(), *associated, side.as_deref(), *dry_run),
+        } => open_with(
+            ctx,
+            common,
+            app.as_deref(),
+            *associated,
+            side.as_deref(),
+            *dry_run,
+        ),
     }
 }
 
@@ -241,7 +248,11 @@ fn overrides(flags: &FolderCopyFlags) -> Result<OpOverrides, ApiError> {
     Ok(OpOverrides {
         backup: super::tri(flags.backup, flags.no_backup),
         preserve,
-        links: flags.symlinks.as_deref().map(parse_link_policy).transpose()?,
+        links: flags
+            .symlinks
+            .as_deref()
+            .map(parse_link_policy)
+            .transpose()?,
     })
 }
 
@@ -278,7 +289,10 @@ fn copy_to_op(flags: &FolderCopyToFlags, moving: bool) -> Result<OpRequest, ApiE
 
 /// The selection of the flags: `--display` defaults to `all`, and every folder is open: a headless command sees the whole
 /// tree, as a script after `expand all`.
-fn select_request(args: &FolderSelectArgs, include_hidden: bool) -> Result<SelectRequest, ApiError> {
+fn select_request(
+    args: &FolderSelectArgs,
+    include_hidden: bool,
+) -> Result<SelectRequest, ApiError> {
     let display = resolve_folder_display(
         Some(args.display.as_deref().unwrap_or("all")),
         None,
@@ -294,7 +308,11 @@ fn select_request(args: &FolderSelectArgs, include_hidden: bool) -> Result<Selec
     };
     Ok(SelectRequest {
         masks: args.select.clone(),
-        paths: args.path.iter().map(|word| parse_select_path(word)).collect(),
+        paths: args
+            .path
+            .iter()
+            .map(|word| parse_select_path(word))
+            .collect(),
         selection: None,
         include_hidden: include_hidden.then_some(true),
         display: Some(display),
@@ -304,7 +322,10 @@ fn select_request(args: &FolderSelectArgs, include_hidden: bool) -> Result<Selec
 }
 
 /// The comparison of the arguments or of `--session`, flags on top.
-fn compare_request(ctx: &Ctx<'_>, common: &FolderOpCommon) -> Result<FolderCompareRequest, ApiError> {
+fn compare_request(
+    ctx: &Ctx<'_>,
+    common: &FolderOpCommon,
+) -> Result<FolderCompareRequest, ApiError> {
     let mut request = folder::rules_request(ctx, &common.rule)?;
     request.ignore_unimportant = common.select.ignore_unimportant;
     match (&common.session, &common.left, &common.right) {
@@ -361,7 +382,9 @@ fn read_only(
     confirm: &FolderConfirmArgs,
 ) -> Result<ReadOnlySides, ApiError> {
     let mut sides = match &common.session {
-        Some(reference) => ctx.service.session_read_only(&SessionRef::parse(reference)?)?,
+        Some(reference) => ctx
+            .service
+            .session_read_only(&SessionRef::parse(reference)?)?,
         None => ReadOnlySides::default(),
     };
     if let Some(word) = &confirm.read_only {
@@ -459,11 +482,7 @@ fn print(
 }
 
 /// `compare`, `crc`: `hikasa.folder_contents.v1`.
-fn contents(
-    ctx: &mut Ctx<'_>,
-    common: &FolderOpCommon,
-    kind: ContentsKind,
-) -> Result<u8, Failure> {
+fn contents(ctx: &mut Ctx<'_>, common: &FolderOpCommon, kind: ContentsKind) -> Result<u8, Failure> {
     let select = bare(select_request(&common.select, common.select.include_hidden))?;
     let (prepared, warnings) = compared(ctx, common)?;
     let request = ContentsRequest {
@@ -496,8 +515,18 @@ fn session_write(ctx: &mut Ctx<'_>, dto: &SessionWriteDto, warnings: &[Warning])
     }
     let mut lines = human::session_write_lines(dto);
     if let Some(masks) = &dto.masks {
-        lines.extend(masks.files.iter().map(|mask| format!("exclude file {mask}")));
-        lines.extend(masks.folders.iter().map(|mask| format!("exclude folder {mask}")));
+        lines.extend(
+            masks
+                .files
+                .iter()
+                .map(|mask| format!("exclude file {mask}")),
+        );
+        lines.extend(
+            masks
+                .folders
+                .iter()
+                .map(|mask| format!("exclude folder {mask}")),
+        );
     }
     if let Some(list) = &dto.ignored {
         lines.extend(list.iter().map(|path| format!("ignored {path}")));
@@ -581,7 +610,9 @@ fn ignored(
         let e = ApiError::InvalidArgument("nothing selected: pass --select all, or a mask".into());
         return Err(fail(e));
     }
-    let list = ctx.service.folder_set_ignored(prepared.model(), &rows, !off);
+    let list = ctx
+        .service
+        .folder_set_ignored(prepared.model(), &rows, !off);
     let dto = match (dry_run, session) {
         (false, Some(reference)) => ctx
             .service
@@ -612,7 +643,12 @@ fn open_with(
         },
     };
     let sides = bare(side.map_or(Ok(SideSet::LEFT), parse_sides))?;
-    let paths: Vec<_> = common.select.path.iter().map(|word| parse_select_path(word)).collect();
+    let paths: Vec<_> = common
+        .select
+        .path
+        .iter()
+        .map(|word| parse_select_path(word))
+        .collect();
     if paths.is_empty() {
         let e = ApiError::InvalidArgument("open-with needs --path".to_owned());
         return Err((e, Vec::new()));

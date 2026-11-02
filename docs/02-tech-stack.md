@@ -120,6 +120,7 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 | `lzma-rust2` **0.23.0** (Apache-2.0) | W5 | `default-features = false`, `std`, `encoder`, `optimization`, `xz` | xz streams. Not the newest 0.24.0: `zip` 9.2 needs `^0.23`, and one LZMA codec in the tree is the point. Moves when `zip` moves |
 | `zstd` **0.14.3** (BSD-3-Clause) | W5 | `default-features = false` | zstd streams. Not the 0.13 of the plan: `zip` 9.2 needs `^0.14.2`. `zstd-safe` 8.2.0, `zstd-sys` 2.1.2 (BSD-3-Clause), libzstd 1.5.7 |
 | `ctrlc` 3.5.2 (MIT OR Apache-2.0) | 0.1.91 | default (no `termination`: SIGTERM and SIGHUP end the process as before) | Ctrl-C of the CLI (D-159): `hikasa-cli` only, named only in `interrupt.rs`. New in `Cargo.lock`: `ctrlc`; `nix` and the Windows and Apple crates it needs were there |
+| `open` 5.4.5 (MIT) | W6b | `default-features = false` | the associated application of FC-062 (D-186): `hikasa-session`, named only in `host.rs` (`SystemLauncher`, adapter-only) |
 | `fontique` 0.11.1 (Apache-2.0 OR MIT) | 0.1.91 | `default-features = false`, `system`, `fontconfig-dlopen`, what eframe's system font fallback already compiles | the theme's named fonts (D-160): `hikasa-gui` only, named only in `fonts.rs`. No new package. On Linux it opens fontconfig at run time, so no build or start-up needs it; without it no family is found |
 
 New crates in `Cargo.lock` with W5 besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`,

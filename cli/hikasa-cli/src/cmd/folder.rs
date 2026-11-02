@@ -205,10 +205,7 @@ pub fn rules_request(
             .transpose()?,
         open_archives: (!rule.open_archive.is_empty()).then(|| rule.open_archive.clone()),
         attrib_filter: filter_word(rule.attrib_filter.as_deref(), AttribFilter::parse)?,
-        unix_type_filter: filter_word(
-            rule.unix_type_filter.as_deref(),
-            UnixTypeFilter::parse,
-        )?,
+        unix_type_filter: filter_word(rule.unix_type_filter.as_deref(), UnixTypeFilter::parse)?,
         auto_scan_subfolders: rule.no_auto_scan.then_some(false),
         expand_on_load: rule.expand_on_load.then_some(true),
         expand_differences_only: rule.expand_differences.then_some(true),

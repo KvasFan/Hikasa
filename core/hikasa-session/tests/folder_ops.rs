@@ -8,11 +8,9 @@ use std::sync::Arc;
 
 use common::{facts, fixed_clock, job, os, write};
 use hikasa_core::{ContentMethod, ErrorKind, ExitCode, JobKind, RelPath, Side, WarningCode};
-use hikasa_folder::ops::{
-    FolderOp, OpPlan, OpVerb, ReadOnlySides, Recycle, RenameMask, TouchFrom,
-};
-use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::NullObserver;
+use hikasa_folder::ops::{FolderOp, OpPlan, OpVerb, ReadOnlySides, Recycle, RenameMask, TouchFrom};
+use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_session::api::folder_ops::{item_line, summary_text};
 use hikasa_session::api::sessions::ExcludeMasksDto;
 use hikasa_session::api::{
@@ -232,8 +230,14 @@ fn a6_21_ignored_and_exclude_change_a_session_not_a_file() {
             .folder_exclude_masks(prepared.model(), &select, ExcludeWhat::Type)
             .is_ok()
     );
-    let rows = service.folder_selected_rows(prepared.model(), &select).unwrap();
-    assert!(!service.folder_set_ignored(prepared.model(), &rows, true).is_empty());
+    let rows = service
+        .folder_selected_rows(prepared.model(), &select)
+        .unwrap();
+    assert!(
+        !service
+            .folder_set_ignored(prepared.model(), &rows, true)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -242,7 +246,9 @@ fn a6_21_a_session_keeps_its_sides_and_swaps_them() {
     let root = tmp.path();
     let service = service(root);
     let reference = SessionRef::parse("ro").unwrap();
-    let mut session = service.session_defaults(SessionType::FolderCompare).unwrap();
+    let mut session = service
+        .session_defaults(SessionType::FolderCompare)
+        .unwrap();
     session.specs.left = root.join("l").display().to_string();
     session.specs.right = root.join("r").display().to_string();
     session.specs.read_only_left = true;
@@ -276,7 +282,12 @@ fn a6_16_the_strict_machine_asks_delete_whatever_the_option_says() {
     });
     let plan = plan_of(&service, &prepared, &request(op, ReadOnlySides::default())).unwrap();
     assert!(service.folder_confirmation(&plan, None).next().is_none());
-    assert!(service.folder_confirmation_strict(&plan, None).next().is_some());
+    assert!(
+        service
+            .folder_confirmation_strict(&plan, None)
+            .next()
+            .is_some()
+    );
 }
 
 #[test]
@@ -305,12 +316,21 @@ fn a6_15_the_default_honours_filters_and_the_option_keeps_working() {
         prepared
     };
     let targets = |plan: &OpPlan| -> Vec<String> {
-        plan.plan.items.iter().map(|item| item.target.file_name().unwrap()).collect()
+        plan.plan
+            .items
+            .iter()
+            .map(|item| item.target.file_name().unwrap())
+            .collect()
     };
     let service = service_of(root);
     let model = make(&service);
     let op = copy(Side::Right);
-    let plan = plan_of(&service, &model, &request(op.clone(), ReadOnlySides::default())).unwrap();
+    let plan = plan_of(
+        &service,
+        &model,
+        &request(op.clone(), ReadOnlySides::default()),
+    )
+    .unwrap();
     assert_eq!(targets(&plan), ["a", "x.txt"]);
     drop(service);
     std::fs::create_dir_all(root.join("config")).unwrap();
@@ -334,7 +354,9 @@ fn a6_22_exclude_rewrites_the_rules_and_a_rerun_hides_the_item() {
     write(root, "r/keep.txt", b"1");
     let service = service(root);
     let reference = SessionRef::parse("ex").unwrap();
-    let mut session = service.session_defaults(SessionType::FolderCompare).unwrap();
+    let mut session = service
+        .session_defaults(SessionType::FolderCompare)
+        .unwrap();
     session.specs.left = root.join("l").display().to_string();
     session.specs.right = root.join("r").display().to_string();
     service.session_save(&reference, &session, false).unwrap();
@@ -349,10 +371,14 @@ fn a6_22_exclude_rewrites_the_rules_and_a_rerun_hides_the_item() {
     assert_eq!(files, ["a\\x.txt"]);
     assert!(folders.is_empty());
     let masks = ExcludeMasksDto { files, folders };
-    let dto = service.session_add_excludes(&reference, &masks, false).unwrap();
+    let dto = service
+        .session_add_excludes(&reference, &masks, false)
+        .unwrap();
     assert_eq!(dto.masks.as_ref(), Some(&masks));
     // Nothing is added twice.
-    service.session_add_excludes(&reference, &masks, false).unwrap();
+    service
+        .session_add_excludes(&reference, &masks, false)
+        .unwrap();
     let saved = service.session_load(&reference).unwrap().value;
     let SessionRules::Folder(rules) = &saved.rules else {
         panic!("folder rules");
@@ -385,17 +411,35 @@ fn a6_22_a_locked_session_needs_force() {
     let root = tmp.path();
     let service = service(root);
     let reference = SessionRef::parse("locked").unwrap();
-    let session = service.session_defaults(SessionType::FolderCompare).unwrap();
+    let session = service
+        .session_defaults(SessionType::FolderCompare)
+        .unwrap();
     service.session_save(&reference, &session, false).unwrap();
     service.session_lock(&reference, true).unwrap();
     let masks = ExcludeMasksDto {
         files: vec!["*.tmp".to_owned()],
         folders: Vec::new(),
     };
-    assert!(service.session_add_excludes(&reference, &masks, false).is_err());
-    assert!(service.session_add_excludes(&reference, &masks, true).is_ok());
-    assert!(service.session_set_ignored(&reference, &["x".to_owned()], false).is_err());
-    assert!(service.session_set_ignored(&reference, &["x".to_owned()], true).is_ok());
+    assert!(
+        service
+            .session_add_excludes(&reference, &masks, false)
+            .is_err()
+    );
+    assert!(
+        service
+            .session_add_excludes(&reference, &masks, true)
+            .is_ok()
+    );
+    assert!(
+        service
+            .session_set_ignored(&reference, &["x".to_owned()], false)
+            .is_err()
+    );
+    assert!(
+        service
+            .session_set_ignored(&reference, &["x".to_owned()], true)
+            .is_ok()
+    );
 }
 
 fn openwith(root: &std::path::Path, text: &str) {
@@ -407,7 +451,10 @@ fn openwith(root: &std::path::Path, text: &str) {
     .unwrap();
 }
 
-fn open_items(root: &std::path::Path, names: &[&str]) -> Vec<(hikasa_core::Spec, hikasa_core::Spec)> {
+fn open_items(
+    root: &std::path::Path,
+    names: &[&str],
+) -> Vec<(hikasa_core::Spec, hikasa_core::Spec)> {
     let spec = |path: std::path::PathBuf| {
         hikasa_core::Spec::Local(hikasa_core::LocalPath::new(path).unwrap())
     };
@@ -417,13 +464,20 @@ fn open_items(root: &std::path::Path, names: &[&str]) -> Vec<(hikasa_core::Spec,
         .collect()
 }
 
-fn with_launcher(root: &std::path::Path, answers: Vec<Option<i32>>) -> (Service, Arc<RecordingLauncher>) {
+fn with_launcher(
+    root: &std::path::Path,
+    answers: Vec<Option<i32>>,
+) -> (Service, Arc<RecordingLauncher>) {
     let launcher = Arc::new(RecordingLauncher::with_answers(answers));
     (service_on(root, launcher.clone()), launcher)
 }
 
 fn arg_texts(command: &OpenCommand) -> Vec<String> {
-    command.args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+    command
+        .args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[test]
@@ -513,11 +567,13 @@ fn a6_23_a_member_is_extracted_and_described_by_its_file() {
     zip.start_file("inner.txt", options).unwrap();
     std::io::Write::write_all(&mut zip, b"member").unwrap();
     write(root, "l/a.zip", &zip.finish().unwrap().into_inner());
-    openwith(root, "[[app]]\ndescription = \"one\"\ncommand = \"tool %f\"\n");
-    let (service, _) = with_launcher(root, Vec::new());
-    let archive = hikasa_core::Spec::Local(
-        hikasa_core::LocalPath::new(root.join("l/a.zip")).unwrap(),
+    openwith(
+        root,
+        "[[app]]\ndescription = \"one\"\ncommand = \"tool %f\"\n",
     );
+    let (service, _) = with_launcher(root, Vec::new());
+    let archive =
+        hikasa_core::Spec::Local(hikasa_core::LocalPath::new(root.join("l/a.zip")).unwrap());
     let member = hikasa_core::Spec::archive_member(archive.clone(), "inner.txt");
     let control = job(&service, JobKind::FolderOp);
     let commands = service
@@ -573,7 +629,11 @@ fn a6_23_a_program_that_cannot_start_and_a_programs_own_exit_code() {
     };
     let control = job(&service, JobKind::FolderOp);
     // Exit code 3 is the program's.
-    assert!(service.open_with_run(std::slice::from_ref(&command), true, &control).is_ok());
+    assert!(
+        service
+            .open_with_run(std::slice::from_ref(&command), true, &control)
+            .is_ok()
+    );
     let err = service
         .open_with_run(std::slice::from_ref(&command), true, &control)
         .unwrap_err();
@@ -629,7 +689,10 @@ fn a6_24_golden_lines_and_the_summary_of_one_function() {
     let seconds = Some(std::time::Duration::from_millis(1500));
     let entries = op_log_entries(&done, &time(), "tab", seconds, &filter);
     assert_eq!(entries[0].kind, LogKind::Summary);
-    assert_eq!(entries[0].text, "copied 1 of 1 items (0 skipped, 0 failed), 3 bytes, 1.5 s");
+    assert_eq!(
+        entries[0].text,
+        "copied 1 of 1 items (0 skipped, 0 failed), 3 bytes, 1.5 s"
+    );
     assert_eq!(entries[0].source, "tab");
     assert_eq!(entries[0].time, time());
     assert_eq!(entries[1].kind, LogKind::Detail);
@@ -653,7 +716,10 @@ fn a6_24_golden_lines_and_the_summary_of_one_function() {
         None,
         &LogFilter::default(),
     );
-    assert_eq!(sync[0].text, "copied 1 of 1 items (0 skipped, 0 failed), 3 bytes");
+    assert_eq!(
+        sync[0].text,
+        "copied 1 of 1 items (0 skipped, 0 failed), 3 bytes"
+    );
 }
 
 #[test]
@@ -664,8 +730,12 @@ fn a6_24_filters_and_failures_always() {
     write(root, "l/b.txt", b"two");
     let service = service(root);
     let prepared = prepared(&service, root);
-    let plan = plan_of(&service, &prepared, &request(copy(Side::Right), ReadOnlySides::default()))
-        .unwrap();
+    let plan = plan_of(
+        &service,
+        &prepared,
+        &request(copy(Side::Right), ReadOnlySides::default()),
+    )
+    .unwrap();
     // The right side changes under the plan: one item fails.
     write(root, "r/a.txt", b"in the way");
     let control = job(&service, JobKind::FolderOp);
@@ -681,7 +751,11 @@ fn a6_24_filters_and_failures_always() {
     let entries = op_log_entries(&done, &time(), "tab", None, &quiet);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, LogKind::Error);
-    assert!(entries[0].text.starts_with("failed copy "), "{}", entries[0].text);
+    assert!(
+        entries[0].text.starts_with("failed copy "),
+        "{}",
+        entries[0].text
+    );
     assert!(entries[0].text.contains("changed since the plan was made"));
 }
 
@@ -723,7 +797,10 @@ fn a6_24_warnings_keep_their_code() {
         spec: None,
     });
     let entries = op_log_entries(&done, &time(), "tab", None, &LogFilter::default());
-    let warned: Vec<_> = entries.iter().filter(|e| e.kind == LogKind::Warning).collect();
+    let warned: Vec<_> = entries
+        .iter()
+        .filter(|e| e.kind == LogKind::Warning)
+        .collect();
     assert_eq!(warned[0].text, "[trash_fallback] text");
     let without = LogFilter {
         warnings: false,
@@ -761,7 +838,9 @@ fn a6_12_contents_through_the_service() {
         kind: ContentsKind::Compare(ContentMethod::Binary),
         text_rules: None,
     };
-    let dto = service.folder_contents(prepared.model(), &compare, &control).unwrap();
+    let dto = service
+        .folder_contents(prepared.model(), &compare, &control)
+        .unwrap();
     assert_eq!((dto.op, dto.method), ("compare", Some("binary")));
     assert_eq!(dto.counts.binary_same, 1);
     let crc = ContentsRequest {
@@ -769,7 +848,9 @@ fn a6_12_contents_through_the_service() {
         kind: ContentsKind::Crc(SideSet::all()),
         text_rules: None,
     };
-    let dto = service.folder_contents(prepared.model(), &crc, &control).unwrap();
+    let dto = service
+        .folder_contents(prepared.model(), &crc, &control)
+        .unwrap();
     assert_eq!(dto.items.len(), 2);
     assert_eq!(dto.items[0].crc32, dto.items[1].crc32);
     assert!(dto.ok());

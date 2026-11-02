@@ -78,9 +78,7 @@ impl Builder<'_, '_> {
         let namer = match mask {
             RenameMask::Name(name) => Namer::Name(name),
             RenameMask::Dos(mask) => Namer::Dos(mask),
-            RenameMask::Regex { old, new } => {
-                Namer::Regex(Box::new(RegexRename::new(old, new)?))
-            }
+            RenameMask::Regex { old, new } => Namer::Regex(Box::new(RegexRename::new(old, new)?)),
         };
         let picked: Vec<(Side, NodeId)> = sides
             .sides()
@@ -256,7 +254,11 @@ impl Builder<'_, '_> {
 
     /// The collision table of §1.6.13, for one folder.
     fn rename_folder(&mut self, side: Side, mut folder: Folder) {
-        let already = |to: &Spec| report(&VfsError::AlreadyExists { spec: to.canonical() });
+        let already = |to: &Spec| {
+            report(&VfsError::AlreadyExists {
+                spec: to.canonical(),
+            })
+        };
         // Two items reach one name: the first in plan order goes on.
         let mut seen = BTreeSet::new();
         let mut errors: BTreeMap<usize, hikasa_core::ErrorReport> = BTreeMap::new();
@@ -368,13 +370,20 @@ impl Builder<'_, '_> {
                     let Some(ren) = folder.rows.get(index) else {
                         continue;
                     };
-                    self.push_rename(ren, ren.source.clone(), ren.target.clone(), ren.stamped, side);
+                    self.push_rename(
+                        ren,
+                        ren.source.clone(),
+                        ren.target.clone(),
+                        ren.stamped,
+                        side,
+                    );
                 }
                 Step::Aside(index) => {
                     let Some(ren) = folder.rows.get(index) else {
                         continue;
                     };
-                    let Some(aside) = self.hidden_name(folder.parent.as_ref(), ren, &mut names) else {
+                    let Some(aside) = self.hidden_name(folder.parent.as_ref(), ren, &mut names)
+                    else {
                         let error = report_with(
                             ErrorKind::InvalidInput,
                             &ren.source,

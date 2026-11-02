@@ -14,9 +14,7 @@ use std::collections::BTreeSet;
 
 use hikasa_core::{Ctl, FileTime, Pair, Side, Spec, Warning};
 use hikasa_vfs::Vfs;
-use hikasa_vfs::ops::{
-    BackupPolicy, ExecOptions, LinkPolicy, OverwritePolicy, Plan, Preserve,
-};
+use hikasa_vfs::ops::{BackupPolicy, ExecOptions, LinkPolicy, OverwritePolicy, Plan, Preserve};
 use serde::{Deserialize, Serialize};
 
 pub use confirm::{
@@ -281,7 +279,11 @@ pub struct OpPlan {
 pub fn refresh_nodes(read: &TreeRead<'_>, meta: &[ItemMeta]) -> Vec<NodeId> {
     let mut seen = BTreeSet::new();
     for node in meta.iter().filter_map(|meta| meta.node) {
-        seen.insert(read.node(node).and_then(|view| view.parent).unwrap_or(NodeId::ROOT));
+        seen.insert(
+            read.node(node)
+                .and_then(|view| view.parent)
+                .unwrap_or(NodeId::ROOT),
+        );
     }
     let mut folders: Vec<(usize, NodeId)> = seen
         .into_iter()

@@ -145,7 +145,10 @@ fn parse_new(new: &str, names: &[Option<String>]) -> Result<Vec<Piece>, FolderEr
                     }
                 }
                 if !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit()) {
-                    group(word.parse().map_err(|_| bad_new(new, "a group number is too large"))?)?
+                    group(
+                        word.parse()
+                            .map_err(|_| bad_new(new, "a group number is too large"))?,
+                    )?
                 } else {
                     let index = names.iter().position(|name| name.as_deref() == Some(&word));
                     let index = index
@@ -159,7 +162,11 @@ fn parse_new(new: &str, names: &[Option<String>]) -> Result<Vec<Piece>, FolderEr
                     number.push(digit);
                     chars.next();
                 }
-                group(number.parse().map_err(|_| bad_new(new, "a group number is too large"))?)?
+                group(
+                    number
+                        .parse()
+                        .map_err(|_| bad_new(new, "a group number is too large"))?,
+                )?
             }
             _ => return Err(bad_new(new, "a `$` needs a group or a second `$`")),
         };
@@ -195,7 +202,9 @@ impl RegexRename {
         };
         let of = |index: usize| -> &str {
             let range: Option<&Range<usize>> = groups.get(index).and_then(Option::as_ref);
-            range.and_then(|range| name.get(range.clone())).unwrap_or("")
+            range
+                .and_then(|range| name.get(range.clone()))
+                .unwrap_or("")
         };
         let mut out = String::with_capacity(name.len());
         for piece in &self.pieces {

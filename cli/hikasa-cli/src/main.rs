@@ -35,8 +35,7 @@ use hikasa_session::api::{OpenArgs, normalize_legacy_args, open_usage, parse_ope
 use hikasa_session::settings::LoadMode;
 use hikasa_session::{
     ApiError, ApiOp, EnvFacts, Platform, Service, ServiceInit, StdinSource, SystemClock,
-    SystemLauncher,
-    capture_env, clipboard_provider, run_guarded,
+    SystemLauncher, capture_env, clipboard_provider, run_guarded,
 };
 use hikasa_vfs::{VfsError, VfsOp};
 

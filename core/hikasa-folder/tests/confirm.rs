@@ -6,14 +6,18 @@ mod common;
 use std::sync::Arc;
 
 use common::{compared, default_now, engines, host, mspec};
-use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, NullProgress, RelPath, Side, Spec, WarningCode};
+use hikasa_core::{
+    CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, NullProgress, RelPath, Side, Spec,
+    WarningCode,
+};
 use hikasa_folder::ops::{
     ConfirmMode, ConfirmPolicy, Confirmation, Conflicts, Declined, FolderOp, OpPlan, OpScope,
     OpSettings, QuestionKind, ReadOnlySides, Recycle, Reply, plan_op,
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{
-    ArchiveHandling, FolderComparison, FolderEnv, FolderModel, FolderRules, NullObserver, compare_into,
+    ArchiveHandling, FolderComparison, FolderEnv, FolderModel, FolderRules, NullObserver,
+    compare_into,
 };
 use hikasa_vfs::ops::{self, Action, ItemStatus, OpReport, OverwritePolicy, SkipReason};
 use hikasa_vfs::{
@@ -56,7 +60,8 @@ fn memory() -> MemoryVfs {
 }
 
 fn file(vfs: &MemoryVfs, path: &str, content: &[u8], with: MemMeta) {
-    vfs.insert_file(&host(path), content.to_vec(), with).unwrap();
+    vfs.insert_file(&host(path), content.to_vec(), with)
+        .unwrap();
 }
 
 fn read(vfs: &MemoryVfs, path: &str) -> Option<Vec<u8>> {
@@ -75,7 +80,15 @@ fn plan(vfs: &dyn Vfs, cmp: &FolderComparison, rows: &[(&str, SideSet)], op: &Fo
         iu: false,
         read_only: ReadOnlySides::default(),
     };
-    plan_op(&read, vfs, &scope, op, &OpSettings::default(), &Ctl::detached()).unwrap()
+    plan_op(
+        &read,
+        vfs,
+        &scope,
+        op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap()
 }
 
 fn run(vfs: &dyn Vfs, plan: OpPlan) -> OpReport {
@@ -142,7 +155,10 @@ fn a6_16_read_only_as_a_dos_bit_and_a_unix_mode() {
 #[test]
 fn a6_16_system() {
     let (vfs, cmp) = replace_case(dos(10, DosAttrs::SYSTEM));
-    assert_eq!(conflicts(&plan(&vfs, &cmp, &[("x", L)], &COPY)), Conflicts::SYSTEM);
+    assert_eq!(
+        conflicts(&plan(&vfs, &cmp, &[("x", L)], &COPY)),
+        Conflicts::SYSTEM
+    );
     assert_eq!(
         conflicts(&plan(&vfs, &cmp, &[("x", R)], &delete(R, no_bin()))),
         Conflicts::SYSTEM
@@ -157,7 +173,10 @@ fn a6_16_overwrite_newer_by_the_rows_relation() {
         Conflicts::OVERWRITE_NEWER
     );
     let (vfs, cmp) = replace_case(meta(5));
-    assert_eq!(conflicts(&plan(&vfs, &cmp, &[("x", L)], &COPY)), Conflicts::empty());
+    assert_eq!(
+        conflicts(&plan(&vfs, &cmp, &[("x", L)], &COPY)),
+        Conflicts::empty()
+    );
 }
 
 #[test]
@@ -175,12 +194,22 @@ fn three() -> (MemoryVfs, OpPlan) {
     for name in ["a", "b", "c"] {
         file(&vfs, &format!("/l/{name}"), b"new", meta(10));
     }
-    file(&vfs, "/r/a", b"old", dos(10, DosAttrs::READONLY | DosAttrs::SYSTEM));
+    file(
+        &vfs,
+        "/r/a",
+        b"old",
+        dos(10, DosAttrs::READONLY | DosAttrs::SYSTEM),
+    );
     file(&vfs, "/r/b", b"old", dos(20, DosAttrs::READONLY));
     file(&vfs, "/r/c", b"old", dos(10, DosAttrs::READONLY));
     file(&vfs, "/l/clean", b"new", meta(10));
     let cmp = compared(&vfs, &FolderRules::default());
-    let out = plan(&vfs, &cmp, &[("a", L), ("b", L), ("c", L), ("clean", L)], &COPY);
+    let out = plan(
+        &vfs,
+        &cmp,
+        &[("a", L), ("b", L), ("c", L), ("clean", L)],
+        &COPY,
+    );
     (vfs, out)
 }
 
@@ -258,12 +287,23 @@ fn a6_16_modes() {
     assert!(machine.next().is_none());
     let done = machine.finish(out.clone()).unwrap();
     assert!(done.plan.items.iter().all(|item| item.skip.is_none()));
-    assert!(done.plan.items.iter().take(3).all(|item| item.clear_read_only));
+    assert!(
+        done.plan
+            .items
+            .iter()
+            .take(3)
+            .all(|item| item.clear_read_only)
+    );
     assert!(!done.plan.items[3].clear_read_only);
     let machine = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::NoToAll);
     assert!(machine.next().is_none());
     let done = machine.finish(out).unwrap();
-    let skipped = done.plan.items.iter().filter(|item| item.skip.is_some()).count();
+    let skipped = done
+        .plan
+        .items
+        .iter()
+        .filter(|item| item.skip.is_some())
+        .count();
     assert_eq!(skipped, 3);
     assert_eq!(done.plan.items[3].action, Action::Copy);
 }
@@ -341,7 +381,11 @@ fn a6_16_the_operation_question_of_each_verb() {
         move_: false,
         ..ConfirmPolicy::ALL
     };
-    assert!(Confirmation::new(&out, &policy, ConfirmMode::Prompt).next().is_none());
+    assert!(
+        Confirmation::new(&out, &policy, ConfirmMode::Prompt)
+            .next()
+            .is_none()
+    );
 }
 
 #[test]
@@ -387,8 +431,15 @@ fn a6_16_a_declined_folder_cuts_what_lies_below_it() {
         iu: false,
         read_only: ReadOnlySides::default(),
     };
-    let out = plan_op(&read_tree, &vfs, &scope, &COPY, &OpSettings::default(), &Ctl::detached())
-        .unwrap();
+    let out = plan_op(
+        &read_tree,
+        &vfs,
+        &scope,
+        &COPY,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     drop(read_tree);
     assert_eq!(out.meta[0].conflicts, Conflicts::READ_ONLY);
     let done = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::NoToAll)
@@ -408,7 +459,10 @@ fn actions(out: &OpPlan) -> Vec<(Action, String)> {
         .iter()
         .map(|item| {
             let name = item.target.canonical().replace('\\', "/");
-            (item.action, name.strip_prefix("C:").unwrap_or(&name).to_owned())
+            (
+                item.action,
+                name.strip_prefix("C:").unwrap_or(&name).to_owned(),
+            )
         })
         .collect()
 }
@@ -422,9 +476,17 @@ fn a6_17_the_table_files_links_special() {
     let cmp = compared(&vfs, &FolderRules::default());
     let rows = [("f", L), ("link", L), ("pipe", L)];
     let out = plan(&vfs, &cmp, &rows, &delete(L, no_bin()));
-    assert!(actions(&out).iter().all(|(action, _)| *action == Action::Remove));
+    assert!(
+        actions(&out)
+            .iter()
+            .all(|(action, _)| *action == Action::Remove)
+    );
     let out = plan(&vfs, &cmp, &rows, &delete(L, bin()));
-    assert!(actions(&out).iter().all(|(action, _)| *action == Action::Trash));
+    assert!(
+        actions(&out)
+            .iter()
+            .all(|(action, _)| *action == Action::Trash)
+    );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(vfs.trashed().len(), 3);
@@ -540,7 +602,11 @@ fn a6_17_a_member_is_no_recycle_bin_yes_and_no() {
     let world = world();
     world
         .mem
-        .insert_file(&host("/l/a.tar"), tar_of(&[("m.txt", b"1"), ("n.txt", b"2")]), meta(10))
+        .insert_file(
+            &host("/l/a.tar"),
+            tar_of(&[("m.txt", b"1"), ("n.txt", b"2")]),
+            meta(10),
+        )
         .unwrap();
     let mut rules = FolderRules::default();
     rules.handling.archives = ArchiveHandling::Always;
@@ -565,10 +631,15 @@ fn a6_17_a_member_is_no_recycle_bin_yes_and_no() {
     let done = machine.finish(out).unwrap();
     let report = run(&world.vfs, done);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
-    assert!(world.vfs.stat(
-        &Spec::archive_member(mspec("/l/a.tar"), "m.txt"),
-        hikasa_vfs::FollowLinks::No
-    ).is_err());
+    assert!(
+        world
+            .vfs
+            .stat(
+                &Spec::archive_member(mspec("/l/a.tar"), "m.txt"),
+                hikasa_vfs::FollowLinks::No
+            )
+            .is_err()
+    );
     assert_eq!(world.mem.trashed(), Vec::<String>::new());
 }
 
@@ -611,7 +682,12 @@ fn a6_17_with_fallback_the_report_shows_remove_items_and_one_warning() {
     }
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
-    let names: Vec<&str> = report.plan.items.iter().map(|item| item.action.as_str()).collect();
+    let names: Vec<&str> = report
+        .plan
+        .items
+        .iter()
+        .map(|item| item.action.as_str())
+        .collect();
     assert_eq!(
         names,
         ["remove", "remove_dir", "remove", "remove_dir", "remove"],

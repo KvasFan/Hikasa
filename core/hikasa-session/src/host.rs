@@ -390,9 +390,8 @@ impl AppLauncher for SystemLauncher {
     }
 
     fn open_associated(&self, path: &std::path::Path) -> Result<(), ApiError> {
-        open::that_detached(path).map_err(|e| {
-            ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display()))
-        })
+        open::that_detached(path)
+            .map_err(|e| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display())))
     }
 }
 

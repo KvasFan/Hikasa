@@ -58,7 +58,10 @@ fn pairs_of(model: &FolderModel, nodes: &[NodeId]) -> Vec<(NodeId, Spec, Spec)> 
             if view.kind != NodeKind::File || left.filtered || right.filtered {
                 return None;
             }
-            let (ls, rs) = (read.spec(row.node, Side::Left)?, read.spec(row.node, Side::Right)?);
+            let (ls, rs) = (
+                read.spec(row.node, Side::Left)?,
+                read.spec(row.node, Side::Right)?,
+            );
             Some((row.node, ls, rs))
         })
         .collect()

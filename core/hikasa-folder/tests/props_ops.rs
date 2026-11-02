@@ -6,12 +6,8 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{
-    compared, config_with, engines, gen_tree, host, materialize_gen, with_env,
-};
-use hikasa_core::{
-    CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, RelPath, Side, Spec,
-};
+use common::{compared, config_with, engines, gen_tree, host, materialize_gen, with_env};
+use hikasa_core::{CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, RelPath, Side, Spec};
 use hikasa_folder::ops::{
     ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides,
     Recycle, TouchFrom, plan_op,
@@ -97,12 +93,7 @@ fn answered(plan: OpPlan, mode: ConfirmMode) -> OpPlan {
     machine.finish(plan).unwrap()
 }
 
-fn plan_for(
-    vfs: &dyn Vfs,
-    cmp: &FolderComparison,
-    picks: &[u8],
-    op: &FolderOp,
-) -> Option<OpPlan> {
+fn plan_for(vfs: &dyn Vfs, cmp: &FolderComparison, picks: &[u8], op: &FolderOp) -> Option<OpPlan> {
     let read = cmp.read();
     plan_op(
         &read,
@@ -125,7 +116,8 @@ fn side_rel(spec: &Spec) -> Option<(Side, String)> {
     if let Some(rel) = text.strip_prefix("/l/") {
         Some((Side::Left, rel.to_owned()))
     } else {
-        text.strip_prefix("/r/").map(|rel| (Side::Right, rel.to_owned()))
+        text.strip_prefix("/r/")
+            .map(|rel| (Side::Right, rel.to_owned()))
     }
 }
 
@@ -136,11 +128,8 @@ fn state_of(cmp: &FolderComparison, rel: &str) -> Option<CompareState> {
 }
 
 fn has(vfs: &MemoryVfs, path: &str) -> bool {
-    vfs.stat(
-        &common::mspec(path),
-        hikasa_vfs::FollowLinks::No,
-    )
-    .is_ok()
+    vfs.stat(&common::mspec(path), hikasa_vfs::FollowLinks::No)
+        .is_ok()
 }
 
 proptest! {
@@ -287,7 +276,11 @@ fn contents(vfs: &MemoryVfs, base: &str) -> BTreeMap<String, Vec<u8>> {
         .into_iter()
         .filter(|entry| entry.kind == EntryKind::File)
         .filter_map(|entry| {
-            let rel = entry.path.strip_prefix(&prefix)?.trim_start_matches(['/', '\\']).replace('\\', "/");
+            let rel = entry
+                .path
+                .strip_prefix(&prefix)?
+                .trim_start_matches(['/', '\\'])
+                .replace('\\', "/");
             let data = vfs.read_back(&entry.path)?;
             Some((rel, data.to_vec()))
         })

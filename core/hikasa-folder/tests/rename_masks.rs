@@ -10,7 +10,9 @@ use hikasa_folder::ops::{
     dos_rename, plan_op,
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
-use hikasa_folder::{CaseMode, FolderComparison, FolderError, FolderModel, FolderRules, compare_into};
+use hikasa_folder::{
+    CaseMode, FolderComparison, FolderError, FolderModel, FolderRules, compare_into,
+};
 use hikasa_formats::{EngineKind, Pattern, RegexLimits};
 use hikasa_vfs::ops::{self, Action, ItemStatus, OpReport, SkipReason};
 use hikasa_vfs::{Fault, MemMeta, MemoryVfs, Vfs, VfsOp};
@@ -64,7 +66,14 @@ fn rename_plan(
         sides: SideSet::LEFT,
         mask,
     };
-    plan_op(&read, vfs, &scope, &op, &OpSettings::default(), &Ctl::detached())
+    plan_op(
+        &read,
+        vfs,
+        &scope,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
 }
 
 fn run(vfs: &dyn Vfs, plan: OpPlan) -> OpReport {
@@ -155,12 +164,20 @@ proptest! {
 
 #[test]
 fn a6_18_regex_groups_names_and_dollars() {
-    let apply = |old: &str, new: &str, name: &str| {
-        RegexRename::new(old, new).unwrap().apply(name).unwrap()
-    };
-    assert_eq!(apply(r"(\w+)\.txt", "$1.bak", "abc.txt").as_deref(), Some("abc.bak"));
-    assert_eq!(apply(r"(\w+)\.txt", "${1}x", "abc.txt").as_deref(), Some("abcx"));
-    assert_eq!(apply(r"(?P<stem>\w+)\.txt", "${stem}!", "abc.txt").as_deref(), Some("abc!"));
+    let apply =
+        |old: &str, new: &str, name: &str| RegexRename::new(old, new).unwrap().apply(name).unwrap();
+    assert_eq!(
+        apply(r"(\w+)\.txt", "$1.bak", "abc.txt").as_deref(),
+        Some("abc.bak")
+    );
+    assert_eq!(
+        apply(r"(\w+)\.txt", "${1}x", "abc.txt").as_deref(),
+        Some("abcx")
+    );
+    assert_eq!(
+        apply(r"(?P<stem>\w+)\.txt", "${stem}!", "abc.txt").as_deref(),
+        Some("abc!")
+    );
     assert_eq!(apply(r"a", "$$", "a").as_deref(), Some("$"));
     // `$1a` is the group, then `a`: the expansion is the same over both engines.
     assert_eq!(apply(r"(b)", "$1a", "b").as_deref(), Some("ba"));
@@ -171,7 +188,13 @@ fn a6_18_regex_groups_names_and_dollars() {
 
 #[test]
 fn a6_18_regex_a_missing_group_or_a_bad_dollar_is_invalid_input() {
-    for (old, new) in [("(a)", "$2"), ("(a)", "${name}"), ("a", "$"), ("a", "$x"), ("(", "x")] {
+    for (old, new) in [
+        ("(a)", "$2"),
+        ("(a)", "${name}"),
+        ("a", "$"),
+        ("a", "$x"),
+        ("(", "x"),
+    ] {
         let err = RegexRename::new(old, new).unwrap_err();
         assert_eq!(
             hikasa_core::Classify::kind(&err),
@@ -191,7 +214,10 @@ fn a6_18_regex_matches_the_whole_name() {
     assert_eq!(either.apply("ab").unwrap().as_deref(), Some("x"));
     let folded = RegexRename::new("(?i)ABC", "x").unwrap();
     assert_eq!(folded.apply("abc").unwrap().as_deref(), Some("x"));
-    assert_eq!(RegexRename::new("ABC", "x").unwrap().apply("abc").unwrap(), None);
+    assert_eq!(
+        RegexRename::new("ABC", "x").unwrap().apply("abc").unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -250,7 +276,10 @@ fn a6_18_name_checks() {
     .unwrap();
     assert_eq!(plan.plan.items[0].skip, Some(SkipReason::NoMatch));
     // One name needs one row.
-    let vfs = tree(CaseSensitivity::Sensitive, &[("/l/a", b"1"), ("/l/b", b"1")]);
+    let vfs = tree(
+        CaseSensitivity::Sensitive,
+        &[("/l/a", b"1"), ("/l/b", b"1")],
+    );
     let cmp = compared(&vfs, &FolderRules::default());
     let err = rename_plan(&vfs, &cmp, &["a", "b"], RenameMask::Name("c".to_owned())).unwrap_err();
     assert_eq!(hikasa_core::Classify::kind(&err), ErrorKind::InvalidInput);
@@ -379,7 +408,10 @@ fn a6_18_a_row_that_stays_holds_its_name_for_the_one_behind_it() {
     let plan = rename_plan(&vfs, &cmp, &["abc", "bca"], rotate(3)).unwrap();
     let text = steps(&plan);
     assert_eq!(text.len(), 2, "{text:?}");
-    assert!(text.iter().all(|step| step.ends_with("!already_exists")), "{text:?}");
+    assert!(
+        text.iter().all(|step| step.ends_with("!already_exists")),
+        "{text:?}"
+    );
     let report = run(&vfs, plan);
     assert_eq!(report.summary.failed, 2);
     assert_eq!(names_on_left(&vfs), ["abc", "bca", "cab"]);
@@ -390,10 +422,7 @@ fn a6_18_a_chain_goes_free_end_first() {
     let vfs = named(CaseSensitivity::Sensitive, &["abcd", "bcda", "cdab"]);
     let cmp = compared(&vfs, &FolderRules::default());
     let plan = rename_plan(&vfs, &cmp, &["abcd", "bcda", "cdab"], rotate(4)).unwrap();
-    assert_eq!(
-        steps(&plan),
-        ["cdab > dabc", "bcda > cdab", "abcd > bcda"]
-    );
+    assert_eq!(steps(&plan), ["cdab > dabc", "bcda > cdab", "abcd > bcda"]);
     let report = run(&vfs, plan);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(names_on_left(&vfs), ["bcda", "cdab", "dabc"]);
@@ -441,10 +470,7 @@ fn a6_18_a_cycle_of_three_ends_as_asked_with_no_hidden_name_left() {
 
 #[test]
 fn a6_18_a_hidden_name_that_is_taken_is_numbered() {
-    let vfs = named(
-        CaseSensitivity::Sensitive,
-        &["ab", "ba", ".ab.hikasa-ren"],
-    );
+    let vfs = named(CaseSensitivity::Sensitive, &["ab", "ba", ".ab.hikasa-ren"]);
     let cmp = compared(&vfs, &FolderRules::default());
     let plan = rename_plan(&vfs, &cmp, &["ab", "ba"], rotate(2)).unwrap();
     assert_eq!(steps(&plan)[0], "ab > .ab.hikasa-ren-2");

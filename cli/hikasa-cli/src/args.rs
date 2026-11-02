@@ -575,7 +575,11 @@ pub enum FolderOpVerb {
         #[command(flatten)]
         common: FolderOpCommon,
         /// An application: its description, or its place in the list.
-        #[arg(long, value_name = "NAME|INDEX", required_unless_present = "associated")]
+        #[arg(
+            long,
+            value_name = "NAME|INDEX",
+            required_unless_present = "associated"
+        )]
         app: Option<String>,
         /// The associated application.
         #[arg(long, conflicts_with = "app")]

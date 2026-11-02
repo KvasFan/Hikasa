@@ -8,21 +8,19 @@ use hikasa_core::{
     CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, RelPath, Side, Spec, Warning,
     WarningCode,
 };
-use hikasa_folder::ops::{
-    FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides, Recycle, plan_op,
-};
+use hikasa_folder::ops::{FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides, Recycle, plan_op};
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{
-    CaseMode, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError,
-    FolderMode, FolderModel, FolderRules, NodeId, ScanStatus, TreeRead, compare_into,
+    CaseMode, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
+    FolderModel, FolderRules, NodeId, ScanStatus, TreeRead, compare_into,
 };
 use hikasa_vfs::ops::{
     self, Action, BackupPolicy, BackupStyle, Expect, ItemStamp, ItemStatus, LinkPolicy, OpReport,
     OverwritePolicy, SkipReason,
 };
 use hikasa_vfs::{
-    Attrs, Capabilities, EntryKind, Fault, ListOptions, Listing, MemMeta, MemoryVfs,
-    ReadSeek, UnixMeta, Vfs, VfsError, VfsOp,
+    Attrs, Capabilities, EntryKind, Fault, ListOptions, Listing, MemMeta, MemoryVfs, ReadSeek,
+    UnixMeta, Vfs, VfsError, VfsOp,
 };
 use proptest::prelude::*;
 
@@ -94,7 +92,15 @@ fn plan_with(
     settings: &OpSettings,
 ) -> OpPlan {
     let read = cmp.read();
-    plan_op(&read, vfs, &scope(&read, rows), op, settings, &Ctl::detached()).unwrap()
+    plan_op(
+        &read,
+        vfs,
+        &scope(&read, rows),
+        op,
+        settings,
+        &Ctl::detached(),
+    )
+    .unwrap()
 }
 
 fn plan(vfs: &dyn Vfs, cmp: &FolderComparison, rows: &[(&str, SideSet)], op: &FolderOp) -> OpPlan {
@@ -268,8 +274,15 @@ fn a6_15_rule2_a_name_that_is_not_utf8_survives_on_disk() {
         iu: false,
         read_only: ReadOnlySides::default(),
     };
-    let out = plan_op(&read, &vfs, &scope, &COPY_RIGHT, &OpSettings::default(), &Ctl::detached())
-        .unwrap();
+    let out = plan_op(
+        &read,
+        &vfs,
+        &scope,
+        &COPY_RIGHT,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     drop(read);
     let report = run(&vfs, out);
     assert_eq!(report.summary.done, 1, "{:?}", report.results);
@@ -595,8 +608,15 @@ fn a6_15_rule6_a_name_only_entry_is_stated_for_its_stamp() {
     selected.include.hidden = true;
     let view = read.node(row).unwrap();
     assert!(view.left.unwrap().stat_skipped);
-    let out = plan_op(&read, &vfs, &selected, &COPY_RIGHT, &OpSettings::default(), &Ctl::detached())
-        .unwrap();
+    let out = plan_op(
+        &read,
+        &vfs,
+        &selected,
+        &COPY_RIGHT,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     let stamp = out.plan.items[0].expect.unwrap().source.unwrap();
     assert_eq!(stamp.size, Some(5));
     assert_eq!(stamp.mtime, FileTime::from_unix(42, 0));
@@ -630,7 +650,12 @@ fn a6_15_rule7_expansion_on_cross_device_at_execution() {
     vfs.set_device(&host("/r"), 9);
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
-    let actions: Vec<&str> = report.plan.items.iter().map(|i| i.action.as_str()).collect();
+    let actions: Vec<&str> = report
+        .plan
+        .items
+        .iter()
+        .map(|i| i.action.as_str())
+        .collect();
     assert!(actions.contains(&"move"), "{actions:?}");
     assert!(actions.contains(&"remove_dir"), "{actions:?}");
     assert_eq!(read(&vfs, "/r/a/x").unwrap(), b"1");
@@ -665,7 +690,10 @@ fn a6_15_rule7_without_whole_hidden_items_stay_and_so_does_their_folder() {
     let out = plan(&vfs, &cmp, &[("a", L)], &MOVE_RIGHT);
     assert_eq!(
         lines(&out),
-        ["create_dir /l/a > /r/a @0", "move /l/a/x.txt > /r/a/x.txt @1"]
+        [
+            "create_dir /l/a > /r/a @0",
+            "move /l/a/x.txt > /r/a/x.txt @1"
+        ]
     );
     let out = plan(&vfs, &cmp, &[("a", L)], &delete(L));
     assert_eq!(lines(&out), ["remove /l/a/x.txt @0"]);
@@ -691,8 +719,15 @@ fn a6_15_rule8_a_folder_at_the_name_of_a_file_fails_whatever_the_policy() {
             .unwrap();
         let mut selected = scope(&read, &[]);
         selected.selection.insert(row, L);
-        let out = plan_op(&read, &vfs, &selected, &op, &OpSettings::default(), &Ctl::detached())
-            .unwrap();
+        let out = plan_op(
+            &read,
+            &vfs,
+            &selected,
+            &op,
+            &OpSettings::default(),
+            &Ctl::detached(),
+        )
+        .unwrap();
         assert_eq!(lines(&out), ["copy /l/same > /r/same @0 !is_a_directory"]);
     }
 }
@@ -725,13 +760,23 @@ fn a6_15_rule8_a_file_at_the_name_of_a_folder() {
         };
         plan_op(&read, &vfs, &selected, &op, &settings, &Ctl::detached()).unwrap()
     };
-    for overwrite in [OverwritePolicy::Fail, OverwritePolicy::Skip, OverwritePolicy::Newer] {
+    for overwrite in [
+        OverwritePolicy::Fail,
+        OverwritePolicy::Skip,
+        OverwritePolicy::Newer,
+    ] {
         let out = plan_for(overwrite);
-        assert_eq!(lines(&out)[0], "create_dir /l/same > /r/same @0 !already_exists");
+        assert_eq!(
+            lines(&out)[0],
+            "create_dir /l/same > /r/same @0 !already_exists"
+        );
     }
     let out = plan_for(OverwritePolicy::Always);
     assert_eq!(lines(&out)[0], "create_dir /l/same > /r/same @0 +replaces");
-    assert_eq!(short(out.plan.items[0].backup.as_ref().unwrap()), "/r/same.bak");
+    assert_eq!(
+        short(out.plan.items[0].backup.as_ref().unwrap()),
+        "/r/same.bak"
+    );
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(read(&vfs, "/r/same/inner").unwrap(), b"1");
@@ -755,8 +800,15 @@ fn a6_15_rule8_what_fails_cuts_what_lies_below_it() {
         to: Side::Right,
         overwrite: OverwritePolicy::Fail,
     };
-    let out = plan_op(&read, &vfs, &selected, &op, &OpSettings::default(), &Ctl::detached())
-        .unwrap();
+    let out = plan_op(
+        &read,
+        &vfs,
+        &selected,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     drop(read);
     let report = run(&vfs, out);
     assert_eq!(report.results[0].status, ItemStatus::Failed);
@@ -913,10 +965,7 @@ fn a6_15_rule10_a_file_changed_since_the_comparison_is_not_overwritten() {
     file(&vfs, "/r/newer", b"edited after the compare", 99);
     let report = run(&vfs, out);
     assert_eq!(report.results[0].status, ItemStatus::Failed);
-    assert_eq!(
-        read(&vfs, "/r/newer").unwrap(),
-        b"edited after the compare"
-    );
+    assert_eq!(read(&vfs, "/r/newer").unwrap(), b"edited after the compare");
 }
 
 #[test]
@@ -1030,7 +1079,9 @@ fn a6_15_rule12_rows_that_failed_are_never_touched() {
     let text = lines(&out);
     assert!(text.contains(&"remove /l/g @0".to_owned()), "{text:?}");
     assert!(
-        text.iter().filter(|l| !l.contains("/l/g")).all(|l| l.contains("!compare_error")),
+        text.iter()
+            .filter(|l| !l.contains("/l/g"))
+            .all(|l| l.contains("!compare_error")),
         "{text:?}"
     );
 }
@@ -1175,7 +1226,10 @@ fn a6_15_duplicates_of_a_case_insensitive_target() {
     let out = plan(&vfs, &cmp, &[("A", L), ("a", L)], &COPY_RIGHT);
     assert_eq!(
         lines(&out),
-        ["copy /l/A > /r/A @0", "skip /l/a > /r/a @0 !duplicate_target"]
+        [
+            "copy /l/A > /r/A @0",
+            "skip /l/a > /r/a @0 !duplicate_target"
+        ]
     );
 }
 

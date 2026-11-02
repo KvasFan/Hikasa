@@ -362,7 +362,8 @@ locked = false
 favorite = false               # SES-031 Favorite
 saved_at = ""                  # RFC 3339; auto-saved files only
 [parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
-[specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding
+[specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding,
+                               # read_only_left, read_only_right (FC-003, per side)
 [rules]                        # folder-compare: the TOML of --rules-file; text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests
 [display]                      # display filter state (SES-010)

@@ -4,7 +4,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hikasa_core::{Ctl, ErrorKind, ErrorReport, FileTime, Pair, RelPath, Side, Spec, Warning, WarningCode};
+use hikasa_core::{
+    Ctl, ErrorKind, ErrorReport, FileTime, Pair, RelPath, Side, Spec, Warning, WarningCode,
+};
 use hikasa_vfs::ops::{
     self, Action, BackupNames, BatchOptions, CopyOptions, ExecOptions, Expect, Fence, ItemStamp,
     MoveOptions, OpKind, OverwritePolicy, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
@@ -202,7 +204,14 @@ pub(super) fn plan(
             "a comparison needs both bases".to_owned(),
         ));
     };
-    let mut builder = Builder::new(read, vfs, scope.include, settings, ctl, Pair::new(left, right));
+    let mut builder = Builder::new(
+        read,
+        vfs,
+        scope.include,
+        settings,
+        ctl,
+        Pair::new(left, right),
+    );
     let rows = resolve(read, &scope.selection, &scope.include);
     let verb = match op {
         FolderOp::Copy { to, overwrite } => {
@@ -426,7 +435,10 @@ impl<'a, 'r> Builder<'a, 'r> {
         if self.warned.insert(format!("{word} {side}")) {
             self.warnings.push(Warning {
                 code: WarningCode::CapabilityMissing,
-                message: format!("{side} side: {}: `{word}` is not possible here", spec.canonical()),
+                message: format!(
+                    "{side} side: {}: `{word}` is not possible here",
+                    spec.canonical()
+                ),
                 spec: Some(spec.canonical()),
             });
         }
@@ -631,7 +643,9 @@ impl<'a, 'r> Builder<'a, 'r> {
     /// True when names at `spec` are compared folded.
     pub(super) fn folds(&mut self, spec: &Spec) -> bool {
         self.read.case() == Some(hikasa_core::CaseSensitivity::Insensitive)
-            || !self.capabilities(spec).contains(Capabilities::CASE_SENSITIVE)
+            || !self
+                .capabilities(spec)
+                .contains(Capabilities::CASE_SENSITIVE)
     }
 
     // ---- targets -----------------------------------------------------------------------------------------------------
@@ -985,7 +999,12 @@ impl<'a, 'r> Builder<'a, 'r> {
                 if self.settings.links == ops::LinkPolicy::Skip {
                     return Err(SkipReason::Symlink);
                 }
-                if self.lacks(target, Capabilities::CREATE_SYMLINKS, "create_symlinks", side) {
+                if self.lacks(
+                    target,
+                    Capabilities::CREATE_SYMLINKS,
+                    "create_symlinks",
+                    side,
+                ) {
                     return Err(SkipReason::SymlinksUnsupported);
                 }
                 Ok(if moving { Action::Move } else { Action::Link })
@@ -1163,7 +1182,15 @@ impl<'a, 'r> Builder<'a, 'r> {
         // A folder: a followed one cannot leave, its contents stay (fence rule 1).
         if view.is_folder() && tr.moving && entry.followed {
             let depth = self.child_depth(view.parent);
-            self.skip_row(id, kind, Some(source), target, depth, SkipReason::FollowedLink, side);
+            self.skip_row(
+                id,
+                kind,
+                Some(source),
+                target,
+                depth,
+                SkipReason::FollowedLink,
+                side,
+            );
             self.cover(id);
             return Ok(());
         }
@@ -1175,7 +1202,15 @@ impl<'a, 'r> Builder<'a, 'r> {
         let gone = tr.moving && self.lacks(&source, Capabilities::REMOVE, "remove", Some(tr.from));
         if gone || self.lacks(&target, need.0, need.1, side) {
             let depth = self.child_depth(view.parent);
-            self.skip_row(id, kind, Some(source), target, depth, SkipReason::Capability, side);
+            self.skip_row(
+                id,
+                kind,
+                Some(source),
+                target,
+                depth,
+                SkipReason::Capability,
+                side,
+            );
             self.cover(id);
             return Ok(());
         }
@@ -1233,7 +1268,8 @@ impl<'a, 'r> Builder<'a, 'r> {
         }
         // An opened archive that goes whole goes as the file it is.
         let opened = view.flags.contains(NodeFlags::archive_root(tr.from));
-        if let (true, true, Spec::ArchiveMember { archive, .. }) = (opened, whole && absent, &source)
+        if let (true, true, Spec::ArchiveMember { archive, .. }) =
+            (opened, whole && absent, &source)
         {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
@@ -1242,7 +1278,12 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.cover(id);
             return Ok(());
         }
-        if tr.moving && whole && absent && !self.has_followed_below(row) && self.can_rename(&source, &target) {
+        if tr.moving
+            && whole
+            && absent
+            && !self.has_followed_below(row)
+            && self.can_rename(&source, &target)
+        {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
             let mut item =
@@ -1335,22 +1376,14 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// An opened archive that leaves as one file: copied or moved by its own stamp.
-    fn place_archive(
-        &mut self,
-        tr: Transfer,
-        id: NodeId,
-        file: Spec,
-        target: Spec,
-        depth: u32,
-    ) {
-        let action = if tr.moving { Action::Move } else { Action::Copy };
-        let mut item = PlanItem::planned(
-            action,
-            EntryKind::File,
-            Some(file.clone()),
-            target,
-            depth,
-        );
+    fn place_archive(&mut self, tr: Transfer, id: NodeId, file: Spec, target: Spec, depth: u32) {
+        let action = if tr.moving {
+            Action::Move
+        } else {
+            Action::Copy
+        };
+        let mut item =
+            PlanItem::planned(action, EntryKind::File, Some(file.clone()), target, depth);
         match self.vfs.stat(&file, FollowLinks::No) {
             Ok(stat) => {
                 item.size = Some(stat.size);
@@ -1444,11 +1477,27 @@ impl<'a, 'r> Builder<'a, 'r> {
             return;
         }
         if left.followed || right.followed {
-            self.skip_row(id, kind, Some(source), target, depth, SkipReason::FollowedLink, None);
+            self.skip_row(
+                id,
+                kind,
+                Some(source),
+                target,
+                depth,
+                SkipReason::FollowedLink,
+                None,
+            );
             return;
         }
         if view.kind == NodeKind::Other {
-            self.skip_row(id, kind, Some(source), target, depth, SkipReason::SpecialFile, None);
+            self.skip_row(
+                id,
+                kind,
+                Some(source),
+                target,
+                depth,
+                SkipReason::SpecialFile,
+                None,
+            );
             return;
         }
         // A link member would come out on a disk: a hostile archive's link must not (D-142).
@@ -1460,7 +1509,15 @@ impl<'a, 'r> Builder<'a, 'r> {
                 source.canonical()
             );
             self.warn_once(WarningCode::ArchiveSymlinkSkipped, &source, message);
-            self.skip_row(id, kind, Some(source), target, depth, SkipReason::Symlink, None);
+            self.skip_row(
+                id,
+                kind,
+                Some(source),
+                target,
+                depth,
+                SkipReason::Symlink,
+                None,
+            );
             return;
         }
         let mut item = PlanItem::planned(
@@ -1492,7 +1549,8 @@ impl<'a, 'r> Builder<'a, 'r> {
             .source_stamp(left, &source)
             .and_then(|left| self.source_stamp(right, &target).map(|right| (left, right)));
         let checked = stamps.and_then(|stamps| {
-            self.same_file(&source, &target, false, false).map(|()| stamps)
+            self.same_file(&source, &target, false, false)
+                .map(|()| stamps)
         });
         match checked {
             Ok((left_stamp, right_stamp)) => {
@@ -1524,7 +1582,10 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.depths.clear();
             self.covered.iter_mut().for_each(|slot| *slot = false);
             let mut open = Vec::new();
-            for row in rows.iter().filter(|row| row.sides.contains(SideSet::of(side))) {
+            for row in rows
+                .iter()
+                .filter(|row| row.sides.contains(SideSet::of(side)))
+            {
                 self.ctl.check()?;
                 self.close_open(&mut open, row.depth);
                 self.delete_row(side, row, recycle, &mut open)?;
@@ -1569,7 +1630,15 @@ impl<'a, 'r> Builder<'a, 'r> {
         };
         let asked = file.as_ref().unwrap_or(&spec).clone();
         if self.lacks(&asked, Capabilities::REMOVE, "remove", Some(side)) {
-            self.skip_row(id, kind, None, spec, depth, SkipReason::Capability, Some(side));
+            self.skip_row(
+                id,
+                kind,
+                None,
+                spec,
+                depth,
+                SkipReason::Capability,
+                Some(side),
+            );
             self.cover(id);
             return Ok(());
         }
@@ -1580,8 +1649,9 @@ impl<'a, 'r> Builder<'a, 'r> {
                     recursive: true,
                     trash: recycle.use_bin && self.has_bin(&spec),
                 };
-                let plan = ops::plan_remove(self.vfs, std::slice::from_ref(&spec), &options, self.ctl)
-                    .map_err(|e| vfs_stop(&e))?;
+                let plan =
+                    ops::plan_remove(self.vfs, std::slice::from_ref(&spec), &options, self.ctl)
+                        .map_err(|e| vfs_stop(&e))?;
                 let first = self.items.len();
                 self.splice(plan, id, &spec, depth, Some(side));
                 self.mark_trash(first, recycle);
@@ -1592,12 +1662,30 @@ impl<'a, 'r> Builder<'a, 'r> {
                 return Ok(());
             }
             if let Some(file) = file {
-                self.delete_one(id, &view, &entry, file, EntryKind::File, depth, side, recycle);
+                self.delete_one(
+                    id,
+                    &view,
+                    &entry,
+                    file,
+                    EntryKind::File,
+                    depth,
+                    side,
+                    recycle,
+                );
                 self.cover(id);
                 return Ok(());
             }
             if recycle.use_bin && self.has_bin(&spec) {
-                self.delete_one(id, &view, &entry, spec, EntryKind::Dir, depth, side, recycle);
+                self.delete_one(
+                    id,
+                    &view,
+                    &entry,
+                    spec,
+                    EntryKind::Dir,
+                    depth,
+                    side,
+                    recycle,
+                );
                 self.cover(id);
                 return Ok(());
             }
@@ -1654,7 +1742,11 @@ impl<'a, 'r> Builder<'a, 'r> {
         recycle: Recycle,
     ) {
         let binned = recycle.use_bin && self.has_bin(&spec);
-        let action = if binned { Action::Trash } else { Action::Remove };
+        let action = if binned {
+            Action::Trash
+        } else {
+            Action::Remove
+        };
         let mut item = PlanItem::planned(action, kind, None, spec, depth);
         item.trash_fallback = binned && recycle.fallback;
         let stamp = if entry.stat_skipped {
@@ -1704,7 +1796,10 @@ impl<'a, 'r> Builder<'a, 'r> {
             return Err(FolderError::InvalidRules(nothing_on(sides)));
         }
         for side in sides.sides() {
-            for row in rows.iter().filter(|row| row.sides.contains(SideSet::of(side))) {
+            for row in rows
+                .iter()
+                .filter(|row| row.sides.contains(SideSet::of(side)))
+            {
                 self.ctl.check()?;
                 self.touch_row(side, row, from);
             }
@@ -1820,16 +1915,15 @@ impl<'a, 'r> Builder<'a, 'r> {
                 self.push(item, meta);
                 continue;
             }
-            let target = match name_problem(name)
-                .map_err(str::to_owned)
-                .and_then(|()| {
-                    FileName::new(name)
-                        .and_then(|file| self.vfs.child(&dir, &file))
-                        .map_err(|e| e.to_string())
-                }) {
+            let target = match name_problem(name).map_err(str::to_owned).and_then(|()| {
+                FileName::new(name)
+                    .and_then(|file| self.vfs.child(&dir, &file))
+                    .map_err(|e| e.to_string())
+            }) {
                 Ok(target) => target,
                 Err(message) => {
-                    let mut item = PlanItem::planned(Action::CreateDir, EntryKind::Dir, None, dir.clone(), 0);
+                    let mut item =
+                        PlanItem::planned(Action::CreateDir, EntryKind::Dir, None, dir.clone(), 0);
                     item.error = Some(report_with(ErrorKind::InvalidInput, &dir, message));
                     self.push(item, meta);
                     continue;
@@ -1914,7 +2008,10 @@ impl<'a, 'r> Builder<'a, 'r> {
             if item.error.is_some() || item.skip.is_some() {
                 continue;
             }
-            let moved_out = matches!(item.action, Action::Move | Action::Rename | Action::Exchange);
+            let moved_out = matches!(
+                item.action,
+                Action::Move | Action::Rename | Action::Exchange
+            );
             let source = item.source.as_ref().filter(|_| moved_out);
             let found = [Some(&item.target), source];
             for outer in found.into_iter().flatten().filter_map(Spec::outermost_file) {
