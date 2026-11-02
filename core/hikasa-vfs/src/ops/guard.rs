@@ -205,7 +205,7 @@ pub(crate) struct Seen {
 
 /// True when `entry` is what `stamp` saw: the same kind; for files and links the same size and time, exactly, where the
 /// stamp has them. A folder's time moves with its children, and nothing else is known of a special file.
-fn holds(stamp: &ItemStamp, entry: &Entry) -> bool {
+pub(crate) fn holds(stamp: &ItemStamp, entry: &Entry) -> bool {
     stamp.kind == entry.kind
         && match entry.kind {
             EntryKind::File | EntryKind::Symlink => {

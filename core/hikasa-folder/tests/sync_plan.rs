@@ -726,6 +726,78 @@ fn a6_27_a_wholly_deleted_folder_is_one_trash_with_the_bin() {
     assert!(!exists(&vfs, "/r/w"));
 }
 
+/// One `trash` of a whole folder takes what lies below it: right before it acts, that must be what the plan saw. A file
+/// added, rewritten, removed or a folder added since: the item fails "changed since the plan was made" and nothing moves.
+#[test]
+fn a6_27_a_whole_trash_checks_what_lies_below_it_before_it_moves() {
+    type Change = fn(&MemoryVfs);
+    let changes: [(&str, Change); 6] = [
+        ("unchanged", |_| {}),
+        ("a file added", |vfs| file(vfs, "/r/w/new.txt", b"precious", 30)),
+        ("a file rewritten", |vfs| {
+            file(vfs, "/r/w/sub/x.txt", b"rewritten since the plan", 30);
+        }),
+        ("a file touched", |vfs| file(vfs, "/r/w/y.txt", b"y", 30)),
+        ("a file gone", |vfs| vfs.remove(&mspec("/r/w/y.txt")).unwrap()),
+        ("a folder added", |vfs| dir(vfs, "/r/w/sub/new")),
+    ];
+    for fallback in [false, true] {
+        for (what, change) in changes {
+            let vfs = memory(CaseSensitivity::Sensitive);
+            file(&vfs, "/l/a.txt", b"a", 10);
+            dir(&vfs, "/r/w/sub");
+            file(&vfs, "/r/w/sub/x.txt", b"x", 10);
+            file(&vfs, "/r/w/y.txt", b"y", 10);
+            let mut options = preset(SyncPreset::MirrorRight);
+            options.recycle = true;
+            options.recycle_fallback = fallback;
+            let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+            let out = plan(&vfs, &cmp, &request(&options));
+            let trash = out
+                .op
+                .plan
+                .items
+                .iter()
+                .find(|item| item.action == Action::Trash)
+                .unwrap();
+            assert_eq!(short(&trash.target), "/r/w");
+            assert!(trash.verify_below, "{what}");
+            assert_eq!(trash.fallback.len(), 4, "{what}: {:?}", trash.fallback);
+            change(&vfs);
+            let below = |vfs: &MemoryVfs| {
+                let w = host("/r/w");
+                let mut dump = vfs.dump();
+                dump.retain(|entry| entry.path.starts_with(&w));
+                dump
+            };
+            let before = below(&vfs);
+            let report = execute(&vfs, &out);
+            let result = report
+                .plan
+                .items
+                .iter()
+                .zip(&report.results)
+                .find(|(item, _)| item.action == Action::Trash)
+                .map(|(_, result)| result.clone())
+                .unwrap();
+            if what == "unchanged" {
+                assert_eq!(result.status, ItemStatus::Done, "{fallback} {result:?}");
+                assert!(!exists(&vfs, "/r/w"));
+                assert_eq!(vfs.trashed().len(), 1);
+                continue;
+            }
+            assert_eq!(result.status, ItemStatus::Failed, "{what} {fallback}");
+            let error = result.error.unwrap();
+            assert!(
+                error.message.contains("changed since the plan was made"),
+                "{what}: {error:?}"
+            );
+            assert!(vfs.trashed().is_empty(), "{what}: {:?}", vfs.trashed());
+            assert_eq!(below(&vfs), before, "{what}: nothing moves");
+        }
+    }
+}
+
 // ---- order ---------------------------------------------------------------------------------------------------------
 
 #[test]

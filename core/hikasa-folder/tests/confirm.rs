@@ -761,36 +761,43 @@ fn a6_17_with_fallback_the_report_shows_remove_items_and_one_warning() {
     assert!(read(&vfs, "/l/f").is_none());
 }
 
-/// §1.6.12: the fallback deletes what the plan saw. A file that came since is no item, stays, and keeps its folder.
+/// §1.6.12: the fallback deletes what the plan saw. A file that came since is no item, stays, and keeps its folder. The
+/// check before the `trash` (`verify_below`) fails such a folder first, and nothing moves; with that check off, as for a
+/// file that comes between the check and the bin's refusal, the fallback still takes only what was stamped.
 #[test]
 fn a6_17_the_fallback_deletes_only_what_the_plan_saw() {
-    let vfs = memory();
-    file(&vfs, "/l/d/x", b"1", meta(10));
-    let cmp = compared(&vfs, &FolderRules::default());
-    let recycle = Recycle {
-        use_bin: true,
-        fallback: true,
-    };
-    let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
-    assert_eq!(out.plan.items.len(), 1);
-    assert_eq!(out.plan.items[0].fallback.len(), 2);
-    assert!(
-        out.plan.items[0]
-            .fallback
-            .iter()
-            .all(|i| i.expect.is_some())
-    );
-    file(&vfs, "/l/d/precious", b"new work", meta(20));
-    vfs.inject(Fault {
-        path: host("/l/d"),
-        op: VfsOp::Trash,
-        kind: ErrorKind::Unsupported,
-    });
-    let report = run(&vfs, out);
-    assert!(!report.ok(), "{:?}", report.results);
-    assert_eq!(report.summary.failed, 1, "{:?}", report.results);
-    assert_eq!(read(&vfs, "/l/d/precious").unwrap(), b"new work");
-    assert!(read(&vfs, "/l/d/x").is_none());
+    for checked in [true, false] {
+        let vfs = memory();
+        file(&vfs, "/l/d/x", b"1", meta(10));
+        let cmp = compared(&vfs, &FolderRules::default());
+        let recycle = Recycle {
+            use_bin: true,
+            fallback: true,
+        };
+        let mut out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
+        assert_eq!(out.plan.items.len(), 1);
+        assert_eq!(out.plan.items[0].fallback.len(), 2);
+        assert!(
+            out.plan.items[0]
+                .fallback
+                .iter()
+                .all(|i| i.expect.is_some())
+        );
+        assert!(out.plan.items[0].verify_below);
+        out.plan.items[0].verify_below = checked;
+        file(&vfs, "/l/d/precious", b"new work", meta(20));
+        vfs.inject(Fault {
+            path: host("/l/d"),
+            op: VfsOp::Trash,
+            kind: ErrorKind::Unsupported,
+        });
+        let report = run(&vfs, out);
+        assert!(!report.ok(), "{:?}", report.results);
+        assert_eq!(report.summary.failed, 1, "{:?}", report.results);
+        assert_eq!(read(&vfs, "/l/d/precious").unwrap(), b"new work");
+        // Checked: the folder changed, so not even the planned file goes.
+        assert_eq!(read(&vfs, "/l/d/x").is_some(), checked);
+    }
 }
 
 /// A file edited since the plan is no file the plan saw: its stamp keeps it, and its folder.
@@ -857,6 +864,37 @@ fn a6_17_the_fallback_of_an_unlisted_folder() {
     let report = run(&vfs, out);
     assert_eq!(report.summary.failed, 1, "{:?}", report.results);
     assert_eq!(read(&vfs, "/l/d/precious").unwrap(), b"new");
+}
+
+/// `folder op delete --recycle` of a whole folder, listed by the comparison or only at planning: right before the `trash`,
+/// what lies below must be what the plan saw. A file added or rewritten since fails the item, and nothing moves.
+#[test]
+fn a6_17_a_whole_trash_of_folder_op_checks_what_lies_below_it() {
+    for listed in [true, false] {
+        for added in [true, false] {
+            let vfs = memory();
+            file(&vfs, "/l/d/x", b"1", meta(10));
+            file(&vfs, "/l/d/e/y", b"2", meta(10));
+            let mut rules = FolderRules::default();
+            rules.handling.scan_orphan_folders = listed;
+            let cmp = compared(&vfs, &rules);
+            let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, bin()));
+            assert_eq!(out.plan.items.len(), 1, "{listed}");
+            assert_eq!(out.plan.items[0].action, Action::Trash);
+            assert!(out.plan.items[0].verify_below);
+            if added {
+                file(&vfs, "/l/d/e/new", b"precious", meta(20));
+            } else {
+                file(&vfs, "/l/d/x", b"rewritten", meta(20));
+            }
+            let report = run(&vfs, out);
+            assert_eq!(report.results[0].status, ItemStatus::Failed, "{listed} {added}");
+            let message = &report.results[0].error.as_ref().unwrap().message;
+            assert!(message.contains("changed since the plan was made"), "{message}");
+            assert!(vfs.trashed().is_empty(), "{:?}", vfs.trashed());
+            assert_eq!(read(&vfs, "/l/d/e/y").unwrap(), b"2");
+        }
+    }
 }
 
 /// One `trash` of a folder asks for what the model knows below it, and the listing of rule 6 knows as much.

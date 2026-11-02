@@ -1891,7 +1891,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                     side,
                     recycle,
                 );
-                self.whole_trash(first, id, side, recycle);
+                self.whole_trash(first, id, side);
                 self.cover(id);
                 return Ok(());
             }
@@ -1924,29 +1924,29 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// What one `trash` of the whole folder `id`, the item at `index`, takes with it: its question asks for what the model
-    /// knows below it, and with the fallback each thing below is stamped, for that fallback may delete nothing else.
-    fn whole_trash(&mut self, index: usize, id: NodeId, side: Side, recycle: Recycle) {
+    /// knows below it, and each thing below is stamped. Execution checks that below the folder stands just that before
+    /// it trashes (`verify_below`), and the fallback may delete nothing else.
+    fn whole_trash(&mut self, index: usize, id: NodeId, side: Side) {
         let below = self.conflicts_below(id, side);
         let mut permanent = Vec::new();
-        if recycle.fallback {
-            self.permanent_rows(id, side, 0, &mut permanent);
-            if let Some(item) = self.items.get(index) {
-                let mut own = PlanItem::planned(
-                    Action::RemoveDir,
-                    EntryKind::Dir,
-                    None,
-                    item.target.clone(),
-                    0,
-                );
-                own.expect = item.expect;
-                permanent.push(own);
-            }
+        self.permanent_rows(id, side, 0, &mut permanent);
+        if let Some(item) = self.items.get(index) {
+            let mut own = PlanItem::planned(
+                Action::RemoveDir,
+                EntryKind::Dir,
+                None,
+                item.target.clone(),
+                0,
+            );
+            own.expect = item.expect;
+            permanent.push(own);
         }
         if let Some(meta) = self.meta.get_mut(index) {
             meta.conflicts |= below;
         }
         if let Some(item) = self.items.get_mut(index) {
             item.fallback = permanent;
+            item.verify_below = true;
         }
     }
 

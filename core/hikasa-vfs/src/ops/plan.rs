@@ -394,10 +394,16 @@ pub struct PlanItem {
     /// A `trash` item that may become a permanent delete when the recycle bin fails (§1.6.12).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub trash_fallback: bool,
-    /// What a folder's `trash_fallback` deletes, stamped at planning, post-order, depths below this item. Nothing else is
-    /// ever deleted by it: a fallback does not list.
+    /// What a folder's whole `trash` takes, stamped at planning, post-order, depths below this item, the folder itself
+    /// last. With `trash_fallback` it is what the fallback deletes; nothing else is ever deleted by it: a fallback does
+    /// not list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback: Vec<PlanItem>,
+    /// A `trash` of a folder whole: right before it acts, execution checks that below the folder stands exactly what
+    /// `fallback` lists (same names, same stamps, nothing added), else the item fails "changed since the plan was made"
+    /// and nothing moves. A file that came since would otherwise go to the bin unseen.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub verify_below: bool,
 }
 
 impl PlanItem {
@@ -427,6 +433,7 @@ impl PlanItem {
             clear_read_only: false,
             trash_fallback: false,
             fallback: Vec::new(),
+            verify_below: false,
         }
     }
 

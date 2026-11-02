@@ -766,9 +766,9 @@ impl Builder<'_, '_> {
         if binned && folder.whole {
             let mut item = removal_of(folder.spec.clone(), &folder.entry, Action::Trash, depth);
             item.trash_fallback = recycle.fallback;
-            if recycle.fallback {
-                permanent(folder, 0, &mut item.fallback);
-            }
+            // What the listing saw is checked right before the trash, and is all the fallback may delete.
+            permanent(folder, 0, &mut item.fallback);
+            item.verify_below = true;
             let mut meta = self.meta_of(id, Some(side));
             meta.conflicts = Conflicts::of_attrs(&folder.entry.attrs) | folder.inside;
             self.push(item, meta);

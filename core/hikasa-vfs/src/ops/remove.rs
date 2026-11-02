@@ -1,12 +1,15 @@
 //! Remove and trash planning and execution (D-98, D-94 rule 3).
 
+use std::collections::HashMap;
+
 use hikasa_core::{Ctl, Spec};
 
 use super::copy::{clear_read_only_of, restore_read_only};
-use super::plan::report;
+use super::guard::{changed, holds};
+use super::plan::{ItemStamp, report};
 use super::{
     Action, Exec, Later, OpKind, Outcome, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
-    check_item, is_blob, scanning,
+    check_item, is_blob, scanning, spec_key,
 };
 use crate::entry::{Entry, EntryKind};
 use crate::error::{VfsError, VfsOp};
@@ -279,6 +282,11 @@ fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     } else {
         false
     };
+    if item.verify_below
+        && let Err(e) = check_below(exec, item)
+    {
+        return Outcome::Failed(e);
+    }
     let result = match item.action {
         Action::Trash => exec.src.move_to_trash(&item.target),
         _ => exec.src.remove(&item.target),
@@ -294,5 +302,51 @@ fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
             }
             Outcome::Failed(e)
         }
+    }
+}
+
+/// The check of a whole folder's `trash` (`PlanItem::verify_below`): below the folder stands exactly what the plan saw, by
+/// the names and stamps of `fallback`, nothing more and nothing less. A link is not entered, as the plan did not enter it.
+/// The first difference fails the item, naming what differs; nothing has moved then. Deletes are not in G7: one walk.
+fn check_below(exec: &Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
+    let vfs = exec.src;
+    let root = spec_key(vfs, &item.target);
+    let mut expected: HashMap<String, (&Spec, Option<ItemStamp>)> = HashMap::new();
+    for below in &item.fallback {
+        let key = spec_key(vfs, &below.target);
+        if key == root {
+            continue;
+        }
+        // A stamp that planning could not take vouches for nothing.
+        let stamp = below
+            .expect
+            .and_then(|expect| expect.target)
+            .filter(|_| below.error.is_none());
+        expected.insert(key, (&below.target, stamp));
+    }
+    let mut folders = vec![item.target.clone()];
+    while let Some(dir) = folders.pop() {
+        exec.ctl.check()?;
+        let listing = vfs.list(&dir, &NO_FOLLOW, exec.ctl.cancel)?;
+        if let Some(failed) = listing.errors.first() {
+            let child = vfs.child(&dir, &failed.name).unwrap_or_else(|_| dir.clone());
+            return Err(changed(&child));
+        }
+        for entry in &listing.entries {
+            let child = vfs.child(&dir, &entry.name)?;
+            let Some((_, stamp)) = expected.remove(&spec_key(vfs, &child)) else {
+                return Err(changed(&child));
+            };
+            if !stamp.is_some_and(|stamp| holds(&stamp, entry)) {
+                return Err(changed(&child));
+            }
+            if entry.kind == EntryKind::Dir {
+                folders.push(child);
+            }
+        }
+    }
+    match expected.values().next() {
+        Some((gone, _)) => Err(changed(gone)),
+        None => Ok(()),
     }
 }

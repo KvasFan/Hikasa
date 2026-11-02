@@ -4438,7 +4438,7 @@ bin if possible*, `fallback` = *may fall back*.
 | Row | `use_bin = false` | `use_bin = true` |
 |---|---|---|
 | file, link, special file | `remove` | `trash` |
-| folder, `whole` | `remove` of its contents, `remove_dir`: post-order from the model | **one** `trash` of the root (D-98), where capability allows; it asks for what lies below it (§1.6.11) |
+| folder, `whole` | `remove` of its contents, `remove_dir`: post-order from the model | **one** `trash` of the root (D-98), where capability allows; it asks for what lies below it (§1.6.11), and right before it acts, checks that what lies below is what the plan saw (`verify_below`) |
 | folder, not `whole` | its visible contents row by row; the folder stays | same with `trash` per item |
 | spec without `TRASH` (a member, a blob) | `remove` | `remove` with conflict `NO_RECYCLE_BIN`: *a member is deleted for good only after a rebuild* (§1.5.17) |
 
@@ -4446,9 +4446,13 @@ W3's primitive never falls back, and neither does the plan unless told to: a `tr
 that mount, a share) fails the item with the file in place. With `trash_fallback` it becomes `Outcome::Expand` into
 permanent items, in place, with one `trash_fallback` warning naming the count, so the report shows what happened. Those
 items are only what the plan saw, as it saw it: a file by its own stamp, a folder by the items stamped at planning
-(`PlanItem::fallback`, post-order; the planner adds them only when the fallback is on). Nothing lists at execution: a file
-that came since is no item and stays, and its folder's `remove_dir` fails with it; a changed file fails as its stamp
-says; a `trash` with no such items fails. `fallback` is the CLI's `--recycle-fallback`, a dialog's check box *If the recycle bin
+(`PlanItem::fallback`, post-order). Nothing lists at execution: a file that came since is no item and stays, and its
+folder's `remove_dir` fails with it; a changed file fails as its stamp says; a `trash` with no such items fails. **A whole
+folder's `trash`** (W6c review) takes everything below it, so the planner always stamps that subtree in `fallback`, with
+or without the fallback, and sets `PlanItem::verify_below`: right before the `trash`, execution walks the folder (links
+not entered) and requires the same names, the same stamps and nothing added; any difference fails the item "changed since
+the plan was made", naming what differs, and nothing moves. An entry the comparison never saw (a name filter's) is such a
+difference: that folder is not trashed whole, as its `remove_dir` would fail without the bin. `fallback` is the CLI's `--recycle-fallback`, a dialog's check box *If the recycle bin
 fails, delete permanently*, and off by default: *if possible* in the docs is answered at planning for what is known, and
 never silently at run time. `clear_read_only` applies to `remove`, not `trash`. FS-005's *Delete to recycle bin if
 possible* is this table.
