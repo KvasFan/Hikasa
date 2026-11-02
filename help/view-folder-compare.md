@@ -22,17 +22,22 @@ Select one row, then:
 
 Each operation is planned first, then its questions are asked in [Confirm an operation](topic:dialog-confirm); Stop
 ends one that runs (what ran stays). The log gets its summary and its failures, a notice sums it up, and the rows it
-wrote are read again, keeping the open folders and the selected row. A side that is read-only (Disable editing: `--ro`,
-`--ro1`, `--ro2`, or the session's `read_only_left`, `read_only_right`) is never written: the commands that would are
-off. `--nobackups` turns backups off for the view's operations. The other operations of the Actions menu, and selecting
+wrote are read again, keeping the open folders and the selected row (a row you select or a folder you close meanwhile
+stays so). A side that is read-only (Disable editing: `--ro`, `--ro1`, `--ro2`, or the session's `read_only_left`,
+`read_only_right`) is never written: the commands that would are off. It stays read-only through Session Settings,
+Save, Save As, Duplicate Tab and workspaces, and a session saved from the view keeps `read_only_left`,
+`read_only_right`. `--nobackups` turns backups off for the view's operations; Duplicate Tab and a workspace keep it, a
+session does not. The other operations of the Actions menu, and selecting
 more than one row, come later; [hikasa folder op](topic:folder-op) has them all from the command line.
 
 ## Folders and archives
 
-- A folder that was not compared yet (*Automatically scan subfolders* off) is read when you open it.
+- A folder that was not compared yet (*Automatically scan subfolders* off) is read when you open it (after the
+  operation, if one runs).
 - `[rules.handling] expand_on_load` opens every folder after a comparison, `expand_differences_only` those with a
   difference below them.
-- Open on a closed archive opens it in place, as a folder; the session remembers it (`open_archives`).
+- Open on a closed archive opens it in place, as a folder; once it opened the session remembers it (`open_archives`).
+  One that cannot be read gives a warning and is not remembered.
 - A Text Compare opened from a row gives its result back to the row once its comparison ends, unless the files changed
   meanwhile.
 

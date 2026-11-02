@@ -19,7 +19,9 @@ replaces free-form actions with a planned operation per item.
   enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
   planned, so no view or script can pass it by. `copyto` out of it is allowed, as `ignored` and `exclude` are: they change a
   session, not a file. *M2 W6d:* the window takes the sides from `--ro`, `--ro1`, `--ro2`, IPC `ReadOnly` and the
-  session, and turns off the commands that would write them.
+  session, and turns off the commands that would write them. They survive Session Settings, Save, Save As, Duplicate
+  Tab and workspaces; a session saved from the window keeps `read_only_*`, and a side becomes writable again only by an
+  explicit change of that key.
 - **FC-004** (P0): "Up One Level" (Left/Right/Both/All), "Set as Base Folder(s)",
   "Set as Base on Other Side", "Compare Parent Folders", "Merge Base Folders",
   "Sync Base Folders", "Compare Base Folders" (from Sync), "Compare to Output"
@@ -188,7 +190,8 @@ Tests that require reading files:
 - **FC-012, M2 (D-170).** `auto_scan_subfolders` off scans the bases, and with `scan_orphan_folders` the orphan folders
   directly in a base with their subtrees. A folder pair not scanned is unknown, so the verdict is `incomplete`; a refresh of
   it scans it. `expand_on_load` and `expand_differences_only` change no result. *M2 W6d:* the window opens the folders
-  `expanded_on_load` names when a comparison ends, and Expand on a folder not scanned refreshes it first.
+  `expanded_on_load` names when a comparison ends, and Expand on a folder not scanned refreshes it first (after an
+  operation or refresh of the view that runs).
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
   (persisted in the session).
 
@@ -438,8 +441,8 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
 - **FC-073** (P0): **Delete** (Del): sides selector (Left/Right/Both; option
   "Require explicit side selection"), *Use recycle bin if possible* (local drives
   only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is
-  not on, or read-only, is greyed; a row on one side has it preset, a pair none (Both is never a default), and the
-  option presets nothing; *If the recycle bin fails, delete permanently* is off; Delete Permanently has the bin off and
+  not on, or read-only, is greyed; a row on one writable side has it preset, a pair none, also with one side
+  read-only (neither Both nor one side of a pair is a default), and the option presets nothing; *If the recycle bin fails, delete permanently* is off; Delete Permanently has the bin off and
   greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9.
 - **FC-074** (P0): **Rename** (F2): single item inline; multi-item with *DOS
   compatible* mask (`abc?.bak` from computed base mask) or *Regular expressions*

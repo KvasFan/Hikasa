@@ -102,8 +102,9 @@ closed archive row adds its path to the view's `open_archives` and runs the comp
 expanded. Two archives, or an archive and a folder, open a Folder Compare. Members open in a read-only Text Compare.
 
 *M2 W6d (§1.6.20, D-189):* Open on a closed archive row opens it in place, by a refresh of its folder
-(`folder_open_archive`), not a new comparison; the path still joins the view's `open_archives`, which its session keeps.
-A folder that was not scanned (*Automatically scan subfolders* off) is refreshed when it is opened, then opens;
+(`folder_open_archive`), not a new comparison; once it opened, the path joins the view's `open_archives`, which its
+session keeps (one that cannot be read gives a warning and is not kept). A folder that was not scanned (*Automatically
+scan subfolders* off) is refreshed when it is opened, then opens (after the view's operation, if one runs);
 `expand_on_load` and `expand_differences_only` open folders when a comparison ends (FC-012).
 
 *M2 W6d (§1.6.20, D-189): file operations of one selected row.* Actions ▸ Copy to Right (Ctrl+R), Copy to Left (Ctrl+L),
@@ -111,15 +112,20 @@ Delete (Del) and Delete Permanently (Shift+Del) are implemented; the rest of the
 with multi-row selection. A copy needs an item on the other side and a writable target side (`SideWritable`); a delete
 needs an item on a writable side (`RowSelected`). Disable editing (`--ro`, `--ro1`, `--ro2`, IPC `ReadOnly`, a
 session's `[specs] read_only_*`) reaches the view's command context, and the Service refuses the same sides again
-(D-184); `--nobackups` turns the view's backups off (`backup = Some(false)`). The flow: the plan is made in a job
-(`folder_op_plan`, `folder_confirmation`); its questions are asked in the confirmation dialog; the confirmed plan runs
+(D-184); `--nobackups` turns the view's backups off (`backup = Some(false)`). Both survive Session Settings, Save, Save
+As, Duplicate Tab and workspaces; the view's session keeps the read-only sides. The flow: the plan is made in a job
+(`folder_op_plan`, `folder_confirmation`); its questions are asked in the confirmation dialog, which names the row and
+its sides, and are not asked when the selection moved off the row meanwhile (nothing runs, a warning says so); the confirmed plan runs
 in a `folder_op` job (the job indicator lists it, Stop cancels it); the outcome goes to the log (`op_log_entries`: the
 summary, one error per failed item, details with *Operation details*) and to one notice: information when every item
 ran, a warning with *Show log* (which opens the view's log panel) when an item failed or did not run or the operation
 was stopped; then the folders of the rows it wrote are refreshed (`folder_refresh`), and the open folders and the
-selected row follow the new ids (`renumbered`), or their path where a row got a new record. A refresh that leaves
+selected row follow the new ids (`renumbered`), or their path where a row got a new record, unless the user selected
+another row or closed the folder while the refresh ran. A refresh that leaves
 more dead records than live ones in the model runs the comparison again. One operation at a time per view, and none
-while its comparison runs; a plan whose model changed before it runs is refused with a warning notice. A Text Compare
+while its comparison runs; a plan whose model changed before it runs is refused with a warning notice. A view that ends
+while its operation runs (tab closed, workspace load, Session Settings OK, Quit) cancels it; the job ends its current
+item and its outcome still reaches the log, with a notice naming the tab; Quit waits for it. A Text Compare
 opened from a row gives its rules-based result back to the row when its comparison ends, while both files still have
 the size and time they had at Open (FC-029(c)).
 

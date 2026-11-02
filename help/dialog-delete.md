@@ -6,11 +6,11 @@ nothing is deleted before they are answered.
 
 ## Sides
 
-- **Left**, **Right**, **Both**: the dialog shows what the row holds on each side. A side where the row has nothing, or
+- **Left**, **Right**, **Both**: the dialog shows the row's path and what it holds on each side. A side where the row has nothing, or
   that is read-only (Disable editing, `--ro`), is greyed.
-- A row on one side has that side chosen. A row on both sides has none chosen, and OK stays off until you choose:
-  deleting both sides is never a default. With `[file_operations] require_side_selection_in_delete` no side is ever
-  chosen for you.
+- A row on one side has that side chosen when it is writable. A row on both sides has none chosen, even when one side
+  is read-only, and OK stays off until you choose: deleting both sides, or one side of a pair, is never a default. With
+  `[file_operations] require_side_selection_in_delete` no side is ever chosen for you.
 - Deleting a side leaves the other side's item: the row becomes an orphan.
 
 ## Recycle bin

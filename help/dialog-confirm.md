@@ -1,7 +1,9 @@
 # Confirm an operation
 
 Before a file operation of the [Folder Compare view](topic:view-folder-compare) writes anything, its plan is made and
-its questions are asked here, one at a time. Nothing is written until the last question is answered.
+its questions are asked here, one at a time. Nothing is written until the last question is answered. Above the question
+the dialog names the row and its sides (`docs/a.txt: from the left to the right`, `…: on both sides`). If you select
+another row while the plan is made, nothing is asked and nothing is written: a notice says the selection changed.
 
 ## The questions
 
@@ -31,6 +33,9 @@ No it writes nothing. The recycle bin's question has no such box. The keys are o
 
 The items that ran, were skipped or failed go to the log, one line each with *Operation details* on, and a notice
 sums them up: information when every item ran, a warning with *Show log* when one failed, did not run or the operation
-was stopped. Then the rows the operation wrote are read again. An item whose file changed since the comparison is
-not written: it fails "changed since the plan was made" (refresh, then try again). See also
+was stopped. Then the rows the operation wrote are read again; a row you select or a folder you close meanwhile stays so.
+An item whose file changed since the comparison is not written: it fails "changed since the plan was made" (refresh,
+then try again). Closing the tab, loading a workspace, applying Session Settings or quitting while an operation runs
+stops it after its current item; its summary still goes to the log, with a notice naming the tab, and Quit waits for
+it. See also
 [hikasa folder op](topic:folder-op), the same operations from the command line.

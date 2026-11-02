@@ -404,7 +404,7 @@ schema_version = 1
 shortcut = ""
 [[window]]                     # width, height, x, y, maximized, active_tab
 [[window.tab]]                 # session = "<ref>"  or  [window.tab.inline] (a session table without schema_version)
-[window.tab.view]              # the tab's layout
+[window.tab.view]              # the tab's layout; no_backups = true keeps --nobackups of the tab's view (M2 W6d)
 ```
 
 A tab has exactly one of `session` and `inline`, and `active_tab` names one of the tabs (lenient loading resets

@@ -54,7 +54,9 @@ A Folder Sync session runs its sync (`[rules.sync]`) as [hikasa folder sync](top
 and exits 100. Other session types cannot run here yet (exit 100, `unsupported`).
 
 `specs.read_only_left` and `specs.read_only_right` (*Disable editing*) protect a side: no folder operation or sync of
-the session writes it, and the window turns off the commands that would.
+the session writes it, and the window turns off the commands that would. The window keeps them when it saves the
+session, and a side becomes writable again only by changing the key (`session edit --set
+specs.read_only_right=false`).
 
 `hikasa gui session <ref> [--wait]` opens it in the window, and so does `hikasa gui open <ref>` when no file of
 that name exists (see [hikasa gui](topic:gui)). See also [hikasa workspace](topic:workspace) and
