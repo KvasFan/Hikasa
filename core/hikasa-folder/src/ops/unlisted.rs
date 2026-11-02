@@ -9,9 +9,11 @@ use hikasa_vfs::{Entry, EntryKind, FollowLinks, ListOptions, VfsError};
 
 use super::Recycle;
 use super::build::{
-    Builder, Found, Open, Placed, Transfer, found_of_stat, report, stamp_of_stat, view_of_entry,
+    Builder, Found, Open, Placed, Transfer, found_of_stat, key_of, report, stamp_of_stat,
+    view_of_entry,
 };
 use super::conflict::Conflicts;
+use crate::align::{ChildKey, exact_bytes, kind_rank};
 use crate::error::FolderError;
 use crate::model::{EntryView, NodeId, NodeKind};
 use crate::resolve::{ResolvedRules, path_verdict};
@@ -152,7 +154,11 @@ impl Builder<'_, '_> {
                 return Ok(folder);
             }
         };
-        listing.sort_by_name();
+        // In the order of a comparison's rows, so that the first of two sources of one target is the same one as for rows.
+        listing.entries.sort_by_cached_key(|entry| {
+            let exact = exact_bytes(&entry.name);
+            ChildKey::new(kind_rank(entry.kind), entry.name.as_str(), &exact, "", None)
+        });
         for failed in &listing.errors {
             let child = self
                 .vfs
@@ -260,6 +266,9 @@ impl Builder<'_, '_> {
         };
         let tree = self.listed(source.clone(), stat, self.place_of(id))?;
         if tr.moving && tree.whole && found.is_none() && self.can_rename(source, target) {
+            if self.outside.is_some() {
+                self.claim_listed(&tree, target);
+            }
             self.push_folder_rename(id, source.clone(), target.clone(), depth, side);
             return Ok(());
         }
@@ -297,6 +306,14 @@ impl Builder<'_, '_> {
                 error.clone(),
                 side,
             );
+            self.relabel(first, path);
+            return Ok(());
+        }
+        let key = key_of(&target.canonical(), self.folds(target));
+        if self.outside.is_some() && self.taken.contains(&key) {
+            let source = Some(folder.spec.clone());
+            let reason = SkipReason::DuplicateTarget;
+            self.skip_row(id, EntryKind::Dir, source, target.clone(), depth, reason, side);
             self.relabel(first, path);
             return Ok(());
         }
@@ -360,7 +377,11 @@ impl Builder<'_, '_> {
                 .join(child.entry.name.as_str())
                 .unwrap_or_else(|_| path.clone());
             let child_target = self.vfs.child(target, &child.entry.name).and_then(|spec| {
-                let stood = if stands { self.stood_at(&spec)? } else { None };
+                let stood = if stands && self.made_here(&spec).is_none() {
+                    self.stood_at(&spec)?
+                } else {
+                    None
+                };
                 Ok((spec, stood))
             });
             let (spec, stood) = match child_target {
@@ -383,7 +404,13 @@ impl Builder<'_, '_> {
                 }
             };
             if child.entry.kind == EntryKind::Dir {
-                let found = stood.as_ref().map(found_of_stat);
+                // A filter that hides what stands there keeps it, as `skip filtered` keeps a row.
+                let found = self.made_here(&spec).or_else(|| {
+                    stood.as_ref().map(|entry| Found {
+                        filtered: side.is_some() && self.hides(folder.place.as_ref(), entry),
+                        ..found_of_stat(entry)
+                    })
+                });
                 self.transfer_listed(walk, child, &spec, found, depth + 1, &below, false)?;
             } else {
                 self.transfer_entry(walk, folder, child, spec, stood, depth + 1, &below);
@@ -405,11 +432,144 @@ impl Builder<'_, '_> {
         Ok(())
     }
 
+    /// Rule 6 of `structure none`: each file below `source` by its name in `root`, the first of a name only, and a source
+    /// folder's `remove_dir` when nothing of it stays.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn expand_flat(
+        &mut self,
+        walk: Walk,
+        entry: &EntryView<'_>,
+        source: &Spec,
+        root: &Spec,
+        fold: bool,
+        depth: u32,
+    ) -> Result<(), FolderError> {
+        let follow = if entry.followed {
+            FollowLinks::Yes
+        } else {
+            FollowLinks::No
+        };
+        let first = self.items.len();
+        let stat = match self.vfs.stat(source, follow) {
+            Ok(stat) => stat,
+            Err(e) if e.is_cancelled() => return Err(FolderError::Cancelled),
+            Err(e) => {
+                let kind = EntryKind::Dir;
+                let (source, root) = (Some(source.clone()), root.clone());
+                self.fail_row(walk.id, Action::Copy, kind, source, root, depth, report(&e), None);
+                return Ok(());
+            }
+        };
+        let tree = self.listed(source.clone(), stat, self.place_of(walk.id))?;
+        let path = self.read.path(walk.id);
+        self.flat_listed(walk, &tree, root, fold, depth, &path)?;
+        if let Some(meta) = self.meta.get_mut(first) {
+            meta.node = Some(walk.id);
+        }
+        Ok(())
+    }
+
+    /// One folder of [`Builder::expand_flat`].
+    #[allow(clippy::too_many_arguments)]
+    fn flat_listed(
+        &mut self,
+        walk: Walk,
+        folder: &Listed,
+        root: &Spec,
+        fold: bool,
+        depth: u32,
+        path: &RelPath,
+    ) -> Result<(), FolderError> {
+        self.ctl.check()?;
+        let Walk { tr, id, side } = walk;
+        let action = if tr.moving { Action::Move } else { Action::Copy };
+        if let Some(error) = &folder.error {
+            let first = self.items.len();
+            let source = Some(folder.spec.clone());
+            let kind = EntryKind::Dir;
+            self.fail_row(id, action, kind, source, root.clone(), depth, error.clone(), side);
+            self.relabel(first, path);
+            return Ok(());
+        }
+        for (spec, error) in &folder.failures {
+            let first = self.items.len();
+            let source = Some(spec.clone());
+            let kind = EntryKind::Other;
+            self.fail_row(id, action, kind, source, root.clone(), depth + 1, error.clone(), side);
+            self.relabel(first, path);
+        }
+        for child in &folder.children {
+            let below = path
+                .join(child.entry.name.as_str())
+                .unwrap_or_else(|_| path.clone());
+            if child.entry.kind == EntryKind::Dir {
+                self.flat_listed(walk, child, root, fold, depth + 1, &below)?;
+                continue;
+            }
+            let first = self.items.len();
+            let looked = self.vfs.child(root, &child.entry.name).and_then(|target| {
+                let stood = self.stood_at(&target)?;
+                Ok((target, stood))
+            });
+            match looked {
+                Ok((target, stood)) => {
+                    let key = key_of(&target.canonical(), fold);
+                    if !self.taken.contains(&key) && !self.is_made(&target) {
+                        self.transfer_entry(walk, folder, child, target, stood, depth + 1, &below);
+                    } else {
+                        let source = Some(child.spec.clone());
+                        let reason = SkipReason::DuplicateTarget;
+                        let kind = child.entry.kind;
+                        self.skip_row(id, kind, source, target, depth + 1, reason, side);
+                        self.relabel(first, &below);
+                    }
+                }
+                Err(e) => {
+                    let source = Some(child.spec.clone());
+                    let kind = child.entry.kind;
+                    self.fail_row(id, action, kind, source, root.clone(), depth + 1, report(&e), side);
+                    self.relabel(first, &below);
+                }
+            }
+        }
+        if tr.moving && folder.whole {
+            let first = self.items.len();
+            self.remove_dir(Open {
+                level: 0,
+                id,
+                spec: folder.spec.clone(),
+                depth,
+                side: tr.from,
+                conflicts: Conflicts::empty(),
+            });
+            self.remember_seen(&folder.entry);
+            self.relabel(first, path);
+        }
+        Ok(())
+    }
+
+    /// What a folder renamed whole takes along is at its target: a second source of one of those paths stays.
+    fn claim_listed(&mut self, folder: &Listed, target: &Spec) {
+        for child in &folder.children {
+            let Ok(at) = self.vfs.child(target, &child.entry.name) else {
+                continue;
+            };
+            if child.entry.kind == EntryKind::Dir {
+                self.note_made(&at, 0);
+                self.claim_listed(child, &at);
+            } else {
+                let key = key_of(&at.canonical(), self.folds(&at));
+                self.taken.insert(key);
+            }
+        }
+    }
+
     /// What stands at `spec`, unfollowed.
     fn stood_at(&self, spec: &Spec) -> Result<Option<Entry>, VfsError> {
         match self.vfs.stat(spec, FollowLinks::No) {
             Ok(entry) => Ok(Some(entry)),
-            Err(VfsError::NotFound { .. }) => Ok(None),
+            // A file in the place of a folder the plan makes: nothing stands below it.
+            Err(VfsError::NotFound { .. } | VfsError::NotADirectory { .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -446,6 +606,15 @@ impl Builder<'_, '_> {
                 side,
             );
             return self.relabel(first, path);
+        }
+        // `copyto`, `moveto`: a second source of one target path stays (rule 16).
+        if self.outside.is_some() {
+            let key = key_of(&target.canonical(), self.folds(&target));
+            if self.is_made(&target) || !self.taken.insert(key) {
+                let reason = SkipReason::DuplicateTarget;
+                self.skip_row(id, kind, Some(source), target, depth, reason, side);
+                return self.relabel(first, path);
+            }
         }
         match self.kind_action(node_kind(kind), &source, &target, side, tr.moving) {
             Ok(action) => {

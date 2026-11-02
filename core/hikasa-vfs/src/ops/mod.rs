@@ -753,7 +753,10 @@ impl Cut {
         item.depth > self.depth
             && (lies_below(&item.target, &self.target)
                 || self.source.as_ref().is_some_and(|source| {
-                    lies_below(own_spec(item), source) || lies_below(&item.target, source)
+                    // What comes from below its source: a move's items, and the `remove_dir` of a folder in it. A target
+                    // below the source is no such thing: a `create_dir`'s source can be the other side's folder.
+                    item.source.as_ref().is_some_and(|spec| lies_below(spec, source))
+                        || (item.action == Action::RemoveDir && lies_below(&item.target, source))
                 }))
     }
 }

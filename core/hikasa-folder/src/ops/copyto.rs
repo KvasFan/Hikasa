@@ -11,7 +11,7 @@ use hikasa_vfs::{Capabilities, EntryKind, FileName, FollowLinks, Vfs, VfsError};
 use super::ItemMeta;
 use super::PathStructure;
 use super::build::{
-    Builder, Open, Placed, Transfer, found_of_stat, nothing_on, report, view_of_entry,
+    Builder, Found, Open, Placed, Transfer, found_of_stat, key_of, nothing_on, report, view_of_entry,
 };
 use super::conflict::Conflicts;
 use super::unlisted::Walk;
@@ -24,8 +24,6 @@ use crate::select::{Resolved, SideSet};
 struct Below {
     /// Folder (canonical) → whether it will exist only through this plan, with the depth of what lies directly in it.
     folders: BTreeMap<String, Option<u32>>,
-    /// The targets taken, as compared.
-    taken: BTreeSet<String>,
     /// The folders planned only as the way to a source, by item: they stay only if something goes there.
     way: BTreeSet<usize>,
 }
@@ -59,7 +57,7 @@ fn common_prefix(paths: &[&[OsString]]) -> usize {
 fn lstat(vfs: &dyn Vfs, spec: &Spec) -> Result<Option<hikasa_vfs::Entry>, VfsError> {
     match vfs.stat(spec, FollowLinks::No) {
         Ok(entry) => Ok(Some(entry)),
-        Err(VfsError::NotFound { .. }) => Ok(None),
+        Err(VfsError::NotFound { .. } | VfsError::NotADirectory { .. }) => Ok(None),
         Err(e) => Err(e),
     }
 }
@@ -256,6 +254,29 @@ impl Builder<'_, '_> {
         Ok(())
     }
 
+    /// What a folder renamed whole takes along is at its target as if each row had gone: a second source of one of those
+    /// paths stays.
+    fn claim_rows(&mut self, id: NodeId, side: Side, target: &Spec) {
+        let read = self.read;
+        let mut stack: Vec<(NodeId, Spec)> = read.children(id).map(|row| (row, target.clone())).collect();
+        while let Some((row, dir)) = stack.pop() {
+            let Some(view) = read.node(row) else { continue };
+            let (Some(_), Some(name)) = (view.side(side), read.raw_name(row, side)) else {
+                continue;
+            };
+            let Ok(at) = self.vfs.child(&dir, &FileName::from_os(&name)) else {
+                continue;
+            };
+            if view.is_folder() {
+                self.note_made(&at, 0);
+                stack.extend(read.children(row).map(|child| (child, at.clone())));
+            } else {
+                let key = key_of(&at.canonical(), self.folds(&at));
+                self.taken.insert(key);
+            }
+        }
+    }
+
     /// Takes the folders of `way` no item needs out of the plan.
     fn drop_unused_way(&mut self, way: &BTreeSet<usize>) {
         let mut needed = BTreeSet::new();
@@ -316,13 +337,31 @@ impl Builder<'_, '_> {
         for (index, folder) in kept.iter().enumerate() {
             at = self.vfs.child(&at, &FileName::from_os(folder))?;
             let key = at.canonical();
+            // A file of this plan stands where this needs a folder.
+            let folded = key_of(&key, self.folds(&at));
+            if self.taken.contains(&folded) {
+                return Err(VfsError::NotADirectory { spec: key });
+            }
             let known = match below.folders.get(&key) {
                 Some(known) => *known,
+                None if self.is_made(&at) => {
+                    let known = self.made_depth(&at);
+                    below.folders.insert(key, known);
+                    known
+                }
                 None => {
-                    let made = !new_parent && lstat(self.vfs, &at)?.is_none() || new_parent;
+                    // What stands there: nothing, a folder, or a file that rule 8 replaces or keeps.
+                    let stood = if new_parent { None } else { lstat(self.vfs, &at)? };
+                    let made = !stood.as_ref().is_some_and(|it| it.kind == EntryKind::Dir);
                     let known = if made {
-                        below.way.insert(self.items.len());
-                        self.folder_on_the_way(tr, source, first + index, &at, depth);
+                        let at_item = self.items.len();
+                        below.way.insert(at_item);
+                        let found = stood.as_ref().map(found_of_stat);
+                        self.folder_on_the_way(tr, source, first + index, &at, found, depth);
+                        // A folder that cannot be made is no folder for the next source: it meets the same refusal.
+                        if self.items.get(at_item).is_some_and(|item| item.error.is_some()) {
+                            return Err(VfsError::NotADirectory { spec: key });
+                        }
                         Some(depth)
                     } else {
                         None
@@ -345,6 +384,7 @@ impl Builder<'_, '_> {
         source: &Source,
         level: usize,
         target: &Spec,
+        found: Option<Found>,
         depth: u32,
     ) {
         let read = self.read;
@@ -365,7 +405,7 @@ impl Builder<'_, '_> {
                     entry: &view_of_entry(&stat),
                     source: from,
                     target: target.clone(),
-                    found: None,
+                    found: found.clone(),
                     depth,
                     side: None,
                 };
@@ -389,7 +429,7 @@ impl Builder<'_, '_> {
             entry: &entry,
             source: from,
             target: target.clone(),
-            found: None,
+            found: found.clone(),
             depth,
             side: None,
         };
@@ -430,13 +470,15 @@ impl Builder<'_, '_> {
         let (target, depth, under_new) = match self.path_below(tr, source, root, drop, below) {
             Ok(path) => path,
             Err(e) => {
+                // At its row's depth, so the folder it is in stays when it moves.
+                let depth = self.child_depth(view.parent);
                 self.fail_row(
                     id,
                     Action::Copy,
                     kind,
                     Some(from),
                     root.clone(),
-                    0,
+                    depth,
                     report(&e),
                     None,
                 );
@@ -504,7 +546,7 @@ impl Builder<'_, '_> {
             && (tr.moving || flat)
         {
             let key = target.canonical();
-            let duplicate = !below.taken.insert(key);
+            let duplicate = !self.taken.insert(key);
             if duplicate {
                 let reason = SkipReason::DuplicateTarget;
                 self.skip_row(id, kind, Some(from), target, depth, reason, None);
@@ -518,6 +560,13 @@ impl Builder<'_, '_> {
             return self.copy_to_folder(
                 tr, source, &view, &entry, from, target, depth, under_new, below, open,
             );
+        }
+        if view.is_folder() && view.scan == ScanStatus::NotScanned {
+            // Flat, and the model never listed it: rule 6 by name.
+            let walk = Walk { tr, id, side: None };
+            self.expand_flat(walk, &entry, &from, root, fold, depth)?;
+            self.cover(id);
+            return Ok(());
         }
         if view.is_folder() {
             // Flat: a folder is no item, and goes only when all of it has.
@@ -539,7 +588,8 @@ impl Builder<'_, '_> {
         } else {
             target.canonical()
         };
-        if !below.taken.insert(key) {
+        // A second source of one path: a file, or a folder this plan makes there.
+        if self.is_made(&target) || !self.taken.insert(key) {
             let reason = SkipReason::DuplicateTarget;
             self.skip_row(id, kind, Some(from), target, depth, reason, None);
             return Ok(());
@@ -599,14 +649,22 @@ impl Builder<'_, '_> {
         open: &mut Vec<Open>,
     ) -> Result<(), FolderError> {
         let id = source.row.node;
-        let found = if under_new {
+        let key = key_of(&target.canonical(), self.folds(&target));
+        if self.taken.contains(&key) {
+            let reason = SkipReason::DuplicateTarget;
+            self.skip_row(id, EntryKind::Dir, Some(from), target, depth, reason, None);
+            self.cover(id);
+            return Ok(());
+        }
+        let made = self.made_here(&target);
+        let found = if under_new || made.is_some() {
             None
         } else {
             lstat(self.vfs, &target).map_err(|e| FolderError::InvalidRules(e.to_string()))?
         };
         if view.scan == ScanStatus::NotScanned {
             let walk = Walk { tr, id, side: None };
-            let found = found.as_ref().map(found_of_stat);
+            let found = made.or_else(|| found.as_ref().map(found_of_stat));
             self.expand_unlisted(walk, entry, &from, &target, found, depth)?;
             self.cover(id);
             return Ok(());
@@ -623,19 +681,24 @@ impl Builder<'_, '_> {
             self.cover(id);
             return Ok(());
         }
-        if tr.moving && whole && found.is_none() && self.can_rename(&from, &target) {
+        if tr.moving && whole && found.is_none() && made.is_none() && self.can_rename(&from, &target)
+        {
+            self.claim_rows(id, tr.from, &target);
             self.push_folder_rename(id, from, target, depth, None);
             self.cover(id);
             return Ok(());
         }
         let key = target.canonical();
         match found {
+            _ if made.is_some() => {
+                below.folders.entry(key).or_insert(None);
+            }
             Some(stat) if stat.kind == EntryKind::Dir => {
                 below.folders.entry(key).or_insert(None);
             }
             _ => {
                 let found = found.as_ref().map(found_of_stat);
-                if let Entry::Vacant(slot) = below.folders.entry(key) {
+                if let Entry::Vacant(slot) = below.folders.entry(key.clone()) {
                     slot.insert(Some(depth));
                     let placed = Placed {
                         id,
@@ -646,8 +709,13 @@ impl Builder<'_, '_> {
                         depth,
                         side: None,
                     };
+                    let first = self.items.len();
                     self.create_dir(placed, tr);
                     self.depths.insert(id, depth);
+                    // A folder that cannot be made is no folder for the next source: it meets the same refusal.
+                    if self.items.get(first).is_some_and(|item| item.error.is_some()) {
+                        below.folders.remove(&key);
+                    }
                 }
             }
         }

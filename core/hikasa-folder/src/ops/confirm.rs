@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hikasa_core::Spec;
 use hikasa_vfs::EntryKind;
-use hikasa_vfs::ops::{Action, SkipReason};
+use hikasa_vfs::ops::{Action, PlanItem, SkipReason};
 
 use super::conflict::Conflicts;
 use super::{OpPlan, OpVerb};
@@ -431,47 +431,62 @@ impl Confirmation {
                 item.clear_read_only = true;
             }
         }
-        decline_below(&mut plan);
+        skip_below(&mut plan);
         Ok(plan)
     }
 }
 
-/// The folders a declined `create_dir` stood for: what lies below them cannot run.
+/// A folder item that will not run: what lies in it cannot either.
 struct Refused {
-    depth: u32,
     source: Option<Spec>,
     target: Spec,
+    reason: SkipReason,
 }
 
-/// True when `spec` lies below one of the folders.
-fn below(spec: &Spec, refused: &Refused) -> bool {
-    std::iter::successors(spec.parent(), Spec::parent)
-        .any(|dir| dir == refused.target || Some(&dir) == refused.source.as_ref())
+/// True when `spec` lies below `folder`.
+fn lies_below(spec: &Spec, folder: &Spec) -> bool {
+    std::iter::successors(spec.parent(), Spec::parent).any(|dir| dir == *folder)
 }
 
-/// Declines every item below a declined folder. Skips hold their subtree in one stretch of the plan, so a stack is enough.
-fn decline_below(plan: &mut OpPlan) {
-    let mut stack: Vec<Refused> = Vec::new();
+/// True when `item` lies in the folder `refused` stood for: its target at or below the target (a second source of one
+/// folder merges into the one that stays), or, in a move, its source below the source (a `remove_dir` there too). A
+/// target below the source is no such thing: a `create_dir`'s source can be the other side's folder.
+fn below(item: &PlanItem, refused: &Refused) -> bool {
+    item.target == refused.target
+        || lies_below(&item.target, &refused.target)
+        || refused.source.as_ref().is_some_and(|source| {
+            item.source.as_ref().is_some_and(|spec| lies_below(spec, source))
+                || (item.action == Action::RemoveDir && lies_below(&item.target, source))
+        })
+}
+
+/// Every item in a folder that is skipped is skipped for the same reason: a plan shows what will not run, and why, rather
+/// than leave it to execution as `not_run`. Such folders are few, so each item is held against all of them.
+pub(super) fn skip_below(plan: &mut OpPlan) {
+    let mut refused: Vec<Refused> = Vec::new();
     for (item, meta) in plan.plan.items.iter_mut().zip(&mut plan.meta) {
-        while stack.last().is_some_and(|folder| {
-            item.depth <= folder.depth
-                || !(below(&item.target, folder)
-                    || item.source.as_ref().is_some_and(|spec| below(spec, folder)))
-        }) {
-            stack.pop();
-        }
-        if !stack.is_empty() && item.error.is_none() && item.skip.is_none() {
+        let inside = refused.iter().find(|folder| below(item, folder));
+        // An error below such a folder comes of the folder not being there: the reason is the folder's.
+        if let Some(folder) = inside
+            && item.skip.is_none()
+        {
             item.action = Action::Skip;
-            item.skip = Some(SkipReason::Declined);
+            item.error = None;
+            item.skip = Some(folder.reason);
             item.replaces = false;
             item.backup = None;
-            meta.answer = Some(false);
+            if folder.reason == SkipReason::Declined {
+                meta.answer = Some(false);
+            }
         }
-        if item.skip == Some(SkipReason::Declined) && item.kind == EntryKind::Dir {
-            stack.push(Refused {
-                depth: item.depth,
+        if let Some(reason) = item.skip
+            && item.kind == EntryKind::Dir
+            && item.source.is_some()
+        {
+            refused.push(Refused {
                 source: item.source.clone(),
                 target: item.target.clone(),
+                reason,
             });
         }
     }

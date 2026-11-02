@@ -652,6 +652,24 @@ fn whole_sides(
     whole
 }
 
+/// The sides on which what hides a row leaves it out of the folder above it. A row selected by itself counts whatever
+/// hides it, but an item that took that folder along whole would take what the plan keeps (`skip filtered`).
+fn hidden_sides(read: &TreeRead<'_>, id: NodeId, view: &NodeView<'_>, include: &Include) -> SideSet {
+    if include.hidden {
+        return SideSet::empty();
+    }
+    let store = read.store();
+    let shown = store
+        .node(id)
+        .is_some_and(|node| is_visible(store, node, &include.display));
+    let mut hidden = SideSet::empty();
+    for side in present_sides(Some(view)).sides() {
+        let filtered = view.side(side).is_some_and(|entry| entry.filtered);
+        hidden.set(SideSet::of(side), !shown || filtered);
+    }
+    hidden
+}
+
 /// **Visible contents (D-176):** what a selection means to an operation, the one definition. A folder selected on a side
 /// contributes the rows `include.display` shows, without items hidden by file filters; with `include.hidden` everything. A
 /// folder and some of the rows below it selected on one side: only those rows count there; with all that is shown below
@@ -677,9 +695,11 @@ pub fn resolve(read: &TreeRead<'_>, sel: &Selection, include: &Include) -> Vec<R
     let mut out: Vec<Resolved> = Vec::new();
     // Per folder on the walk: the sides on which something below it is left out.
     let mut left_out: BTreeMap<NodeId, SideSet> = BTreeMap::new();
-    let lose = |left_out: &mut BTreeMap<NodeId, SideSet>, view: &NodeView<'_>, whole| {
+    let lose = |left_out: &mut BTreeMap<NodeId, SideSet>, view: &NodeView<'_>, whole: SideSet| {
         if let Some(parent) = view.parent {
-            *left_out.entry(parent).or_default() |= present_sides(Some(view)).difference(whole);
+            let hidden = hidden_sides(read, view.id, view, include);
+            *left_out.entry(parent).or_default() |=
+                present_sides(Some(view)).difference(whole.difference(hidden));
         }
     };
     let mut stack = vec![Visit::Enter {

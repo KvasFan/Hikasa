@@ -105,6 +105,7 @@ pub(super) fn found_of_stat(entry: &Entry) -> Found {
         attrs: entry.attrs,
         mtime: entry.mtime,
         row: None,
+        filtered: false,
     }
 }
 
@@ -140,6 +141,8 @@ pub(super) struct Found {
     pub(super) mtime: Option<FileTime>,
     /// The row it is the entry of.
     pub(super) row: Option<NodeId>,
+    /// A filter hides it: what a plan does not touch without `--include-hidden`.
+    pub(super) filtered: bool,
 }
 
 /// One direction of a copy or a move.
@@ -219,6 +222,10 @@ pub(super) struct Builder<'a, 'r> {
     /// Folders a flat comparison needs on a side, by their path: the depth of what lies in one the plan makes (`None`: it
     /// stands).
     flat_folders: BTreeMap<(Side, String), Option<u32>>,
+    /// Folders this plan makes (canonical), with the depth of their item: a second source of one folder merges into it.
+    pub(super) made: BTreeMap<String, u32>,
+    /// `copyto`, `moveto`: the file targets taken, as compared: the first source of one path goes, the others stay.
+    pub(super) taken: BTreeSet<String>,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -338,6 +345,8 @@ impl<'a, 'r> Builder<'a, 'r> {
             orphans: BTreeSet::new(),
             outside: None,
             flat_folders: BTreeMap::new(),
+            made: BTreeMap::new(),
+            taken: BTreeSet::new(),
         }
     }
 
@@ -603,6 +612,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             let stat = self.vfs.stat(spec, FollowLinks::No)?;
             return Ok(Found {
                 row: Some(id),
+                filtered: entry.filtered,
                 ..found_of_stat(&stat)
             });
         }
@@ -616,6 +626,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             attrs: entry.attrs,
             mtime: entry.mtime,
             row: Some(id),
+            filtered: entry.filtered,
         })
     }
 
@@ -763,6 +774,11 @@ impl<'a, 'r> Builder<'a, 'r> {
                 // Another spelling of a folder that stands there: nothing to make.
                 return;
             }
+            if found.filtered && !self.include.hidden {
+                item.action = Action::Skip;
+                item.skip = Some(SkipReason::Filtered);
+                return self.push(item, meta);
+            }
             if tr.overwrite != OverwritePolicy::Always {
                 let error = VfsError::AlreadyExists {
                     spec: target.canonical(),
@@ -776,7 +792,50 @@ impl<'a, 'r> Builder<'a, 'r> {
                 }
             }
         }
+        if item.error.is_none() {
+            let made = item.target.clone();
+            self.note_made(&made, depth);
+        }
         self.push(item, meta);
+    }
+
+    /// The key of a folder of `made`: as the back-end compares names.
+    fn made_key(&mut self, spec: &Spec) -> String {
+        key_of(&spec.canonical(), self.folds(spec))
+    }
+
+    /// Records a folder this plan makes, with the depth of its item.
+    pub(super) fn note_made(&mut self, spec: &Spec, depth: u32) {
+        let key = self.made_key(spec);
+        self.made.insert(key, depth);
+    }
+
+    /// True when this plan makes the folder `spec`.
+    pub(super) fn is_made(&mut self, spec: &Spec) -> bool {
+        let key = self.made_key(spec);
+        self.made.contains_key(&key)
+    }
+
+    /// The depth of the item of a folder this plan makes.
+    pub(super) fn made_depth(&mut self, spec: &Spec) -> Option<u32> {
+        let key = self.made_key(spec);
+        self.made.get(&key).copied()
+    }
+
+    /// What stands at a folder this plan makes: the folder, for what comes after it.
+    pub(super) fn made_here(&mut self, spec: &Spec) -> Option<Found> {
+        self.is_made(spec).then(|| Found {
+            kind: EntryKind::Dir,
+            stamp: ItemStamp {
+                kind: EntryKind::Dir,
+                size: None,
+                mtime: None,
+            },
+            attrs: Attrs::None,
+            mtime: None,
+            row: None,
+            filtered: false,
+        })
     }
 
     /// The target of a row on the side written: its own, or a new name under the folder of the row above, with what stands
@@ -985,6 +1044,11 @@ impl<'a, 'r> Builder<'a, 'r> {
         };
         let mut meta = self.meta_of(id, side);
         if let Some(found) = found {
+            if found.filtered && !self.include.hidden {
+                item.action = Action::Skip;
+                item.skip = Some(SkipReason::Filtered);
+                return self.push(item, meta);
+            }
             if found.kind == EntryKind::Dir {
                 item.error = Some(report(&VfsError::IsADirectory {
                     spec: target.canonical(),
@@ -1448,6 +1512,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         depth: u32,
         side: Option<Side>,
     ) {
+        self.note_made(&target, depth);
         let mut item =
             PlanItem::planned(Action::Rename, EntryKind::Dir, Some(source), target, depth);
         item.expect = Some(Expect {
@@ -2172,7 +2237,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             items: self.items,
             warnings: Vec::new(),
         };
-        OpPlan {
+        let mut out = OpPlan {
             verb,
             bases: self.bases,
             plan,
@@ -2180,7 +2245,9 @@ impl<'a, 'r> Builder<'a, 'r> {
             exec,
             warnings: self.warnings,
             refresh,
-        }
+        };
+        super::confirm::skip_below(&mut out);
+        out
     }
 
     /// A change of a member rewrites the file around it: what that file's attributes ask, each item that changes it asks

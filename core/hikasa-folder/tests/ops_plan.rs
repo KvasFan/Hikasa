@@ -1505,3 +1505,30 @@ proptest! {
         prop_assert_eq!(report.summary.failed, 0);
     }
 }
+
+/// A folder on the way that a filter keeps: what goes in it is skipped for the same reason, at planning (P-OPS).
+#[test]
+fn a6_15_what_lies_in_a_skipped_folder_is_skipped_too() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/l/a"), meta(10)).unwrap();
+    file(&vfs, "/r/a", b"hidden", 10);
+    let cmp = compared(&vfs, &unlisted(Some("*.txt")));
+    let parent = id(&cmp.read(), "a");
+    let op = FolderOp::Mkdir {
+        sides: SideSet::all(),
+        parent,
+        name: "new".to_owned(),
+        folder: true,
+    };
+    let out = plan(&vfs, &cmp, &[], &op);
+    let line = lines(&out);
+    assert!(
+        line.iter()
+            .filter(|l| l.contains("/r/a/new"))
+            .all(|l| l.ends_with("!filtered")),
+        "{line:?}"
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(read(&vfs, "/r/a").unwrap(), b"hidden");
+}
