@@ -282,6 +282,68 @@ fn a6_1_a_failed_folder_cuts_its_subtree_only() {
 }
 
 /// A declined `skip` blocks the `remove_dir` of its parent.
+/// A folder that exists has no item (rule 3 of §1.6.10), so its rows follow a sibling at the depth of that sibling's
+/// contents. What a skip or a failure cuts is what lies below it, and no more.
+#[test]
+fn a6_1_a_cut_stops_at_what_lies_below_it() {
+    let vfs = memory();
+    file(&vfs, "/l/a/in", b"a", 10);
+    file(&vfs, "/l/b/x", b"b", 10);
+    file(&vfs, "/r/a", b"a file", 10);
+    file(&vfs, "/r/b/o", b"o", 10);
+    let mut skipped = item(Action::Skip, EntryKind::Dir, Some("/l/a"), "/r/a", 0);
+    skipped.skip = Some(SkipReason::FollowedLink);
+    let moved = item(Action::Move, EntryKind::File, Some("/l/b/x"), "/r/b/x", 1);
+    let gone = item(Action::RemoveDir, EntryKind::Dir, None, "/l/b", 0);
+    let plan = batch_with(
+        vec![skipped, moved, gone],
+        BatchOptions {
+            moves: true,
+            ..BatchOptions::default()
+        },
+    );
+    let report = run(&vfs, plan);
+    assert_eq!(
+        statuses(&report),
+        [ItemStatus::Skipped, ItemStatus::Done, ItemStatus::Done]
+    );
+    assert_eq!(content(&vfs, "/r/b/x"), b"b");
+    assert!(report.ok());
+
+    // A failed `create_dir`: its own child stays, a sibling's rows run, and only the `not_run` is not ok.
+    let vfs = memory();
+    file(&vfs, "/l/a/in", b"a", 10);
+    file(&vfs, "/l/b/x", b"b", 10);
+    file(&vfs, "/r/b/o", b"o", 10);
+    vfs.inject(Fault {
+        path: host("/r/a"),
+        op: VfsOp::Mkdir,
+        kind: ErrorKind::PermissionDenied,
+    });
+    let items = vec![
+        item(Action::CreateDir, EntryKind::Dir, Some("/l/a"), "/r/a", 0),
+        copy_item("/l/a/in", "/r/a/in", 1),
+        copy_item("/l/b/x", "/r/b/x", 1),
+    ];
+    let report = run(&vfs, batch(items));
+    assert_eq!(
+        statuses(&report),
+        [ItemStatus::Failed, ItemStatus::NotRun, ItemStatus::Done]
+    );
+}
+
+/// An item that did not run and no cancel: less ran than the plan showed, which no success may hide.
+#[test]
+fn a6_1_an_item_not_run_is_not_ok() {
+    let vfs = memory();
+    file(&vfs, "/l/x", b"1", 10);
+    vfs.insert_dir(&host("/r"), MemMeta::default()).unwrap();
+    let mut report = run(&vfs, batch(vec![copy_item("/l/x", "/r/x", 0)]));
+    assert!(report.ok());
+    report.results[0].status = ItemStatus::NotRun;
+    assert!(!report.ok());
+}
+
 #[test]
 fn a6_1_a_declined_skip_blocks_its_parent() {
     let vfs = memory();

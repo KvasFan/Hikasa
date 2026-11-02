@@ -639,9 +639,15 @@ pub struct OpReport {
 }
 
 impl OpReport {
-    /// No item failed and the operation was not cancelled.
+    /// No item failed, every item ran, and the operation was not cancelled. An item `not_run` is no success: a plan ran
+    /// less than it showed.
     pub fn ok(&self) -> bool {
-        self.summary.failed == 0 && !self.cancelled
+        self.summary.failed == 0
+            && !self.cancelled
+            && !self
+                .results
+                .iter()
+                .any(|result| result.status == ItemStatus::NotRun)
     }
 }
 

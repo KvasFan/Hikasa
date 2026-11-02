@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hikasa_core::Spec;
+use hikasa_vfs::EntryKind;
 use hikasa_vfs::ops::{Action, SkipReason};
 
 use super::conflict::Conflicts;
@@ -392,8 +394,9 @@ impl Confirmation {
     }
 
     /// The plan with its answers: declined items become `Action::Skip`, reason `declined`; `clear_read_only` as answered.
-    /// `Err(Declined)` after `Cancel` or a `No` to `Operation`, and with the operation question still open: what was not
-    /// answered does not run. An item question left open is a declined item.
+    /// What lies below a declined folder goes with it, under the same reason: the answer is why it stays, and the report
+    /// says so. `Err(Declined)` after `Cancel` or a `No` to `Operation`, and with the operation question still open: what was
+    /// not answered does not run. An item question left open is a declined item.
     pub fn finish(self, mut plan: OpPlan) -> Result<OpPlan, Declined> {
         if self.declined || self.operation_open {
             return Err(Declined);
@@ -420,6 +423,48 @@ impl Confirmation {
                 item.clear_read_only = true;
             }
         }
+        decline_below(&mut plan);
         Ok(plan)
+    }
+}
+
+/// The folders a declined `create_dir` stood for: what lies below them cannot run.
+struct Refused {
+    depth: u32,
+    source: Option<Spec>,
+    target: Spec,
+}
+
+/// True when `spec` lies below one of the folders.
+fn below(spec: &Spec, refused: &Refused) -> bool {
+    std::iter::successors(spec.parent(), Spec::parent)
+        .any(|dir| dir == refused.target || Some(&dir) == refused.source.as_ref())
+}
+
+/// Declines every item below a declined folder. Skips hold their subtree in one stretch of the plan, so a stack is enough.
+fn decline_below(plan: &mut OpPlan) {
+    let mut stack: Vec<Refused> = Vec::new();
+    for (item, meta) in plan.plan.items.iter_mut().zip(&mut plan.meta) {
+        while stack.last().is_some_and(|folder| {
+            item.depth <= folder.depth
+                || !(below(&item.target, folder)
+                    || item.source.as_ref().is_some_and(|spec| below(spec, folder)))
+        }) {
+            stack.pop();
+        }
+        if !stack.is_empty() && item.error.is_none() && item.skip.is_none() {
+            item.action = Action::Skip;
+            item.skip = Some(SkipReason::Declined);
+            item.replaces = false;
+            item.backup = None;
+            meta.answer = Some(false);
+        }
+        if item.skip == Some(SkipReason::Declined) && item.kind == EntryKind::Dir {
+            stack.push(Refused {
+                depth: item.depth,
+                source: item.source.clone(),
+                target: item.target.clone(),
+            });
+        }
     }
 }

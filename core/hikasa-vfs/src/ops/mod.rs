@@ -730,6 +730,39 @@ pub(crate) struct PendingDir {
     source: Entry,
 }
 
+/// A folder item whose failure or skip stops what lies below it: its level, and the two folders it stands for.
+struct Cut {
+    depth: u32,
+    source: Option<Spec>,
+    target: Spec,
+}
+
+impl Cut {
+    /// The cut of `item`.
+    fn of(item: &PlanItem) -> Cut {
+        Cut {
+            depth: item.depth,
+            source: item.source.clone(),
+            target: item.target.clone(),
+        }
+    }
+
+    /// True when `item` lies below this folder. A level says little here: a folder that exists has no item of its own
+    /// (rule 3 of §1.6.10), so its rows follow a sibling's at the depth of that sibling's contents.
+    fn holds(&self, item: &PlanItem) -> bool {
+        item.depth > self.depth
+            && (lies_below(&item.target, &self.target)
+                || self.source.as_ref().is_some_and(|source| {
+                    lies_below(own_spec(item), source) || lies_below(&item.target, source)
+                }))
+    }
+}
+
+/// True when `spec` lies strictly below `folder`, as a plan spells them.
+fn lies_below(spec: &Spec, folder: &Spec) -> bool {
+    std::iter::successors(spec.parent(), Spec::parent).any(|dir| dir == *folder)
+}
+
 /// Execution state shared by the item runners.
 pub(crate) struct Exec<'a> {
     pub(crate) src: &'a dyn Vfs,
@@ -750,9 +783,9 @@ pub(crate) struct Exec<'a> {
     folders: BTreeMap<String, (Option<FileId>, FollowLinks)>,
     /// Folders found changed since the plan was made: nothing below them is touched.
     changed: BTreeSet<String>,
-    /// Depths of the copy/move folder items that failed or were skipped: the items below them (deeper, until the
-    /// next item at that depth or above) are `not_run` (§1.3.12).
-    cut: Vec<u32>,
+    /// The copy/move folder items that failed or were skipped: the items below them are `not_run` (§1.3.12). Empty but for
+    /// such a failure, so what it costs is paid there.
+    cut: Vec<Cut>,
     /// Folders this execution made and no sync has named yet: a move's source waits for that (§1.6.3).
     new_folders: BTreeSet<String>,
     /// A move runs in two phases: its removals wait for the rebuild of the archive it moves into (D-148).
@@ -964,7 +997,7 @@ pub fn execute_with(
     let mut expanded = Vec::new();
     while let Some(item) = queue.pop_front() {
         exec.flush_dirs(item.depth, &mut results);
-        while exec.cut.last().is_some_and(|&d| d >= item.depth) {
+        while exec.cut.last().is_some_and(|cut| !cut.holds(&item)) {
             exec.cut.pop();
         }
         if cancelled || ctl.check().is_err() {
@@ -975,11 +1008,12 @@ pub fn execute_with(
             item_bytes.push(0);
             continue;
         }
-        // Below a failed or skipped folder item, or a folder that changed since the plan was made: not run.
-        if !exec.cut.is_empty() || exec.parent_changed(&item) {
+        // Below a failed or skipped folder item, or a folder that changed since the plan was made: not run. An item the
+        // plan skips says why itself.
+        if item.skip.is_none() && (!exec.cut.is_empty() || exec.parent_changed(&item)) {
             exec.block(&item);
             if tree_op && holds_items(&item) {
-                exec.cut.push(item.depth);
+                exec.cut.push(Cut::of(&item));
             }
             roots.note(None);
             done_items.push(item);
@@ -1050,7 +1084,7 @@ pub fn execute_with(
         if result.status != ItemStatus::Done {
             exec.block(&item);
             if tree_op && holds_items(&item) {
-                exec.cut.push(item.depth);
+                exec.cut.push(Cut::of(&item));
             }
         }
         done_items.push(item);

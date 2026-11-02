@@ -500,8 +500,12 @@ fn a6_16_a_declined_folder_cuts_what_lies_below_it() {
         .finish(out)
         .unwrap();
     let report = run(&vfs, done);
-    assert_eq!(report.results[0].status, ItemStatus::Skipped);
-    assert_eq!(report.results[1].status, ItemStatus::NotRun);
+    // The answer is why what lies below stays: nothing is left `not_run`, and the plan is a success.
+    for result in &report.results {
+        assert_eq!(result.status, ItemStatus::Skipped);
+        assert_eq!(result.skip, Some(SkipReason::Declined));
+    }
+    assert!(report.ok());
     assert_eq!(read(&vfs, "/r/same").unwrap(), b"2");
 }
 
