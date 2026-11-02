@@ -11,8 +11,12 @@ mod html;
 mod list;
 mod sbs;
 mod summary;
+mod xml;
 
+use std::collections::BTreeSet;
 use std::io::{BufWriter, Write};
+
+use hikasa_folder::select::Selection;
 
 use hikasa_core::{Pair, Side};
 use hikasa_folder::{
@@ -22,6 +26,7 @@ use hikasa_folder::{
 
 use crate::error::ReportError;
 use crate::escape;
+use crate::links::PairLinks;
 use crate::meta::{Header, ReportMeta};
 use crate::options::{HtmlStyle, OutputFormat};
 use crate::style::Sgr;
@@ -130,6 +135,8 @@ pub enum FolderLayout {
     Summary,
     /// The `hikasa.folder_compare.v1` JSON document.
     Json,
+    /// The `hikasa-report` XML dump (M2 W7, D-198).
+    Xml,
 }
 
 impl FolderLayout {
@@ -152,13 +159,15 @@ impl FolderLayout {
         )
     }
 
-    /// `list`, `side-by-side`, `summary`, `json`.
+    /// `list`, `side-by-side`, `summary`, `json`, `xml`. [`FolderLayout::parse`] keeps M1's words: `xml` is read by
+    /// [`crate::ReportRequest::parse`].
     pub const fn name(self) -> &'static str {
         match self {
             FolderLayout::List => "list",
             FolderLayout::SideBySide => "side-by-side",
             FolderLayout::Summary => "summary",
             FolderLayout::Json => "json",
+            FolderLayout::Xml => "xml",
         }
     }
 }
@@ -212,21 +221,35 @@ pub fn render_folder_report_with(
     style: &HtmlStyle,
     out: &mut dyn Write,
 ) -> Result<(), ReportError> {
+    render(cmp, opts, meta, style, None, None, out)
+}
+
+/// Renders a folder report with a scope (`None`: every row) and the links of side-by-side HTML and XML.
+pub(crate) fn render(
+    cmp: &FolderComparison,
+    opts: &FolderReportOptions,
+    meta: &ReportMeta,
+    style: &HtmlStyle,
+    scope: Option<&Selection>,
+    links: Option<&dyn PairLinks>,
+    out: &mut dyn Write,
+) -> Result<(), ReportError> {
     let mut w = BufWriter::with_capacity(64 * 1024, out);
-    let css = style.custom_css.as_deref();
     match (opts.layout, opts.format) {
-        (FolderLayout::List, OutputFormat::Text { ansi }) => list::write(&mut w, cmp, opts, ansi)?,
+        (FolderLayout::List, OutputFormat::Text { ansi }) => {
+            list::write(&mut w, cmp, opts, scope, ansi)?;
+        }
         (FolderLayout::SideBySide, OutputFormat::Text { ansi }) => {
-            sbs::write(&mut w, cmp, opts, meta, ansi)?;
+            sbs::write(&mut w, cmp, opts, meta, scope, ansi)?;
         }
         (FolderLayout::SideBySide, OutputFormat::Html { mono }) => {
-            html::write(&mut w, cmp, opts, meta, mono, css)?;
+            html::write(&mut w, cmp, opts, meta, scope, links, mono, style)?;
         }
         (FolderLayout::Summary, OutputFormat::Text { ansi }) => {
             summary::write_text(&mut w, cmp, opts, meta, ansi)?;
         }
         (FolderLayout::Summary, OutputFormat::Html { mono }) => {
-            summary::write_html(&mut w, cmp, opts, meta, mono, css)?;
+            summary::write_html(&mut w, cmp, opts, meta, mono, style)?;
         }
         (FolderLayout::Json, OutputFormat::Text { .. }) => {
             // The result document with its schema id first (§4.1 rule 10; wave-4 decision).
@@ -235,8 +258,11 @@ pub fn render_folder_report_with(
                 .map_err(ReportError::from_json)?;
             w.write_all(b"\n")?;
         }
+        (FolderLayout::Xml, OutputFormat::Text { .. }) => {
+            xml::write(&mut w, cmp, opts, meta, scope, links)?;
+        }
         (
-            layout @ (FolderLayout::List | FolderLayout::Json),
+            layout @ (FolderLayout::List | FolderLayout::Json | FolderLayout::Xml),
             format @ OutputFormat::Html { .. },
         ) => {
             return Err(ReportError::Unsupported {
@@ -247,6 +273,34 @@ pub fn render_folder_report_with(
     }
     w.flush()?;
     Ok(())
+}
+
+/// The visible rows within a scope (D-209): the selected rows, everything below a selected row, and their ancestors
+/// for the structure; the display filter applies on top. `None`: every visible row.
+pub(crate) fn scoped(
+    cmp: &FolderComparison,
+    display: &DisplayOptions,
+    scope: Option<&Selection>,
+) -> Vec<VisibleRow> {
+    let mut rows = visible(cmp, display);
+    let Some(selection) = scope else {
+        return rows;
+    };
+    let read = cmp.read();
+    let selected: BTreeSet<NodeId> = selection.iter().map(|(node, _)| node).collect();
+    let mut above: BTreeSet<NodeId> = BTreeSet::new();
+    for node in &selected {
+        above.extend(read.ancestors(*node));
+    }
+    rows.retain(|row| {
+        selected.contains(&row.node)
+            || above.contains(&row.node)
+            || read
+                .ancestors(row.node)
+                .iter()
+                .any(|a| selected.contains(a))
+    });
+    rows
 }
 
 /// The visible rows of a report (every visible folder expanded), collected under one read guard.

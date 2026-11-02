@@ -86,6 +86,8 @@ pub enum WarningCode {
     ReadOnlySide,
     /// A sync ran on a comparison that did not finish (M2 W6, §1.6.14).
     SyncIncomplete,
+    /// A report request held words its layout does not use (M2 W7, §1.7.4).
+    ReportOptionUnused,
 }
 
 impl WarningCode {
@@ -123,6 +125,7 @@ impl WarningCode {
             WarningCode::TrashFallback => "trash_fallback",
             WarningCode::ReadOnlySide => "read_only_side",
             WarningCode::SyncIncomplete => "sync_incomplete",
+            WarningCode::ReportOptionUnused => "report_option_unused",
         }
     }
 }
@@ -172,6 +175,7 @@ mod tests {
             WarningCode::TrashFallback,
             WarningCode::ReadOnlySide,
             WarningCode::SyncIncomplete,
+            WarningCode::ReportOptionUnused,
         ];
         for code in all {
             assert_eq!(

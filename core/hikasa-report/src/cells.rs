@@ -24,6 +24,10 @@ pub(crate) enum Tone {
     Important,
     /// Unimportant difference (blue).
     Unimportant,
+    /// A struck important difference (interleaved strike-out: red, SGR 9).
+    ImportantStruck,
+    /// A struck unimportant difference (blue, SGR 9).
+    UnimportantStruck,
 }
 
 impl Tone {
@@ -33,6 +37,17 @@ impl Tone {
             Tone::Plain => "",
             Tone::Important => Sgr::RED,
             Tone::Unimportant => Sgr::BLUE,
+            Tone::ImportantStruck => Sgr::RED_STRUCK,
+            Tone::UnimportantStruck => Sgr::BLUE_STRUCK,
+        }
+    }
+
+    /// The struck variant of a difference's tone (plain stays plain).
+    pub fn struck(self) -> Tone {
+        match self {
+            Tone::Important | Tone::ImportantStruck => Tone::ImportantStruck,
+            Tone::Unimportant | Tone::UnimportantStruck => Tone::UnimportantStruck,
+            Tone::Plain => Tone::Plain,
         }
     }
 }

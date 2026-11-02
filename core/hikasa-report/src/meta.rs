@@ -94,9 +94,11 @@ fn text_mode(opts: &TextReportOptions) -> String {
             DisplayMode::Context { lines }.describe()
         }
         TextLayout::Patch(PatchStyle::Normal) => DisplayMode::Mismatches.describe(),
-        TextLayout::SideBySide | TextLayout::Summary | TextLayout::Statistics => {
-            opts.display.describe()
-        }
+        TextLayout::SideBySide
+        | TextLayout::Summary
+        | TextLayout::Statistics
+        | TextLayout::Interleaved
+        | TextLayout::Xml => opts.display.describe(),
     };
     format!(
         "display: {display}; ignore unimportant: {}",

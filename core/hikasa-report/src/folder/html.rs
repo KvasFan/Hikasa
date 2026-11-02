@@ -5,14 +5,17 @@
 use std::io::Write;
 
 use hikasa_folder::FolderComparison;
+use hikasa_folder::select::Selection;
 
 use crate::error::ReportError;
 use crate::escape;
 use crate::folder::{
     CHUNK_ROWS, FolderColumns, FolderReportOptions, SIDE_COLUMNS, colour_class, marker_class,
-    row_cells, status_words, visible,
+    row_cells, scoped, status_words,
 };
+use crate::links::{PairLink, PairLinks};
 use crate::meta::ReportMeta;
+use crate::options::HtmlStyle;
 use crate::style::{self, Sheet};
 
 /// The legend (FC-031 colours).
@@ -22,13 +25,16 @@ const LEGEND: &str = "<table class=\"legend\">\n<tr><td class=\"c-same\">Same</t
 <td class=\"c-filtered\">Filtered</td><td class=\"c-error\">Error</td></tr>\n</table>\n";
 
 /// Writes the document.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn write(
     w: &mut dyn Write,
     cmp: &FolderComparison,
     opts: &FolderReportOptions,
     meta: &ReportMeta,
+    scope: Option<&Selection>,
+    links: Option<&dyn PairLinks>,
     mono: bool,
-    custom_css: Option<&str>,
+    style: &HtmlStyle,
 ) -> Result<(), ReportError> {
     let header = super::header(cmp, meta);
     style::html_start(
@@ -37,7 +43,7 @@ pub(super) fn write(
         &meta.generator,
         Sheet::Folder,
         mono,
-        custom_css,
+        style,
     )?;
     header.write_html(w)?;
     w.write_all(LEGEND.as_bytes())?;
@@ -67,7 +73,7 @@ pub(super) fn write(
     head.push_str("</tr></thead>");
     writeln!(w, "{head}")?;
     writeln!(w, "<tbody>")?;
-    let rows = visible(cmp, &opts.display);
+    let rows = scoped(cmp, &opts.display, scope);
     let mut line = String::new();
     for chunk in rows.chunks(CHUNK_ROWS) {
         let read = cmp.read();
@@ -77,15 +83,28 @@ pub(super) fn write(
             };
             line.clear();
             line.push_str("<tr>");
+            let link = links.and_then(|links| links.link(row.node));
             for i in 0..2 {
                 let class = colour_class(cells.colours[i]);
                 match &cells.sides[i] {
                     Some((name, values)) => {
-                        line.push_str(&format!(
-                            "<td class=\"name {class}\" style=\"padding-left:{}ch\">{}</td>",
-                            1 + 2 * u64::from(cells.depth),
-                            escape::html(name)
-                        ));
+                        let padding = 1 + 2 * u64::from(cells.depth);
+                        let name = escape::html(name);
+                        match &link {
+                            None => line.push_str(&format!(
+                                "<td class=\"name {class}\" style=\"padding-left:{padding}ch\">{name}</td>"
+                            )),
+                            Some(PairLink::Href(href)) => line.push_str(&format!(
+                                "<td class=\"name {class}\" style=\"padding-left:{padding}ch\"><a href=\"{}\">{name}</a></td>",
+                                escape::html(href)
+                            )),
+                            Some(PairLink::Skipped(why) | PairLink::Failed(why)) => {
+                                line.push_str(&format!(
+                                    "<td class=\"name {class}\" style=\"padding-left:{padding}ch\" title=\"no file report: {}\">{name}</td>",
+                                    escape::html(why)
+                                ));
+                            }
+                        }
                         for ((_, right), v) in cols.iter().zip(values) {
                             let num = if *right { " num" } else { "" };
                             line.push_str(&format!(

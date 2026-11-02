@@ -9,15 +9,15 @@ use std::io::Write;
 use hikasa_core::Side;
 use hikasa_text::{
     Importance, InlineRange, Row, RowIdx, RowState, TextComparison, TextDocument, ViewItem,
-    ViewOptions,
 };
 
 use crate::error::ReportError;
 use crate::escape;
 use crate::meta::ReportMeta;
+use crate::options::HtmlStyle;
 use crate::style::{self, Sheet};
 use crate::text::sbs::{hidden_text, marker};
-use crate::text::{TextReportOptions, spec_text};
+use crate::text::{Items, NO_ROWS, TextReportOptions, spec_text};
 
 /// The legend (RPT-010 colour semantics).
 const LEGEND: &str = "<table class=\"legend\">\n<tr><td class=\"imp\">Important difference</td>\
@@ -25,7 +25,7 @@ const LEGEND: &str = "<table class=\"legend\">\n<tr><td class=\"imp\">Important 
 <td class=\"repl\">Replacement</td><td class=\"gap\">Hidden lines</td></tr>\n</table>\n";
 
 /// The class attribute of a row.
-fn row_class(row: &Row, ignore_unimportant: bool) -> &'static str {
+pub(crate) fn row_class(row: &Row, ignore_unimportant: bool) -> &'static str {
     let unimportant_as_same = ignore_unimportant && row.importance == Importance::Unimportant;
     match (row.state, row.importance) {
         (RowState::Same, _) => "",
@@ -83,18 +83,12 @@ pub(super) fn write(
     cmp: &TextComparison,
     opts: &TextReportOptions,
     meta: &ReportMeta,
+    items: &Items,
     mono: bool,
-    custom_css: Option<&str>,
+    style: &HtmlStyle,
 ) -> Result<(), ReportError> {
     let header = super::header(cmp, meta, &[]);
-    style::html_start(
-        w,
-        &header.title,
-        &meta.generator,
-        Sheet::Text,
-        mono,
-        custom_css,
-    )?;
+    style::html_start(w, &header.title, &meta.generator, Sheet::Text, mono, style)?;
     header.write_html(w)?;
     w.write_all(LEGEND.as_bytes())?;
     let iu = opts.ignore_unimportant;
@@ -115,14 +109,15 @@ pub(super) fn write(
     )?;
     writeln!(w, "<tbody>")?;
     let columns = if numbers { 5 } else { 3 };
-    let view = cmp.view(&ViewOptions {
-        filter: opts.display.text_filter(),
-        ignore_unimportant: iu,
-        expanded: Vec::new(),
-    });
     let docs: [&TextDocument; 2] = [cmp.document(Side::Left), cmp.document(Side::Right)];
     let mut line = String::new();
-    for item in view.iter() {
+    if items.nothing() {
+        writeln!(
+            w,
+            "<tr class=\"gap\"><td colspan=\"{columns}\">{NO_ROWS}</td></tr>"
+        )?;
+    }
+    for item in items.iter() {
         line.clear();
         match item {
             ViewItem::Gap { rows } => {

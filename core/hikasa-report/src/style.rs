@@ -5,6 +5,8 @@
 use std::io::Write;
 
 use crate::escape;
+use crate::options::{HtmlStyle, Wrap};
+use crate::request::{Orientation, PrintBlock};
 
 /// ANSI SGR sequences (text output with `ansi = true`).
 pub(crate) struct Sgr;
@@ -26,6 +28,10 @@ impl Sgr {
     pub const GREY: &'static str = "\x1b[90m";
     /// Bold red: errors.
     pub const ERROR: &'static str = "\x1b[1;31m";
+    /// Struck red: a struck important difference (interleaved strike-out).
+    pub const RED_STRUCK: &'static str = "\x1b[9;31m";
+    /// Struck blue: a struck unimportant difference.
+    pub const BLUE_STRUCK: &'static str = "\x1b[9;34m";
 }
 
 /// Layout rules shared by every HTML report.
@@ -85,6 +91,45 @@ tr.gap td, td.gap { font-style: italic; border-top: 1px dashed #000000; border-b
 td.x { background: repeating-linear-gradient(135deg, #ffffff 0, #ffffff 3px, #cccccc 3px, #cccccc 4px); }
 ";
 
+/// Layout of the interleaved table (M2 W7, D-197): left number, right number, text.
+const IL_LAYOUT: &str = "\
+table.il { width: 100%; table-layout: fixed; font-family: monospace; }
+table.il col.n { width: 5em; }
+table.il th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.3em; overflow-wrap: anywhere; }
+table.il td { vertical-align: top; padding: 0 0.3em; }
+table.il td.n { text-align: right; color: #808080; }
+table.il td.t { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.il tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+del { text-decoration: line-through; }
+";
+
+/// Interleaved colours (RPT-010): the line's row tinted by its importance, orphans purple, struck spans as the
+/// inline ones with a line through them.
+const IL_COLOUR: &str = "\
+table.il tr.imp td.t { background: #ffe8e8; }
+table.il tr.unimp td.t { background: #e8eeff; }
+table.il tr.lo td.t, table.il tr.ro td.t, td.lo, td.ro { background: #f6e8fa; }
+table.il tr.lo.imp td.t, table.il tr.ro.imp td.t { color: #c00000; }
+table.il tr.lo.unimp td.t, table.il tr.ro.unimp td.t { color: #0030c0; }
+span.imp, del.imp, td.imp { color: #c00000; background: #ffc8c8; }
+span.unimp, del.unimp, td.unimp { color: #0030c0; background: #c8d4ff; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+";
+
+/// The monochrome interleaved variant: emphasis instead of colour; a struck span keeps its line.
+const IL_MONO: &str = "\
+table.il tr.l td.t { border-left: 2px solid #000000; }
+table.il tr.r td.t { border-left: 2px dashed #000000; }
+table.il tr.lo.imp td.t, table.il tr.ro.imp td.t { font-weight: bold; }
+table.il tr.lo.unimp td.t, table.il tr.ro.unimp td.t { font-style: italic; }
+td.lo, td.ro { border-left: 2px solid #000000; }
+span.imp, td.imp { font-weight: bold; text-decoration: underline; }
+span.unimp, td.unimp { font-style: italic; text-decoration: underline dotted; }
+del.imp { font-weight: bold; text-decoration: line-through; }
+del.unimp { font-style: italic; text-decoration: line-through; }
+tr.gap td, td.gap { font-style: italic; border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; }
+";
+
 /// Layout of the folder side-by-side table.
 const FOLDER_LAYOUT: &str = "\
 table.fsbs { font-family: monospace; }
@@ -118,36 +163,93 @@ const FOLDER_MONO: &str = "\
 /// Which report a stylesheet serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Sheet {
-    /// Text reports.
+    /// Text reports (side-by-side, summary).
     Text,
+    /// The interleaved text report (M2 W7).
+    Interleaved,
     /// Folder reports.
     Folder,
 }
 
-/// The built-in stylesheet.
-pub(crate) fn stylesheet(sheet: Sheet, mono: bool) -> String {
-    let (layout, palette) = match (sheet, mono) {
+/// The layout rules and the palette of a sheet.
+fn parts(sheet: Sheet, mono: bool) -> (&'static str, &'static str) {
+    match (sheet, mono) {
         (Sheet::Text, false) => (TEXT_LAYOUT, TEXT_COLOUR),
         (Sheet::Text, true) => (TEXT_LAYOUT, TEXT_MONO),
+        (Sheet::Interleaved, false) => (IL_LAYOUT, IL_COLOUR),
+        (Sheet::Interleaved, true) => (IL_LAYOUT, IL_MONO),
         (Sheet::Folder, false) => (FOLDER_LAYOUT, FOLDER_COLOUR),
         (Sheet::Folder, true) => (FOLDER_LAYOUT, FOLDER_MONO),
+    }
+}
+
+/// The rules `wrap-none` and `wrap-word` put after a text table's layout (D-210); `wrap-character` and no word add
+/// nothing (M1's rule: `pre-wrap`, `overflow-wrap: anywhere`).
+fn wrap_rules(sheet: Sheet, wrap: Option<Wrap>) -> &'static str {
+    match (sheet, wrap) {
+        (Sheet::Text, Some(Wrap::None)) => {
+            "table.sbs { width: auto; table-layout: auto; }\ntable.sbs td.t { white-space: pre; overflow-wrap: normal; }\n"
+        }
+        (Sheet::Text, Some(Wrap::Word)) => "table.sbs td.t { overflow-wrap: break-word; }\n",
+        (Sheet::Interleaved, Some(Wrap::None)) => {
+            "table.il { width: auto; table-layout: auto; }\ntable.il td.t { white-space: pre; overflow-wrap: normal; }\n"
+        }
+        (Sheet::Interleaved, Some(Wrap::Word)) => "table.il td.t { overflow-wrap: break-word; }\n",
+        _ => "",
+    }
+}
+
+/// The print block (D-210): the page, exact colours, table headers repeated on every page, rows kept whole.
+fn print_rules(print: PrintBlock) -> String {
+    let size = match print.orientation {
+        Orientation::Portrait => "portrait",
+        Orientation::Landscape => "landscape",
     };
-    let mut css = String::with_capacity(BASE.len() + layout.len() + palette.len());
+    format!(
+        "@page {{ size: {size}; margin: 12mm; }}\n\
+         @media print {{\n\
+         body {{ margin: 0; }}\n\
+         * {{ print-color-adjust: exact; -webkit-print-color-adjust: exact; }}\n\
+         thead {{ display: table-header-group; }}\n\
+         tr {{ break-inside: avoid; page-break-inside: avoid; }}\n\
+         }}\n"
+    )
+}
+
+/// The built-in stylesheet: the shared rules, the sheet's layout, the wrap rules, the palette and the print block.
+/// When the print palette differs from the screen palette, each palette is scoped to its medium. Without wrap and
+/// print, the bytes are M1's.
+pub(crate) fn stylesheet(sheet: Sheet, mono: bool, style: &HtmlStyle) -> String {
+    let (layout, palette) = parts(sheet, mono);
+    let mut css = String::with_capacity(BASE.len() + layout.len() + palette.len() + 512);
     css.push_str(BASE);
     css.push_str(layout);
-    css.push_str(palette);
+    css.push_str(wrap_rules(sheet, style.wrap));
+    match style.print {
+        Some(print) if print.mono != mono => {
+            css.push_str("@media screen {\n");
+            css.push_str(palette);
+            css.push_str("}\n@media print {\n");
+            css.push_str(parts(sheet, print.mono).1);
+            css.push_str("}\n");
+        }
+        _ => css.push_str(palette),
+    }
+    if let Some(print) = style.print {
+        css.push_str(&print_rules(print));
+    }
     css
 }
 
-/// Writes `<!DOCTYPE html>` … `<body>`: charset, generator, title, the built-in stylesheet and, after it, the
-/// custom one (so that its rules win).
+/// Writes `<!DOCTYPE html>` … `<body>`: charset, generator, title, the built-in stylesheet (with `style`'s wrap and
+/// print block) and, after it, the custom one (so that its rules win).
 pub(crate) fn html_start(
     w: &mut dyn Write,
     title: &str,
     generator: &str,
     sheet: Sheet,
     mono: bool,
-    custom_css: Option<&str>,
+    style: &HtmlStyle,
 ) -> std::io::Result<()> {
     writeln!(w, "<!DOCTYPE html>")?;
     writeln!(w, "<html lang=\"en\">")?;
@@ -162,8 +264,8 @@ pub(crate) fn html_start(
     }
     writeln!(w, "<title>{}</title>", escape::html(title))?;
     writeln!(w, "<style>")?;
-    w.write_all(stylesheet(sheet, mono).as_bytes())?;
-    if let Some(css) = custom_css {
+    w.write_all(stylesheet(sheet, mono, style).as_bytes())?;
+    if let Some(css) = style.custom_css.as_deref() {
         let css = escape::css_text(css);
         w.write_all(css.as_bytes())?;
         if !css.ends_with('\n') {
@@ -189,15 +291,16 @@ mod tests {
 
     #[test]
     fn stylesheets_carry_the_contract_classes() {
-        let colour = stylesheet(Sheet::Text, false);
+        let plain = HtmlStyle::default();
+        let colour = stylesheet(Sheet::Text, false, &plain);
         for class in [".imp", ".unimp", ".lo", ".ro", ".gap", ".repl"] {
             assert!(colour.contains(class), "{class}");
         }
         assert!(colour.contains("#c00000") && colour.contains("#0030c0"));
-        let mono = stylesheet(Sheet::Text, true);
+        let mono = stylesheet(Sheet::Text, true, &plain);
         assert!(!mono.contains("#c00000"));
-        assert!(stylesheet(Sheet::Folder, false).contains(".c-filtered"));
-        assert!(!stylesheet(Sheet::Folder, true).contains("#800080"));
+        assert!(stylesheet(Sheet::Folder, false, &plain).contains(".c-filtered"));
+        assert!(!stylesheet(Sheet::Folder, true, &plain).contains("#800080"));
         for css in [colour, mono] {
             assert!(!css.contains("url("), "no external resources");
             assert!(!css.contains("@import"));
@@ -213,7 +316,7 @@ mod tests {
             "hikasa \"x\"",
             Sheet::Text,
             false,
-            Some("p { color: red }</style>"),
+            &HtmlStyle::custom("p { color: red }</style>"),
         )
         .unwrap();
         html_end(&mut out).unwrap();
@@ -226,5 +329,47 @@ mod tests {
         assert!(s.contains("p { color: red }<\\/style>\n</style>"));
         assert!(s.ends_with("</body>\n</html>\n"));
         assert!(!s.contains("<script"));
+    }
+
+    #[test]
+    fn wrap_and_print_blocks() {
+        let plain = HtmlStyle::default();
+        let m1 = stylesheet(Sheet::Text, false, &plain);
+        // `wrap-character` is M1's rule: the same bytes.
+        let character = HtmlStyle {
+            wrap: Some(Wrap::Character),
+            ..HtmlStyle::default()
+        };
+        assert_eq!(stylesheet(Sheet::Text, false, &character), m1);
+        let none = HtmlStyle {
+            wrap: Some(Wrap::None),
+            ..HtmlStyle::default()
+        };
+        assert!(stylesheet(Sheet::Text, false, &none).contains("white-space: pre;"));
+        let word = HtmlStyle {
+            wrap: Some(Wrap::Word),
+            ..HtmlStyle::default()
+        };
+        assert!(stylesheet(Sheet::Interleaved, true, &word).contains("overflow-wrap: break-word"));
+        // The folder sheet has no wrap rules.
+        assert_eq!(
+            stylesheet(Sheet::Folder, false, &none),
+            stylesheet(Sheet::Folder, false, &plain)
+        );
+        let print = |orientation, mono| HtmlStyle {
+            print: Some(PrintBlock { orientation, mono }),
+            ..HtmlStyle::default()
+        };
+        let same = stylesheet(Sheet::Text, false, &print(Orientation::Landscape, false));
+        assert!(same.starts_with(&m1));
+        assert!(same.contains("@page { size: landscape; margin: 12mm; }"));
+        assert!(same.contains("print-color-adjust: exact"));
+        assert!(!same.contains("@media screen"));
+        let other = stylesheet(Sheet::Text, false, &print(Orientation::Portrait, true));
+        assert!(other.contains("@media screen {\ntr.imp td.t { background: #ffe8e8; }"));
+        assert!(
+            other.contains("}\n@media print {\ntr.imp td.m, tr.unimp td.m { font-weight: bold; }")
+        );
+        assert!(other.contains("@page { size: portrait; margin: 12mm; }"));
     }
 }

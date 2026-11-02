@@ -15,8 +15,8 @@ use std::path::Path;
 
 use common::{assert_golden, cases, check_html, compare_case, fixtures, sibling_fixtures};
 use hikasa_report::{
-    DisplayMode, OutputFormat, PatchStyle, ReportMeta, TextLayout, TextReportOptions, Wrap,
-    render_text_report, text_compare_json,
+    DisplayMode, OutputFormat, PatchStyle, ReportMeta, StrikeOut, TextLayout, TextReportOptions,
+    Wrap, render_text_report, text_compare_json,
 };
 use hikasa_text::{TextComparison, ViewOptions};
 use serde::Deserialize;
@@ -109,6 +109,7 @@ fn text_report_goldens() {
             width: case.width,
             wrap: Wrap::parse(&case.wrap).unwrap(),
             format: OutputFormat::Text { ansi: false },
+            strike: StrikeOut::empty(),
         };
         let text = OutputFormat::Text { ansi: false };
         let html = OutputFormat::Html { mono: case.mono };

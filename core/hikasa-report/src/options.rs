@@ -6,6 +6,7 @@ use hikasa_text::TextDisplayFilter;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ReportError;
+use crate::request::PrintBlock;
 
 /// A vocabulary word normalised for matching: trimmed, ASCII lower case, `_` read as `-`, without `prefix`.
 fn normalise<'a>(word: &str, prefix: &str, buf: &'a mut String) -> &'a str {
@@ -34,6 +35,10 @@ pub enum DisplayMode {
     },
     /// display-matches.
     Matches,
+    /// display-none (M2 W7, D-195): no row, only the header and one hidden-rows line (text), no item (folders).
+    /// Not a word of [`DisplayMode::parse`] (an M1 parser, unchanged): the report vocabulary of
+    /// [`crate::ReportRequest::parse`] reads it.
+    None,
 }
 
 impl Default for DisplayMode {
@@ -51,6 +56,7 @@ impl DisplayMode {
             DisplayMode::Mismatches => TextDisplayFilter::Differences,
             DisplayMode::Context { lines } => TextDisplayFilter::Context { lines },
             DisplayMode::Matches => TextDisplayFilter::Same,
+            DisplayMode::None => TextDisplayFilter::None,
         }
     }
 
@@ -66,6 +72,7 @@ impl DisplayMode {
                 FolderMode::CompareStructure,
             ),
             DisplayMode::Matches => (FolderDisplayFilter::Same, FolderMode::OnlyFiles),
+            DisplayMode::None => (FolderDisplayFilter::None, FolderMode::CompareStructure),
         }
     }
 
@@ -98,6 +105,7 @@ impl DisplayMode {
             DisplayMode::Mismatches => "differences".to_owned(),
             DisplayMode::Context { lines } => format!("context ({})", plural(lines, "line")),
             DisplayMode::Matches => "same".to_owned(),
+            DisplayMode::None => "none".to_owned(),
         }
     }
 }
@@ -226,12 +234,18 @@ pub const fn folder_mode_word(mode: FolderMode) -> &'static str {
 }
 
 /// Styling inputs that do not fit the `Copy` option structs (additive, wave 4): RPT-002 / SCR-001
-/// `html-custom:<css>`.
+/// `html-custom:<css>`; M2 W7 (D-210): the print block and the HTML wrap.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct HtmlStyle {
     /// A custom stylesheet, embedded after the built-in one (so its rules win) in every HTML report. The caller
     /// reads the file (core does no I/O of its own). `None` = the built-in colour or mono stylesheet only.
     pub custom_css: Option<String>,
+    /// The print block (`print-portrait`, `print-landscape`, or a printer target): `@page` and `@media print`
+    /// rules after the built-in stylesheet. `None` = none, every byte as before W7.
+    pub print: Option<PrintBlock>,
+    /// The wrap of the text in text side-by-side and interleaved HTML (`wrap-*`). `None` = M1's rule (wrap by
+    /// character), every byte as before W7; `Some(Wrap::Character)` is the same rule.
+    pub wrap: Option<Wrap>,
 }
 
 impl HtmlStyle {
@@ -239,6 +253,7 @@ impl HtmlStyle {
     pub fn custom(css: impl Into<String>) -> HtmlStyle {
         HtmlStyle {
             custom_css: Some(css.into()),
+            ..HtmlStyle::default()
         }
     }
 }

@@ -5,13 +5,15 @@
 use std::io::Write;
 
 use hikasa_core::{CompareVerdict, ContentKind};
-use hikasa_folder::{Category, FolderComparison, FolderStats};
+use hikasa_folder::{Category, FolderComparison};
 
 use crate::error::ReportError;
 use crate::escape;
 use crate::folder::FolderReportOptions;
 use crate::meta::ReportMeta;
+use crate::options::HtmlStyle;
 use crate::style::{self, Sgr, Sheet};
+use crate::summary_counts::{SummaryCount, category_word, content_word, of_folder, value};
 
 /// Words of a folder verdict.
 pub(crate) fn verdict_words(v: CompareVerdict) -> &'static str {
@@ -57,50 +59,39 @@ struct Table {
     rows: Vec<(&'static str, Vec<String>)>,
 }
 
-/// The three tables of the summary.
-fn tables(stats: &FolderStats) -> [Table; 3] {
+/// The three tables of the summary, made from [`summary_counts`](crate::summary_counts) (T11).
+fn tables(counts: &[SummaryCount]) -> [Table; 3] {
+    let get = |group: &str, name: &str| value(counts, group, name).to_string();
     let categories = Table {
         caption: "Items",
         columns: vec!["Category", "Files", "Folders"],
         rows: Category::ALL
             .iter()
             .map(|&c| {
+                let word = category_word(c);
                 (
                     category_title(c),
-                    vec![
-                        stats.files.get(c).to_string(),
-                        stats.folders.get(c).to_string(),
-                    ],
+                    vec![get("files", word), get("folders", word)],
                 )
             })
             .collect(),
     };
+    let side_row =
+        |title: &'static str, name: &str| (title, vec![get("left", name), get("right", name)]);
     let totals = Table {
         caption: "Totals",
         columns: vec!["", "Left", "Right"],
         rows: vec![
-            (
-                "Files",
-                vec![stats.left.files.to_string(), stats.right.files.to_string()],
-            ),
-            (
-                "Folders",
-                vec![
-                    stats.left.folders.to_string(),
-                    stats.right.folders.to_string(),
-                ],
-            ),
-            (
-                "Bytes",
-                vec![stats.left.bytes.to_string(), stats.right.bytes.to_string()],
-            ),
+            side_row("Files", "files"),
+            side_row("Folders", "folders"),
+            side_row("Bytes", "bytes"),
         ],
     };
     let mut content_rows: Vec<(&'static str, Vec<String>)> = ContentKind::ALL
         .iter()
-        .map(|&k| (content_title(k), vec![stats.content.get(k).to_string()]))
+        .map(|&k| (content_title(k), vec![get("content", content_word(k))]))
         .collect();
-    content_rows.push(("Not compared", vec![stats.content.not_compared.to_string()]));
+    content_rows.push(("Not compared", vec![get("content", "not-compared")]));
     let content = Table {
         caption: "Content comparisons",
         columns: vec!["Result", "Pairs"],
@@ -153,7 +144,7 @@ pub(super) fn write_text(
         let reset = if colour.is_empty() { "" } else { Sgr::RESET };
         writeln!(w, "{:<20}{colour}{value}{reset}", format!("{label}:"))?;
     }
-    for table in tables(&cmp.stats(iu)) {
+    for table in tables(&of_folder(cmp, iu)) {
         writeln!(w)?;
         let first = table
             .rows
@@ -199,7 +190,7 @@ pub(super) fn write_html(
     opts: &FolderReportOptions,
     meta: &ReportMeta,
     mono: bool,
-    custom_css: Option<&str>,
+    style: &HtmlStyle,
 ) -> Result<(), ReportError> {
     let header = super::header(cmp, meta);
     style::html_start(
@@ -208,7 +199,7 @@ pub(super) fn write_html(
         &meta.generator,
         Sheet::Folder,
         mono,
-        custom_css,
+        style,
     )?;
     header.write_html(w)?;
     writeln!(w, "<table class=\"summary\">")?;
@@ -221,7 +212,7 @@ pub(super) fn write_html(
         )?;
     }
     writeln!(w, "</table>")?;
-    for table in tables(&cmp.stats(opts.display.ignore_unimportant)) {
+    for table in tables(&of_folder(cmp, opts.display.ignore_unimportant)) {
         writeln!(w, "<h2>{}</h2>", escape::html(table.caption))?;
         writeln!(w, "<table class=\"summary\">")?;
         let mut head = String::from("<tr>");
@@ -253,7 +244,9 @@ mod tests {
         assert_eq!(verdict_words(CompareVerdict::Incomplete), "incomplete");
         assert_eq!(category_title(Category::LeftOrphan), "Left only");
         assert_eq!(content_title(ContentKind::RulesSame), "Rules same");
-        let t = tables(&FolderStats::default());
+        let t = tables(&crate::summary_counts::folder_counts(
+            &hikasa_folder::FolderStats::default(),
+        ));
         assert_eq!(t[0].rows.len(), 9);
         assert_eq!(t[1].rows.len(), 3);
         assert_eq!(t[2].rows.len(), 7);

@@ -199,6 +199,7 @@ impl Plan {
                 Some(mono) => OutputFormat::Html { mono },
                 None => OutputFormat::Text { ansi },
             },
+            ..TextReportOptions::default()
         }
     }
 }

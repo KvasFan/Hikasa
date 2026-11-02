@@ -7,16 +7,14 @@ use std::io::Write;
 use std::ops::Range;
 
 use hikasa_core::Side;
-use hikasa_text::{
-    Importance, Row, RowIdx, RowState, TextComparison, TextDocument, ViewItem, ViewOptions,
-};
+use hikasa_text::{Importance, Row, RowIdx, RowState, TextComparison, TextDocument, ViewItem};
 
 use crate::cells::{self, Atom, Atoms, Tone, Wrapper};
 use crate::error::ReportError;
 use crate::meta::ReportMeta;
 use crate::options::Wrap;
 use crate::style::Sgr;
-use crate::text::{TextReportOptions, spec_text};
+use crate::text::{Items, NO_ROWS, TextReportOptions, spec_text};
 
 /// The marker of a row (`'~'` becomes `' '` when unimportant differences count as same, TC-024).
 pub(crate) fn marker(row: &Row, ignore_unimportant: bool) -> char {
@@ -50,10 +48,15 @@ pub(crate) fn digits(n: u32) -> usize {
 /// The tones of both sides of a row for ANSI output (`[left, right]`, each the toned byte ranges and the base
 /// tone): inline ranges on changed rows (unimportant ones dropped under ignore-unimportant), the whole line on
 /// orphans, nothing on same rows and on unimportant rows under ignore-unimportant.
-type SideTones = (Vec<(Range<u32>, Tone)>, Tone);
+pub(crate) type SideTones = (Vec<(Range<u32>, Tone)>, Tone);
 
 /// See [`SideTones`].
-fn tones(cmp: &TextComparison, idx: RowIdx, row: &Row, ignore_unimportant: bool) -> [SideTones; 2] {
+pub(crate) fn tones(
+    cmp: &TextComparison,
+    idx: RowIdx,
+    row: &Row,
+    ignore_unimportant: bool,
+) -> [SideTones; 2] {
     let tone_of = |important: bool| {
         if important {
             Tone::Important
@@ -130,11 +133,11 @@ pub(super) fn write(
     cmp: &TextComparison,
     opts: &TextReportOptions,
     meta: &ReportMeta,
+    items: &Items,
     ansi: bool,
 ) -> Result<(), ReportError> {
     super::header(cmp, meta, &[]).write_text(w, "", ansi)?;
     let g = Geometry::new(cmp, opts);
-    let iu = opts.ignore_unimportant;
     let tab = usize::from(cmp.format().text().tab_size);
     let docs: [&TextDocument; 2] = [cmp.document(Side::Left), cmp.document(Side::Right)];
     // Column titles: the two specs.
@@ -157,17 +160,15 @@ pub(super) fn write(
         }
     }
     writeln!(w, "{}", line.trim_end())?;
-    let view = cmp.view(&ViewOptions {
-        filter: opts.display.text_filter(),
-        ignore_unimportant: iu,
-        expanded: Vec::new(),
-    });
     let (grey, reset) = if ansi {
         (Sgr::GREY, Sgr::RESET)
     } else {
         ("", "")
     };
-    for item in view.iter() {
+    if items.nothing() {
+        writeln!(w, "{grey}      {NO_ROWS}{reset}")?;
+    }
+    for item in items.iter() {
         match item {
             ViewItem::Gap { rows } => {
                 writeln!(w, "{grey}      {}{reset}", hidden_text(&rows))?;

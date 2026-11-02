@@ -6,12 +6,13 @@
 use std::io::Write;
 
 use hikasa_folder::FolderComparison;
+use hikasa_folder::select::Selection;
 
 use crate::cells::{self, text_width};
 use crate::error::ReportError;
 use crate::folder::{
     CHUNK_ROWS, FolderColumns, FolderReportOptions, RowCells, SIDE_COLUMNS, colour_sgr, marker_sgr,
-    row_cells, status_words, visible,
+    row_cells, scoped, status_words,
 };
 use crate::meta::ReportMeta;
 use crate::style::Sgr;
@@ -72,13 +73,14 @@ pub(super) fn write(
     cmp: &FolderComparison,
     opts: &FolderReportOptions,
     meta: &ReportMeta,
+    scope: Option<&Selection>,
     ansi: bool,
 ) -> Result<(), ReportError> {
     super::header(cmp, meta).write_text(w, "", ansi)?;
     let iu = opts.display.ignore_unimportant;
     let cols = enabled(opts.columns);
     let status = opts.columns.contains(FolderColumns::STATUS);
-    let rows = visible(cmp, &opts.display);
+    let rows = scoped(cmp, &opts.display, scope);
     // Pass 1: widths (titles included).
     let title_widths = Widths {
         name: "Name".len(),
