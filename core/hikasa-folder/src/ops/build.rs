@@ -8,14 +8,15 @@ use hikasa_core::{
     Ctl, ErrorKind, ErrorReport, FileTime, Pair, RelPath, Side, Spec, Warning, WarningCode,
 };
 use hikasa_vfs::ops::{
-    self, Action, BackupNames, BatchOptions, CopyOptions, ExecOptions, Expect, Fence, ItemStamp,
-    MoveOptions, OpKind, OverwritePolicy, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
+    self, Action, BackupNames, BatchOptions, ExecOptions, Expect, Fence, ItemStamp, OpKind,
+    OverwritePolicy, Plan, PlanItem, PlanOptions, SkipReason,
 };
 use hikasa_vfs::{
     Attrs, Capabilities, Entry, EntryKind, FileName, FollowLinks, SetTimes, Vfs, VfsError,
 };
 
 use super::conflict::Conflicts;
+use super::unlisted::Walk;
 use super::{FolderOp, ItemMeta, OpPlan, OpScope, OpSettings, OpVerb, Recycle, TouchFrom};
 use crate::error::FolderError;
 use crate::model::{EntryView, NodeFlags, NodeId, NodeKind, NodeView, ScanStatus, TreeRead};
@@ -93,6 +94,36 @@ pub(super) fn stamp_of_stat(entry: &Entry) -> ItemStamp {
             size: None,
             mtime: None,
         },
+    }
+}
+
+/// What a stat saw stands where an item goes.
+pub(super) fn found_of_stat(entry: &Entry) -> Found {
+    Found {
+        kind: entry.kind,
+        stamp: stamp_of_stat(entry),
+        attrs: entry.attrs,
+        mtime: entry.mtime,
+        row: None,
+    }
+}
+
+/// An entry of a listing as a row's: what the items of rule 6 share with those of a row.
+pub(super) fn view_of_entry(entry: &Entry) -> EntryView<'_> {
+    EntryView {
+        name: entry.name.as_str(),
+        name_lossy: false,
+        kind: entry.kind,
+        size: entry.size,
+        mtime: entry.mtime,
+        ctime: entry.ctime,
+        attrs: entry.attrs,
+        link_target: entry.link_target.as_deref(),
+        followed: false,
+        crc32: None,
+        filtered: false,
+        stat_skipped: false,
+        dir: None,
     }
 }
 
@@ -538,43 +569,6 @@ impl<'a, 'r> Builder<'a, 'r> {
         self.push(item, meta);
     }
 
-    /// Takes `plan`'s items, made from the disk for what the model has no contents for (rule 6), at `depth`.
-    pub(super) fn splice(
-        &mut self,
-        plan: Plan,
-        id: NodeId,
-        root: &Spec,
-        depth: u32,
-        side: Option<Side>,
-    ) {
-        self.warnings.extend(plan.warnings);
-        let base = self.read.path(id);
-        for mut item in plan.items {
-            item.depth += depth;
-            let path = rel_below(root, item.source.as_ref().unwrap_or(&item.target))
-                .and_then(|rel| {
-                    rel.components()
-                        .try_fold(base.clone(), |path, name| path.join(name).ok())
-                })
-                .unwrap_or_else(|| base.clone());
-            let mut conflicts = Conflicts::empty();
-            conflicts.set(
-                Conflicts::REPLACE_DURING_MOVE,
-                item.replaces && item.action == Action::Move,
-            );
-            self.push(
-                item,
-                ItemMeta {
-                    side,
-                    node: None,
-                    path: path.as_str().to_owned(),
-                    conflicts,
-                    answer: None,
-                },
-            );
-        }
-    }
-
     /// The entry on `side` as a plan can stamp it: a name-only entry (D-45) is stat'd once.
     pub(super) fn source_stamp(
         &self,
@@ -602,11 +596,8 @@ impl<'a, 'r> Builder<'a, 'r> {
         if entry.stat_skipped {
             let stat = self.vfs.stat(spec, FollowLinks::No)?;
             return Ok(Found {
-                kind: stat.kind,
-                stamp: stamp_of_stat(&stat),
-                attrs: stat.attrs,
-                mtime: stat.mtime,
                 row: Some(id),
+                ..found_of_stat(&stat)
             });
         }
         Ok(Found {
@@ -899,7 +890,7 @@ impl<'a, 'r> Builder<'a, 'r> {
     pub(super) fn place_file(
         &mut self,
         placed: Placed<'_>,
-        view: &NodeView<'_>,
+        kind: NodeKind,
         action: Action,
         tr: Transfer,
     ) {
@@ -912,10 +903,10 @@ impl<'a, 'r> Builder<'a, 'r> {
             depth,
             side,
         } = placed;
-        let kind = if entry.followed || view.kind == NodeKind::File {
+        let kind = if entry.followed || kind == NodeKind::File {
             EntryKind::File
         } else {
-            view.kind.entry_kind()
+            kind.entry_kind()
         };
         let mut item = PlanItem::planned(action, kind, Some(source.clone()), target.clone(), depth);
         item.follow_source = entry.followed;
@@ -942,7 +933,10 @@ impl<'a, 'r> Builder<'a, 'r> {
                 }));
                 return self.push(item, meta);
             }
-            let (source_newer, _) = self.newer(view, entry, &found, tr.from);
+            let source_newer = self
+                .read
+                .node(id)
+                .is_some_and(|view| self.newer(&view, entry, &found, tr.from).0);
             match tr.overwrite {
                 OverwritePolicy::Fail => {
                     item.error = Some(report(&VfsError::AlreadyExists {
@@ -989,14 +983,14 @@ impl<'a, 'r> Builder<'a, 'r> {
     /// The action of a file-like row, or why it stays (rule 5). `to` may be `None`: a target outside the bases.
     pub(super) fn kind_action(
         &mut self,
-        view: &NodeView<'_>,
+        kind: NodeKind,
         source: &Spec,
         target: &Spec,
         side: Option<Side>,
         moving: bool,
     ) -> Result<Action, SkipReason> {
         let file = if moving { Action::Move } else { Action::Copy };
-        match view.kind {
+        match kind {
             NodeKind::Other => Err(SkipReason::SpecialFile),
             NodeKind::Symlink => {
                 if matches!(source, Spec::ArchiveMember { .. }) {
@@ -1070,7 +1064,7 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// One `remove_dir`, after its contents.
-    fn remove_dir(&mut self, folder: Open) {
+    pub(super) fn remove_dir(&mut self, folder: Open) {
         let mut item = PlanItem::planned(
             Action::RemoveDir,
             EntryKind::Dir,
@@ -1245,7 +1239,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         } else {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
-            match self.kind_action(&view, &source, &target, side, tr.moving) {
+            match self.kind_action(view.kind, &source, &target, side, tr.moving) {
                 Ok(action) => {
                     let placed = Placed {
                         id,
@@ -1256,7 +1250,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                         depth,
                         side,
                     };
-                    self.place_file(placed, &view, action, tr);
+                    self.place_file(placed, view.kind, action, tr);
                 }
                 Err(reason) => {
                     self.skip_row(id, kind, Some(source), target, depth, reason, side);
@@ -1288,7 +1282,8 @@ impl<'a, 'r> Builder<'a, 'r> {
         if view.scan == ScanStatus::NotScanned {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
-            self.expand_unlisted(tr, id, entry, &source, &target, depth)?;
+            let walk = Walk { tr, id, side };
+            self.expand_unlisted(walk, entry, &source, &target, found, depth)?;
             self.cover(id);
             return Ok(());
         }
@@ -1312,18 +1307,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
-            let mut item =
-                PlanItem::planned(Action::Rename, EntryKind::Dir, Some(source), target, depth);
-            item.expect = Some(Expect {
-                source: Some(ItemStamp {
-                    kind: EntryKind::Dir,
-                    size: None,
-                    mtime: None,
-                }),
-                target: None,
-            });
-            let meta = self.meta_of(id, side);
-            self.push(item, meta);
+            self.push_folder_rename(id, source, target, depth, side);
             self.cover(id);
             return Ok(());
         }
@@ -1367,37 +1351,27 @@ impl<'a, 'r> Builder<'a, 'r> {
         false
     }
 
-    /// Rule 6: a folder the model has no contents for is expanded by `hikasa_vfs::ops`, with that one root.
-    pub(super) fn expand_unlisted(
+    /// One `rename` of a whole folder (rule 7).
+    pub(super) fn push_folder_rename(
         &mut self,
-        tr: Transfer,
         id: NodeId,
-        entry: &EntryView<'_>,
-        source: &Spec,
-        target: &Spec,
+        source: Spec,
+        target: Spec,
         depth: u32,
-    ) -> Result<(), FolderError> {
-        let pairs = [(source.clone(), target.clone())];
-        let planned = if tr.moving {
-            let options = MoveOptions {
-                overwrite: tr.overwrite,
-                create_parents: false,
-            };
-            ops::plan_move(self.vfs, self.vfs, &pairs, &options, self.ctl)
-        } else {
-            let options = CopyOptions {
-                recursive: true,
-                overwrite: tr.overwrite,
-                links: self.settings.links,
-                preserve: self.settings.preserve,
-                follow_roots: entry.followed,
-                create_parents: false,
-            };
-            ops::plan_copy(self.vfs, self.vfs, &pairs, &options, self.ctl)
-        };
-        let plan = planned.map_err(|e| vfs_stop(&e))?;
-        self.splice(plan, id, source, depth, Some(tr.to));
-        Ok(())
+        side: Option<Side>,
+    ) {
+        let mut item =
+            PlanItem::planned(Action::Rename, EntryKind::Dir, Some(source), target, depth);
+        item.expect = Some(Expect {
+            source: Some(ItemStamp {
+                kind: EntryKind::Dir,
+                size: None,
+                mtime: None,
+            }),
+            target: None,
+        });
+        let meta = self.meta_of(id, side);
+        self.push(item, meta);
     }
 
     /// An opened archive that leaves as one file: copied or moved by its own stamp.
@@ -1678,16 +1652,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         // A followed row is its link (fence rule 2), whatever it leads to.
         if view.is_folder() && !entry.followed {
             if view.scan == ScanStatus::NotScanned {
-                let options = RemoveOptions {
-                    recursive: true,
-                    trash: recycle.use_bin && self.has_bin(&spec),
-                };
-                let plan =
-                    ops::plan_remove(self.vfs, std::slice::from_ref(&spec), &options, self.ctl)
-                        .map_err(|e| vfs_stop(&e))?;
-                let first = self.items.len();
-                self.splice(plan, id, &spec, depth, Some(side));
-                self.mark_trash(first, recycle);
+                self.delete_unlisted(side, id, &spec, depth, recycle)?;
                 self.cover(id);
                 return Ok(());
             }
@@ -1709,16 +1674,18 @@ impl<'a, 'r> Builder<'a, 'r> {
                 return Ok(());
             }
             if recycle.use_bin && self.has_bin(&spec) {
+                let first = self.items.len();
                 self.delete_one(
                     id,
                     &view,
                     &entry,
-                    spec,
+                    spec.clone(),
                     EntryKind::Dir,
                     depth,
                     side,
                     recycle,
                 );
+                self.whole_trash(first, id, side, recycle);
                 self.cover(id);
                 return Ok(());
             }
@@ -1746,18 +1713,121 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// True when `spec` can go to the bin.
-    fn has_bin(&mut self, spec: &Spec) -> bool {
+    pub(super) fn has_bin(&mut self, spec: &Spec) -> bool {
         self.capabilities(spec).contains(Capabilities::TRASH)
     }
 
-    /// The items of `first..`, from the disk: a `trash` may fall back, and what has no bin is its question.
-    fn mark_trash(&mut self, first: usize, recycle: Recycle) {
-        for (item, meta) in self.items.iter_mut().zip(&mut self.meta).skip(first) {
-            item.trash_fallback = item.action == Action::Trash && recycle.fallback;
-            meta.conflicts.set(
-                Conflicts::NO_RECYCLE_BIN,
-                recycle.use_bin && item.action != Action::Trash,
-            );
+    /// What one `trash` of the whole folder `id`, the item at `index`, takes with it: its question asks for what the model
+    /// knows below it, and with the fallback each thing below is stamped, for that fallback may delete nothing else.
+    fn whole_trash(&mut self, index: usize, id: NodeId, side: Side, recycle: Recycle) {
+        let below = self.conflicts_below(id, side);
+        let mut permanent = Vec::new();
+        if recycle.fallback {
+            self.permanent_rows(id, side, 0, &mut permanent);
+            if let Some(item) = self.items.get(index) {
+                let mut own = PlanItem::planned(
+                    Action::RemoveDir,
+                    EntryKind::Dir,
+                    None,
+                    item.target.clone(),
+                    0,
+                );
+                own.expect = item.expect;
+                permanent.push(own);
+            }
+        }
+        if let Some(meta) = self.meta.get_mut(index) {
+            meta.conflicts |= below;
+        }
+        if let Some(item) = self.items.get_mut(index) {
+            item.fallback = permanent;
+        }
+    }
+
+    /// What the attributes of everything below the row `id` on `side` ask of its removal.
+    fn conflicts_below(&self, id: NodeId, side: Side) -> Conflicts {
+        let read = self.read;
+        let mut found = Conflicts::empty();
+        let mut stack: Vec<NodeId> = read.children(id).collect();
+        while let Some(row) = stack.pop() {
+            let Some(view) = read.node(row) else { continue };
+            let Some(entry) = view.side(side) else {
+                continue;
+            };
+            found |= Conflicts::of_attrs(&entry.attrs);
+            if view.is_folder() && !entry.followed {
+                stack.extend(read.children(row));
+            }
+        }
+        found
+    }
+
+    /// Everything below the row `id` for good, stamped, post-order (§1.6.12): a followed row is its link, an opened archive
+    /// the file it is.
+    fn permanent_rows(&self, id: NodeId, side: Side, depth: u32, out: &mut Vec<PlanItem>) {
+        let read = self.read;
+        let at = depth + 1;
+        for row in read.children(id) {
+            let Some(view) = read.node(row) else { continue };
+            let (Some(entry), Some(spec)) = (view.side(side), read.spec(row, side)) else {
+                continue;
+            };
+            let opened = view.flags.contains(NodeFlags::archive_root(side));
+            let (target, kind, stamp) = match (&spec, opened) {
+                (Spec::ArchiveMember { archive, .. }, true) => {
+                    let file = (**archive).clone();
+                    let stamp = self
+                        .vfs
+                        .stat(&file, FollowLinks::No)
+                        .map(|stat| stamp_of_stat(&stat));
+                    (file, EntryKind::File, stamp)
+                }
+                _ if view.is_folder() && !entry.followed => {
+                    self.permanent_rows(row, side, at, out);
+                    let stamp = ItemStamp {
+                        kind: EntryKind::Dir,
+                        size: None,
+                        mtime: None,
+                    };
+                    let mut item = PlanItem::planned(
+                        Action::RemoveDir,
+                        EntryKind::Dir,
+                        None,
+                        spec,
+                        at,
+                    );
+                    item.expect = Some(Expect {
+                        source: None,
+                        target: Some(stamp),
+                    });
+                    out.push(item);
+                    continue;
+                }
+                _ if entry.followed => {
+                    (spec, EntryKind::Symlink, Ok(stamp_of(&entry, false)))
+                }
+                _ => {
+                    let stamp = if entry.stat_skipped {
+                        self.vfs
+                            .stat(&spec, FollowLinks::No)
+                            .map(|stat| stamp_of_stat(&stat))
+                    } else {
+                        Ok(stamp_of(&entry, true))
+                    };
+                    (spec, view.kind.entry_kind(), stamp)
+                }
+            };
+            let mut item = PlanItem::planned(Action::Remove, kind, None, target, at);
+            match stamp {
+                Ok(stamp) => {
+                    item.expect = Some(Expect {
+                        source: None,
+                        target: Some(stamp),
+                    });
+                }
+                Err(e) => item.error = Some(report(&e)),
+            }
+            out.push(item);
         }
     }
 
@@ -2116,15 +2186,6 @@ pub(super) fn nothing_on(sides: SideSet) -> String {
     match sides.sides().collect::<Vec<_>>().as_slice() {
         [one] => format!("nothing selected on the {one}"),
         _ => "nothing selected".to_owned(),
-    }
-}
-
-/// What a planner's stop is: only cancellation comes out of `plan_copy`, `plan_move` and `plan_remove`.
-pub(super) fn vfs_stop(error: &VfsError) -> FolderError {
-    if error.is_cancelled() {
-        FolderError::Cancelled
-    } else {
-        FolderError::InvalidRules(error.to_string())
     }
 }
 

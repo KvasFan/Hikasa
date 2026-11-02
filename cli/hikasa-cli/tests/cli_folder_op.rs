@@ -352,6 +352,59 @@ fn a6_16_a_folder_that_replaces_a_file_is_a_conflict() {
     assert_eq!(std::fs::read(s.join("r/n/in")).unwrap(), b"in");
 }
 
+/// Rule 6 through the CLI (p02 of the review): filters win, and a folder that was never listed asks as a row does.
+#[test]
+fn a6_15_rule6_filters_and_questions_through_the_cli() {
+    let filtered = |verb: &[&str]| {
+        let s = Sandbox::new();
+        s.file("l/d/x.txt", "x");
+        s.file("l/d/hidden.log", "k");
+        s.dir("r");
+        let mut args = verb.to_vec();
+        args.extend([
+            "--path",
+            "d",
+            "--filters",
+            "*.txt",
+            "--no-scan-orphans",
+            "--yes",
+        ]);
+        let out = op(&s, &args);
+        assert_eq!(code(&out), 0, "{verb:?} {}", stderr(&out));
+        s
+    };
+    let s = filtered(&["delete", "--side", "left"]);
+    assert!(s.join("l/d/hidden.log").exists());
+    assert!(!s.join("l/d/x.txt").exists());
+    let s = filtered(&["move", "--to", "right"]);
+    assert!(s.join("l/d/hidden.log").exists());
+    assert!(!s.join("r/d/hidden.log").exists());
+    assert!(s.join("r/d/x.txt").exists());
+    let s = filtered(&["copy", "--to", "right"]);
+    assert!(!s.join("r/d/hidden.log").exists());
+
+    let s = Sandbox::new();
+    s.file_at("l/p/d/a.txt", "new", 1_000_000);
+    s.file_at("r/p/d/a.txt", "newer work", 2_000_000);
+    common::set_mode(&s.join("r/p/d/a.txt"), 0o444);
+    let flags = ["--to", "right", "--path", "p", "--no-auto-scan"];
+    let mut dry = vec!["copy"];
+    dry.extend(flags);
+    dry.push("--dry-run");
+    let out = op(&s, &dry);
+    let text = stdout(&out);
+    #[cfg(unix)]
+    assert!(text.contains("[read_only,overwrite_newer]"), "{text}");
+    #[cfg(windows)]
+    assert!(text.contains("overwrite_newer"), "{text}");
+    let mut keep = vec!["copy"];
+    keep.extend(flags);
+    keep.extend(["--confirm", "no-to-all"]);
+    let out = op(&s, &keep);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/p/d/a.txt")).unwrap(), b"newer work");
+}
+
 /// A folder that cannot go is no reason for what follows it: a plan runs what it showed (p04 of the review).
 #[cfg(unix)]
 #[test]

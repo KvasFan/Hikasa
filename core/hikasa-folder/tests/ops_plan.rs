@@ -8,11 +8,15 @@ use hikasa_core::{
     CancelToken, CaseSensitivity, Ctl, ErrorKind, FileTime, RelPath, Side, Spec, Warning,
     WarningCode,
 };
-use hikasa_folder::ops::{FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides, Recycle, plan_op};
+use hikasa_folder::ops::{
+    ConfirmMode, ConfirmPolicy, Confirmation, Conflicts, FolderOp, OpPlan, OpScope, OpSettings,
+    ReadOnlySides, Recycle, plan_op,
+};
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{
-    CaseMode, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
-    FolderModel, FolderRules, NodeId, ScanStatus, TreeRead, compare_into,
+    CaseMode, Change, Cmp, DisplayOptions, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
+    FolderModel, FolderRules, FolderRulesPatch, NodeId, ScanStatus, SizeFilter, TreeRead,
+    compare_into,
 };
 use hikasa_vfs::ops::{
     self, Action, BackupPolicy, BackupStyle, Expect, ItemStamp, ItemStatus, LinkPolicy, OpReport,
@@ -544,10 +548,261 @@ fn a6_15_rule6_a_folder_not_scanned_is_spliced_and_only_it_is_listed() {
         ]
     );
     assert_eq!(*spy.seen.lock().unwrap(), ["/l/sub", "/l/sub/deep"]);
-    assert!(out.plan.items.iter().all(|item| item.expect.is_none()));
-    // Rows from the disk have no row, and their paths are the bases'.
-    assert!(out.meta.iter().all(|meta| meta.node.is_none()));
+    // What a listing saw is stamped as a row is.
+    assert!(out.plan.items.iter().all(|item| item.expect.is_some()));
+    // What lies below the row has no row, and its paths are the bases'.
+    assert_eq!(out.meta[0].node, Some(id(&cmp.read(), "sub")));
+    assert!(out.meta[1..].iter().all(|meta| meta.node.is_none()));
     assert_eq!(out.meta[3].path, "sub/x");
+}
+
+/// Rules that leave `sub` unlisted, and with `filter` a name filter.
+fn unlisted(filter: Option<&str>) -> FolderRules {
+    let mut rules = FolderRules::default();
+    rules.handling.auto_scan_subfolders = false;
+    rules.handling.scan_orphan_folders = false;
+    if let Some(text) = filter {
+        let patch = FolderRulesPatch {
+            name_filter: Some(text.to_owned()),
+            ..FolderRulesPatch::default()
+        };
+        rules.apply(&patch).unwrap();
+    }
+    rules
+}
+
+fn read_only_at(secs: i64) -> MemMeta {
+    MemMeta {
+        attrs: Some(Attrs::Unix {
+            meta: UnixMeta {
+                mode: 0o444,
+                uid: 0,
+                gid: 0,
+            },
+        }),
+        ..meta(secs)
+    }
+}
+
+/// Rule 6 asks what a scanned row asks, from what it listed.
+#[test]
+fn a6_15_rule6_conflicts_are_those_of_a_row() {
+    let vfs = memory();
+    file(&vfs, "/l/sub/deep/x", b"old", 10);
+    vfs.insert_file(&host("/r/sub/deep/x"), b"work".to_vec(), read_only_at(20))
+        .unwrap();
+    let rules = unlisted(None);
+    let cmp = compared(&vfs, &rules);
+    let at = |out: &OpPlan| {
+        let index = out
+            .meta
+            .iter()
+            .position(|meta| meta.path == "sub/deep/x")
+            .unwrap();
+        (out.plan.items[index].replaces, out.meta[index].conflicts)
+    };
+    let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
+    assert_eq!(at(&out), (true, Conflicts::READ_ONLY | Conflicts::OVERWRITE_NEWER));
+    let out = plan(&vfs, &cmp, &[("sub", L)], &MOVE_RIGHT);
+    assert_eq!(
+        at(&out),
+        (
+            true,
+            Conflicts::READ_ONLY | Conflicts::OVERWRITE_NEWER | Conflicts::REPLACE_DURING_MOVE
+        )
+    );
+    // No to all keeps the target, as a row's.
+    let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
+    let done = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::NoToAll)
+        .finish(out)
+        .unwrap();
+    let report = run(&vfs, done);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(read(&vfs, "/r/sub/deep/x").unwrap(), b"work");
+    // Rule 9: `newer` reads the rules' tolerance from the same two times.
+    let newer = FolderOp::Copy {
+        to: Side::Right,
+        overwrite: OverwritePolicy::Newer,
+    };
+    let out = plan(&vfs, &cmp, &[("sub", L)], &newer);
+    let index = out.meta.iter().position(|m| m.path == "sub/deep/x").unwrap();
+    assert_eq!(out.plan.items[index].skip, Some(SkipReason::NotNewer));
+}
+
+/// A folder in the place of a folder of rule 6, and a file: rule 8, as a row.
+#[test]
+fn a6_15_rule6_a_folder_onto_a_file_is_rule_8() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/l/sub/deep"), meta(10)).unwrap();
+    file(&vfs, "/l/sub/deep/x", b"1", 10);
+    file(&vfs, "/r/sub/deep", b"file", 20);
+    let cmp = compared(&vfs, &unlisted(None));
+    let out = plan(&vfs, &cmp, &[("sub", L)], &MOVE_RIGHT);
+    let index = out.meta.iter().position(|m| m.path == "sub/deep").unwrap();
+    assert!(out.plan.items[index].replaces);
+    assert_eq!(
+        out.meta[index].conflicts,
+        Conflicts::OVERWRITE_NEWER | Conflicts::REPLACE_DURING_MOVE
+    );
+    let fail = FolderOp::Copy {
+        to: Side::Right,
+        overwrite: OverwritePolicy::Fail,
+    };
+    let out = plan(&vfs, &cmp, &[("sub", L)], &fail);
+    let line = lines(&out);
+    assert!(
+        line.iter().any(|line| line.contains("!already_exists")),
+        "{line:?}"
+    );
+    assert!(!line.iter().any(|line| line.contains("/deep/x")), "{line:?}");
+}
+
+/// D-176: what the filters hide is not touched, and a folder goes as one only when nothing below it stays.
+#[test]
+fn a6_15_rule6_filters_win() {
+    let tree = || {
+        let vfs = memory();
+        file(&vfs, "/l/sub/seen.txt", b"1", 10);
+        file(&vfs, "/l/sub/hidden.log", b"2", 10);
+        file(&vfs, "/l/sub/clean/a.txt", b"3", 10);
+        vfs
+    };
+    let rules = unlisted(Some("*.txt"));
+    // A delete: no `remove_dir` of what stays, one of what does not.
+    let vfs = tree();
+    let cmp = compared(&vfs, &rules);
+    {
+        let read = cmp.read();
+        assert_eq!(
+            read.node(id(&read, "sub")).unwrap().scan,
+            ScanStatus::NotScanned
+        );
+    }
+    let out = plan(&vfs, &cmp, &[("sub", L)], &delete(L));
+    assert_eq!(
+        lines(&out),
+        [
+            "remove /l/sub/clean/a.txt @2",
+            "remove_dir /l/sub/clean @1",
+            "remove /l/sub/seen.txt @1",
+        ]
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok());
+    assert_eq!(read(&vfs, "/l/sub/hidden.log").unwrap(), b"2");
+    // The bin: one `trash` of what is whole, the rest item by item.
+    let vfs = tree();
+    let cmp = compared(&vfs, &rules);
+    let bin = FolderOp::Delete {
+        sides: L,
+        recycle: Recycle {
+            use_bin: true,
+            fallback: false,
+        },
+    };
+    let out = plan(&vfs, &cmp, &[("sub", L)], &bin);
+    assert_eq!(
+        lines(&out),
+        ["trash /l/sub/clean @1", "trash /l/sub/seen.txt @1"]
+    );
+    // A move: no `rename` of the folder, and the folder stays.
+    let vfs = tree();
+    let cmp = compared(&vfs, &rules);
+    let out = plan(&vfs, &cmp, &[("sub", L)], &MOVE_RIGHT);
+    assert_eq!(
+        lines(&out),
+        [
+            "create_dir /l/sub > /r/sub @0",
+            "create_dir /l/sub/clean > /r/sub/clean @1",
+            "move /l/sub/clean/a.txt > /r/sub/clean/a.txt @2",
+            "remove_dir /l/sub/clean @1",
+            "move /l/sub/seen.txt > /r/sub/seen.txt @1",
+        ]
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok());
+    assert_eq!(read(&vfs, "/l/sub/hidden.log").unwrap(), b"2");
+    assert!(read(&vfs, "/r/sub/hidden.log").is_none());
+    // A copy.
+    let vfs = tree();
+    let cmp = compared(&vfs, &rules);
+    let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
+    assert!(lines(&out).iter().all(|line| !line.contains("hidden.log")));
+}
+
+/// `--include-hidden` takes what filters hide, and with nothing left out a folder is one item again.
+#[test]
+fn a6_15_rule6_include_hidden_takes_all() {
+    let vfs = memory();
+    file(&vfs, "/l/sub/seen.txt", b"1", 10);
+    file(&vfs, "/l/sub/hidden.log", b"2", 10);
+    let cmp = compared(&vfs, &unlisted(Some("*.txt")));
+    let read_tree = cmp.read();
+    let mut with = scope(&read_tree, &[("sub", L)]);
+    with.include.hidden = true;
+    let out = plan_op(
+        &read_tree,
+        &vfs,
+        &with,
+        &MOVE_RIGHT,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!(lines(&out), ["rename /l/sub > /r/sub @0"]);
+}
+
+/// A filter on the side written keeps what stands there, as `skip filtered` keeps a row.
+#[test]
+fn a6_15_rule6_a_target_the_filters_hide_stays() {
+    let vfs = memory();
+    file(&vfs, "/l/sub/a.txt", b"small", 10);
+    file(&vfs, "/r/sub/a.txt", &[0; 4096], 10);
+    let mut rules = unlisted(None);
+    let patch = FolderRulesPatch {
+        size_filter: Some(Change::Set(SizeFilter {
+            cmp: Cmp::Less,
+            bytes: 1000,
+        })),
+        ..FolderRulesPatch::default()
+    };
+    rules.apply(&patch).unwrap();
+    let cmp = compared(&vfs, &rules);
+    let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
+    let line = lines(&out);
+    assert!(line.iter().any(|l| l.ends_with("!filtered")), "{line:?}");
+    assert!(!out.plan.items.iter().any(|item| item.replaces), "{line:?}");
+}
+
+/// What a listing saw is what runs: a file edited after the plan stays, with its folder, for a delete and a move.
+#[test]
+fn a6_15_rule6_items_are_stamped() {
+    for op in [delete(L), MOVE_RIGHT.clone()] {
+        let vfs = memory();
+        file(&vfs, "/l/sub/x", b"1", 10);
+        file(&vfs, "/l/sub/y", b"2", 10);
+        vfs.set_device(&host("/r"), 9);
+        let cmp = compared(&vfs, &unlisted(None));
+        let out = plan(&vfs, &cmp, &[("sub", L)], &op);
+        vfs.insert_file(&host("/l/sub/x"), b"edited".to_vec(), meta(30))
+            .unwrap();
+        let report = run(&vfs, out);
+        assert!(!report.ok(), "{:?}", report.results);
+        assert_eq!(report.summary.failed, 1);
+        assert_eq!(read(&vfs, "/l/sub/x").unwrap(), b"edited");
+        assert!(read(&vfs, "/l/sub/y").is_none());
+    }
+    // A replace: the target edited since is no target the plan saw.
+    let vfs = memory();
+    file(&vfs, "/l/sub/x", b"1", 10);
+    file(&vfs, "/r/sub/x", b"2", 5);
+    let cmp = compared(&vfs, &unlisted(None));
+    let out = plan(&vfs, &cmp, &[("sub", L)], &COPY_RIGHT);
+    vfs.insert_file(&host("/r/sub/x"), b"edited".to_vec(), meta(30))
+        .unwrap();
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 1);
+    assert_eq!(read(&vfs, "/r/sub/x").unwrap(), b"edited");
 }
 
 #[test]

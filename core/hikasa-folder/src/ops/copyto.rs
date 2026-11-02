@@ -5,13 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 
 use hikasa_core::{Side, Spec};
-use hikasa_vfs::ops::{self, Action, Expect, ItemStamp, OverwritePolicy, PlanItem, SkipReason};
+use hikasa_vfs::ops::{self, Action, OverwritePolicy, PlanItem, SkipReason};
 use hikasa_vfs::{Capabilities, EntryKind, FileName, FollowLinks, Vfs, VfsError};
 
 use super::ItemMeta;
 use super::PathStructure;
-use super::build::{Builder, Found, Open, Placed, Transfer, nothing_on, report, stamp_of_stat};
+use super::build::{Builder, Open, Placed, Transfer, found_of_stat, nothing_on, report};
 use super::conflict::Conflicts;
+use super::unlisted::Walk;
 use crate::error::FolderError;
 use crate::model::{NodeFlags, NodeId, ScanStatus};
 use crate::select::{Resolved, SideSet};
@@ -436,13 +437,7 @@ impl Builder<'_, '_> {
             None
         } else {
             match lstat(self.vfs, &target) {
-                Ok(found) => found.map(|stat| Found {
-                    kind: stat.kind,
-                    stamp: stamp_of_stat(&stat),
-                    attrs: stat.attrs,
-                    mtime: stat.mtime,
-                    row: None,
-                }),
+                Ok(found) => found.as_ref().map(found_of_stat),
                 Err(e) => {
                     self.fail_row(
                         id,
@@ -458,7 +453,7 @@ impl Builder<'_, '_> {
                 }
             }
         };
-        match self.kind_action(&view, &from, &target, None, tr.moving) {
+        match self.kind_action(view.kind, &from, &target, None, tr.moving) {
             Ok(action) => {
                 let placed = Placed {
                     id,
@@ -469,7 +464,7 @@ impl Builder<'_, '_> {
                     depth,
                     side: None,
                 };
-                self.place_file(placed, &view, action, tr);
+                self.place_file(placed, view.kind, action, tr);
             }
             Err(reason) => self.skip_row(id, kind, Some(from), target, depth, reason, None),
         }
@@ -499,8 +494,9 @@ impl Builder<'_, '_> {
             lstat(self.vfs, &target).map_err(|e| FolderError::InvalidRules(e.to_string()))?
         };
         if view.scan == ScanStatus::NotScanned {
-            self.expand_unlisted(tr, id, entry, &from, &target, depth)?;
-            self.relabel_outside();
+            let walk = Walk { tr, id, side: None };
+            let found = found.as_ref().map(found_of_stat);
+            self.expand_unlisted(walk, entry, &from, &target, found, depth)?;
             self.cover(id);
             return Ok(());
         }
@@ -517,18 +513,7 @@ impl Builder<'_, '_> {
             return Ok(());
         }
         if tr.moving && whole && found.is_none() && self.can_rename(&from, &target) {
-            let mut item =
-                PlanItem::planned(Action::Rename, EntryKind::Dir, Some(from), target, depth);
-            item.expect = Some(Expect {
-                source: Some(ItemStamp {
-                    kind: EntryKind::Dir,
-                    size: None,
-                    mtime: None,
-                }),
-                target: None,
-            });
-            let meta = self.meta_of(id, None);
-            self.push(item, meta);
+            self.push_folder_rename(id, from, target, depth, None);
             self.cover(id);
             return Ok(());
         }
@@ -538,13 +523,7 @@ impl Builder<'_, '_> {
                 below.folders.entry(key).or_insert(None);
             }
             _ => {
-                let found = found.map(|stat| Found {
-                    kind: stat.kind,
-                    stamp: stamp_of_stat(&stat),
-                    attrs: stat.attrs,
-                    mtime: stat.mtime,
-                    row: None,
-                });
+                let found = found.as_ref().map(found_of_stat);
                 if let Entry::Vacant(slot) = below.folders.entry(key) {
                     slot.insert(Some(depth));
                     let placed = Placed {
@@ -579,15 +558,5 @@ impl Builder<'_, '_> {
             });
         }
         Ok(())
-    }
-
-    /// Spliced items of a target outside the bases have no side.
-    fn relabel_outside(&mut self) {
-        for meta in self.meta.iter_mut().rev() {
-            if meta.node.is_some() || meta.side.is_none() {
-                break;
-            }
-            meta.side = None;
-        }
     }
 }

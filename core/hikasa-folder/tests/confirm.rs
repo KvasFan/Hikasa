@@ -761,6 +761,120 @@ fn a6_17_with_fallback_the_report_shows_remove_items_and_one_warning() {
     assert!(read(&vfs, "/l/f").is_none());
 }
 
+/// §1.6.12: the fallback deletes what the plan saw. A file that came since is no item, stays, and keeps its folder.
+#[test]
+fn a6_17_the_fallback_deletes_only_what_the_plan_saw() {
+    let vfs = memory();
+    file(&vfs, "/l/d/x", b"1", meta(10));
+    let cmp = compared(&vfs, &FolderRules::default());
+    let recycle = Recycle {
+        use_bin: true,
+        fallback: true,
+    };
+    let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
+    assert_eq!(out.plan.items.len(), 1);
+    assert_eq!(out.plan.items[0].fallback.len(), 2);
+    assert!(out.plan.items[0].fallback.iter().all(|i| i.expect.is_some()));
+    file(&vfs, "/l/d/precious", b"new work", meta(20));
+    vfs.inject(Fault {
+        path: host("/l/d"),
+        op: VfsOp::Trash,
+        kind: ErrorKind::Unsupported,
+    });
+    let report = run(&vfs, out);
+    assert!(!report.ok(), "{:?}", report.results);
+    assert_eq!(report.summary.failed, 1, "{:?}", report.results);
+    assert_eq!(read(&vfs, "/l/d/precious").unwrap(), b"new work");
+    assert!(read(&vfs, "/l/d/x").is_none());
+}
+
+/// A file edited since the plan is no file the plan saw: its stamp keeps it, and its folder.
+#[test]
+fn a6_17_the_fallback_goes_by_the_stamp() {
+    let recycle = Recycle {
+        use_bin: true,
+        fallback: true,
+    };
+    let vfs = memory();
+    file(&vfs, "/l/f", b"1", meta(10));
+    file(&vfs, "/l/d/x", b"1", meta(10));
+    let cmp = compared(&vfs, &FolderRules::default());
+    let out = plan(&vfs, &cmp, &[("d", L), ("f", L)], &delete(L, recycle));
+    file(&vfs, "/l/d/x", b"edited", meta(30));
+    for path in ["/l/d", "/l/f"] {
+        vfs.inject(Fault {
+            path: host(path),
+            op: VfsOp::Trash,
+            kind: ErrorKind::Unsupported,
+        });
+    }
+    let report = run(&vfs, out);
+    assert!(!report.ok());
+    assert_eq!(read(&vfs, "/l/d/x").unwrap(), b"edited");
+    assert!(read(&vfs, "/l/f").is_none());
+    // A trash with nothing stamped below it deletes nothing: a plan read back has no fallback to run.
+    let vfs = memory();
+    file(&vfs, "/l/d/x", b"1", meta(10));
+    let cmp = compared(&vfs, &FolderRules::default());
+    let mut out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
+    out.plan.items[0].fallback.clear();
+    vfs.inject(Fault {
+        path: host("/l/d"),
+        op: VfsOp::Trash,
+        kind: ErrorKind::Unsupported,
+    });
+    let report = run(&vfs, out);
+    assert_eq!(report.results[0].status, ItemStatus::Failed);
+    assert_eq!(read(&vfs, "/l/d/x").unwrap(), b"1");
+}
+
+/// A folder the model never listed: the listing at planning is all the fallback may take.
+#[test]
+fn a6_17_the_fallback_of_an_unlisted_folder() {
+    let vfs = memory();
+    file(&vfs, "/l/d/x", b"1", meta(10));
+    let mut rules = FolderRules::default();
+    rules.handling.scan_orphan_folders = false;
+    let cmp = compared(&vfs, &rules);
+    let recycle = Recycle {
+        use_bin: true,
+        fallback: true,
+    };
+    let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, recycle));
+    assert_eq!(out.plan.items.len(), 1);
+    assert_eq!(out.plan.items[0].action, Action::Trash);
+    file(&vfs, "/l/d/precious", b"new", meta(20));
+    vfs.inject(Fault {
+        path: host("/l/d"),
+        op: VfsOp::Trash,
+        kind: ErrorKind::Unsupported,
+    });
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 1, "{:?}", report.results);
+    assert_eq!(read(&vfs, "/l/d/precious").unwrap(), b"new");
+}
+
+/// One `trash` of a folder asks for what the model knows below it, and the listing of rule 6 knows as much.
+#[test]
+fn a6_16_one_trash_asks_for_what_lies_below_it() {
+    for scanned in [true, false] {
+        let vfs = memory();
+        file(&vfs, "/l/d/sub/x", b"1", unix(10, 0o444));
+        let mut rules = FolderRules::default();
+        rules.handling.scan_orphan_folders = scanned;
+        let cmp = compared(&vfs, &rules);
+        let out = plan(&vfs, &cmp, &[("d", L)], &delete(L, bin()));
+        assert_eq!(out.plan.items.len(), 1, "{:?}", out.plan.items);
+        assert_eq!(out.plan.items[0].action, Action::Trash);
+        assert_eq!(out.meta[0].conflicts, Conflicts::READ_ONLY);
+        let done = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::NoToAll)
+            .finish(out)
+            .unwrap();
+        assert_eq!(run(&vfs, done).results[0].skip, Some(SkipReason::Declined));
+        assert_eq!(vfs.trashed(), Vec::<String>::new());
+    }
+}
+
 #[test]
 fn a6_17_a_gone_item_never_falls_back() {
     let vfs = memory();
