@@ -131,6 +131,25 @@ next to that file) and the link itself stays. A target that is not a regular fil
 FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
 to directly, which cannot be atomic.
 
+**Durability (M2 W6, D-164).** What a sync protects differs by case, so the case decides. A new target of a copy is not
+synced: it is written under a temporary name with its time and mode and then renamed, so it never shows under its name
+with a wrong time or mode. A replaced target syncs the file. A move syncs file and folder, because a source is removed on
+the strength of the copy. Saves, settings and archive rebuilds stay as they were. **A power cut just after a copy can lose
+files the copy created; it can never lose a file that existed**, and no source is removed before its copy is on disk.
+
+**Batches, the fence, backups (M2 W6, D-162…D-168).** A folder operation or a sync is one plan of kind `batch`, executed
+once, so an archive is rebuilt and backed up once. Items carry what the plan saw: a file changed since then is refused,
+`changed since the plan was made`, and the others go on. The fence refuses at execution, again, any removal or source
+outside the base folders, and with `writes` any target; a base itself is never removed. `exchange` copies both sides
+first, so neither can be lost at any step; with an archive, the rename on disk comes last, after the rebuild.
+A backup keeps what a copy or move replaces: the old file is renamed to its backup just before the commit and back if the
+commit fails, on another disk it is copied first, and a failed backup fails the item with the target in place. Removes
+are not backed up: they have the recycle bin. An archive has one backup of its outermost file per operation.
+
+**Extraction for programs (D-186).** `ArchiveVfs::extract_to_cache` gives a member a real path, `s<n>/x<k>/<safe name>` in
+the session's cache: the member's name where it is safe on every platform, else `member` with its extension. The file is
+read-only, stays until the session ends, and an edit is not written back.
+
 **Mutations (M2 W3, D-92…D-98).** Every back-end implements single-item primitives —
 `create_dir`, `remove` (a file, a link or an empty folder), `rename` (within one back-end),
 `set_times` (modification time; creation time on Windows and macOS; never the access time),

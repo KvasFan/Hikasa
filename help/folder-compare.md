@@ -15,6 +15,14 @@ default it shows the differences with the folder structure; the [exit code](topi
 - `--rules-file <toml>` loads folder rules; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`,
   `--case-sensitive`, `--case-insensitive`, `--cutoff`, `--size-filter`, `--include-protected`.
 
+- `--attrib-filter <expr>` hides regular files by DOS attribute (`+rh-s`), `--unixtype-filter <expr>` hides anything but
+  folders by Unix type, `b c l p r s` (`-lp`); `none` turns either off.
+- `--no-auto-scan` scans only the bases, and the orphan folders in a base with their subtrees. A folder pair not scanned
+  is unknown, so the verdict is incomplete. `--expand-on-load` and `--expand-differences` say what a view opens.
+- `--ignored <path>` marks a row and all below it, `!<path>` is an exception; the longest path decides. A difference
+  there counts as same in the verdict, the exit code and the statistics; an error stays an error.
+- `--format-on <id>` and `--format-off <id>` turn a file format on or off for this comparison.
+
 ## What is shown
 
 - `--display <filter>` (default `differences`), `--folders always|structure|files-only`,

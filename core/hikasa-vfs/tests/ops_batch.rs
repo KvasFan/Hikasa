@@ -1497,3 +1497,49 @@ fn a6_3_copy_on_disk_keeps_the_result() {
     assert_eq!(copied, ft(1_000));
     assert_eq!(read_to_vec(vfs.open_read(&target).unwrap()), b"bytes");
 }
+
+/// `R` is set after the rename, a creation time on the handle (A6.3). Wine keeps neither time nor rename as Windows does,
+/// so the time waits for the real thing there (§6.6).
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a6_3_read_only_and_created_on_disk() {
+    let disk = tempfile::tempdir().unwrap();
+    let root = disk.path().canonicalize().unwrap();
+    let (source, target) = (root.join("s"), root.join("t"));
+    std::fs::write(&source, b"bytes").unwrap();
+    let vfs = LocalVfs::default();
+    let spec = common::lspec(&source);
+    if cfg!(windows) {
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&source, permissions).unwrap();
+    }
+    let wine = std::env::var_os("WINEPREFIX").is_some();
+    if !wine {
+        vfs.set_times(
+            &spec,
+            &SetTimes {
+                modified: Some(ft(2_000_000)),
+                created: Some(ft(1_000_000)),
+            },
+        )
+        .unwrap();
+    }
+    let options = CopyOptions {
+        preserve: Preserve {
+            created: true,
+            ..Preserve::default()
+        },
+        ..CopyOptions::default()
+    };
+    let pairs = [(spec, common::lspec_new(&target))];
+    let plan = ops::plan_copy(&vfs, &vfs, &pairs, &options, &Ctl::detached()).unwrap();
+    let report = ops::execute(&vfs, &vfs, plan, &Ctl::detached());
+    assert!(report.ok(), "{:?}", report.results);
+    let made = std::fs::metadata(&target).unwrap();
+    assert_eq!(made.permissions().readonly(), cfg!(windows));
+    if !wine {
+        let entry = vfs.stat(&pairs[0].1, FollowLinks::No).unwrap();
+        assert_eq!(entry.ctime, Some(ft(1_000_000)));
+    }
+}

@@ -4952,6 +4952,80 @@ run in the pre-merge CI (§6.6 rules).
 *To be written by each part*, as §1.5.19: every point where the implementation interpreted or extended the text above,
 numbered per part.
 
+**W6a.** Where the implementation interpreted or extended §1.6.2–§1.6.8 and §1.6.18, and why.
+
+1. **Exchange with an archive, the other way round.** §1.6.2 defers step 4 only. That is right when `target` is the member.
+   With `source` the member and `target` the plain file, step 3 would replace the file on disk before the rebuild, and a
+   failed rebuild would lose it. So the rename **on disk** comes last in either direction: the member's rename runs in the
+   overlay, the disk's joins `exec.deferred`. After a cancellation, an exchange whose rebuild went through still runs its
+   last rename, as "after step 3 the item runs to its end" asks.
+2. **`execute_with` refuses two archives too.** The builder's item error is W6b; a hand-built plan gets `unsupported` from
+   `run_exchange`, for the reason §1.6.2 gives.
+3. **Clear read-only.** `clear_read_only` forces the stream path, so `R` goes just before `commit` and comes back if the
+   commit fails. `exchange` clears both sides before step 3: a read-only left side would otherwise fail step 4 on Windows,
+   the one step that leaves a hidden copy behind. `run_rename` clears a replaced target; `link` and `create_dir` clear it
+   before the item goes aside.
+4. **A stamp reads once.** `Seen` carries the two `lstat`s into the action. `run_copy` also keeps the source entry for the
+   metadata step, so a copy reads the source once, where W3 read it twice; the metadata is what was seen before the
+   content. A source changed in between gets its copy with the older time, which a later comparison shows.
+5. **The fence runs before `Roots::touch`,** so a refused item opens no archive. It is step 2 all the same: nothing between
+   them looks at the item. Keys of the bases are built once per execution, as an item would otherwise fold each base.
+6. **`within` of an archive file.** `Spec::parent` of an archive's root skips the file, so a base given as the file
+   (`/a/b.zip`, not `/a/b.zip/`) would never hold its members. `within` compares that file too. The root of an archive is
+   not below its own file: it is the same thing.
+7. **The fence and a base as a write target.** "Every target" is literal: with `writes`, a `keep_dir` or `touch` of a base
+   itself is refused. W6b's builder must not plan one.
+8. **`copy_new_file`'s temporary file is not locked.** `create_temp`'s `try_lock` and `still_named` cost a tenth of the
+   path, and exist so that a rebuild's `reap` can tell a live writer: `reap` looks only beside an existing target, and this
+   target does not exist. It keeps the names of `create_temp`. A rename that loses a race with a creator is §1.6.3's window.
+9. **`copy_new_file` needs one back-end and no `create_parents`:** a root of `cp --parents` takes the next path, with the same
+   durability. An `mtime` a `SystemTime` cannot hold answers `Ok(None)`, for `filetime` to try.
+10. **Backups.** `BackupNames` is additive: it is W6b's call for "names are final at planning", with the numbering and the
+    `is_a_directory` of a folder at the name, and A6.6 tests it here. `BackupPolicy::target` numbers a name that would be the
+    item itself (`abc.bak` with `stem_bak` gives `abc-2.bak`), or the rename would lose the file. With `--no-preserve` the
+    target keeps its mode across a backup by a `set_attrs` after the commit: the writer finds no old file to copy it from.
+    `write_backup` of a link goes through a temporary sibling, to be atomic. `replace_with` without `RENAME` takes
+    `write_backup` first. Its old backup is replaced only once the new item stands.
+11. **`trash_fallback` is a field only.** Its execution is §1.6.12, W6b, with `WarningCode::TrashFallback`.
+12. **`extract_to_cache`.** A name over 255 bytes does not fit one path component, so it counts as unsafe. The reservation
+    may pass `cache_max` by what readers hold, or a zip member over half the limit could not be extracted while its own spool
+    is open; the limit stands again when the reader lets go (`Cache::trim`), and only spools can be evicted for it. A sweep
+    clears `R` in `x*` folders of a dead session.
+13. **`Entry::special` inside a batch.** `Overlay::entry` does not carry it, so a device member reads `None` while a batch is
+    open. Nothing filters there.
+14. **`attrib` text** is written in lower case, `+hr-s`, and read in any case, as `parse_letters`. `unix_type` letters are
+    lower case only, as the contract lists them.
+15. **`handling` keys are skipped when they hold their default,** as `ignored` and `format_overrides`, so `to_toml` of old
+    rules, session files and goldens stay byte for byte.
+16. **A `NotScanned` orphan stays an orphan** (M1's `--no-scan-orphans`); only a pair is Unknown. A child orphan of a refreshed
+    pair stays `NotScanned` with auto-scan off: "directly in a base" holds there too.
+17. **`--expand-differences` works alone,** as *only expand subfolders with differences* would; it needs no `--expand-on-load`.
+18. **`FolderStats::ignored`** counts rows whose category the mark changed, and is left out of JSON at 0. It walks the tree when
+    there are marks (O(nodes)) and is 0 without: a counter would have to follow every content result for a figure only a
+    statistics dialog shows. Marks are placed in `Scan::insert`, not `plan_pair`: that is where a parent's path is known,
+    once per folder.
+19. **Modules.** `refresh.rs` and `content.rs` are `scan/refresh.rs`, `scan/content.rs`: they need the scanner's private types,
+    and the architecture test bans `#[path]`.
+20. **Ids no longer rise from parent to child.** A kept folder moved to the tail stands above its children, so INV-FOLDER-1
+    loses "parent is older" for "every live node is reachable once", and `canonical::build`, the recounts and the reference
+    rows walk `Store::post_order`.
+21. **A kept row keeps its old record whole;** a kept folder's own time is not updated, as `to_canonical` has none. A row
+    `CONTENT_PENDING`, or a folder left `NotScanned` that a scan would enter, is not kept, so a second refresh repairs a
+    cancelled one. An opened archive whose `mtime` moved counts as changed (*a new stamp below one*).
+22. **Refresh and followed links.** A folder followed through a link is one folder at two paths, and a refresh lists the one it
+    is asked for. P-REFRESH runs without following; §1.6.4 rule 1 keeps operations from writing through them.
+23. **A refresh of a `NotScanned` folder opens it,** by §1.6.7, so a refreshed tree can hold more than a fresh one with auto-scan
+    off. P-REFRESH refreshes scanned folders only.
+24. **On-demand tests leave the state alone until the outcome.** `CONTENT_PENDING` is set and cleared, the stored state stays,
+    so a cancelled run has nothing to restore. `apply_content` also clears `CONTENT_SKIPPED` and `DiffFlags::CONTENT`, or a
+    repeated test would keep a difference it no longer finds. A run claims the model like a refresh: `RefreshBusy`.
+25. **"Visible contents" of `compare_contents`** is, until W6b's `select::resolve`, every file pair below a folder with neither
+    side hidden. W6b should route it through that one definition.
+26. **`compute_crcs` runs in sequence on the calling thread.** It is one read per side, and a back-end's CRC needs no read.
+27. **D-164's figure.** At the `ops` level, stamped batch with fence against the plain copy of §1.6.22: **1.48 ×** (363.6 ms
+    against 244.9 ms, median of three, release build, `/var/tmp`, 10,000 files of 4 KiB in 100 folders;
+    `core/hikasa-vfs/tests/perf_copy.rs`). G7 is W6c's, through the Service.
+
 ### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

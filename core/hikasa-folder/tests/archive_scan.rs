@@ -86,8 +86,14 @@ fn zip_raw_with(entries: &[(&str, &Vec<u8>)]) -> Vec<u8> {
 }
 
 fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let typed: Vec<(&str, &[u8], u8)> = entries.iter().map(|(n, d)| (*n, *d, b'0')).collect();
+    tar_typed(&typed)
+}
+
+/// A tar of `(name, data, type flag)`.
+fn tar_typed(entries: &[(&str, &[u8], u8)]) -> Vec<u8> {
     let mut out = Vec::new();
-    for (name, data) in entries {
+    for (name, data, flag) in entries {
         let mut block = [0u8; 512];
         block[..name.len()].copy_from_slice(name.as_bytes());
         block[100..108].copy_from_slice(b"0000644\0");
@@ -95,7 +101,7 @@ fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         block[116..124].copy_from_slice(b"0000000\0");
         block[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
         block[136..148].copy_from_slice(format!("{:011o}\0", 1_790_000_000).as_bytes());
-        block[156] = b'0';
+        block[156] = *flag;
         block[257..263].copy_from_slice(b"ustar\0");
         block[263..265].copy_from_slice(b"00");
         block[148..156].fill(b' ');
@@ -801,4 +807,36 @@ fn a6_12_a_zip_crc_is_not_read() {
     });
     assert_eq!(results[0].2.as_ref().copied().unwrap(), crc32(b"one"));
     assert_eq!(world.vfs.counters(), before, "nothing decoded");
+}
+
+/// A6.7: tar devices are known by their type flags, through `ArchiveVfs`.
+#[test]
+fn a6_7_tar_devices() {
+    let world = world();
+    let entries: [(&str, &[u8], u8); 4] = [
+        ("char", b"", b'3'),
+        ("block", b"", b'4'),
+        ("fifo", b"", b'6'),
+        ("file", b"x", b'0'),
+    ];
+    world.put("/l/a.tar", &tar_typed(&entries));
+    world.put("/r/a.tar", &tar_typed(&entries));
+    let root = |path: &str| Spec::archive_member(mspec(path), "");
+    let hidden = |text: &str| {
+        let mut rules = FolderRules::default();
+        rules.filters.other.unix_type = Some(hikasa_folder::UnixTypeFilter::parse(text).unwrap());
+        let cmp = world.compare(root("/l/a.tar"), root("/r/a.tar"), &rules);
+        let read = cmp.read();
+        let mut names: Vec<String> = read
+            .children(NodeId::ROOT)
+            .filter(|&id| read.node(id).unwrap().state == CompareState::Filtered)
+            .map(|id| read.path(id).as_str().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(hidden("-c"), ["char"]);
+    assert_eq!(hidden("-b"), ["block"]);
+    assert_eq!(hidden("-p"), ["fifo"]);
+    assert_eq!(hidden("+r"), ["block", "char", "fifo"]);
 }

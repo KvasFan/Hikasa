@@ -486,3 +486,7 @@ P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog fram
 
 *M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
 the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.
+
+**Folder rules added in M2 W6 (sparse, schema version unchanged).** `[rules.filters.other] attrib = "+rh-s"`, `unix_type = "-lp"`
+(`false` is off); `[rules.handling] auto_scan_subfolders`, `expand_on_load`, `expand_differences_only`; `ignored`, a list of
+base-relative paths with `!path` exceptions (FC-033); `[rules.format_overrides]`, format id → enabled (FF-002).

@@ -349,6 +349,81 @@ fn a6_11_cancel_leaves_it_incomplete() {
     assert_eq!(cmp.verdict(false), hikasa_core::CompareVerdict::Incomplete);
 }
 
+/// A back-end that cancels at the n-th `list`.
+struct CancelAtList<'a> {
+    inner: &'a dyn Vfs,
+    token: &'a CancelToken,
+    left: Mutex<u32>,
+}
+
+impl Vfs for CancelAtList<'_> {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        let listing = self.inner.list(dir, opts, cancel);
+        let mut left = self.left.lock().unwrap();
+        *left = left.saturating_sub(1);
+        if *left == 0 {
+            self.token.cancel();
+        }
+        listing
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+}
+
+/// Cancel at the second folder: the first holds what it found, the rest what it had.
+#[test]
+fn a6_11_cancel_at_the_nth_folder() {
+    let vfs = tree();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let (a, b) = (id(&cmp, "a"), id(&cmp, "b"));
+    let cancel = CancelToken::new();
+    let wrapper = CancelAtList {
+        inner: &vfs,
+        token: &cancel,
+        left: Mutex::new(3),
+    };
+    let engines = engines(1 << 30);
+    file(&vfs, "/l/a/new", b"n", 10);
+    file(&vfs, "/l/b/new", b"n", 10);
+    let report = with_env(&wrapper, &engines, &cancel, |env| {
+        refresh_into(cmp.model(), &[a, b], env).unwrap()
+    });
+    assert!(!report.complete);
+    assert_eq!(report.folders, 1);
+    check_tree_invariants(&cmp.read()).unwrap();
+    assert!(!cmp.read().is_complete());
+    assert_eq!(cmp.verdict(false), hikasa_core::CompareVerdict::Incomplete);
+    let read = cmp.read();
+    let found = |path: &str| read.node_at(&RelPath::parse(path).unwrap()).is_some();
+    assert_eq!(
+        found("a/new"),
+        !found("b/new"),
+        "one of the two folders ran"
+    );
+}
+
 /// `RefreshFlat`, and `RefreshBusy` for a model still scanning.
 #[test]
 fn a6_11_flat_and_busy() {

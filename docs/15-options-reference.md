@@ -192,7 +192,7 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-007 | P0 | `[next_difference] show_message_panel` | bool | true |
 | OPT-008 | P0 | `[backups] back_up_before_copy` | bool | false |
 | OPT-008 | P0 | `[backups] back_up_before_save` | bool | true |
-| OPT-008 | P0 | `[backups] naming` | enum `name_tilde` (`abc.txt~`), `stem_tilde` (`abc~.txt`), `name_bak` (`abc.txt.bak`), `tilde_name` (`~abc.txt`), `stem_bak` (`abc.bak`), `stem_bak_ext` (`abc.bak.txt`), `folder` (`abc.txt` in `folder`) | `name_bak` |
+| OPT-008 | P0 | `[backups] naming` | enum `name_tilde` (`abc.txt~`), `stem_tilde` (`abc~.txt`), `name_bak` (`abc.txt.bak`), `tilde_name` (`~abc.txt`), `stem_bak` (`abc.bak`), `stem_bak_ext` (`abc.bak.txt`), `folder` (`<folder>/<path below the base>/abc.txt`: the path is kept, so `a/x.txt` and `b/x.txt` keep their own) | `name_bak` |
 | OPT-008 | P0 | `[backups] folder` | path (used by `naming = "folder"`; created on demand) | `""` |
 | OPT-009 | P0 | `[file_operations] confirm_copy`, `confirm_move`, `confirm_read_only`, `confirm_system`, `confirm_overwrite_newer`, `confirm_replace_during_move`, `confirm_delete`, `confirm_merge` | bool | true |
 | OPT-009 | P0 | `[file_operations] confirm_content_compare`, `require_side_selection_in_delete` | bool | false |

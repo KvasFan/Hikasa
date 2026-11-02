@@ -579,10 +579,16 @@ fn format_on_and_off() {
     let s = Sandbox::new();
     s.file("a/x.c", "int a; // one\n");
     s.file("b/x.c", "int a; // two\n");
-    let rules = ["--content", "rules", "--ignore-unimportant"];
+    let rules = [
+        "--content",
+        "rules",
+        "--unimportant",
+        "Comment",
+        "--ignore-unimportant",
+    ];
     assert_eq!(
         code(&compare(&s, &rules)),
-        0,
+        2,
         "a comment is unimportant in C"
     );
     let mut off = rules.to_vec();

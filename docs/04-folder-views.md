@@ -181,6 +181,9 @@ Tests that require reading files:
   selected), the centre column shows the content-comparison result icon when a
   content test ran (binary same, binary different, rules same, similar/unimportant,
   important difference) and the comparison direction arrows.
+- **FC-012, M2 (D-170).** `auto_scan_subfolders` off scans the bases, and with `scan_orphan_folders` the orphan folders
+  directly in a base with their subtrees. A folder pair not scanned is unknown, so the verdict is `incomplete`; a refresh of
+  it scans it. `expand_on_load` and `expand_differences_only` change no result.
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
   (persisted in the session).
 
@@ -204,6 +207,11 @@ Tests that require reading files:
 
 ## 5. Columns
 
+- **FC-029 (b, c), FC-040 on demand (D-174).** `compare_contents` and `compute_crcs` run on rows of a finished comparison,
+  on the same engines and budget as a scan, and update it in place; a repeated test counts once, a cancelled one leaves the
+  old state. A child view's result applies only while the pair's size and time hold.
+- **Refresh (D-173).** A refresh lists one folder level and goes down only where a row changed. Rows with equal facts keep
+  their content result and CRC; an Ignored mark and FC-054's rules hold as in a scan. It equals a fresh comparison.
 - **FC-040** (P0): Columns per side: Name, Ext, Size (folder size = sum once scanned),
   Modified, Attributes (DOS letters `A C D E H I L M N O P R S T U Z` or Unix mode
   `-rwxr-xr-x`), CRC (computed on demand), Version (executables), Owner, Group,
@@ -283,6 +291,12 @@ tables are in `design/m1-contracts.md` §2.2 and §2.3.
   folder is always included; its files are subject to the file masks only.
 
 ### 6.2 Other filters
+
+**Attribute and Unix-type filters (plan A5, D-169).** `attrib` tests DOS attributes on regular files: `+rh-s` keeps a file
+that has R and H and not S; on a back-end without DOS attributes it has no effect, with one `capability_missing` warning
+per side. `unix_type` tests everything but folders by the letters `b c l p r s`: `+p` shows only FIFOs, `-lp` hides links
+and FIFOs; a followed link is its target's type, and an item whose type is unknown matches no letter. A folder is never
+hidden by either, or its subtree would vanish.
 
 - **FC-053** (P1): Rules ▸ Other Filters: list of items — *date modified* (older/newer
   than; absolute date-time or N days ago relative to midnight), *size* (smaller/larger

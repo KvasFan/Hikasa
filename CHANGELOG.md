@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+- **`folder compare` flags.** `--attrib-filter` and `--unixtype-filter` hide items by DOS attribute and by Unix type;
+  `--no-auto-scan` scans only the bases, and the orphan folders in a base with their subtrees; `--expand-on-load` and
+  `--expand-differences` say what a view opens; `--ignored <PATH>` (with `!<PATH>` for an exception) marks rows whose
+  differences count as same, while errors stay; `--format-on` and `--format-off` turn a file format on or off for one
+  comparison. Rules files take the same keys, and old ones read as before.
+
+### Changed
+- **A new copy no longer syncs to disk.** `vfs cp`, and every copy that creates its target, writes a file with its final
+  time and mode under a temporary name and renames it. Copying 10,000 small files took 26 times a plain copy, and now takes
+  about 1.5 times. A power cut just after a copy can lose files the copy created; it can never lose a file that existed. A copy that replaces still
+  syncs the file, and a move still syncs file and folder, because a source goes on the strength of its copy.
+
+### Internal
+- `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder
+  operations of the next parts, with subtree refresh, contents on demand and `ArchiveVfs::extract_to_cache`; no command
+  reaches them yet.
+
 ## 0.1.91 (2026-11-01, pre-release)
 
 ### Added

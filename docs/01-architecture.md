@@ -147,6 +147,8 @@ enum Spec {
 
 ### 3.2 VFS (hikasa-vfs)
 
+`WriteOptions::durability` (M2 W6, D-164) says what a commit syncs: `Full` (the file, then the folder after the rename), `FileOnly`, or `None`, for a new file nothing depends on yet.
+
 ```
 trait Vfs {
     fn stat(&self, spec:&Spec) -> Result<Entry>;
@@ -176,6 +178,7 @@ trait Vfs {
     fn create_symlink(&self, spec:&Spec, target:&OsStr, target_is_dir:bool) -> Result<()>;
     fn move_to_trash(&self, spec:&Spec) -> Result<()>;           // never a permanent delete
     fn copy_file_fast(&self, from:&Spec, to:&Spec, ..) -> Result<Option<u64>>;  // optional fast path
+    fn copy_new_file(&self, from:&Spec, to:&Spec, meta:&HandleMeta, cancel) -> Result<Option<u64>>;  // a new file, final on its handle (M2 W6, D-164)
 }
 struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttrs|UnixMode, owner, group, link_target, crc32: Option<u32>, version: Option<VersionInfo> }
 ```
