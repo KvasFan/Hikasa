@@ -83,7 +83,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
 | a signal-handling crate | M2: `ctrlc` (D-159), see the M2 table below. In M1 Ctrl-C terminated the CLI, and every `--output` file is written atomically. A cancelled comparison now ends with exit 100 before it renders, so `--output` keeps the report it had. |
-| `tempfile` (dev-only) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). |
+| `tempfile` (dev-only, but for one call) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). `hikasa-vfs` calls `TempPath::persist_noclobber` alone, in `local/mod.rs`: a rename that never replaces has no safe spelling in std, and `unsafe` stays in `mmap.rs`. It holds `renameat2`, `renamex_np` and `MoveFileExW`, with a hard link where a file system has none. |
 
 Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
 uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (one LCS implementation,

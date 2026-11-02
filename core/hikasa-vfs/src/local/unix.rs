@@ -116,6 +116,11 @@ pub(super) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
 }
 
+/// [`super::rename_new`]'s call: nothing to wait for here.
+pub(super) fn persist_new(from: &Path, to: &Path) -> io::Result<()> {
+    super::persist_new(from, to)
+}
+
 /// The handle stays open through a rename: nothing here keeps an open file from being renamed.
 pub(super) fn hold_through_rename(file: File) -> Option<File> {
     Some(file)

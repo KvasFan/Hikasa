@@ -104,6 +104,11 @@ pub(super) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     past_others(|| fs::rename(from, to))
 }
 
+/// [`super::rename_new`]'s call, past a scanner or an indexer.
+pub(super) fn persist_new(from: &Path, to: &Path) -> io::Result<()> {
+    past_others(|| super::persist_new(from, to))
+}
+
 /// The handle closes before the rename: a rename needs every handle to share deletion, and not all paths here can
 /// promise that of a file another program opened.
 pub(super) fn hold_through_rename(_file: std::fs::File) -> Option<std::fs::File> {

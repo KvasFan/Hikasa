@@ -1289,8 +1289,9 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "lzma-rust2",
             "zstd",
             "jiff",
+            "tempfile",
         ],
-        &["tempfile", "proptest", "pretty_assertions", "criterion"],
+        &["proptest", "pretty_assertions", "criterion"],
     ),
     (
         "hikasa-diff",

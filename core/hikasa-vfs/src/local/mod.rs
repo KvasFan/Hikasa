@@ -15,7 +15,7 @@
 //!   target on every platform.
 //! - **Atomic writes** (SES-053, INV-VFS-3) go to a temporary file in the target's folder, created with
 //!   `create_new` (`.<name>.hikasa-tmp[-N]`); `commit` flushes, syncs and renames it onto the target (with
-//!   `overwrite = false` through a hard link, which fails atomically when the target exists); dropping the
+//!   `overwrite = false` a rename that never replaces, see [`rename_new`]); dropping the
 //!   writer removes the temporary file. Its writer keeps it locked and owner-only until the rename, when it gets the
 //!   mode it will have (`lock`). A target that is a symbolic link is resolved first: the file the link
 //!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
@@ -86,6 +86,9 @@ mod platform {
     }
     pub(super) fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::rename(from, to)
+    }
+    pub(super) fn persist_new(from: &Path, to: &Path) -> std::io::Result<()> {
+        super::persist_new(from, to)
     }
     pub(super) fn hold_through_rename(file: std::fs::File) -> Option<std::fs::File> {
         Some(file)
@@ -731,9 +734,10 @@ impl Vfs for LocalVfs {
     /// Local → local files up to [`FAST_COPY_MAX`] (larger ones `Ok(None)`, for G4), with a mode: a file created without
     /// one needs the default mode, which only the sequence of D-158 gives without reading the umask. The temporary
     /// sibling is opened `create_new`, owner-only, takes the content, its final mode and time on the handle, and is
-    /// closed and renamed to `to`, so the file never shows under its name with a wrong time or mode. Windows' `R` comes
-    /// after the rename, from the usual step. The temporary file is not locked as a writer's: nothing stands at `to`, so
-    /// no rebuild of `to` looks for it, and this path has no time for it (D-164).
+    /// closed and renamed to `to`, so the file never shows under its name with a wrong time or mode. The rename never
+    /// replaces: a file another program made at `to` meanwhile stays, and the copy is `AlreadyExists` ([`rename_new`]).
+    /// Windows' `R` comes after the rename, from the usual step. The temporary file is not locked as a writer's: nothing
+    /// stands at `to`, so no rebuild of `to` looks for it, and this path has no time for it (D-164).
     fn copy_new_file(
         &self,
         from: &Spec,
@@ -801,11 +805,43 @@ impl Vfs for LocalVfs {
         #[cfg(test)]
         tests::before_rename(&tmp);
         cancel.check()?;
-        platform::rename(&tmp, to_path.as_path())
-            .map_err(|e| VfsError::from_io(to.canonical(), VfsOp::Commit, e))?;
+        rename_new(&tmp, to_path.as_path()).map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists => VfsError::AlreadyExists {
+                spec: to.canonical(),
+            },
+            _ => VfsError::from_io(to.canonical(), VfsOp::Commit, e),
+        })?;
         std::mem::forget(temporary);
         Ok(Some(copied))
     }
+}
+
+/// `tmp` takes the name `target`, which must be free, atomically: a program that creates `target` first keeps its file and
+/// this is `AlreadyExists`. [`tempfile`] holds the one safe spelling of each OS's call (Linux `renameat2` with
+/// `RENAME_NOREPLACE`, macOS `renamex_np` with `RENAME_EXCL`, Windows `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`),
+/// and a hard link where the file system has no such rename. Where it has hard links neither, what is left is to look
+/// and rename, which a racing creator can get in between.
+fn rename_new(tmp: &Path, target: &Path) -> io::Result<()> {
+    match platform::persist_new(tmp, target) {
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+            if fs::symlink_metadata(target).is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            platform::rename(tmp, target)
+        }
+        done => done,
+    }
+}
+
+/// One try of [`rename_new`].
+fn persist_new(tmp: &Path, target: &Path) -> io::Result<()> {
+    tempfile::TempPath::try_from_path(tmp)?
+        .persist_noclobber(target)
+        .map_err(|e| {
+            // The file stays, and whoever made it removes it.
+            std::mem::forget(e.path);
+            e.error
+        })
 }
 
 /// The temporary file of [`LocalVfs::copy_new_file`]: it goes unless it was renamed.
@@ -1081,33 +1117,18 @@ impl LocalWriter {
         {
             let _ = fs::set_permissions(&self.tmp, mode);
         }
-        if self.overwrite {
-            platform::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
-            self.pending = false;
+        let renamed = if self.overwrite {
+            platform::rename(&self.tmp, &self.target)
         } else {
-            match fs::hard_link(&self.tmp, &self.target) {
-                Ok(()) => {
-                    self.pending = false;
-                    let _ = platform::remove_file(&self.tmp);
-                }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                    return Err(VfsError::AlreadyExists {
-                        spec: self.spec.clone(),
-                    });
-                }
-                Err(_) => {
-                    // No hard links on this file system: check, then rename (not atomic against a racing
-                    // creator, which the hard link would have caught).
-                    if fs::symlink_metadata(&self.target).is_ok() {
-                        return Err(VfsError::AlreadyExists {
-                            spec: self.spec.clone(),
-                        });
-                    }
-                    platform::rename(&self.tmp, &self.target).map_err(|e| self.fail(e))?;
-                    self.pending = false;
-                }
-            }
-        }
+            rename_new(&self.tmp, &self.target)
+        };
+        renamed.map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists if !self.overwrite => VfsError::AlreadyExists {
+                spec: self.spec.clone(),
+            },
+            _ => self.fail(e),
+        })?;
+        self.pending = false;
         if self.durability == Durability::Full {
             sync_folder(&self.dir);
         }
@@ -1469,6 +1490,56 @@ mod tests {
             .unwrap();
         assert_eq!(result, None);
         assert!(!to.exists());
+    }
+
+    /// A program that creates the target while the copy runs keeps its file: the rename never replaces.
+    #[test]
+    fn a_file_created_during_the_copy_is_not_replaced() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        let (from, to) = (root.join("from"), root.join("to"));
+        fs::write(&from, b"copied").unwrap();
+        let racer = to.clone();
+        set_stop(Some(Box::new(move |_: &Path| {
+            fs::write(&racer, b"another program's file").unwrap();
+        })));
+        let vfs = LocalVfs::default();
+        let result = vfs.copy_new_file(
+            &spec(&from),
+            &spec(&to),
+            &meta_of(&from, 5),
+            &CancelToken::new(),
+        );
+        set_stop(None);
+        assert!(
+            matches!(result, Err(VfsError::AlreadyExists { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs::read(&to).unwrap(), b"another program's file");
+        let left = fs::read_dir(&root).unwrap().count();
+        assert_eq!(left, 2, "no temporary file stays");
+    }
+
+    /// The same for the writer of a new file.
+    #[test]
+    fn a_writer_of_a_new_file_does_not_replace_a_racing_creator() {
+        let (_dir, root) = scratch();
+        let to = root.join("to");
+        let vfs = LocalVfs::default();
+        let options = WriteOptions {
+            durability: Durability::None,
+            ..WriteOptions::default()
+        };
+        let mut writer = vfs.open_write(&spec(&to), &options).unwrap();
+        writer.write_all(b"mine").unwrap();
+        fs::write(&to, b"another program's file").unwrap();
+        let result = writer.commit();
+        assert!(
+            matches!(result, Err(VfsError::AlreadyExists { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs::read(&to).unwrap(), b"another program's file");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     }
 
     /// `preserve.attrs` off: the result needs the default mode, so `ops` takes the old path.

@@ -19,6 +19,9 @@
 - **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
   `a/../copy`) never ended and could not be cancelled; this goes back to 0.1.90. A `..` keeps the meaning the OS gives it
   through links, so a folder still cannot be copied below itself by spelling.
+- **A copy never replaces a file that appears while it runs.** A new file takes its name by a rename that cannot replace,
+  so a program that creates the target during a `vfs cp` keeps its file and the copy fails `already_exists`. This holds
+  where the file system has that rename or hard links.
 
 ### Internal
 - `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder

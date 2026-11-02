@@ -367,8 +367,8 @@ pub trait Vfs: Send + Sync {
     }
 
     /// A copy of the regular file `from` to `to`, which does not exist, with `meta` applied, or `Ok(None)` when this
-    /// back-end has no such path (D-164). Never replaces on purpose; the window against a racing creator is `rename`'s
-    /// (§1.3.1). Nothing is synced, and a failure or a cancellation leaves no file. Default: `Ok(None)`.
+    /// back-end has no such path (D-164). Never replaces: a target that appeared meanwhile stays, and this is
+    /// `AlreadyExists`. Nothing is synced, and a failure or a cancellation leaves no file. Default: `Ok(None)`.
     fn copy_new_file(
         &self,
         _from: &Spec,
