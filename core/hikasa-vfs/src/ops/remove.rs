@@ -246,23 +246,20 @@ fn falls_back(item: &PlanItem, error: &VfsError) -> bool {
         && !matches!(error, VfsError::NotFound { .. })
 }
 
-/// The permanent items of a root the recycle bin refused, at its place in the plan (§1.6.12). What the plan answered of
-/// the root holds for them, and the count ends in one `trash_fallback` warning of the operation.
-fn fall_back(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
-    let options = RemoveOptions {
-        recursive: true,
-        trash: false,
+/// The permanent items of a root the recycle bin refused, at its place in the plan (§1.6.12). Only what the plan saw, and
+/// only as it saw it: a file by its stamp, a folder by the items stamped at planning. Nothing here lists, so a file that
+/// came since is no item: it stays, and so does its folder. With no such items the `trash` fails. What the plan answered
+/// of the root holds for them, and the count ends in one `trash_fallback` warning of the operation.
+fn fall_back(exec: &mut Exec<'_>, item: &PlanItem, error: VfsError) -> Outcome {
+    let mut items = if !item.fallback.is_empty() {
+        item.fallback.clone()
+    } else if item.kind != EntryKind::Dir && item.expect.is_some_and(|e| e.target.is_some()) {
+        let mut remove = PlanItem::planned(Action::Remove, item.kind, None, item.target.clone(), 0);
+        remove.expect = item.expect;
+        vec![remove]
+    } else {
+        return Outcome::Failed(error);
     };
-    let plan = match plan_remove(
-        exec.src,
-        std::slice::from_ref(&item.target),
-        &options,
-        exec.ctl,
-    ) {
-        Ok(plan) => plan,
-        Err(e) => return Outcome::Failed(e),
-    };
-    let mut items = plan.items;
     for expanded in &mut items {
         expanded.depth += item.depth;
         expanded.clear_read_only = item.clear_read_only;
@@ -293,7 +290,7 @@ fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
                 restore_read_only(exec.src, &item.target);
             }
             if falls_back(item, &e) {
-                return fall_back(exec, item);
+                return fall_back(exec, item, e);
             }
             Outcome::Failed(e)
         }

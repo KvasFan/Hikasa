@@ -394,6 +394,10 @@ pub struct PlanItem {
     /// A `trash` item that may become a permanent delete when the recycle bin fails (§1.6.12).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub trash_fallback: bool,
+    /// What a folder's `trash_fallback` deletes, stamped at planning, post-order, depths below this item. Nothing else is
+    /// ever deleted by it: a fallback does not list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<PlanItem>,
 }
 
 impl PlanItem {
@@ -422,7 +426,13 @@ impl PlanItem {
             follow_source: false,
             clear_read_only: false,
             trash_fallback: false,
+            fallback: Vec::new(),
         }
+    }
+
+    /// The identity a planner saw of this folder item: execution re-checks it (D-103).
+    pub fn set_seen(&mut self, seen: Option<FileId>) {
+        self.seen = seen;
     }
 
     /// The bytes this item copies: an `exchange` copies both sides, and its target's size is in its stamp (§1.6.2).

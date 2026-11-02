@@ -234,7 +234,7 @@ pub(crate) fn is_respelling(src: &dyn Vfs, dst: &dyn Vfs, source: &Spec, target:
 }
 
 /// Reports `Phase::Scanning` progress while planning (`done` = items planned so far).
-pub(crate) fn scanning(ctl: &Ctl<'_>, done: usize, current: &Spec) {
+pub fn scanning(ctl: &Ctl<'_>, done: usize, current: &Spec) {
     ctl.progress(Phase::Scanning, || Progress {
         phase: Phase::Scanning,
         done: done as u64,
