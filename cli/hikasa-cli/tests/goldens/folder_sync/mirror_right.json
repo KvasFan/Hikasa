@@ -1,0 +1,235 @@
+{
+  "schema": "hikasa.folder_sync.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "preset": "mirror_right",
+    "matrix": {
+      "newer_left": "copy_right",
+      "newer_right": "copy_right",
+      "added_left": "copy_right",
+      "added_right": "delete_right",
+      "deleted_left": "delete_right",
+      "deleted_right": "copy_right",
+      "different": "copy_right",
+      "same": "leave"
+    },
+    "orphans": "added",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "rows": [
+      {
+        "path": "empty",
+        "kind": "folder",
+        "situation": "added_left",
+        "action": "leave",
+        "overridden": false,
+        "conflict": false,
+        "reason": "matrix"
+      },
+      {
+        "path": "gone/inner.txt",
+        "kind": "file",
+        "situation": "added_right",
+        "action": "delete_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "gone",
+        "kind": "folder",
+        "situation": "added_right",
+        "action": "delete_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "different.txt",
+        "kind": "file",
+        "situation": "different",
+        "action": "copy_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "left-only.txt",
+        "kind": "file",
+        "situation": "added_left",
+        "action": "copy_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "newer-left.txt",
+        "kind": "file",
+        "situation": "newer_left",
+        "action": "copy_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "newer-right.txt",
+        "kind": "file",
+        "situation": "newer_right",
+        "action": "copy_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      },
+      {
+        "path": "right-only.txt",
+        "kind": "file",
+        "situation": "added_right",
+        "action": "delete_right",
+        "overridden": false,
+        "conflict": false,
+        "reason": null
+      }
+    ],
+    "items": [
+      {
+        "action": "remove",
+        "kind": "file",
+        "side": "right",
+        "path": "gone/inner.txt",
+        "source": null,
+        "target": "<TMP>/r/gone/inner.txt",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "remove_dir",
+        "kind": "dir",
+        "side": "right",
+        "path": "gone",
+        "source": null,
+        "target": "<TMP>/r/gone",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "remove",
+        "kind": "file",
+        "side": "right",
+        "path": "right-only.txt",
+        "source": null,
+        "target": "<TMP>/r/right-only.txt",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "different.txt",
+        "source": "<TMP>/l/different.txt",
+        "target": "<TMP>/r/different.txt",
+        "size": 10,
+        "replaces": true,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "left-only.txt",
+        "source": "<TMP>/l/left-only.txt",
+        "target": "<TMP>/r/left-only.txt",
+        "size": 10,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "newer-left.txt",
+        "source": "<TMP>/l/newer-left.txt",
+        "target": "<TMP>/r/newer-left.txt",
+        "size": 10,
+        "replaces": true,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "newer-right.txt",
+        "source": "<TMP>/l/newer-right.txt",
+        "target": "<TMP>/r/newer-right.txt",
+        "size": 4,
+        "replaces": true,
+        "backup": null,
+        "conflicts": [
+          "overwrite_newer"
+        ],
+        "answer": true,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "counts": {
+      "copy_right": 4,
+      "copy_left": 0,
+      "delete_left": 0,
+      "delete_right": 3,
+      "leave": 2,
+      "conflicts": 0,
+      "unresolved": 0,
+      "bytes_right": 34,
+      "bytes_left": 0
+    },
+    "backups": [],
+    "summary": {
+      "planned": 7,
+      "done": 7,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 34
+    }
+  },
+  "warnings": [],
+  "error": null
+}

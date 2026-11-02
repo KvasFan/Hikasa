@@ -17,9 +17,9 @@ use hikasa_session::api::sessions::ExcludeMasksDto;
 use hikasa_session::api::{
     ApiOp, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest, FolderOpRequest,
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, PreparedFolderCompare, SelectRequest,
-    SessionRunRequest, SessionWriteDto, human, parse_confirm_mode, parse_content_method,
-    parse_exclude_what, parse_link_policy, parse_mkdir_name, parse_overwrite, parse_select_path,
-    parse_side, parse_sides, parse_structure, parse_time, resolve_folder_display,
+    SessionWriteDto, human, parse_confirm_mode, parse_content_method, parse_exclude_what,
+    parse_link_policy, parse_mkdir_name, parse_overwrite, parse_select_path, parse_side,
+    parse_sides, parse_structure, parse_time, resolve_folder_display,
 };
 use hikasa_session::launcher::OpenCommandDto;
 use hikasa_session::sessions::SessionRef;
@@ -294,7 +294,7 @@ fn copy_to_op(flags: &FolderCopyToFlags, moving: bool) -> Result<OpRequest, ApiE
 
 /// The selection of the flags: `--display` defaults to `all`, and every folder is open: a headless command sees the whole
 /// tree, as a script after `expand all`.
-fn select_request(
+pub(super) fn select_request(
     args: &FolderSelectArgs,
     include_hidden: bool,
 ) -> Result<SelectRequest, ApiError> {
@@ -336,7 +336,10 @@ fn compare_request(
     match (&common.session, &common.left, &common.right) {
         (Some(reference), _, _) => {
             let reference = SessionRef::parse(reference)?;
-            let SessionRunRequest::Folder(session) = ctx.service.session_run_request(&reference)?
+            let Some(session) = ctx
+                .service
+                .session_run_request(&reference)?
+                .folder_request()
             else {
                 return Err(ApiError::InvalidArgument(format!(
                     "`{reference}` is no folder session"
@@ -414,7 +417,7 @@ fn mode_of(confirm: &FolderConfirmArgs) -> Result<ConfirmMode, ApiError> {
 }
 
 /// The answers of a plan: a mode needs no person; `Prompt` asks on a terminal, and without one nothing is touched.
-fn answered(
+pub(super) fn answered(
     ctx: &Ctx<'_>,
     plan: OpPlan,
     mode: ConfirmMode,

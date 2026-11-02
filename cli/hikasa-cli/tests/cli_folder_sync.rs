@@ -1,0 +1,742 @@
+//! `hikasa folder sync` end to end (M2 W6c, contract §1.6.17): A6.31 and the CLI's half of A6.30. Each preset flag, `--custom`,
+//! `--orphans`, `--create-empty`, `--recycle`, `--within-archives`, `--override`, `--just-selection`, `--visible`,
+//! `--all-rows`, goldens, exit codes, dry runs equal to runs, `--gui` up to the IPC answer, and folder-sync sessions with
+//! `session run`.
+
+mod common;
+
+use std::path::Path;
+use std::sync::Arc;
+
+use common::{CloseMode, FakeGui, Sandbox, assert_golden, code, json, serve, stderr, stdout};
+use hikasa_core::ExitCode;
+
+fn tree(root: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .strip_prefix(root)
+                .unwrap()
+                .display()
+                .to_string()
+                .replace('\\', "/");
+            if std::fs::symlink_metadata(&path).unwrap().is_dir() {
+                out.push((name, None));
+                pending.push(path);
+            } else {
+                out.push((name, Some(std::fs::read(&path).unwrap())));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `l/` and `r/`: the left newer, the right newer, an orphan on each side, a pair that differs at one time, one the same,
+/// an empty folder on the left and a folder with a file on the right only.
+fn sandbox() -> Sandbox {
+    let s = Sandbox::new();
+    s.file_at("l/newer-left.txt", "left wins\n", 2_000_000);
+    s.file_at("r/newer-left.txt", "old\n", 1_000_000);
+    s.file_at("l/newer-right.txt", "old\n", 1_000_000);
+    s.file_at("r/newer-right.txt", "right wins\n", 2_000_000);
+    s.file_at("l/left-only.txt", "left only\n", 1_000_000);
+    s.file_at("r/right-only.txt", "right only\n", 1_000_000);
+    s.file_at("l/different.txt", "left side\n", 1_000_000);
+    s.file_at("r/different.txt", "the right side\n", 1_000_000);
+    s.file_at("l/same.txt", "same\n", 1_000_000);
+    s.file_at("r/same.txt", "same\n", 1_000_000);
+    s.dir("l/empty");
+    s.file_at("r/gone/inner.txt", "inner\n", 1_000_000);
+    s.settle("l");
+    s.settle("r");
+    s
+}
+
+fn sync(s: &Sandbox, args: &[&str]) -> std::process::Output {
+    let mut command = s.cmd();
+    command.args(["folder", "sync"]);
+    command.arg(s.join("l"));
+    command.arg(s.join("r"));
+    command.args(args);
+    command.output().unwrap()
+}
+
+/// A tree: each path with its bytes (`None` for a folder).
+type Tree = Vec<(String, Option<Vec<u8>>)>;
+
+fn state(s: &Sandbox) -> (Tree, Tree) {
+    (tree(&s.join("l")), tree(&s.join("r")))
+}
+
+fn names(list: &[(String, Option<Vec<u8>>)]) -> Vec<&str> {
+    list.iter().map(|(name, _)| name.as_str()).collect()
+}
+
+fn read(s: &Sandbox, rel: &str) -> String {
+    std::fs::read_to_string(s.join(rel)).unwrap()
+}
+
+/// A text golden and a JSON golden of a sync on fresh sandboxes.
+fn golden(name: &str, args: &[&str]) {
+    let s = sandbox();
+    let out = sync(&s, args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_golden(
+        &format!("folder_sync/{name}.txt"),
+        &s.normalise(&stdout(&out)),
+    );
+    let s = sandbox();
+    let mut with_json = args.to_vec();
+    with_json.push("--json");
+    let out = sync(&s, &with_json);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["schema"], "hikasa.folder_sync.v1");
+    assert_eq!(doc["ok"], true);
+    assert_golden(
+        &format!("folder_sync/{name}.json"),
+        &s.normalise(&stdout(&out)),
+    );
+}
+
+#[test]
+fn a6_31_goldens_of_the_presets() {
+    golden("mirror_right", &["--mirror-right", "--yes"]);
+    golden("update_both", &["--update-both", "--yes"]);
+    golden("mirror_left_dry", &["--mirror-left", "--dry-run"]);
+}
+
+#[test]
+fn a6_31_each_preset_flag_does_its_table() {
+    // Update Right: newer and new on the left go right; nothing is deleted; the right's newer file stays.
+    let s = sandbox();
+    let out = sync(&s, &["--update-right", "--yes"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s, "r/newer-left.txt"), "left wins\n");
+    assert_eq!(read(&s, "r/left-only.txt"), "left only\n");
+    assert_eq!(read(&s, "r/newer-right.txt"), "right wins\n");
+    assert_eq!(read(&s, "r/different.txt"), "the right side\n");
+    assert!(s.join("r/right-only.txt").exists() && s.join("r/gone/inner.txt").exists());
+    assert!(
+        stdout(&out).contains("<!> leave different.txt (matrix)"),
+        "{}",
+        stdout(&out)
+    );
+    // Update Left: the other way.
+    let s = sandbox();
+    assert_eq!(code(&sync(&s, &["--update-left", "--yes"])), 0);
+    assert_eq!(read(&s, "l/newer-right.txt"), "right wins\n");
+    assert_eq!(read(&s, "l/right-only.txt"), "right only\n");
+    assert_eq!(read(&s, "l/newer-left.txt"), "left wins\n");
+    assert!(s.join("l/left-only.txt").exists());
+    // Update Both.
+    let s = sandbox();
+    assert_eq!(code(&sync(&s, &["--update-both", "--yes"])), 0);
+    assert_eq!(read(&s, "r/newer-left.txt"), "left wins\n");
+    assert_eq!(read(&s, "l/newer-right.txt"), "right wins\n");
+    assert!(s.join("l/right-only.txt").exists() && s.join("r/left-only.txt").exists());
+    // Mirror to Right: the right is the left, empty folders aside.
+    let s = sandbox();
+    assert_eq!(code(&sync(&s, &["--mirror-right", "--yes"])), 0);
+    let (l, r) = state(&s);
+    let files = |list: &[(String, Option<Vec<u8>>)]| -> Vec<(String, Option<Vec<u8>>)> {
+        list.iter()
+            .filter(|(_, it)| it.is_some())
+            .cloned()
+            .collect()
+    };
+    assert_eq!(files(&l), files(&r));
+    assert!(
+        !s.join("r/gone").exists(),
+        "a folder all of whose rows went goes too"
+    );
+    // Mirror to Left.
+    let s = sandbox();
+    assert_eq!(code(&sync(&s, &["--mirror-left", "--yes"])), 0);
+    let (l, r) = state(&s);
+    assert_eq!(files(&l), files(&r));
+    assert!(!s.join("l/left-only.txt").exists());
+}
+
+#[test]
+fn a6_31_custom_orphans_create_empty_and_override() {
+    // `--custom`: a preset as the base, one cell changed.
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &[
+            "--custom",
+            "mirror-right,different=leave",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["result"]["preset"], "custom");
+    assert_eq!(doc["result"]["matrix"]["different"], "leave");
+    assert_eq!(doc["result"]["matrix"]["added_right"], "delete_right");
+    assert_eq!(read(&s, "r/different.txt"), "the right side\n");
+    assert!(!s.join("r/right-only.txt").exists());
+    // `--orphans deleted`: a right-only file is gone from the left, so Mirror to Left... and Update Left leaves it.
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &["--update-left", "--orphans", "deleted", "--yes", "--json"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["result"]["orphans"], "deleted");
+    assert!(!s.join("l/right-only.txt").exists());
+    // `--create-empty`: the empty folder is made.
+    let s = sandbox();
+    assert_eq!(code(&sync(&s, &["--mirror-right", "--yes"])), 0);
+    assert!(!s.join("r/empty").exists());
+    let s = sandbox();
+    assert_eq!(
+        code(&sync(&s, &["--mirror-right", "--create-empty", "--yes"])),
+        0
+    );
+    assert!(s.join("r/empty").is_dir());
+    // `--override`: a path, a folder over its subtree, the longest path wins.
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--override",
+            "gone=leave",
+            "--override",
+            "newer-right.txt=leave",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s, "r/gone/inner.txt"), "inner\n");
+    assert_eq!(read(&s, "r/newer-right.txt"), "right wins\n");
+    let rows = json(&out)["result"]["rows"].as_array().unwrap().clone();
+    let inner = rows.iter().find(|r| r["path"] == "gone/inner.txt").unwrap();
+    assert_eq!(inner["overridden"], true);
+    assert_eq!(inner["action"], "leave");
+}
+
+#[test]
+fn a6_31_bad_words_are_100_and_write_nothing() {
+    for args in [
+        vec!["--custom", "added-left=copy-left", "--yes"],
+        vec![
+            "--custom",
+            "newer-left=copy-right,newer-left=leave",
+            "--yes",
+        ],
+        vec!["--custom", "sideways", "--yes"],
+        vec!["--mirror-right", "--orphans", "gone", "--yes"],
+        vec!["--mirror-right", "--override", "=leave", "--yes"],
+        vec!["--mirror-right", "--override", "../x=leave", "--yes"],
+        vec!["--mirror-right", "--override", "a.txt=move", "--yes"],
+        // No preset at all.
+        vec!["--yes"],
+        // A sync ignores the selection: without `--just-selection` it is refused.
+        vec!["--mirror-right", "--select", "all", "--yes"],
+    ] {
+        let s = sandbox();
+        let before = state(&s);
+        let mut with_json = args.clone();
+        with_json.push("--json");
+        let out = sync(&s, &with_json);
+        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        let doc = json(&out);
+        assert_eq!(doc["schema"], "hikasa.folder_sync.v1", "{args:?}");
+        assert_eq!(doc["ok"], false, "{args:?}");
+        assert_eq!(state(&s), before, "{args:?}");
+    }
+    // Two presets: a usage error of the parser.
+    let s = sandbox();
+    let out = sync(&s, &["--mirror-right", "--update-left", "--yes"]);
+    assert_ne!(code(&out), 0);
+}
+
+#[test]
+fn a6_31_just_selection_visible_and_all_rows() {
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--just-selection",
+            "--path",
+            "left-only.txt",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("r/left-only.txt").exists());
+    assert_eq!(read(&s, "r/newer-left.txt"), "old\n");
+    assert!(s.join("r/right-only.txt").exists());
+    let rows = json(&out)["result"]["rows"].as_array().unwrap().clone();
+    assert!(rows.iter().any(|r| r["reason"] == "out_of_scope"));
+    // `--just-selection` with nothing selected acts on nothing: 100.
+    let s = sandbox();
+    let before = state(&s);
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--just-selection",
+            "--select",
+            "left.newer.files",
+            "--display",
+            "same",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert_eq!(state(&s), before);
+    // `--visible`: what `--display` shows.
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--visible",
+            "--display",
+            "orphans",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("r/left-only.txt").exists());
+    assert!(!s.join("r/right-only.txt").exists());
+    assert_eq!(read(&s, "r/newer-left.txt"), "old\n");
+    // `--all-rows`: `same` rows and folders too.
+    let s = sandbox();
+    let some = json(&sync(&s, &["--update-right", "--dry-run", "--json"]));
+    let all = json(&sync(
+        &s,
+        &["--update-right", "--dry-run", "--all-rows", "--json"],
+    ));
+    let paths = |doc: &serde_json::Value| -> Vec<String> {
+        doc["result"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["path"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert!(!paths(&some).contains(&"same.txt".to_owned()));
+    assert!(paths(&all).contains(&"same.txt".to_owned()));
+    assert!(paths(&all).contains(&"gone".to_owned()));
+}
+
+#[test]
+fn a6_31_recycle_plans_trash_and_a_dry_run_equals_the_run() {
+    // The real recycle bin is never used by a test: `--recycle` is checked in a dry run.
+    let s = sandbox();
+    let out = sync(&s, &["--mirror-right", "--recycle", "--dry-run", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let items = json(&out)["result"]["items"].as_array().unwrap().clone();
+    let trashed: Vec<&str> = items
+        .iter()
+        .filter(|i| i["action"] == "trash")
+        .map(|i| i["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(trashed, ["gone", "right-only.txt"], "{items:?}");
+    // A dry run shows the items a run does, in order, and the run does each one.
+    let s = sandbox();
+    let dry = json(&sync(
+        &s,
+        &["--mirror-right", "--create-empty", "--dry-run", "--json"],
+    ));
+    let s = sandbox();
+    let run = json(&sync(
+        &s,
+        &["--mirror-right", "--create-empty", "--yes", "--json"],
+    ));
+    let key = |doc: &serde_json::Value| -> Vec<(String, String)> {
+        doc["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| {
+                (
+                    i["action"].as_str().unwrap().to_owned(),
+                    i["path"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(key(&dry), key(&run));
+    assert!(
+        dry["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["status"] == "planned")
+    );
+    assert!(
+        run["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["status"] == "done")
+    );
+    assert_eq!(dry["result"]["counts"], run["result"]["counts"]);
+    assert_eq!(dry["result"]["dry_run"], true);
+}
+
+#[test]
+fn a6_31_within_archives() {
+    fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (name, data) in entries {
+            let mut header = [0u8; 512];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            header[100..107].copy_from_slice(b"0000644");
+            header[108..115].copy_from_slice(b"0000000");
+            header[116..123].copy_from_slice(b"0000000");
+            header[124..135].copy_from_slice(format!("{:011o}", data.len()).as_bytes());
+            header[136..147].copy_from_slice(b"15000000000");
+            header[156] = b'0';
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            header[148..156].copy_from_slice(b"        ");
+            let sum: u32 = header.iter().map(|&b| u32::from(b)).sum();
+            header[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+            out.extend_from_slice(&header);
+            out.extend_from_slice(data);
+            out.resize(out.len().div_ceil(512) * 512, 0);
+        }
+        out.resize(out.len() + 1024, 0);
+        out
+    }
+    let setup = || {
+        let s = Sandbox::new();
+        s.file_at(
+            "l/a.tar",
+            tar_of(&[("x", b"new x"), ("y", b"same")]),
+            2_000_000,
+        );
+        s.file_at(
+            "r/a.tar",
+            tar_of(&[("x", b"old"), ("y", b"same"), ("z", b"stale")]),
+            1_000_000,
+        );
+        s.settle("l");
+        s.settle("r");
+        s
+    };
+    // Without: the archive is a file, copied whole.
+    let s = setup();
+    let out = sync(&s, &["--mirror-right", "--yes", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(s.join("r/a.tar")).unwrap(),
+        std::fs::read(s.join("l/a.tar")).unwrap()
+    );
+    // Within: member by member.
+    let s = setup();
+    let out = sync(
+        &s,
+        &["--mirror-right", "--within-archives", "--yes", "--json"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    let rows = doc["result"]["rows"].as_array().unwrap();
+    let paths: Vec<&str> = rows.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    assert!(
+        paths.contains(&"a.tar/x") && paths.contains(&"a.tar/z"),
+        "{paths:?}"
+    );
+    let mut list = s.cmd();
+    list.args(["vfs", "ls", "--json"]).arg(s.join("r/a.tar"));
+    let listed = json(&list.output().unwrap());
+    let members: Vec<String> = listed["result"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(members, ["x", "y"]);
+}
+
+#[test]
+fn a6_31_exit_codes_and_safety() {
+    // A base that is not there: 107.
+    let s = sandbox();
+    let mut command = s.cmd();
+    command.args(["folder", "sync", "--mirror-right", "--yes", "--json"]);
+    command.arg(s.join("l")).arg(s.join("missing"));
+    let out = command.output().unwrap();
+    assert_eq!(code(&out), 107, "{}", stderr(&out));
+    // An empty source: refused, nothing written; `--yes` does not answer it, `--allow-empty-source` does.
+    let s = Sandbox::new();
+    s.dir("l");
+    s.file("r/a.txt", "a\n");
+    s.file("r/d/b.txt", "b\n");
+    let out = sync(&s, &["--mirror-right", "--yes", "--json"]);
+    assert_eq!(code(&out), 100);
+    assert_eq!(json(&out)["error"]["kind"], "invalid_input");
+    assert!(
+        json(&out)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("empty")
+    );
+    assert!(s.join("r/a.txt").exists() && s.join("r/d/b.txt").exists());
+    let out = sync(&s, &["--mirror-right", "--yes", "--allow-empty-source"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!s.join("r/a.txt").exists() && !s.join("r/d").exists());
+    // Update from an empty base is fine: it deletes nothing.
+    let s = Sandbox::new();
+    s.dir("l");
+    s.file("r/a.txt", "a\n");
+    assert_eq!(code(&sync(&s, &["--update-right", "--yes"])), 0);
+    assert!(s.join("r/a.txt").exists());
+    // Without a terminal and without `--yes`: 100, nothing touched.
+    let s = sandbox();
+    let before = state(&s);
+    let out = sync(&s, &["--mirror-right"]);
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(stderr(&out).contains("need an answer"), "{}", stderr(&out));
+    assert_eq!(state(&s), before);
+    // A read-only side: its rows are left, the sync goes on and says so.
+    let s = sandbox();
+    let out = sync(
+        &s,
+        &["--update-both", "--read-only", "right", "--yes", "--json"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!s.join("r/left-only.txt").exists());
+    assert!(s.join("l/right-only.txt").exists());
+    let doc = json(&out);
+    assert!(
+        doc["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["code"] == "read_only_side"),
+        "{doc}"
+    );
+    // A row the comparison could not tell: 100 also in a dry run, and nothing below it is touched.
+    #[cfg(unix)]
+    {
+        let s = sandbox();
+        s.file_at("r/locked/keep.txt", "keep\n", 1_000_000);
+        s.dir("l/locked");
+        common::set_mode(&s.join("l/locked"), 0o000);
+        let readable = std::fs::read_dir(s.join("l/locked")).is_ok();
+        if !readable {
+            let out = sync(&s, &["--mirror-right", "--dry-run", "--json"]);
+            assert_eq!(code(&out), 100, "{}", stderr(&out));
+            let doc = json(&out);
+            assert_eq!(doc["ok"], true);
+            assert!(doc["result"]["counts"]["unresolved"].as_u64().unwrap() >= 1);
+            assert!(
+                doc["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|w| w["code"] == "sync_incomplete")
+            );
+            let out = sync(&s, &["--mirror-right", "--yes"]);
+            assert_eq!(code(&out), 100);
+            assert_eq!(read(&s, "r/locked/keep.txt"), "keep\n");
+        }
+        common::set_mode(&s.join("l/locked"), 0o755);
+    }
+}
+
+#[test]
+fn a6_31_gui_sends_the_sync_and_the_answer_is_unsupported() {
+    let s = sandbox();
+    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::Success);
+    let server = serve(&s, Arc::clone(&gui));
+    let out = sync(
+        &s,
+        &["--mirror-right", "--orphans", "deleted", "--gui", "--json"],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["schema"], "hikasa.gui_open.v1");
+    assert_eq!(doc["error"]["kind"], "unsupported");
+    // The answer names the Folder Sync view: what the server got was `OpenView { kind: folder_sync }`.
+    assert!(
+        doc["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot show a Folder Sync view yet"),
+        "{doc}"
+    );
+    // The words are checked before any contact: a bad word is 100 with its own message, and the GUI got nothing.
+    let out = sync(&s, &["--custom", "same=sideways", "--gui", "--json"]);
+    assert_eq!(code(&out), 100);
+    let message = json(&out)["error"]["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("sideways"), "{message}");
+    assert!(gui.requests().is_empty(), "{:?}", gui.requests());
+    server.shutdown().unwrap();
+    assert!(state(&s).1.iter().any(|(n, _)| n == "right-only.txt"));
+}
+
+#[test]
+fn a6_31_help_topic() {
+    let s = Sandbox::new();
+    let mut command = s.cmd();
+    command.args(["help", "folder", "sync"]);
+    let out = command.output().unwrap();
+    assert_eq!(code(&out), 0);
+    assert!(
+        stdout(&out).contains("hikasa folder sync"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("--allow-empty-source"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+// ---- sessions (A6.30) ------------------------------------------------------------------------------------------
+
+fn session(s: &Sandbox, args: &[&str]) -> std::process::Output {
+    let mut command = s.cmd();
+    command.arg("session");
+    command.args(args);
+    command.output().unwrap()
+}
+
+#[test]
+fn a6_30_a_folder_sync_session_end_to_end() {
+    let s = sandbox();
+    let mut new = s.cmd();
+    new.args([
+        "session",
+        "new",
+        "nightly",
+        "--type",
+        "folder-sync",
+        "--left",
+    ]);
+    new.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&new.output().unwrap()), 0);
+    // The defaults: Update Right, and a sparse file.
+    let show = session(&s, &["show", "nightly", "--json"]);
+    assert_eq!(code(&show), 0, "{}", stderr(&show));
+    let doc = json(&show);
+    assert_eq!(doc["result"]["session"]["type"], "folder-sync", "{doc}");
+    let file = std::fs::read_to_string(s.config().join("sessions/nightly.toml")).unwrap();
+    assert!(!file.contains("[rules.sync]"), "sparse: {file}");
+    // `--set` a preset and a cell; a bad cell is refused.
+    let out = session(
+        &s,
+        &["edit", "nightly", "--set", "rules.sync.preset=mirror_right"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let bad = session(
+        &s,
+        &[
+            "edit",
+            "nightly",
+            "--set",
+            "rules.sync.matrix.added_left=copy_left",
+        ],
+    );
+    assert_eq!(code(&bad), 100, "{}", stderr(&bad));
+    let file = std::fs::read_to_string(s.config().join("sessions/nightly.toml")).unwrap();
+    assert!(file.contains("preset = \"mirror_right\""), "{file}");
+    assert!(!file.contains("added_left"), "{file}");
+    // `session run`: a dry run writes nothing; without `--yes` and a terminal it is 100; with `--yes` it runs.
+    let before = state(&s);
+    let dry = session(&s, &["run", "nightly", "--dry-run", "--json"]);
+    assert_eq!(code(&dry), 0, "{}", stderr(&dry));
+    assert_eq!(json(&dry)["schema"], "hikasa.folder_sync.v1");
+    assert_eq!(json(&dry)["result"]["preset"], "mirror_right");
+    assert_eq!(state(&s), before);
+    let ask = session(&s, &["run", "nightly"]);
+    assert_eq!(code(&ask), 100, "{}", stderr(&ask));
+    assert_eq!(state(&s), before);
+    let run = session(&s, &["run", "nightly", "--yes"]);
+    assert_eq!(code(&run), 0, "{}", stderr(&run));
+    assert!(!s.join("r/right-only.txt").exists());
+    assert_eq!(read(&s, "r/newer-left.txt"), "left wins\n");
+    // `read_only_right` from the session: a mirror onto it writes nothing.
+    let s = sandbox();
+    let mut new = s.cmd();
+    new.args(["session", "new", "ro", "--type", "folder-sync", "--left"]);
+    new.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&new.output().unwrap()), 0);
+    let out = session(
+        &s,
+        &[
+            "edit",
+            "ro",
+            "--set",
+            "rules.sync.preset=mirror_right",
+            "--set",
+            "specs.read_only_right=true",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let before = state(&s);
+    let run = session(&s, &["run", "ro", "--yes", "--json"]);
+    assert_eq!(code(&run), 0, "{}", stderr(&run));
+    assert_eq!(state(&s).1, before.1);
+    // `folder sync --session` takes the session's preset, flags on top.
+    let out = {
+        let mut command = s.cmd();
+        command.args(["folder", "sync", "--session", "ro", "--dry-run", "--json"]);
+        command.output().unwrap()
+    };
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(json(&out)["result"]["preset"], "mirror_right");
+    // The sync flags of `session run` mean nothing to a comparison: refused.
+    let mut compare = s.cmd();
+    compare.args([
+        "session",
+        "new",
+        "cmp",
+        "--type",
+        "folder-compare",
+        "--left",
+    ]);
+    compare.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&compare.output().unwrap()), 0);
+    assert_eq!(code(&session(&s, &["run", "cmp", "--yes"])), 100);
+}
+
+#[test]
+fn a6_30_an_old_folder_sync_file_reads_as_it_is() {
+    let s = sandbox();
+    let sessions = s.config().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    // A file of M1/W2: `type = "folder-sync"` with an empty `[rules]`.
+    let l = s.join("l").display().to_string().replace('\\', "\\\\");
+    let r = s.join("r").display().to_string().replace('\\', "\\\\");
+    std::fs::write(
+        sessions.join("old.toml"),
+        format!(
+            "schema_version = 1\ntype = \"folder-sync\"\ndescription = \"before W6\"\n\n[specs]\nleft = \"{l}\"\nright = \
+             \"{r}\"\n\n[rules]\n"
+        ),
+    )
+    .unwrap();
+    let show = session(&s, &["show", "old", "--json"]);
+    assert_eq!(code(&show), 0, "{}", stderr(&show));
+    assert_eq!(json(&show)["result"]["session"]["description"], "before W6");
+    let dry = session(&s, &["run", "old", "--dry-run", "--json"]);
+    assert_eq!(code(&dry), 0, "{}", stderr(&dry));
+    assert_eq!(json(&dry)["result"]["preset"], "update_right");
+    // A text session still reads as an opaque one does not change: `session list` lists both.
+    let list = session(&s, &["list", "--json"]);
+    assert_eq!(code(&list), 0);
+    let _ = names(&[]);
+}

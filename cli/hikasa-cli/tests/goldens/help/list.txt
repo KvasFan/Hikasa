@@ -6,6 +6,7 @@ quick	hikasa quick
 text-compare	hikasa text compare
 folder-compare	hikasa folder compare
 folder-op	hikasa folder op
+folder-sync	hikasa folder sync
 format	hikasa format
 settings	hikasa settings
 session	hikasa session

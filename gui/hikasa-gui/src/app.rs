@@ -846,7 +846,7 @@ impl AppCore {
             let mut state = self.state.clone();
             let name = match &request {
                 ViewRequest::Text { .. } => Scope::Text,
-                ViewRequest::Folder { .. } => Scope::Folder,
+                ViewRequest::Folder { .. } | ViewRequest::Sync { .. } => Scope::Folder,
             }
             .view_name()
             .unwrap_or_default();
@@ -874,6 +874,22 @@ impl AppCore {
                     request,
                     display,
                     expand_all,
+                    titles,
+                    self.wake(),
+                );
+                m.apply_layout(layout);
+                ViewModel::Folder(Box::new(m))
+            }
+            // A Folder Sync view is W9's: a GUI answers `unsupported_view` before a sync request is built (D-190), so none
+            // arrives here; were one to, the window shows the comparison of its bases, which writes nothing.
+            ViewRequest::Sync {
+                request, display, ..
+            } => {
+                let mut m = FolderViewModel::new(
+                    &self.service,
+                    request,
+                    display,
+                    false,
                     titles,
                     self.wake(),
                 );

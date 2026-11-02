@@ -94,5 +94,5 @@ One line per item, in plan order: `L` or `R` for the side, `-` for a target outs
 | nothing selected, a bad word, unanswered questions, a read-only side | 100, nothing written |
 | a base that cannot be loaded | 107 |
 
-See also [folder compare](topic:folder-compare), [session](topic:session), [archives](topic:archives) and
-[exit codes](topic:exit-codes).
+See also [folder compare](topic:folder-compare), [folder sync](topic:folder-sync), [session](topic:session),
+[archives](topic:archives) and [exit codes](topic:exit-codes).

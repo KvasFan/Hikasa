@@ -303,6 +303,91 @@ pub enum FolderCmd {
         #[command(subcommand)]
         verb: Box<FolderOpVerb>,
     },
+    /// Compare, then synchronize the two sides by a preset or a matrix.
+    Sync(Box<FolderSyncArgs>),
+}
+
+/// The preset of `folder sync`: exactly one, unless `--session` holds one.
+#[derive(Debug, Clone, Default, clap::Args)]
+#[group(multiple = false)]
+pub struct SyncPresetArgs {
+    /// Update Left: what is newer or new on the right goes left.
+    #[arg(long)]
+    pub update_left: bool,
+    /// Update Right: what is newer or new on the left goes right.
+    #[arg(long)]
+    pub update_right: bool,
+    /// Update Both.
+    #[arg(long)]
+    pub update_both: bool,
+    /// Mirror to Left: the left becomes what the right is (deletes on the left).
+    #[arg(long)]
+    pub mirror_left: bool,
+    /// Mirror to Right: the right becomes what the left is (deletes on the right).
+    #[arg(long)]
+    pub mirror_right: bool,
+    /// A matrix: `<situation>=<action>,…`, a preset first as its base (`mirror-right,same=leave`).
+    #[arg(long, value_name = "MATRIX")]
+    pub custom: Option<String>,
+}
+
+/// `hikasa folder sync [<LEFT> <RIGHT>]` (§1.6.17).
+#[derive(Debug, Clone, clap::Args)]
+pub struct FolderSyncArgs {
+    /// The sides, the rules and `SELECT` (with `--just-selection`).
+    #[command(flatten)]
+    pub common: FolderOpCommon,
+    /// `CONFIRM`.
+    #[command(flatten)]
+    pub confirm: FolderConfirmArgs,
+    /// The preset.
+    #[command(flatten)]
+    pub preset: SyncPresetArgs,
+    /// An item on one side only is `added` there (default) or `deleted` on the other.
+    #[arg(long, value_name = "READING")]
+    pub orphans: Option<String>,
+    /// Empty folders are made and deleted too.
+    #[arg(long)]
+    pub create_empty: bool,
+    /// Archives are folders: their members are synced.
+    #[arg(long)]
+    pub within_archives: bool,
+    /// Deletes go to the recycle bin where there is one.
+    #[arg(long)]
+    pub recycle: bool,
+    /// A delete the bin refuses becomes permanent.
+    #[arg(long, requires = "recycle")]
+    pub recycle_fallback: bool,
+    /// An action for a path and what lies below it (repeatable): `<PATH>=<ACTION>`.
+    #[arg(long = "override", value_name = "PATH=ACTION")]
+    pub overrides: Vec<String>,
+    /// Only the rows `--select` and `--path` choose (else a sync ignores them).
+    #[arg(long)]
+    pub just_selection: bool,
+    /// Only the rows `--display` shows.
+    #[arg(long)]
+    pub visible: bool,
+    /// A side with nothing on it may make the other empty.
+    #[arg(long)]
+    pub allow_empty_source: bool,
+    /// Keep what is replaced, as `[backups]` names it.
+    #[arg(long, conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// Keep no backup, whatever `[backups]` says.
+    #[arg(long)]
+    pub no_backup: bool,
+    /// The output shows every row, `same` ones and folders too.
+    #[arg(long)]
+    pub all_rows: bool,
+    /// Show the sync in the GUI instead of running it here.
+    #[arg(long, conflicts_with_all = ["dry_run", "yes", "confirm", "all_rows"])]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes and exit with its code.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI when it is not running.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
 }
 
 /// What every `folder op` verb takes: the sides and the rules, the selection.
@@ -1180,6 +1265,21 @@ pub struct SessionRunArgs {
     /// Write the report to FILE (atomically) instead of stdout.
     #[arg(long, value_name = "FILE")]
     pub output: Option<OsString>,
+    /// Folder Sync: answer every question yes.
+    #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// Folder Sync: prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Folder Sync: print the plan; nothing is written.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Folder Sync: a side with nothing on it may make the other empty.
+    #[arg(long)]
+    pub allow_empty_source: bool,
+    /// Folder Sync: the output shows every row.
+    #[arg(long)]
+    pub all_rows: bool,
 }
 
 /// `hikasa workspace …`.

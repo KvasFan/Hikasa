@@ -1589,7 +1589,9 @@ impl AppCore {
         let mut request = view.request;
         match &mut request {
             ViewRequest::Text { view, .. } => apply_text_display(&session.display, view),
-            ViewRequest::Folder { display, .. } => apply_folder_display(&session.display, display),
+            ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
+                apply_folder_display(&session.display, display)
+            }
         }
         let kind = view.kind;
         let specs = view.specs;
@@ -2546,7 +2548,9 @@ impl AppCore {
         let mut request = opened.request;
         match &mut request {
             ViewRequest::Text { view, .. } => apply_text_display(&session.display, view),
-            ViewRequest::Folder { display, .. } => apply_folder_display(&session.display, display),
+            ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
+                apply_folder_display(&session.display, display)
+            }
         }
         let model = self.build_model_with([None, None], request, &session.view);
         let specs = opened.specs;

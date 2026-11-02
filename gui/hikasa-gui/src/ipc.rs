@@ -94,10 +94,7 @@ impl IpcHandler for GuiHandler {
                 if !kind.is_served_in_m1() {
                     return Response::error(
                         IpcErrorCode::UnsupportedView,
-                        format!(
-                            "the {} view is not available in this version",
-                            kind.as_str()
-                        ),
+                        hikasa_session::ipc::unserved_view(kind),
                     );
                 }
                 // `clipboard://` is read from the GUI's own clipboard first (D-101).
