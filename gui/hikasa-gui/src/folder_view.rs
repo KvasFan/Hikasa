@@ -265,8 +265,8 @@ enum AfterRefresh {
     Operation,
     /// A folder Expand opened that was not scanned (FC-012): it opens.
     Expand(NodeId),
-    /// A closed archive `Open` opened (§1.6.20): its row opens.
-    Archive,
+    /// A closed archive `Open` opened (§1.6.20): once it opened, the view's session keeps its path and its row opens.
+    Archive(String),
 }
 
 /// The operation or refresh of a view (M2 W6d): one at a time, and none while the comparison runs.
@@ -283,6 +283,10 @@ enum Task {
         caption: String,
         view: ViewId,
         mark: Mark,
+        /// The row the command was given on: the question is asked only while it is still the selected one.
+        node: NodeId,
+        /// The row and its sides as the question names them.
+        subject: String,
         job: Job<(OpPlan, Confirmation)>,
     },
     /// The confirmation dialog is open.
@@ -303,7 +307,8 @@ enum Task {
     Refreshing {
         after: AfterRefresh,
         model: Arc<FolderModel>,
-        /// The open folders and the selected row by path when it started.
+        /// The open folders and the selected row by path when it started: found again only where the user changed
+        /// nothing while it ran.
         points: Option<Restore>,
         job: Job<RefreshDto>,
     },
@@ -340,13 +345,35 @@ impl Task {
     }
 }
 
-/// The open folders and the selected row by path, kept across a full re-run (its ids are new).
+/// The open folders and the selected row by path, kept across a refresh or a full re-run (ids move, records are
+/// replaced).
 #[derive(Debug, Clone, Default)]
 struct Restore {
-    /// `expanded` (or `collapsed` with expand-all), by path.
-    folders: Vec<String>,
+    /// `expanded` (or `collapsed` with expand-all), by path, with the id each had when this was taken.
+    folders: Vec<(String, NodeId)>,
     /// The selected row, and whether it is a folder (a file and a folder of one name are two rows, D-20).
     selected: Option<(String, bool)>,
+    /// [`FolderViewModel::selection_moves`] when this was taken: a selection the user made since wins.
+    moves: u64,
+}
+
+/// An operation's job that outlives its view (the tab closed, the view was replaced, the window quits): cancelled, it
+/// ends after its current item, and the window reports what it did (§1.6.25 W6d after review).
+pub struct RunningOp {
+    /// The command's caption.
+    pub caption: String,
+    /// When it started.
+    pub began: Instant,
+    /// The job.
+    pub job: Job<FolderOpOutcome>,
+}
+
+/// What a view hands over when it ends: the events not taken yet (an outcome among them) and its running operation.
+pub struct Retired {
+    /// Dialogs, notices and outcomes the window did not take yet.
+    pub events: Vec<FolderEvent>,
+    /// The operation still writing, cancelled.
+    pub running: Option<RunningOp>,
 }
 
 /// A gate the tests hold a view's operation jobs at (deterministic Stop and busy states, §6.6 "no timers").
@@ -418,9 +445,17 @@ pub struct FolderViewModel {
     child_results: Vec<(ViewId, ContentOutcome)>,
     /// A folder the tree opened that was not scanned: refreshed at the next poll (FC-012).
     unscanned_open: Option<NodeId>,
-    /// Tests hold the operation jobs here.
+    /// Folders an Expand asked for while a task ran, by path: refreshed and opened once it ends (FC-012).
+    queued_expand: Vec<String>,
+    /// Bumped by every selection the user makes: a refresh does not put back a selection older than one made while it
+    /// ran.
+    selection_moves: u64,
+    /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
+    /// Tests hold a comparison here once it scanned, before it reports (a view that is still comparing).
+    #[cfg(test)]
+    pub scan_gate: Option<Gate>,
 }
 
 /// The cached availability of next/previous difference.
@@ -483,8 +518,12 @@ impl FolderViewModel {
             children: HashMap::new(),
             child_results: Vec::new(),
             unscanned_open: None,
+            queued_expand: Vec::new(),
+            selection_moves: 0,
             #[cfg(test)]
             gate: None,
+            #[cfg(test)]
+            scan_gate: None,
         }
     }
 
@@ -541,6 +580,8 @@ impl FolderViewModel {
             });
         let job_prepared = prepared.clone();
         let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
+        #[cfg(test)]
+        let gate = self.scan_gate.clone();
         let job = Job::spawn(
             service,
             JobKind::FolderCompare,
@@ -549,6 +590,8 @@ impl FolderViewModel {
             move |svc, job| {
                 let result = svc.folder_run(&job_prepared, job, &observer);
                 drop(observer);
+                #[cfg(test)]
+                wait_at(gate.as_ref());
                 result
             },
         );
@@ -626,6 +669,37 @@ impl FolderViewModel {
             }
             FolderState::Running { job, .. } => job.cancel(),
             _ => {}
+        }
+    }
+
+    /// The view ends (its tab closes, its model is replaced, the window quits): everything stops, and what the window
+    /// must still report comes back: the events it did not take, and an operation's job, cancelled, which ends after
+    /// its current item (the cancel is cooperative). A plan or a question that had not run writes nothing.
+    pub fn retire(&mut self) -> Retired {
+        let running = match self.task.take() {
+            Some(Task::Executing {
+                caption,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job,
+                })
+            }
+            Some(task) => {
+                task.cancel();
+                None
+            }
+            None => None,
+        };
+        self.cancel();
+        Retired {
+            events: std::mem::take(&mut self.outbox),
+            running,
         }
     }
 
@@ -743,6 +817,9 @@ impl FolderViewModel {
             changed = true;
         }
         changed |= self.poll_task(service);
+        if self.task.is_none() && !self.scanning() && !self.queued_expand.is_empty() {
+            changed |= self.run_queued_expands(service);
+        }
         if self.task.is_none() && !self.child_results.is_empty() {
             self.apply_child_results();
             changed = true;
@@ -830,6 +907,7 @@ impl FolderViewModel {
         if let Some(row) = self.rows.get(index) {
             self.selected = Some(row.node);
             self.selected_index = Some(index);
+            self.selection_moves += 1;
         }
     }
 
@@ -878,16 +956,46 @@ impl FolderViewModel {
         })
     }
 
-    /// Opens a folder; one that was not scanned is refreshed first, and opens when its rows are in (FC-012).
+    /// Opens a folder; one that was not scanned is refreshed first, and opens when its rows are in (FC-012). While a
+    /// task of the view runs, the Expand waits for it, by path (the task may move the ids).
     fn expand(&mut self, service: &Service, node: NodeId) {
         if self.not_scanned(node) && !self.scanning() {
             if self.task.is_none() {
                 self.refresh_rows(service, vec![node], AfterRefresh::Expand(node));
+            } else if let Some(path) = self.path_of(node)
+                && !self.queued_expand.contains(&path)
+            {
+                self.queued_expand.push(path);
             }
             return;
         }
         self.set_open(node, true);
         self.rebuild();
+    }
+
+    /// The path of a row of the current model.
+    fn path_of(&self, id: NodeId) -> Option<String> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        read.node(id)?;
+        Some(read.path(id).as_str().to_owned())
+    }
+
+    /// The Expands that waited for a task, now that none runs: each folder still there is expanded (the first that
+    /// needs a refresh starts it; the rest wait for that one).
+    fn run_queued_expands(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        for path in std::mem::take(&mut self.queued_expand) {
+            let found = self.prepared().and_then(|p| {
+                let read = p.model().read();
+                live_at(&read, &path, true)
+            });
+            if let Some(node) = found {
+                self.expand(service, node);
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn set_open(&mut self, id: NodeId, open: bool) {
@@ -922,8 +1030,9 @@ impl FolderViewModel {
         opens_archive(&read, &node).then(|| (id, read.path(id).as_str().to_owned()))
     }
 
-    /// Adds `path` to the view's `rules.open_archives`, so the session keeps it, and opens the archive in place with
-    /// `folder_open_archive`: a refresh of its folder, not a new comparison (§1.6.20).
+    /// Opens the archive in place with `folder_open_archive`: a refresh of its folder, not a new comparison (§1.6.20).
+    /// Once it opened, `path` joins the view's `rules.open_archives`, so the session keeps it; an open that failed or
+    /// was stopped leaves both as they were.
     fn open_archive(&mut self, service: &Service, node: NodeId, path: String) {
         if self.task.is_some() {
             return;
@@ -932,6 +1041,34 @@ impl FolderViewModel {
             return;
         };
         let model = Arc::clone(prepared.model());
+        let job_model = Arc::clone(&model);
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderRefresh,
+            "open the archive".into(),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_open_archive(&job_model, node, job, &hikasa_folder::NullObserver)
+            },
+        );
+        let points = self.restore_points();
+        self.task = Some(Task::Refreshing {
+            after: AfterRefresh::Archive(path),
+            model,
+            points,
+            job,
+        });
+    }
+
+    /// An archive opened: the view's session keeps its path, and its row opens once it is a folder.
+    fn archive_opened(&mut self, path: String) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
         let mut open = self
             .request
             .patch
@@ -943,23 +1080,6 @@ impl FolderViewModel {
         }
         self.request.patch.open_archives = Some(open);
         self.expand_archive = Some(path);
-        let job_model = Arc::clone(&model);
-        let job = Job::spawn(
-            service,
-            JobKind::FolderRefresh,
-            "open the archive".into(),
-            &self.wake,
-            move |svc, job| {
-                svc.folder_open_archive(&job_model, node, job, &hikasa_folder::NullObserver)
-            },
-        );
-        let points = self.restore_points();
-        self.task = Some(Task::Refreshing {
-            after: AfterRefresh::Archive,
-            model,
-            points,
-            job,
-        });
     }
 
     /// The paths of `rules.open_archives` the view adds to its comparison (what its session keeps).
@@ -979,6 +1099,8 @@ impl FolderViewModel {
         if let Some(restore) = restore {
             self.restore = Some(restore);
         }
+        // An id of the old model names nothing in the new one (an Expand that waits for a task does so by path).
+        self.unscanned_open = None;
         self.expanded.clear();
         self.collapsed.clear();
         self.selected = None;
@@ -1003,10 +1125,10 @@ impl FolderViewModel {
         } else {
             &self.expanded
         };
-        let mut folders: Vec<String> = set
+        let mut folders: Vec<(String, NodeId)> = set
             .iter()
             .filter(|&&id| read.node(id).is_some_and(|n| n.is_folder()))
-            .map(|&id| read.path(id).as_str().to_owned())
+            .map(|&id| (read.path(id).as_str().to_owned(), id))
             .collect();
         folders.sort();
         Some(Restore {
@@ -1015,7 +1137,32 @@ impl FolderViewModel {
                 let folder = read.node(id).is_some_and(|n| n.is_folder());
                 (read.path(id).as_str().to_owned(), folder)
             }),
+            moves: self.selection_moves,
         })
+    }
+
+    /// What of `points` the user left as it was while a refresh ran: the folders still open (one closed meanwhile
+    /// stays closed; with expand-all, still closed) and the selection, unless another row was selected meanwhile (a click during a refresh wins).
+    /// Read before the refresh's `renumbered` moves the ids.
+    fn untouched(&self, points: Restore) -> Restore {
+        // The set the points were taken from: the open folders, or the closed ones with expand-all.
+        let set = if self.expand_all {
+            &self.collapsed
+        } else {
+            &self.expanded
+        };
+        let still_open = |id: NodeId| set.contains(&id);
+        Restore {
+            folders: points
+                .folders
+                .into_iter()
+                .filter(|(_, id)| still_open(*id))
+                .collect(),
+            selected: points
+                .selected
+                .filter(|_| self.selection_moves == points.moves),
+            moves: points.moves,
+        }
     }
 
     /// A run ended: the open folders of a re-run are found again by path; a first run opens what FC-012 asks
@@ -1029,36 +1176,23 @@ impl FolderViewModel {
         let read = model.read();
         match self.restore.take() {
             Some(restore) => {
-                let folder_at = |path: &str| {
-                    let rel = RelPath::parse(path).ok()?;
-                    let id = read.node_at(&rel)?;
-                    let parent = read.node(id)?.parent.unwrap_or(NodeId::ROOT);
-                    // A file and a folder of one name are two rows (D-20): the folder.
-                    std::iter::once(id).chain(read.children(parent)).find(|&c| {
-                        read.path(c).as_str() == path && read.node(c).is_some_and(|n| n.is_folder())
-                    })
-                };
+                // A file and a folder of one name are two rows (D-20): the folder.
                 let found: Vec<NodeId> = restore
                     .folders
                     .iter()
-                    .filter_map(|p| folder_at(p))
+                    .filter_map(|(p, _)| live_at(&read, p, true))
                     .collect();
                 if self.expand_all {
                     self.collapsed.extend(found);
                 } else {
                     self.expanded.extend(found);
                 }
-                self.selected = restore.selected.and_then(|(path, folder)| {
-                    let rel = RelPath::parse(&path).ok()?;
-                    let first = read.node_at(&rel)?;
-                    let parent = read.node(first)?.parent.unwrap_or(NodeId::ROOT);
-                    std::iter::once(first)
-                        .chain(read.children(parent))
-                        .find(|&c| {
-                            read.path(c).as_str() == path
-                                && read.node(c).is_some_and(|n| n.is_folder() == folder)
-                        })
-                });
+                // A row the user selected while the comparison ran again stays selected.
+                if self.selection_moves == restore.moves {
+                    self.selected = restore
+                        .selected
+                        .and_then(|(path, folder)| live_at(&read, &path, folder));
+                }
             }
             None => {
                 if !self.expand_all {
@@ -1120,7 +1254,17 @@ impl FolderViewModel {
                     to,
                     overwrite: OverwritePolicy::Always,
                 };
-                self.plan(service, view, caption, op, node, SideSet::of(from), mark);
+                let subject = self.subject(node, SideSet::of(from), Some(to));
+                self.plan(
+                    service,
+                    view,
+                    caption,
+                    op,
+                    node,
+                    SideSet::of(from),
+                    mark,
+                    subject,
+                );
                 None
             }
             CommandId::Delete | CommandId::PermanentDelete => {
@@ -1189,6 +1333,10 @@ impl FolderViewModel {
             self.refuse_changed(&caption);
             return;
         }
+        if self.selected != Some(node) {
+            self.refuse_moved(&caption);
+            return;
+        }
         let permanent = command == CommandId::PermanentDelete;
         let recycle = if permanent {
             hikasa_folder::ops::Recycle::default()
@@ -1199,7 +1347,33 @@ impl FolderViewModel {
             sides: choice.sides,
             recycle,
         };
-        self.plan(service, view, &caption, op, node, choice.sides, mark);
+        let subject = self.subject(node, choice.sides, None);
+        self.plan(
+            service,
+            view,
+            &caption,
+            op,
+            node,
+            choice.sides,
+            mark,
+            subject,
+        );
+    }
+
+    /// The row an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
+    /// `a/b.txt: on the left`, `a/b.txt: on both sides`.
+    fn subject(&self, node: NodeId, sides: SideSet, to: Option<Side>) -> String {
+        let path = self.path_of(node).unwrap_or_default();
+        let where_ = match to {
+            Some(Side::Left) => "from the right to the left",
+            Some(_) => "from the left to the right",
+            None if sides.contains(SideSet::LEFT) && sides.contains(SideSet::RIGHT) => {
+                "on both sides"
+            }
+            None if sides.contains(SideSet::LEFT) => "on the left",
+            None => "on the right",
+        };
+        format!("{path}: {where_}")
     }
 
     /// Plans `op` on the row `node` (its `sides`) in a job: `folder_op_plan`, then `folder_confirmation`, which reads
@@ -1215,6 +1389,7 @@ impl FolderViewModel {
         node: NodeId,
         sides: SideSet,
         mark: Mark,
+        subject: String,
     ) {
         let mut selection = Selection::default();
         selection.insert(node, sides);
@@ -1253,6 +1428,8 @@ impl FolderViewModel {
             caption: caption.to_owned(),
             view,
             mark,
+            node,
+            subject,
             job,
         });
     }
@@ -1288,7 +1465,18 @@ impl FolderViewModel {
         self.outbox.push(FolderEvent::Notice {
             kind: NoticeKind::Warning,
             text: format!(
-                "{caption}: the comparison changed while the operation waited; nothing was written. Select the row                  again."
+                "{caption}: the comparison changed while the operation waited; nothing was written. Select the row again."
+            ),
+        });
+    }
+
+    /// The selection moved off the row while its operation was prepared: the question is not asked, nothing runs, and
+    /// the window says so (the question would name a row the user no longer has selected).
+    fn refuse_moved(&mut self, caption: &str) {
+        self.outbox.push(FolderEvent::Notice {
+            kind: NoticeKind::Warning,
+            text: format!(
+                "{caption}: the selection changed while the operation was prepared; nothing was written."
             ),
         });
     }
@@ -1325,12 +1513,16 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let job_model = Arc::clone(&model);
+        #[cfg(test)]
+        let gate = self.gate.clone();
         let job = Job::spawn(
             service,
             JobKind::FolderRefresh,
             "refresh".into(),
             &self.wake,
             move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
                 svc.folder_refresh(&job_model, &nodes, job, &hikasa_folder::NullObserver)
             },
         );
@@ -1369,6 +1561,8 @@ impl FolderViewModel {
                     caption,
                     view,
                     mark,
+                    node,
+                    subject,
                     ..
                 },
                 Ready::Plan(result),
@@ -1376,6 +1570,8 @@ impl FolderViewModel {
                 Ok((plan, confirmation)) => {
                     if !mark.holds(self.prepared()) {
                         self.refuse_changed(&caption);
+                    } else if self.selected != Some(node) {
+                        self.refuse_moved(&caption);
                     } else if confirmation.next().is_none() {
                         // Nothing to ask (the options drop every question): the plan runs as confirmed.
                         match confirmation.finish(plan) {
@@ -1386,7 +1582,8 @@ impl FolderViewModel {
                             }),
                         }
                     } else {
-                        let dialog = PlanConfirmDialog::new(view, &caption, &plan, confirmation);
+                        let dialog =
+                            PlanConfirmDialog::new(view, &caption, subject, &plan, confirmation);
                         self.task = Some(Task::Asking {
                             caption,
                             plan: Box::new(plan),
@@ -1455,9 +1652,41 @@ impl FolderViewModel {
                 if !current {
                     return true;
                 }
+                if let (Ok(dto), AfterRefresh::Archive(path)) = (&result, &after) {
+                    // Opened: its row is a folder that could be listed (a flat comparison runs again with it). An
+                    // archive that cannot be read is a folder that failed, with its error: not remembered.
+                    let failed = dto.report.is_some().then(|| {
+                        let read = model.read();
+                        match live_at(&read, path, true) {
+                            Some(id)
+                                if read.node(id).is_some_and(|n| n.scan != ScanStatus::Failed) =>
+                            {
+                                None
+                            }
+                            Some(id) => Some(
+                                read.errors(id)
+                                    .first()
+                                    .map_or_else(String::new, |e| e.error.message.clone()),
+                            ),
+                            None => Some(String::new()),
+                        }
+                    });
+                    match failed.flatten() {
+                        None => self.archive_opened(path.clone()),
+                        Some(why) => self.outbox.push(FolderEvent::Notice {
+                            kind: NoticeKind::Warning,
+                            text: if why.is_empty() {
+                                format!("Open {path}: the archive could not be opened.")
+                            } else {
+                                format!("Open {path}: {why}")
+                            },
+                        }),
+                    }
+                }
                 match result {
                     Ok(dto) => match dto.report {
                         Some(report) => {
+                            let points = points.map(|p| self.untouched(p));
                             self.renumber(&report.renumbered);
                             self.find_again(points.as_ref());
                             if let AfterRefresh::Expand(node) = after {
@@ -1481,10 +1710,17 @@ impl FolderViewModel {
                     },
                     Err(ApiError::Cancelled) => {}
                     Err(e) => {
-                        self.notes.push(LogNote {
-                            kind: LogKind::Warning,
-                            text: format!("refresh: {e}"),
-                        });
+                        if let AfterRefresh::Archive(path) = &after {
+                            self.outbox.push(FolderEvent::Notice {
+                                kind: NoticeKind::Warning,
+                                text: format!("Open {path}: {e}"),
+                            });
+                        } else {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Warning,
+                                text: format!("refresh: {e}"),
+                            });
+                        }
                         if after == AfterRefresh::Operation {
                             self.refresh(service);
                             return true;
@@ -1527,20 +1763,13 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let read = model.read();
-        // The live row at `path` (`node_at` walks the tree, so a record a refresh left behind is never found).
-        let at = |path: &str, folder: bool| -> Option<NodeId> {
-            let rel = RelPath::parse(path).ok()?;
-            let first = read.node_at(&rel)?;
-            let parent = read.node(first)?.parent.unwrap_or(NodeId::ROOT);
-            std::iter::once(first)
-                .chain(read.children(parent))
-                .find(|&c| {
-                    read.path(c).as_str() == path
-                        && read.node(c).is_some_and(|n| n.is_folder() == folder)
-                })
-        };
+        let at = |path: &str, folder: bool| live_at(&read, path, folder);
         if let Some(points) = points {
-            let found: Vec<NodeId> = points.folders.iter().filter_map(|p| at(p, true)).collect();
+            let found: Vec<NodeId> = points
+                .folders
+                .iter()
+                .filter_map(|(p, _)| at(p, true))
+                .collect();
             if self.expand_all {
                 self.collapsed.extend(found);
             } else {
@@ -2155,6 +2384,19 @@ fn renumbered(pairs: &[(NodeId, NodeId)], id: NodeId) -> NodeId {
         }
     }
     id
+}
+
+/// The live row at `path`, a folder or not (a file and a folder of one name are two rows, D-20); `node_at` walks the
+/// tree, so a record a refresh left behind is never found.
+fn live_at(read: &TreeRead<'_>, path: &str, folder: bool) -> Option<NodeId> {
+    let rel = RelPath::parse(path).ok()?;
+    let first = read.node_at(&rel)?;
+    let parent = read.node(first)?.parent.unwrap_or(NodeId::ROOT);
+    std::iter::once(first)
+        .chain(read.children(parent))
+        .find(|&c| {
+            read.path(c).as_str() == path && read.node(c).is_some_and(|n| n.is_folder() == folder)
+        })
 }
 
 /// The file row at `path` (a file and a folder of one name are two rows, D-20).

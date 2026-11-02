@@ -226,6 +226,8 @@ pub struct TextViewModel {
     started: Instant,
     loaded_after: Option<Duration>,
     ready_after: Option<Duration>,
+    /// Disable editing (FC-003): nothing writes yet; the session and a duplicate keep it.
+    write: crate::folder_view::WritePolicy,
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker before the first `spans` call
@@ -277,9 +279,20 @@ impl TextViewModel {
             started: Instant::now(),
             loaded_after: None,
             ready_after: None,
+            write: crate::folder_view::WritePolicy::default(),
         };
         model.start(service);
         model
+    }
+
+    /// Sets what the view may write (FC-003).
+    pub fn set_write_policy(&mut self, write: crate::folder_view::WritePolicy) {
+        self.write = write;
+    }
+
+    /// What the view may write.
+    pub fn write_policy(&self) -> crate::folder_view::WritePolicy {
+        self.write
     }
 
     /// (Re)starts the comparison (Reload).

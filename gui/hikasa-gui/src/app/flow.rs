@@ -28,7 +28,7 @@ use hikasa_session::{ApiError, Service};
 use super::{AppCore, CoreJob, Effect, OpenTarget};
 use crate::commands::{CommandId, Scope};
 use crate::dialog::{ButtonRole, Followup, Prompt};
-use crate::folder_view::ChildTicket;
+use crate::folder_view::{ChildTicket, WritePolicy};
 use crate::home::{HomeModel, PanelMode, PanelTarget, RenameEdit, TreeNode};
 use crate::job::Job;
 use crate::notify::{Notice, NoticeKind};
@@ -796,11 +796,12 @@ impl AppCore {
         (layout_table(&keys), display)
     }
 
-    /// What a job needs to build the current session of a tab (D-105); `None` for Home and pending tabs.
+    /// What a job needs to build the current session of a tab (D-105); `None` for Home and pending tabs. Disable
+    /// editing goes with it: the session of a protected view stays protected (`[specs] read_only_*`).
     fn capture(tab: &Tab) -> Option<ViewCapture> {
-        let request = match tab.model()? {
-            ViewModel::Text(m) => m.duplicate().0,
-            ViewModel::Folder(m) => m.duplicate().0,
+        let (request, write) = match tab.model()? {
+            ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Home(_) => return None,
         };
         let (view, display) = AppCore::tables_of(tab);
@@ -811,7 +812,17 @@ impl AppCore {
             display,
             parent: vs.and_then(|s| s.parent.clone()),
             description: vs.map(|s| s.description.clone()).unwrap_or_default(),
+            read_only: write.read_only,
         })
+    }
+
+    /// What a tab may write (`WritePolicy::default()` for Home and pending tabs).
+    fn write_of(tab: &Tab) -> WritePolicy {
+        match tab.model() {
+            Some(ViewModel::Text(m)) => m.write_policy(),
+            Some(ViewModel::Folder(m)) => m.write_policy(),
+            _ => WritePolicy::default(),
+        }
     }
 
     fn auto_save_on(&self) -> bool {
@@ -1588,6 +1599,16 @@ impl AppCore {
         }
         let mut vs = self.view_state_of(&opened);
         vs.inline = inline;
+        // `--nobackups` of a restored workspace tab: kept in the tab's own `view` table, never in a session.
+        let no_backups = match how {
+            OpenHow::Pending(id) => self
+                .tab(id)
+                .and_then(Tab::pending_tab)
+                .and_then(|p| p.view.get(NO_BACKUPS_KEY))
+                .and_then(hikasa_session::sessions::view_bool)
+                .unwrap_or(false),
+            _ => false,
+        };
         let origin = vs.origin.clone();
         let OpenedSession {
             view,
@@ -1605,7 +1626,13 @@ impl AppCore {
         let kind = view.kind;
         let specs = view.specs;
         let mut model = self.build_model_with([None, None], request, &session.view);
-        super::set_write(&mut model, session_write(&session));
+        super::set_write(
+            &mut model,
+            WritePolicy {
+                no_backups,
+                ..session_write(&session)
+            },
+        );
         let toolbar = self.session_toolbar(&session, model.scope());
         match how {
             OpenHow::Pending(id) => {
@@ -2566,17 +2593,23 @@ impl AppCore {
             }
         }
         let mut model = self.build_model_with([None, None], request, &session.view);
-        super::set_write(&mut model, session_write(&session));
+        // Disable editing is the session's, which carries the view's own (`capture`); `--nobackups` is the view's.
+        let before = self.tab(view).map(AppCore::write_of).unwrap_or_default();
+        super::set_write(
+            &mut model,
+            WritePolicy {
+                no_backups: before.no_backups,
+                ..session_write(&session)
+            },
+        );
         let specs = opened.specs;
+        let mut old = None;
         if let Some(tab) = self.tab_mut(view) {
-            if let Some(m) = tab.model_mut() {
-                match m {
-                    ViewModel::Text(m) => m.cancel(),
-                    ViewModel::Folder(m) => m.cancel(),
-                    ViewModel::Home(_) => {}
-                }
-            }
-            tab.content = TabContent::Live(model);
+            let source = tab.caption();
+            old = Some((
+                source,
+                std::mem::replace(&mut tab.content, TabContent::Live(model)),
+            ));
             if let Some(vs) = tab.session.as_mut() {
                 vs.dirty = dirty;
                 vs.settings_pending = false;
@@ -2585,6 +2618,14 @@ impl AppCore {
             let caption = tab.caption();
             self.shared.set_title(view, caption);
             self.shared.set_specs(view, specs);
+        }
+        // The old model ends: an operation it was running is reported once it has stopped (§1.6.25 W6d).
+        match old {
+            Some((source, TabContent::Live(ViewModel::Folder(mut m)))) => {
+                self.retire_folder(view, &source, "settings applied", &mut m);
+            }
+            Some((_, TabContent::Live(ViewModel::Text(mut m)))) => m.cancel(),
+            _ => {}
         }
         self.untrack_view(view);
         self.track_view(view);
@@ -2725,14 +2766,23 @@ impl AppCore {
                     if i == w.active {
                         active = tabs.len();
                     }
+                    // `--nobackups` has no session key: the workspace keeps it in the tab's own `view` table.
+                    let no_backups = AppCore::write_of(tab).no_backups;
                     let captured = match (tab.pending_tab(), &tab.session) {
                         (Some(p), _) => Some(CapturedTab::Pending(Box::new(p.clone()))),
                         (None, Some(vs)) => match (vs.reference(), AppCore::capture(tab)) {
-                            (Some(r), Some(c)) => Some(CapturedTab::Named(r.to_string(), c.view)),
+                            (Some(r), Some(c)) => {
+                                let mut view = c.view;
+                                if no_backups {
+                                    view.insert(NO_BACKUPS_KEY.into(), true.into());
+                                }
+                                Some(CapturedTab::Named(r.to_string(), view))
+                            }
                             (None, Some(c)) => Some(CapturedTab::Inline {
                                 capture: Box::new(c),
                                 previous: vs.inline.clone(),
                                 slot: self.slots.get(&tab.id).cloned(),
+                                no_backups,
                             }),
                             _ => None,
                         },
@@ -3110,10 +3160,12 @@ fn rename_folder_prompt(path: &str, to: &str, locked: &[String]) -> Prompt {
     )
 }
 
-/// A session with its specs in stored form (D-80; a typed relative path becomes absolute).
+/// The key of a workspace tab's `view` table that keeps `--nobackups` of its view (§1.6.25 W6d after review).
+pub(crate) const NO_BACKUPS_KEY: &str = "no_backups";
+
 /// Disable editing of a session (`[specs] read_only_left`, `read_only_right`; FC-003).
-fn session_write(session: &Session) -> crate::folder_view::WritePolicy {
-    crate::folder_view::WritePolicy {
+fn session_write(session: &Session) -> WritePolicy {
+    WritePolicy {
         read_only: hikasa_folder::ops::ReadOnlySides {
             left: session.specs.read_only_left,
             right: session.specs.read_only_right,
@@ -3122,6 +3174,7 @@ fn session_write(session: &Session) -> crate::folder_view::WritePolicy {
     }
 }
 
+/// A session with its specs in stored form (D-80; a typed relative path becomes absolute).
 fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
     for slot in [&mut session.specs.left, &mut session.specs.right] {
         if !slot.is_empty() {

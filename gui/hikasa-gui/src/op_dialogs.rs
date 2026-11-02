@@ -89,13 +89,16 @@ pub fn plan_counts(plan: &OpPlan) -> Vec<String> {
     lines
 }
 
-/// The questions of one plan (§1.6.11): the text of each [`hikasa_folder::ops::Question`], the plan's counts, and Yes,
-/// No, Yes to All, No to All, Cancel. Esc is Cancel; Enter is Yes for the operation question and No for an item's.
+/// The questions of one plan (§1.6.11): the row and the sides it acts on, the text of each
+/// [`hikasa_folder::ops::Question`], the plan's counts, and Yes, No, Yes to All, No to All, Cancel. Esc is Cancel; Enter
+/// is Yes for the operation question and No for an item's.
 #[derive(Debug)]
 pub struct PlanConfirmDialog {
     /// The view that asked.
     pub view: ViewId,
     title: String,
+    /// The row and its sides (`a/b.txt: from the left to the right`).
+    subject: String,
     verb: OpVerb,
     /// `None` once taken.
     confirmation: Option<Confirmation>,
@@ -109,16 +112,19 @@ pub struct PlanConfirmDialog {
 }
 
 impl PlanConfirmDialog {
-    /// The dialog of `confirmation`, which has a question; `title` is the command's caption.
+    /// The dialog of `confirmation`, which has a question; `title` is the command's caption, `subject` the row and the
+    /// sides it acts on.
     pub fn new(
         view: ViewId,
         title: impl Into<String>,
+        subject: impl Into<String>,
         plan: &OpPlan,
         confirmation: Confirmation,
     ) -> PlanConfirmDialog {
         PlanConfirmDialog {
             view,
             title: title.into(),
+            subject: subject.into(),
             verb: plan.verb,
             confirmation: Some(confirmation),
             counts: plan_counts(plan),
@@ -130,6 +136,11 @@ impl PlanConfirmDialog {
 
     fn current(&self) -> Option<&hikasa_folder::ops::Question> {
         self.confirmation.as_ref().and_then(Confirmation::next)
+    }
+
+    /// The row and the sides the operation acts on.
+    pub fn subject(&self) -> &str {
+        &self.subject
     }
 
     /// The question asked now (`None`: every question is answered).
@@ -299,8 +310,9 @@ pub struct DeleteChoice {
 }
 
 /// The Delete dialog (FC-073): Left, Right, Both; *Use recycle bin if possible*; *If the recycle bin fails, delete
-/// permanently*; what the row holds on each side. A side the row has nothing on, or that is read-only, is greyed. With
-/// `require_side_selection_in_delete`, or a row on two writable sides, no side is preset and OK stays off until one is
+/// permanently*; the row's path and what it holds on each side. A side the row has nothing on, or that is read-only, is
+/// greyed. A row on one side has that side preset when it is writable; a row on both sides (a pair) never has a preset,
+/// whatever is read-only, nor does any row with `require_side_selection_in_delete`: OK stays off until a side is
 /// chosen. *Delete Permanently* has the bin off and greyed, and no fallback.
 #[derive(Debug)]
 pub struct DeleteDialog {
@@ -334,10 +346,13 @@ impl DeleteDialog {
             holds[0].is_some() && writable[0],
             holds[1].is_some() && writable[1],
         ];
-        // A preset never surprises: one side the row can lose, and only when the option does not ask for a choice.
-        let choice = match (require_side, allowed) {
-            (false, [true, false]) => Some(SideChoice::Left),
-            (false, [false, true]) => Some(SideChoice::Right),
+        // A preset never surprises: only a row on one side has one, that side, when it is writable and the option does
+        // not ask for a choice. A pair is never preset, even when one of its sides is read-only: Enter, Enter must not
+        // delete one half of a pair the user did not pick.
+        let on = [holds[0].is_some(), holds[1].is_some()];
+        let choice = match (require_side, on, allowed) {
+            (false, [true, false], [true, _]) => Some(SideChoice::Left),
+            (false, [false, true], [_, true]) => Some(SideChoice::Right),
             _ => None,
         };
         DeleteDialog {

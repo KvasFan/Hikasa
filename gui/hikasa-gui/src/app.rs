@@ -48,6 +48,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod flow;
 
+pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
 pub use flow::OpenHow;
 pub use flow::{Catalog, OpenedSession, PanelAction, load_named};
@@ -264,6 +265,24 @@ pub struct AppCore {
     child_parents: std::collections::HashMap<ViewId, ViewId>,
     /// The view the last `OpenHow::Target` opened (a child view's id, once its session is read).
     last_opened: Option<ViewId>,
+    /// Operations whose view ended while they wrote: cancelled, they end after their current item, and their outcome
+    /// goes to the log with one notice (§1.6.25 W6d after review).
+    orphans: Vec<OrphanOp>,
+    /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
+    #[cfg(test)]
+    pub before_wait: Option<Box<dyn FnOnce() + Send>>,
+}
+
+/// An operation whose view ended (the tab closed, the view was replaced, the window quits).
+struct OrphanOp {
+    /// The view it ran in.
+    view: ViewId,
+    /// The view's caption: the source of its log entries.
+    source: String,
+    /// How the view ended (`closed`, `settings applied`), for the notice.
+    why: &'static str,
+    /// The job, cancelled.
+    op: crate::folder_view::RunningOp,
 }
 
 /// The theme preview of the Options dialog (D-130).
@@ -361,6 +380,9 @@ impl AppCore {
             preview: None,
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
+            orphans: Vec::new(),
+            #[cfg(test)]
+            before_wait: None,
         };
         let root = app.new_window(None);
         app.new_home_tab(root);
@@ -1197,6 +1219,7 @@ impl AppCore {
         for (window, view, caption, list) in events {
             effects.extend(self.folder_events(window, view, &caption, list));
         }
+        self.poll_orphans();
         self.child_results();
         effects.extend(self.poll_jobs());
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
@@ -1248,42 +1271,166 @@ impl AppCore {
                     caption,
                     outcome,
                     elapsed,
-                } => {
-                    let time = self.service.clock().now();
-                    let filter = self.log.filter();
-                    let entries = hikasa_session::log::op_log_entries(
-                        &outcome,
-                        &time,
-                        source,
-                        Some(elapsed),
-                        &filter,
-                    );
-                    for entry in entries {
-                        self.log.push(entry);
-                    }
-                    let summary = hikasa_session::api::folder_ops::summary_text(
-                        outcome.verb,
-                        false,
-                        &outcome.report.summary,
-                        None,
-                    );
-                    let clean = outcome.ok();
-                    let text = if outcome.report.cancelled {
-                        format!("{caption}: stopped; {summary}.")
-                    } else {
-                        format!("{caption}: {summary}.")
-                    };
-                    let notice = if clean {
-                        Notice::new(format!("op:{}", view.0), NoticeKind::Info, text)
-                    } else {
-                        Notice::new(format!("op:{}", view.0), NoticeKind::Warning, text)
-                            .with_actions(vec![NoticeAction::ShowLog(view)])
-                    };
-                    self.push_notice(window, notice);
-                }
+                } => self.op_outcome(window, view, None, source, &caption, &outcome, elapsed),
             }
         }
         effects
+    }
+
+    /// An operation's outcome: its entries in the log (`op_log_entries`, D-116) and one notice (D-117), information
+    /// when every item ran, a warning when one failed, did not run or the operation was stopped; with *Show log* while
+    /// the view lives (`ended` is `None`). The notice of a view that ended names its tab and how it ended.
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn op_outcome(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        ended: Option<&str>,
+        source: &str,
+        caption: &str,
+        outcome: &hikasa_session::api::FolderOpOutcome,
+        elapsed: std::time::Duration,
+    ) {
+        let time = self.service.clock().now();
+        let filter = self.log.filter();
+        let entries =
+            hikasa_session::log::op_log_entries(outcome, &time, source, Some(elapsed), &filter);
+        for entry in entries {
+            self.log.push(entry);
+        }
+        let summary = hikasa_session::api::folder_ops::summary_text(
+            outcome.verb,
+            false,
+            &outcome.report.summary,
+            None,
+        );
+        let clean = outcome.ok();
+        let what = match ended {
+            None => caption.to_owned(),
+            Some(why) => format!("{caption} in {source} ({why})"),
+        };
+        let text = if outcome.report.cancelled {
+            format!("{what}: stopped; {summary}.")
+        } else {
+            format!("{what}: {summary}.")
+        };
+        let key = format!("op:{}", view.0);
+        let notice = if clean {
+            Notice::new(key, NoticeKind::Info, text)
+        } else if ended.is_none() {
+            Notice::new(key, NoticeKind::Warning, text)
+                .with_actions(vec![NoticeAction::ShowLog(view)])
+        } else {
+            Notice::new(key, NoticeKind::Warning, text)
+        };
+        self.push_notice(window, notice);
+    }
+
+    /// A folder view ends while it may still write (§1.6.25 W6d after review): what it did not hand over yet is
+    /// reported now (an outcome, a notice; a dialog is dropped: its view is gone), and its running operation, cancelled,
+    /// is kept until it ends, so its outcome reaches the log too.
+    pub(crate) fn retire_folder(
+        &mut self,
+        view: ViewId,
+        source: &str,
+        why: &'static str,
+        m: &mut FolderViewModel,
+    ) {
+        let retired = m.retire();
+        let window = self.window_of(view).unwrap_or_else(|| self.focused());
+        for event in retired.events {
+            match event {
+                FolderEvent::Dialog(_) => {}
+                FolderEvent::Notice { kind, text } => {
+                    let log = match kind {
+                        NoticeKind::Info => LogKind::Summary,
+                        NoticeKind::Warning => LogKind::Warning,
+                        NoticeKind::Error => LogKind::Error,
+                    };
+                    let notice = Notice::new(format!("op:{}", view.0), kind, text);
+                    self.notify(window, notice, source, log);
+                }
+                FolderEvent::Outcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => self.op_outcome(window, view, Some(why), source, &caption, &outcome, elapsed),
+            }
+        }
+        for note in m.take_notes() {
+            self.log_entry(note.kind, source, note.text);
+        }
+        if let Some(op) = retired.running {
+            self.orphans.push(OrphanOp {
+                view,
+                source: source.to_owned(),
+                why,
+                op,
+            });
+        }
+    }
+
+    /// The orphaned operations that ended: their outcomes go to the log, each with one notice. True while some run.
+    fn poll_orphans(&mut self) -> bool {
+        let mut i = 0;
+        while i < self.orphans.len() {
+            let Some(result) = self.orphans[i].op.job.try_result() else {
+                i += 1;
+                continue;
+            };
+            let orphan = self.orphans.remove(i);
+            let window = self.focused();
+            let caption = &orphan.op.caption;
+            match result {
+                Ok(outcome) => self.op_outcome(
+                    window,
+                    orphan.view,
+                    Some(orphan.why),
+                    &orphan.source,
+                    caption,
+                    &outcome,
+                    orphan.op.began.elapsed(),
+                ),
+                Err(e) => {
+                    let text = format!("{caption} in {} ({}): {e}", orphan.source, orphan.why);
+                    let notice =
+                        Notice::new(format!("op:{}", orphan.view.0), NoticeKind::Error, text);
+                    self.notify(window, notice, &orphan.source, LogKind::Error);
+                }
+            }
+        }
+        !self.orphans.is_empty()
+    }
+
+    /// Waits (at most `limit`) for the orphaned operations to end, so none is cut off mid-item with a temporary file
+    /// left (Quit). One still running after `limit` is logged as an error.
+    fn wait_operations(&mut self, limit: std::time::Duration) {
+        if self.orphans.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        if let Some(hook) = self.before_wait.take() {
+            hook();
+        }
+        let began = std::time::Instant::now();
+        while self.poll_orphans() {
+            if began.elapsed() >= limit {
+                let mut errors = Vec::new();
+                for orphan in &self.orphans {
+                    let text = format!(
+                        "{} in {} was still running at exit: it may have stopped mid-item.",
+                        orphan.op.caption, orphan.source
+                    );
+                    tracing::error!(target: "hikasa::gui", "{text}");
+                    errors.push((orphan.source.clone(), text));
+                }
+                for (source, text) in errors {
+                    self.log_entry(LogKind::Error, &source, text);
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
     /// `TextDirty` for every text view whose panes must refetch, `FolderScroll` for every tree that must
@@ -1680,6 +1827,7 @@ impl AppCore {
             Some(ViewModel::Home(h)) => Err(h.copy_fields()),
             Some(ViewModel::Text(m)) => {
                 let (request, titles) = m.duplicate();
+                write = m.write_policy();
                 Ok((ViewKind::TextCompare, request, titles, m.inputs().to_vec()))
             }
             Some(ViewModel::Folder(m)) => {
@@ -1903,10 +2051,11 @@ impl AppCore {
             let (result, code) = ViewOutcome::close_unopened(reason);
             self.shared.close(id, result, code);
         }
+        let source = tab.caption();
         let outcome = match tab.model_mut() {
             Some(ViewModel::Folder(m)) => {
                 let outcome = m.outcome(&service);
-                m.cancel();
+                self.retire_folder(id, &source, "closed", m);
                 Some(outcome)
             }
             Some(ViewModel::Text(m)) => {
@@ -2197,6 +2346,8 @@ impl AppCore {
                 self.close_model(&mut tab, CloseReason::Shutdown);
             }
         }
+        // An operation that was writing ends its current item first (no temporary file is left), and is logged.
+        self.wait_operations(OPERATION_FLUSH);
         self.persist_state(geometry);
         self.send_watch(WatchCmd::Stop);
         if let Some(server) = self.server.take()
@@ -3386,15 +3537,21 @@ impl AppCore {
 /// How long an exit nobody can refuse waits for a settings write (an import, a restore).
 const SETTINGS_FLUSH: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long Quit waits for a cancelled operation to end its current item (the cancel is checked per buffer).
+const OPERATION_FLUSH: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// `tabs.warn_when_closing_multiple_tabs` (the prompts' "Do not ask again").
 const WARN_TABS: &str = "tabs.warn_when_closing_multiple_tabs";
 /// `tabs.warn_when_closing_multiple_windows`.
 const WARN_WINDOWS: &str = "tabs.warn_when_closing_multiple_windows";
 
-/// Sets what a folder view may write (FC-003, CLI-003); other views have nothing to protect yet.
+/// Sets what a view may write (FC-003, CLI-003). A text view writes nothing yet, but keeps its read-only sides for its
+/// session (`[specs] read_only_*`) and its duplicate.
 pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
-    if let ViewModel::Folder(m) = model {
-        m.set_write_policy(write);
+    match model {
+        ViewModel::Folder(m) => m.set_write_policy(write),
+        ViewModel::Text(m) => m.set_write_policy(write),
+        ViewModel::Home(_) => {}
     }
 }
 

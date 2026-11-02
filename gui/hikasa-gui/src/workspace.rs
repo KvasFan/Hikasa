@@ -220,6 +220,8 @@ pub enum CapturedTab {
         previous: Option<OpaqueTable>,
         /// Its auto-saved file: its identity (overrides, favorite) stays.
         slot: Option<AutoId>,
+        /// `--nobackups` of its view, kept in the tab's `view` table (a session has no such key).
+        no_backups: bool,
     },
     /// A tab not restored yet.
     Pending(Box<PendingTab>),
@@ -251,6 +253,7 @@ impl CapturedWindow {
                     capture,
                     previous,
                     slot,
+                    no_backups,
                 } => {
                     let mut session = capture.session(service)?.0;
                     let file = slot
@@ -260,9 +263,13 @@ impl CapturedWindow {
                         session = merged_with_file(session, &file.value);
                         session.locked = false;
                     }
+                    let mut view = capture.view.clone();
+                    if *no_backups {
+                        view.insert(crate::app::NO_BACKUPS_KEY.into(), true.into());
+                    }
                     WorkspaceTab {
                         inline: service.inline_table(&session, previous.as_ref())?,
-                        view: capture.view.clone(),
+                        view,
                         ..WorkspaceTab::default()
                     }
                 }

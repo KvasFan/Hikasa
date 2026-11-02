@@ -9,6 +9,8 @@ use hikasa_core::Side;
 
 /// The confirmation dialog's body.
 pub fn confirm(ui: &mut Ui, dialog: &mut PlanConfirmDialog, pal: &Palette) {
+    ui.label(RichText::new(dialog.subject()).color(pal.fg).strong());
+    ui.add_space(4.0);
     if let Some(question) = dialog.question() {
         ui.label(RichText::new(question).color(pal.fg));
     }
