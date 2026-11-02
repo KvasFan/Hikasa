@@ -458,6 +458,13 @@ new file's absent target is checked by that rename, with the error of D-103 when
 unchanged: its stamps, the folder above it, the fence, and a target that appeared since the plan stays. The other extra
 calls are the guarantees: the folder above each item (D-94 rule 3), the stamp, a temporary name and its rename.
 
+**After the review of W6c** (`LocalVfs::copy_new_file` reads through `take(size + 1)` and fails a count other than the
+stamp's): the same test, two release binaries, the copy path before and after that change and nothing else different,
+run in turn, six rounds each, load given before each. Load 14–19: before 1.49, 1.46, 1.46, 1.47, 1.41, 1.46 ×
+(`folder_op_execute` 358–395 ms), after 1.48, 1.45, 1.48, 1.13, 1.48, 1.40 × (357–379 ms; the 1.13 is a slow plain copy).
+At load 35–60 both sides crossed the gate in some rounds (before 1.43–1.58 ×, after 1.15–2.09 ×). No difference beyond
+the noise of a shared machine; the gate keeps no margin, as before.
+
 **Memory.** The first count gave 91.9 MiB for the `OpPlan`: the plan kept the capacity its vectors grew to (131,072 items
 of 640 bytes), and a `Spec` was 112 bytes because of the URL variants no plan holds. The builder now gives back what it did
 not use, and `Spec::Remote` and `Spec::Http` are boxed: a `Spec` is 56 bytes and a `PlanItem` 472.
