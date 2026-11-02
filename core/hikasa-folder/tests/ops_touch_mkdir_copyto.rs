@@ -706,3 +706,198 @@ fn a6_19_members_are_copied_out_of_an_archive() {
     assert_eq!(report.summary.failed, 0, "{:?}", report.results);
     assert_eq!(read(&world.mem, "/out/x.txt").unwrap(), b"1");
 }
+
+/// Files not named `*.txt` are hidden, so a folder `c.txt` shows while its `a` does not.
+fn only_txt() -> FolderRules {
+    let mut rules = FolderRules::default();
+    let patch = hikasa_folder::FolderRulesPatch {
+        name_filter: Some("*.txt".to_owned()),
+        ..hikasa_folder::FolderRulesPatch::default()
+    };
+    rules.apply(&patch).unwrap();
+    rules
+}
+
+/// Rule 16 (§1.6.25 W6b note 42): a folder planned only as the way to sources that all stay writes nothing, so it claims
+/// no path. Left `c.txt/a` is filtered; the right's file `c.txt` takes `/o/t/c.txt`, and `/o/t` is made for it (P-OPS,
+/// seed `a049c850`).
+#[test]
+fn a6_19_copyto_a_way_folder_with_nothing_in_it_is_no_duplicate() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+    file(&vfs, "/l/c.txt/a", b"hidden", 10);
+    file(&vfs, "/l/a", b"hidden", 10);
+    file(&vfs, "/r/c.txt", b"right", 10);
+    file(&vfs, "/r/a", b"hidden", 10);
+    let cmp = compared(&vfs, &only_txt());
+    let read_tree = cmp.read();
+    let mut selection = Selection::default();
+    let both = SideSet::all();
+    for id in read_tree.children(NodeId::ROOT).collect::<Vec<_>>() {
+        let view = read_tree.node(id).unwrap();
+        if view.is_folder() {
+            for child in read_tree.children(id) {
+                selection.insert(child, both);
+            }
+        } else {
+            selection.insert(id, both);
+        }
+    }
+    let scope = OpScope {
+        selection,
+        include: Include::visible(),
+        iu: false,
+        read_only: ReadOnlySides::default(),
+    };
+    let op = FolderOp::CopyTo {
+        sides: both,
+        target: mspec("/o/t"),
+        folder: false,
+        structure: PathStructure::Base,
+        overwrite: OverwritePolicy::Always,
+    };
+    let out = plan_op(
+        &read_tree,
+        &vfs,
+        &scope,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    drop(read_tree);
+    assert_eq!(
+        lines(&out),
+        [
+            "create_dir /o/t @0",
+            "skip /o/t/c.txt/a @1 !filtered",
+            "skip /o/t/a @0 !filtered",
+            "skip /o/t/a @0 !filtered",
+            "copy /o/t/c.txt @0",
+        ]
+    );
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert_eq!(read(&vfs, "/o/t/c.txt").unwrap(), b"right");
+}
+
+/// The other half of note 42: a folder of the other side that lands on such a way folder is a source, and the folder is
+/// made for it, though nothing goes into it.
+#[test]
+fn a6_19_copyto_a_folder_that_merges_into_a_way_folder_is_made() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+    file(&vfs, "/l/c.txt/a", b"hidden", 10);
+    vfs.insert_dir(&host("/r/c.txt"), meta(1)).unwrap();
+    let cmp = compared(&vfs, &only_txt());
+    let out = plan_of(
+        &vfs,
+        &cmp,
+        &[("c.txt/a", L), ("c.txt", R)],
+        &FolderOp::CopyTo {
+            sides: SideSet::all(),
+            target: mspec("/o/t"),
+            folder: false,
+            structure: PathStructure::Base,
+            overwrite: OverwritePolicy::Always,
+        },
+    )
+    .unwrap();
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    let made = vfs.stat(&mspec("/o/t/c.txt"), FollowLinks::No).unwrap();
+    assert_eq!(made.kind, EntryKind::Dir);
+}
+
+/// Note 42 on a back-end that folds case: the left's way folder `D` holds only a filtered file, the right's `d/y.txt` goes
+/// through the same folder by its other spelling, so the folder is made.
+#[test]
+fn a6_19_copyto_a_way_folder_used_by_another_spelling_is_made() {
+    let vfs = MemoryVfs::new(CaseSensitivity::Insensitive);
+    for dir in ["/l", "/r", "/o"] {
+        vfs.insert_dir(&host(dir), meta(1)).unwrap();
+    }
+    file(&vfs, "/l/D/a", b"hidden", 10);
+    file(&vfs, "/r/d/y.txt", b"right", 10);
+    let mut rules = only_txt();
+    rules.alignment.case = hikasa_folder::CaseMode::Insensitive;
+    let cmp = compared(&vfs, &rules);
+    let out = plan_of(
+        &vfs,
+        &cmp,
+        &[("D/a", L), ("D/y.txt", R)],
+        &FolderOp::CopyTo {
+            sides: SideSet::all(),
+            target: mspec("/o/t"),
+            folder: false,
+            structure: PathStructure::Base,
+            overwrite: OverwritePolicy::Always,
+        },
+    )
+    .unwrap();
+    let shown = lines(&out);
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 0, "{shown:?} {:?}", report.results);
+    assert_eq!(
+        read(&vfs, "/o/t/D/y.txt")
+            .or_else(|| read(&vfs, "/o/t/d/y.txt"))
+            .unwrap(),
+        b"right"
+    );
+}
+
+/// The mirror of note 42: the left's file `c.txt` goes first, and the right's filtered `c.txt/a` would need a folder there.
+/// It writes nothing, so it is `skip filtered`, not an error of a row nobody sees.
+#[test]
+fn a6_19_copyto_a_filtered_row_behind_a_file_of_the_plan_is_skipped() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+    file(&vfs, "/l/c.txt", b"left", 10);
+    file(&vfs, "/r/c.txt/a", b"hidden", 10);
+    let cmp = compared(&vfs, &only_txt());
+    let read_tree = cmp.read();
+    let mut selection = Selection::default();
+    for id in read_tree.children(NodeId::ROOT).collect::<Vec<_>>() {
+        if read_tree.node(id).unwrap().is_folder() {
+            for child in read_tree.children(id) {
+                selection.insert(child, R);
+            }
+        } else {
+            selection.insert(id, L);
+        }
+    }
+    let scope = OpScope {
+        selection,
+        include: Include::visible(),
+        iu: false,
+        read_only: ReadOnlySides::default(),
+    };
+    let op = FolderOp::CopyTo {
+        sides: SideSet::all(),
+        target: mspec("/o/t"),
+        folder: false,
+        structure: PathStructure::Base,
+        overwrite: OverwritePolicy::Always,
+    };
+    let out = plan_op(
+        &read_tree,
+        &vfs,
+        &scope,
+        &op,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    drop(read_tree);
+    assert_eq!(
+        lines(&out),
+        [
+            "create_dir /o/t @0",
+            "copy /o/t/c.txt @0",
+            "skip /o/t/c.txt/a @0 !filtered",
+        ]
+    );
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert_eq!(read(&vfs, "/o/t/c.txt").unwrap(), b"left");
+}

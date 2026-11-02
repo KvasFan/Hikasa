@@ -226,6 +226,8 @@ pub(super) struct Builder<'a, 'r> {
     pub(super) made: BTreeMap<String, u32>,
     /// `copyto`, `moveto`: the file targets taken, as compared: the first source of one path goes, the others stay.
     pub(super) taken: BTreeSet<String>,
+    /// `copyto`, `moveto`: the folders planned only as the way to a source, by item: they stay only if something goes there.
+    pub(super) way: BTreeSet<usize>,
     /// A sync: the entries of rows this plan deletes, by row (bit 1 left, 2 right). Their names are free for what the plan
     /// copies after its deletes (D-182: a file `x` replacing a folder `x`), so a copy expects no target there.
     pub(super) freed: Vec<u8>,
@@ -355,6 +357,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             flat_folders: BTreeMap::new(),
             made: BTreeMap::new(),
             taken: BTreeSet::new(),
+            way: BTreeSet::new(),
             freed: Vec::new(),
             own_only: false,
         }

@@ -561,7 +561,7 @@ impl Builder<'_, '_> {
             match looked {
                 Ok((target, stood)) => {
                     let key = key_of(&target.canonical(), fold);
-                    if !self.taken.contains(&key) && !self.is_made(&target) {
+                    if !self.taken.contains(&key) && !self.holds_folder(&target) {
                         self.transfer_entry(walk, folder, child, target, stood, depth + 1, &below);
                     } else {
                         let source = Some(child.spec.clone());
@@ -666,7 +666,7 @@ impl Builder<'_, '_> {
         // `copyto`, `moveto`: a second source of one target path stays (rule 16).
         if self.outside.is_some() {
             let key = key_of(&target.canonical(), self.folds(&target));
-            if self.is_made(&target) || !self.taken.insert(key) {
+            if self.holds_folder(&target) || !self.taken.insert(key) {
                 let reason = SkipReason::DuplicateTarget;
                 self.skip_row(id, kind, Some(source), target, depth, reason, side);
                 return self.relabel(first, path);

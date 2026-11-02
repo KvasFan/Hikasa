@@ -5299,6 +5299,15 @@ numbered per part.
     files and folders (links and case folding are the conservation property's). It found the bugs of notes 30 and 36, a whole
     rename that took a filtered file along (a row a filter hides now leaves its folder not `whole`, §1.6.9 rule 3), a folder of
     rule 8 that replaced a file a filter hides, and a flat `copyto` that passed over an unlisted folder.
+42. **A source that writes nothing claims no place** (P-OPS on CI, seed `a049c850`). Rule 16 drops a folder planned only as the
+    way to sources when nothing goes there, and that decides duplicates too: a way folder whose sources all stay (filtered,
+    refused, failed) is no folder of the plan, so a file of the other side at its path is no `duplicate_target`; it goes, with
+    the folders above it (`holds_folder`). Sides are planned one after the other, so when that file comes every source that
+    could still go into the folder has been planned. A folder source of the other side that lands on a way folder makes it its
+    own, and it is made though nothing goes in, as a copied empty folder is. The mirror case: a row refused for its own reason
+    (`filtered`, `compare_error`, `followed_link`) that a file of the plan stands in the way of is that skip, not an item error
+    `not_a_directory`. Which way folders are needed is decided as names compare (folded when the comparison or the back-end
+    folds case), so a folder used only by its other spelling stays.
 
 **W6c.** Where the implementation interpreted or extended §1.6.14–§1.6.17 (sync), §1.6.22, and why. Safety won where the
 text was silent.

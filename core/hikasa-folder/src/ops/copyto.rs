@@ -25,8 +25,6 @@ use crate::select::{Resolved, SideSet};
 struct Below {
     /// Folder (canonical) → whether it will exist only through this plan, with the depth of what lies directly in it.
     folders: BTreeMap<String, Option<u32>>,
-    /// The folders planned only as the way to a source, by item: they stay only if something goes there.
-    way: BTreeSet<usize>,
 }
 
 /// One row with its own path below the base.
@@ -148,7 +146,7 @@ impl Builder<'_, '_> {
                     EntryKind::Dir
                 };
                 let item = PlanItem::planned(action, kind, None, on_disk.clone(), 0);
-                below.way.insert(self.items.len());
+                self.way.insert(self.items.len());
                 self.push_outside(item, on_disk);
                 below.folders.insert(on_disk.canonical(), Some(0));
                 if action == Action::CreateArchive {
@@ -177,7 +175,7 @@ impl Builder<'_, '_> {
         }
         for dir in missing.into_iter().rev() {
             let item = PlanItem::planned(Action::CreateDir, EntryKind::Dir, None, dir.clone(), 0);
-            below.way.insert(self.items.len());
+            self.way.insert(self.items.len());
             self.push_outside(item, &dir);
             below.folders.insert(dir.canonical(), Some(0));
         }
@@ -251,7 +249,7 @@ impl Builder<'_, '_> {
             }
             self.close_open(&mut open, 0);
         }
-        self.drop_unused_way(&below.way);
+        self.drop_unused_way(fold);
         Ok(())
     }
 
@@ -279,8 +277,65 @@ impl Builder<'_, '_> {
         }
     }
 
+    /// True when a folder this plan makes at `target` keeps that path from a file. A folder planned only as the way to sources
+    /// that all stay (skipped, failed) writes nothing, so it claims nothing: the file takes the path, and the folder, with
+    /// the way folders below it, leaves the plan at its end (rule 16, §1.6.25 W6b note 42). Sides go one after the other, so
+    /// when the other side's file comes, every source that could still go into that folder has been planned.
+    pub(super) fn holds_folder(&mut self, target: &Spec) -> bool {
+        if !self.is_made(target) {
+            return false;
+        }
+        let fold = self.folds(target);
+        let key = key_of(&target.canonical(), fold);
+        let at_key = |spec: &Spec| key_of(&spec.canonical(), fold) == key;
+        // Only way items stand for it: not a source's own folder, nor one a whole rename takes along (no item of its own).
+        let (mut way, mut own) = (false, false);
+        for (index, item) in self.items.iter().enumerate() {
+            if item.error.is_none() && at_key(&item.target) {
+                if self.way.contains(&index) {
+                    way = true;
+                } else {
+                    own = true;
+                }
+            }
+        }
+        if own || !way {
+            return true;
+        }
+        let used = self.items.iter().enumerate().any(|(index, item)| {
+            !self.way.contains(&index)
+                && item.error.is_none()
+                && item.skip.is_none()
+                && std::iter::successors(item.target.parent(), Spec::parent).any(|dir| at_key(&dir))
+        });
+        if used {
+            return true;
+        }
+        self.made.retain(|made, _| {
+            !made
+                .strip_prefix(key.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
+        });
+        false
+    }
+
+    /// A folder source lands on a folder this plan makes: if it was only the way to other sources, it is this source's own
+    /// now, and stays though nothing goes into it.
+    fn own_way_folder(&mut self, target: &Spec) {
+        let fold = self.folds(target);
+        let key = key_of(&target.canonical(), fold);
+        let items = &self.items;
+        self.way.retain(|index| {
+            !items
+                .get(*index)
+                .is_some_and(|item| key_of(&item.target.canonical(), fold) == key)
+        });
+    }
+
     /// Takes the folders of `way` no item needs out of the plan.
-    fn drop_unused_way(&mut self, way: &BTreeSet<usize>) {
+    /// `fold`: names compare as the back-end and the comparison do, so a folder needed by another spelling stays.
+    fn drop_unused_way(&mut self, fold: bool) {
+        let way = std::mem::take(&mut self.way);
         let mut needed = BTreeSet::new();
         for (index, item) in self.items.iter().enumerate() {
             if way.contains(&index) || item.error.is_some() || item.skip.is_some() {
@@ -288,9 +343,9 @@ impl Builder<'_, '_> {
             }
             for dir in std::iter::successors(item.target.parent(), Spec::parent) {
                 if let Spec::ArchiveMember { archive, .. } = &dir {
-                    needed.insert(archive.canonical());
+                    needed.insert(key_of(&archive.canonical(), fold));
                 }
-                if !needed.insert(dir.canonical()) {
+                if !needed.insert(key_of(&dir.canonical(), fold)) {
                     break;
                 }
             }
@@ -301,7 +356,7 @@ impl Builder<'_, '_> {
             .filter(|index| {
                 self.items
                     .get(*index)
-                    .is_some_and(|item| !needed.contains(&item.target.canonical()))
+                    .is_some_and(|item| !needed.contains(&key_of(&item.target.canonical(), fold)))
             })
             .collect();
         if unused.is_empty() {
@@ -317,6 +372,17 @@ impl Builder<'_, '_> {
             at += 1;
             !unused.contains(&(at - 1))
         });
+    }
+
+    /// The target of a source by its names alone, with no folder planned: what a refused row's item names.
+    fn plain_path(&self, source: &Source, root: &Spec, drop: usize) -> Option<Spec> {
+        let (name, folders) = source.names.split_last()?;
+        let kept = folders.get(drop.min(folders.len())..).unwrap_or_default();
+        let mut at = root.clone();
+        for folder in kept.iter().chain(std::iter::once(name)) {
+            at = self.vfs.child(&at, &FileName::from_os(folder)).ok()?;
+        }
+        Some(at)
     }
 
     /// The target of a source: `<root>/<names without the first drop>`, every folder on the way planned, once.
@@ -361,7 +427,7 @@ impl Builder<'_, '_> {
                     let made = !stood.as_ref().is_some_and(|it| it.kind == EntryKind::Dir);
                     let known = if made {
                         let at_item = self.items.len();
-                        below.way.insert(at_item);
+                        self.way.insert(at_item);
                         let found = stood.as_ref().map(found_of_stat);
                         self.folder_on_the_way(tr, source, first + index, &at, found, depth);
                         // A folder that cannot be made is no folder for the next source: it meets the same refusal.
@@ -482,6 +548,16 @@ impl Builder<'_, '_> {
             Err(e) => {
                 // At its row's depth, so the folder it is in stays when it moves.
                 let depth = self.child_depth(view.parent);
+                // A row refused for its own reason writes nothing, so what the plan put in its way is no error of its
+                // (§1.6.25 W6b note 42).
+                if let Some(reason) = self.refusal(id, &view, Some(tr.from), writes) {
+                    let target = self
+                        .plain_path(source, root, drop)
+                        .unwrap_or_else(|| root.clone());
+                    self.skip_row(id, kind, Some(from), target, depth, reason, None);
+                    self.cover(id);
+                    return Ok(());
+                }
                 self.fail_row(
                     id,
                     Action::Copy,
@@ -599,7 +675,7 @@ impl Builder<'_, '_> {
             target.canonical()
         };
         // A second source of one path: a file, or a folder this plan makes there.
-        if self.is_made(&target) || !self.taken.insert(key) {
+        if self.holds_folder(&target) || !self.taken.insert(key) {
             let reason = SkipReason::DuplicateTarget;
             self.skip_row(id, kind, Some(from), target, depth, reason, None);
             return Ok(());
@@ -705,6 +781,7 @@ impl Builder<'_, '_> {
         let key = target.canonical();
         match found {
             _ if made.is_some() => {
+                self.own_way_folder(&target);
                 below.folders.entry(key).or_insert(None);
             }
             Some(stat) if stat.kind == EntryKind::Dir => {
