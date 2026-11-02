@@ -45,6 +45,12 @@ pub enum FolderError {
     /// Cancelled before the base folders were loaded.
     #[error("operation cancelled")]
     Cancelled,
+    /// A refresh or a content test on demand runs, or the model is still scanning (§1.6.7).
+    #[error("this comparison is busy")]
+    RefreshBusy,
+    /// A flat comparison has no folders to refresh: the caller re-runs (§1.6.7).
+    #[error("a flat comparison cannot be refreshed")]
+    RefreshFlat,
     /// A rules file written by a newer version of Hikasa (`schema_version` newer than
     /// [`crate::FOLDER_RULES_SCHEMA_VERSION`], SES-052, D-31). Additive variant (see the crate documentation).
     #[error("folder rules: {0}")]
@@ -67,9 +73,10 @@ impl Classify for FolderError {
             FolderError::BaseNotFolder { .. } => ErrorKind::NotADirectory,
             FolderError::Filter(e) => e.kind(),
             FolderError::InvalidRules(_) => ErrorKind::InvalidInput,
-            FolderError::RulesComparatorMissing | FolderError::AlreadyScanned => {
-                ErrorKind::Internal
-            }
+            FolderError::RulesComparatorMissing
+            | FolderError::AlreadyScanned
+            | FolderError::RefreshBusy
+            | FolderError::RefreshFlat => ErrorKind::Internal,
             FolderError::Cancelled => ErrorKind::Cancelled,
             FolderError::Schema(e) => e.kind(),
         }

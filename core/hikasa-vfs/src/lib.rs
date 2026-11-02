@@ -102,7 +102,7 @@ pub use archive::{
 };
 pub use caps::Capabilities;
 pub use compare::{BinaryComparator, BinaryOutcome, CrcComparator, compare_sources, crc32_source};
-pub use entry::{Attrs, DosAttrs, Entry, EntryKind, FileId, FileName, UnixMeta};
+pub use entry::{Attrs, DosAttrs, Entry, EntryKind, FileId, FileName, SpecialKind, UnixMeta};
 pub use error::{VfsError, VfsOp};
 pub use local::{FAST_COPY_MAX, LocalOptions, LocalVfs};
 pub use memory::{Fault, ListingOrder, MemDump, MemMeta, MemoryVfs};

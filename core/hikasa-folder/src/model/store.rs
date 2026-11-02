@@ -14,8 +14,9 @@ use hikasa_core::{
     CaseSensitivity, ContentKind, ContentMethod, ContentOutcome, ContentResult, FileTime, Pair,
     Spec, Warning, WarningCode,
 };
-use hikasa_vfs::{Attrs, DosAttrs, Entry, EntryKind, UnixMeta};
+use hikasa_vfs::{Attrs, DosAttrs, Entry, EntryKind, SpecialKind, UnixMeta};
 
+use crate::align::{AlignOptions, canonical_fold};
 use crate::counts::{AggDelta, Aggregates, SideTotals, Slot};
 use crate::model::BaseInfo;
 use crate::model::node::{
@@ -220,6 +221,18 @@ pub(crate) struct SideRec {
     kind: u8,
     attr_tag: u8,
     pub(crate) bits: u8,
+    special: u8,
+}
+
+/// The code of a [`SpecialKind`] in a side record (0: none).
+const fn special_code(special: Option<SpecialKind>) -> u8 {
+    match special {
+        None => 0,
+        Some(SpecialKind::Block) => 1,
+        Some(SpecialKind::Char) => 2,
+        Some(SpecialKind::Fifo) => 3,
+        Some(SpecialKind::Socket) => 4,
+    }
 }
 
 impl SideRec {
@@ -250,6 +263,16 @@ impl SideRec {
 
     fn ctime(&self) -> Option<FileTime> {
         time(self.ctime_secs, self.ctime_nanos)
+    }
+
+    pub(crate) fn special(&self) -> Option<SpecialKind> {
+        match self.special {
+            1 => Some(SpecialKind::Block),
+            2 => Some(SpecialKind::Char),
+            3 => Some(SpecialKind::Fifo),
+            4 => Some(SpecialKind::Socket),
+            _ => None,
+        }
     }
 
     pub(crate) fn attrs(&self) -> Attrs {
@@ -295,6 +318,7 @@ impl SideRec {
             kind: entry_kind_code(entry.kind),
             attr_tag,
             bits,
+            special: special_code(entry.special),
         }
     }
 
@@ -323,8 +347,10 @@ fn split_time(t: Option<FileTime>) -> (i64, u32) {
 pub(crate) mod internal {
     /// A child of a folder whose listing failed on the other side: its state is Unknown, not orphan.
     pub(crate) const PARTIAL_UNKNOWN: u8 = 1;
-    /// A content test is pending (state Unknown until it reports).
+    /// A content test is pending (state Unknown until it reports; on demand the old state stays until it does).
     pub(crate) const CONTENT_PENDING: u8 = 2;
+    /// A node a refresh dropped or moved away: no read from the root meets it, its arena space is not reused.
+    pub(crate) const GONE: u8 = 4;
 }
 
 /// One node (both sides inline): 160 bytes.
@@ -548,6 +574,15 @@ pub(crate) struct Staged {
     not_compared: u32,
 }
 
+/// What one row of a refresh was (§1.6.7 step 4).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Row {
+    /// The old row of the same `(kind, left name, right name)`.
+    pub(crate) old: Option<u32>,
+    /// Its record, content result, CRC and subtree stay.
+    pub(crate) kept: bool,
+}
+
 /// Children staged between two cancellation checks.
 const STAGE_CHECK_EVERY: u32 = 1024;
 
@@ -618,14 +653,15 @@ pub(crate) fn stage<'e>(
             if node.is_folder() {
                 own_category_of(&node, Some(&Aggregates::default()), iu)
             } else {
-                file_category(
+                let category = file_category(
                     node.stored_state(),
                     node.diffs(),
                     node.time(),
                     node.content().map(|c| c.kind),
                     override_quick,
                     iu,
-                )
+                );
+                marked(node.flags(), category)
             }
         };
         let slot = if node.is_folder() {
@@ -713,6 +749,111 @@ fn stage_side(batch: &mut Staged, side: usize, offset: u32, s: &NewSide<'_>) -> 
     SideRec::of(entry, name, s.dir, bits_set)
 }
 
+/// The Ignored marks of a comparison (FC-033, D-171): keys of [`path_key`], with the path as written and whether it marks
+/// or excepts. The longest path that names a node or an ancestor decides.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IgnoredMarks {
+    marks: BTreeMap<String, (String, bool)>,
+}
+
+impl IgnoredMarks {
+    /// The marks of a list of `path` and `!path`.
+    pub(crate) fn parse(list: &[String], align: &AlignOptions) -> IgnoredMarks {
+        let mut marks = BTreeMap::new();
+        for text in list {
+            let (path, on) = match text.strip_prefix('!') {
+                Some(path) => (path, false),
+                None => (text.as_str(), true),
+            };
+            marks.insert(path_key(align, path).into_owned(), (path.to_owned(), on));
+        }
+        IgnoredMarks { marks }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.marks.is_empty()
+    }
+
+    /// True when the path of `key` is marked: the longest path that names it or an ancestor decides.
+    pub(crate) fn decides(&self, key: &str) -> bool {
+        let mut at = key;
+        loop {
+            if let Some((_, on)) = self.marks.get(at) {
+                return *on;
+            }
+            match at.rsplit_once('/') {
+                Some((parent, _)) => at = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// Marks or excepts `key` and all below it.
+    fn set(&mut self, key: &str, text: &str, on: bool) {
+        let below = format!("{key}/");
+        self.marks
+            .retain(|mark, _| mark != key && !mark.starts_with(&below));
+        if self.decides(key) != on {
+            self.marks.insert(key.to_owned(), (text.to_owned(), on));
+        }
+    }
+
+    /// Drops what an equal ancestor says already, nearest the base first.
+    fn minimize(&mut self) {
+        let mut keys: Vec<String> = self.marks.keys().cloned().collect();
+        keys.sort_by_key(|key| key.matches('/').count());
+        for key in keys {
+            let Some(mark) = self.marks.remove(&key) else {
+                continue;
+            };
+            if self.decides(&key) != mark.1 {
+                self.marks.insert(key, mark);
+            }
+        }
+    }
+
+    /// The list for the session, `!` only where needed.
+    fn list(&self) -> Vec<String> {
+        self.marks
+            .values()
+            .map(|(text, on)| {
+                if *on {
+                    text.clone()
+                } else {
+                    format!("!{text}")
+                }
+            })
+            .collect()
+    }
+}
+
+/// The alignment's case and normalisation options applied to a whole path.
+pub(crate) fn path_key<'t>(align: &AlignOptions, text: &'t str) -> std::borrow::Cow<'t, str> {
+    use std::borrow::Cow;
+    match align.case {
+        CaseSensitivity::Insensitive => canonical_fold(text),
+        CaseSensitivity::Sensitive if align.align_normalization => hikasa_core::case::nfc(text),
+        CaseSensitivity::Sensitive => Cow::Borrowed(text),
+    }
+}
+
+/// What an Ignored mark makes of a category (D-171): a difference reads as `same`; a failure is never hidden (D-19).
+fn marked(flags: NodeFlags, category: Category) -> Category {
+    let difference = matches!(
+        category,
+        Category::LeftNewer
+            | Category::RightNewer
+            | Category::Different
+            | Category::LeftOrphan
+            | Category::RightOrphan
+    );
+    if difference && flags.contains(NodeFlags::IGNORED) {
+        Category::Same
+    } else {
+        category
+    }
+}
+
 /// A flatten-mode folder of one side.
 #[derive(Debug, Clone)]
 pub(crate) struct DirInfo {
@@ -748,6 +889,14 @@ pub(crate) struct Store {
     pub(crate) complete: bool,
     pub(crate) override_quick: bool,
     pub(crate) flatten: bool,
+    /// The options of alignment, once the bases are loaded.
+    pub(crate) align: Option<AlignOptions>,
+    /// The Ignored marks: here, because the rules of a model are immutable.
+    pub(crate) ignored: IgnoredMarks,
+    /// Paths of archives opened after the scan (`FolderModel::open_archive`), for what a refresh opens.
+    pub(crate) opened: Vec<String>,
+    /// Records a refresh left behind: a view may re-run when they pass half the arena.
+    pub(crate) garbage: u32,
 }
 
 impl Store {
@@ -771,6 +920,10 @@ impl Store {
             complete: false,
             override_quick,
             flatten,
+            align: None,
+            ignored: IgnoredMarks::default(),
+            opened: Vec::new(),
+            garbage: 0,
         };
         let folder = store.folders.push(FolderData::default());
         store.nodes.push(Node {
@@ -799,6 +952,21 @@ impl Store {
         self.nodes.get(id.0 as usize)
     }
 
+    /// The nodes reachable from the root, each after its descendants: the order of a bottom-up pass, which ids no longer
+    /// give once a refresh has moved a folder above its children.
+    pub(crate) fn post_order(&self) -> Vec<u32> {
+        let mut order = Vec::with_capacity(self.nodes.len());
+        let mut stack = vec![0u32];
+        while let Some(id) = stack.pop() {
+            order.push(id);
+            if let Some(node) = self.nodes.get(id as usize) {
+                stack.extend(node.children());
+            }
+        }
+        order.reverse();
+        order
+    }
+
     fn folder(&self, node: &Node) -> Option<&FolderData> {
         if node.folder == NONE {
             None
@@ -822,6 +990,129 @@ impl Store {
         self.bases = Pair::new(Some(bases.left), Some(bases.right));
         self.case = Some(case);
         self.resolved = Some(resolved);
+    }
+
+    /// The path of a node, as [`crate::TreeRead::path`] gives it.
+    pub(crate) fn path_text(&self, id: NodeId) -> String {
+        let mut names: Vec<&str> = Vec::new();
+        let mut current = id.0;
+        let mut flat_dir: Option<&str> = None;
+        while current != 0 && current != NONE {
+            let Some(node) = self.node(NodeId(current)) else {
+                break;
+            };
+            names.push(self.representative_name(node));
+            if flat_dir.is_none() && current == id.0 {
+                let side = if node.sides[0].present() { 0 } else { 1 };
+                flat_dir = node.sides[side]
+                    .dir()
+                    .and_then(|d| self.dir_info(side, d))
+                    .map(|d| d.text.as_str())
+                    .filter(|d| !d.is_empty());
+            }
+            current = node.parent;
+        }
+        let mut text = String::new();
+        if let Some(dir) = flat_dir {
+            text.push_str(dir);
+        }
+        for name in names.iter().rev() {
+            if !text.is_empty() {
+                text.push('/');
+            }
+            text.push_str(name);
+        }
+        text
+    }
+
+    /// Sets or clears the mark on `nodes` and everything below them; the counters of every ancestor follow.
+    pub(crate) fn set_ignored(&mut self, nodes: &[NodeId], on: bool) -> Vec<String> {
+        let align = self.align.unwrap_or(AlignOptions {
+            case: CaseSensitivity::Sensitive,
+            align_extensions: false,
+            align_normalization: false,
+        });
+        for &id in nodes {
+            if self.node(id).is_none() {
+                continue;
+            }
+            let text = self.path_text(id);
+            let mut stack = vec![id.0];
+            if id == NodeId::ROOT {
+                stack = self
+                    .node(id)
+                    .map_or_else(Vec::new, |n| n.children().collect());
+                // The marks of the whole tree: every first level is marked or cleared by itself.
+                for &child in &stack {
+                    let text = self.path_text(NodeId(child));
+                    let key = path_key(&align, &text).into_owned();
+                    self.ignored.set(&key, &text, on);
+                }
+            } else {
+                let key = path_key(&align, &text).into_owned();
+                self.ignored.set(&key, &text, on);
+            }
+            while let Some(current) = stack.pop() {
+                let Some(node) = self.nodes.get(current as usize).copied() else {
+                    continue;
+                };
+                stack.extend(node.children());
+                self.set_flag(current, NodeFlags::IGNORED, on);
+            }
+        }
+        self.ignored.minimize();
+        self.ignored.list()
+    }
+
+    /// Sets or clears a flag on a node; the ancestors' counters follow a change of its category.
+    fn set_flag(&mut self, id: u32, flag: NodeFlags, on: bool) {
+        let Some(node) = self.nodes.get(id as usize).copied() else {
+            return;
+        };
+        let old = self.categories(&node);
+        let mut flags = node.flags();
+        flags.set(flag, on);
+        let Some(target) = self.nodes.get_mut(id as usize) else {
+            return;
+        };
+        target.flags = flags.bits();
+        let updated = *target;
+        let new = self.categories(&updated);
+        let slot = if updated.is_folder() {
+            Slot::Folders
+        } else {
+            Slot::Files
+        };
+        let mut delta = AggDelta::default();
+        delta.change(slot, old, new);
+        if updated.parent != NONE && !delta.is_zero() {
+            self.propagate(updated.parent, delta, Pair::default());
+        }
+    }
+
+    /// Rows of a marked subtree with a difference the mark reads as `same`.
+    pub(crate) fn ignored_rows(&self, iu: bool) -> u32 {
+        if self.ignored.is_empty() {
+            return 0;
+        }
+        let mut count = 0;
+        let mut stack = self
+            .node(NodeId::ROOT)
+            .map_or_else(Vec::new, |n| n.children().collect::<Vec<u32>>());
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.node(NodeId(id)) else {
+                continue;
+            };
+            stack.extend(node.children());
+            if node.flags().contains(NodeFlags::IGNORED) {
+                let mut plain = *node;
+                plain.flags &= !NodeFlags::IGNORED.bits();
+                if self.category_of(&plain, iu) != self.category_of(node, iu) {
+                    count += 1;
+                }
+            }
+        }
+        count
     }
 
     /// Builds a side record for node `id` (side tables are filled for `id`).
@@ -902,19 +1193,25 @@ impl Store {
         if node.is_folder() {
             return self.own_category(node, iu);
         }
-        file_category(
+        let category = file_category(
             node.stored_state(),
             node.diffs(),
             node.time(),
             node.content().map(|c| c.kind),
             self.override_quick,
             iu,
-        )
+        );
+        marked(node.flags(), category)
     }
 }
 
 /// The own category of a folder node with the given counters (§2.6.4); see [`Store::own_category`].
 pub(crate) fn own_category_of(node: &Node, agg: Option<&Aggregates>, iu: bool) -> Category {
+    marked(node.flags(), plain_category_of(node, agg, iu))
+}
+
+/// [`own_category_of`] without what an Ignored mark makes of it: the state a mark never changes.
+fn plain_category_of(node: &Node, agg: Option<&Aggregates>, iu: bool) -> Category {
     let (present, all_filtered) = node.presence();
     if present == 0 {
         return Category::Unknown;
@@ -964,7 +1261,7 @@ impl Store {
     /// Canonical state of a node (folders: `own_category(F, false)`).
     pub(crate) fn state_of(&self, node: &Node) -> CompareState {
         if node.is_folder() {
-            self.own_category(node, false).state()
+            plain_category_of(node, self.folder(node).map(|d| &d.agg), false).state()
         } else {
             node.stored_state()
         }
@@ -1166,12 +1463,353 @@ impl Store {
         (first, unused)
     }
 
-    /// Applies a content outcome to a file node (§2.6.2) and updates every ancestor's counters.
+    /// Takes the content result of `id` out of the counts and its side tables: a repeated test counts once.
+    fn take_content(&mut self, id: u32) {
+        let Some(node) = self.nodes.get(id as usize).copied() else {
+            return;
+        };
+        if let Some(summary) = node.content() {
+            let counts = &mut self.content_counts;
+            let slot = match summary.kind {
+                ContentKind::BinarySame => &mut counts.binary_same,
+                ContentKind::RulesSame => &mut counts.rules_same,
+                ContentKind::UnimportantOnly => &mut counts.unimportant_only,
+                ContentKind::ImportantDifferences => &mut counts.important_differences,
+                ContentKind::BinaryDifferent => &mut counts.binary_different,
+                ContentKind::Error => &mut counts.error,
+            };
+            *slot = slot.saturating_sub(1);
+            if summary.kind == ContentKind::Error
+                && let Some(list) = self.errors.get_mut(&id)
+            {
+                list.retain(|e| e.side.is_some());
+                if list.is_empty() {
+                    self.errors.remove(&id);
+                }
+            }
+        }
+        self.outcomes.remove(&id);
+        if node.flags().contains(NodeFlags::CONTENT_SKIPPED) {
+            self.content_counts.not_compared = self.content_counts.not_compared.saturating_sub(1);
+        }
+    }
+
+    /// Everything of `id` outside its record goes (a dropped or a rewritten row).
+    fn forget(&mut self, id: u32) {
+        self.take_content(id);
+        self.errors.remove(&id);
+        for side in 0..2 {
+            if let Some(table) = self.links.get_mut(side) {
+                table.remove(&id);
+            }
+            if let Some(table) = self.crcs.get_mut(side) {
+                table.remove(&id);
+            }
+            if let Some(table) = self.raw_names.get_mut(side) {
+                table.remove(&id);
+            }
+        }
+    }
+
+    /// Moves what side tables hold of `from` to `to`, the same row at a new id.
+    fn move_tables(&mut self, from: u32, to: u32) {
+        if let Some(list) = self.errors.remove(&from) {
+            self.errors.insert(to, list);
+        }
+        if let Some(outcome) = self.outcomes.remove(&from) {
+            self.outcomes.insert(to, outcome);
+        }
+        for side in 0..2 {
+            if let Some(table) = self.links.get_mut(side)
+                && let Some(link) = table.remove(&from)
+            {
+                table.insert(to, link);
+            }
+            if let Some(table) = self.crcs.get_mut(side)
+                && let Some(crc) = table.remove(&from)
+            {
+                table.insert(to, crc);
+            }
+            if let Some(table) = self.raw_names.get_mut(side)
+                && let Some(raw) = table.remove(&from)
+            {
+                table.insert(to, raw);
+            }
+        }
+    }
+
+    /// Marks `id` gone: its record stays, and only the refresh that made it so can reach it.
+    fn bury(&mut self, id: u32) {
+        if let Some(node) = self.nodes.get_mut(id as usize) {
+            node.internal |= internal::GONE;
+            node.first_child = NONE;
+            node.child_count = 0;
+            self.garbage = self.garbage.saturating_add(1);
+        }
+    }
+
+    /// Drops `id` and everything below it.
+    fn drop_subtree(&mut self, id: u32) {
+        let mut stack = vec![id];
+        while let Some(current) = stack.pop() {
+            if let Some(node) = self.nodes.get(current as usize) {
+                stack.extend(node.children());
+            }
+            self.forget(current);
+            self.bury(current);
+        }
+    }
+
+    /// Replaces the children of `folder` by a refresh's rows (§1.6.7 steps 5–7): the rows of `batch`, in final order, with
+    /// what each was. The same rows in the same order are rewritten in place and every id stays. Otherwise a new contiguous
+    /// block goes to the tail of the arena, kept folders move there and the `parent` of their children is rewritten.
+    /// The folder's counters are recounted from its rows, the difference goes up. Returns the first child and the ids
+    /// that changed.
+    pub(crate) fn replace_children(
+        &mut self,
+        folder: NodeId,
+        scan: ScanStatus,
+        folder_flags: NodeFlags,
+        folder_errors: Vec<NodeError>,
+        batch: Staged,
+        rows: &[Row],
+    ) -> (u32, Vec<(NodeId, NodeId)>) {
+        let Staged {
+            nodes,
+            names,
+            errors,
+            links,
+            crcs,
+            raw_names,
+            ..
+        } = batch;
+        let mut renumbered = Vec::new();
+        let Some(parent) = self.nodes.get(folder.0 as usize).copied() else {
+            return (NONE, renumbered);
+        };
+        let old_categories = self.categories(&parent);
+        let old_data = self.folder(&parent).copied().unwrap_or_default();
+        let old_rows = parent.children();
+        let in_place = rows.len() == old_rows.len()
+            && rows
+                .iter()
+                .zip(old_rows.clone())
+                .all(|(row, id)| row.old == Some(id));
+        let mut chunks = [0u32; 2];
+        for (side, text) in names.into_iter().enumerate() {
+            if text.is_empty() {
+                continue;
+            }
+            if let (Some(arena), Some(slot)) = (self.names.get_mut(side), chunks.get_mut(side)) {
+                *slot = arena.adopt(text);
+            }
+        }
+        let first = if in_place {
+            parent.first_child
+        } else {
+            self.len()
+        };
+        if !in_place {
+            let taken: std::collections::HashSet<u32> =
+                rows.iter().filter_map(|row| row.old).collect();
+            for id in old_rows.clone() {
+                if !taken.contains(&id) {
+                    self.drop_subtree(id);
+                }
+            }
+        }
+        for (offset, (mut node, row)) in nodes.into_iter().zip(rows).enumerate() {
+            let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+            let id = first.saturating_add(offset);
+            match (row.kept, row.old) {
+                (true, Some(old)) if in_place => debug_assert_eq!(old, id),
+                (true, Some(old)) => {
+                    let Some(mut record) = self.nodes.get(old as usize).copied() else {
+                        continue;
+                    };
+                    record.parent = folder.0;
+                    self.nodes.push(record);
+                    for child in record.children() {
+                        if let Some(below) = self.nodes.get_mut(child as usize) {
+                            below.parent = id;
+                        }
+                    }
+                    self.move_tables(old, id);
+                    self.bury(old);
+                    renumbered.push((NodeId(old), NodeId(id)));
+                }
+                (_, old) => {
+                    for (side, rec) in node.sides.iter_mut().enumerate() {
+                        if rec.present() {
+                            rec.name.chunk = chunks.get(side).copied().unwrap_or(0);
+                        }
+                    }
+                    node.parent = folder.0;
+                    if node.is_folder() {
+                        let index = self.folders.push(FolderData::default());
+                        node.folder = u32::try_from(index).unwrap_or(NONE);
+                    }
+                    if node.flags().contains(NodeFlags::CONTENT_SKIPPED) {
+                        self.content_counts.not_compared =
+                            self.content_counts.not_compared.saturating_add(1);
+                    }
+                    if in_place {
+                        // The same row, new facts: what was below it goes, its id stays.
+                        if let Some(record) = self.nodes.get(id as usize).copied() {
+                            for child in record.children() {
+                                self.drop_subtree(child);
+                            }
+                        }
+                        self.forget(id);
+                        if let Some(slot) = self.nodes.get_mut(id as usize) {
+                            *slot = node;
+                        }
+                    } else {
+                        if let Some(old) = old {
+                            self.drop_subtree(old);
+                            renumbered.push((NodeId(old), NodeId(id)));
+                        }
+                        self.nodes.push(node);
+                    }
+                }
+            }
+        }
+        let fresh = |offset: u32| rows.get(offset as usize).is_some_and(|row| !row.kept);
+        for (offset, list) in errors {
+            if fresh(offset) {
+                self.errors.insert(first.saturating_add(offset), list);
+            }
+        }
+        for (side, list) in links.into_iter().enumerate() {
+            if let Some(table) = self.links.get_mut(side) {
+                let new = list.into_iter().filter(|(o, _)| fresh(*o));
+                table.extend(new.map(|(o, l)| (first.saturating_add(o), l)));
+            }
+        }
+        for (side, list) in crcs.into_iter().enumerate() {
+            if let Some(table) = self.crcs.get_mut(side) {
+                let new = list.into_iter().filter(|(o, _)| fresh(*o));
+                table.extend(new.map(|(o, c)| (first.saturating_add(o), c)));
+            }
+        }
+        for (side, list) in raw_names.into_iter().enumerate() {
+            if let Some(table) = self.raw_names.get_mut(side) {
+                let new = list.into_iter().filter(|(o, _)| fresh(*o));
+                table.extend(new.map(|(o, r)| (first.saturating_add(o), r)));
+            }
+        }
+        let count = u32::try_from(rows.len()).unwrap_or(0);
+        if let Some(p) = self.nodes.get_mut(folder.0 as usize) {
+            p.first_child = if count == 0 { NONE } else { first };
+            p.child_count = count;
+            p.scan = scan_code(scan);
+            let stale = NodeFlags::LEFT_ERROR | NodeFlags::RIGHT_ERROR | NodeFlags::SYMLINK_LOOP;
+            p.flags =
+                (NodeFlags::from_bits_retain(p.flags).difference(stale) | folder_flags).bits();
+        }
+        self.errors.remove(&folder.0);
+        if !folder_errors.is_empty() {
+            self.errors.insert(folder.0, folder_errors);
+        }
+        self.recount(folder, old_categories, old_data);
+        (first, renumbered)
+    }
+
+    /// The counters of `folder` from its rows, and the difference to every ancestor (§1.6.7 step 6).
+    fn recount(&mut self, folder: NodeId, old_categories: [Category; 2], old: FolderData) {
+        let Some(updated) = self.nodes.get(folder.0 as usize).copied() else {
+            return;
+        };
+        let mut data = FolderData::default();
+        for child in updated.children() {
+            let Some(node) = self.nodes.get(child as usize).copied() else {
+                continue;
+            };
+            let slot = if node.is_folder() {
+                Slot::Folders
+            } else {
+                Slot::Files
+            };
+            let mut one = AggDelta::default();
+            let [plain, ignoring] = self.categories(&node);
+            one.add(false, slot, plain, 1);
+            one.add(true, slot, ignoring, 1);
+            data.agg.apply(&one);
+            let t = Store::totals_contribution(&node);
+            data.totals.left.add(&t.left);
+            data.totals.right.add(&t.right);
+            if let Some(below) = self.folder(&node).copied() {
+                data.agg.add(&below.agg);
+                data.totals.left.add(&below.totals.left);
+                data.totals.right.add(&below.totals.right);
+            }
+        }
+        if let Some(slot) = self.folders.get_mut(updated.folder as usize) {
+            *slot = data;
+        }
+        let new_categories = self.categories(&updated);
+        let mut delta = data.agg.minus(&old.agg);
+        if updated.parent == NONE {
+            return;
+        }
+        delta.change(Slot::Folders, old_categories, new_categories);
+        let mut current = updated.parent;
+        while current != NONE {
+            let Some(node) = self.nodes.get(current as usize).copied() else {
+                break;
+            };
+            if node.folder != NONE
+                && let Some(slot) = self.folders.get_mut(node.folder as usize)
+            {
+                slot.totals
+                    .left
+                    .replace(&old.totals.left, &data.totals.left);
+                slot.totals
+                    .right
+                    .replace(&old.totals.right, &data.totals.right);
+            }
+            current = node.parent;
+        }
+        self.propagate(updated.parent, delta, Pair::default());
+    }
+
+    /// Sets `CONTENT_PENDING` on `ids`, or clears it (a run that ended without an outcome keeps the row as it was).
+    pub(crate) fn set_pending(&mut self, ids: &[NodeId], on: bool) {
+        for id in ids {
+            if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+                if on {
+                    node.internal |= internal::CONTENT_PENDING;
+                } else {
+                    node.internal &= !internal::CONTENT_PENDING;
+                }
+            }
+        }
+    }
+
+    /// Records a computed CRC-32 in the side table (`EntryView::crc32`).
+    pub(crate) fn set_crc(&mut self, id: NodeId, side: usize, crc: u32) {
+        if let Some(table) = self.crcs.get_mut(side) {
+            table.insert(id.0, crc);
+        }
+        if let Some(rec) = self
+            .nodes
+            .get_mut(id.0 as usize)
+            .and_then(|node| node.sides.get_mut(side))
+        {
+            rec.bits |= bits::CRC;
+        }
+    }
+
+    /// Applies a content outcome to a file node (§2.6.2) and updates every ancestor's counters. A repeated test
+    /// replaces the old result, which leaves the counts first.
     pub(crate) fn apply_content(&mut self, id: NodeId, outcome: ContentOutcome) {
-        let Some(node) = self.nodes.get(id.0 as usize).copied() else {
+        self.take_content(id.0);
+        let Some(mut node) = self.nodes.get(id.0 as usize).copied() else {
             return;
         };
         let old = self.categories(&node);
+        node.diffs &= !DiffFlags::CONTENT.bits();
+        node.flags &= !NodeFlags::CONTENT_SKIPPED.bits();
         let kind = outcome.result.kind();
         let summary = ContentSummary {
             method: outcome.method,
@@ -1326,7 +1964,7 @@ impl Store {
     }
 
     pub(crate) fn view(&self, id: NodeId) -> Option<NodeView<'_>> {
-        let node = self.node(id)?;
+        let node = self.node(id).filter(|n| n.internal & internal::GONE == 0)?;
         Some(NodeView {
             id,
             parent: (node.parent != NONE).then_some(NodeId(node.parent)),

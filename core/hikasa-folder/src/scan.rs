@@ -13,6 +13,11 @@
 //! folder with a million entries neither multiplies its memory nor delays cancellation (§5.3, §5.7). A batch
 //! cancelled before its insertion is dropped: the folder stays not scanned and the result incomplete.
 
+#[path = "content.rs"]
+pub(crate) mod content;
+#[path = "refresh.rs"]
+pub(crate) mod refresh;
+
 use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -36,7 +41,7 @@ use crate::align::{
 use crate::budget::ByteBudget;
 use crate::error::FolderError;
 use crate::events::{ScanEvent, ScanObserver};
-use crate::model::store::{DirInfo, NewNode, NewSide, internal, stage};
+use crate::model::store::{DirInfo, IgnoredMarks, NewNode, NewSide, internal, path_key, stage};
 use crate::model::{
     BaseInfo, FolderComparison, FolderModel, NodeError, NodeFlags, NodeId, NodeKind, ScanStatus,
 };
@@ -218,31 +223,17 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         .iter()
         .map(|path| path_key(&align, path).into_owned())
         .collect();
-    let scan = Scan {
-        env,
-        model,
-        rules,
-        criteria: effective_criteria(&rules.criteria, caps),
+    let ignored = IgnoredMarks::parse(&rules.ignored, &align);
+    let start = ScanStart {
+        caps,
         resolved,
         align,
         follow,
-        budget: ByteBudget::new(env.content_budget),
-        caps,
-        wants_events: env.observer.wants_events(),
-        pending: Mutex::new(Vec::new()),
-        in_flight: AtomicUsize::new(0),
-        folders_done: AtomicU64::new(0),
-        content_done: AtomicU64::new(0),
-        content_total: AtomicU64::new(0),
-        mtime_warned: [AtomicBool::new(false), AtomicBool::new(false)],
-        aborted: AtomicBool::new(false),
-        flat_items: [Mutex::new(Items::default()), Mutex::new(Items::default())],
-        flat_dirs: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
-        flat_deferred: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
         open_archives,
-        archive_entries: AtomicU64::new(base_entries(env, specs)),
-        archive_limit_warned: AtomicBool::new(false),
+        ignored: ignored.clone(),
+        archive_entries: base_entries(env, specs),
     };
+    let scan = Scan::new(env, model, start);
     let root_sides = [
         Some(SideFolder::root(left.spec.clone(), &left.entry, follow)),
         Some(SideFolder::root(right.spec.clone(), &right.entry, follow)),
@@ -268,6 +259,8 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
     let warnings = scan.capability_warnings(&[&left, &right]);
     model.mutate(|s| {
         s.set_bases(Pair::new(left, right), case, scan.resolved.clone());
+        s.align = Some(align);
+        s.ignored = ignored;
         for w in warnings {
             s.warn(w);
         }
@@ -306,17 +299,6 @@ fn run(model: &Arc<FolderModel>, env: &FolderEnv<'_>) -> Result<FolderComparison
         cmp.check_invariants()
     );
     Ok(cmp)
-}
-
-/// The alignment's case and normalisation options applied to a whole path.
-fn path_key<'t>(align: &AlignOptions, text: &'t str) -> Cow<'t, str> {
-    match align.case {
-        hikasa_core::CaseSensitivity::Insensitive => canonical_fold(text),
-        hikasa_core::CaseSensitivity::Sensitive if align.align_normalization => {
-            hikasa_core::case::nfc(text)
-        }
-        hikasa_core::CaseSensitivity::Sensitive => Cow::Borrowed(text),
-    }
 }
 
 /// `criteria` without the quick tests that a base's back-end cannot evaluate (§2.6.1).
@@ -494,6 +476,16 @@ impl Items {
     }
 }
 
+/// A folder pair once listed: its items and what its failures make of it.
+struct Listed {
+    items: [Items; 2],
+    partial: bool,
+    status: ScanStatus,
+    folder_flags: NodeFlags,
+    folder_errors: Vec<NodeError>,
+    warnings: Vec<Warning>,
+}
+
 /// A folder pair to list.
 struct FolderTask {
     node: NodeId,
@@ -536,7 +528,7 @@ enum Task {
 }
 
 /// Everything a scan shares between its tasks.
-struct Scan<'a> {
+pub(crate) struct Scan<'a> {
     env: &'a FolderEnv<'a>,
     model: &'a FolderModel,
     rules: &'a FolderRules,
@@ -565,10 +557,58 @@ struct Scan<'a> {
     flat_deferred: [Mutex<Vec<Deferred>>; 2],
     /// `open_archives`, as [`Scan::path_key`] keys.
     open_archives: HashSet<String>,
+    /// The Ignored marks.
+    ignored: IgnoredMarks,
+    /// The method of the content tasks: the rules', or the one asked for on demand (§1.6.8).
+    content_method: ContentMethod,
     /// Entries listed inside archives (D-151).
     archive_entries: AtomicU64,
     /// The `archive_scan_limit` warning was added.
     archive_limit_warned: AtomicBool,
+}
+
+/// What a [`Scan`] starts from that the rules alone do not say.
+struct ScanStart {
+    caps: [Capabilities; 2],
+    resolved: ResolvedRules,
+    align: AlignOptions,
+    follow: FollowLinks,
+    open_archives: HashSet<String>,
+    ignored: IgnoredMarks,
+    archive_entries: u64,
+}
+
+impl<'a> Scan<'a> {
+    fn new(env: &'a FolderEnv<'a>, model: &'a FolderModel, start: ScanStart) -> Scan<'a> {
+        let rules = model.rules();
+        Scan {
+            env,
+            model,
+            rules,
+            criteria: effective_criteria(&rules.criteria, start.caps),
+            resolved: start.resolved,
+            align: start.align,
+            follow: start.follow,
+            budget: ByteBudget::new(env.content_budget),
+            caps: start.caps,
+            wants_events: env.observer.wants_events(),
+            pending: Mutex::new(Vec::new()),
+            in_flight: AtomicUsize::new(0),
+            folders_done: AtomicU64::new(0),
+            content_done: AtomicU64::new(0),
+            content_total: AtomicU64::new(0),
+            mtime_warned: [AtomicBool::new(false), AtomicBool::new(false)],
+            aborted: AtomicBool::new(false),
+            flat_items: [Mutex::new(Items::default()), Mutex::new(Items::default())],
+            flat_dirs: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
+            flat_deferred: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
+            open_archives: start.open_archives,
+            ignored: start.ignored,
+            content_method: rules.criteria.content.method,
+            archive_entries: AtomicU64::new(start.archive_entries),
+            archive_limit_warned: AtomicBool::new(false),
+        }
+    }
 }
 
 fn spawn_task<'s>(scope: &rayon::Scope<'s>, scan: &'s Scan<'_>, task: Task) {
@@ -825,7 +865,7 @@ impl<'a> Scan<'a> {
     fn capability_warnings(&self, bases: &[&BaseInfo; 2]) -> Vec<Warning> {
         let c = &self.rules.criteria;
         let mut out = Vec::new();
-        let needs: [(bool, Capabilities, &str); 5] = [
+        let needs: [(bool, Capabilities, &str); 6] = [
             (
                 c.timestamps.enabled,
                 Capabilities::MTIME,
@@ -843,6 +883,11 @@ impl<'a> Scan<'a> {
             ),
             (c.unix.owner, Capabilities::UNIX_OWNER, "Unix owners"),
             (c.unix.group, Capabilities::UNIX_OWNER, "Unix groups"),
+            (
+                self.rules.filters.other.attrib.is_some(),
+                Capabilities::DOS_ATTRS,
+                "DOS attributes for the attribute filter",
+            ),
         ];
         for (index, base) in bases.iter().enumerate() {
             for (wanted, cap, what) in needs {
@@ -1043,7 +1088,8 @@ impl<'a> Scan<'a> {
             let kind = entry.kind;
             let name = entry.name.as_str();
             let names_ok = rules.names_accept(parent, verdict, name, kind);
-            let other = rules.other_filtered(kind, entry.size, entry.mtime, &entry.attrs);
+            let other =
+                rules.other_filtered(kind, entry.size, entry.mtime, &entry.attrs, entry.special);
             f.filtered = !names_ok || other;
             if kind == EntryKind::Dir {
                 f.verdict = rules.folder_verdict(parent, name, verdict);
@@ -1122,60 +1168,20 @@ impl<'a> Scan<'a> {
         node: NodeId,
         depth: u32,
         sides: &[Option<SideFolder>; 2],
-        mut listings: [Option<Result<Listing, VfsError>>; 2],
+        listings: [Option<Result<Listing, VfsError>>; 2],
         spawn: &mut dyn FnMut(Task),
     ) {
-        // A listing that returned after cancellation is dropped: the folder stays not scanned.
-        if self.cancelled() {
-            self.discard(listings);
+        let Some(listed) = self.collect(sides, listings) else {
             return;
-        }
-        let mut items: [Items; 2] = [Items::default(), Items::default()];
-        let mut failed = [false, false];
-        let mut folder_flags = NodeFlags::empty();
-        let mut folder_errors = Vec::new();
-        let mut warnings = Vec::new();
-        for index in 0..2 {
-            let side = side_of(index);
-            match (listings[index].take(), &sides[index]) {
-                (Some(Ok(listing)), Some(sf)) => {
-                    match self.items(listing, &sf.spec, &sf.rel, sf.verdict, None) {
-                        Ok(list) => items[index] = list,
-                        Err(rest) => {
-                            self.discard((rest, items, listings));
-                            return;
-                        }
-                    }
-                }
-                (Some(Err(e)), _) if e.is_cancelled() => {
-                    self.aborted.store(true, Ordering::Release);
-                    self.discard((items, listings));
-                    return;
-                }
-                (Some(Err(e)), sf) => {
-                    let spec = sf.as_ref().map(|s| &s.spec);
-                    let error = ErrorReport::capture(&e, spec);
-                    warnings.push(Warning {
-                        code: WarningCode::EntryError,
-                        message: error.message.clone(),
-                        spec: error.spec.clone(),
-                    });
-                    failed[index] = true;
-                    folder_flags |= NodeFlags::error(side);
-                    folder_errors.push(NodeError {
-                        side: Some(side),
-                        error,
-                    });
-                }
-                (Some(Ok(_)), None) | (None, _) => {}
-            }
-        }
-        let partial = failed.iter().any(|&f| f);
-        let status = if partial {
-            ScanStatus::Failed
-        } else {
-            ScanStatus::Scanned
         };
+        let Listed {
+            mut items,
+            partial,
+            status,
+            folder_flags,
+            folder_errors,
+            warnings,
+        } = listed;
         let tasks = self.plan_and_insert(
             node,
             depth,
@@ -1208,6 +1214,73 @@ impl<'a> Scan<'a> {
         for task in tasks {
             spawn(task);
         }
+    }
+
+    /// The listings of a folder pair as items, and what its failures make of the folder; `None` when cancelled.
+    fn collect(
+        &self,
+        sides: &[Option<SideFolder>; 2],
+        mut listings: [Option<Result<Listing, VfsError>>; 2],
+    ) -> Option<Listed> {
+        // A listing that returned after cancellation is dropped: the folder stays not scanned.
+        if self.cancelled() {
+            self.discard(listings);
+            return None;
+        }
+        let mut items: [Items; 2] = [Items::default(), Items::default()];
+        let mut failed = [false, false];
+        let mut folder_flags = NodeFlags::empty();
+        let mut folder_errors = Vec::new();
+        let mut warnings = Vec::new();
+        for index in 0..2 {
+            let side = side_of(index);
+            match (listings[index].take(), &sides[index]) {
+                (Some(Ok(listing)), Some(sf)) => {
+                    match self.items(listing, &sf.spec, &sf.rel, sf.verdict, None) {
+                        Ok(list) => items[index] = list,
+                        Err(rest) => {
+                            self.discard((rest, items, listings));
+                            return None;
+                        }
+                    }
+                }
+                (Some(Err(e)), _) if e.is_cancelled() => {
+                    self.aborted.store(true, Ordering::Release);
+                    self.discard((items, listings));
+                    return None;
+                }
+                (Some(Err(e)), sf) => {
+                    let spec = sf.as_ref().map(|s| &s.spec);
+                    let error = ErrorReport::capture(&e, spec);
+                    warnings.push(Warning {
+                        code: WarningCode::EntryError,
+                        message: error.message.clone(),
+                        spec: error.spec.clone(),
+                    });
+                    failed[index] = true;
+                    folder_flags |= NodeFlags::error(side);
+                    folder_errors.push(NodeError {
+                        side: Some(side),
+                        error,
+                    });
+                }
+                (Some(Ok(_)), None) | (None, _) => {}
+            }
+        }
+        let partial = failed.iter().any(|&f| f);
+        let status = if partial {
+            ScanStatus::Failed
+        } else {
+            ScanStatus::Scanned
+        };
+        Some(Listed {
+            items,
+            partial,
+            status,
+            folder_flags,
+            folder_errors,
+            warnings,
+        })
     }
 
     /// Aligns, plans and inserts one folder batch; `None` when cancelled before the insertion (nothing of the
@@ -1771,7 +1844,7 @@ impl<'a> Scan<'a> {
         let Some(parents) = parents else {
             return;
         };
-        if present == 1 && !self.rules.handling.scan_orphan_folders {
+        if !self.descends(present, depth, parents) {
             return;
         }
         let following = self.follow == FollowLinks::Yes;
@@ -1866,6 +1939,42 @@ impl<'a> Scan<'a> {
         }
     }
 
+    /// The table of §1.6.6 (FC-012, D-170): whether a folder of `present` sides in the folder `parents` is scanned on. With
+    /// `auto_scan_subfolders` off only the orphan folders directly in a base go on, with their subtrees.
+    fn descends(&self, present: usize, depth: u32, parents: &[Option<SideFolder>; 2]) -> bool {
+        let handling = &self.rules.handling;
+        if present == 1 && !handling.scan_orphan_folders {
+            return false;
+        }
+        handling.auto_scan_subfolders
+            || (present == 1 && (depth == 0 || parents.iter().any(Option::is_none)))
+    }
+
+    /// Marks the planned children of `node` that the Ignored marks name (D-171).
+    fn mark_ignored(
+        &self,
+        node: NodeId,
+        items: &[Items; 2],
+        planned: &mut [Planned],
+        dirs: [&[DirInfo]; 2],
+    ) {
+        let parent = self.model.read().path(node);
+        for p in planned {
+            let side = usize::from(p.sides[0] == NO);
+            let Some((entry, f)) = items[side].get(p.sides[side]) else {
+                continue;
+            };
+            let dir = f
+                .dir()
+                .and_then(|d| dirs[side].get(d as usize))
+                .map_or("", |d| d.text.as_str());
+            let path = join_text(&join_text(parent.as_str(), dir), entry.name.as_str());
+            if self.ignored.decides(&self.path_key(&path)) {
+                p.flags |= NodeFlags::IGNORED;
+            }
+        }
+    }
+
     /// Inserts the planned children of `node` in canonical order (§2.5.4) and returns the tasks to run next;
     /// `None` when cancelled before the write lock was taken (nothing is inserted then). `dirs` is installed as the
     /// flatten folder table in the same mutation (before any child can be read).
@@ -1883,51 +1992,14 @@ impl<'a> Scan<'a> {
         dirs: [&[DirInfo]; 2],
         table: Option<[Vec<DirInfo>; 2]>,
     ) -> Option<Vec<Task>> {
+        if !self.ignored.is_empty() {
+            self.mark_ignored(node, items, &mut planned, dirs);
+        }
         let order = self.canonical_order(items, &planned, dirs)?;
         // Detach the task parts (rare; content tests take copies of both entries) before the planned records are
         // consumed by the insertion.
-        let mut detached: Vec<Detached> = Vec::new();
-        for (offset, &index) in order.iter().enumerate() {
-            if let Some(p) = planned.get_mut(index as usize)
-                && (p.content.is_some() || p.descend.is_some())
-            {
-                let entry = |side: usize| items[side].get(p.sides[side]).map(|(e, _)| e.clone());
-                let content = match (p.content.take(), entry(0), entry(1)) {
-                    (Some(specs), Some(le), Some(re)) => {
-                        let [ls, rs] = *specs;
-                        Some(Box::new([(ls, le), (rs, re)]))
-                    }
-                    _ => None,
-                };
-                detached.push(Detached {
-                    offset: Items::index(offset),
-                    content,
-                    descend: p.descend.take(),
-                });
-            }
-        }
-        let children = order.iter().filter_map(|&index| {
-            let p = planned.get_mut(index as usize)?;
-            Some(NewNode {
-                kind: p.kind,
-                state: p.state,
-                scan: p.scan,
-                diffs: p.diffs,
-                time: p.time,
-                flags: p.flags,
-                internal: p.internal,
-                sides: [0usize, 1].map(|side| {
-                    items[side].get(p.sides[side]).map(|(entry, f)| NewSide {
-                        entry,
-                        filtered: f.filtered,
-                        stat_skipped: f.stat_skipped,
-                        no_meta: f.no_meta,
-                        dir: f.dir(),
-                    })
-                }),
-                errors: std::mem::take(&mut p.errors),
-            })
-        });
+        let detached = Scan::detach(items, &mut planned, &order);
+        let children = Scan::new_nodes(items, &mut planned, &order);
         // Built outside the write lock (with cancellation checks); the lock only appends the prepared batch.
         let staged = stage(
             node.0,
@@ -1954,6 +2026,66 @@ impl<'a> Scan<'a> {
             s.insert_staged(node, status, folder_flags, folder_errors, batch)
         });
         drop(unused);
+        Some(self.tasks_of(detached, first, depth))
+    }
+
+    /// The task parts of the planned children, in the order of `order`.
+    fn detach(items: &[Items; 2], planned: &mut [Planned], order: &[u32]) -> Vec<Detached> {
+        let mut detached: Vec<Detached> = Vec::new();
+        for (offset, &index) in order.iter().enumerate() {
+            if let Some(p) = planned.get_mut(index as usize)
+                && (p.content.is_some() || p.descend.is_some())
+            {
+                let entry = |side: usize| items[side].get(p.sides[side]).map(|(e, _)| e.clone());
+                let content = match (p.content.take(), entry(0), entry(1)) {
+                    (Some(specs), Some(le), Some(re)) => {
+                        let [ls, rs] = *specs;
+                        Some(Box::new([(ls, le), (rs, re)]))
+                    }
+                    _ => None,
+                };
+                detached.push(Detached {
+                    offset: Items::index(offset),
+                    content,
+                    descend: p.descend.take(),
+                });
+            }
+        }
+        detached
+    }
+
+    /// The records of the planned children, in the order of `order`.
+    fn new_nodes<'i>(
+        items: &'i [Items; 2],
+        planned: &'i mut [Planned],
+        order: &'i [u32],
+    ) -> impl Iterator<Item = NewNode<'i>> + 'i {
+        order.iter().filter_map(move |&index| {
+            let p = planned.get_mut(index as usize)?;
+            Some(NewNode {
+                kind: p.kind,
+                state: p.state,
+                scan: p.scan,
+                diffs: p.diffs,
+                time: p.time,
+                flags: p.flags,
+                internal: p.internal,
+                sides: [0usize, 1].map(|side| {
+                    items[side].get(p.sides[side]).map(|(entry, f)| NewSide {
+                        entry,
+                        filtered: f.filtered,
+                        stat_skipped: f.stat_skipped,
+                        no_meta: f.no_meta,
+                        dir: f.dir(),
+                    })
+                }),
+                errors: std::mem::take(&mut p.errors),
+            })
+        })
+    }
+
+    /// The tasks of the children inserted from `first` on.
+    fn tasks_of(&self, detached: Vec<Detached>, first: u32, depth: u32) -> Vec<Task> {
         let mut tasks = Vec::with_capacity(detached.len());
         for Detached {
             offset,
@@ -1963,9 +2095,7 @@ impl<'a> Scan<'a> {
         {
             let id = NodeId(first.saturating_add(offset));
             if let Some(sides) = content {
-                self.content_total.fetch_add(1, Ordering::Relaxed);
-                self.in_flight.fetch_add(1, Ordering::AcqRel);
-                tasks.push(Task::Content(ContentTask { node: id, sides }));
+                tasks.push(self.content_of(id, sides));
             }
             if let Some(sides) = descend {
                 tasks.push(Task::Folder(FolderTask {
@@ -1975,7 +2105,14 @@ impl<'a> Scan<'a> {
                 }));
             }
         }
-        Some(tasks)
+        tasks
+    }
+
+    /// A content test, counted.
+    fn content_of(&self, node: NodeId, sides: Box<[(Spec, Entry); 2]>) -> Task {
+        self.content_total.fetch_add(1, Ordering::Relaxed);
+        self.in_flight.fetch_add(1, Ordering::AcqRel);
+        Task::Content(ContentTask { node, sides })
     }
 
     /// The planned children's indices in canonical order (§2.5.4, the order of `ChildKey`): kind rank, then
@@ -2036,7 +2173,7 @@ impl<'a> Scan<'a> {
         if self.cancelled() {
             return;
         }
-        let method = self.rules.criteria.content.method;
+        let method = self.content_method;
         let Some(comparator) = self.env.content.get(method) else {
             return;
         };
@@ -2291,6 +2428,7 @@ impl<'a> Scan<'a> {
                     task.entry.size,
                     task.entry.mtime,
                     &task.entry.attrs,
+                    task.entry.special,
                 );
                 self.flat_items[task.side].lock().push(task.entry, f);
             }

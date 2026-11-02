@@ -5,11 +5,12 @@
 use hikasa_core::{
     CaseSensitivity, FileTime, FolderVerdict, MaskOptions, NameFilter, RelPath, Side,
 };
-use hikasa_vfs::{Attrs, Capabilities, DosAttrs, EntryKind};
+use hikasa_vfs::{Attrs, Capabilities, DosAttrs, EntryKind, SpecialKind};
 
 use crate::error::FolderError;
 use crate::rules::{
-    CaseMode, Cmp, DateCutoff, DateFilter, FolderRules, OtherFilters, SizeFilter, file_time,
+    AttribFilter, CaseMode, Cmp, DateCutoff, DateFilter, FolderRules, OtherFilters, SizeFilter,
+    UnixTypeFilter, UnixTypes, file_time,
 };
 
 /// Rules compiled for one scan.
@@ -25,6 +26,24 @@ pub(crate) struct ResolvedRules {
     pub(crate) size: Option<SizeFilter>,
     /// Date filter with its absolute cutoff.
     pub(crate) date: Option<(Cmp, FileTime)>,
+    /// `attrib` filter.
+    pub(crate) attrib: Option<AttribFilter>,
+    /// `unix_type` filter.
+    pub(crate) unix_type: Option<UnixTypeFilter>,
+}
+
+/// The letter of an entry for the `unix_type` filter: `File` → `r`, `Symlink` → `l`, `Other` → what it is; none for an
+/// `Other` nothing is known of, and for a folder.
+fn unix_type_of(kind: EntryKind, special: Option<SpecialKind>) -> UnixTypes {
+    match (kind, special) {
+        (EntryKind::File, _) => UnixTypes::REGULAR,
+        (EntryKind::Symlink, _) => UnixTypes::LINK,
+        (EntryKind::Other, Some(SpecialKind::Block)) => UnixTypes::BLOCK,
+        (EntryKind::Other, Some(SpecialKind::Char)) => UnixTypes::CHAR,
+        (EntryKind::Other, Some(SpecialKind::Fifo)) => UnixTypes::FIFO,
+        (EntryKind::Other, Some(SpecialKind::Socket)) => UnixTypes::SOCKET,
+        (EntryKind::Other | EntryKind::Dir, _) => UnixTypes::empty(),
+    }
 }
 
 /// `CaseMode::Auto` → sensitive iff both bases' back-ends report `CASE_SENSITIVE`.
@@ -87,6 +106,8 @@ impl ResolvedRules {
             exclude_protected,
             size,
             date,
+            attrib,
+            unix_type,
         } = rules.filters.other;
         Ok(ResolvedRules {
             names_match_all: filter.is_match_all(),
@@ -94,6 +115,8 @@ impl ResolvedRules {
             exclude_protected,
             size,
             date: date.map(|d| (d.cmp, absolute_cutoff(&d, now))),
+            attrib,
+            unix_type,
         })
     }
 
@@ -140,13 +163,15 @@ impl ResolvedRules {
     }
 
     /// True when the other filters (FC-053) hide a stat'ed entry: SYSTEM+HIDDEN with `exclude_protected` (any
-    /// kind); for regular files, the size filter and the date filter (a missing mtime fails it).
+    /// kind); the `unix_type` filter (anything but a folder); for regular files, the size filter, the date filter (a
+    /// missing mtime fails it) and the `attrib` filter (DOS attributes only: without them it has no effect).
     pub(crate) fn other_filtered(
         &self,
         kind: EntryKind,
         size: u64,
         mtime: Option<FileTime>,
         attrs: &Attrs,
+        special: Option<SpecialKind>,
     ) -> bool {
         if self.exclude_protected
             && let Attrs::Dos { attrs } = attrs
@@ -154,8 +179,19 @@ impl ResolvedRules {
         {
             return true;
         }
+        if kind != EntryKind::Dir
+            && let Some(filter) = self.unix_type
+            && filter.hides(unix_type_of(kind, special))
+        {
+            return true;
+        }
         if kind != EntryKind::File {
             return false;
+        }
+        if let (Some(filter), Attrs::Dos { attrs }) = (self.attrib, attrs)
+            && (!attrs.contains(filter.set) || attrs.intersects(filter.clear))
+        {
+            return true;
         }
         if let Some(filter) = self.size
             && !filter.cmp.holds(size, filter.bytes)
@@ -271,32 +307,32 @@ mod tests {
         let recent = Some(FileTime::parse("2026-10-20T00:00:00Z").unwrap());
         let old = Some(FileTime::parse("2026-01-01T00:00:00Z").unwrap());
         let none = Attrs::None;
-        assert!(!r.other_filtered(EntryKind::File, 5, recent, &none));
+        assert!(!r.other_filtered(EntryKind::File, 5, recent, &none, None));
         assert!(
-            r.other_filtered(EntryKind::File, 10, recent, &none),
+            r.other_filtered(EntryKind::File, 10, recent, &none, None),
             "not < 10"
         );
-        assert!(r.other_filtered(EntryKind::File, 5, old, &none));
+        assert!(r.other_filtered(EntryKind::File, 5, old, &none, None));
         assert!(
-            r.other_filtered(EntryKind::File, 5, None, &none),
+            r.other_filtered(EntryKind::File, 5, None, &none, None),
             "missing mtime"
         );
         assert!(
-            !r.other_filtered(EntryKind::Dir, 50, old, &none),
+            !r.other_filtered(EntryKind::Dir, 50, old, &none, None),
             "files only"
         );
         assert!(
-            !r.other_filtered(EntryKind::Symlink, 50, old, &none),
+            !r.other_filtered(EntryKind::Symlink, 50, old, &none, None),
             "files only"
         );
         let protected = Attrs::Dos {
             attrs: DosAttrs::SYSTEM | DosAttrs::HIDDEN,
         };
-        assert!(r.other_filtered(EntryKind::Dir, 0, None, &protected));
+        assert!(r.other_filtered(EntryKind::Dir, 0, None, &protected, None));
         let hidden = Attrs::Dos {
             attrs: DosAttrs::HIDDEN,
         };
-        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &hidden));
+        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &hidden, None));
         let unix = Attrs::Unix {
             meta: UnixMeta {
                 mode: 0,
@@ -304,10 +340,10 @@ mod tests {
                 gid: 0,
             },
         };
-        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &unix));
+        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &unix, None));
         rules.filters.other.exclude_protected = false;
         let r = ResolvedRules::new(&rules, CaseSensitivity::Sensitive, &now()).unwrap();
-        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &protected));
+        assert!(!r.other_filtered(EntryKind::Dir, 0, None, &protected, None));
     }
 
     #[test]

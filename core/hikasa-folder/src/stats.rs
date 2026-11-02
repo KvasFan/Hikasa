@@ -25,6 +25,19 @@ pub struct ContentCounts {
 }
 
 impl ContentCounts {
+    /// One more result of `kind`.
+    pub(crate) fn add(&mut self, kind: ContentKind) {
+        let slot = match kind {
+            ContentKind::BinarySame => &mut self.binary_same,
+            ContentKind::RulesSame => &mut self.rules_same,
+            ContentKind::UnimportantOnly => &mut self.unimportant_only,
+            ContentKind::ImportantDifferences => &mut self.important_differences,
+            ContentKind::BinaryDifferent => &mut self.binary_different,
+            ContentKind::Error => &mut self.error,
+        };
+        *slot = slot.saturating_add(1);
+    }
+
     /// Count of one result kind. Additive API.
     pub fn get(&self, kind: ContentKind) -> u32 {
         match kind {
@@ -51,6 +64,14 @@ pub struct FolderStats {
     pub right: SideTotals,
     /// Content test results.
     pub content: ContentCounts,
+    /// Rows with a difference that an Ignored mark reads as `same` (FC-033).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub ignored: u32,
+}
+
+/// Keeps the field off the JSON of a comparison without marks.
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 #[cfg(test)]

@@ -62,6 +62,9 @@ mod platform {
             | C::REMOVE
             | C::RENAME
     }
+    pub(super) fn special(_meta: &Metadata) -> Option<crate::entry::SpecialKind> {
+        None
+    }
     pub(super) fn sync_dir(_dir: &Path) {}
     pub(super) fn open_new(path: &Path) -> std::io::Result<std::fs::File> {
         std::fs::OpenOptions::new()
@@ -249,6 +252,11 @@ fn entry_from(name: FileName, meta: &Metadata, link: Option<&Path>, followed: bo
         followed,
         crc32: None,
         file_id: platform::file_id(meta),
+        special: if kind == EntryKind::Other {
+            platform::special(meta)
+        } else {
+            None
+        },
     };
     if let Some(target) = link {
         entry.set_link_target(target.as_os_str());

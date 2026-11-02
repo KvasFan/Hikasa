@@ -5,6 +5,7 @@
 //! Every type here is plain data. Defaults are documented on each field; every field round-trips through TOML
 //! (no `Option` field has a non-`None` default, D-52).
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use hikasa_core::{
@@ -42,6 +43,13 @@ pub struct FolderRules {
     /// FC-015: archives opened as folders with [`ArchiveHandling::OnceOpened`]: paths relative to the bases,
     /// `/`-separated, also through an archive (`a.zip/b.tar.gz`).
     pub open_archives: Vec<String>,
+    /// FC-033: Ignored marks: paths relative to the bases, `/`-separated, in the spelling of `open_archives`; `a` is a
+    /// folder and all below it, `!a/b.txt` an exception. The longest path that names a node or an ancestor decides.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<String>,
+    /// FF-002: format id → enabled, for this comparison. Plain data: the session turns it into its overrides.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub format_overrides: BTreeMap<String, bool>,
 }
 
 impl Default for FolderRules {
@@ -53,6 +61,8 @@ impl Default for FolderRules {
             filters: FilterRules::default(),
             handling: Handling::default(),
             open_archives: Vec::new(),
+            ignored: Vec::new(),
+            format_overrides: BTreeMap::new(),
         }
     }
 }
@@ -409,6 +419,18 @@ pub struct OtherFilters {
         deserialize_with = "off_or::deserialize"
     )]
     pub date: Option<DateFilter>,
+    /// `attrib` filter (FC-053's DOS attribute test on regular files). Default `None`; `false` also reads as `None`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "off_or::deserialize"
+    )]
+    pub attrib: Option<AttribFilter>,
+    /// `unixtype` filter, on everything but folders. Default `None`; `false` also reads as `None`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "off_or::deserialize"
+    )]
+    pub unix_type: Option<UnixTypeFilter>,
 }
 
 impl Default for OtherFilters {
@@ -417,9 +439,213 @@ impl Default for OtherFilters {
             exclude_protected: true,
             size: None,
             date: None,
+            attrib: None,
+            unix_type: None,
         }
     }
 }
+
+/// `attrib:(+|-)<letters>…`, FC-053's DOS attribute test (D-169). `set`: an item must have them all; `clear`: none of
+/// them. Serialized as this text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AttribFilter {
+    /// Attributes an item must have.
+    pub set: DosAttrs,
+    /// Attributes an item must not have.
+    pub clear: DosAttrs,
+}
+
+bitflags::bitflags! {
+    /// The letters of [`UnixTypeFilter`]: `b c l p r s`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct UnixTypes: u8 {
+        /// `b`: a block device.
+        const BLOCK = 1;
+        /// `c`: a character device.
+        const CHAR = 2;
+        /// `l`: a symbolic link.
+        const LINK = 4;
+        /// `p`: a FIFO.
+        const FIFO = 8;
+        /// `r`: a regular file.
+        const REGULAR = 16;
+        /// `s`: a socket.
+        const SOCKET = 32;
+    }
+}
+
+/// The letters of [`UnixTypes`], in canonical order.
+const UNIX_LETTERS: [(char, UnixTypes); 6] = [
+    ('b', UnixTypes::BLOCK),
+    ('c', UnixTypes::CHAR),
+    ('l', UnixTypes::LINK),
+    ('p', UnixTypes::FIFO),
+    ('r', UnixTypes::REGULAR),
+    ('s', UnixTypes::SOCKET),
+];
+
+/// `unixtype:(+|-)<letters>…` (D-169). `include` not empty: only these; `exclude`: not these. Serialized as this text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UnixTypeFilter {
+    /// Only these, when not empty.
+    pub include: UnixTypes,
+    /// Not these.
+    pub exclude: UnixTypes,
+}
+
+/// Splits `text` into its `(positive, letters)` groups: one or more of a sign and at least one letter.
+fn sign_groups<'t>(text: &'t str, what: &str) -> Result<Vec<(bool, &'t str)>, FolderError> {
+    let bad = || FolderError::InvalidRules(format!("invalid {what} filter `{text}`"));
+    let mut groups = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let positive = match rest.chars().next() {
+            Some('+') => true,
+            Some('-') => false,
+            _ => return Err(bad()),
+        };
+        let body = rest.get(1..).unwrap_or_default();
+        let end = body.find(['+', '-']).unwrap_or(body.len());
+        let (letters, tail) = body.split_at(end);
+        if letters.is_empty() {
+            return Err(bad());
+        }
+        groups.push((positive, letters));
+        rest = tail;
+    }
+    if groups.is_empty() {
+        return Err(bad());
+    }
+    Ok(groups)
+}
+
+/// The canonical text of two groups: `+<on>-<off>`, an empty group left out.
+fn signed(on: &str, off: &str) -> String {
+    let group = |sign: char, letters: &str| {
+        if letters.is_empty() {
+            String::new()
+        } else {
+            format!("{sign}{letters}")
+        }
+    };
+    format!("{}{}", group('+', on), group('-', off))
+}
+
+impl AttribFilter {
+    /// Parses `+rh-s`: groups of a sign and DOS letters. A letter on both signs, a group without letters or an unknown
+    /// letter is [`FolderError::InvalidRules`].
+    pub fn parse(text: &str) -> Result<AttribFilter, FolderError> {
+        let mut filter = AttribFilter {
+            set: DosAttrs::empty(),
+            clear: DosAttrs::empty(),
+        };
+        for (positive, letters) in sign_groups(text, "attribute")? {
+            let parsed = DosAttrs::parse_letters(letters).map_err(|_| {
+                FolderError::InvalidRules(format!("invalid attribute filter `{text}`"))
+            })?;
+            if positive {
+                filter.set |= parsed;
+            } else {
+                filter.clear |= parsed;
+            }
+        }
+        if filter.set.intersects(filter.clear) {
+            return Err(FolderError::InvalidRules(format!(
+                "attribute filter `{text}` has a letter on both signs"
+            )));
+        }
+        Ok(filter)
+    }
+}
+
+impl fmt::Display for AttribFilter {
+    /// The text [`AttribFilter::parse`] reads: lower-case letters in canonical order.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lower = |attrs: DosAttrs| attrs.letters().to_ascii_lowercase();
+        f.write_str(&signed(&lower(self.set), &lower(self.clear)))
+    }
+}
+
+impl UnixTypeFilter {
+    /// Parses `-lp`: groups of a sign and the letters `b c l p r s`. A letter on both signs, a group without letters or
+    /// an unknown letter is [`FolderError::InvalidRules`]; `d` is not a letter: folders are never hidden.
+    pub fn parse(text: &str) -> Result<UnixTypeFilter, FolderError> {
+        let mut filter = UnixTypeFilter {
+            include: UnixTypes::empty(),
+            exclude: UnixTypes::empty(),
+        };
+        for (positive, letters) in sign_groups(text, "unix type")? {
+            for letter in letters.chars() {
+                let Some((_, flag)) = UNIX_LETTERS.iter().find(|(l, _)| *l == letter) else {
+                    return Err(FolderError::InvalidRules(format!(
+                        "invalid unix type filter `{text}`"
+                    )));
+                };
+                if positive {
+                    filter.include |= *flag;
+                } else {
+                    filter.exclude |= *flag;
+                }
+            }
+        }
+        if filter.include.intersects(filter.exclude) {
+            return Err(FolderError::InvalidRules(format!(
+                "unix type filter `{text}` has a letter on both signs"
+            )));
+        }
+        Ok(filter)
+    }
+
+    /// True when the filter hides an item of type `types` (empty: an `Other` entry nothing is known of).
+    pub(crate) fn hides(&self, types: UnixTypes) -> bool {
+        (!self.include.is_empty() && !self.include.intersects(types))
+            || self.exclude.intersects(types)
+    }
+}
+
+impl fmt::Display for UnixTypeFilter {
+    /// The text [`UnixTypeFilter::parse`] reads.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let letters = |types: UnixTypes| -> String {
+            UNIX_LETTERS
+                .iter()
+                .filter(|(_, flag)| types.contains(*flag))
+                .map(|(letter, _)| *letter)
+                .collect()
+        };
+        f.write_str(&signed(&letters(self.include), &letters(self.exclude)))
+    }
+}
+
+/// The text form of the two filters in a rules file.
+macro_rules! text_serde {
+    ($type:ty, $what:literal) => {
+        impl Serialize for $type {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.to_string())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $type {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<$type, D::Error> {
+                struct Text;
+                impl Visitor<'_> for Text {
+                    type Value = $type;
+                    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str($what)
+                    }
+                    fn visit_str<E: de::Error>(self, value: &str) -> Result<$type, E> {
+                        <$type>::parse(value).map_err(E::custom)
+                    }
+                }
+                deserializer.deserialize_str(Text)
+            }
+        }
+    };
+}
+
+text_serde!(AttribFilter, "an attribute filter such as \"+rh-s\"");
+text_serde!(UnixTypeFilter, "a unix type filter such as \"-lp\"");
 
 /// Filters.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -443,6 +669,20 @@ pub struct Handling {
     pub scan_orphan_folders: bool,
     /// FC-015: how archives inside a tree are treated. Default [`ArchiveHandling::OnceOpened`].
     pub archives: ArchiveHandling,
+    /// FC-012: subfolders are scanned without being asked. Default true (the table of §1.6.6).
+    #[serde(skip_serializing_if = "is_true")]
+    pub auto_scan_subfolders: bool,
+    /// FC-012: the view opens the folders of the tree. Default false; changes no result.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub expand_on_load: bool,
+    /// FC-012: of those, the folders with differences only. Default false; changes no result.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub expand_differences_only: bool,
+}
+
+/// Keeps a key off a rules file while it holds its default.
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// How an archive inside a tree is treated (FC-015, D-151). A base may be an archive in every mode.
@@ -465,6 +705,9 @@ impl Default for Handling {
             flatten: false,
             scan_orphan_folders: true,
             archives: ArchiveHandling::default(),
+            auto_scan_subfolders: true,
+            expand_on_load: false,
+            expand_differences_only: false,
         }
     }
 }
@@ -577,6 +820,27 @@ pub struct FolderRulesPatch {
     /// `open_archives` (`--open-archive`, the whole list).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_archives: Option<Vec<String>>,
+    /// `filters.other.attrib`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attrib_filter: Option<Change<AttribFilter>>,
+    /// `filters.other.unix_type`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unix_type_filter: Option<Change<UnixTypeFilter>>,
+    /// `handling.auto_scan_subfolders`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_scan_subfolders: Option<bool>,
+    /// `handling.expand_on_load`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expand_on_load: Option<bool>,
+    /// `handling.expand_differences_only`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expand_differences_only: Option<bool>,
+    /// `ignored` (the whole list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored: Option<Vec<String>>,
+    /// `format_overrides` (the whole map).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format_overrides: Option<BTreeMap<String, bool>>,
 }
 
 /// Mask options used to validate and convert name filters. Mask syntax does not depend on case sensitivity;
@@ -656,13 +920,31 @@ impl FolderRules {
         if let Some(change) = patch.date_filter {
             o.date = change.into_option();
         }
+        if let Some(change) = patch.attrib_filter {
+            o.attrib = change.into_option();
+        }
+        if let Some(change) = patch.unix_type_filter {
+            o.unix_type = change.into_option();
+        }
         let h = &mut next.handling;
         set(&mut h.follow_symlinks, patch.follow_symlinks);
         set(&mut h.flatten, patch.flatten);
         set(&mut h.scan_orphan_folders, patch.scan_orphan_folders);
         set(&mut h.archives, patch.archives);
+        set(&mut h.auto_scan_subfolders, patch.auto_scan_subfolders);
+        set(&mut h.expand_on_load, patch.expand_on_load);
+        set(
+            &mut h.expand_differences_only,
+            patch.expand_differences_only,
+        );
         if let Some(paths) = &patch.open_archives {
             next.open_archives.clone_from(paths);
+        }
+        if let Some(paths) = &patch.ignored {
+            next.ignored.clone_from(paths);
+        }
+        if let Some(formats) = &patch.format_overrides {
+            next.format_overrides.clone_from(formats);
         }
         next.validate()?;
         *self = next;
@@ -720,6 +1002,8 @@ fn known_keys(path: &str) -> Option<&'static [&'static str]> {
             "filters",
             "handling",
             "open_archives",
+            "ignored",
+            "format_overrides",
         ],
         "criteria" => &[
             "size",
@@ -747,7 +1031,7 @@ fn known_keys(path: &str) -> Option<&'static [&'static str]> {
             "include_folders",
             "exclude_folders",
         ],
-        "filters.other" => &["exclude_protected", "size", "date"],
+        "filters.other" => &["exclude_protected", "size", "date", "attrib", "unix_type"],
         "filters.other.size" => &["cmp", "bytes"],
         "filters.other.date" => &["cmp", "cutoff"],
         "filters.other.date.cutoff" => &["type", "at", "days"],
@@ -756,6 +1040,9 @@ fn known_keys(path: &str) -> Option<&'static [&'static str]> {
             "flatten",
             "scan_orphan_folders",
             "archives",
+            "auto_scan_subfolders",
+            "expand_on_load",
+            "expand_differences_only",
         ],
         _ => return None,
     })
@@ -993,7 +1280,7 @@ mod off_or {
         type Value = Option<T>;
 
         fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("a table, or `false` (off)")
+            f.write_str("a table, a filter's text, or `false` (off)")
         }
 
         fn visit_bool<E: de::Error>(self, v: bool) -> Result<Option<T>, E> {
@@ -1018,6 +1305,10 @@ mod off_or {
 
         fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Option<T>, A::Error> {
             T::deserialize(MapAccessDeserializer::new(map)).map(Some)
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Option<T>, E> {
+            T::deserialize(de::value::StrDeserializer::new(value)).map(Some)
         }
     }
 }

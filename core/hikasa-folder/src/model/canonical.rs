@@ -70,14 +70,14 @@ pub struct CanonicalError {
     pub kind: ErrorKind,
 }
 
-/// Builds the canonical tree bottom-up (children always have larger ids than their parent), without
-/// recursion.
+/// Builds the canonical tree bottom-up (each node after its descendants), without recursion.
 pub(crate) fn build(tree: &TreeRead<'_>) -> CanonicalTree {
     let len = tree.len() as usize;
     let mut built: Vec<Option<CanonicalNode>> = Vec::with_capacity(len);
     built.resize_with(len, || None);
-    for id in (0..len).rev() {
-        let node_id = NodeId(u32::try_from(id).unwrap_or(u32::MAX));
+    for id in tree.store().post_order() {
+        let node_id = NodeId(id);
+        let id = id as usize;
         let Some(view) = tree.node(node_id) else {
             continue;
         };

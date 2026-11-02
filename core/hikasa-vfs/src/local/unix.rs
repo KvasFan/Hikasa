@@ -4,12 +4,12 @@
 use std::ffi::OsStr;
 use std::fs::{self, File, FileTimes, Metadata, OpenOptions, Permissions};
 use std::io;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use super::AttrFailure;
 use crate::caps::Capabilities;
-use crate::entry::{Attrs, FileId, UnixMeta};
+use crate::entry::{Attrs, FileId, SpecialKind, UnixMeta};
 use crate::vfs::AttrChange;
 
 /// `Attrs::Unix` with the permission bits (`st_mode & 0o7777`), uid and gid.
@@ -29,6 +29,22 @@ pub(super) fn file_id(meta: &Metadata) -> Option<FileId> {
         dev: meta.dev(),
         ino: meta.ino(),
     })
+}
+
+/// What a special file is.
+pub(super) fn special(meta: &Metadata) -> Option<SpecialKind> {
+    let kind = meta.file_type();
+    if kind.is_block_device() {
+        Some(SpecialKind::Block)
+    } else if kind.is_char_device() {
+        Some(SpecialKind::Char)
+    } else if kind.is_fifo() {
+        Some(SpecialKind::Fifo)
+    } else if kind.is_socket() {
+        Some(SpecialKind::Socket)
+    } else {
+        None
+    }
 }
 
 /// Read, write, list, seek, mtime, ctime (birth time where the file system records one), Unix mode and owner,

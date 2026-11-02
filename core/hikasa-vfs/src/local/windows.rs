@@ -35,6 +35,11 @@ pub(super) fn file_id(_meta: &Metadata) -> Option<FileId> {
     None
 }
 
+/// Windows does not say what a special entry is.
+pub(super) fn special(_meta: &Metadata) -> Option<crate::entry::SpecialKind> {
+    None
+}
+
 /// Read, write, list, seek, mtime, ctime (creation time), DOS attributes, symlinks, local paths; set times
 /// (modification and creation), mkdir, remove, rename, set attributes (`R` only, D-99), trash, create symlinks
 /// (which may still fail without the privilege).

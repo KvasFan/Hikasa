@@ -1036,12 +1036,16 @@ fn link_text(link: &[u8]) -> Option<Box<str>> {
 
 /// A tar record as a [`RawMember`].
 fn tar_member(item: TarItem) -> RawMember {
+    let special = match item.kind {
+        TarKind::Other(special) => special,
+        _ => None,
+    };
     let kind = match item.kind {
         TarKind::File => MemberKind::File,
         TarKind::Dir => MemberKind::Dir,
         TarKind::Symlink => MemberKind::Symlink,
         TarKind::HardLink => MemberKind::HardLink,
-        TarKind::Other => MemberKind::Other,
+        TarKind::Other(_) => MemberKind::Other,
         TarKind::Sparse => MemberKind::Sparse,
     };
     let lossy = std::str::from_utf8(&item.name).is_err();
@@ -1054,6 +1058,7 @@ fn tar_member(item: TarItem) -> RawMember {
         .flatten()
         .map(|clean| tar_text(&clean));
     RawMember {
+        special,
         path,
         kind,
         lossy,
@@ -1204,6 +1209,7 @@ fn index_single(
     let mut members = Vec::new();
     if damage.is_none() {
         members.push(RawMember {
+            special: None,
             path: Ok(stream_member_name(name)),
             kind: MemberKind::File,
             lossy: false,

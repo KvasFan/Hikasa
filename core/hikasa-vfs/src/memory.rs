@@ -70,7 +70,7 @@ use hikasa_core::{
 };
 
 use crate::caps::Capabilities;
-use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
+use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, SpecialKind, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
     AtomicWrite, AttrChange, Durability, EntryError, FollowLinks, ListOptions, Listing, NameOnly,
@@ -97,6 +97,8 @@ pub struct MemMeta {
     pub attrs: Option<Attrs>,
     /// Back-end CRC (simulates archives).
     pub crc32: Option<u32>,
+    /// What an entry of [`MemoryVfs::insert_other`] is.
+    pub special: Option<SpecialKind>,
 }
 
 /// Listing order produced by `MemoryVfs::list`. It exposes bugs that depend on order (INV-VFS-1).
@@ -311,6 +313,8 @@ enum NodeKind {
     Dir,
     File(Arc<[u8]>),
     Symlink(String),
+    /// A device, a FIFO or a socket: listed, never opened.
+    Other,
 }
 
 impl NodeKind {
@@ -319,6 +323,7 @@ impl NodeKind {
             NodeKind::Dir => EntryKind::Dir,
             NodeKind::File(_) => EntryKind::File,
             NodeKind::Symlink(_) => EntryKind::Symlink,
+            NodeKind::Other => EntryKind::Other,
         }
     }
 }
@@ -563,6 +568,7 @@ impl Tree {
                 target.len() as u64,
                 Some(target.clone()),
             ),
+            NodeKind::Other => (EntryKind::Other, 0, link),
         };
         Entry {
             name,
@@ -580,6 +586,10 @@ impl Tree {
                 dev: self.dev_of(idx),
                 ino: idx as u64 + 1,
             }),
+            special: match node.kind {
+                NodeKind::Other => node.meta.special,
+                _ => None,
+            },
         }
     }
 
@@ -680,9 +690,11 @@ impl Tree {
                     }
                     Ok(())
                 }
-                NodeKind::File(_) | NodeKind::Symlink(_) => Err(VfsError::IsADirectory {
-                    spec: spec.to_owned(),
-                }),
+                NodeKind::File(_) | NodeKind::Symlink(_) | NodeKind::Other => {
+                    Err(VfsError::IsADirectory {
+                        spec: spec.to_owned(),
+                    })
+                }
             };
         };
         let Comp::Name(name) = last else {
@@ -977,6 +989,14 @@ impl MemoryVfs {
             .insert(&parsed, NodeKind::Symlink(target.to_owned()), meta, path)
     }
 
+    /// Inserts an entry of kind `Other` (creating parents); `meta.special` says what it is (D-169).
+    pub fn insert_other(&self, path: &str, meta: MemMeta) -> Result<(), VfsError> {
+        let parsed = insert_path(path)?;
+        self.shared
+            .write()
+            .insert(&parsed, NodeKind::Other, meta, path)
+    }
+
     /// Sets the listing order.
     pub fn set_listing_order(&self, order: ListingOrder) {
         self.shared.write().order = order;
@@ -1029,7 +1049,7 @@ impl MemoryVfs {
         let idx = tree.resolve(&parsed, true).ok()?;
         match &tree.node(idx)?.kind {
             NodeKind::File(content) => Some(Arc::clone(content)),
-            NodeKind::Dir | NodeKind::Symlink(_) => None,
+            NodeKind::Dir | NodeKind::Symlink(_) | NodeKind::Other => None,
         }
     }
 
@@ -1109,6 +1129,7 @@ impl MemoryVfs {
                     None,
                     Some(target.clone()),
                 ),
+                NodeKind::Other => (EntryKind::Other, 0, None, None),
             };
             out.push(MemDump {
                 path: tree.node_path(idx).to_string_lossy().into_owned(),
@@ -1299,7 +1320,7 @@ impl Vfs for MemoryVfs {
         let content = match tree.node(idx).map(|n| &n.kind) {
             Some(NodeKind::File(content)) => Arc::clone(content),
             Some(NodeKind::Dir) => return Err(VfsError::IsADirectory { spec: spec_text }),
-            Some(NodeKind::Symlink(_)) | None => {
+            Some(NodeKind::Symlink(_) | NodeKind::Other) | None => {
                 return Err(VfsError::NotFound { spec: spec_text });
             }
         };

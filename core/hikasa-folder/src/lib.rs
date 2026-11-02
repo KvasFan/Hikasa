@@ -101,14 +101,17 @@ pub use events::{ChannelObserver, NullObserver, ScanEvent, ScanObserver};
 pub use model::{
     BaseInfo, CanonicalEntry, CanonicalError, CanonicalNode, CanonicalTree, ContentSummary,
     EntryView, FolderComparison, FolderModel, NodeError, NodeFlags, NodeId, NodeKind, NodeView,
-    ScanStatus, TreeRead, check_tree_invariants,
+    ScanStatus, TreeRead, check_tree_invariants, expanded_on_load,
 };
 pub use quick::{DiffFlags, quick_tests};
 pub use rules::{
-    ArchiveHandling, CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec, DateCutoff,
-    DateFilter, FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules, FolderRulesPatch, Handling,
-    NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset, UnixCriteria,
+    ArchiveHandling, AttribFilter, CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec,
+    DateCutoff, DateFilter, FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules,
+    FolderRulesPatch, Handling, NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset,
+    UnixCriteria, UnixTypeFilter, UnixTypes,
 };
+pub use scan::content::{ContentItem, ContentReport, compare_contents, compute_crcs};
+pub use scan::refresh::{RefreshReport, refresh_into};
 pub use scan::{
     ContentEngines, FolderEnv, MAX_FOLLOW_DEPTH, SCAN_ARCHIVE_ENTRIES_MAX, compare_folders,
     compare_into,

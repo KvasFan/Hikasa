@@ -292,6 +292,7 @@ fn insert_entry(vfs: &MemoryVfs, base: &str, e: &EntrySpec) {
         ctime: None,
         attrs,
         crc32: e.crc32,
+        ..MemMeta::default()
     };
     match e.kind.as_deref().unwrap_or("file") {
         "file" => {
@@ -877,6 +878,7 @@ fn insert_gen(vfs: &MemoryVfs, base: &str, node: &GenNode, left: bool, unix: boo
         ctime: None,
         attrs: Some(attrs),
         crc32: None,
+        ..MemMeta::default()
     };
     let host_path = host(&path);
     let ok = match kind {
@@ -1085,4 +1087,38 @@ pub fn state_at(tree: &CanonicalTree, path: &str) -> CompareState {
 /// Entry of a canonical node side (for assertions).
 pub fn entry_name(e: &Option<CanonicalEntry>) -> Option<&str> {
     e.as_ref().map(|e| e.name.as_str())
+}
+
+/// Runs `body` with a `FolderEnv` over `vfs` (no pool): the shape every test of W6a needs.
+pub fn with_env<R>(
+    vfs: &dyn Vfs,
+    engines: &ContentEngines,
+    cancel: &CancelToken,
+    body: impl FnOnce(&hikasa_folder::FolderEnv<'_>) -> R,
+) -> R {
+    let progress = NullProgress;
+    let now = default_now();
+    let env = hikasa_folder::FolderEnv {
+        vfs,
+        content: engines,
+        pool: None,
+        ctl: Ctl {
+            cancel,
+            progress: &progress,
+        },
+        observer: &hikasa_folder::NullObserver,
+        now: &now,
+        content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
+    };
+    body(&env)
+}
+
+/// A finished comparison of `/l` and `/r`.
+pub fn compared(vfs: &dyn Vfs, rules: &FolderRules) -> hikasa_folder::FolderComparison {
+    let engines = engines(1 << 30);
+    with_env(vfs, &engines, &CancelToken::new(), |env| {
+        let model = FolderModel::new(mspec("/l"), mspec("/r"), rules.clone()).unwrap();
+        hikasa_folder::compare_into(&model, env).unwrap()
+    })
 }
