@@ -58,6 +58,9 @@ struct Planner<'a, 'r> {
     depth: Vec<u32>,
     /// The sides on which a folder above the row is hidden by a filter; either hides the row.
     hidden_above: Vec<u8>,
+    /// The sides on which the row's name shares its aligned key with a sibling's, or the row lies below a folder on one
+    /// side that does (a case-insensitive comparison). Empty when the comparison aligns names exactly.
+    ambiguous: Vec<u8>,
     /// Rows in scope (`None`: all).
     scope: Option<Vec<bool>>,
     /// The overrides (`None`: none).
@@ -118,6 +121,7 @@ pub(crate) fn plan(
         builder,
         depth: vec![0; len],
         hidden_above: vec![0; len],
+        ambiguous: Vec::new(),
         scope: None,
         overrides: None,
         dropped: BTreeSet::new(),
@@ -183,6 +187,7 @@ impl<'a, 'r> Planner<'a, 'r> {
                 *slot = hidden;
             }
         }
+        self.find_ambiguous();
         let request = self.request;
         if request.just_selection.is_some() || request.visible.is_some() {
             let len = read.len() as usize;
@@ -224,6 +229,76 @@ impl<'a, 'r> Planner<'a, 'r> {
             self.overrides = Some(Overrides { keys });
         }
         Ok(())
+    }
+
+    /// The sides on which two siblings' names align to one key, inherited below a folder on one side (`ambiguous`). Only
+    /// a comparison that folds names can have them, so an exact one costs nothing here.
+    fn find_ambiguous(&mut self) {
+        let read = self.read;
+        let align = read.store().marks_align();
+        if align.case != hikasa_core::CaseSensitivity::Insensitive && !align.align_normalization {
+            return;
+        }
+        let mut bits = vec![0u8; read.len() as usize];
+        let mut folders = vec![NodeId::ROOT];
+        while let Some(folder) = folders.pop() {
+            let mut seen: HashMap<(u8, String), NodeId> = HashMap::new();
+            for child in read.children(folder) {
+                let Some(view) = read.node(child) else { continue };
+                let mut own = 0u8;
+                for side in [Side::Left, Side::Right] {
+                    let Some(entry) = view.side(side) else { continue };
+                    let key = (bit(side), path_key(&align, entry.name).into_owned());
+                    if let Some(&other) = seen.get(&key) {
+                        own |= bit(side);
+                        if let Some(slot) = bits.get_mut(other.0 as usize) {
+                            *slot |= bit(side);
+                        }
+                    } else {
+                        seen.insert(key, child);
+                    }
+                }
+                if let Some(slot) = bits.get_mut(child.0 as usize) {
+                    *slot |= own;
+                }
+            }
+            for child in read.children(folder) {
+                if read.node(child).is_some_and(|view| view.is_folder()) {
+                    folders.push(child);
+                }
+            }
+        }
+        // Below a folder on one side only that is ambiguous there, every row is: hand it down, parents first.
+        for (id, _) in read.preorder() {
+            let Some(view) = read.node(id) else { continue };
+            let parent = view.parent.unwrap_or(NodeId::ROOT);
+            if parent == NodeId::ROOT {
+                continue;
+            }
+            let Some(parent_view) = read.node(parent) else {
+                continue;
+            };
+            let from_above = bits.get(parent.0 as usize).copied().unwrap_or(0);
+            for side in [Side::Left, Side::Right] {
+                let one_sided = parent_view.side(side).is_some()
+                    && parent_view.side(side.opposite()).is_none();
+                if one_sided && from_above & bit(side) != 0 && view.side(side).is_some() {
+                    if let Some(slot) = bits.get_mut(id.0 as usize) {
+                        *slot |= bit(side);
+                    }
+                }
+            }
+        }
+        self.ambiguous = bits;
+    }
+
+    /// True when a copy of the row reading `from` would give the other side a name another row of `from` also aligns to.
+    fn is_ambiguous(&self, view: &NodeView<'_>, id: NodeId, from: Side) -> bool {
+        view.side(from.opposite()).is_none()
+            && self
+                .ambiguous
+                .get(id.0 as usize)
+                .is_some_and(|bits| bits & bit(from) != 0)
     }
 
     /// True when the row is in scope.
@@ -394,6 +469,12 @@ impl<'a, 'r> Planner<'a, 'r> {
             } else {
                 LeaveReason::Matrix
             });
+            return;
+        }
+        if let Some(from) = action.reads()
+            && self.is_ambiguous(view, id, from)
+        {
+            row.reason = Some(LeaveReason::AmbiguousName);
             return;
         }
         match self.infeasible(id, view, action) {
@@ -706,8 +787,9 @@ impl<'a, 'r> Planner<'a, 'r> {
 
 /// The reason a folder on one side stays, from those of its rows: the one that says most.
 fn strongest(children: &[SyncRow]) -> LeaveReason {
-    const ORDER: [LeaveReason; 8] = [
+    const ORDER: [LeaveReason; 9] = [
         LeaveReason::CompareError,
+        LeaveReason::AmbiguousName,
         LeaveReason::ReadOnlySide,
         LeaveReason::Capability,
         LeaveReason::FollowedLink,

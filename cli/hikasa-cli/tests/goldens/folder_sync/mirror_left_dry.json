@@ -219,7 +219,8 @@
       "conflicts": 0,
       "unresolved": 0,
       "bytes_right": 0,
-      "bytes_left": 47
+      "bytes_left": 47,
+      "ambiguous": 0
     },
     "backups": [],
     "summary": {

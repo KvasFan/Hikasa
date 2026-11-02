@@ -519,6 +519,9 @@ pub enum LeaveReason {
     Capability,
     /// Outside *Just selection* or the visible rows.
     OutOfScope,
+    /// Two names on the source side align to one key (a case-insensitive comparison) and the other side has no entry of
+    /// its own for this one: which name the other side should hold is not the plan's to choose (W6c review).
+    AmbiguousName,
 }
 
 impl LeaveReason {
@@ -533,6 +536,7 @@ impl LeaveReason {
             LeaveReason::ReadOnlySide => "read_only_side",
             LeaveReason::Capability => "capability",
             LeaveReason::OutOfScope => "out_of_scope",
+            LeaveReason::AmbiguousName => "ambiguous_name",
         }
     }
 }
@@ -575,6 +579,9 @@ pub struct SyncCounts {
     pub bytes_right: u64,
     /// Bytes copied to the left.
     pub bytes_left: u64,
+    /// Rows left as `ambiguous_name` (additive).
+    #[serde(default)]
+    pub ambiguous: u64,
 }
 
 impl SyncCounts {
@@ -589,6 +596,7 @@ impl SyncCounts {
         self.unresolved += other.unresolved;
         self.bytes_right += other.bytes_right;
         self.bytes_left += other.bytes_left;
+        self.ambiguous += other.ambiguous;
     }
 
     /// The counts of one row of `bytes` (its file's size, when it copies).
@@ -611,6 +619,7 @@ impl SyncCounts {
         }
         counts.conflicts = u64::from(row.conflict);
         counts.unresolved = u64::from(row.reason == Some(LeaveReason::CompareError));
+        counts.ambiguous = u64::from(row.reason == Some(LeaveReason::AmbiguousName));
         counts
     }
 }

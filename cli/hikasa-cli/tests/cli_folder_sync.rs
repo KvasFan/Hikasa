@@ -987,3 +987,58 @@ fn a6_31_a_copied_link_keeps_its_time_and_a_sync_settles() {
         assert_eq!(counts(&both)["copy_right"], 0);
     }
 }
+
+/// `--case-insensitive --filename-case`: a mirror gives the target the source's spelling, so the second run plans nothing.
+/// Two source names of one key (where the file system keeps both): the one without a counterpart is left at planning as
+/// `ambiguous_name`, and the summary says so; no item, and the next run the same.
+#[test]
+fn a6_31_case_insensitive_alignment_settles() {
+    let s = Sandbox::new();
+    s.file_at("l/a.txt", "left content\n", 2_000_000);
+    s.file_at("r/A.txt", "right\n", 1_000_000);
+    let flags = [
+        "--mirror-right",
+        "--case-insensitive",
+        "--filename-case",
+        "--yes",
+        "--json",
+    ];
+    let out = sync(&s, &flags);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let names: Vec<String> = std::fs::read_dir(s.join("r"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["a.txt"]);
+    assert_eq!(read(&s, "r/a.txt"), "left content\n");
+    let again = sync(&s, &flags);
+    assert_eq!(code(&again), 0, "{}", stderr(&again));
+    assert_eq!(json(&again)["result"]["items"], serde_json::json!([]));
+    // Two names of one key on the left, where this file system keeps them apart.
+    let s = Sandbox::new();
+    s.file_at("l/a.txt", "lower\n", 2_000_000);
+    s.file_at("l/A.TXT", "UPPER\n", 2_000_000);
+    s.file_at("r/a.txt", "r\n", 1_000_000);
+    if read(&s, "l/a.txt") != "lower\n" {
+        eprintln!("skipped: this file system folds names");
+        return;
+    }
+    for _ in 0..2 {
+        let out = sync(&s, &["--mirror-right", "--case-insensitive", "--yes"]);
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        let text = stdout(&out);
+        assert!(text.contains("leave A.TXT (ambiguous_name)"), "{text}");
+        assert!(
+            text.contains("1 left as ambiguous names (two names align to one)"),
+            "{text}"
+        );
+        assert!(!text.contains("skip ("), "{text}");
+        assert!(!s.join("r/A.TXT").exists());
+        assert_eq!(read(&s, "r/a.txt"), "lower\n");
+    }
+    let out = sync(
+        &s,
+        &["--mirror-right", "--case-insensitive", "--dry-run", "--json"],
+    );
+    assert_eq!(json(&out)["result"]["counts"]["ambiguous"], 1);
+}

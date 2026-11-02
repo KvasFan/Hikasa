@@ -926,6 +926,93 @@ fn a6_27_case_only_names() {
     assert_eq!(read(&vfs, "/r/b.txt").unwrap(), b"lower");
 }
 
+/// With `filename_case` a case-only difference is a difference: a sync gives the counterpart the source's spelling too (one
+/// `rename` after the copy), so a second run plans nothing. On a file system that folds and on one that does not.
+#[test]
+fn a6_27_with_filename_case_the_target_takes_the_sources_spelling() {
+    for case in [CaseSensitivity::Insensitive, CaseSensitivity::Sensitive] {
+        let vfs = memory(case);
+        file(&vfs, "/l/a.txt", b"left content", 20);
+        file(&vfs, "/r/A.txt", b"right", 10);
+        let mut rules = FolderRules::default();
+        rules.alignment.case = CaseMode::Insensitive;
+        rules.criteria.filename_case = true;
+        let options = preset(SyncPreset::MirrorRight);
+        let cmp = sync_compare(&vfs, &rules, &options);
+        let out = plan(&vfs, &cmp, &request(&options));
+        assert_eq!(out.counts.copy_right, 1, "{case:?}");
+        let lines = items(&out);
+        assert!(
+            lines.iter().any(|l| l == "rename /r/a.txt"),
+            "{case:?} {lines:?}"
+        );
+        assert_clean(&execute(&vfs, &out));
+        let names: Vec<String> = vfs
+            .dump()
+            .into_iter()
+            .filter(|e| e.kind == EntryKind::File && e.path.replace('\\', "/").contains("/r/"))
+            .map(|e| e.path.replace('\\', "/"))
+            .collect();
+        assert_eq!(names.len(), 1, "{case:?} {names:?}");
+        assert!(names[0].ends_with("/r/a.txt"), "{case:?} {names:?}");
+        assert_eq!(read(&vfs, "/r/a.txt").unwrap(), b"left content");
+        let cmp = sync_compare(&vfs, &rules, &options);
+        let again = plan(&vfs, &cmp, &request(&options));
+        assert!(again.op.plan.items.is_empty(), "{case:?} {:?}", items(&again));
+        // Without `filename_case` the spelling is no difference, and nothing is renamed.
+        let vfs = memory(case);
+        file(&vfs, "/l/a.txt", b"left content", 20);
+        file(&vfs, "/r/A.txt", b"right", 10);
+        rules.criteria.filename_case = false;
+        let cmp = sync_compare(&vfs, &rules, &options);
+        let out = plan(&vfs, &cmp, &request(&options));
+        assert!(!items(&out).iter().any(|l| l.starts_with("rename")), "{:?}", items(&out));
+    }
+}
+
+/// Two source names of one key under a case-insensitive comparison: the one the other side has no entry for is left at
+/// planning (`ambiguous_name`, counted), with no item; the pair is synced. Below a folder that is such a name, every row is
+/// left too. A second run plans the same: nothing.
+#[test]
+fn a6_27_two_source_names_of_one_key_are_left_as_ambiguous() {
+    let vfs = memory(CaseSensitivity::Sensitive);
+    file(&vfs, "/l/a.txt", b"lower", 20);
+    file(&vfs, "/l/A.TXT", b"UPPER", 20);
+    file(&vfs, "/r/a.txt", b"r", 10);
+    file(&vfs, "/l/Sub/x", b"x", 20);
+    file(&vfs, "/l/SUB/y", b"y", 20);
+    let mut rules = FolderRules::default();
+    rules.alignment.case = CaseMode::Insensitive;
+    let options = preset(SyncPreset::MirrorRight);
+    let cmp = sync_compare(&vfs, &rules, &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    let read_ = cmp.read();
+    let ambiguous: Vec<String> = out
+        .rows
+        .iter()
+        .filter(|r| r.reason == Some(LeaveReason::AmbiguousName))
+        .map(|r| read_.path(r.node).as_str().to_owned())
+        .collect();
+    assert_eq!(
+        ambiguous.iter().filter(|p| p.as_str() == "A.TXT").count(),
+        1,
+        "{ambiguous:?}"
+    );
+    assert!(ambiguous.iter().any(|p| p == "Sub/x" || p == "SUB/y"), "{ambiguous:?}");
+    assert_eq!(out.counts.ambiguous as usize, ambiguous.len());
+    assert_eq!(row(&cmp, &out, "a.txt").action, SyncAction::CopyRight);
+    let lines = items(&out);
+    assert!(!lines.iter().any(|l| l.contains("A.TXT")), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("skip")), "{lines:?}");
+    assert_clean(&execute(&vfs, &out));
+    assert_eq!(read(&vfs, "/r/a.txt").unwrap(), b"lower");
+    assert!(!exists(&vfs, "/r/A.TXT"));
+    let cmp = sync_compare(&vfs, &rules, &options);
+    let again = plan(&vfs, &cmp, &request(&options));
+    assert!(!items(&again).iter().any(|l| l.contains("a.txt")), "{:?}", items(&again));
+    assert_eq!(again.counts.ambiguous, out.counts.ambiguous);
+}
+
 #[test]
 fn a6_27_links_are_copied_and_deleted_as_links() {
     let vfs = memory(CaseSensitivity::Sensitive);

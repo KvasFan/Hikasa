@@ -4545,11 +4545,13 @@ pub struct SyncRules { #[serde(flatten)] pub folder: FolderRules, pub sync: Sync
 pub struct SyncRequest<'a> { pub options: &'a SyncOptions, pub just_selection: Option<&'a Selection>,
     pub visible: Option<DisplayOptions>, pub include_hidden: bool, pub iu: bool, pub read_only: ReadOnlySides,
     pub allow_empty_source: bool, pub settings: OpSettings }
-pub enum LeaveReason { Same, Matrix, Filtered, CompareError, FollowedLink, ReadOnlySide, Capability, OutOfScope }
+pub enum LeaveReason { Same, Matrix, Filtered, CompareError, FollowedLink, ReadOnlySide, Capability, OutOfScope,
+                       AmbiguousName /* W6c review */ }
 pub struct SyncRow { pub node: NodeId, pub situation: Option<Situation>, pub action: SyncAction,
                      pub reason: Option<LeaveReason>, pub overridden: bool, pub conflict: bool }    // ≤ 16 bytes
 #[derive(Default)] pub struct SyncCounts { pub copy_right: u64, pub copy_left: u64, pub delete_left: u64, pub delete_right: u64,
-                     pub leave: u64, pub conflicts: u64, pub unresolved: u64, pub bytes_right: u64, pub bytes_left: u64 }
+                     pub leave: u64, pub conflicts: u64, pub unresolved: u64, pub bytes_right: u64, pub bytes_left: u64,
+                     pub ambiguous: u64 /* W6c review */ }
 pub struct SyncPlan { pub rows: Vec<SyncRow> /* tree order */, pub op: OpPlan, pub counts: SyncCounts, pub warnings: Vec<Warning> }
 impl SyncPlan { /** FS-001's folder summaries: O(1) after the plan. */ pub fn folder(&self, node: NodeId) -> SyncCounts; }
 pub fn sync_folder_rules(rules: &FolderRules, options: &SyncOptions) -> Result<FolderRules, FolderError>;
@@ -4807,7 +4809,7 @@ dry run's conflicts; `, <n> not run` at the end of a summary that has such items
 | Schema | `result` |
 |---|---|
 | `hikasa.folder_op.v1` | `{op, dry_run, cancelled, left, right, items: [{action, kind, side: "left"\|"right"\|null, path, source, target, size, replaces, backup, conflicts: [str], answer: bool\|null, status, reason, error}], backups: [{file, backup}], summary: {planned, done, skipped, failed, bytes}, commands: [{program, args, cwd}]\|null}` |
-| `hikasa.folder_sync.v1` | `{preset, matrix: {newer_left, newer_right, added_left, added_right, deleted_left, deleted_right, different, same}, orphans, dry_run, cancelled, left, right, rows: [{path, kind, situation, action, overridden, conflict, reason}], items: [as folder_op], counts: {copy_right, copy_left, delete_left, delete_right, leave, conflicts, unresolved, bytes_right, bytes_left}, backups, summary}` |
+| `hikasa.folder_sync.v1` | `{preset, matrix: {newer_left, newer_right, added_left, added_right, deleted_left, deleted_right, different, same}, orphans, dry_run, cancelled, left, right, rows: [{path, kind, situation, action, overridden, conflict, reason}], items: [as folder_op], counts: {copy_right, copy_left, delete_left, delete_right, leave, conflicts, unresolved, bytes_right, bytes_left, ambiguous}, backups, summary}` |
 | `hikasa.folder_contents.v1` | `{op: "compare"\|"crc", method, cancelled, items: [{path, side, result, crc32, error}], counts: {binary_same, rules_same, unimportant_only, important_differences, binary_different, error}}` |
 
 `exclude` and `ignored` print `hikasa.session_write.v1`, or with `--dry-run` `{masks}`/`{ignored}` in it. `rows` hold
@@ -5404,6 +5406,15 @@ text was silent.
    Every back-end of this build can time a link; one that answers `OperationUnsupported` leaves the link made with one
    `capability_missing` warning. A comparison of links by target and kind instead of time is therefore not built: no
    back-end needs it.
+5. **Case-insensitive alignment settles.** With `criteria.filename_case` a sync that replaces a counterpart whose name
+   differs from the source's (by case, under a folding alignment) plans one `rename` after the copy, to the source's
+   spelling, expecting what the copy wrote (the source's size, and its time when times are kept); a copy that did not run
+   leaves the old name. `folder op` does not. **Two source names of one key** are not the plan's to choose: a row whose
+   source name shares its aligned key with a sibling's and that has no entry of its own on the other side (and every row
+   below such a folder on one side) is left at planning with the new `LeaveReason::AmbiguousName` (`ambiguous_name`),
+   counted in `SyncCounts::ambiguous` (additive in `counts`), and the `#` line ends `, <n> left as ambiguous names (two
+   names align to one)` when there are any. No item is planned, so nothing is skipped at execution, and a second run is
+   the same. The pair the comparison aligned goes on as usual.
 
 ### 1.7–1.14 W7–W14
 

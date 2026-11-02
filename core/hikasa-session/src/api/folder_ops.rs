@@ -387,7 +387,7 @@ pub struct FolderSyncDto {
 /// The counts of a sync in words: `<n> copies right, <n> copies left, <n> deletes left, <n> deletes right, <n> conflicts,
 /// <n> unresolved`. One text for the human output and the log (T11).
 pub fn sync_counts_text(counts: &SyncCounts) -> String {
-    format!(
+    let mut text = format!(
         "{} copies right, {} copies left, {} deletes left, {} deletes right, {} conflicts, {} unresolved",
         counts.copy_right,
         counts.copy_left,
@@ -395,7 +395,15 @@ pub fn sync_counts_text(counts: &SyncCounts) -> String {
         counts.delete_right,
         counts.conflicts,
         counts.unresolved
-    )
+    );
+    // Said only when it happens: two names of one side align to one key, and the plan does not choose (W6c review).
+    if counts.ambiguous > 0 {
+        text.push_str(&format!(
+            ", {} left as ambiguous names (two names align to one)",
+            counts.ambiguous
+        ));
+    }
+    text
 }
 
 /// The marker of a sync row in the human output: `L>R`, `R>L`, `delL`, `delR`, `----`, `<!>` for a conflict.

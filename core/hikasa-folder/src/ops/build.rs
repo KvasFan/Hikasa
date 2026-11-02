@@ -1132,7 +1132,56 @@ impl<'a, 'r> Builder<'a, 'r> {
             meta.conflicts = self.replacing(id, entry, &found, tr);
         }
         item.expect = Some(expect);
+        let respelt = item
+            .replaces
+            .then(|| self.respelling(id, entry, &item.target, stamp, tr))
+            .flatten();
         self.push(item, meta);
+        if let Some(rename) = respelt {
+            let meta = self.meta_of(id, side);
+            self.push(rename, meta);
+        }
+    }
+
+    /// A sync that compares the case of names (`filename_case`) also gives a replaced counterpart the source's spelling:
+    /// one `rename` after the copy, else a case-only difference is planned again on every run. The rename expects what the
+    /// copy wrote, so a copy that did not run leaves the old spelling. `None` for `folder op`, the same spelling, or a
+    /// side that cannot rename.
+    fn respelling(
+        &mut self,
+        id: NodeId,
+        entry: &EntryView<'_>,
+        target: &Spec,
+        stamp: ItemStamp,
+        tr: Transfer,
+    ) -> Option<PlanItem> {
+        if !self.own_only || tr.moving || !self.read.rules().criteria.filename_case {
+            return None;
+        }
+        let view = self.read.node(id)?;
+        let there = view.side(tr.to)?;
+        if there.name == entry.name || there.followed || entry.followed {
+            return None;
+        }
+        let respelt = self.new_child(&target.parent()?, id, tr.from).ok()?;
+        if self.lacks(target, Capabilities::RENAME, "rename", Some(tr.to)) {
+            return None;
+        }
+        let mut rename = PlanItem::planned(
+            Action::Rename,
+            stamp.kind,
+            Some(target.clone()),
+            respelt,
+            self.child_depth(view.parent),
+        );
+        rename.expect = Some(Expect {
+            source: Some(ItemStamp {
+                mtime: stamp.mtime.filter(|_| self.settings.preserve.times),
+                ..stamp
+            }),
+            target: None,
+        });
+        Some(rename)
     }
 
     /// The action of a file-like row, or why it stays (rule 5). `to` may be `None`: a target outside the bases.
