@@ -512,7 +512,7 @@ impl Plan {
 }
 
 /// What [`crate::ops::execute_with`] adds to [`crate::ops::execute`]. `Default` is `execute`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecOptions {
     /// Refuses what lies outside the base folders (§1.6.4).
     pub fence: Option<Fence>,

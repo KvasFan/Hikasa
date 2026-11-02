@@ -333,6 +333,17 @@ impl TreeRead<'_> {
         Some(spec)
     }
 
+    /// The name of a node's side as the OS has it, which [`EntryView::name`] may only approximate. `None` when the side is
+    /// absent. Additive API (§1.6.10 rule 2: a name that is not UTF-8 survives an operation).
+    pub fn raw_name(&self, id: NodeId, side: Side) -> Option<std::ffi::OsString> {
+        if !matches!(side, Side::Left | Side::Right) {
+            return None;
+        }
+        let s = side_index(side);
+        let rec = self.store.node(id)?.sides.get(s)?;
+        rec.present().then(|| self.store.raw_name(s, id.0, rec))
+    }
+
     /// Display category (§2.6.3), O(1).
     pub fn category(&self, id: NodeId, ignore_unimportant: bool) -> Category {
         self.store.node(id).map_or(Category::Unknown, |n| {

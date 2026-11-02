@@ -241,6 +241,47 @@ impl Pattern {
             },
         }
     }
+
+    /// The names of the groups by index, the whole match (group 0) first: `None` for a group without a name (D-180).
+    pub fn group_names(&self) -> Vec<Option<String>> {
+        let owned = |name: Option<&str>| name.map(str::to_owned);
+        match &self.engine {
+            Engine::Standard(re) => re.capture_names().map(owned).collect(),
+            Engine::Fancy(re) => re.capture_names().map(owned).collect(),
+        }
+    }
+
+    /// Byte ranges of the groups of the first match at or after `start`; group 0 is the match (D-180). `Err` only for
+    /// fancy-regex runtime limits. A `start` past the end or inside a char gives `Ok(None)`.
+    pub fn captures_at(
+        &self,
+        haystack: &str,
+        start: usize,
+    ) -> Result<Option<Vec<Option<Range<usize>>>>, PatternError> {
+        if start > haystack.len() || !haystack.is_char_boundary(start) {
+            return Ok(None);
+        }
+        match &self.engine {
+            Engine::Standard(re) => Ok(re.captures_at(haystack, start).map(|found| {
+                found
+                    .iter()
+                    .map(|group| group.map(|m| m.range()))
+                    .collect()
+            })),
+            Engine::Fancy(re) => match re.captures_from_pos(haystack, start) {
+                Ok(found) => Ok(found.map(|found| {
+                    (0..found.len())
+                        .map(|index| found.get(index).map(|m| m.start()..m.end()))
+                        .collect()
+                })),
+                Err(e) => Err(PatternError {
+                    pattern: self.source.clone(),
+                    message: one_line(&e.to_string()),
+                    runtime: true,
+                }),
+            },
+        }
+    }
 }
 
 /// Joins a multi-line engine message (with its caret diagram) into one line.

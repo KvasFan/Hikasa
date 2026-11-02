@@ -237,6 +237,35 @@ pub(crate) fn finish_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     remove_now(exec, item)
 }
 
+/// True when a `trash` that failed with `error` may become a permanent delete: not for a stop, and not for an item that
+/// is simply gone, which has nothing left to delete and says so.
+fn falls_back(item: &PlanItem, error: &VfsError) -> bool {
+    item.trash_fallback
+        && item.action == Action::Trash
+        && !error.is_cancelled()
+        && !matches!(error, VfsError::NotFound { .. })
+}
+
+/// The permanent items of a root the recycle bin refused, at its place in the plan (§1.6.12). What the plan answered of
+/// the root holds for them, and the count ends in one `trash_fallback` warning of the operation.
+fn fall_back(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
+    let options = RemoveOptions {
+        recursive: true,
+        trash: false,
+    };
+    let plan = match plan_remove(exec.src, std::slice::from_ref(&item.target), &options, exec.ctl) {
+        Ok(plan) => plan,
+        Err(e) => return Outcome::Failed(e),
+    };
+    let mut items = plan.items;
+    for expanded in &mut items {
+        expanded.depth += item.depth;
+        expanded.clear_read_only = item.clear_read_only;
+    }
+    exec.trash_fallbacks += items.len() as u64;
+    Outcome::Expand(items)
+}
+
 /// The removal itself.
 fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     // `clear_read_only` applies to `remove`, not `trash` (§1.6.12).
@@ -257,6 +286,9 @@ fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
         Err(e) => {
             if cleared {
                 restore_read_only(exec.src, &item.target);
+            }
+            if falls_back(item, &e) {
+                return fall_back(exec, item);
             }
             Outcome::Failed(e)
         }

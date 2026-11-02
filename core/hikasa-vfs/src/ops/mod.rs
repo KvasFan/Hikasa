@@ -250,7 +250,7 @@ pub(crate) fn same_instance(a: &dyn Vfs, b: &dyn Vfs) -> bool {
 }
 
 /// The comparison key of a spec on a back-end: canonical, case-folded when the back-end is not case-sensitive.
-pub(crate) fn spec_key(vfs: &dyn Vfs, spec: &Spec) -> String {
+pub fn spec_key(vfs: &dyn Vfs, spec: &Spec) -> String {
     let insensitive = vfs
         .capabilities(spec)
         .is_ok_and(|caps| !caps.contains(Capabilities::CASE_SENSITIVE));
@@ -264,7 +264,7 @@ pub(crate) fn spec_key(vfs: &dyn Vfs, spec: &Spec) -> String {
 
 /// Same-item and nesting checks of a root (§1.3.4 step 2): `InvalidTarget "is the source itself"` or `"is
 /// inside the source folder"` (the latter for folder sources only).
-pub(crate) fn check_nesting(
+pub fn check_nesting(
     src: &dyn Vfs,
     dst: &dyn Vfs,
     source: &Spec,
@@ -412,7 +412,7 @@ pub(crate) fn check_holder(
 
 /// A move between two names of one archive, one of them a link: both would rewrite one file, and the second waits for
 /// a lock the first holds → `InvalidTarget`, which says so. Hard links are two files to a rewrite, and are let through.
-pub(crate) fn check_same_archive(
+pub fn check_same_archive(
     src: &dyn Vfs,
     dst: &dyn Vfs,
     source: &Spec,
@@ -439,7 +439,7 @@ pub(crate) fn check_same_archive(
 }
 
 /// A move of a file into an archive it is, or holds: its source removal would take the copy with it → `InvalidTarget`.
-pub(crate) fn check_move_inside(
+pub fn check_move_inside(
     src: &dyn Vfs,
     dst: &dyn Vfs,
     source: &Spec,
@@ -672,6 +672,8 @@ pub(crate) struct Exec<'a> {
     pub(crate) two_phase: bool,
     /// What the second phase does: result indexes, in plan order.
     pub(crate) deferred: Vec<(usize, Later)>,
+    /// The permanent items that took the place of `trash` items the recycle bin refused (§1.6.12).
+    pub(crate) trash_fallbacks: u64,
 }
 
 impl Exec<'_> {
@@ -776,7 +778,7 @@ impl Exec<'_> {
     /// failed or skipped child.
     fn block(&mut self, item: &PlanItem) {
         let spec = own_spec(item);
-        if matches!(item.action, Action::CreateDir | Action::KeepDir) {
+        if holds_items(item) {
             self.blocked.insert(spec.canonical());
         }
         self.block_ancestors(spec, item.depth);
@@ -860,6 +862,7 @@ pub fn execute_with(
         new_folders: BTreeSet::new(),
         two_phase: false,
         deferred: Vec::new(),
+        trash_fallbacks: 0,
     };
     let mut roots = Roots::new(src, dst);
     for item in &items {
@@ -887,7 +890,7 @@ pub fn execute_with(
         // Below a failed or skipped folder item, or a folder that changed since the plan was made: not run.
         if !exec.cut.is_empty() || exec.parent_changed(&item) {
             exec.block(&item);
-            if tree_op && matches!(item.action, Action::CreateDir | Action::KeepDir) {
+            if tree_op && holds_items(&item) {
                 exec.cut.push(item.depth);
             }
             roots.note(None);
@@ -957,7 +960,7 @@ pub fn execute_with(
         };
         if result.status != ItemStatus::Done {
             exec.block(&item);
-            if tree_op && matches!(item.action, Action::CreateDir | Action::KeepDir) {
+            if tree_op && holds_items(&item) {
                 exec.cut.push(item.depth);
             }
         }
@@ -980,6 +983,16 @@ pub fn execute_with(
         .map(|(_, bytes)| bytes)
         .sum();
     let summary = plan::Summary::count(&results, bytes);
+    if exec.trash_fallbacks > 0 {
+        exec.warnings.push(Warning {
+            code: WarningCode::TrashFallback,
+            message: format!(
+                "the recycle bin failed: {} items were planned for a permanent delete instead",
+                exec.trash_fallbacks
+            ),
+            spec: None,
+        });
+    }
     OpReport {
         plan: Plan {
             op,
@@ -1162,6 +1175,13 @@ impl Exec<'_> {
         }
         Ok(())
     }
+}
+
+/// True for a folder item the items below it depend on: a `create_dir` or `keep_dir`, or one that a plan or an answer
+/// turned into a skip and still has its source. A skipped `remove_dir` has none: what follows it is no child of it.
+fn holds_items(item: &PlanItem) -> bool {
+    matches!(item.action, Action::CreateDir | Action::KeepDir)
+        || (item.action == Action::Skip && item.kind == EntryKind::Dir && item.source.is_some())
 }
 
 /// The spec whose folders a failure blocks: the source of moves (their source folders are removed), else the

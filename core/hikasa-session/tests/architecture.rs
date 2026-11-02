@@ -1364,6 +1364,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
         &[
             "hikasa-core",
             "hikasa-vfs",
+            "hikasa-formats",
             "rayon",
             "serde",
             "thiserror",

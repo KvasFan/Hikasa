@@ -24,7 +24,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::case::nfc;
-use crate::mask::{Mask, MaskError, MaskList, MaskOptions, MaskTarget, Name, Polarity, trim_item};
+use crate::mask::{
+    Mask, MaskError, MaskList, MaskOptions, MaskTarget, Name, Polarity, split_items, trim_item,
+};
 use crate::path::RelPath;
 
 /// The four persisted lists of the Name Filters tab (FC-050). Order is preserved.
@@ -124,7 +126,7 @@ impl NameFilter {
     /// trailing separator makes a folder mask.
     pub fn parse(filter: &str, opts: MaskOptions) -> Result<NameFilter, MaskError> {
         let mut masks = Vec::new();
-        for item in filter.split(';') {
+        for item in split_items(filter) {
             if trim_item(item).is_empty() {
                 continue;
             }
@@ -146,7 +148,7 @@ impl NameFilter {
             (&lists.exclude_folders, true, true),
         ];
         for (items, exclude, folder) in groups {
-            for item in items.iter().flat_map(|item| item.split(';')) {
+            for item in items.iter().flat_map(|item| split_items(item)) {
                 let body = trim_item(item);
                 if body.is_empty() {
                     continue;

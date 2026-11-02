@@ -16,6 +16,7 @@ use crate::error::FolderError;
 use crate::model::{FolderModel, NodeId, NodeKind};
 use crate::resolve::side_index;
 use crate::scan::FolderEnv;
+use crate::select::{Include, Selection, SideSet, resolve};
 use crate::stats::ContentCounts;
 
 /// One result of [`compare_contents`].
@@ -40,33 +41,27 @@ pub struct ContentReport {
     pub complete: bool,
 }
 
-/// The file pairs of `nodes`: a pair itself, or a folder's pairs below it, what is hidden left out.
+/// The file pairs of `nodes`, by §1.6.9's *visible contents*: a pair itself, or the rows a folder contributes, with what a
+/// filter hides left out on either side.
 fn pairs_of(model: &FolderModel, nodes: &[NodeId]) -> Vec<(NodeId, Spec, Spec)> {
     let read = model.read();
-    let mut out = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    let mut stack: Vec<NodeId> = nodes.iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(view) = read.node(id) else { continue };
-        if view.is_folder() {
-            if !view.left.is_some_and(|e| e.filtered) || !view.right.is_some_and(|e| e.filtered) {
-                let mut children: Vec<NodeId> = read.children(id).collect();
-                children.reverse();
-                stack.extend(children);
-            }
-            continue;
-        }
-        let (Some(left), Some(right)) = (view.left, view.right) else {
-            continue;
-        };
-        if view.kind != NodeKind::File || left.filtered || right.filtered || !seen.insert(id) {
-            continue;
-        }
-        if let (Some(ls), Some(rs)) = (read.spec(id, Side::Left), read.spec(id, Side::Right)) {
-            out.push((id, ls, rs));
-        }
+    let mut selection = Selection::default();
+    for node in nodes {
+        selection.insert(*node, SideSet::all());
     }
-    out
+    resolve(&read, &selection, &Include::visible())
+        .into_iter()
+        .filter(|row| row.sides == SideSet::all())
+        .filter_map(|row| {
+            let view = read.node(row.node)?;
+            let (left, right) = (view.left?, view.right?);
+            if view.kind != NodeKind::File || left.filtered || right.filtered {
+                return None;
+            }
+            let (ls, rs) = (read.spec(row.node, Side::Left)?, read.spec(row.node, Side::Right)?);
+            Some((row.node, ls, rs))
+        })
+        .collect()
 }
 
 /// The entries of a pair; a failure is what a failed read of it would be.

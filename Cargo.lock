@@ -2077,6 +2077,7 @@ dependencies = [
  "crossbeam-channel",
  "filetime",
  "hikasa-core",
+ "hikasa-formats",
  "hikasa-vfs",
  "jiff",
  "parking_lot",
