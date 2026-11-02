@@ -1029,7 +1029,9 @@ fn a6_31_a_copied_link_keeps_its_time_and_a_sync_settles() {
     let s = Sandbox::new();
     s.dir("l");
     s.dir("r");
-    if !make_link("some/where", &s.join("l/lnk")) {
+    // A target in the system's own spelling.
+    let target = if cfg!(windows) { r"some\where" } else { "some/where" };
+    if !make_link(target, &s.join("l/lnk")) {
         eprintln!("skipped: this system does not let the test make a link");
         return;
     }
