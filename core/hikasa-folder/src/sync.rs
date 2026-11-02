@@ -456,7 +456,7 @@ impl SyncOptions {
 
 /// The path of an override, checked: below the bases, `/`-separated, no `.` or `..`. A trailing `/` is dropped. The base
 /// is no override: an empty path would change the whole tree by one forgotten word.
-pub(crate) fn override_path(text: &str) -> Result<RelPath, FolderError> {
+pub fn override_path(text: &str) -> Result<RelPath, FolderError> {
     let trimmed = text.trim_end_matches('/');
     match RelPath::parse(trimmed) {
         Ok(path) if !trimmed.is_empty() => Ok(path),

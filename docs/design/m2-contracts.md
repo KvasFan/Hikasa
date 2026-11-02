@@ -5450,6 +5450,12 @@ text was silent.
    no-to-all too; presets still plan nothing that runs. It asserts shares of cases that ran (a third of the plans not
    refused), deleted, hid one side, held links, aligned two spellings, failed a listing, had a scope or an Ignored path,
    and refused an unfinished comparison. The mutations of the review fail it (see the review's report).
+10. **A folder-sync file of the old shape** (§1.6.15's "reads as it is"; note 12). Before W6 `[rules]` of a folder-sync
+    session was kept as written, so a file may hold an older shape; the pre-W6 golden is kept as a fixture
+    (`folder-sync-before-w6.toml`) beside the new one. Where the old shape has one meaning now it is read as that:
+    `filters.names` as a filter text (`"*.c;-obj\\"`), a string where a list is expected as that one item. What has none
+    fails at load, `invalid_data`, naming the key: `rules.mode` (no preset can be told from `"mirror"`), and a value whose
+    type is not its key's now.
 
 ### 1.7–1.14 W7–W14
 

@@ -187,6 +187,67 @@ impl SessionRules {
     }
 }
 
+/// A folder-sync file written before W6 kept `[rules]` as it was written (D-81's opaque table), so its shape may be an
+/// older one. Where that shape has one meaning now it is read as that: `filters.names` given as a filter text
+/// (`"*.c;-obj\\"`) is those name filters, and a string where a list is expected is that one item. What has none fails,
+/// naming the key: `mode` (no preset can be told from it), and a value whose type is not the one of its key now.
+fn old_sync_shape(rules: &mut Table, now: &Value) -> Result<(), ApiError> {
+    if let Some(mode) = rules.get("mode") {
+        return Err(ApiError::InvalidData(format!(
+            "rules.mode = {mode}: a key of folder-sync files written before this version, which says no preset now; \
+             set rules.sync.preset (update_right, update_left, update_both, mirror_right, mirror_left) and remove it"
+        )));
+    }
+    if let Some(Value::Table(filters)) = rules.get_mut("filters")
+        && let Some(Value::String(text)) = filters.get("names").cloned()
+    {
+        let mut parsed = FolderRules::default();
+        parsed
+            .apply(&hikasa_folder::FolderRulesPatch {
+                name_filter: Some(text.clone()),
+                ..hikasa_folder::FolderRulesPatch::default()
+            })
+            .map_err(|e| ApiError::InvalidData(format!("rules.filters.names = {text:?}: {e}")))?;
+        let lists = Value::try_from(&parsed.filters.names)
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        filters.insert("names".to_owned(), lists);
+    }
+    // Lists a default leaves out of the file (empty): a string is that one item too.
+    for key in ["ignored", "open_archives"] {
+        if let Some(Value::String(text)) = rules.get(key).cloned() {
+            rules.insert(key.to_owned(), Value::Array(vec![Value::String(text)]));
+        }
+    }
+    fn walk(path: &mut Vec<String>, written: &mut Table, now: &Table) -> Result<(), ApiError> {
+        for (key, value) in written.iter_mut() {
+            let Some(known) = now.get(key) else { continue };
+            path.push(key.clone());
+            let name = path.join(".");
+            match (&mut *value, known) {
+                (Value::Table(inner), Value::Table(known_inner)) => walk(path, inner, known_inner)?,
+                (Value::String(text), Value::Array(_)) => *value = Value::Array(vec![Value::String(text.clone())]),
+                (found, known) if std::mem::discriminant(&*found) != std::mem::discriminant(known)
+                    // A map of the new shape (overrides, matrix, format overrides) holds what it likes.
+                    && !matches!(known, Value::Table(t) if t.is_empty()) =>
+                {
+                    return Err(ApiError::InvalidData(format!(
+                        "rules.{name}: a {} where this version reads a {}",
+                        found.type_str(),
+                        known.type_str()
+                    )));
+                }
+                _ => {}
+            }
+            path.pop();
+        }
+        Ok(())
+    }
+    if let Value::Table(now) = now {
+        walk(&mut Vec::new(), rules, now)?;
+    }
+    Ok(())
+}
+
 /// The inputs of a session (canonical spec strings; `""` = not set).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -428,7 +489,11 @@ impl Session {
             }
         };
         let mut rules = base.rules.to_value();
-        tree::overlay(&mut rules, &Value::Table(doc.rules.clone()));
+        let mut written = doc.rules.clone();
+        if kind == SessionType::FolderSync {
+            old_sync_shape(&mut written, &rules)?;
+        }
+        tree::overlay(&mut rules, &Value::Table(written));
         let rules = SessionRules::from_value(&base.rules, rules)
             .map_err(|e| ApiError::InvalidData(format!("rules: {e}")))?;
         let text_rules = if kind.is_folder() {

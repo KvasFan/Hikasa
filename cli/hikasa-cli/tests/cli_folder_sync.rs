@@ -75,9 +75,6 @@ fn state(s: &Sandbox) -> (Tree, Tree) {
     (tree(&s.join("l")), tree(&s.join("r")))
 }
 
-fn names(list: &[(String, Option<Vec<u8>>)]) -> Vec<&str> {
-    list.iter().map(|(name, _)| name.as_str()).collect()
-}
 
 fn read(s: &Sandbox, rel: &str) -> String {
     std::fs::read_to_string(s.join(rel)).unwrap()
@@ -731,14 +728,53 @@ fn a6_30_an_old_folder_sync_file_reads_as_it_is() {
     .unwrap();
     let show = session(&s, &["show", "old", "--json"]);
     assert_eq!(code(&show), 0, "{}", stderr(&show));
-    assert_eq!(json(&show)["result"]["session"]["description"], "before W6");
+    let doc = json(&show);
+    let read = &doc["result"]["session"];
+    assert_eq!(read["description"], "before W6");
+    assert_eq!(read["type"], "folder-sync");
+    let canonical = |rel: &str| {
+        std::fs::canonicalize(s.join(rel))
+            .unwrap()
+            .display()
+            .to_string()
+    };
+    for (side, rel) in [("left", "l"), ("right", "r")] {
+        let got = read["specs"][side].as_str().unwrap().to_owned();
+        assert!(
+            got == s.join(rel).display().to_string() || got == canonical(rel),
+            "{side}: {got}"
+        );
+    }
+    // An empty `[rules]` is the defaults: Update Right, orphans added, nothing else.
     let dry = session(&s, &["run", "old", "--dry-run", "--json"]);
     assert_eq!(code(&dry), 0, "{}", stderr(&dry));
-    assert_eq!(json(&dry)["result"]["preset"], "update_right");
-    // A text session still reads as an opaque one does not change: `session list` lists both.
-    let list = session(&s, &["list", "--json"]);
-    assert_eq!(code(&list), 0);
-    let _ = names(&[]);
+    let result = &json(&dry)["result"];
+    assert_eq!(result["preset"], "update_right");
+    assert_eq!(result["orphans"], "added");
+    assert_eq!(result["matrix"]["newer_left"], "copy_right");
+    assert_eq!(result["matrix"]["added_right"], "leave");
+    let items: Vec<(String, String)> = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["action"].as_str().unwrap().to_owned(),
+                i["path"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let paths: Vec<&str> = items.iter().map(|(_, p)| p.as_str()).collect();
+    assert!(paths.contains(&"left-only.txt") && paths.contains(&"newer-left.txt"), "{items:?}");
+    assert!(
+        items.iter().all(|(action, _)| action == "copy" || action == "replace"),
+        "Update Right only copies: {items:?}"
+    );
+    assert_eq!(result["counts"]["delete_right"], 0);
+    // The file is not rewritten by reading it.
+    let after = std::fs::read_to_string(sessions.join("old.toml")).unwrap();
+    assert!(after.contains("description = \"before W6\""), "{after}");
+    assert!(!after.contains("[rules.sync]"), "{after}");
 }
 
 // ---- after the review of W6c -------------------------------------------------------------------------------------
@@ -1175,4 +1211,44 @@ fn a6_30_unknown_keys_of_a_sync_session_are_refused_and_others_warned() {
         "{}",
         stderr(&out)
     );
+}
+
+/// `session edit --set` sets a per-row override of a folder-sync session (FS-004): a new path is a new entry, a bad action
+/// or a path that names the base is refused, and the run honours it.
+#[test]
+fn a6_30_session_edit_sets_a_per_row_override() {
+    let s = sandbox();
+    let mut new = s.cmd();
+    new.args(["session", "new", "o", "--type", "folder-sync", "--left"]);
+    new.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&new.output().unwrap()), 0);
+    let set = |pairs: &[&str]| {
+        let mut args = vec!["edit", "o"];
+        for pair in pairs {
+            args.extend(["--set", pair]);
+        }
+        session(&s, &args)
+    };
+    let out = set(&[
+        "rules.sync.preset=mirror_right",
+        "rules.sync.overrides.\"right-only.txt\"=leave",
+        "rules.sync.overrides.gone=leave",
+    ]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let file = std::fs::read_to_string(s.config().join("sessions/o.toml")).unwrap();
+    assert!(file.contains("\"right-only.txt\" = \"leave\""), "{file}");
+    for bad in [
+        "rules.sync.overrides.\"newer-left.txt\"=sideways",
+        "rules.sync.overrides.\"..\"=leave",
+    ] {
+        let out = set(&[bad]);
+        assert_eq!(code(&out), 100, "{bad}: {}", stdout(&out));
+    }
+    let before = std::fs::read_to_string(s.config().join("sessions/o.toml")).unwrap();
+    assert_eq!(before, file, "a refused edit writes nothing");
+    let run = session(&s, &["run", "o", "--yes"]);
+    assert_eq!(code(&run), 0, "{}", stderr(&run));
+    assert!(s.join("r/right-only.txt").exists());
+    assert!(s.join("r/gone/inner.txt").exists());
+    assert_eq!(read(&s, "r/newer-left.txt"), "left wins\n");
 }

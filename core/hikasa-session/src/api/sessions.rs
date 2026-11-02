@@ -1631,6 +1631,18 @@ fn set_keys(
             )));
         }
         let opaque = matches!(first.as_str(), "display" | "view") && path.len() > 1;
+        // A folder-sync session's per-row overrides are a map keyed by path: a new path is a new entry (FS-004).
+        let override_entry = session.kind == SessionType::FolderSync
+            && path.len() == 4
+            && path[..3]
+                .iter()
+                .zip(["rules", "sync", "overrides"])
+                .all(|(segment, word)| matches!(segment, KeySegment::Name(name) if name == word));
+        if override_entry && let Some(KeySegment::Name(row)) = path.last() {
+            hikasa_folder::sync::override_path(row)
+                .map_err(|e| ApiError::InvalidArgument(format!("{key}: {e}")))?;
+        }
+        let opaque = opaque || override_entry;
         let existing = tree::get(&root, &path).cloned();
         let kind = match (&existing, opaque) {
             (Some(Value::Table(_)), _) => {
