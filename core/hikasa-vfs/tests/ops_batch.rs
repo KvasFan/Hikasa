@@ -17,8 +17,8 @@ use hikasa_vfs::ops::{
 };
 use hikasa_vfs::{
     ArchiveFormat, ArchiveLimits, AtomicWrite, Attrs, Capabilities, DosAttrs, Durability, Entry,
-    EntryKind, Fault, FileName, Finish, FollowLinks, ListOptions, Listing, LocalVfs, MemDump, MemMeta,
-    MemoryVfs, ReadSeek, SetTimes, UnixMeta, Vfs, VfsError, VfsOp, WriteOptions,
+    EntryKind, Fault, FileName, Finish, FollowLinks, ListOptions, Listing, LocalVfs, MemDump,
+    MemMeta, MemoryVfs, ReadSeek, SetTimes, UnixMeta, Vfs, VfsError, VfsOp, WriteOptions,
 };
 
 // ---- helpers -----------------------------------------------------------------------------------------------
@@ -780,10 +780,16 @@ fn a6_2_a_move_keeps_a_source_edited_during_its_copy() {
         progress: &sink,
     };
     let report = ops::execute(&vfs, &vfs, batch(vec![moved]), &ctl);
-    assert!(sink.done.load(std::sync::atomic::Ordering::SeqCst), "the sink ran");
+    assert!(
+        sink.done.load(std::sync::atomic::Ordering::SeqCst),
+        "the sink ran"
+    );
     assert_eq!(report.results[0].status, ItemStatus::Failed);
     let message = failure(&report, 0);
-    assert!(message.contains("changed during the move; the copy was kept"), "{message}");
+    assert!(
+        message.contains("changed during the move; the copy was kept"),
+        "{message}"
+    );
     assert!(message.contains(&source.canonical()), "{message}");
     assert_eq!(content(&vfs, "/s"), b"edited during the copy");
     assert_eq!(content(&vfs, "/moved"), b"as planned");
@@ -1187,6 +1193,18 @@ fn a6_4_a_name_near_the_limit() {
     assert!(report.ok(), "{:?}", report.results);
     assert_eq!(std::fs::read(root.join("l").join(&name)).unwrap(), b"right");
     assert_eq!(std::fs::read(root.join("r").join(&name)).unwrap(), b"left");
+    // The plain copy that always could.
+    std::fs::remove_file(root.join("r").join(&name)).unwrap();
+    let copied = PlanItem::planned(
+        Action::Copy,
+        EntryKind::File,
+        Some(common::lspec(&root.join("l").join(&name))),
+        common::lspec_new(&root.join("r").join(&name)),
+        0,
+    );
+    let report = run(&vfs, batch(vec![copied]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(std::fs::read(root.join("r").join(&name)).unwrap(), b"right");
 }
 
 #[test]
@@ -1602,7 +1620,11 @@ fn a6_5_a_link_in_a_base_is_refused() {
         let before = vfs.dump();
         let report = run_with(&vfs, batch(vec![row.clone()]), &fence_of("/base", true));
         assert_eq!(statuses(&report), [ItemStatus::Failed], "{row:?}");
-        assert!(failure(&report, 0).contains(LINKED), "{}", failure(&report, 0));
+        assert!(
+            failure(&report, 0).contains(LINKED),
+            "{}",
+            failure(&report, 0)
+        );
         assert!(failure(&report, 0).contains("/base/sub"));
         assert_eq!(vfs.dump(), before, "{row:?}");
     }
@@ -1721,7 +1743,9 @@ struct SwapFolder<'a> {
 impl ProgressSink for SwapFolder<'_> {
     fn report(&self, _event: Progress) {
         if !self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            self.vfs.rename(&mspec("/base/sub"), &mspec("/out/sub"), false).unwrap();
+            self.vfs
+                .rename(&mspec("/base/sub"), &mspec("/out/sub"), false)
+                .unwrap();
             self.vfs
                 .insert_symlink(&host("/base/sub"), "../out/sub", MemMeta::default())
                 .unwrap();
@@ -1755,7 +1779,10 @@ fn a6_5_a_removal_trusts_no_earlier_look() {
         &fence_of("/base", true),
         &ctl,
     );
-    assert!(sink.done.load(std::sync::atomic::Ordering::SeqCst), "the sink ran");
+    assert!(
+        sink.done.load(std::sync::atomic::Ordering::SeqCst),
+        "the sink ran"
+    );
     assert_eq!(report.results[1].status, ItemStatus::Failed);
     assert!(failure(&report, 1).contains(LINKED));
     assert_eq!(content(&vfs, "/out/sub/x"), b"precious");
@@ -1781,7 +1808,12 @@ fn a6_5_a_link_of_the_plan_ends_what_was_known() {
         copy_item("/s", "/base/sub/through", 0),
     ];
     let report = run_with(&vfs, batch(items), &fence_of("/base", true));
-    assert_eq!(report.results[5].status, ItemStatus::Failed, "{:?}", report.results);
+    assert_eq!(
+        report.results[5].status,
+        ItemStatus::Failed,
+        "{:?}",
+        report.results
+    );
     assert!(failure(&report, 5).contains(LINKED));
     assert!(vfs.read_back(&host("/out/through")).is_none());
 }
@@ -2186,7 +2218,10 @@ fn a6_cr_a_rename_gives_it_back() {
     let vfs = memory();
     file(&vfs, "/s", b"new", 5);
     dos(&vfs, "/t", b"old", 1);
-    let report = run(&vfs, batch(vec![replacing(Action::Rename, Some("/s"), "/t")]));
+    let report = run(
+        &vfs,
+        batch(vec![replacing(Action::Rename, Some("/s"), "/t")]),
+    );
     assert!(report.ok(), "{:?}", report.results);
     assert_eq!(content(&vfs, "/t"), b"new");
 }
@@ -2392,7 +2427,10 @@ fn a6_cr_exchange_with_an_archive() {
                 assert_eq!(memory.mem.dump(), before);
             } else {
                 assert!(report.ok(), "{:?}", report.results);
-                assert_eq!(memory.mem.read_back(&host("/d/plain")).unwrap().as_ref(), b"member");
+                assert_eq!(
+                    memory.mem.read_back(&host("/d/plain")).unwrap().as_ref(),
+                    b"member"
+                );
             }
         }
     }

@@ -308,7 +308,11 @@ pub(crate) fn run_move(
             Err(e) => return Outcome::Failed(e),
         },
     };
-    if let Some(parent) = item.target.parent().filter(|_| exec.create_parents(item.depth)) {
+    if let Some(parent) = item
+        .target
+        .parent()
+        .filter(|_| exec.create_parents(item.depth))
+    {
         exec.note_new_folder(&parent, true);
     }
     let copied = match entry.kind {

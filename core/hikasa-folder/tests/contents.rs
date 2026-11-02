@@ -222,11 +222,18 @@ fn a6_12_a_stop_in_the_middle_of_a_run() {
     assert_eq!(report.items.len(), 1, "{:?}", report.items);
     let tested = &report.items[0].path;
     assert_eq!(cmp.read().children(d).count(), 2);
-    let other = if tested == "d/differ" { "d/same" } else { "d/differ" };
+    let other = if tested == "d/differ" {
+        "d/same"
+    } else {
+        "d/differ"
+    };
     let read = cmp.read();
     assert!(read.node(id(&cmp, tested)).unwrap().content.is_some());
     assert!(read.node(id(&cmp, other)).unwrap().content.is_none());
-    assert_eq!(read.node(id(&cmp, other)).unwrap().state, CompareState::Same);
+    assert_eq!(
+        read.node(id(&cmp, other)).unwrap().state,
+        CompareState::Same
+    );
     drop(read);
     assert_nothing_pending(&cmp, &vfs);
     check_tree_invariants(&cmp.read()).unwrap();

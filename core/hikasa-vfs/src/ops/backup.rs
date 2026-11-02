@@ -246,7 +246,10 @@ pub(crate) fn clashes(
     }
     let mut owners = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
-        let outers = [item.target.outermost_file(), item.source.as_ref().and_then(Spec::outermost_file)];
+        let outers = [
+            item.target.outermost_file(),
+            item.source.as_ref().and_then(Spec::outermost_file),
+        ];
         for outer in outers.into_iter().flatten() {
             let Some(backup) = archive_backups.get(&outer.canonical()) else {
                 continue;

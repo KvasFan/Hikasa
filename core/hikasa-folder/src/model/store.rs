@@ -1648,8 +1648,7 @@ impl Store {
             self.len()
         };
         if !in_place {
-            let taken: BTreeSet<u32> =
-                rows.iter().filter_map(|row| row.old).collect();
+            let taken: BTreeSet<u32> = rows.iter().filter_map(|row| row.old).collect();
             for id in old_rows.clone() {
                 if !taken.contains(&id) {
                     self.drop_subtree(id);

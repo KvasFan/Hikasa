@@ -3795,6 +3795,8 @@ pub trait Vfs: Send + Sync {
     /// back-end has no such path. Never replaces: a target that appeared meanwhile stays, and this is `AlreadyExists`.
     fn copy_new_file(&self, _from: &Spec, _to: &Spec, _meta: &HandleMeta, _cancel: &CancelToken)
         -> Result<Option<u64>, VfsError> { Ok(None) }
+    /// Makes what happened in the folder `dir` durable, best effort: names, not contents (§1.6.25 note 34).
+    fn sync_folder(&self, _dir: &Spec) {}
 }
 ```
 

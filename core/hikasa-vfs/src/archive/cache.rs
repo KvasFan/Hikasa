@@ -344,7 +344,11 @@ impl Cache {
         drop(file);
         let key = (archive, Box::from(key));
         let mut state = self.lock();
-        if let Some(found) = state.extracted.get(&key).filter(|found| found.path.is_file()) {
+        if let Some(found) = state
+            .extracted
+            .get(&key)
+            .filter(|found| found.path.is_file())
+        {
             // Another thread did the same: one file, as for any second call.
             return Ok(found.path.clone());
         }

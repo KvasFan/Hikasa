@@ -487,7 +487,10 @@ fn a6_11_cancel_and_a_refresh_of_another_subtree() {
     let cmp = compared(&vfs, &rules);
     let (a, b) = (id(&cmp, "a"), id(&cmp, "b"));
     refresh_cancelled(&cmp, &vfs, &[a]);
-    assert!(refresh(&cmp, &vfs, &[b]).complete, "this refresh did its part");
+    assert!(
+        refresh(&cmp, &vfs, &[b]).complete,
+        "this refresh did its part"
+    );
     assert!(!cmp.read().is_complete());
     assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
     refresh(&cmp, &vfs, &[a]);
@@ -625,6 +628,51 @@ fn a6_11_a_cancelled_content_test_is_repaired() {
     assert_fresh(&cmp, &vfs, &rules);
 }
 
+/// §1.6.7's table: a file becomes a folder and back, on one side, through a refresh of the parent.
+#[test]
+fn a6_11_a_row_changes_kind() {
+    let vfs = tree();
+    let rules = FolderRules::default();
+    let cmp = compared(&vfs, &rules);
+    vfs.remove(&mspec("/l/top")).unwrap();
+    file(&vfs, "/l/top/inner", b"i", 11);
+    refresh(&cmp, &vfs, &[NodeId::ROOT]);
+    assert_fresh(&cmp, &vfs, &rules);
+    vfs.remove(&mspec("/l/top/inner")).unwrap();
+    vfs.remove(&mspec("/l/top")).unwrap();
+    file(&vfs, "/l/top", b"t", 10);
+    refresh(&cmp, &vfs, &[NodeId::ROOT]);
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
+/// A changed attribute with an `attrib` filter: the row follows.
+#[test]
+fn a6_11_a_changed_attribute() {
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let dos = |attrs: DosAttrs| MemMeta {
+        mtime: FileTime::from_unix(10, 0),
+        attrs: Some(Attrs::Dos { attrs }),
+        ..MemMeta::default()
+    };
+    for side in ["/l", "/r"] {
+        vfs.insert_file(
+            &host(&format!("{side}/f")),
+            &b"f"[..],
+            dos(DosAttrs::empty()),
+        )
+        .unwrap();
+    }
+    let mut rules = FolderRules::default();
+    rules.filters.other.attrib = Some(hikasa_folder::AttribFilter::parse("-r").unwrap());
+    let cmp = compared(&vfs, &rules);
+    vfs.remove(&mspec("/l/f")).unwrap();
+    vfs.insert_file(&host("/l/f"), &b"f"[..], dos(DosAttrs::READONLY))
+        .unwrap();
+    refresh(&cmp, &vfs, &[NodeId::ROOT]);
+    assert_fresh(&cmp, &vfs, &rules);
+    assert_same_facts(&cmp, &compared(&vfs, &rules));
+}
+
 /// A refresh on a pool, with content tests: a row at a time, or several at once, the same result.
 #[test]
 fn a6_11_on_a_pool() {
@@ -654,7 +702,12 @@ fn a6_11_on_a_pool() {
         content_budget: 1 << 30,
         archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
     };
-    let nodes = [NodeId::ROOT, id(&cmp, "a"), id(&cmp, "a/sub"), id(&cmp, "b")];
+    let nodes = [
+        NodeId::ROOT,
+        id(&cmp, "a"),
+        id(&cmp, "a/sub"),
+        id(&cmp, "b"),
+    ];
     let report = refresh_into(cmp.model(), &nodes, &env).unwrap();
     assert!(report.complete);
     assert_fresh(&cmp, &vfs, &rules);

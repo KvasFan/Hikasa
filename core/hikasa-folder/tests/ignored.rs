@@ -318,10 +318,7 @@ fn a6_9_a_mark_set_during_a_scan() {
         inner: &vfs,
         folder: mspec("/l/a"),
         hook: || {
-            let row = model
-                .read()
-                .node_at(&RelPath::parse("a").unwrap())
-                .unwrap();
+            let row = model.read().node_at(&RelPath::parse("a").unwrap()).unwrap();
             assert_eq!(model.set_ignored(&[row], true), ["a"]);
         },
     };

@@ -767,7 +767,10 @@ fn a6_13_an_extraction_whose_file_went_is_made_again() {
         assert_eq!(fs::read(&path).unwrap().len(), 4096, "{}", path.display());
         assert_eq!(disk.vfs.cache_used(), 4096);
         let mut unlocked = fs::metadata(&path).unwrap().permissions();
-        #[expect(clippy::permissions_set_readonly_false, reason = "a test's scratch file")]
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "a test's scratch file"
+        )]
         unlocked.set_readonly(false);
         fs::set_permissions(&path, unlocked).unwrap();
         fs::remove_file(&path).unwrap();

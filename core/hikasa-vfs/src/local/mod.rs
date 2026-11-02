@@ -15,7 +15,7 @@
 //!   target on every platform.
 //! - **Atomic writes** (SES-053, INV-VFS-3) go to a temporary file in the target's folder, created with
 //!   `create_new` (`.<name>.hikasa-tmp[-N]`); `commit` flushes, syncs and renames it onto the target (with
-//!   `overwrite = false` a rename that never replaces, see [`rename_new`]); dropping the
+//!   `overwrite = false` a rename that cannot replace, or a hard link where there is none); dropping the
 //!   writer removes the temporary file. Its writer keeps it locked and owner-only until the rename, when it gets the
 //!   mode it will have (`lock`). A target that is a symbolic link is resolved first: the file the link
 //!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
@@ -741,7 +741,7 @@ impl Vfs for LocalVfs {
     /// one needs the default mode, which only the sequence of D-158 gives without reading the umask. The temporary
     /// sibling is opened `create_new`, owner-only, takes the content, its final mode and time on the handle, and is
     /// closed and renamed to `to`, so the file never shows under its name with a wrong time or mode. The rename never
-    /// replaces: a file another program made at `to` meanwhile stays, and the copy is `AlreadyExists` ([`rename_new`]).
+    /// replaces: a file another program made at `to` meanwhile stays, and the copy is `AlreadyExists`.
     /// Windows' `R` comes after the rename, from the usual step. The temporary file is not locked as a writer's: nothing
     /// stands at `to`, so no rebuild of `to` looks for it, and this path has no time for it (D-164).
     fn copy_new_file(
@@ -1586,7 +1586,10 @@ mod tests {
         fs::write(root.join("l").join("f"), b"left").unwrap();
         fs::write(root.join("r").join("f"), b"right").unwrap();
         let action = crate::ops::Action::Exchange;
-        let (left, right) = (spec(&root.join("l").join("f")), spec(&root.join("r").join("f")));
+        let (left, right) = (
+            spec(&root.join("l").join("f")),
+            spec(&root.join("r").join("f")),
+        );
         let item = crate::ops::PlanItem::planned(action, EntryKind::File, Some(left), right, 0);
         let plan = ops::Plan {
             op: ops::OpKind::Batch,

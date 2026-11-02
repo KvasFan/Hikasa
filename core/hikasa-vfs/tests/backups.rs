@@ -214,7 +214,8 @@ fn a6_6_the_folder_of_the_item_itself_is_numbered() {
         folder: None,
     };
     assert_eq!(
-        stem.target(&insensitive, &mspec("/d/ABC.BAK"), None).unwrap(),
+        stem.target(&insensitive, &mspec("/d/ABC.BAK"), None)
+            .unwrap(),
         mspec("/d/ABC-2.BAK")
     );
 }
@@ -273,7 +274,9 @@ fn a6_6_an_item_assigned_earlier_keeps_its_name() {
         folder: None,
     };
     let mut names = BackupNames::default();
-    names.assign(&policy, &vfs, &mspec("/d/x.bak"), None).unwrap();
+    names
+        .assign(&policy, &vfs, &mspec("/d/x.bak"), None)
+        .unwrap();
     assert_eq!(
         names.assign(&policy, &vfs, &mspec("/d/x"), None).unwrap(),
         mspec("/d/x-2.bak")
@@ -540,7 +543,10 @@ fn a6_6_a_plan_whose_backup_loses_a_file_is_refused() {
             }
         }
         assert_eq!(vfs.dump(), before);
-        assert!(vfs.journal().iter().all(|(op, _)| *op == VfsOp::Stat), "no item ran");
+        assert!(
+            vfs.journal().iter().all(|(op, _)| *op == VfsOp::Stat),
+            "no item ran"
+        );
     }
 }
 
@@ -830,9 +836,16 @@ fn a6_6_the_backup_of_an_archive_behind_a_link_holds_its_bytes() {
     let member = Spec::archive_member(outer, "gone");
     let report = exec(&*disk.vfs, vec![removal(&member)], &options);
     assert!(report.ok(), "{:?}", report.results);
-    assert_ne!(std::fs::read(&real).unwrap(), before, "the archive was rewritten");
+    assert_ne!(
+        std::fs::read(&real).unwrap(),
+        before,
+        "the archive was rewritten"
+    );
     let kind = std::fs::symlink_metadata(&backup).unwrap().file_type();
-    assert!(!kind.is_symlink(), "the backup is a link to the new archive");
+    assert!(
+        !kind.is_symlink(),
+        "the backup is a link to the new archive"
+    );
     assert_eq!(std::fs::read(&backup).unwrap(), before);
 }
 
@@ -871,13 +884,7 @@ fn a6_6_an_archive_backup_that_loses_a_file_is_refused() {
             .unwrap();
         let before = memory.mem.dump();
         let member = Spec::archive_member(file.clone(), "a");
-        let touched = PlanItem::planned(
-            Action::Touch,
-            EntryKind::File,
-            None,
-            mspec("/other"),
-            0,
-        );
+        let touched = PlanItem::planned(Action::Touch, EntryKind::File, None, mspec("/other"), 0);
         let report = exec(
             &*memory.vfs,
             vec![removal(&member), touched],

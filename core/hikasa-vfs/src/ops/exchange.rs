@@ -128,9 +128,7 @@ fn exchange(
     let target_member = matches!(target, Spec::ArchiveMember { .. });
     // A rename in an overlay meets no `R`, and a plain side against a member clears it with its rename, after the rebuild.
     let clear = item.clear_read_only && !source_member && !target_member;
-    let cleared_target = clear
-        && clear_read_only_of(dst, target)
-            .map_err(drop_both)?;
+    let cleared_target = clear && clear_read_only_of(dst, target).map_err(drop_both)?;
     let give_back = |vfs: &dyn Vfs, spec: &Spec, cleared: bool| {
         if cleared {
             restore_read_only(vfs, spec);

@@ -179,6 +179,7 @@ trait Vfs {
     fn move_to_trash(&self, spec:&Spec) -> Result<()>;           // never a permanent delete
     fn copy_file_fast(&self, from:&Spec, to:&Spec, ..) -> Result<Option<u64>>;  // optional fast path
     fn copy_new_file(&self, from:&Spec, to:&Spec, meta:&HandleMeta, cancel) -> Result<Option<u64>>;  // a new file, final on its handle (M2 W6, D-164)
+    fn sync_folder(&self, dir:&Spec);                            // names, best effort: what a move leaves on the strength of a copy
 }
 struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttrs|UnixMode, owner, group, link_target, crc32: Option<u32>, version: Option<VersionInfo> }
 ```

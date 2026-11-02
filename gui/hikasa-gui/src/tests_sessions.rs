@@ -542,9 +542,7 @@ fn a6_10_a_child_request_has_the_overrides_of_its_row() {
     let SessionRules::Folder(rules) = &mut session.rules else {
         panic!("a folder session");
     };
-    rules
-        .format_overrides
-        .insert("c-cpp".to_owned(), false);
+    rules.format_overrides.insert("c-cpp".to_owned(), false);
     save(&world, "tree", &session);
     let mut app = started(&world);
     let view = open_named(&world, &mut app, "tree");
