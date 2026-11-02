@@ -26,5 +26,7 @@ dialog-options	Options
 wizard-export	Export Settings
 wizard-import	Import Settings
 wizard-restore	Restore Factory Defaults
+dialog-confirm	Confirm an operation
+dialog-delete	Delete
 view-folder-compare	The Folder Compare view
 view-text-compare	The Text Compare view
