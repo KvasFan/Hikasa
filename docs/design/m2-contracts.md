@@ -5385,6 +5385,17 @@ text was silent.
     the copies' direction is flipped. A6.28 (`props_sync_fence.rs`) fails when the planner's and the builder's followed-link
     refusals and the fence are taken out.
 
+**W6c after review.** Decisions of the review of W6c, where the contract was silent or let data go; safety won each time.
+
+1. **A whole folder's `trash` checks what lies below it** (§1.6.12, `PlanItem::verify_below`): the subtree is always
+   stamped, and a name, a stamp or an entry added since fails the item before the bin is called. `folder op delete
+   --recycle` and a sync alike, listed by the comparison or by rule 6.
+2. **`include_hidden_by_default` is no sync's.** `FolderSyncRequest::include_hidden` is the sync's own flag, `None` = off,
+   for rule 3 and for `--just-selection`'s selection; the folder-op preference never reaches a sync. The other options a
+   sync reads are those the contract names: `[backups]` (§1.6.5), `preserve_created`, and the confirmation keys
+   (`sync_confirmations` for a view, `confirm_*` for the per-item questions, §1.6.11; the CLI asks the operation question
+   whatever `confirm_delete` says).
+
 ### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

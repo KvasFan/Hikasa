@@ -245,7 +245,8 @@ pub struct FolderSyncRequest {
     pub select: Option<SelectRequest>,
     /// `--visible`: only the rows this display shows.
     pub visible: Option<DisplayOptions>,
-    /// `--include-hidden`; `None`: `[file_operations] include_hidden_by_default`.
+    /// `--include-hidden`; `None`: off. Never `[file_operations] include_hidden_by_default`, a folder operation's
+    /// preference: a sync leaves a side a filter hides unless its own command says otherwise (rule 3).
     pub include_hidden: Option<bool>,
     /// *Ignore unimportant differences*.
     pub iu: bool,
@@ -1064,9 +1065,16 @@ impl Service {
             req.options.validate().map_err(ApiError::from_folder)?;
             let options = self.fresh_options();
             let read = model.read();
+            // A sync takes `include_hidden` from its own request alone: `[file_operations] include_hidden_by_default` is a
+            // preference of folder operations, and would turn off rule 3 (a side a filter hides is left) for every sync.
+            let include_hidden = req.include_hidden.unwrap_or(false);
             let selection = match &req.select {
                 Some(select) => {
-                    let (selection, _) = self.select_of(&read, select, SideSet::all())?;
+                    let select = SelectRequest {
+                        include_hidden: Some(include_hidden),
+                        ..select.clone()
+                    };
+                    let (selection, _) = self.select_of(&read, &select, SideSet::all())?;
                     if selection.is_empty() {
                         return Err(ApiError::InvalidArgument(
                             "nothing selected: pass --select all, or a mask".to_owned(),
@@ -1076,9 +1084,6 @@ impl Service {
                 }
                 None => None,
             };
-            let include_hidden = req
-                .include_hidden
-                .unwrap_or(options.file_operations.include_hidden_by_default);
             let request = SyncRequest {
                 options: &req.options,
                 just_selection: selection.as_ref(),

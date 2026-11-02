@@ -740,3 +740,77 @@ fn a6_30_an_old_folder_sync_file_reads_as_it_is() {
     assert_eq!(code(&list), 0);
     let _ = names(&[]);
 }
+
+// ---- after the review of W6c -------------------------------------------------------------------------------------
+
+/// `[file_operations] include_hidden_by_default` is a folder operation's preference: it never reaches a sync, whose rule 3
+/// leaves a side a filter hides unless the sync's own `--include-hidden` says otherwise.
+#[test]
+fn a6_31_the_include_hidden_preference_does_not_reach_a_sync() {
+    let fresh = || {
+        let s = Sandbox::new();
+        s.file_at("l/f", "tiny\n", 2_000_000);
+        s.file_at(
+            "r/f",
+            "the right side is large enough to pass the filter\n",
+            1_000_000,
+        );
+        s.settle("l");
+        s.settle("r");
+        s.options("[file_operations]\ninclude_hidden_by_default = true\n");
+        s
+    };
+    let s = fresh();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--size-filter=>10",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        read(&s, "r/f"),
+        "the right side is large enough to pass the filter\n"
+    );
+    let rows = json(&out)["result"]["rows"].as_array().unwrap().clone();
+    assert!(
+        rows.iter()
+            .any(|r| r["path"] == "f" && r["reason"] == "filtered"),
+        "{rows:?}"
+    );
+    // `--just-selection --select all` does not bring it either.
+    let s = fresh();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--size-filter=>10",
+            "--just-selection",
+            "--select",
+            "all",
+            "--yes",
+        ],
+    );
+    assert_eq!(
+        read(&s, "r/f"),
+        "the right side is large enough to pass the filter\n",
+        "{}",
+        stdout(&out)
+    );
+    // The sync's own flag does.
+    let s = fresh();
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--size-filter=>10",
+            "--include-hidden",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s, "r/f"), "tiny\n");
+}
