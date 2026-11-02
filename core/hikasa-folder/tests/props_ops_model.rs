@@ -1073,3 +1073,327 @@ fn p_ops_the_tree_is_what_the_model_says() {
         "only {ran} of {seen} cases ran an item"
     );
 }
+
+// ---- aligned folder pairs (D-194) -----------------------------------------------------------------------------
+
+/// Folder names by their two spellings (left, right): a case pair, an NFC/NFD pair, and one spelled alike.
+const PAIRS: [(&str, &str); 3] = [("D", "d"), ("caf\u{e9}", "cafe\u{301}"), ("e", "e")];
+/// File names: the same on both sides.
+const FILES: [&str; 2] = ["x.txt", "y.txt"];
+
+/// A node of a pair tree: a folder (one of `PAIRS`, spelled by `spell` per side) or a file (one of `FILES`).
+#[derive(Debug, Clone)]
+struct PairNode {
+    folder: bool,
+    name: usize,
+    /// Present on the left, on the right.
+    on: [bool; 2],
+    /// Per side, whether the folder is spelled the other way.
+    spell: [bool; 2],
+    content: [u8; 2],
+    children: Vec<PairNode>,
+}
+
+impl PairNode {
+    fn name(&self, side: usize) -> &'static str {
+        if self.folder {
+            let (a, b) = PAIRS[self.name];
+            if self.spell[side] { b } else { a }
+        } else {
+            FILES[self.name]
+        }
+    }
+}
+
+fn pair_nodes() -> impl Strategy<Value = Vec<PairNode>> {
+    let leaf = (
+        any::<bool>(),
+        0..PAIRS.len(),
+        prop_oneof![
+            Just([true, true]),
+            Just([true, false]),
+            Just([false, true]),
+            Just([true, true])
+        ],
+        any::<[bool; 2]>(),
+        any::<[u8; 2]>(),
+    )
+        .prop_map(|(folder, name, on, spell, content)| PairNode {
+            folder,
+            name: if folder { name } else { name % FILES.len() },
+            on,
+            spell,
+            content,
+            children: Vec::new(),
+        });
+    let tree = leaf.prop_recursive(3, 16, 4, |inner| {
+        (inner.clone(), proptest::collection::vec(inner, 0..4)).prop_map(|(mut node, children)| {
+            if node.folder {
+                node.children = children;
+            }
+            node
+        })
+    });
+    proptest::collection::vec(tree, 1..4).prop_map(|mut nodes| {
+        for node in &mut nodes {
+            within(node, [true, true]);
+        }
+        nodes
+    })
+}
+
+/// A node is on a side only where its folder is.
+fn within(node: &mut PairNode, parent: [bool; 2]) {
+    node.on = [node.on[0] && parent[0], node.on[1] && parent[1]];
+    let on = node.on;
+    for child in &mut node.children {
+        within(child, on);
+    }
+}
+
+/// Writes the nodes of `side` below `dir`; siblings of one name (whatever the spelling) count once, on both sides alike.
+fn pair_insert(vfs: &MemoryVfs, dir: &str, nodes: &[PairNode], side: usize) {
+    for node in pair_unique(nodes) {
+        if !node.on[side] {
+            continue;
+        }
+        let path = format!("{dir}/{}", node.name(side));
+        if node.folder {
+            vfs.insert_dir(&host(&path), meta(FOLDER_TIME, false))
+                .unwrap();
+            pair_insert(vfs, &path, &node.children, side);
+        } else {
+            let bytes = format!("{}{}", side, node.content[side] % 3).into_bytes();
+            let secs = 1_000_000 * (1 + i64::from(node.content[side] % 2));
+            vfs.insert_file(&host(&path), bytes, meta(secs, false))
+                .unwrap();
+        }
+    }
+}
+
+/// The first node of each (kind, name).
+fn pair_unique(nodes: &[PairNode]) -> Vec<&PairNode> {
+    let mut seen = BTreeSet::new();
+    nodes
+        .iter()
+        .filter(|node| seen.insert((node.folder, node.name)))
+        .collect()
+}
+
+/// The model of `copyto`/`moveto` of whole rows below `p`, overwrite always, onto a case-sensitive `/o/t` that holds
+/// folders only: each aligned pair is one folder, named by rule 16 (D-194); a second file of one path stays.
+struct PairModel<'a> {
+    before: &'a Tree,
+    tree: Tree,
+    taken: BTreeSet<String>,
+    /// The name chosen for a pair below a target folder.
+    chosen: BTreeMap<(String, usize), &'static str>,
+    sides: SideSet,
+    moving: bool,
+}
+
+impl PairModel<'_> {
+    /// The folder of `node` in the target folder `to`: rule 16's choice when the two sides spell it differently.
+    fn folder_name(&mut self, node: &PairNode, to: &str, side: usize) -> &'static str {
+        let (left, right) = (node.name(0), node.name(1));
+        if !(node.on[0] && node.on[1]) || left == right {
+            return node.name(side);
+        }
+        let key = (to.to_owned(), node.name);
+        if let Some(name) = self.chosen.get(&key) {
+            return name;
+        }
+        let stands = |name: &str| matches!(self.before.get(&format!("{to}/{name}")), Some(It::Dir));
+        let name = if stands(left) {
+            left
+        } else if stands(right) {
+            right
+        } else if self.sides.contains(SideSet::LEFT) {
+            left
+        } else {
+            right
+        };
+        self.chosen.insert(key, name);
+        name
+    }
+
+    /// True when nothing of the source is left.
+    fn place(&mut self, node: &PairNode, from: &str, to_dir: &str, side: usize) -> bool {
+        if node.folder {
+            let to = format!("{to_dir}/{}", self.folder_name(node, to_dir, side));
+            self.tree.entry(to.clone()).or_insert(It::Dir);
+            let mut gone = true;
+            for child in pair_unique(&node.children) {
+                if child.on[side] {
+                    gone &= self.place(child, &format!("{from}/{}", child.name(side)), &to, side);
+                }
+            }
+            if self.moving && gone {
+                self.tree.remove(from);
+            }
+            self.moving && gone
+        } else {
+            let to = format!("{to_dir}/{}", node.name(side));
+            if !self.taken.insert(to.clone()) {
+                return false;
+            }
+            let it = self.tree.get(from).cloned().expect("a source file");
+            self.tree.insert(to, it);
+            if self.moving {
+                self.tree.remove(from);
+            }
+            true
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PairRun {
+    nodes: Vec<PairNode>,
+    /// Per top-level node: 0 nothing at the target, 1 the left's spelling, 2 the right's, 3 both.
+    stands: Vec<u8>,
+    sides: u8,
+    relative: bool,
+    moving: bool,
+}
+
+fn pair_runs() -> impl Strategy<Value = PairRun> {
+    (
+        pair_nodes(),
+        proptest::collection::vec(0u8..4, 4),
+        0u8..3,
+        any::<bool>(),
+        any::<bool>(),
+    )
+        .prop_map(|(nodes, stands, sides, relative, moving)| PairRun {
+            nodes,
+            stands,
+            sides,
+            relative,
+            moving,
+        })
+}
+
+/// A7.1, P-OPS for aligned folder pairs: trees whose folders differ in case and NFC/NFD between the sides, compared
+/// case-insensitively with `align_normalization`, `copyto`/`moveto` with structure `base` or `relative` onto a case-sensitive
+/// target that may already hold one spelling or both. The tree after execution is the model's, which places both sides of
+/// a pair under the one folder rule 16 chooses; nothing fails.
+#[test]
+fn p_ops_aligned_pairs_land_in_one_folder() {
+    let config = config_with("tests/proptest-regressions/props_ops_model_pairs.txt", 256);
+    let mut runner = TestRunner::new(config);
+    let paired = AtomicU32::new(0);
+    runner
+        .run(&pair_runs(), |run| {
+            let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+            for dir in ["/l", "/r", "/o", "/l/p", "/r/p"] {
+                vfs.insert_dir(&host(dir), meta(FOLDER_TIME, false)).unwrap();
+            }
+            pair_insert(&vfs, "/l/p", &run.nodes, 0);
+            pair_insert(&vfs, "/r/p", &run.nodes, 1);
+            let above = if run.relative { "/o/t" } else { "/o/t/p" };
+            for (node, stands) in pair_unique(&run.nodes).into_iter().zip(&run.stands) {
+                if !node.folder {
+                    continue;
+                }
+                for (bit, side) in [(1, 0), (2, 1)] {
+                    if stands & bit != 0 {
+                        for dir in ["/o/t", "/o/t/p"].into_iter().filter(|d| above.starts_with(d)) {
+                            vfs.insert_dir(&host(dir), meta(FOLDER_TIME, false)).ok();
+                        }
+                        let path = format!("{above}/{}", node.name(side));
+                        vfs.insert_dir(&host(&path), meta(FOLDER_TIME, false)).ok();
+                    }
+                }
+            }
+            let mut rules = FolderRules::default();
+            rules.alignment.case = hikasa_folder::CaseMode::Insensitive;
+            rules.alignment.align_normalization = true;
+            let cmp = compared(&vfs, &rules);
+            let read = cmp.read();
+            let sides = match run.sides {
+                0 => SideSet::all(),
+                1 => SideSet::LEFT,
+                _ => SideSet::RIGHT,
+            };
+            let p = read.children(NodeId::ROOT).next().expect("p");
+            let mut selection = Selection::default();
+            for child in read.children(p) {
+                selection.insert(child, sides);
+            }
+            let structure = if run.relative { PathStructure::Relative } else { PathStructure::Base };
+            let target = mspec("/o/t");
+            let overwrite = OverwritePolicy::Always;
+            let op = if run.moving {
+                FolderOp::MoveTo { sides, target, folder: false, structure, overwrite }
+            } else {
+                FolderOp::CopyTo { sides, target, folder: false, structure, overwrite }
+            };
+            let scope = OpScope {
+                selection,
+                include: Include::visible(),
+                iu: false,
+                read_only: ReadOnlySides::default(),
+            };
+            let before = snapshot(&vfs);
+            let planned = plan_op(&read, &vfs, &scope, &op, &OpSettings::default(), &Ctl::detached());
+            drop(read);
+            let Ok(planned) = planned else {
+                // Nothing on the sides asked for.
+                return Ok(());
+            };
+            let machine = Confirmation::new(&planned, &ConfirmPolicy::ALL, ConfirmMode::YesToAll);
+            let planned = machine.finish(planned).unwrap();
+            let report = ops::execute_with(&vfs, &vfs, planned.plan, &planned.exec, &Ctl::detached());
+            let items: Vec<String> = report
+                .plan
+                .items
+                .iter()
+                .zip(&report.results)
+                .map(|(i, r)| format!("{:?} {:?} -> {} {:?} {:?}", i.action, i.source.as_ref().map(Spec::canonical), i.target.canonical(), r.status, r.skip.or(i.skip)))
+                .collect();
+            prop_assert!(
+                report.results.iter().all(|r| r.status != ItemStatus::Failed),
+                "an item failed: {items:#?}"
+            );
+            let mut model = PairModel {
+                before: &before,
+                tree: before.clone(),
+                taken: BTreeSet::new(),
+                chosen: BTreeMap::new(),
+                sides,
+                moving: run.moving,
+            };
+            for (side, base) in [(0, "/l/p"), (1, "/r/p")] {
+                if !sides.contains(if side == 0 { SideSet::LEFT } else { SideSet::RIGHT }) {
+                    continue;
+                }
+                for node in pair_unique(&run.nodes) {
+                    if node.on[side] {
+                        model.tree.entry("/o/t".to_owned()).or_insert(It::Dir);
+                        if !run.relative {
+                            model.tree.entry("/o/t/p".to_owned()).or_insert(It::Dir);
+                        }
+                        let from = format!("{base}/{}", node.name(side));
+                        model.place(node, &from, above, side);
+                    }
+                }
+            }
+            if !model.chosen.is_empty() {
+                paired.fetch_add(1, Ordering::Relaxed);
+            }
+            let after = snapshot(&vfs);
+            if after != model.tree {
+                let extra: Vec<_> = after.iter().filter(|(k, v)| model.tree.get(*k) != Some(v)).collect();
+                let missing: Vec<_> = model.tree.iter().filter(|(k, v)| after.get(*k) != Some(v)).collect();
+                prop_assert!(false, "{op:?}\nnot in the model: {extra:#?}\nnot on disk: {missing:#?}\nitems {items:#?}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    // A property that meets no pair proves nothing.
+    assert!(
+        paired.load(Ordering::Relaxed) > 0,
+        "no case held an aligned pair"
+    );
+}

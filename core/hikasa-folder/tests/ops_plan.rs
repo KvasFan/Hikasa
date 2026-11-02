@@ -10,7 +10,7 @@ use hikasa_core::{
 };
 use hikasa_folder::ops::{
     ConfirmMode, ConfirmPolicy, Confirmation, Conflicts, FolderOp, OpPlan, OpScope, OpSettings,
-    ReadOnlySides, Recycle, plan_op,
+    PathStructure, ReadOnlySides, Recycle, plan_op,
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{
@@ -1559,4 +1559,355 @@ fn a6_15_what_lies_in_a_skipped_folder_is_skipped_too() {
     let report = run(&vfs, out);
     assert!(report.ok(), "{:?}", report.results);
     assert_eq!(read(&vfs, "/r/a").unwrap(), b"hidden");
+}
+
+// ---- rule 16: one folder per aligned pair (D-194) ------------------------------------------------------------
+
+/// What stands at `/o/t` before a run of the table of §1.7.2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Before {
+    Nothing,
+    Upper,
+    Lower,
+    Both,
+}
+
+/// One row of the table of §1.7.2: `<base>/p/<left>/x.txt` and `<base>/p/<right>/y.txt`, aligned as one folder pair, written
+/// by `copyto` or `moveto` from `sides` with `structure`, onto a target `/o/t` that holds `before`. The folder both files
+/// must land in, below the target, and whether the plan makes it.
+struct PairCase {
+    names: (&'static str, &'static str),
+    target: CaseSensitivity,
+    before: Before,
+    sides: SideSet,
+    structure: PathStructure,
+    moving: bool,
+}
+
+impl PairCase {
+    fn world(&self) -> (MemoryVfs, FolderComparison) {
+        let vfs = bases(self.target);
+        vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+        let (left, right) = self.names;
+        file(&vfs, &format!("/l/p/{left}/x.txt"), b"left", 10);
+        file(&vfs, &format!("/r/p/{right}/y.txt"), b"right", 10);
+        let above = self.above();
+        let made = |name: &str| {
+            vfs.insert_dir(&host(&format!("/o/t{above}/{name}")), meta(1))
+                .unwrap();
+        };
+        match self.before {
+            Before::Nothing => {}
+            Before::Upper => made(left),
+            Before::Lower => made(right),
+            Before::Both => {
+                made(left);
+                made(right);
+            }
+        }
+        let mut rules = FolderRules::default();
+        rules.alignment.case = CaseMode::Insensitive;
+        rules.alignment.align_normalization = true;
+        let cmp = compared(&vfs, &rules);
+        (vfs, cmp)
+    }
+
+    /// `/p` with structure `base`; nothing with `relative` (the common folder of the selection is `p`).
+    fn above(&self) -> &'static str {
+        if self.structure == PathStructure::Base {
+            "/p"
+        } else {
+            ""
+        }
+    }
+
+    fn op(&self) -> FolderOp {
+        let target = mspec("/o/t");
+        let (sides, structure, overwrite) = (self.sides, self.structure, OverwritePolicy::Always);
+        if self.moving {
+            FolderOp::MoveTo {
+                sides,
+                target,
+                folder: false,
+                structure,
+                overwrite,
+            }
+        } else {
+            FolderOp::CopyTo {
+                sides,
+                target,
+                folder: false,
+                structure,
+                overwrite,
+            }
+        }
+    }
+
+    fn plan(&self, vfs: &MemoryVfs, cmp: &FolderComparison) -> OpPlan {
+        let (left, _) = self.names;
+        let mut rows = Vec::new();
+        for side in self.sides.sides() {
+            rows.push((format!("p/{left}"), SideSet::of(side)));
+        }
+        let rows: Vec<(&str, SideSet)> = rows.iter().map(|(p, s)| (p.as_str(), *s)).collect();
+        plan(vfs, cmp, &rows, &self.op())
+    }
+
+    /// The spelling rule 16 chooses: the left's name if the target holds it, else the right's, else the first source side's.
+    fn chosen(&self) -> &'static str {
+        let (left, right) = self.names;
+        match self.before {
+            Before::Upper | Before::Both => left,
+            Before::Lower => right,
+            Before::Nothing if self.sides.contains(SideSet::LEFT) => left,
+            Before::Nothing => right,
+        }
+    }
+}
+
+/// The folders and files below `/o/t`, as stored.
+fn below_target(vfs: &MemoryVfs) -> Vec<String> {
+    let mut out: Vec<String> = vfs
+        .dump()
+        .into_iter()
+        .map(|entry| entry.path.replace('\\', "/"))
+        .map(|path| path.strip_prefix("C:").map(str::to_owned).unwrap_or(path))
+        .filter(|path| path.starts_with("/o/t/"))
+        .collect();
+    out.sort();
+    out
+}
+
+fn check_pair_case(case: &PairCase) {
+    let (vfs, cmp) = case.world();
+    let out = case.plan(&vfs, &cmp);
+    let shown = lines(&out);
+    let above = case.above();
+    let chosen = format!("/o/t{above}/{}", case.chosen());
+    let label = format!(
+        "{:?} {:?} {:?} {:?} {:?} moving {}: {shown:#?}",
+        case.names, case.target, case.before, case.sides, case.structure, case.moving
+    );
+    let as_target = |path: &str| {
+        if case.target == CaseSensitivity::Insensitive {
+            hikasa_core::case::fold(path).into_owned()
+        } else {
+            path.to_owned()
+        }
+    };
+    // Every item of a source below the pair names the chosen folder.
+    for item in &out.plan.items {
+        let target = short(&item.target);
+        if target.ends_with("/x.txt") || target.ends_with("/y.txt") {
+            assert_eq!(
+                parent_of_short(&target),
+                chosen,
+                "an item outside the pair's folder: {label}"
+            );
+        }
+    }
+    // The pair's folder is made once, by `create_dir` or by a whole `rename`, and only when the target lacks it.
+    let makes = out
+        .plan
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(item.action, Action::CreateDir | Action::Rename)
+                && item.kind == EntryKind::Dir
+                && hikasa_core::case::fold(&short(&item.target)) == hikasa_core::case::fold(&chosen)
+        })
+        .count();
+    let expected = usize::from(case.before == Before::Nothing);
+    assert_eq!(makes, expected, "folder items: {label}");
+    let report = run(&vfs, out);
+    assert_eq!(report.summary.failed, 0, "{label} {:?}", report.results);
+    // Both files in one folder, and no folder of the other spelling made.
+    let tree = below_target(&vfs);
+    let sources = [
+        (SideSet::LEFT, "x.txt", b"left".as_slice()),
+        (SideSet::RIGHT, "y.txt", b"right".as_slice()),
+    ];
+    for (side, name, content) in sources {
+        if case.sides.contains(side) {
+            assert_eq!(
+                read(&vfs, &format!("{chosen}/{name}")).as_deref(),
+                Some(content),
+                "{label} {tree:#?}"
+            );
+        }
+    }
+    let other = if case.chosen() == case.names.0 {
+        case.names.1
+    } else {
+        case.names.0
+    };
+    let other = format!("/o/t{above}/{other}");
+    let other_made = tree
+        .iter()
+        .any(|path| path == &other || path.starts_with(&format!("{other}/")));
+    let other_stood = case.before == Before::Both;
+    assert_eq!(other_made, other_stood, "{label} {tree:#?}");
+    if other_stood {
+        assert!(
+            tree.iter()
+                .all(|path| !path.starts_with(&format!("{other}/"))),
+            "{label} {tree:#?}"
+        );
+    }
+    // A second run lands where the first did: no folder item.
+    if !case.moving {
+        let cmp = compared(&vfs, &{
+            let mut rules = FolderRules::default();
+            rules.alignment.case = CaseMode::Insensitive;
+            rules.alignment.align_normalization = true;
+            rules
+        });
+        let again = case.plan(&vfs, &cmp);
+        let shown = lines(&again);
+        assert!(
+            again
+                .plan
+                .items
+                .iter()
+                .all(|item| item.action != Action::CreateDir),
+            "a second run makes a folder: {label} {shown:#?} {tree:#?}"
+        );
+        for item in &again.plan.items {
+            let target = short(&item.target);
+            if target.ends_with("/x.txt") || target.ends_with("/y.txt") {
+                // A folding target's `lstat` finds the folder by either spelling (step 1 of the rule).
+                assert_eq!(
+                    as_target(&parent_of_short(&target)),
+                    as_target(&chosen),
+                    "second run: {label} {shown:#?} {tree:#?}"
+                );
+            }
+        }
+    }
+}
+
+fn parent_of_short(path: &str) -> String {
+    path.rsplit_once('/')
+        .map_or("", |(parent, _)| parent)
+        .to_owned()
+}
+
+const BOTH: SideSet = SideSet::all();
+
+/// A7.1: the table of §1.7.2, row by row, for `copyto` and `moveto`, structure `base` and `relative`, on a case-sensitive
+/// target; the rows a folding target can hold on a folding one.
+#[test]
+fn a7_1_rule16_one_folder_per_aligned_pair() {
+    let rows = [
+        (CaseSensitivity::Sensitive, Before::Nothing, BOTH),
+        (CaseSensitivity::Sensitive, Before::Upper, BOTH),
+        (CaseSensitivity::Sensitive, Before::Lower, BOTH),
+        (CaseSensitivity::Sensitive, Before::Both, BOTH),
+        (CaseSensitivity::Sensitive, Before::Nothing, R),
+        (CaseSensitivity::Sensitive, Before::Upper, R),
+        (CaseSensitivity::Sensitive, Before::Nothing, L),
+        (CaseSensitivity::Insensitive, Before::Nothing, BOTH),
+        (CaseSensitivity::Insensitive, Before::Upper, BOTH),
+        (CaseSensitivity::Insensitive, Before::Nothing, R),
+    ];
+    for (target, before, sides) in rows {
+        for structure in [PathStructure::Base, PathStructure::Relative] {
+            for moving in [false, true] {
+                check_pair_case(&PairCase {
+                    names: ("D", "d"),
+                    target,
+                    before,
+                    sides,
+                    structure,
+                    moving,
+                });
+            }
+        }
+    }
+}
+
+/// A7.1 on a folding target where the right's spelling stands: the left's name finds it (an `lstat` folds), so both land
+/// in the folder that stands, under the left's spelling, and no second folder is made.
+#[test]
+fn a7_1_rule16_a_folding_target_holding_the_rights_spelling() {
+    for moving in [false, true] {
+        let case = PairCase {
+            names: ("D", "d"),
+            target: CaseSensitivity::Insensitive,
+            before: Before::Lower,
+            sides: BOTH,
+            structure: PathStructure::Base,
+            moving,
+        };
+        let (vfs, cmp) = case.world();
+        let out = case.plan(&vfs, &cmp);
+        let shown = lines(&out);
+        assert!(
+            out.plan.items.iter().all(
+                |item| item.action != Action::CreateDir || !short(&item.target).contains("/p/")
+            ),
+            "{shown:#?}"
+        );
+        let report = run(&vfs, out);
+        assert_eq!(report.summary.failed, 0, "{shown:#?} {:?}", report.results);
+        assert_eq!(
+            below_target(&vfs),
+            ["/o/t/p", "/o/t/p/d", "/o/t/p/d/x.txt", "/o/t/p/d/y.txt"],
+            "{shown:#?}"
+        );
+    }
+}
+
+/// A7.1: an NFC/NFD pair under `align_normalization`, on a target that keeps both forms apart.
+#[test]
+fn a7_1_rule16_an_nfc_nfd_pair_is_one_folder() {
+    for before in [Before::Nothing, Before::Upper, Before::Lower] {
+        for structure in [PathStructure::Base, PathStructure::Relative] {
+            for moving in [false, true] {
+                check_pair_case(&PairCase {
+                    names: ("caf\u{e9}", "cafe\u{301}"),
+                    target: CaseSensitivity::Sensitive,
+                    before,
+                    sides: BOTH,
+                    structure,
+                    moving,
+                });
+            }
+        }
+    }
+}
+
+/// A7.1, the defect itself: before D-194 the right's file went to its own spelling, which the plan never made.
+#[test]
+fn a7_1_rule16_the_right_file_goes_into_the_folder_made_for_the_pair() {
+    let vfs = memory();
+    vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+    file(&vfs, "/l/D/x.txt", b"left", 10);
+    file(&vfs, "/r/d/y.txt", b"right", 10);
+    let mut rules = FolderRules::default();
+    rules.alignment.case = CaseMode::Insensitive;
+    let cmp = compared(&vfs, &rules);
+    let op = FolderOp::CopyTo {
+        sides: BOTH,
+        target: mspec("/o/t"),
+        folder: false,
+        structure: PathStructure::Base,
+        overwrite: OverwritePolicy::Always,
+    };
+    let out = plan(&vfs, &cmp, &[("D", BOTH)], &op);
+    assert_eq!(
+        lines(&out),
+        [
+            "create_dir /o/t @0",
+            "create_dir /l/D > /o/t/D @0",
+            "copy /l/D/x.txt > /o/t/D/x.txt @1",
+            "copy /r/d/y.txt > /o/t/D/y.txt @1",
+        ]
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(
+        below_target(&vfs),
+        ["/o/t/D", "/o/t/D/x.txt", "/o/t/D/y.txt"]
+    );
 }

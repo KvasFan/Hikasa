@@ -1906,3 +1906,41 @@ fn a6_25_t11_the_cli_and_the_service_give_one_tree() {
     service.folder_op_execute(plan, &job).unwrap();
     assert_eq!(state(&by_cli), state(&by_service));
 }
+
+/// A7.1 (D-194) on a Linux disk, which is case-sensitive: the folders `D` and `d` of an aligned pair become one folder at
+/// the target, named as the left spells it, and both files go into it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a7_1_copyto_of_an_aligned_folder_pair_makes_one_folder() {
+    let s = Sandbox::new();
+    s.file_at("l/D/x.txt", "left\n", 1_000_000);
+    s.file_at("r/d/y.txt", "right\n", 1_000_000);
+    s.settle("l");
+    s.settle("r");
+    let target = s.join("o/t");
+    let out = op(
+        &s,
+        &[
+            "copyto",
+            "--side",
+            "both",
+            "--structure",
+            "base",
+            "--case-insensitive",
+            "--target",
+            target.to_str().unwrap(),
+            "--select",
+            "all",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}{}", stdout(&out), stderr(&out));
+    let names: Vec<String> = tree(&s.join("o/t"))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(names, ["D", "D/x.txt", "D/y.txt"]);
+    assert_eq!(std::fs::read(target.join("D/x.txt")).unwrap(), b"left\n");
+    assert_eq!(std::fs::read(target.join("D/y.txt")).unwrap(), b"right\n");
+    assert!(!target.join("d").exists());
+}

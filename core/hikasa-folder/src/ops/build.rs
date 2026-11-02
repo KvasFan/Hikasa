@@ -835,9 +835,14 @@ impl<'a, 'r> Builder<'a, 'r> {
         self.push(item, meta);
     }
 
-    /// The key of a folder of `made`: as the back-end compares names.
-    fn made_key(&mut self, spec: &Spec) -> String {
-        key_of(&spec.canonical(), self.folds(spec))
+    /// The key of a folder of `made`: as the back-end compares names. Not as the comparison does: an aligned pair whose
+    /// names differ is one folder by rule 16's choice of its name (D-194), and two folders the comparison folds together
+    /// but a case-sensitive back-end keeps apart are two.
+    pub(super) fn made_key(&mut self, spec: &Spec) -> String {
+        let folds = !self
+            .capabilities(spec)
+            .contains(Capabilities::CASE_SENSITIVE);
+        key_of(&spec.canonical(), folds)
     }
 
     /// Records a folder this plan makes, with the depth of its item.
