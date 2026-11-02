@@ -189,7 +189,8 @@ fn reap(dir: &Path, name: &OsStr) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    for entry in entries.flatten() {
+    // `map_while`: an entry that keeps failing, as a folder going away does on Windows, must not spin here.
+    for entry in entries.map_while(Result::ok) {
         if !is_temp_name(&entry.file_name(), &base) {
             continue;
         }

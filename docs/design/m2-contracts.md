@@ -5025,6 +5025,10 @@ numbered per part.
 27. **D-164's figure.** At the `ops` level, stamped batch with fence against the plain copy of §1.6.22: **1.48 ×** (363.6 ms
     against 244.9 ms, median of three, release build, `/var/tmp`, 10,000 files of 4 KiB in 100 folders;
     `core/hikasa-vfs/tests/perf_copy.rs`). G7 is W6c's, through the Service.
+28. **A listing that keeps failing.** `ReadDir` on Windows answers each `next` with the error of a folder that went away, so
+    `.flatten()` over it never ends. The walks in `cache.rs` and `lock::reap` now stop at the first failure
+    (`map_while(Result::ok)`). A sweep clears `R` in the `x*` folders of a dead session only; a session's own `cleanup` has
+    removed them, so its exit lists nothing more than it did before W6a.
 
 ### 1.7–1.14 W7–W14
 

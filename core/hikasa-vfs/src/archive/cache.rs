@@ -707,8 +707,9 @@ fn claim(root: &Path) -> io::Result<(u64, PathBuf, Handle)> {
 /// Removes the folder and the lock file of every other session whose lock can be taken: its owner is gone. A lock
 /// that fails with any error counts as held.
 fn sweep(root: &Path, own: u64) -> io::Result<()> {
-    for item in fs::read_dir(root)? {
-        let Ok(item) = item else { continue };
+    // An entry that fails ends the walk: on Windows a folder going away under the listing fails every next entry, for
+    // ever, and a later session sweeps what this one did not reach.
+    for item in fs::read_dir(root)?.map_while(Result::ok) {
         let name = item.file_name();
         let Some(number) = name.to_str().and_then(session_number) else {
             continue;
@@ -725,7 +726,7 @@ fn sweep(root: &Path, own: u64) -> io::Result<()> {
         };
         if lock.as_file().try_lock().is_ok()
             && is_at(&lock, &path)
-            && remove_tree(&root.join(format!("s{number}"))).is_ok()
+            && remove_dead(&root.join(format!("s{number}"))).is_ok()
         {
             let _ = fs::remove_file(&path);
         }
@@ -776,21 +777,27 @@ fn release_extracted(dir: &Path) {
     let Ok(items) = fs::read_dir(dir) else {
         return;
     };
-    for item in items.flatten() {
+    for item in items.map_while(Result::ok) {
         let name = item.file_name();
         if name.to_string_lossy().starts_with('x')
             && let Ok(files) = fs::read_dir(item.path())
         {
-            for file in files.flatten() {
+            for file in files.map_while(Result::ok) {
                 make_writable(&file.path());
             }
         }
     }
 }
 
+/// The folder of a dead session: it kept its extractions, whose `R` is in the way on Windows. A session of its own has
+/// removed them by then ([`Cache::cleanup`]), so only a sweep looks.
+fn remove_dead(dir: &Path) -> io::Result<()> {
+    release_extracted(dir);
+    remove_tree(dir)
+}
+
 /// `remove_dir_all`; a folder that is not there is removed.
 fn remove_tree(dir: &Path) -> io::Result<()> {
-    release_extracted(dir);
     match fs::remove_dir_all(dir) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
