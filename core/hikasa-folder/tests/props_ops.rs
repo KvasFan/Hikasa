@@ -17,7 +17,7 @@ use hikasa_folder::{
     CaseMode, FolderComparison, FolderRules, FolderRulesPatch, NodeId, TreeRead, refresh_into,
 };
 use hikasa_vfs::ops::{
-    self, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy, SkipReason,
+    self, Action, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy, SkipReason,
 };
 use hikasa_vfs::{EntryKind, Fault, FollowLinks, MemoryVfs, Vfs, VfsOp};
 use proptest::prelude::*;
@@ -283,7 +283,14 @@ proptest! {
         };
         let nodes_to_refresh: Vec<NodeId> = planned.refresh.clone();
         let planned = answered(planned, ConfirmMode::YesToAll);
-        run(&vfs, planned);
+        let runs = runnable(&planned);
+        let report = run(&vfs, planned);
+        // Nothing is injected here: what the plan let through runs, or a refresh of nothing would prove nothing.
+        prop_assert!(
+            !runs || report.results.iter().any(|r| r.status == ItemStatus::Done),
+            "nothing ran: {:?}",
+            report.plan.items.iter().zip(&report.results).map(|(i, r)| (i.action, i.target.canonical(), r)).collect::<Vec<_>>()
+        );
         let contents = engines(1 << 30);
         with_env(&vfs, &contents, &CancelToken::new(), |env| {
             refresh_into(cmp.model(), &nodes_to_refresh, env).unwrap();
@@ -323,7 +330,12 @@ proptest! {
             }
         }
         let planned = answered(planned, ConfirmMode::YesToAll);
+        let runs = runnable(&planned);
         let report = run(&vfs, planned);
+        prop_assert!(
+            !runs || !faulted.is_empty() || report.results.iter().any(|r| r.status == ItemStatus::Done),
+            "nothing ran: {:?}", report.results
+        );
         let after_left = files_on_left(&vfs);
         let after_right = files_on_right(&vfs);
         for (name, bytes) in &input {
@@ -416,12 +428,35 @@ proptest! {
             }
         }
         for (index, backup, before) in &kept {
-            if report.results[*index].status == ItemStatus::Done {
-                let found = vfs.read_back(backup).map(|bytes| bytes.to_vec());
-                prop_assert_eq!(found.as_ref(), Some(before));
-            }
+            // No fault, every answer yes: an item with a backup replaced its target, and the backup holds what it was.
+            prop_assert_eq!(report.results[*index].status, ItemStatus::Done, "{:?}", report.results[*index]);
+            let found = vfs.read_back(backup).map(|bytes| bytes.to_vec());
+            prop_assert_eq!(found.as_ref(), Some(before));
         }
     }
+}
+
+/// True when an item of `plan` is to run.
+/// One that is not below a folder the plan already failed, and is no `remove_dir`, which waits for its contents.
+fn runnable(plan: &OpPlan) -> bool {
+    let failed: Vec<&ops::PlanItem> = plan
+        .plan
+        .items
+        .iter()
+        .filter(|item| item.error.is_some() && item.kind == EntryKind::Dir)
+        .collect();
+    plan.plan.items.iter().any(|item| {
+        item.error.is_none()
+            && item.skip.is_none()
+            && item.action != Action::RemoveDir
+            && !failed.iter().any(|folder| {
+                below(&item.target, &folder.target)
+                    || folder
+                        .source
+                        .as_ref()
+                        .is_some_and(|s| item.source.as_ref().is_some_and(|i| below(i, s)))
+            })
+    })
 }
 
 /// The verbs of the conservation property.
