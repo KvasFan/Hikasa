@@ -4,7 +4,7 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use hikasa_core::{ExitCode, JobKind, Warning};
+use hikasa_core::{CancelToken, ExitCode, JobKind, Warning};
 use hikasa_folder::NullObserver;
 use hikasa_folder::ops::{
     ConfirmMode, FolderOp, OpPlan, ReadOnlySides, Recycle, RenameMask, TouchFrom,
@@ -414,7 +414,12 @@ fn mode_of(confirm: &FolderConfirmArgs) -> Result<ConfirmMode, ApiError> {
 }
 
 /// The answers of a plan: a mode needs no person; `Prompt` asks on a terminal, and without one nothing is touched.
-fn answered(ctx: &Ctx<'_>, plan: OpPlan, mode: ConfirmMode) -> Result<OpPlan, ApiError> {
+fn answered(
+    ctx: &Ctx<'_>,
+    plan: OpPlan,
+    mode: ConfirmMode,
+    cancel: &CancelToken,
+) -> Result<OpPlan, ApiError> {
     let mut machine = ctx.service.folder_confirmation_strict(&plan, Some(mode));
     if machine.next().is_some() {
         if !io::stdin().is_terminal() {
@@ -427,7 +432,7 @@ fn answered(ctx: &Ctx<'_>, plan: OpPlan, mode: ConfirmMode) -> Result<OpPlan, Ap
         }
         ctx.progress.clear();
         let mut stderr = io::stderr();
-        ask(&mut machine, &mut io::stdin().lock(), &mut stderr);
+        ask(&mut machine, cancel, &mut stderr);
         let _ = stderr.flush();
     }
     machine.finish(plan).map_err(|_| ApiError::Cancelled)
@@ -459,7 +464,7 @@ fn plan_verb(
     let outcome = if confirm.dry_run {
         ctx.service.folder_op_dry_run(plan)
     } else {
-        let plan = answered(ctx, plan, mode).map_err(|e| failure(e, &warnings))?;
+        let plan = answered(ctx, plan, mode, &job.cancel).map_err(|e| failure(e, &warnings))?;
         ctx.service
             .folder_op_execute(plan, &job)
             .map_err(|e| failure(e, &warnings))?

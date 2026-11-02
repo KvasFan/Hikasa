@@ -1,25 +1,35 @@
 //! The CLI's driver of the question machine (§1.6.11): one line per question on stderr, `[y]es [n]o [a]ll [s]kip all [c]ancel`.
-//! The lines come from a [`BufRead`], so a test scripts them: no terminal, no PTY.
+//! A person's lines come from a thread that reads the terminal, so a Ctrl-C at a prompt ends it at once: a blocked read would
+//! wait for a line. The questions themselves are read from a [`BufRead`] in the tests, with no terminal.
 
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::Duration;
 
+use hikasa_core::CancelToken;
 use hikasa_folder::ops::{Confirmation, Reply};
 use hikasa_report::escape_controls;
 
 /// The prompt after each question.
 const CHOICES: &str = "[y]es [n]o [a]ll [s]kip all [c]ancel";
+/// How often a prompt looks at the cancel token.
+const LOOK: Duration = Duration::from_millis(20);
 
-/// Asks every question of `machine` on `output`, reading `input`. The end of the input is `Cancel`: nothing is assumed.
-pub fn ask(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {
+/// Asks every question of `machine` on `output`. `line` gives the next line; `None`, the end of the input or a stop, is
+/// `Cancel`: nothing is assumed.
+fn drive(
+    machine: &mut Confirmation,
+    line: &mut dyn FnMut() -> Option<String>,
+    output: &mut dyn Write,
+) {
     while let Some(question) = machine.next() {
         let text = escape_controls(&question.text).into_owned();
         let reply = loop {
             let _ = writeln!(output, "{text} {CHOICES}");
             let _ = output.flush();
-            let mut line = String::new();
-            match input.read_line(&mut line) {
-                Ok(0) | Err(_) => break Reply::Cancel,
-                Ok(_) => {
+            match line() {
+                None => break Reply::Cancel,
+                Some(line) => {
                     if let Some(reply) = Reply::parse(&line) {
                         break reply;
                     }
@@ -28,6 +38,53 @@ pub fn ask(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn
         };
         machine.reply(reply);
     }
+}
+
+/// The lines of standard input, from a thread of their own: a read cannot be stopped, a wait for its result can. The thread
+/// ends with the process, or at the end of the input.
+fn stdin_lines() -> Receiver<String> {
+    let (send, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        loop {
+            let mut line = String::new();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) if send.send(line).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    lines
+}
+
+/// Asks every question of `machine` on `output`, reading the terminal. The cancel token ends the prompt at once, as a `Cancel`.
+pub fn ask(machine: &mut Confirmation, cancel: &CancelToken, output: &mut dyn Write) {
+    let lines = stdin_lines();
+    let mut next = || loop {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        match lines.recv_timeout(LOOK) {
+            Ok(line) => return Some(line),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    };
+    drive(machine, &mut next, output);
+}
+
+/// [`drive`] over a reader.
+#[cfg(test)]
+fn ask_from(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {
+    let mut next = || {
+        let mut line = String::new();
+        match input.read_line(&mut line) {
+            Ok(0) | Err(_) => None,
+            Ok(_) => Some(line),
+        }
+    };
+    drive(machine, &mut next, output);
 }
 
 #[cfg(test)]
@@ -113,7 +170,7 @@ mod tests {
         let plan = plan();
         let mut machine = Confirmation::new(&plan, &ConfirmPolicy::ALL, ConfirmMode::Prompt);
         let mut output = Vec::new();
-        ask(
+        ask_from(
             &mut machine,
             &mut Cursor::new(lines.to_owned()),
             &mut output,

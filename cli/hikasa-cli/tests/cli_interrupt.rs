@@ -411,3 +411,139 @@ fn an_inherited_ignored_ctrl_c_stays_ignored() {
     assert_ne!(status.code(), Some(100), "{status:?}");
     assert!(status.code().is_some(), "{status:?}");
 }
+
+/// A prompt on a real terminal: `script` gives the child a pty as its controlling terminal, and what is written to `script`
+/// goes through its line discipline, so `\x03` is the press of a key and not a signal aimed by a test. Linux only: the flags
+/// of `script` differ elsewhere.
+#[cfg(target_os = "linux")]
+mod at_a_terminal {
+    use std::io::{Read, Write};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use super::{LIMIT, wait};
+    use crate::common::{Sandbox, hikasa_exe};
+
+    /// `hikasa <args>` on a pty, with what it prints.
+    fn spawn(s: &Sandbox, args: &[&str]) -> (Child, Arc<Mutex<Vec<u8>>>) {
+        let quoted = |word: &str| format!("'{}'", word.replace('\'', r"'\''"));
+        let mut line = quoted(hikasa_exe().to_str().unwrap());
+        line.push_str(" --config-dir ");
+        line.push_str(&quoted(s.config().to_str().unwrap()));
+        for arg in args {
+            line.push(' ');
+            line.push_str(&quoted(arg));
+        }
+        let mut child = Command::new("script")
+            .args(["--quiet", "--return", "--command", &line, "/dev/null"])
+            .current_dir(s.path())
+            .env("SHELL", "/bin/sh")
+            .env("HIKASA_IPC_ENDPOINT", s.socket())
+            .env("LC_ALL", "C.UTF-8")
+            .env("TZ", "UTC")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn script: util-linux's `script` is needed here");
+        let mut stdout = child.stdout.take().expect("piped");
+        let printed = Arc::new(Mutex::new(Vec::new()));
+        let shared = Arc::clone(&printed);
+        std::thread::spawn(move || {
+            let mut chunk = [0; 4096];
+            while let Ok(read) = stdout.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                shared
+                    .lock()
+                    .expect("the printed bytes")
+                    .extend_from_slice(&chunk[..read]);
+            }
+        });
+        (child, printed)
+    }
+
+    /// Waits for the first prompt.
+    fn wait_for_a_prompt(child: &mut Child, printed: &Mutex<Vec<u8>>) {
+        let began = Instant::now();
+        loop {
+            let text = printed.lock().expect("the printed bytes").clone();
+            if String::from_utf8_lossy(&text).contains("[c]ancel") {
+                return;
+            }
+            let ended = child.try_wait().expect("wait");
+            assert!(ended.is_none(), "no prompt: {ended:?}");
+            assert!(began.elapsed() < LIMIT, "no prompt");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn type_in(child: &mut Child, keys: &[u8]) {
+        let stdin = child.stdin.as_mut().expect("piped");
+        stdin.write_all(keys).expect("the terminal");
+        stdin.flush().expect("the terminal");
+    }
+
+    /// §1.6.11: Ctrl-C at a prompt ends it, with no line typed, exit 100, nothing written.
+    #[test]
+    fn a6_16_ctrl_c_at_a_prompt_ends_it_at_once() {
+        let s = Sandbox::new();
+        s.file("l/f", "new");
+        s.file("r/f", "old");
+        let (left, right) = (s.join("l"), s.join("r"));
+        let (mut child, printed) = spawn(
+            &s,
+            &[
+                "folder",
+                "op",
+                "copy",
+                left.to_str().unwrap(),
+                right.to_str().unwrap(),
+                "--to",
+                "right",
+                "--select",
+                "all",
+            ],
+        );
+        wait_for_a_prompt(&mut child, &printed);
+        type_in(&mut child, b"\x03");
+        let status = wait(&mut child, LIMIT);
+        assert_eq!(status.code(), Some(100));
+        assert_eq!(std::fs::read(s.join("r/f")).unwrap(), b"old");
+    }
+
+    /// Rule 6 stamps what it listed: a file edited while the question is open stays, with its folder (p16 of the review).
+    #[test]
+    fn a6_16_a_file_edited_at_the_prompt_stays() {
+        let s = Sandbox::new();
+        s.file("l/s/f", "x");
+        s.dir("r");
+        let (left, right) = (s.join("l"), s.join("r"));
+        let (mut child, printed) = spawn(
+            &s,
+            &[
+                "folder",
+                "op",
+                "delete",
+                left.to_str().unwrap(),
+                right.to_str().unwrap(),
+                "--side",
+                "left",
+                "--path",
+                "s",
+                "--no-scan-orphans",
+            ],
+        );
+        wait_for_a_prompt(&mut child, &printed);
+        std::fs::write(s.join("l/s/f"), "edited after the plan").unwrap();
+        type_in(&mut child, b"y\n");
+        let status = wait(&mut child, LIMIT);
+        assert_eq!(status.code(), Some(100));
+        assert_eq!(
+            std::fs::read(s.join("l/s/f")).unwrap(),
+            b"edited after the plan"
+        );
+    }
+}
