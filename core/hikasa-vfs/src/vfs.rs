@@ -393,6 +393,10 @@ pub trait Vfs: Send + Sync {
         Ok(None)
     }
 
+    /// Makes what happened in the folder `dir` durable, best effort: names, not contents (D-164). What a move leaves on
+    /// the strength of a copy needs it, where no writer did it: a link, a new folder. Default: nothing.
+    fn sync_folder(&self, _dir: &Spec) {}
+
     /// `open_read` that can be cancelled while an archive member is decoded (`Cancelled`). Default: `open_read`.
     fn open_read_with(
         &self,

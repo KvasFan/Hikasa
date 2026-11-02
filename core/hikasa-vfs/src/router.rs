@@ -448,6 +448,12 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn sync_folder(&self, dir: &Spec) {
+        if matches!(self.route(dir), Route::Local) {
+            self.local.sync_folder(dir);
+        }
+    }
+
     fn prepare(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError> {
         match self.route(spec) {
             Route::Archive(archive) => archive.prepare(spec, ctl),

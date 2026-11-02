@@ -685,6 +685,12 @@ impl Vfs for LocalVfs {
         self::trash::move_to_trash(path.as_path(), &meta, &spec.canonical())
     }
 
+    fn sync_folder(&self, dir: &Spec) {
+        if let Ok(path) = local(dir) {
+            sync_names(path.as_path());
+        }
+    }
+
     /// Local → local files up to [`FAST_COPY_MAX`]: `std::io::copy` from the source into the temporary sibling
     /// `open_write` creates (`copy_file_range` on Linux), then the same commit protocol (D-95). Larger files, and targets `open_write`
     /// would write to directly, return `Ok(None)` (the caller streams).
@@ -1130,7 +1136,7 @@ impl LocalWriter {
         })?;
         self.pending = false;
         if self.durability == Durability::Full {
-            sync_folder(&self.dir);
+            sync_names(&self.dir);
         }
         Ok(())
     }
@@ -1144,7 +1150,7 @@ fn sync_file(file: &File) -> io::Result<()> {
 }
 
 /// The sync of a folder after a rename, counted in tests where there is one.
-fn sync_folder(dir: &Path) {
+fn sync_names(dir: &Path) {
     #[cfg(test)]
     if cfg!(unix) {
         tests::count_sync();
@@ -1490,6 +1496,84 @@ mod tests {
             .unwrap();
         assert_eq!(result, None);
         assert!(!to.exists());
+    }
+
+    /// What `execute` syncs for `items` of a move plan.
+    fn syncs_of_move(items: Vec<crate::ops::PlanItem>, options: MoveOptions) -> u32 {
+        let plan = ops::Plan {
+            op: ops::OpKind::Move,
+            options: ops::PlanOptions::Move(options),
+            items,
+            warnings: Vec::new(),
+        };
+        let vfs = LocalVfs::default();
+        syncs_of(|| {
+            let report = ops::execute(&vfs, &vfs, plan, &Ctl::detached());
+            assert!(report.ok(), "{:?}", report.results);
+        })
+    }
+
+    fn moved(from: &Path, to: &Path, kind: EntryKind, depth: u32) -> crate::ops::PlanItem {
+        let action = crate::ops::Action::Move;
+        crate::ops::PlanItem::planned(action, kind, Some(spec(from)), spec(to), depth)
+    }
+
+    /// §1.6.3: "no source is removed before its copy is on disk". A link has no file to sync, only its name.
+    #[cfg(unix)]
+    #[test]
+    fn a_moved_link_is_on_disk_before_its_source_goes() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        std::os::unix::fs::symlink("somewhere", root.join("link")).unwrap();
+        fs::create_dir(root.join("sub")).unwrap();
+        let item = moved(
+            &root.join("link"),
+            &root.join("sub").join("link"),
+            EntryKind::Symlink,
+            0,
+        );
+        assert_eq!(syncs_of_move(vec![item], MoveOptions::default()), 1);
+    }
+
+    /// The name of a new folder is in its parent, which a sync of the file and of that folder leaves out.
+    #[test]
+    fn a_move_into_a_new_folder_syncs_the_name_of_the_folder() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        fs::write(root.join("file"), b"content").unwrap();
+        let folder = root.join("new");
+        let create = crate::ops::PlanItem::planned(
+            crate::ops::Action::CreateDir,
+            EntryKind::Dir,
+            None,
+            spec(&folder),
+            0,
+        );
+        let item = moved(&root.join("file"), &folder.join("file"), EntryKind::File, 1);
+        let expected = if cfg!(unix) { 3 } else { 1 };
+        assert_eq!(
+            syncs_of_move(vec![create, item], MoveOptions::default()),
+            expected
+        );
+    }
+
+    /// `--parents`: every folder a move creates on its way.
+    #[test]
+    fn a_move_with_parents_syncs_the_name_of_each() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        fs::write(root.join("file"), b"content").unwrap();
+        let to = root.join("a").join("b").join("file");
+        let item = moved(&root.join("file"), &to, EntryKind::File, 0);
+        let options = MoveOptions {
+            create_parents: true,
+            ..MoveOptions::default()
+        };
+        // The file, its folder; then the names of `a` and `b`.
+        let expected = if cfg!(unix) { 4 } else { 1 };
+        assert_eq!(syncs_of_move(vec![item], options), expected);
+        assert!(to.is_file());
+        assert!(!root.join("file").exists());
     }
 
     /// A program that creates the target while the copy runs keeps its file: the rename never replaces.

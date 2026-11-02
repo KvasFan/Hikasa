@@ -471,6 +471,7 @@ pub(crate) fn run_dir(
     } else {
         None
     };
+    exec.note_new_folder(&item.target, parents);
     let created = match replaced {
         // The file or link being replaced is first moved aside, so a failing `create_dir` puts it back.
         Some(()) => replace_with(exec, item, |dst| {

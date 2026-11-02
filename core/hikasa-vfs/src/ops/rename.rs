@@ -268,10 +268,30 @@ fn expand(exec: &mut Exec<'_>, item: &PlanItem, source: &Spec) -> Outcome {
     Outcome::Expand(items)
 }
 
-/// `move`: copy the file or link, then remove the source; when the removal fails the copy is removed again
-/// unless it replaced a target (D-97), or the source is no longer the item copied (gone, or another item in its
-/// place): then the copy is kept and the item fails "changed during the move; the copy was kept". A move into an
-/// archive stops after the copy: the source goes only after the rebuild, in [`remove_moved`] (D-148).
+/// True when the source of a move is what was copied: the same kind, size, time and identity (D-163).
+fn still_the_source(exec: &Exec<'_>, item: &PlanItem, source: &Spec, copied: &Entry) -> bool {
+    let follow = exec.source_follow(item);
+    exec.src.stat(source, follow).is_ok_and(|now| {
+        now.kind == copied.kind
+            && now.size == copied.size
+            && now.mtime == copied.mtime
+            && now.file_id == copied.file_id
+    })
+}
+
+/// The failure of a move whose source changed: it stays, and so does the copy.
+fn left_in_place(source: &Spec) -> VfsError {
+    VfsError::InvalidTarget {
+        spec: source.canonical(),
+        reason: "changed during the move; the copy was kept",
+    }
+}
+
+/// `move`: copy the file or link, then remove the source, once the copy's folders are on disk and the source is still what
+/// was copied: one that an edit reached during the copy stays, and the item fails "changed during the move; the copy was
+/// kept" (D-163). When the removal fails the copy is removed again unless it replaced a target (D-97), or the source is no
+/// longer the item copied (gone, or another item in its place): then the item fails the same way. A move into an archive
+/// stops after the copy: the source goes only after the rebuild, in [`remove_moved`] (D-148).
 pub(crate) fn run_move(
     exec: &mut Exec<'_>,
     item: &PlanItem,
@@ -288,6 +308,9 @@ pub(crate) fn run_move(
             Err(e) => return Outcome::Failed(e),
         },
     };
+    if let Some(parent) = item.target.parent().filter(|_| exec.create_parents(item.depth)) {
+        exec.note_new_folder(&parent, true);
+    }
     let copied = match entry.kind {
         EntryKind::File => {
             // A root link of a W3 move never gets here as a file; the entry is what is copied.
@@ -303,7 +326,12 @@ pub(crate) fn run_move(
         }
         EntryKind::Symlink => {
             seen.source = Some(entry.clone());
-            create_link_copy(exec, source, item, seen).map(|()| 0)
+            let linked = create_link_copy(exec, source, item, seen).map(|()| 0);
+            // A link has no writer to sync its name (§1.6.3).
+            if let (Ok(_), Some(parent)) = (&linked, item.target.parent()) {
+                exec.dst.sync_folder(&parent);
+            }
+            linked
         }
         EntryKind::Dir | EntryKind::Other => Err(source_changed(source)),
     };
@@ -322,6 +350,10 @@ pub(crate) fn run_move(
         exec.deferred.push((index, Later::Moved(entry)));
         return Outcome::Done(bytes);
     }
+    exec.sync_new_folders(&item.target);
+    if !still_the_source(exec, item, source, &entry) {
+        return Outcome::Failed(left_in_place(source));
+    }
     match exec.src.remove(source) {
         Ok(()) => Outcome::Done(bytes),
         Err(e) => {
@@ -332,10 +364,7 @@ pub(crate) fn run_move(
                 .stat(source, FollowLinks::No)
                 .is_ok_and(|now| now.kind == entry.kind && now.file_id == entry.file_id);
             if !still_there {
-                return Outcome::Failed(VfsError::InvalidTarget {
-                    spec: source.canonical(),
-                    reason: "changed during the move; the copy was kept",
-                });
+                return Outcome::Failed(left_in_place(source));
             }
             if !item.replaces {
                 let _ = exec.dst.remove(&item.target);
@@ -378,17 +407,8 @@ pub(crate) fn remove_moved(exec: &mut Exec<'_>, item: &PlanItem, copied: &Entry)
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
-    let same = exec.src.stat(source, FollowLinks::No).is_ok_and(|now| {
-        now.kind == copied.kind
-            && now.size == copied.size
-            && now.mtime == copied.mtime
-            && now.file_id == copied.file_id
-    });
-    if !same {
-        return Outcome::Failed(VfsError::InvalidTarget {
-            spec: source.canonical(),
-            reason: "changed during the move; the copy was kept",
-        });
+    if !still_the_source(exec, item, source, copied) {
+        return Outcome::Failed(left_in_place(source));
     }
     match exec.src.remove(source) {
         Ok(()) => Outcome::Done(0),

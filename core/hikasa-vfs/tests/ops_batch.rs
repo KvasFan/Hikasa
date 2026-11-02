@@ -743,6 +743,77 @@ fn a6_2_one_lstat_per_side_per_item() {
 
 /// Member stamps; and a member the plan does not touch, changed by another operation since planning, survives the
 /// rebuild.
+/// Rewrites the source at the first report of progress, that is, between the read and the removal of a move.
+struct RewriteSource<'a> {
+    vfs: &'a MemoryVfs,
+    done: std::sync::atomic::AtomicBool,
+}
+
+impl ProgressSink for RewriteSource<'_> {
+    fn report(&self, _event: Progress) {
+        if !self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            file(self.vfs, "/s", b"edited during the copy", 50);
+        }
+    }
+}
+
+/// D-163: "a file modified after the comparison is never overwritten or deleted on the strength of an old row". A source
+/// edited during its copy stays, the copy stays, and the item says so.
+#[test]
+fn a6_2_a_move_keeps_a_source_edited_during_its_copy() {
+    let vfs = memory();
+    file(&vfs, "/s", b"as planned", 10);
+    let source = mspec("/s");
+    let mut moved = item(Action::Move, EntryKind::File, Some("/s"), "/moved", 0);
+    moved.size = Some(10);
+    moved.expect = Some(Expect {
+        source: stamp(&vfs, "/s"),
+        target: None,
+    });
+    let sink = RewriteSource {
+        vfs: &vfs,
+        done: std::sync::atomic::AtomicBool::new(false),
+    };
+    let cancel = CancelToken::new();
+    let ctl = Ctl {
+        cancel: &cancel,
+        progress: &sink,
+    };
+    let report = ops::execute(&vfs, &vfs, batch(vec![moved]), &ctl);
+    assert!(sink.done.load(std::sync::atomic::Ordering::SeqCst), "the sink ran");
+    assert_eq!(report.results[0].status, ItemStatus::Failed);
+    let message = failure(&report, 0);
+    assert!(message.contains("changed during the move; the copy was kept"), "{message}");
+    assert!(message.contains(&source.canonical()), "{message}");
+    assert_eq!(content(&vfs, "/s"), b"edited during the copy");
+    assert_eq!(content(&vfs, "/moved"), b"as planned");
+}
+
+/// A link the comparison followed: the stamp of the re-check is the one of the copy, through the link.
+#[test]
+fn a6_2_a_move_through_a_followed_link_goes_through() {
+    let vfs = memory();
+    file(&vfs, "/real", b"content", 10);
+    vfs.insert_symlink(&host("/s"), "real", MemMeta::default())
+        .unwrap();
+    let mut moved = item(Action::Move, EntryKind::File, Some("/s"), "/moved", 0);
+    moved.follow_source = true;
+    let entry = vfs.stat(&mspec("/s"), FollowLinks::Yes).unwrap();
+    moved.expect = Some(Expect {
+        source: Some(ItemStamp {
+            kind: entry.kind,
+            size: Some(entry.size),
+            mtime: entry.mtime,
+        }),
+        target: None,
+    });
+    let report = run(&vfs, batch(vec![moved]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/moved"), b"content");
+    assert_eq!(content(&vfs, "/real"), b"content");
+    assert!(vfs.stat(&mspec("/s"), FollowLinks::No).is_err());
+}
+
 #[test]
 fn a6_2_member_stamps_and_other_members_survive() {
     let memory = on_memory(ArchiveLimits::default());

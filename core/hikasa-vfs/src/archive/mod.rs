@@ -1527,6 +1527,12 @@ impl Vfs for ArchiveVfs {
         }
     }
 
+    fn sync_folder(&self, dir: &Spec) {
+        if !matches!(dir, Spec::ArchiveMember { .. }) {
+            self.core.base.sync_folder(dir);
+        }
+    }
+
     /// Builds the index of every archive around `spec`, with cancellation and `Phase::Scanning` progress in bytes.
     fn prepare(&self, spec: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError> {
         self.archive_entries(spec, ctl).map(drop)

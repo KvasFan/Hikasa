@@ -664,6 +664,8 @@ pub(crate) struct Exec<'a> {
     /// Depths of the copy/move folder items that failed or were skipped: the items below them (deeper, until the
     /// next item at that depth or above) are `not_run` (§1.3.12).
     cut: Vec<u32>,
+    /// Folders this execution made and no sync has named yet: a move's source waits for that (§1.6.3).
+    new_folders: BTreeSet<String>,
     /// A move runs in two phases: its removals wait for the rebuild of the archive it moves into (D-148).
     pub(crate) two_phase: bool,
     /// What the second phase does: result indexes, in plan order.
@@ -729,6 +731,33 @@ impl Exec<'_> {
                 PlanOptions::Move(opts) => opts.create_parents,
                 _ => false,
             }
+    }
+
+    /// Remembers the folder `dir` that is about to be made; with `parents` also the missing folders above it.
+    pub(crate) fn note_new_folder(&mut self, dir: &Spec, parents: bool) {
+        self.new_folders.insert(dir.canonical());
+        let mut above = dir.parent().filter(|_| parents);
+        while let Some(folder) = above {
+            if !matches!(lstat_target(self.dst, &folder), Ok(None)) {
+                break;
+            }
+            above = folder.parent();
+            self.new_folders.insert(folder.canonical());
+        }
+    }
+
+    /// Syncs the name of each new folder on the way to `target`, from the nearest up, once.
+    pub(crate) fn sync_new_folders(&mut self, target: &Spec) {
+        let mut folder = target.parent();
+        while let Some(dir) = folder {
+            if !self.new_folders.remove(&dir.canonical()) {
+                break;
+            }
+            folder = dir.parent();
+            if let Some(parent) = &folder {
+                self.dst.sync_folder(parent);
+            }
+        }
     }
 
     /// Remembers a created folder whose metadata is applied after its subtree.
@@ -826,6 +855,7 @@ pub fn execute_with(
         folders: BTreeMap::new(),
         changed: BTreeSet::new(),
         cut: Vec::new(),
+        new_folders: BTreeSet::new(),
         two_phase: false,
         deferred: Vec::new(),
     };
