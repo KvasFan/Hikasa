@@ -3,6 +3,8 @@
 
 mod common;
 
+#[cfg(unix)]
+use common::archives::on_disk;
 use common::archives::{OnMemory, TreeData, bytes_of, on_memory};
 use common::{ft, host, mspec, read_to_vec};
 use hikasa_core::{CaseSensitivity, Ctl, ErrorKind, RelPath, Spec};
@@ -801,6 +803,60 @@ fn commits_of(memory: &OnMemory, path: &str) -> usize {
         .iter()
         .filter(|(op, at)| *op == VfsOp::Commit && *at == spec)
         .count()
+}
+
+/// An archive reached through a link: the backup holds the bytes the rebuild rewrites. A link would lead to the new
+/// archive, and "an archive is never rewritten without its backup".
+#[cfg(unix)]
+#[test]
+fn a6_6_the_backup_of_an_archive_behind_a_link_holds_its_bytes() {
+    use std::os::unix::fs::symlink;
+    let disk = on_disk(ArchiveLimits::default());
+    let tree: TreeData = vec![
+        ("keep".into(), b"keep".to_vec()),
+        ("gone".into(), b"gone".to_vec()),
+    ];
+    let real = disk.dir.join("real.zip");
+    std::fs::write(&real, bytes_of(ArchiveFormat::Zip, &tree)).unwrap();
+    let before = std::fs::read(&real).unwrap();
+    let link = disk.dir.join("link.zip");
+    symlink(&real, &link).unwrap();
+    let outer = common::lspec_new(&link);
+    let backup = disk.dir.join("link.zip.bak");
+    let mut options = ExecOptions::default();
+    options
+        .archive_backups
+        .insert(outer.canonical(), common::lspec_new(&backup));
+    let member = Spec::archive_member(outer, "gone");
+    let report = exec(&*disk.vfs, vec![removal(&member)], &options);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_ne!(std::fs::read(&real).unwrap(), before, "the archive was rewritten");
+    let kind = std::fs::symlink_metadata(&backup).unwrap().file_type();
+    assert!(!kind.is_symlink(), "the backup is a link to the new archive");
+    assert_eq!(std::fs::read(&backup).unwrap(), before);
+}
+
+/// A backup that is the file behind the link keeps nothing: the rebuild stops, the archive as it was.
+#[cfg(unix)]
+#[test]
+fn a6_6_the_backup_of_an_archive_is_not_the_file_behind_its_link() {
+    use std::os::unix::fs::symlink;
+    let disk = on_disk(ArchiveLimits::default());
+    let tree: TreeData = vec![("gone".into(), b"gone".to_vec())];
+    let real = disk.dir.join("real.zip");
+    std::fs::write(&real, bytes_of(ArchiveFormat::Zip, &tree)).unwrap();
+    let before = std::fs::read(&real).unwrap();
+    let link = disk.dir.join("link.zip");
+    symlink(&real, &link).unwrap();
+    let outer = common::lspec_new(&link);
+    let mut options = ExecOptions::default();
+    options
+        .archive_backups
+        .insert(outer.canonical(), common::lspec_new(&real));
+    let member = Spec::archive_member(outer, "gone");
+    let report = exec(&*disk.vfs, vec![removal(&member)], &options);
+    assert!(!report.ok());
+    assert_eq!(std::fs::read(&real).unwrap(), before);
 }
 
 /// An archive's backup that is the archive, or a path of the plan, is refused before the archive is touched.

@@ -10,7 +10,7 @@ use std::path::Path;
 use hikasa_core::{Ctl, Phase, Progress, RelPath, Spec, Unit};
 
 use super::copy::free_sibling;
-use super::{Action, PlanItem, lstat_target, same_instance, spec_key};
+use super::{Action, PlanItem, hard_linked, lstat_target, one_file, same_instance, spec_key};
 use crate::entry::{Attrs, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::stream::StreamOptions;
@@ -311,8 +311,36 @@ pub fn write_backup(
     backup: &Spec,
     ctl: &Ctl<'_>,
 ) -> Result<(), VfsError> {
+    copy_aside(vfs, item, FollowLinks::No, backup, ctl)
+}
+
+/// The backup of an archive (D-168): the bytes of the file a rebuild rewrites, through a link that leads to it, which a
+/// link at the backup would not keep. One that is that file itself keeps nothing → `InvalidTarget`.
+pub(crate) fn write_archive_backup(
+    vfs: &dyn Vfs,
+    outer: &Spec,
+    backup: &Spec,
+    ctl: &Ctl<'_>,
+) -> Result<(), VfsError> {
+    if one_file(vfs, vfs, outer, backup) && !hard_linked(vfs, vfs, outer, backup) {
+        return Err(VfsError::InvalidTarget {
+            spec: backup.canonical(),
+            reason: THE_ITEM,
+        });
+    }
+    copy_aside(vfs, outer, FollowLinks::Yes, backup, ctl)
+}
+
+/// [`write_backup`], reading `item` by `follow`.
+fn copy_aside(
+    vfs: &dyn Vfs,
+    item: &Spec,
+    follow: FollowLinks,
+    backup: &Spec,
+    ctl: &Ctl<'_>,
+) -> Result<(), VfsError> {
     ctl.check()?;
-    let entry = vfs.stat(item, FollowLinks::No)?;
+    let entry = vfs.stat(item, follow)?;
     if let Some(parent) = backup.parent() {
         vfs.create_dir(&parent, true)?;
     }

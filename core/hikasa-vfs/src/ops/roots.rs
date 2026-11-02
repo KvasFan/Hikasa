@@ -10,7 +10,7 @@ use std::cell::Cell;
 
 use hikasa_core::{Ctl, ErrorReport, Spec};
 
-use super::backup::write_backup;
+use super::backup::write_archive_backup;
 use super::plan::report;
 use super::{Action, Exec, ItemResult, ItemStatus, Later, PlanItem, same_instance};
 use crate::error::VfsError;
@@ -178,7 +178,7 @@ impl<'a> Roots<'a> {
                     .is_some_and(|result| result.status == ItemStatus::Done)
         };
         if (0..results.len()).any(done) {
-            write_backup(self.vfs(found.side), &found.outer, backup, exec.ctl)?;
+            write_archive_backup(self.vfs(found.side), &found.outer, backup, exec.ctl)?;
         }
         Ok(())
     }
