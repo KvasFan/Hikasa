@@ -380,6 +380,7 @@ fn a6_14_resolve_a_folder_and_a_child_counts_the_rows_below() {
     );
     // On the other side the folder is not affected by what is selected on this one.
     let vfs = bases();
+    file(&vfs, "/l/a/w", b"x", 10);
     file(&vfs, "/l/a/x", b"x", 10);
     file(&vfs, "/r/a/x", b"x", 10);
     file(&vfs, "/r/a/z", b"z", 10);
@@ -391,6 +392,33 @@ fn a6_14_resolve_a_folder_and_a_child_counts_the_rows_below() {
     assert_eq!(
         rows(&read, &sel, &include(false, FolderDisplayFilter::All)),
         ["a:r:r", "a/x:lr:lr", "a/z:r:r"]
+    );
+}
+
+#[test]
+fn a6_14_resolve_a_folder_with_all_it_shows_selected_is_the_folder() {
+    // `select all` picks a folder and each row below it: that is no choice among its rows.
+    let vfs = bases();
+    file(&vfs, "/l/a/b/x", b"x", 10);
+    file(&vfs, "/l/a/y", b"y", 10);
+    let cmp = compared(&vfs, &FolderRules::default());
+    let read = cmp.read();
+    let shown = all();
+    let scope = SelectScope {
+        display: &shown,
+        expanded: None,
+    };
+    let mut sel = Selection::default();
+    select(&read, &scope, &[SelectMask::parse("all").unwrap()], false, &mut sel);
+    assert_eq!(
+        rows(&read, &sel, &include(false, FolderDisplayFilter::All)),
+        ["a:l:l", "a/b:l:l", "a/b/x:l:l", "a/y:l:l"]
+    );
+    // One row short of it, the rows count.
+    sel.remove(id(&read, "a/y"), SideSet::LEFT);
+    assert_eq!(
+        rows(&read, &sel, &include(false, FolderDisplayFilter::All)),
+        ["a/b:l:l", "a/b/x:l:l"]
     );
 }
 

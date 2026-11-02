@@ -1,0 +1,42 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "touch",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [
+      {
+        "action": "touch",
+        "kind": "file",
+        "side": "right",
+        "path": "same.txt",
+        "source": null,
+        "target": "<TMP>/r/same.txt",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "backups": [],
+    "summary": {
+      "planned": 1,
+      "done": 1,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    },
+    "commands": null
+  },
+  "warnings": [],
+  "error": null
+}

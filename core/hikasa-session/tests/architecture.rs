@@ -12,7 +12,9 @@
 //!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
 //!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
 //!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test; 0.1.91 confines `ctrlc` to
-//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`. Imports are expanded first, so grouped and aliased forms are caught as
+//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`; M2 W6 confines `open::` to
+//!    `core/hikasa-session/src/host.rs`, adds `SystemLauncher` to the adapter-only names, refuses it in every test, and
+//!    keeps `execute_with` to `api/folder_ops.rs`, `plan_op` to `folder_op_plan`. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
 //!    `.elapsed()` counts as a clock read;
 //! 3. every dependency of every workspace member is `workspace = true` and listed in `[workspace.dependencies]`,
@@ -1030,6 +1032,7 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
             "SystemClock",
             "SystemClipboard",
             "clipboard_provider",
+            "SystemLauncher",
         ] {
             for at in find_token(&code, token) {
                 let line = line_of(&code, at);
@@ -1107,6 +1110,36 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
                     line_of(&code, at)
                 ));
             }
+            // M2 W6 (§1.6.21): `open::` of the crate, not of a method or a path that ends in it.
+            for at in find_token(&code, "open::") {
+                let before = code[..at].trim_end();
+                if !before.ends_with("::") {
+                    violations.push(format!(
+                        "{rel}:{}: the `open` crate is named only in core/hikasa-session/src/host.rs",
+                        line_of(&code, at)
+                    ));
+                }
+            }
+        }
+        // M2 W6 (T11, §1.6.21): one way into execution and planning of folder operations.
+        if rel.starts_with("core/hikasa-session/src/") {
+            let confined: [(&str, &[&str]); 3] = [
+                ("execute_with", &["core/hikasa-session/src/api/folder_ops.rs"]),
+                ("plan_op", &["core/hikasa-session/src/api/folder_ops.rs"]),
+                ("ops::execute", &["core/hikasa-session/src/api/vfs_ops.rs"]),
+            ];
+            for (token, homes) in confined {
+                if homes.contains(&rel.as_str()) {
+                    continue;
+                }
+                for at in find_token(&code, token) {
+                    violations.push(format!(
+                        "{rel}:{}: `{token}` is called only from {}",
+                        line_of(&code, at),
+                        homes.join(", ")
+                    ));
+                }
+            }
         }
         // M2 W5 (§1.5.15): the archive crates only behind `ArchiveVfs`, in library code; `zip` also in the settings
         // packages (D-86). Tests write their fixtures with them.
@@ -1149,6 +1182,12 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
             for at in find_token(&code, "SystemClipboard") {
                 violations.push(format!(
                     "{rel}:{}: tests never use the real clipboard (`SystemClipboard`)",
+                    line_of(&code, at)
+                ));
+            }
+            for at in find_token(&code, "SystemLauncher") {
+                violations.push(format!(
+                    "{rel}:{}: tests never start a real program (`SystemLauncher`)",
                     line_of(&code, at)
                 ));
             }
@@ -1429,6 +1468,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "crossbeam-channel",
             "zip",
             "arboard",
+            "open",
         ],
         &["tempfile", "pretty_assertions", "proptest"],
     ),
@@ -3210,6 +3250,59 @@ fn check_2_confines_the_crates_of_the_adapters() {
     assert_eq!(violations.len(), 2, "{violations:?}");
     assert!(violations[0].contains("`ctrlc`"), "{violations:?}");
     assert!(violations[1].contains("`fontique`"), "{violations:?}");
+}
+
+/// M2 W6 (§1.6.21): `open::` in one file, one way into execution and planning, and no real program in a test.
+#[test]
+fn check_2_confines_open_and_the_ways_into_execution() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-session/src/host.rs",
+        "fn a() { open::that_detached(\"x\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/folder_ops.rs",
+        "fn b() { ops::execute_with(); plan_op(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/vfs_ops.rs",
+        "fn c() { ops::execute(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/compare.rs",
+        "fn d() { open::that_detached(\"y\"); ops::execute_with(); ops::execute(); plan_op(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/tests/run.rs",
+        "fn e() { let _ = hikasa_session::SystemLauncher; }\n",
+    );
+    let violations = check_confined_crates(root);
+    for needle in [
+        "api/compare.rs:1: the `open` crate",
+        "api/compare.rs:1: `execute_with`",
+        "api/compare.rs:1: `ops::execute`",
+        "api/compare.rs:1: `plan_op`",
+        "tests/run.rs:1: tests never start a real program",
+    ] {
+        assert!(
+            violations.iter().any(|v| v.contains(needle)),
+            "{needle}: {violations:?}"
+        );
+    }
+    assert!(
+        !violations.iter().any(|v| {
+            ["api/folder_ops.rs:", "api/vfs_ops.rs:", "src/host.rs:"]
+                .iter()
+                .any(|file| v.contains(&format!("{file}1")))
+        }),
+        "{violations:?}"
+    );
 }
 
 /// M2 W3 (§1.3.9): `trash::` and `arboard` are confined to one file each; no test names `SystemClipboard`.

@@ -1464,6 +1464,34 @@ mod tests {
 
     use super::*;
 
+    /// The long flags of `command`, sorted.
+    fn long_flags(command: &clap::Command) -> Vec<String> {
+        let mut flags: Vec<String> = command
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect();
+        flags.sort();
+        flags
+    }
+
+    #[test]
+    fn a6_25_rule_flags_equal_folder_compares() {
+        use clap::Args as _;
+        let cli = Cli::command();
+        let folder = cli.find_subcommand("folder").unwrap();
+        let rules = long_flags(&FolderRuleArgs::augment_args(clap::Command::new("rules")));
+        assert!(rules.contains(&"attrib-filter".to_owned()), "{rules:?}");
+        let compare = long_flags(folder.find_subcommand("compare").unwrap());
+        let op = folder.find_subcommand("op").unwrap();
+        for verb in op.get_subcommands() {
+            let own = long_flags(verb);
+            for flag in &rules {
+                assert!(compare.contains(flag), "compare: {flag}");
+                assert!(own.contains(flag), "{}: {flag}", verb.get_name());
+            }
+        }
+    }
+
     #[test]
     fn the_command_tree_is_valid() {
         Cli::command().debug_assert();

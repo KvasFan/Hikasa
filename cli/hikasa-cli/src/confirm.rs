@@ -8,18 +8,6 @@ use hikasa_folder::ops::{Confirmation, Reply};
 /// The prompt after each question.
 const CHOICES: &str = "[y]es [n]o [a]ll [s]kip all [c]ancel";
 
-/// The reply of one line; `None` for anything else, which asks again.
-fn reply_of(line: &str) -> Option<Reply> {
-    match line.trim().to_ascii_lowercase().as_str() {
-        "y" | "yes" => Some(Reply::Yes),
-        "n" | "no" => Some(Reply::No),
-        "a" | "all" => Some(Reply::YesToAll),
-        "s" | "skip" | "skip all" => Some(Reply::NoToAll),
-        "c" | "cancel" => Some(Reply::Cancel),
-        _ => None,
-    }
-}
-
 /// Asks every question of `machine` on `output`, reading `input`. The end of the input is `Cancel`: nothing is assumed.
 pub fn ask(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {
     while let Some(question) = machine.next() {
@@ -31,7 +19,7 @@ pub fn ask(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn
             match input.read_line(&mut line) {
                 Ok(0) | Err(_) => break Reply::Cancel,
                 Ok(_) => {
-                    if let Some(reply) = reply_of(&line) {
+                    if let Some(reply) = Reply::parse(&line) {
                         break reply;
                     }
                 }

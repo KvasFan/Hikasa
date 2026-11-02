@@ -5,6 +5,7 @@ json-output	JSON output
 quick	hikasa quick
 text-compare	hikasa text compare
 folder-compare	hikasa folder compare
+folder-op	hikasa folder op
 format	hikasa format
 settings	hikasa settings
 session	hikasa session

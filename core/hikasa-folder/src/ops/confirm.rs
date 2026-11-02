@@ -107,6 +107,21 @@ pub enum Reply {
     Cancel,
 }
 
+impl Reply {
+    /// The reply of a word on a line, what a prompt offers as `[y]es [n]o [a]ll [s]kip all [c]ancel` (ASCII
+    /// case-insensitive); `None` for anything else.
+    pub fn parse(word: &str) -> Option<Reply> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => Some(Reply::Yes),
+            "n" | "no" => Some(Reply::No),
+            "a" | "all" => Some(Reply::YesToAll),
+            "s" | "skip" | "skip all" => Some(Reply::NoToAll),
+            "c" | "cancel" => Some(Reply::Cancel),
+            _ => None,
+        }
+    }
+}
+
 /// How a driver answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConfirmMode {
@@ -136,6 +151,18 @@ pub struct ConfirmPolicy {
     pub overwrite_newer: bool,
     /// `confirm_replace_during_move`.
     pub replace_during_move: bool,
+}
+
+impl ConfirmMode {
+    /// `prompt`, `yes-to-all`, `no-to-all`.
+    pub fn parse(word: &str) -> Option<ConfirmMode> {
+        match word.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "prompt" => Some(ConfirmMode::Prompt),
+            "yes-to-all" => Some(ConfirmMode::YesToAll),
+            "no-to-all" => Some(ConfirmMode::NoToAll),
+            _ => None,
+        }
+    }
 }
 
 impl ConfirmPolicy {

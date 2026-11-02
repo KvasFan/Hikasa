@@ -192,11 +192,9 @@ pub struct Specs {
     pub left_encoding: String,
     /// Right encoding label.
     pub right_encoding: String,
-    /// Disable editing, left (FC-003). Written when set.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// Disable editing, left (FC-003).
     pub read_only_left: bool,
     /// Disable editing, right.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub read_only_right: bool,
 }
 

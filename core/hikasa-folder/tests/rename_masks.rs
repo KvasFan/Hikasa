@@ -518,11 +518,25 @@ fn a6_18_a_folder_is_one_item_and_its_contents_stay_inside() {
 }
 
 #[test]
-fn a6_18_a_folder_and_a_child_selected_rename_the_child_alone() {
-    let vfs = tree(CaseSensitivity::Sensitive, &[("/l/d/x", b"1")]);
+fn a6_18_a_folder_and_some_of_its_rows_rename_those_alone() {
+    let vfs = tree(
+        CaseSensitivity::Sensitive,
+        &[("/l/d/x", b"1"), ("/l/d/y", b"2")],
+    );
     let cmp = compared(&vfs, &FolderRules::default());
     let plan = rename_plan(&vfs, &cmp, &["d", "d/x"], RenameMask::Dos("z".to_owned())).unwrap();
     assert_eq!(steps(&plan), ["x > z"]);
+}
+
+#[test]
+fn a6_18_a_folder_with_all_its_rows_goes_after_them() {
+    let vfs = tree(CaseSensitivity::Sensitive, &[("/l/d/x", b"1")]);
+    let cmp = compared(&vfs, &FolderRules::default());
+    let plan = rename_plan(&vfs, &cmp, &["d", "d/x"], RenameMask::Dos("?z".to_owned())).unwrap();
+    assert_eq!(steps(&plan), ["x > xz", "d > dz"]);
+    let report = run(&vfs, plan);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert_eq!(read(&vfs, "/l/dz/xz").unwrap(), b"1");
 }
 
 #[test]

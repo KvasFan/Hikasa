@@ -33,6 +33,7 @@ topics!(
     "quick",
     "text-compare",
     "folder-compare",
+    "folder-op",
     "format",
     "settings",
     "session",

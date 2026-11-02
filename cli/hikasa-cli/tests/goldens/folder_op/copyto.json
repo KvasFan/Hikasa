@@ -1,0 +1,74 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "copy_to",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "side": null,
+        "path": "<TMP>/out",
+        "source": null,
+        "target": "<TMP>/out",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "side": null,
+        "path": "sub",
+        "source": "<TMP>/l/sub",
+        "target": "<TMP>/out/sub",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": null,
+        "path": "sub/inner.txt",
+        "source": "<TMP>/l/sub/inner.txt",
+        "target": "<TMP>/out/sub/inner.txt",
+        "size": 6,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "backups": [],
+    "summary": {
+      "planned": 3,
+      "done": 3,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 6
+    },
+    "commands": null
+  },
+  "warnings": [],
+  "error": null
+}

@@ -497,6 +497,23 @@ fn row_of(read: &TreeRead<'_>, path: &str, windows: bool) -> Result<NodeId, ApiE
     read.node_at(&rel).ok_or_else(unknown)
 }
 
+/// A file and a folder of one name are two rows (D-20): `row`, or its sibling of that name which has `sides`.
+fn row_on(read: &TreeRead<'_>, row: NodeId, sides: SideSet) -> NodeId {
+    let has = |id: NodeId| {
+        read.node(id).is_some_and(|view| {
+            sides.sides().any(|side| view.side(side).is_some())
+        })
+    };
+    if has(row) {
+        return row;
+    }
+    let path = read.path(row);
+    let parent = read.node(row).and_then(|view| view.parent).unwrap_or(NodeId::ROOT);
+    read.children(parent)
+        .find(|&child| has(child) && read.path(child) == path)
+        .unwrap_or(row)
+}
+
 impl Service {
     /// What a selection in words holds on `read`, with what it takes in.
     fn select_of(
@@ -534,7 +551,7 @@ impl Service {
         for (path, sides) in &req.paths {
             let row = row_of(read, path, windows)?;
             let sides = if sides.is_empty() { verb } else { *sides };
-            selection.insert(row, sides);
+            selection.insert(row_on(read, row, sides), sides);
         }
         let hidden = req
             .include_hidden

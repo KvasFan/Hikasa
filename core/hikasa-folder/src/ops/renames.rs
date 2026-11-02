@@ -107,8 +107,14 @@ impl Builder<'_, '_> {
                 self.ctl.check()?;
                 self.rename_row(side, *id, &namer, &mut folders);
             }
-            for (parent, folder) in folders {
-                self.rename_folder(side, parent, folder);
+            // What lies deepest goes first: a folder renamed before its rows would take their paths with it.
+            let mut ordered: Vec<(usize, NodeId, Folder)> = folders
+                .into_iter()
+                .map(|(parent, folder)| (self.read.ancestors(parent).len(), parent, folder))
+                .collect();
+            ordered.sort_by_key(|(depth, parent, _)| (std::cmp::Reverse(*depth), *parent));
+            for (_, _, folder) in ordered {
+                self.rename_folder(side, folder);
             }
         }
         Ok(())
@@ -264,7 +270,7 @@ impl Builder<'_, '_> {
     }
 
     /// The collision table of §1.6.13, for one folder.
-    fn rename_folder(&mut self, side: Side, _parent: NodeId, mut folder: Folder) {
+    fn rename_folder(&mut self, side: Side, mut folder: Folder) {
         let already = |to: &Spec| report(&VfsError::AlreadyExists { spec: to.canonical() });
         // Two items reach one name: the first in plan order goes on.
         let mut seen = BTreeSet::new();

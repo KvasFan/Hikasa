@@ -36,6 +36,9 @@
     "hikasa.workspace_write.v1",
     "hikasa.settings_export.v1",
     "hikasa.settings_import.v1",
-    "hikasa.vfs_op.v1"
+    "hikasa.vfs_op.v1",
+    "hikasa.folder_op.v1",
+    "hikasa.folder_sync.v1",
+    "hikasa.folder_contents.v1"
   ]
 }

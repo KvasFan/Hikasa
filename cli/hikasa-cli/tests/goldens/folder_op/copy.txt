@@ -1,0 +1,5 @@
+R mkdir <TMP>/r/sub
+R copy <TMP>/l/sub/inner.txt -> <TMP>/r/sub/inner.txt
+R replace <TMP>/l/changed.txt -> <TMP>/r/changed.txt
+R copy <TMP>/l/only.txt -> <TMP>/r/only.txt
+copied 4 of 4 items (0 skipped, 0 failed), 20 bytes

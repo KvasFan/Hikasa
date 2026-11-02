@@ -19,11 +19,13 @@
 //! | `--display`/`--folders`/`--suppress-filters` defaults (folders) | [`resolve_folder_display`] |
 //! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
 //! | `--path` | [`parse_select_path`] |
+//! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
 
 use std::ops::RangeInclusive;
 
 use hikasa_core::{ContentMethod, Side};
-use hikasa_folder::select::SideSet;
+use hikasa_folder::ops::{ConfirmMode, PathStructure};
+use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
@@ -197,6 +199,38 @@ pub fn parse_sides(word: &str) -> Result<SideSet, ApiError> {
     parse_side(word)
         .map(SideSet::of)
         .map_err(|_| ApiError::InvalidArgument(format!("unknown side {word:?} (valid: left, right, both)")))
+}
+
+/// Parses `--structure relative|base|none`.
+pub fn parse_structure(word: &str) -> Result<PathStructure, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "relative" => Ok(PathStructure::Relative),
+        "base" => Ok(PathStructure::Base),
+        "none" => Ok(PathStructure::None),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown structure {word:?} (valid: relative, base, none)"
+        ))),
+    }
+}
+
+/// Parses `--confirm prompt|yes-to-all|no-to-all`.
+pub fn parse_confirm_mode(word: &str) -> Result<ConfirmMode, ApiError> {
+    ConfirmMode::parse(word).ok_or_else(|| {
+        ApiError::InvalidArgument(format!(
+            "unknown confirmation {word:?} (valid: prompt, yes-to-all, no-to-all)"
+        ))
+    })
+}
+
+/// Parses `--what items|type`.
+pub fn parse_exclude_what(word: &str) -> Result<ExcludeWhat, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "items" => Ok(ExcludeWhat::Items),
+        "type" => Ok(ExcludeWhat::Type),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} (valid: items, type)"
+        ))),
+    }
 }
 
 /// Parses `--path <REL>`: a row by its path, with `left:` or `right:` for one side, else the verb's side: `(path, sides)`,

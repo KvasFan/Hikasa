@@ -567,6 +567,37 @@ fn selected_below(read: &TreeRead<'_>, sel: &Selection) -> BTreeMap<NodeId, Side
     below
 }
 
+/// The sides on which a row's whole shown contents are selected, by id: a folder selected with all of that is the folder,
+/// not a choice among its rows. "Some of its children" is the choice docs/04 §8 speaks of.
+fn fully_selected(read: &TreeRead<'_>, sel: &Selection, include: &Include) -> Vec<SideSet> {
+    let store = read.store();
+    let mut full = vec![SideSet::all(); read.len() as usize];
+    for id in store.post_order() {
+        let node_id = NodeId(id);
+        let mut sides = SideSet::all();
+        for child in read.children(node_id) {
+            let Some(view) = read.node(child) else {
+                continue;
+            };
+            let shown = store
+                .node(child)
+                .is_some_and(|node| is_visible(store, node, &include.display));
+            let below = full.get(child.0 as usize).copied().unwrap_or_default();
+            for side in present_sides(Some(&view)).sides() {
+                let bit = SideSet::of(side);
+                let hidden = !shown || view.side(side).is_some_and(|entry| entry.filtered);
+                if !hidden && !(sel.get(child).contains(bit) && below.contains(bit)) {
+                    sides.remove(bit);
+                }
+            }
+        }
+        if let Some(slot) = full.get_mut(id as usize) {
+            *slot = sides;
+        }
+    }
+    full
+}
+
 /// True when a row itself leaves something out on `side`: it failed or is unknown (D-19).
 fn row_failed(read: &TreeRead<'_>, id: NodeId, view: &NodeView<'_>, side: Side) -> bool {
     if view.flags.contains(NodeFlags::error(side)) {
@@ -613,12 +644,23 @@ fn whole_sides(
 
 /// **Visible contents (D-176):** what a selection means to an operation, the one definition. A folder selected on a side
 /// contributes the rows `include.display` shows, without items hidden by file filters; with `include.hidden` everything. A
-/// folder and any row below it selected on one side: only the rows below count there. A row selected by itself counts,
+/// folder and some of the rows below it selected on one side: only those rows count there; with all that is shown below
+/// it, the folder counts, as it would alone. A row selected by itself counts,
 /// whatever hides it: what its operation does with a filtered row is the plan's (`skip filtered`). The list is in
 /// pre-order and has no root. O(rows reached + depth × selected).
 pub fn resolve(read: &TreeRead<'_>, sel: &Selection, include: &Include) -> Vec<Resolved> {
     let store = read.store();
-    let below = selected_below(read, sel);
+    let mut below = selected_below(read, sel);
+    // A selected folder with something selected below it: only a choice among its rows narrows it.
+    if sel.iter().any(|(node, sides)| below.get(&node).is_some_and(|set| set.intersects(sides))) {
+        let full = fully_selected(read, sel, include);
+        for (node, sides) in sel.iter() {
+            let whole = full.get(node.0 as usize).copied().unwrap_or_default() & sides;
+            if let Some(set) = below.get_mut(&node) {
+                set.remove(whole);
+            }
+        }
+    }
     let mut out: Vec<Resolved> = Vec::new();
     // Per folder on the walk: the sides on which something below it is left out.
     let mut left_out: BTreeMap<NodeId, SideSet> = BTreeMap::new();

@@ -197,7 +197,8 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-009 | P0 | `[file_operations] confirm_copy`, `confirm_move`, `confirm_read_only`, `confirm_system`, `confirm_overwrite_newer`, `confirm_replace_during_move`, `confirm_delete`, `confirm_merge` | bool | true |
 | OPT-009 | P0 | `[file_operations] confirm_content_compare`, `require_side_selection_in_delete` | bool | false |
 | OPT-009 | P0 | `[file_operations] sync_confirmations` | enum `prompt`, `yes_to_all`, `no_to_all` | `prompt` |
-| OPT-009 | P0 | `[file_operations] include_hidden_by_default` | bool | true |
+| OPT-009 | P0 | `[file_operations] include_hidden_by_default` | bool (operations honour the filters unless a dialog or `--include-hidden` says otherwise, D-176) | false |
+| OPT-009 | P0 | `[file_operations] preserve_created` | bool (FC-070: copies keep the creation date too) | false |
 | OPT-010 | P0 | archive type masks | `archives.toml` (below) | |
 | OPT-011 | P0 | toolbars, shortcuts, menus | `commands.toml` (below) | |
 | OPT-012 | P0 | Open With applications | `openwith.toml` (below) | |

@@ -1,0 +1,2 @@
+R move <TMP>/l/only.txt -> <TMP>/r/only.txt
+moved 1 of 1 items (0 skipped, 0 failed), 5 bytes

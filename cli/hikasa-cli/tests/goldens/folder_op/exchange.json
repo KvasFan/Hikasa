@@ -1,0 +1,42 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "exchange",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [
+      {
+        "action": "exchange",
+        "kind": "file",
+        "side": null,
+        "path": "changed.txt",
+        "source": "<TMP>/l/changed.txt",
+        "target": "<TMP>/r/changed.txt",
+        "size": 9,
+        "replaces": true,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "backups": [],
+    "summary": {
+      "planned": 1,
+      "done": 1,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 13
+    },
+    "commands": null
+  },
+  "warnings": [],
+  "error": null
+}

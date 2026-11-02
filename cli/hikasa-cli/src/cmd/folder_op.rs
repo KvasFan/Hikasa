@@ -6,7 +6,7 @@ use std::io::{self, IsTerminal, Write};
 
 use hikasa_core::{ExitCode, JobKind, Warning};
 use hikasa_folder::ops::{
-    ConfirmMode, FolderOp, OpPlan, PathStructure, ReadOnlySides, Recycle, RenameMask, TouchFrom,
+    ConfirmMode, FolderOp, OpPlan, ReadOnlySides, Recycle, RenameMask, TouchFrom,
 };
 use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::NullObserver;
@@ -17,9 +17,9 @@ use hikasa_session::api::sessions::ExcludeMasksDto;
 use hikasa_session::api::{
     ApiOp, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest, FolderOpRequest,
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, PreparedFolderCompare, SelectRequest,
-    SessionRunRequest, SessionWriteDto, human, parse_content_method, parse_link_policy,
-    parse_overwrite, parse_select_path, parse_side, parse_sides, parse_time,
-    resolve_folder_display,
+    SessionRunRequest, SessionWriteDto, human, parse_confirm_mode, parse_content_method,
+    parse_exclude_what, parse_link_policy, parse_overwrite, parse_select_path, parse_side,
+    parse_sides, parse_structure, parse_time, resolve_folder_display,
 };
 use hikasa_session::launcher::OpenCommandDto;
 use hikasa_session::sessions::SessionRef;
@@ -248,16 +248,12 @@ fn overrides(flags: &FolderCopyFlags) -> Result<OpOverrides, ApiError> {
 /// `--side`, `--target`, `--structure`, `--overwrite`.
 fn copy_to_op(flags: &FolderCopyToFlags, moving: bool) -> Result<OpRequest, ApiError> {
     let sides = parse_sides(&flags.side)?;
-    let structure = match flags.structure.as_deref() {
-        None | Some("relative") => PathStructure::Relative,
-        Some("base") => PathStructure::Base,
-        Some("none") => PathStructure::None,
-        Some(word) => {
-            return Err(ApiError::InvalidArgument(format!(
-                "unknown structure {word:?} (valid: relative, base, none)"
-            )));
-        }
-    };
+    let structure = flags
+        .structure
+        .as_deref()
+        .map(parse_structure)
+        .transpose()?
+        .unwrap_or_default();
     let overwrite = match &flags.overwrite {
         Some(word) => parse_overwrite(word)?,
         None => OverwritePolicy::Fail,
@@ -381,14 +377,12 @@ fn mode_of(confirm: &FolderConfirmArgs) -> Result<ConfirmMode, ApiError> {
     if confirm.yes {
         return Ok(ConfirmMode::YesToAll);
     }
-    match confirm.confirm.as_deref() {
-        None | Some("prompt") => Ok(ConfirmMode::Prompt),
-        Some("yes-to-all") => Ok(ConfirmMode::YesToAll),
-        Some("no-to-all") => Ok(ConfirmMode::NoToAll),
-        Some(word) => Err(ApiError::InvalidArgument(format!(
-            "unknown confirmation {word:?} (valid: prompt, yes-to-all, no-to-all)"
-        ))),
-    }
+    Ok(confirm
+        .confirm
+        .as_deref()
+        .map(parse_confirm_mode)
+        .transpose()?
+        .unwrap_or_default())
 }
 
 /// The answers of a plan: a mode needs no person; `Prompt` asks on a terminal, and without one nothing is touched.
@@ -544,14 +538,7 @@ fn exclude(
     dry_run: bool,
     force: bool,
 ) -> Result<u8, Failure> {
-    let what = match what {
-        None | Some("items") => ExcludeWhat::Items,
-        Some("type") => ExcludeWhat::Type,
-        Some(word) => {
-            let e = format!("unknown word {word:?} (valid: items, type)");
-            return Err((ApiError::InvalidArgument(e), Vec::new()));
-        }
-    };
+    let what = bare(what.map(parse_exclude_what).transpose())?.unwrap_or(ExcludeWhat::Items);
     let session = bare(session_of(common, dry_run))?;
     let select = bare(select_request(&common.select, common.select.include_hidden))?;
     let (prepared, warnings) = compared(ctx, common)?;
