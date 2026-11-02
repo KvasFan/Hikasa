@@ -1086,3 +1086,61 @@ fn a_double_click_opens_an_archive_row() {
     s.settle();
     s.find("member.txt");
 }
+
+/// A6.34 (M2 W6d): a row is deleted by its dialog, with the pointer and the keyboard only: a click selects it, Del opens
+/// the Delete dialog, a click on its check box turns the recycle bin off (checked before OK: no test calls the real
+/// bin), OK, then Yes in the confirmation; the file and its row are gone.
+#[test]
+fn a6_34_a_row_is_deleted_by_its_dialog() {
+    use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
+    let world = World::new();
+    world.write("l/keep.txt", "k\n");
+    world.write("r/keep.txt", "k\n");
+    let gone = world.write("r/gone.txt", "bye\n");
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.click("gone.txt");
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    assert!(model.selected().is_some(), "the click selects the row");
+    s.input(vec![Event::Key {
+        key: egui::Key::Delete,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    s.settle();
+    assert_eq!(s.dialogs(), 1, "Del opens the Delete dialog");
+    s.click("Use recycle bin if possible");
+    let root = s.root();
+    let bin = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<DeleteDialog>())
+        .map(|d| d.use_bin());
+    assert_eq!(bin, Some(false), "the check box turned the bin off");
+    s.click("OK");
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let counts = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<PlanConfirmDialog>())
+        .map(|d| d.counts().to_vec());
+    assert_eq!(counts, Some(vec!["remove: 1 items".to_owned()]));
+    s.click("Yes");
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(s.dialogs(), 0);
+    assert!(!gone.exists(), "the file is deleted");
+    let drawn = s.drawn();
+    assert!(
+        !drawn.iter().any(|d| d.text == "gone.txt"),
+        "its row is gone"
+    );
+}
