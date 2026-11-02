@@ -5184,7 +5184,11 @@ numbered per part.
     writes of `exclude` and `ignored`; `SessionWriteDto` gains `masks`, `ignored`.
 25. **`parse_side`, `parse_sides`, `parse_structure`, `parse_confirm_mode`, `parse_exclude_what`, `parse_select_path`, `Reply::parse`,
     `ConfirmMode::parse`** hold the words in core, for check 7.
-26. **Architecture.** `check_confined_crates` also keeps `execute_with` and `plan_op` to `api/folder_ops.rs`, `ops::execute` to
+26. **Figures.** Probe of `folder_op_execute` on 10,000 files of 4 KiB in 100 folders through `plan_op` on a loaded machine, release,
+    median of three: **1.45 ×** a plain copy (391 ms against 270 ms), which is the path of W6a note 27: `folder_op_execute` adds
+    `execute_with` and one walk of `expanded`. `plan_op` of those 10,100 items takes 12–14 ms, so about 1.3 µs an item. The
+    official G7 stays W6c's.
+27. **Architecture.** `check_confined_crates` also keeps `execute_with` and `plan_op` to `api/folder_ops.rs`, `ops::execute` to
     `vfs_ops.rs`, in `hikasa-session`; `op_dialogs.rs` joins check 7 with W6d, which adds the file.
 
 ### 1.7–1.14 W7–W14

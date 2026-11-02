@@ -19,7 +19,7 @@ use hikasa_folder::{
 use hikasa_vfs::ops::{
     self, Action, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy,
 };
-use hikasa_vfs::{EntryKind, Fault, MemoryVfs, Vfs, VfsOp};
+use hikasa_vfs::{EntryKind, Fault, FollowLinks, MemoryVfs, Vfs, VfsOp};
 use proptest::prelude::*;
 
 /// A choice of rows: each bit of `mask` picks a row of the tree, in pre-order, with one side or both.
@@ -132,8 +132,7 @@ fn state_of(cmp: &FolderComparison, rel: &str) -> Option<CompareState> {
 }
 
 fn has(vfs: &MemoryVfs, path: &str) -> bool {
-    vfs.stat(&common::mspec(path), hikasa_vfs::FollowLinks::No)
-        .is_ok()
+    vfs.stat(&common::mspec(path), FollowLinks::No).is_ok()
 }
 
 proptest! {
@@ -331,7 +330,11 @@ proptest! {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.kind == EntryKind::File)
+            .filter(|(_, item)| {
+                // A link replaced is a link at its backup, and reads as something else from there.
+                vfs.stat(&item.target, FollowLinks::No)
+                    .is_ok_and(|entry| entry.kind == EntryKind::File)
+            })
             .filter_map(|(index, item)| {
                 let backup = item.backup.as_ref()?.canonical();
                 let before = vfs.read_back(&item.target.canonical())?.to_vec();
@@ -350,7 +353,8 @@ proptest! {
         }
         for (index, backup, before) in &kept {
             if report.results[*index].status == ItemStatus::Done {
-                prop_assert_eq!(vfs.read_back(backup).as_deref(), Some(before.as_slice()));
+                let found = vfs.read_back(backup).map(|bytes| bytes.to_vec());
+                prop_assert_eq!(found.as_ref(), Some(before));
             }
         }
     }
