@@ -1,0 +1,37 @@
+{
+  "schema": "hikasa.folder_contents.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "compare",
+    "method": "binary",
+    "cancelled": false,
+    "items": [
+      {
+        "path": "changed.txt",
+        "side": null,
+        "result": "binary_different",
+        "crc32": null,
+        "error": null
+      },
+      {
+        "path": "same.txt",
+        "side": null,
+        "result": "binary_same",
+        "crc32": null,
+        "error": null
+      }
+    ],
+    "counts": {
+      "binary_same": 1,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 1,
+      "error": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

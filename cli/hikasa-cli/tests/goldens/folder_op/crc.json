@@ -1,0 +1,72 @@
+{
+  "schema": "hikasa.folder_contents.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "crc",
+    "method": null,
+    "cancelled": false,
+    "items": [
+      {
+        "path": "sub/inner.txt",
+        "side": "left",
+        "result": null,
+        "crc32": "d0024d8c",
+        "error": null
+      },
+      {
+        "path": "changed.txt",
+        "side": "left",
+        "result": null,
+        "crc32": "350e26ee",
+        "error": null
+      },
+      {
+        "path": "changed.txt",
+        "side": "right",
+        "result": null,
+        "crc32": "e2884db0",
+        "error": null
+      },
+      {
+        "path": "only.txt",
+        "side": "left",
+        "result": null,
+        "crc32": "595c8e54",
+        "error": null
+      },
+      {
+        "path": "ronly.txt",
+        "side": "right",
+        "result": null,
+        "crc32": "28b9189b",
+        "error": null
+      },
+      {
+        "path": "same.txt",
+        "side": "left",
+        "result": null,
+        "crc32": "439ad3eb",
+        "error": null
+      },
+      {
+        "path": "same.txt",
+        "side": "right",
+        "result": null,
+        "crc32": "439ad3eb",
+        "error": null
+      }
+    ],
+    "counts": {
+      "binary_same": 0,
+      "rules_same": 0,
+      "unimportant_only": 0,
+      "important_differences": 0,
+      "binary_different": 0,
+      "error": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

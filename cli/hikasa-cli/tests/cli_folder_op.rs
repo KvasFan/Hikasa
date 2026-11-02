@@ -159,6 +159,76 @@ fn a6_25_mkdir() {
     golden("mkdir", &["mkdir", "--side", "both", "--name", "new"]);
 }
 
+/// [`golden`] for a verb whose words name the sandbox (a `--target`) or need a file there first.
+fn golden_in(name: &str, prepare: &dyn Fn(&Sandbox), args: &dyn Fn(&Sandbox) -> Vec<String>) {
+    let s = sandbox();
+    prepare(&s);
+    let words = args(&s);
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let out = op(&s, &words);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_golden(
+        &format!("folder_op/{name}.txt"),
+        &s.normalise(&stdout(&out)),
+    );
+    let s = sandbox();
+    prepare(&s);
+    let mut words = args(&s);
+    words.push("--json".to_owned());
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let out = op(&s, &words);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(json(&out)["ok"], true);
+    assert_golden(
+        &format!("folder_op/{name}.json"),
+        &s.normalise(&stdout(&out)),
+    );
+}
+
+fn words(list: &[&str]) -> Vec<String> {
+    list.iter().map(|word| (*word).to_owned()).collect()
+}
+
+/// A6.25: the goldens of the verbs that are not plans of items, and of `copyto`, `moveto` in text.
+#[test]
+fn a6_25_goldens_of_the_other_verbs() {
+    let nothing = |_: &Sandbox| {};
+    let target = |s: &Sandbox| s.join("out").to_str().unwrap().to_owned();
+    golden_in("copyto", &nothing, &|s| {
+        let mut list = words(&["copyto", "--side", "left", "--path", "sub/inner.txt"]);
+        list.extend(["--target".to_owned(), target(s), "--structure".into(), "base".into(), "--yes".into()]);
+        list
+    });
+    golden_in("moveto", &nothing, &|s| {
+        let mut list = words(&["moveto", "--side", "left", "--path", "sub"]);
+        list.extend(["--target".to_owned(), target(s), "--yes".into()]);
+        list
+    });
+    golden_in("compare", &nothing, &|_| {
+        words(&["compare", "--method", "binary", "--select", "all.files"])
+    });
+    golden_in("crc", &nothing, &|_| {
+        words(&["crc", "--side", "both", "--select", "all.files"])
+    });
+    golden_in("exclude", &nothing, &|_| {
+        words(&["exclude", "--what", "items", "--select", "left.orphan", "--dry-run"])
+    });
+    golden_in("ignored", &nothing, &|_| {
+        words(&["ignored", "--path", "only.txt", "--path", "sub", "--dry-run"])
+    });
+    let app = |s: &Sandbox| {
+        std::fs::create_dir_all(s.config()).unwrap();
+        std::fs::write(
+            s.config().join("openwith.toml"),
+            "schema_version = 1\n[[app]]\ndescription = \"view\"\ncommand = \"viewer --line %l %n\"\n",
+        )
+        .unwrap();
+    };
+    golden_in("open-with", &app, &|_| {
+        words(&["open-with", "--path", "changed.txt", "--side", "both", "--app", "view", "--dry-run"])
+    });
+}
+
 #[test]
 fn a6_25_copyto() {
     let s = sandbox();

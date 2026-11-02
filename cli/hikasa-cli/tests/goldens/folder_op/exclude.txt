@@ -1,0 +1,3 @@
+exclude file .\only.txt
+exclude file sub\inner.txt
+exclude folder .\sub\
