@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use hikasa_core::{Pair, Spec, Warning, WarningCode};
 use hikasa_folder::FolderRules;
 use hikasa_folder::ops::ReadOnlySides;
+use hikasa_folder::sync::{SyncOptions, SyncRules};
 use hikasa_text::ViewOptions;
 use serde::Serialize;
 use toml::{Table, Value};
@@ -238,6 +239,25 @@ pub enum SessionRunRequest {
     Text(TextCompareRequest),
     /// A Folder Compare session.
     Folder(FolderCompareRequest),
+    /// A Folder Sync session (§1.6.17): the comparison, and the sync's options from `[rules.sync]`.
+    Sync {
+        /// The comparison (its rules are the session's folder rules; `folder_sync_prepare` makes them a sync's).
+        request: FolderCompareRequest,
+        /// `[rules.sync]`.
+        options: SyncOptions,
+    },
+}
+
+impl SessionRunRequest {
+    /// The comparison of a folder session, Compare or Sync: what `folder op --session` compares.
+    pub fn folder_request(self) -> Option<FolderCompareRequest> {
+        match self {
+            SessionRunRequest::Folder(request) | SessionRunRequest::Sync { request, .. } => {
+                Some(request)
+            }
+            SessionRunRequest::Text(_) => None,
+        }
+    }
 }
 
 /// What the GUI opens for a session (`LoadSession`, `LoadWorkspace`).
@@ -750,6 +770,9 @@ impl Service {
                 ViewRequest::Folder { request, .. } => {
                     (SessionType::FolderCompare, &request.left, &request.right)
                 }
+                ViewRequest::Sync { request, .. } => {
+                    (SessionType::FolderSync, &request.left, &request.right)
+                }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
                 let (spec, warning) = self.stored_spec(&raw.to_string_lossy())?;
@@ -757,6 +780,10 @@ impl Service {
                 warnings.extend(warning);
             }
             let defaults = store.defaults(kind)?;
+            let synced = match request {
+                ViewRequest::Sync { options, .. } => Some(options.clone()),
+                _ => None,
+            };
             let (rules, text_rules) = match request {
                 ViewRequest::Text { request, .. } => {
                     let base = match &request.base_rules {
@@ -774,12 +801,18 @@ impl Service {
                     )?;
                     (SessionRules::Text(rules), None)
                 }
-                ViewRequest::Folder { request, .. } => {
+                ViewRequest::Folder { request, .. } | ViewRequest::Sync { request, .. } => {
                     let mut with_defaults = request.clone();
-                    if with_defaults.base_rules.is_none()
-                        && let SessionRules::Folder(rules) = &defaults.rules
-                    {
-                        with_defaults.base_rules = Some(rules.clone());
+                    if with_defaults.base_rules.is_none() {
+                        match &defaults.rules {
+                            SessionRules::Folder(rules) => {
+                                with_defaults.base_rules = Some(rules.clone());
+                            }
+                            SessionRules::Sync(rules) => {
+                                with_defaults.base_rules = Some(rules.folder.clone());
+                            }
+                            _ => {}
+                        }
                     }
                     if with_defaults.base_text_rules.is_none() {
                         with_defaults
@@ -790,7 +823,14 @@ impl Service {
                     let text = effective
                         .text_rules
                         .or(with_defaults.base_text_rules.clone());
-                    (SessionRules::Folder(effective.rules), text)
+                    let rules = match synced.clone() {
+                        Some(sync) => SessionRules::Sync(SyncRules {
+                            folder: effective.rules,
+                            sync,
+                        }),
+                        None => SessionRules::Folder(effective.rules),
+                    };
+                    (rules, text)
                 }
             };
             Ok((
@@ -936,10 +976,14 @@ impl Service {
             let store = self.session_store();
             refuse_locked(&store, reference, force)?;
             let mut session = self.session_load(reference)?.value;
-            let SessionRules::Folder(rules) = &mut session.rules else {
-                return Err(ApiError::InvalidArgument(format!(
-                    "`{reference}` is no folder session"
-                )));
+            let rules = match &mut session.rules {
+                SessionRules::Folder(rules) => rules,
+                SessionRules::Sync(rules) => &mut rules.folder,
+                _ => {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "`{reference}` is no folder session"
+                    )));
+                }
             };
             edit(rules);
             rules.validate().map_err(ApiError::from_folder)?;
@@ -1388,9 +1432,19 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
                 ..FolderCompareRequest::default()
             }))
         }
+        (SessionType::FolderSync, SessionRules::Sync(rules)) => Ok(SessionRunRequest::Sync {
+            request: FolderCompareRequest {
+                left: need(&session.specs.left, "left")?,
+                right: need(&session.specs.right, "right")?,
+                base_rules: Some(rules.folder.clone()),
+                base_text_rules: session.text_rules.clone(),
+                ..FolderCompareRequest::default()
+            },
+            options: rules.sync.clone(),
+        }),
         (kind, _) => Err(ApiError::Unsupported(format!(
-            "`session run` runs folder-compare and text-compare sessions; {kind} sessions are not supported in \
-             this version"
+            "`session run` runs folder-compare, folder-sync and text-compare sessions; {kind} sessions are not \
+             supported in this version"
         ))),
     }
 }
@@ -1552,6 +1606,12 @@ fn set_keys(
     };
     if let SessionRules::Text(rules) = &edited.rules {
         check(rules)?;
+    }
+    if let SessionRules::Sync(rules) = &edited.rules {
+        rules
+            .sync
+            .validate()
+            .map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
     }
     if let Some(rules) = &edited.text_rules {
         check(rules)?;

@@ -13,7 +13,7 @@ use hikasa_core::Warning;
 use hikasa_vfs::ops::ItemStatus;
 
 use crate::api::folder_ops::{
-    FolderOpOutcome, FolderSyncOutcome, item_line, item_word, summary_text,
+    FolderOpOutcome, FolderSyncOutcome, item_line, item_word, summary_text, sync_counts_text,
 };
 use crate::settings::Options;
 
@@ -285,7 +285,9 @@ pub fn op_log_entries(
     entries
 }
 
-/// The entries of a sync: those of its operation (D-188).
+/// The entries of a sync (D-188): those of its operation, the summary followed by one more `Summary` with the counts of its
+/// rows (the text of the human output's `#` line), and a `Warning` per row the comparison could not tell is already one of
+/// its warnings (`sync_incomplete`).
 pub fn sync_log_entries(
     outcome: &FolderSyncOutcome,
     time: &jiff::Zoned,
@@ -293,7 +295,23 @@ pub fn sync_log_entries(
     elapsed: Option<Duration>,
     filter: &LogFilter,
 ) -> Vec<LogEntry> {
-    op_log_entries(&outcome.op, time, source, elapsed, filter)
+    let mut entries = op_log_entries(&outcome.op, time, source, elapsed, filter);
+    if filter.keeps(LogKind::Summary) {
+        let at = entries
+            .iter()
+            .position(|entry| entry.kind == LogKind::Summary)
+            .map_or(0, |index| index + 1);
+        entries.insert(
+            at,
+            LogEntry {
+                time: time.clone(),
+                kind: LogKind::Summary,
+                source: source.to_owned(),
+                text: sync_counts_text(&outcome.counts),
+            },
+        );
+    }
+    entries
 }
 
 #[cfg(test)]

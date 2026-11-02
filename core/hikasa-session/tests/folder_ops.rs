@@ -712,8 +712,20 @@ fn a6_24_golden_lines_and_the_summary_of_one_function() {
         human.last().unwrap(),
         &summary_text(OpVerb::Copy, false, &done.report.summary, None)
     );
+    let counts = hikasa_folder::sync::SyncCounts {
+        copy_right: 1,
+        bytes_right: 3,
+        ..hikasa_folder::sync::SyncCounts::default()
+    };
     let sync = hikasa_session::log::sync_log_entries(
-        &hikasa_session::api::FolderSyncOutcome { op: done },
+        &hikasa_session::api::FolderSyncOutcome {
+            op: done,
+            rows: Vec::new(),
+            counts,
+            preset: hikasa_folder::sync::SyncPreset::UpdateRight,
+            matrix: hikasa_folder::sync::SyncMatrix::default(),
+            orphans: hikasa_folder::sync::OrphanReading::Added,
+        },
         &time(),
         "tab",
         None,
@@ -722,6 +734,19 @@ fn a6_24_golden_lines_and_the_summary_of_one_function() {
     assert_eq!(
         sync[0].text,
         "copied 1 of 1 items (0 skipped, 0 failed), 3 bytes"
+    );
+    // A sync's counts follow its summary: the text of the human output's `#` line (T11).
+    assert_eq!(sync[1].kind, LogKind::Summary);
+    assert_eq!(
+        sync[1].text,
+        "1 copies right, 0 copies left, 0 deletes left, 0 deletes right, 0 conflicts, 0 unresolved"
+    );
+    assert_eq!(
+        format!("# {}", sync[1].text),
+        format!(
+            "# {}",
+            hikasa_session::api::folder_ops::sync_counts_text(&counts)
+        )
     );
 }
 

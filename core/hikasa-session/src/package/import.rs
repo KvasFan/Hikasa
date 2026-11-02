@@ -365,6 +365,10 @@ fn check_session(doc: &SessionDoc, limits: &RegexLimits) -> Result<Session, ApiE
             let bad = |e: String| ApiError::InvalidData(format!("{at}: {e}"));
             match rules {
                 SessionRules::Folder(r) => r.validate().map_err(|e| bad(e.to_string()))?,
+                SessionRules::Sync(r) => {
+                    r.folder.validate().map_err(|e| bad(e.to_string()))?;
+                    r.sync.validate().map_err(|e| bad(e.to_string()))?;
+                }
                 SessionRules::Text(r) => r.validate(limits).map_err(|e| bad(e.to_string()))?,
                 SessionRules::Opaque(_) => {}
             }

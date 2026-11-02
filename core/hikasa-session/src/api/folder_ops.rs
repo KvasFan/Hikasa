@@ -19,6 +19,10 @@ use hikasa_folder::select::{
     ExcludeWhat, Include, SelectMask, SelectScope, Selection, SideSet, exclude_masks, resolve,
     select,
 };
+use hikasa_folder::sync::{
+    LeaveReason, OrphanReading, Situation, SyncAction, SyncCounts, SyncMatrix, SyncOptions,
+    SyncPlan, SyncPreset, SyncRequest, SyncRow, plan_sync,
+};
 use hikasa_folder::{
     DisplayOptions, FolderDisplayFilter, FolderEnv, FolderError, FolderMode, FolderModel, NodeId,
     RefreshReport, ScanObserver, TreeRead, compare_contents, compute_crcs, refresh_into,
@@ -36,6 +40,7 @@ use serde::Serialize;
 use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
 use crate::launcher::{OpenCommand, OpenCommandDto};
+use crate::settings::options::SyncConfirmations;
 use crate::settings::{
     ExpandContext, ExpandItem, InstanceMode, LoadMode, OpenWithApp, Options, SettingsStore,
     WorkingFolder, expand_command,
@@ -231,11 +236,179 @@ impl FolderOpOutcome {
     }
 }
 
-/// What a sync ran. W6c adds its rows and counts; the log model of W6b reads the operation.
+/// One sync (§1.6.16): the options, *Just selection*, `sync visible`, and what a `folder op` takes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FolderSyncRequest {
+    /// The preset, matrix, orphans, overrides and FS-005's options.
+    pub options: SyncOptions,
+    /// `--just-selection`: only these rows (`None`: the whole tree; a selection is otherwise ignored, SCR-002).
+    pub select: Option<SelectRequest>,
+    /// `--visible`: only the rows this display shows.
+    pub visible: Option<DisplayOptions>,
+    /// `--include-hidden`; `None`: `[file_operations] include_hidden_by_default`.
+    pub include_hidden: Option<bool>,
+    /// *Ignore unimportant differences*.
+    pub iu: bool,
+    /// The read-only sides: their rows are left, row by row (D-184).
+    pub read_only: ReadOnlySides,
+    /// `--allow-empty-source` (`--yes` does not imply it).
+    pub allow_empty_source: bool,
+    /// Backups, metadata, links.
+    pub overrides: OpOverrides,
+}
+
+/// What a sync ran, or would run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderSyncOutcome {
-    /// The operation.
+    /// The operation: its items, report and warnings (the sync's own first).
     pub op: FolderOpOutcome,
+    /// The rows, in tree order, a folder after its children.
+    pub rows: Vec<SyncRow>,
+    /// Their counts.
+    pub counts: SyncCounts,
+    /// The preset (additive: for the report).
+    pub preset: SyncPreset,
+    /// The matrix in effect (additive).
+    pub matrix: SyncMatrix,
+    /// How orphans were read (additive).
+    pub orphans: OrphanReading,
+}
+
+impl FolderSyncOutcome {
+    /// Every item done or skipped, nothing cancelled, and every row compared (a `compare_error` row is exit 100, also in
+    /// a dry run).
+    pub fn ok(&self) -> bool {
+        self.op.ok() && self.counts.unresolved == 0
+    }
+
+    /// 0, or 100 (§1.6.17).
+    pub fn exit_code(&self) -> ExitCode {
+        if self.ok() {
+            ExitCode::Success
+        } else {
+            ExitCode::UnknownError
+        }
+    }
+
+    /// `hikasa.folder_sync.v1` (`result`), with the paths of `read`, the comparison the plan was made from: rows with an
+    /// action and rows left for a reason other than `same`; with `all_rows`, every row, folders and `same` ones too.
+    pub fn dto(&self, read: &TreeRead<'_>, all_rows: bool) -> FolderSyncDto {
+        let op = self.op.dto();
+        let rows = self
+            .rows
+            .iter()
+            .filter(|row| {
+                all_rows
+                    || row.action != SyncAction::Leave
+                    || !matches!(row.reason, None | Some(LeaveReason::Same))
+            })
+            .map(|row| SyncRowDto {
+                path: read.path(row.node).as_str().to_owned(),
+                kind: read
+                    .node(row.node)
+                    .map_or("file", |view| view.kind.as_str()),
+                situation: row.situation,
+                action: row.action,
+                overridden: row.overridden,
+                conflict: row.conflict,
+                reason: row.reason,
+            })
+            .collect();
+        FolderSyncDto {
+            preset: self.preset.as_str(),
+            matrix: self.matrix,
+            orphans: self.orphans.as_str(),
+            dry_run: op.dry_run,
+            cancelled: op.cancelled,
+            left: op.left,
+            right: op.right,
+            rows,
+            items: op.items,
+            counts: self.counts,
+            backups: op.backups,
+            summary: op.summary,
+            warnings: op.warnings,
+        }
+    }
+}
+
+/// One row of `hikasa.folder_sync.v1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SyncRowDto {
+    /// Its path below the bases.
+    pub path: String,
+    /// `file`, `folder`, `symlink`, `other`.
+    pub kind: &'static str,
+    /// Its situation.
+    pub situation: Option<Situation>,
+    /// What the sync does.
+    pub action: SyncAction,
+    /// An override chose the action.
+    pub overridden: bool,
+    /// A conflict (FS-004).
+    pub conflict: bool,
+    /// Why it is left.
+    pub reason: Option<LeaveReason>,
+}
+
+/// `hikasa.folder_sync.v1` (`result`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FolderSyncDto {
+    /// The preset.
+    pub preset: &'static str,
+    /// The matrix in effect.
+    pub matrix: SyncMatrix,
+    /// `added`, `deleted`.
+    pub orphans: &'static str,
+    /// Nothing was written.
+    pub dry_run: bool,
+    /// The sync was cancelled.
+    pub cancelled: bool,
+    /// The left base.
+    pub left: String,
+    /// The right base.
+    pub right: String,
+    /// The rows.
+    pub rows: Vec<SyncRowDto>,
+    /// The items, as `hikasa.folder_op.v1`.
+    pub items: Vec<FolderOpItemDto>,
+    /// The counts of the rows.
+    pub counts: SyncCounts,
+    /// The backups of archives.
+    pub backups: Vec<BackupDto>,
+    /// The counts of the items.
+    pub summary: Summary,
+    /// The envelope's warnings; not in `result`.
+    #[serde(skip)]
+    pub warnings: Vec<Warning>,
+}
+
+/// The counts of a sync in words: `<n> copies right, <n> copies left, <n> deletes left, <n> deletes right, <n> conflicts,
+/// <n> unresolved`. One text for the human output and the log (T11).
+pub fn sync_counts_text(counts: &SyncCounts) -> String {
+    format!(
+        "{} copies right, {} copies left, {} deletes left, {} deletes right, {} conflicts, {} unresolved",
+        counts.copy_right,
+        counts.copy_left,
+        counts.delete_left,
+        counts.delete_right,
+        counts.conflicts,
+        counts.unresolved
+    )
+}
+
+/// The marker of a sync row in the human output: `L>R`, `R>L`, `delL`, `delR`, `----`, `<!>` for a conflict.
+pub fn sync_marker(row: &SyncRowDto) -> &'static str {
+    if row.conflict {
+        return "<!>";
+    }
+    match row.action {
+        SyncAction::CopyRight => "L>R",
+        SyncAction::CopyLeft => "R>L",
+        SyncAction::DeleteLeft => "delL",
+        SyncAction::DeleteRight => "delR",
+        SyncAction::Leave => "----",
+    }
 }
 
 /// One item of `hikasa.folder_op.v1`.
@@ -748,15 +921,7 @@ impl Service {
                     "nothing selected: pass --select all, or a mask".to_owned(),
                 ));
             }
-            let preserve = req.overrides.preserve.unwrap_or(Preserve {
-                created: options.file_operations.preserve_created,
-                ..Preserve::default()
-            });
-            let settings = OpSettings {
-                preserve,
-                links: req.overrides.links.unwrap_or_default(),
-                backup: self.backup_policy(&options, req.overrides.backup)?,
-            };
+            let settings = self.op_settings(&options, &req.overrides)?;
             let scope = OpScope {
                 selection,
                 include,
@@ -769,10 +934,21 @@ impl Service {
         })
     }
 
-    /// The question machine of `plan`: `mode`, else `Prompt` (`sync_confirmations` in a sync plan, W6c).
+    /// The question machine of `plan`: `mode`, else `Prompt`; a sync plan without a mode takes `[file_operations]
+    /// sync_confirmations` (OPT-009), which a dialog offers and a script does not (D-77: scripts pass a mode).
     pub fn folder_confirmation(&self, plan: &OpPlan, mode: Option<ConfirmMode>) -> Confirmation {
-        let policy = confirm_policy(&self.fresh_options());
-        Confirmation::new(plan, &policy, mode.unwrap_or_default())
+        let options = self.fresh_options();
+        let policy = confirm_policy(&options);
+        let mode = mode.unwrap_or(if plan.verb == OpVerb::Sync {
+            match options.file_operations.sync_confirmations {
+                SyncConfirmations::Prompt => ConfirmMode::Prompt,
+                SyncConfirmations::YesToAll => ConfirmMode::YesToAll,
+                SyncConfirmations::NoToAll => ConfirmMode::NoToAll,
+            }
+        } else {
+            ConfirmMode::Prompt
+        });
+        Confirmation::new(plan, &policy, mode)
     }
 
     /// [`Service::folder_confirmation`] with the operation question asked whatever `confirm_delete` says: a script's safety
@@ -855,6 +1031,118 @@ impl Service {
                 refresh_nodes: refresh,
                 warnings,
             })
+        })
+    }
+
+    /// The settings of a plan: metadata from `[file_operations]`, backups from `[backups]`, unless the command says.
+    fn op_settings(
+        &self,
+        options: &Options,
+        overrides: &OpOverrides,
+    ) -> Result<OpSettings, ApiError> {
+        let preserve = overrides.preserve.unwrap_or(Preserve {
+            created: options.file_operations.preserve_created,
+            ..Preserve::default()
+        });
+        Ok(OpSettings {
+            preserve,
+            links: overrides.links.unwrap_or_default(),
+            backup: self.backup_policy(options, overrides.backup)?,
+        })
+    }
+
+    /// Plans a sync from the model (§1.6.14): nothing is written (T12). The read-only sides are left row by row (D-184), an
+    /// empty source and an unfinished comparison refuse a sync that deletes, and *Just selection* with nothing selected is
+    /// refused as `folder op` refuses it.
+    pub fn folder_sync_plan(
+        &self,
+        model: &Arc<FolderModel>,
+        req: &FolderSyncRequest,
+        job: &JobControl,
+    ) -> Result<SyncPlan, ApiError> {
+        run_guarded(|| {
+            req.options.validate().map_err(ApiError::from_folder)?;
+            let options = self.fresh_options();
+            let read = model.read();
+            let selection = match &req.select {
+                Some(select) => {
+                    let (selection, _) = self.select_of(&read, select, SideSet::all())?;
+                    if selection.is_empty() {
+                        return Err(ApiError::InvalidArgument(
+                            "nothing selected: pass --select all, or a mask".to_owned(),
+                        ));
+                    }
+                    Some(selection)
+                }
+                None => None,
+            };
+            let include_hidden = req
+                .include_hidden
+                .unwrap_or(options.file_operations.include_hidden_by_default);
+            let request = SyncRequest {
+                options: &req.options,
+                just_selection: selection.as_ref(),
+                visible: req.visible,
+                include_hidden,
+                iu: req.iu,
+                read_only: req.read_only,
+                allow_empty_source: req.allow_empty_source,
+                settings: self.op_settings(&options, &req.overrides)?,
+            };
+            let router = self.router();
+            plan_sync(&read, &*router, &request, &job.ctl()).map_err(ApiError::from_folder)
+        })
+    }
+
+    /// A sync as a dry run shows it: nothing is written.
+    pub fn folder_sync_dry_run(&self, plan: SyncPlan) -> FolderSyncOutcome {
+        let SyncPlan {
+            rows,
+            op,
+            counts,
+            warnings,
+            preset,
+            matrix,
+            orphans,
+            ..
+        } = plan;
+        let mut op = self.folder_op_dry_run(op);
+        op.warnings.splice(0..0, warnings);
+        FolderSyncOutcome {
+            op,
+            rows,
+            counts,
+            preset,
+            matrix,
+            orphans,
+        }
+    }
+
+    /// Executes a sync on the calling thread: one batch, so one rebuild and one backup per archive (D-182).
+    pub fn folder_sync_execute(
+        &self,
+        plan: SyncPlan,
+        job: &JobControl,
+    ) -> Result<FolderSyncOutcome, ApiError> {
+        let SyncPlan {
+            rows,
+            op,
+            counts,
+            warnings,
+            preset,
+            matrix,
+            orphans,
+            ..
+        } = plan;
+        let mut op = self.folder_op_execute(op, job)?;
+        op.warnings.splice(0..0, warnings);
+        Ok(FolderSyncOutcome {
+            op,
+            rows,
+            counts,
+            preset,
+            matrix,
+            orphans,
         })
     }
 

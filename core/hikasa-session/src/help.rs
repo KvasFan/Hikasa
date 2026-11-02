@@ -34,6 +34,7 @@ topics!(
     "text-compare",
     "folder-compare",
     "folder-op",
+    "folder-sync",
     "format",
     "settings",
     "session",

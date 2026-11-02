@@ -26,7 +26,8 @@ use super::endpoint::{Endpoint, InstanceLock, prepare_own_dir};
 use super::error::IpcError;
 use super::framing::{recv_typed, write_frame};
 use super::protocol::{
-    CloseReason, Envelope, IpcErrorCode, Request, Response, ServerInfo, ViewId, ViewResult,
+    CloseReason, Envelope, IpcErrorCode, Request, Response, ServerInfo, ViewId, ViewKind,
+    ViewResult,
 };
 use super::transport::{connect_stream, name_of};
 use crate::jobs::panic_message;
@@ -816,13 +817,9 @@ fn dispatch(
             IpcErrorCode::UnsupportedRequest,
             format!("`{}` is not supported in this version", request.type_name()),
         ),
-        Request::OpenView { kind, .. } if !kind.is_served_in_m1() => Response::error(
-            IpcErrorCode::UnsupportedView,
-            format!(
-                "view kind `{}` is not supported in this version",
-                kind.as_str()
-            ),
-        ),
+        Request::OpenView { kind, .. } if !kind.is_served_in_m1() => {
+            Response::error(IpcErrorCode::UnsupportedView, unserved_view(kind))
+        }
         request @ (Request::OpenView { wait: true, .. }
         | Request::LoadSession { wait: true, .. }) => {
             let shared = Arc::new(Gate {
@@ -871,6 +868,18 @@ fn call_handler(
         Err(payload) => Response::error(
             IpcErrorCode::Internal,
             format!("the request failed: {}", panic_message(payload.as_ref())),
+        ),
+    }
+}
+
+/// The message of an `OpenView` of a kind this window cannot show (D-190): the Folder Sync view is W9's, and the CLI's
+/// switch, request and checks are W6's.
+pub fn unserved_view(kind: ViewKind) -> String {
+    match kind {
+        ViewKind::FolderSync => "this window cannot show a Folder Sync view yet".to_owned(),
+        other => format!(
+            "view kind `{}` is not supported in this version",
+            other.as_str()
         ),
     }
 }

@@ -59,8 +59,8 @@ use parking_lot::{Mutex, RwLock};
 pub use error::ApiError;
 pub use folder_ops::{
     ContentsDto, ContentsKind, ContentsRequest, ExpandWords, FolderOpDto, FolderOpOutcome,
-    FolderOpRequest, FolderSyncOutcome, OpOverrides, OpRequest, OpenTarget, OpenWithRequest,
-    RefreshDto, SelectRequest,
+    FolderOpRequest, FolderSyncDto, FolderSyncOutcome, FolderSyncRequest, OpOverrides, OpRequest,
+    OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
 };
 pub use gui::{
     GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
@@ -93,6 +93,7 @@ pub use vocab::{
     parse_algorithm, parse_archive_handling, parse_confirm_mode, parse_content_method,
     parse_exclude_what, parse_folder_mode, parse_line_range, parse_mkdir_name, parse_select_path,
     parse_side, parse_sides, parse_structure, resolve_folder_display, resolve_text_display,
+    sync_options,
 };
 
 use crate::clipboard::{

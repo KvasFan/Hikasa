@@ -154,6 +154,8 @@ fn sample_options() -> OpenOptions {
         context_lines: Some(2),
         folders: Some("structure".into()),
         suppress_filters: true,
+        no_backups: false,
+        sync: None,
     }
 }
 

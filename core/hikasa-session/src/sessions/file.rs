@@ -10,6 +10,7 @@
 use std::fmt;
 
 use hikasa_folder::FolderRules;
+use hikasa_folder::sync::SyncRules;
 use hikasa_text::TextRules;
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
@@ -120,13 +121,13 @@ impl SessionType {
     pub fn builtin_rules(self) -> SessionRules {
         match self {
             SessionType::FolderCompare => SessionRules::Folder(FolderRules::default()),
+            SessionType::FolderSync => SessionRules::Sync(SyncRules::default()),
             SessionType::TextCompare | SessionType::TextEdit => {
                 SessionRules::Text(TextRules::default())
             }
-            SessionType::FolderSync
-            | SessionType::TableCompare
-            | SessionType::HexCompare
-            | SessionType::PictureCompare => SessionRules::Opaque(Table::new()),
+            SessionType::TableCompare | SessionType::HexCompare | SessionType::PictureCompare => {
+                SessionRules::Opaque(Table::new())
+            }
         }
     }
 }
@@ -144,7 +145,10 @@ pub enum SessionRules {
     Folder(FolderRules),
     /// Text Compare and Text Edit.
     Text(TextRules),
-    /// Folder Sync, Table, Hex and Picture until their engine waves: kept as it is.
+    /// Folder Sync (§1.6.15, D-183): the folder rules and `[rules.sync]`. A file written before W6 reads as it is: its
+    /// table had this shape, or was empty.
+    Sync(SyncRules),
+    /// Table, Hex and Picture until their engine waves: kept as it is.
     Opaque(Table),
 }
 
@@ -153,6 +157,7 @@ impl SessionRules {
     pub fn to_value(&self) -> Value {
         let value = match self {
             SessionRules::Folder(rules) => Value::try_from(rules),
+            SessionRules::Sync(rules) => Value::try_from(rules),
             SessionRules::Text(rules) => Value::try_from(rules),
             SessionRules::Opaque(table) => Ok(Value::Table(table.clone())),
         };
@@ -165,6 +170,10 @@ impl SessionRules {
             SessionRules::Folder(_) => value
                 .try_into()
                 .map(SessionRules::Folder)
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Sync(_) => value
+                .try_into()
+                .map(SessionRules::Sync)
                 .map_err(|e: toml::de::Error| one_line(e.message())),
             SessionRules::Text(_) => value
                 .try_into()
@@ -377,6 +386,7 @@ impl Session {
         };
         let shape = match &self.rules {
             SessionRules::Folder(_) => RulesShape::FOLDER,
+            SessionRules::Sync(_) => RulesShape::SYNC,
             SessionRules::Text(_) => RulesShape::TEXT,
             SessionRules::Opaque(_) => RulesShape::OPAQUE,
         };
@@ -493,6 +503,16 @@ impl RulesShape {
             &["filters", "other", "date"],
         ],
         maps: &[],
+        opaque: false,
+    };
+    /// `hikasa_folder::sync::SyncRules`: the folder rules, and `[rules.sync]`, whose overrides are a map.
+    const SYNC: RulesShape = RulesShape {
+        optional: &[
+            &["criteria", "timestamps", "offset"],
+            &["filters", "other", "size"],
+            &["filters", "other", "date"],
+        ],
+        maps: &[&["sync", "overrides"]],
         opaque: false,
     };
     /// `hikasa_text::TextRules`.

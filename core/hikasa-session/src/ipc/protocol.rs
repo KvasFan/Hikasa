@@ -317,6 +317,39 @@ pub struct OpenOptions {
     pub folders: Option<String>,
     /// `--suppress-filters` (folder views, FC-057). Added in the wave-4 review.
     pub suppress_filters: bool,
+    /// `--nobackups` (CLI-003): the view's operations keep no backups, whatever `[backups]` says. Additive (M2 W6, D-46):
+    /// left out of the wire while it is off, so an older peer reads the same message.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_backups: bool,
+    /// The sync of a `folder_sync` view (`folder sync --gui`, `--sync`), in words the GUI parses with the core parsers.
+    /// Additive (M2 W6, D-190); left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<SyncWords>,
+}
+
+/// The words of a sync in an `OpenView` (D-190): what `folder sync` takes, parsed by `api::vocab::sync_options` on both
+/// sides of the IPC (T11). Every field defaults when absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncWords {
+    /// `update-left`, `update-right`, `update-both`, `mirror-left`, `mirror-right`; `None`: the session's, else Update Right.
+    pub preset: Option<String>,
+    /// `--custom <matrix>`.
+    pub custom: Option<String>,
+    /// `--orphans added|deleted`.
+    pub orphans: Option<String>,
+    /// `--create-empty`.
+    pub create_empty: bool,
+    /// `--within-archives`.
+    pub within_archives: bool,
+    /// `--recycle`.
+    pub recycle: bool,
+    /// `--recycle-fallback`.
+    pub recycle_fallback: bool,
+    /// `--override <PATH>=<ACTION>`.
+    pub overrides: Vec<String>,
+    /// `--allow-empty-source`.
+    pub allow_empty_source: bool,
 }
 
 /// Read-only switches.

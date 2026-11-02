@@ -20,6 +20,7 @@
 //! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
 //! | `--path` | [`parse_select_path`] |
 //! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
+//! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
 
@@ -32,6 +33,8 @@ pub use hikasa_report::folder_mode_word;
 use hikasa_text::AlgorithmChoice;
 
 use super::ApiError;
+use crate::ipc::SyncWords;
+use hikasa_folder::sync::{OrphanReading, SyncAction, SyncMatrix, SyncOptions, SyncPreset};
 
 /// The default folder display filter of `folder compare` and of a folder view (§1.9.2 amendment): show the
 /// differences (the §4.3.3 examples).
@@ -257,6 +260,71 @@ pub fn parse_mkdir_name(name: &str, windows: bool) -> Result<(String, bool), Api
     let separator = |c: char| c == '/' || (windows && c == '\\');
     let bare = name.trim_end_matches(separator);
     Ok((bare.to_owned(), bare.len() != name.len()))
+}
+
+/// The sync of `words` over `base` (a session's `[rules.sync]`, or the defaults), one parser for `folder sync`, `session run`
+/// and an `OpenView` of `folder_sync` (T11, D-190). A preset word replaces the base's preset; `--custom` writes on the base's
+/// matrix (a preset name may come first as its base) and makes the preset `custom`; flags only turn options on; an
+/// override `<PATH>=<ACTION>` replaces the base's for that path (`\` separates on Windows too). The result is validated: a
+/// bad word, a repeated situation, an invalid cell and an override of the base are `invalid_input`.
+pub fn sync_options(
+    words: &SyncWords,
+    base: &SyncOptions,
+    windows: bool,
+) -> Result<SyncOptions, ApiError> {
+    let folder = |e: hikasa_folder::FolderError| ApiError::InvalidArgument(e.to_string());
+    let mut options = base.clone();
+    if let Some(word) = &words.preset {
+        options.preset = SyncPreset::parse(word)
+            .filter(|preset| *preset != SyncPreset::Custom)
+            .ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "unknown sync preset {word:?} (valid: update-left, update-right, update-both, mirror-left, \
+                     mirror-right)"
+                ))
+            })?;
+    }
+    if let Some(text) = &words.custom {
+        options.matrix = SyncMatrix::parse(text, base.matrix).map_err(folder)?;
+        options.preset = SyncPreset::Custom;
+    }
+    if let Some(word) = &words.orphans {
+        options.orphans = OrphanReading::parse(word).ok_or_else(|| {
+            ApiError::InvalidArgument(format!(
+                "unknown orphan reading {word:?} (valid: added, deleted)"
+            ))
+        })?;
+    }
+    options.create_empty |= words.create_empty;
+    options.within_archives |= words.within_archives;
+    options.recycle |= words.recycle;
+    options.recycle_fallback |= words.recycle_fallback;
+    if options.recycle_fallback && !options.recycle {
+        return Err(ApiError::InvalidArgument(
+            "--recycle-fallback needs --recycle".to_owned(),
+        ));
+    }
+    for word in &words.overrides {
+        let Some((path, action)) = word.rsplit_once('=') else {
+            return Err(ApiError::InvalidArgument(format!(
+                "--override {word:?}: expected <PATH>=<ACTION>"
+            )));
+        };
+        let action = SyncAction::parse(action).ok_or_else(|| {
+            ApiError::InvalidArgument(format!(
+                "--override {word:?}: unknown action {action:?} (valid: leave, copy-right, copy-left, delete-left, \
+                 delete-right)"
+            ))
+        })?;
+        let path = if windows {
+            path.replace('\\', "/")
+        } else {
+            path.to_owned()
+        };
+        options.overrides.insert(path, action);
+    }
+    options.validate().map_err(folder)?;
+    Ok(options)
 }
 
 #[cfg(test)]

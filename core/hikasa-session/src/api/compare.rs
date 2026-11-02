@@ -8,6 +8,7 @@ use hikasa_core::{
     CancelToken, Cancelled, ContentComparator, ContentMethod, ContentOutcome, ContentResult,
     ContentSource, ExitCode, Pair, ReadError, Side, Spec, Warning, WarningCode,
 };
+use hikasa_folder::sync::{SyncOptions, sync_folder_rules};
 use hikasa_folder::{
     ArchiveHandling, ContentEngines, Criteria, FolderEnv, FolderModel, FolderRules, ScanObserver,
     compare_into,
@@ -320,16 +321,44 @@ impl Service {
         run_guarded(|| self.folder_prepare_inner(req, &job.cancel))
     }
 
+    /// The comparison of a sync (§1.6.14): [`Service::folder_prepare_in`] with the rules `sync_folder_rules` makes of the
+    /// request's (every folder scanned, archives by *Sync within archives*, flatten refused). The sync's words are checked
+    /// here, before anything is scanned.
+    pub fn folder_sync_prepare(
+        &self,
+        req: &FolderCompareRequest,
+        sync: &SyncOptions,
+        job: &JobControl,
+    ) -> Result<PreparedFolderCompare, ApiError> {
+        run_guarded(|| {
+            sync.validate().map_err(ApiError::from_folder)?;
+            self.folder_prepare_with(req, &job.cancel, Some(sync))
+        })
+    }
+
     fn folder_prepare_inner(
         &self,
         req: &FolderCompareRequest,
         cancel: &CancelToken,
     ) -> Result<PreparedFolderCompare, ApiError> {
+        self.folder_prepare_with(req, cancel, None)
+    }
+
+    fn folder_prepare_with(
+        &self,
+        req: &FolderCompareRequest,
+        cancel: &CancelToken,
+        sync: Option<&SyncOptions>,
+    ) -> Result<PreparedFolderCompare, ApiError> {
         // A base is a folder: `a.zip` is the archive's root, whatever the handling mode (FC-001).
         let left = self.parse_spec_in(&req.left, SpecUse::Folder, cancel)?;
         let right = self.parse_spec_in(&req.right, SpecUse::Folder, cancel)?;
         let mut warnings = Vec::new();
-        let effective = self.folder_rules(req, &mut warnings)?;
+        let mut effective = self.folder_rules(req, &mut warnings)?;
+        if let Some(sync) = sync {
+            effective.rules =
+                sync_folder_rules(&effective.rules, sync).map_err(ApiError::from_folder)?;
+        }
         let model = FolderModel::new(left.clone(), right.clone(), effective.rules.clone())
             .map_err(ApiError::from_folder)?;
         Ok(PreparedFolderCompare {

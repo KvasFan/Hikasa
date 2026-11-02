@@ -61,6 +61,15 @@ fn sample(kind: SessionType) -> Session {
             rules.handling.flatten = true;
             rules.criteria.size = false;
         }
+        SessionRules::Sync(rules) => {
+            rules.folder.criteria.size = false;
+            rules.sync.preset = hikasa_folder::sync::SyncPreset::MirrorRight;
+            rules.sync.create_empty = true;
+            rules
+                .sync
+                .overrides
+                .insert("a/b.txt".into(), hikasa_folder::sync::SyncAction::Leave);
+        }
         SessionRules::Text(rules) => {
             rules.alignment.skew_tolerance = 7;
             s.specs.format = "c-cpp".into();
@@ -218,6 +227,10 @@ fn arb_session(kind: SessionType) -> impl Strategy<Value = Session> {
                 SessionRules::Folder(rules) => {
                     rules.handling.flatten = flag;
                     rules.criteria.timestamps.tolerance_secs = n;
+                }
+                SessionRules::Sync(rules) => {
+                    rules.folder.criteria.timestamps.tolerance_secs = n;
+                    rules.sync.within_archives = flag;
                 }
                 SessionRules::Text(rules) => {
                     rules.importance.compare_line_endings = flag;

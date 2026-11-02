@@ -442,9 +442,10 @@ impl SyncOptions {
         SyncMatrix::of(self.preset).unwrap_or(self.matrix)
     }
 
-    /// `invalid_input` for an invalid cell of the matrix in effect, and for an override whose path names no row below the
-    /// bases (empty, `.`, `..`, the base itself).
+    /// `invalid_input` for an invalid cell of the matrix in effect or of the stored one (which `custom` would put in effect),
+    /// and for an override whose path names no row below the bases (empty, `.`, `..`, the base itself).
     pub fn validate(&self) -> Result<(), FolderError> {
+        self.matrix.validate()?;
         self.effective_matrix().validate()?;
         for path in self.overrides.keys() {
             override_path(path)?;
