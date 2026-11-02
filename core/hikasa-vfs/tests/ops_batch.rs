@@ -1571,7 +1571,7 @@ fn linked_base() -> MemoryVfs {
     file(&vfs, "/base/a", b"a", 1);
     file(&vfs, "/out/x", b"precious", 1);
     file(&vfs, "/s", b"new", 1);
-    vfs.insert_symlink(&host("/base/sub"), "/out", MemMeta::default())
+    vfs.insert_symlink(&host("/base/sub"), "../out", MemMeta::default())
         .unwrap();
     vfs
 }
@@ -1624,7 +1624,7 @@ fn fence_of(base: &str, writes: bool) -> ExecOptions {
 fn a6_5_what_a_link_does_not_stop() {
     // The base is a link, and one stands above a base.
     let vfs = linked_base();
-    vfs.insert_symlink(&host("/via"), "/base", MemMeta::default())
+    vfs.insert_symlink(&host("/via"), "base", MemMeta::default())
         .unwrap();
     let remove = item(Action::Remove, EntryKind::File, None, "/via/a", 0);
     let report = run_with(&vfs, batch(vec![remove]), &fence_of("/via", true));
@@ -1723,7 +1723,7 @@ impl ProgressSink for SwapFolder<'_> {
         if !self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
             self.vfs.rename(&mspec("/base/sub"), &mspec("/out/sub"), false).unwrap();
             self.vfs
-                .insert_symlink(&host("/base/sub"), "/out/sub", MemMeta::default())
+                .insert_symlink(&host("/base/sub"), "../out/sub", MemMeta::default())
                 .unwrap();
         }
     }
@@ -1768,7 +1768,7 @@ fn a6_5_a_link_of_the_plan_ends_what_was_known() {
     file(&vfs, "/s", b"new", 1);
     file(&vfs, "/base/sub/x", b"x", 1);
     vfs.insert_dir(&host("/out"), MemMeta::default()).unwrap();
-    vfs.insert_symlink(&host("/l"), "/out", MemMeta::default())
+    vfs.insert_symlink(&host("/l"), "out", MemMeta::default())
         .unwrap();
     let mut link = item(Action::Link, EntryKind::Symlink, Some("/l"), "/base/sub", 0);
     link.replaces = false;
