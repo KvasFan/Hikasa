@@ -412,6 +412,60 @@ fn a6_16_a_read_only_yes_clears_r_before_replace_and_remove() {
     assert!(read(&vfs, "/r/y").is_none());
 }
 
+/// On disk: a read-only target, `R` on Windows, a mode without write bits elsewhere.
+#[test]
+fn a6_16_a_read_only_target_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (l, r) = (root.join("l"), root.join("r"));
+    std::fs::create_dir(&l).unwrap();
+    std::fs::create_dir(&r).unwrap();
+    std::fs::write(l.join("x"), b"new").unwrap();
+    std::fs::write(r.join("x"), b"old").unwrap();
+    std::fs::write(r.join("y"), b"old").unwrap();
+    for name in ["x", "y"] {
+        let path = r.join(name);
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+    let spec = |path: &std::path::Path| {
+        Spec::Local(hikasa_core::LocalPath::new(path.to_path_buf()).unwrap())
+    };
+    let vfs = hikasa_vfs::LocalVfs::new(hikasa_vfs::LocalOptions::default());
+    let contents = engines(1 << 20);
+    let compare = || {
+        common::with_env(&vfs, &contents, &CancelToken::new(), |env| {
+            let model = FolderModel::new(spec(&l), spec(&r), FolderRules::default()).unwrap();
+            compare_into(&model, env).unwrap()
+        })
+    };
+    let cmp = compare();
+    let out = plan(&vfs, &cmp, &[("x", L)], &COPY);
+    assert_eq!(out.meta[0].conflicts, Conflicts::READ_ONLY);
+    // No keeps it.
+    let declined = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::NoToAll)
+        .finish(out.clone())
+        .unwrap();
+    run(&vfs, declined);
+    assert_eq!(std::fs::read(r.join("x")).unwrap(), b"old");
+    // Yes replaces it, and removes the other.
+    let done = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::YesToAll)
+        .finish(out)
+        .unwrap();
+    let report = run(&vfs, done);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert_eq!(std::fs::read(r.join("x")).unwrap(), b"new");
+    let cmp = compare();
+    let out = plan(&vfs, &cmp, &[("y", R)], &delete(R, no_bin()));
+    let done = Confirmation::new(&out, &ConfirmPolicy::ALL, ConfirmMode::YesToAll)
+        .finish(out)
+        .unwrap();
+    let report = run(&vfs, done);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert!(!r.join("y").exists());
+}
+
 #[test]
 fn a6_16_a_declined_folder_cuts_what_lies_below_it() {
     let vfs = memory();

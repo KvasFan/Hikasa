@@ -13,8 +13,12 @@ use hikasa_folder::ops::{
     Recycle, TouchFrom, plan_op,
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
-use hikasa_folder::{CompareState, FolderComparison, FolderRules, NodeId, TreeRead, refresh_into};
-use hikasa_vfs::ops::{self, Action, ItemStatus, OpReport, OverwritePolicy};
+use hikasa_folder::{
+    CaseMode, CompareState, FolderComparison, FolderRules, NodeId, TreeRead, refresh_into,
+};
+use hikasa_vfs::ops::{
+    self, Action, BackupPolicy, BackupStyle, ItemStatus, OpReport, OverwritePolicy,
+};
 use hikasa_vfs::{EntryKind, Fault, MemoryVfs, Vfs, VfsOp};
 use proptest::prelude::*;
 
@@ -266,6 +270,88 @@ proptest! {
         }
         for (name, bytes) in &right {
             prop_assert_eq!(after_right.get(name), Some(bytes), "{} of the right side", name);
+        }
+    }
+}
+
+const STYLES: [BackupStyle; 7] = [
+    BackupStyle::NameTilde,
+    BackupStyle::StemTilde,
+    BackupStyle::NameBak,
+    BackupStyle::TildeName,
+    BackupStyle::StemBak,
+    BackupStyle::StemBakExt,
+    BackupStyle::Folder,
+];
+
+proptest! {
+    #![proptest_config(config_with("tests/proptest-regressions/props_ops_backups.txt", 128))]
+
+    /// §1.6.5: the planner numbers around every path of the plan, so execution never refuses a clash, and what an item
+    /// replaced is at its backup.
+    #[test]
+    fn p_ops_backups_never_clash_with_the_plan(
+        nodes in gen_tree(),
+        picks in proptest::collection::vec(any::<u8>(), 1..16),
+        which in any::<u8>(),
+        style in 0usize..STYLES.len(),
+        case in any::<bool>(),
+    ) {
+        let case = if case {
+            CaseSensitivity::Sensitive
+        } else {
+            CaseSensitivity::Insensitive
+        };
+        let vfs = materialize_gen(&nodes, case, true);
+        let mut rules = FolderRules::default();
+        if case == CaseSensitivity::Insensitive {
+            rules.alignment.case = CaseMode::Insensitive;
+        }
+        let cmp = compared(&vfs, &rules);
+        let style = STYLES[style];
+        let folder = (style == BackupStyle::Folder).then(|| common::mspec("/l/kept"));
+        let settings = OpSettings {
+            backup: Some(BackupPolicy { style, folder }),
+            ..OpSettings::default()
+        };
+        let op = if which.is_multiple_of(2) {
+            FolderOp::Copy { to: Side::Right, overwrite: OverwritePolicy::Always }
+        } else {
+            FolderOp::Move { to: Side::Left, overwrite: OverwritePolicy::Always }
+        };
+        let view = cmp.read();
+        let Ok(planned) = plan_op(&view, &vfs, &scope(&view, &picks), &op, &settings, &Ctl::detached())
+        else {
+            return Ok(());
+        };
+        drop(view);
+        let planned = answered(planned, ConfirmMode::YesToAll);
+        let kept: Vec<(usize, String, Vec<u8>)> = planned
+            .plan
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.kind == EntryKind::File)
+            .filter_map(|(index, item)| {
+                let backup = item.backup.as_ref()?.canonical();
+                let before = vfs.read_back(&item.target.canonical())?.to_vec();
+                Some((index, backup, before))
+            })
+            .collect();
+        let report = run(&vfs, planned);
+        for (result, item) in report.results.iter().zip(&report.plan.items) {
+            if let Some(error) = &result.error {
+                prop_assert!(
+                    !error.message.contains("is a path of another item")
+                        && !error.message.contains("is the item it backs up"),
+                    "{}: {}", item.target, error.message
+                );
+            }
+        }
+        for (index, backup, before) in &kept {
+            if report.results[*index].status == ItemStatus::Done {
+                prop_assert_eq!(vfs.read_back(backup).as_deref(), Some(before.as_slice()));
+            }
         }
     }
 }
