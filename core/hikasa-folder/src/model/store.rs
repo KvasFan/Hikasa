@@ -1069,8 +1069,8 @@ impl Store {
         self.ignored.list()
     }
 
-    /// How marks are keyed.
-    fn marks_align(&self) -> AlignOptions {
+    /// How marks are keyed, and a sync's overrides (§1.6.14).
+    pub(crate) fn marks_align(&self) -> AlignOptions {
         self.align.unwrap_or(AlignOptions {
             case: CaseSensitivity::Sensitive,
             align_extensions: false,

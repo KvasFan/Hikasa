@@ -226,6 +226,9 @@ pub(super) struct Builder<'a, 'r> {
     pub(super) made: BTreeMap<String, u32>,
     /// `copyto`, `moveto`: the file targets taken, as compared: the first source of one path goes, the others stay.
     pub(super) taken: BTreeSet<String>,
+    /// A sync: the entries of rows this plan deletes, by row (bit 1 left, 2 right). Their names are free for what the plan
+    /// copies after its deletes (D-182: a file `x` replacing a folder `x`), so a copy expects no target there.
+    pub(super) freed: Vec<u8>,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -349,7 +352,19 @@ impl<'a, 'r> Builder<'a, 'r> {
             flat_folders: BTreeMap::new(),
             made: BTreeMap::new(),
             taken: BTreeSet::new(),
+            freed: Vec::new(),
         }
+    }
+
+    /// True when this plan deletes the entry of `id` on `side` before it copies (a sync).
+    fn is_freed(&self, id: NodeId, side: Side) -> bool {
+        let bit = match side {
+            Side::Right => 2,
+            Side::Left | Side::Center | Side::Output => 1,
+        };
+        self.freed
+            .get(id.0 as usize)
+            .is_some_and(|bits| bits & bit != 0)
     }
 
     // ---- what a row may do ---------------------------------------------------------------------------------------
@@ -736,6 +751,9 @@ impl<'a, 'r> Builder<'a, 'r> {
         let view = read.node(id)?;
         let name = view.side(tr.from)?.name;
         let row = self.lookup(parent, tr.to, name, target)?;
+        if self.is_freed(row, tr.to) {
+            return None;
+        }
         let other = read.node(row)?;
         let entry = other.side(tr.to)?;
         let spec = read.spec(row, tr.to)?;
@@ -2218,7 +2236,7 @@ impl<'a, 'r> Builder<'a, 'r> {
     // ---- the end -----------------------------------------------------------------------------------------------------
 
     /// The plan: backups by their final names, around every path of the plan (§1.6.5), the fence.
-    fn finish(mut self, verb: OpVerb, writes: bool, moves: bool) -> OpPlan {
+    pub(super) fn finish(mut self, verb: OpVerb, writes: bool, moves: bool) -> OpPlan {
         self.ask_for_archives();
         let mut exec = ExecOptions {
             fence: Some(Fence {

@@ -9,6 +9,7 @@ mod conflict;
 mod copyto;
 pub mod rename;
 mod renames;
+pub(crate) mod sync;
 mod unlisted;
 
 use std::collections::BTreeSet;

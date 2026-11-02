@@ -89,6 +89,7 @@ mod scan;
 pub mod select;
 pub mod state;
 mod stats;
+pub mod sync;
 mod time_cmp;
 
 pub use align::{AlignInput, AlignOptions, align_flat, align_names};
