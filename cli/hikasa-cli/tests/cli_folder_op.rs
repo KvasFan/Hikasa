@@ -1188,11 +1188,22 @@ fn a6_25_no_spelling_of_path_reaches_the_base() {
         }
     }
     assert_eq!(state(&s), before);
-    // A name of dots is a name, and a trailing separator still names its row.
-    s.file_at("l/.../x", "x", 1_000_000);
-    let out = op(&s, &["copy", "--to", "right", "--path", ".../", "--yes"]);
+    // A trailing separator still names its row, and off Windows a name of dots is a name.
+    let name = if cfg!(windows) { "sub" } else { "..." };
+    s.file_at(&format!("l/{name}/x"), "x", 1_000_000);
+    let out = op(
+        &s,
+        &[
+            "copy",
+            "--to",
+            "right",
+            "--path",
+            &format!("{name}/"),
+            "--yes",
+        ],
+    );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(s.join("r/.../x").exists());
+    assert!(s.join(&format!("r/{name}/x")).exists());
 }
 
 #[test]
