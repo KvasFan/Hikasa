@@ -10,11 +10,16 @@
 //!
 //! A plain file against a member: the rename on disk comes last and waits for the rebuild, as a move's removal does
 //! (D-148), so a failed rebuild leaves the plain file; what was staged for it is removed.
+//!
+//! **Read-only.** `clear_read_only` takes `R` off the sides on disk just before their renames, and every failure gives it
+//! back, on both sides. The side that waits for a rebuild clears it just before that rename, so a failed rebuild has
+//! nothing to give back. A hidden copy can hold `R`, from the side it copies: it is cleared before the copy is removed.
 
 use hikasa_core::Spec;
 
 use super::copy::{
-    apply_metadata_on, clear_read_only_of, copy_file_on, free_sibling, source_changed,
+    apply_metadata_on, clear_read_only_of, copy_file_on, free_sibling, restore_read_only,
+    source_changed,
 };
 use super::guard::Seen;
 use super::{Exec, Later, Outcome, PlanItem, lstat_target};
@@ -22,10 +27,16 @@ use crate::entry::{Entry, EntryKind};
 use crate::error::VfsError;
 use crate::vfs::{FollowLinks, Vfs};
 
-/// The name of the hidden siblings of an exchange.
-const SUFFIX: &str = ".hikasa-xchg";
+/// The name of the hidden copies of an exchange.
+const HIDDEN: &str = ".hikasa-xchg";
 /// What a failed last step says.
 const KEPT: &str = "changed during the move; the copy was kept";
+
+/// Removes a hidden copy. One that took `R` from its side loses it first: Windows would keep the file.
+pub(crate) fn drop_copy(vfs: &dyn Vfs, copy: &Spec) {
+    let _ = clear_read_only_of(vfs, copy);
+    let _ = vfs.remove(copy);
+}
 
 /// Makes `copy` of `from` (described by `entry`), on the other side of the exchange: a file with its metadata, a link as
 /// a link. On failure nothing of it stays.
@@ -49,7 +60,7 @@ fn stage(
         EntryKind::Dir | EntryKind::Other => Err(source_changed(from)),
     };
     if made.is_err() {
-        let _ = to_vfs.remove(copy);
+        drop_copy(to_vfs, copy);
     }
     made
 }
@@ -96,42 +107,59 @@ fn exchange(
     }
     .ok_or_else(|| source_changed(target))?;
     exec.ctl.check()?;
-    let t1 = free_sibling(dst, target, SUFFIX)?;
+    let t1 = free_sibling(dst, target, HIDDEN)?;
     let mut bytes = stage(exec, (src, source), &left, (dst, &t1))?;
     let drop_t1 = |e: VfsError| {
-        let _ = dst.remove(&t1);
+        drop_copy(dst, &t1);
         e
     };
     exec.ctl.check().map_err(VfsError::from).map_err(drop_t1)?;
-    let t2 = free_sibling(src, source, SUFFIX).map_err(drop_t1)?;
+    let t2 = free_sibling(src, source, HIDDEN).map_err(drop_t1)?;
     bytes += stage(exec, (dst, target), &right, (src, &t2)).map_err(drop_t1)?;
     let drop_both = |e: VfsError| {
-        let _ = src.remove(&t2);
+        drop_copy(src, &t2);
         drop_t1(e)
     };
     exec.ctl
         .check()
         .map_err(VfsError::from)
         .map_err(drop_both)?;
-    if item.clear_read_only {
-        clear_read_only_of(dst, target).map_err(drop_both)?;
-        clear_read_only_of(src, source).map_err(drop_both)?;
-    }
     let source_member = matches!(source, Spec::ArchiveMember { .. });
     let target_member = matches!(target, Spec::ArchiveMember { .. });
+    // A rename in an overlay meets no `R`, and a plain side against a member clears it with its rename, after the rebuild.
+    let clear = item.clear_read_only && !source_member && !target_member;
+    let cleared_target = clear
+        && clear_read_only_of(dst, target)
+            .map_err(drop_both)?;
+    let give_back = |vfs: &dyn Vfs, spec: &Spec, cleared: bool| {
+        if cleared {
+            restore_read_only(vfs, spec);
+        }
+    };
+    let cleared_source = clear
+        && clear_read_only_of(src, source).map_err(|e| {
+            give_back(dst, target, cleared_target);
+            drop_both(e)
+        })?;
+    let undo = |e: VfsError| {
+        give_back(dst, target, cleared_target);
+        give_back(src, source, cleared_source);
+        drop_both(e)
+    };
     if source_member && !target_member {
-        src.rename(&t2, source, true).map_err(drop_both)?;
+        src.rename(&t2, source, true).map_err(undo)?;
         exec.deferred.push((
             index,
             Later::Rename {
                 on_source: false,
                 from: t1,
                 to: target.clone(),
+                clear: item.clear_read_only,
             },
         ));
         return Ok(Outcome::Done(bytes));
     }
-    dst.rename(&t1, target, true).map_err(drop_both)?;
+    dst.rename(&t1, target, true).map_err(undo)?;
     if target_member && !source_member {
         exec.deferred.push((
             index,
@@ -139,23 +167,38 @@ fn exchange(
                 on_source: true,
                 from: t2,
                 to: source.clone(),
+                clear: item.clear_read_only,
             },
         ));
         return Ok(Outcome::Done(bytes));
     }
-    src.rename(&t2, source, true)
-        .map_err(|_| VfsError::InvalidTarget {
-            spec: t2.canonical(),
-            reason: KEPT,
-        })?;
+    src.rename(&t2, source, true).map_err(|_| {
+        give_back(src, source, cleared_source);
+        kept(&t2)
+    })?;
     Ok(Outcome::Done(bytes))
 }
 
+/// What a failed last step says: `copy` holds the other side's old content.
+fn kept(copy: &Spec) -> VfsError {
+    VfsError::InvalidTarget {
+        spec: copy.canonical(),
+        reason: KEPT,
+    }
+}
+
 /// The last rename of an exchange with an archive, after its rebuild went through. It fails like step 4.
-pub(crate) fn finish_rename(vfs: &dyn Vfs, from: &Spec, to: &Spec) -> Result<(), VfsError> {
-    vfs.rename(from, to, true)
-        .map_err(|_| VfsError::InvalidTarget {
-            spec: from.canonical(),
-            reason: KEPT,
-        })
+pub(crate) fn finish_rename(
+    vfs: &dyn Vfs,
+    from: &Spec,
+    to: &Spec,
+    clear: bool,
+) -> Result<(), VfsError> {
+    let cleared = clear && clear_read_only_of(vfs, to).map_err(|_| kept(from))?;
+    vfs.rename(from, to, true).map_err(|_| {
+        if cleared {
+            restore_read_only(vfs, to);
+        }
+        kept(from)
+    })
 }

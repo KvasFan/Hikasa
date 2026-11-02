@@ -16,8 +16,8 @@ use hikasa_vfs::ops::{
     OpKind, OpReport, Plan, PlanItem, PlanOptions, Preserve, SkipReason, within,
 };
 use hikasa_vfs::{
-    ArchiveFormat, ArchiveLimits, AtomicWrite, Attrs, Capabilities, Durability, Entry, EntryKind,
-    Fault, FileName, Finish, FollowLinks, ListOptions, Listing, LocalVfs, MemDump, MemMeta,
+    ArchiveFormat, ArchiveLimits, AtomicWrite, Attrs, Capabilities, DosAttrs, Durability, Entry,
+    EntryKind, Fault, FileName, Finish, FollowLinks, ListOptions, Listing, LocalVfs, MemDump, MemMeta,
     MemoryVfs, ReadSeek, SetTimes, UnixMeta, Vfs, VfsError, VfsOp, WriteOptions,
 };
 
@@ -1096,8 +1096,8 @@ fn a6_4_links_on_disk() {
 /// A fault at each of the four steps.
 #[test]
 fn a6_4_a_fault_at_each_step() {
-    let t1 = host("/r/.f.hikasa-xchg");
-    let t2 = host("/l/.f.hikasa-xchg");
+    let t1 = host("/r/.hikasa-xchg");
+    let t2 = host("/l/.hikasa-xchg");
     // Rows 1–3: both sides byte-identical, no hidden sibling.
     let faults = [
         Fault {
@@ -1155,7 +1155,7 @@ fn a6_4_a_fault_at_each_step() {
     );
     assert_eq!(
         error.spec.as_deref(),
-        Some(mspec("/l/.f.hikasa-xchg").canonical().as_str())
+        Some(mspec("/l/.hikasa-xchg").canonical().as_str())
     );
     assert_eq!(content(&vfs, "/r/f"), b"left side");
     assert_eq!(content(&vfs, "/l/f"), b"left side");
@@ -1164,13 +1164,38 @@ fn a6_4_a_fault_at_each_step() {
 }
 
 /// A free sibling is looked for: a leftover `T2` of an earlier run stays as it is.
+/// A name near the limit of a file system: the hidden sibling does not grow with it, and a swap works where a copy does.
+#[cfg(unix)]
+#[test]
+fn a6_4_a_name_near_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("l")).unwrap();
+    std::fs::create_dir_all(root.join("r")).unwrap();
+    let name = "n".repeat(250);
+    std::fs::write(root.join("l").join(&name), b"left").unwrap();
+    std::fs::write(root.join("r").join(&name), b"right").unwrap();
+    let vfs = LocalVfs::default();
+    let swap = PlanItem::planned(
+        Action::Exchange,
+        EntryKind::File,
+        Some(common::lspec(&root.join("l").join(&name))),
+        common::lspec(&root.join("r").join(&name)),
+        0,
+    );
+    let report = run(&vfs, batch(vec![swap]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(std::fs::read(root.join("l").join(&name)).unwrap(), b"right");
+    assert_eq!(std::fs::read(root.join("r").join(&name)).unwrap(), b"left");
+}
+
 #[test]
 fn a6_4_a_hidden_name_in_use_moves_on() {
     let vfs = pair();
-    file(&vfs, "/r/.f.hikasa-xchg", b"mine", 9);
+    file(&vfs, "/r/.hikasa-xchg", b"mine", 9);
     let report = run(&vfs, batch(vec![swap_item(&vfs, "/l/f", "/r/f")]));
     assert!(report.ok(), "{:?}", report.results);
-    assert_eq!(content(&vfs, "/r/.f.hikasa-xchg"), b"mine");
+    assert_eq!(content(&vfs, "/r/.hikasa-xchg"), b"mine");
     assert_eq!(content(&vfs, "/r/f"), b"left side");
 }
 
@@ -1725,4 +1750,485 @@ fn a6_3_read_only_and_created_on_disk() {
         let entry = vfs.stat(&pairs[0].1, FollowLinks::No).unwrap();
         assert_eq!(entry.ctime, Some(ft(1_000_000)));
     }
+}
+
+// ---- clear_read_only (§1.6.25 note 3) ---------------------------------------------------------------------------
+
+fn dos(vfs: &MemoryVfs, path: &str, content: &[u8], secs: i64) {
+    let meta = MemMeta {
+        mtime: Some(ft(secs)),
+        attrs: Some(Attrs::Dos {
+            attrs: DosAttrs::READONLY,
+        }),
+        ..MemMeta::default()
+    };
+    vfs.insert_file(&host(path), content, meta).unwrap();
+}
+
+fn read_only(vfs: &MemoryVfs, path: &str) -> bool {
+    dump_of(vfs, path)
+        .attrs
+        .dos()
+        .is_some_and(|attrs| attrs.contains(DosAttrs::READONLY))
+}
+
+fn fault(vfs: &MemoryVfs, path: &str, op: VfsOp) {
+    vfs.inject(Fault {
+        path: host(path),
+        op,
+        kind: ErrorKind::Io,
+    });
+}
+
+/// `op` on `path`, journal order.
+fn at(vfs: &MemoryVfs, op: VfsOp, path: &str) -> Option<usize> {
+    let path = mspec(path).canonical();
+    vfs.journal()
+        .iter()
+        .position(|(found, spec)| *found == op && *spec == path)
+}
+
+fn replacing(action: Action, source: Option<&str>, target: &str) -> PlanItem {
+    let mut item = item(action, EntryKind::File, source, target, 0);
+    item.replaces = true;
+    item.clear_read_only = true;
+    item
+}
+
+/// Nothing to do with a target that has no `R`, and nothing happens to one without the answer.
+#[test]
+fn a6_cr_only_on_the_answer_and_only_a_set_bit() {
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 5);
+    file(&vfs, "/plain", b"old", 1);
+    dos(&vfs, "/t", b"old", 1);
+    vfs.set_journal(true);
+    let options = BatchOptions {
+        preserve: Preserve::NONE,
+        ..BatchOptions::default()
+    };
+    let asked = replacing(Action::Copy, Some("/s"), "/plain");
+    let mut unasked = replacing(Action::Copy, Some("/s"), "/t");
+    unasked.clear_read_only = false;
+    let report = run(&vfs, batch_with(vec![asked, unasked], options));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(at(&vfs, VfsOp::SetAttrs, "/plain"), None);
+    assert_eq!(at(&vfs, VfsOp::SetAttrs, "/t"), None);
+}
+
+/// `copy`: `R` goes just before the commit, and comes back when the commit fails.
+#[test]
+fn a6_cr_a_copy_clears_just_before_the_commit() {
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 5);
+    dos(&vfs, "/t", b"old", 1);
+    vfs.set_journal(true);
+    let options = BatchOptions {
+        preserve: Preserve::NONE,
+        ..BatchOptions::default()
+    };
+    let item = replacing(Action::Copy, Some("/s"), "/t");
+    let report = run(&vfs, batch_with(vec![item], options));
+    assert!(report.ok(), "{:?}", report.results);
+    let (cleared, committed) = (
+        at(&vfs, VfsOp::SetAttrs, "/t").unwrap(),
+        at(&vfs, VfsOp::Commit, "/t").unwrap(),
+    );
+    assert!(cleared < committed, "{:?}", vfs.journal());
+    assert_eq!(content(&vfs, "/t"), b"new");
+
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 5);
+    dos(&vfs, "/t", b"old", 1);
+    let before = vfs.dump();
+    fault(&vfs, "/t", VfsOp::Commit);
+    let report = run(&vfs, batch(vec![replacing(Action::Copy, Some("/s"), "/t")]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+}
+
+/// A failed clear fails the item, before anything else.
+#[test]
+fn a6_cr_a_failed_clear_fails_the_item() {
+    for action in [Action::Copy, Action::Rename, Action::Remove] {
+        let vfs = memory();
+        file(&vfs, "/s", b"new", 5);
+        dos(&vfs, "/t", b"old", 1);
+        let before = vfs.dump();
+        fault(&vfs, "/t", VfsOp::SetAttrs);
+        let source = (action != Action::Remove).then_some("/s");
+        let report = run(&vfs, batch(vec![replacing(action, source, "/t")]));
+        assert_eq!(report.results[0].status, ItemStatus::Failed, "{action:?}");
+        assert_eq!(vfs.dump(), before, "{action:?}");
+    }
+}
+
+/// `backup` on another disk: the target is still there for the commit, so its `R` goes first (S2).
+#[test]
+fn a6_cr_a_backup_on_another_disk_clears_too() {
+    let setup = || {
+        let vfs = memory();
+        file(&vfs, "/s", b"new", 5);
+        dos(&vfs, "/t", b"old", 1);
+        vfs.insert_dir(&host("/far"), MemMeta::default()).unwrap();
+        vfs.set_device(&host("/far"), 2);
+        vfs
+    };
+    let item = || {
+        let mut item = replacing(Action::Copy, Some("/s"), "/t");
+        item.backup = Some(mspec("/far/t"));
+        item
+    };
+    let vfs = setup();
+    vfs.set_journal(true);
+    let report = run(&vfs, batch(vec![item()]));
+    assert!(report.ok(), "{:?}", report.results);
+    let (cleared, committed) = (
+        at(&vfs, VfsOp::SetAttrs, "/t").unwrap(),
+        at(&vfs, VfsOp::Commit, "/t").unwrap(),
+    );
+    assert!(cleared < committed, "{:?}", vfs.journal());
+    assert_eq!(content(&vfs, "/far/t"), b"old");
+
+    let vfs = setup();
+    fault(&vfs, "/t", VfsOp::Commit);
+    let report = run(&vfs, batch(vec![item()]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert!(read_only(&vfs, "/t"));
+    assert_eq!(content(&vfs, "/t"), b"old");
+}
+
+/// A backup renamed aside keeps its `R`: what it keeps is what was there.
+#[test]
+fn a6_cr_a_backup_keeps_what_it_keeps() {
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 5);
+    dos(&vfs, "/t", b"old", 1);
+    let mut item = replacing(Action::Copy, Some("/s"), "/t");
+    item.backup = Some(mspec("/t.bak"));
+    let report = run(&vfs, batch(vec![item]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert!(read_only(&vfs, "/t.bak"));
+}
+
+/// `rename`: cleared, and given back when the rename fails; with a backup, as a copy.
+#[test]
+fn a6_cr_a_rename_gives_it_back() {
+    for backup in [None, Some("/t.bak")] {
+        let vfs = memory();
+        file(&vfs, "/s", b"new", 5);
+        dos(&vfs, "/t", b"old", 1);
+        let before = vfs.dump();
+        fault(&vfs, "/s", VfsOp::Rename);
+        let mut item = replacing(Action::Rename, Some("/s"), "/t");
+        item.backup = backup.map(mspec);
+        let report = run(&vfs, batch(vec![item]));
+        assert_eq!(statuses(&report), [ItemStatus::Failed], "{backup:?}");
+        assert_eq!(vfs.dump(), before, "{backup:?}");
+    }
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 5);
+    dos(&vfs, "/t", b"old", 1);
+    let report = run(&vfs, batch(vec![replacing(Action::Rename, Some("/s"), "/t")]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/t"), b"new");
+}
+
+/// `link` and `create_dir`: `R` leaves with the hidden sibling, so every failure finds it where it was.
+#[test]
+fn a6_cr_replacing_with_a_link_or_a_folder() {
+    let setup = || {
+        let vfs = memory();
+        vfs.insert_symlink(&host("/l"), "x", MemMeta::default())
+            .unwrap();
+        dos(&vfs, "/t", b"old", 1);
+        vfs
+    };
+    let link = || {
+        let mut item = replacing(Action::Link, Some("/l"), "/t");
+        item.kind = EntryKind::Symlink;
+        item
+    };
+    // The rename aside fails, `create` fails, the backup fails.
+    let vfs = setup();
+    let before = vfs.dump();
+    fault(&vfs, "/t", VfsOp::Rename);
+    let report = run(&vfs, batch(vec![link()]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+
+    let vfs = setup();
+    let before = vfs.dump();
+    fault(&vfs, "/t", VfsOp::Symlink);
+    let report = run(&vfs, batch(vec![link()]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+
+    let vfs = setup();
+    vfs.insert_dir(&host("/t.bak"), MemMeta::default()).unwrap();
+    let before = vfs.dump();
+    let mut item = link();
+    item.backup = Some(mspec("/t.bak"));
+    let report = run(&vfs, batch(vec![item]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+
+    // It goes through: the old item is gone, no sibling stays; a backup keeps its `R`.
+    let vfs = setup();
+    vfs.set_journal(true);
+    let report = run(&vfs, batch(vec![link()]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert!(vfs.read_back(&host("/.hikasa-old")).is_none());
+    let cleared = at(&vfs, VfsOp::SetAttrs, "/.hikasa-old").unwrap();
+    let removed = at(&vfs, VfsOp::Remove, "/.hikasa-old").unwrap();
+    assert!(cleared < removed, "{:?}", vfs.journal());
+
+    let vfs = setup();
+    let mut item = link();
+    item.backup = Some(mspec("/t.bak"));
+    let report = run(&vfs, batch(vec![item]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert!(read_only(&vfs, "/t.bak"));
+
+    let vfs = setup();
+    let mut folder = replacing(Action::CreateDir, None, "/t");
+    folder.kind = EntryKind::Dir;
+    let report = run(&vfs, batch(vec![folder]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(dump_of(&vfs, "/t").kind, EntryKind::Dir);
+}
+
+/// A back-end without `RENAME`: no hidden sibling, so the item is cleared just before it goes, and comes back when it stays.
+#[test]
+fn a6_cr_without_rename() {
+    let setup = || {
+        let vfs = memory();
+        vfs.insert_symlink(&host("/l"), "x", MemMeta::default())
+            .unwrap();
+        dos(&vfs, "/t", b"old", 1);
+        let caps = vfs.capabilities(&mspec("/")).unwrap();
+        vfs.set_capabilities(caps.difference(Capabilities::RENAME));
+        vfs
+    };
+    let vfs = setup();
+    let before = vfs.dump();
+    fault(&vfs, "/t", VfsOp::Remove);
+    let mut item = replacing(Action::Link, Some("/l"), "/t");
+    item.kind = EntryKind::Symlink;
+    let report = run(&vfs, batch(vec![item.clone()]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+    let vfs = setup();
+    let report = run(&vfs, batch(vec![item]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(dump_of(&vfs, "/t").kind, EntryKind::Symlink);
+}
+
+/// `remove` clears, a failed removal gives it back, `trash` never clears (§1.6.12).
+#[test]
+fn a6_cr_remove_and_trash() {
+    let vfs = memory();
+    dos(&vfs, "/t", b"old", 1);
+    let before = vfs.dump();
+    fault(&vfs, "/t", VfsOp::Remove);
+    let report = run(&vfs, batch(vec![replacing(Action::Remove, None, "/t")]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(vfs.dump(), before);
+
+    let vfs = memory();
+    dos(&vfs, "/t", b"old", 1);
+    vfs.set_journal(true);
+    let report = run(&vfs, batch(vec![replacing(Action::Remove, None, "/t")]));
+    assert!(report.ok(), "{:?}", report.results);
+    let cleared = at(&vfs, VfsOp::SetAttrs, "/t").unwrap();
+    assert!(cleared < at(&vfs, VfsOp::Remove, "/t").unwrap());
+
+    let vfs = memory();
+    dos(&vfs, "/t", b"old", 1);
+    vfs.set_journal(true);
+    let report = run(&vfs, batch(vec![replacing(Action::Trash, None, "/t")]));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(at(&vfs, VfsOp::SetAttrs, "/t"), None);
+}
+
+fn dos_pair() -> MemoryVfs {
+    let vfs = memory();
+    dos(&vfs, "/l/f", b"left", 1);
+    dos(&vfs, "/r/f", b"right", 2);
+    vfs
+}
+
+fn dos_swap() -> PlanItem {
+    replacing(Action::Exchange, Some("/l/f"), "/r/f")
+}
+
+/// `exchange` clears both sides just before step 3, and a read-only pair swaps.
+#[test]
+fn a6_cr_exchange_clears_both_sides() {
+    let vfs = dos_pair();
+    vfs.set_journal(true);
+    let report = run(&vfs, batch(vec![dos_swap()]));
+    assert!(report.ok(), "{:?}", report.results);
+    let step_3 = at(&vfs, VfsOp::Rename, "/r/.hikasa-xchg").unwrap();
+    assert!(at(&vfs, VfsOp::SetAttrs, "/r/f").unwrap() < step_3);
+    assert!(at(&vfs, VfsOp::SetAttrs, "/l/f").unwrap() < step_3);
+    assert_eq!(content(&vfs, "/l/f"), b"right");
+    assert_eq!(content(&vfs, "/r/f"), b"left");
+    assert!(read_only(&vfs, "/l/f"), "the metadata travels");
+    assert!(read_only(&vfs, "/r/f"));
+}
+
+/// §1.6.2 rows 1–3, "both sides untouched": `R` is given back on both sides, whichever step fails.
+#[test]
+fn a6_cr_exchange_gives_it_back() {
+    let rows = [
+        ("/r/f", VfsOp::SetAttrs),
+        ("/l/f", VfsOp::SetAttrs),
+        ("/r/.hikasa-xchg", VfsOp::Rename),
+    ];
+    for (path, op) in rows {
+        let vfs = dos_pair();
+        let before = vfs.dump();
+        fault(&vfs, path, op);
+        let report = run(&vfs, batch(vec![dos_swap()]));
+        assert_eq!(statuses(&report), [ItemStatus::Failed], "{path}");
+        assert_eq!(vfs.dump(), before, "{path}");
+    }
+}
+
+/// Row 4: the left side is as it was, `R` too, and `T2` holds the other side's old content.
+#[test]
+fn a6_cr_exchange_step_4_gives_it_back() {
+    let vfs = dos_pair();
+    fault(&vfs, "/l/.hikasa-xchg", VfsOp::Rename);
+    let report = run(&vfs, batch(vec![dos_swap()]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert_eq!(content(&vfs, "/l/f"), b"left");
+    assert!(read_only(&vfs, "/l/f"));
+    assert_eq!(content(&vfs, "/l/.hikasa-xchg"), b"right");
+    assert_eq!(content(&vfs, "/r/f"), b"left");
+}
+
+/// A plain file against a member: `R` waits with the rename on disk, so a failed rebuild has nothing to give back.
+#[test]
+fn a6_cr_exchange_with_an_archive() {
+    for member_on_the_left in [false, true] {
+        for fails in [true, false] {
+            let (memory, plain, member) = plain_and_member();
+            memory.mem.remove(&plain).unwrap();
+            dos(&memory.mem, "/d/plain", b"plain file", 5);
+            let vfs: &dyn Vfs = &*memory.vfs;
+            let (left, right) = if member_on_the_left {
+                (member.clone(), plain.clone())
+            } else {
+                (plain.clone(), member.clone())
+            };
+            if fails {
+                fault(&memory.mem, "/a.zip", VfsOp::Commit);
+            }
+            let before = memory.mem.dump();
+            let mut swap = swap_specs(&left, &right);
+            swap.clear_read_only = true;
+            let report = run(vfs, batch(vec![swap]));
+            if fails {
+                assert_eq!(statuses(&report), [ItemStatus::Failed]);
+                assert_eq!(memory.mem.dump(), before);
+            } else {
+                assert!(report.ok(), "{:?}", report.results);
+                assert_eq!(memory.mem.read_back(&host("/d/plain")).unwrap().as_ref(), b"member");
+            }
+        }
+    }
+}
+
+/// The back-end `inner`, whose `rename` fails: steps 3 and 4 of an exchange on a real disk.
+#[cfg(windows)]
+struct NoRename {
+    inner: LocalVfs,
+}
+
+#[cfg(windows)]
+impl Vfs for NoRename {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        self.inner.remove(spec)
+    }
+    fn set_attrs(&self, spec: &Spec, change: &hikasa_vfs::AttrChange) -> Result<(), VfsError> {
+        self.inner.set_attrs(spec, change)
+    }
+    fn set_times(&self, spec: &Spec, times: &SetTimes) -> Result<(), VfsError> {
+        self.inner.set_times(spec, times)
+    }
+    fn rename(&self, from: &Spec, _to: &Spec, _replace: bool) -> Result<(), VfsError> {
+        Err(VfsError::from_io(
+            from.canonical(),
+            VfsOp::Rename,
+            std::io::Error::other("no rename today"),
+        ))
+    }
+}
+
+/// S1: a hidden copy that took `R` from its side goes when a later step fails, and no sibling stays on Windows.
+#[cfg(windows)]
+#[test]
+fn a6_cr_a_read_only_hidden_copy_goes_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("l")).unwrap();
+    std::fs::create_dir_all(root.join("r")).unwrap();
+    let (left, right) = (root.join("l/f"), root.join("r/f"));
+    for (path, text) in [(&left, "left"), (&right, "right")] {
+        std::fs::write(path, text).unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+    let vfs = NoRename {
+        inner: LocalVfs::default(),
+    };
+    let swap = PlanItem::planned(
+        Action::Exchange,
+        EntryKind::File,
+        Some(common::lspec(&left)),
+        common::lspec(&right),
+        0,
+    );
+    let report = run(&vfs, batch(vec![swap]));
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    let names = |folder: &str| {
+        std::fs::read_dir(root.join(folder))
+            .unwrap()
+            .map(|item| item.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names("l"), ["f"]);
+    assert_eq!(names("r"), ["f"]);
+    assert_eq!(std::fs::read(&left).unwrap(), b"left");
+    assert!(std::fs::metadata(&left).unwrap().permissions().readonly());
 }

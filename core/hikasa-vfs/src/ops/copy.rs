@@ -874,18 +874,17 @@ pub(crate) fn create_link_copy(
     }
 }
 
-/// The name of a free hidden sibling of `target` (`.<name><suffix>`, then `-1`, `-2`, …).
-pub(crate) fn free_sibling(dst: &dyn Vfs, target: &Spec, suffix: &str) -> Result<Spec, VfsError> {
-    let (Some(parent), Some(name)) = (target.parent(), target_name(target)) else {
+/// A free hidden name next to `target`: `name`, then `name-1`, `name-2`, … It does not grow with `target`'s, or a name
+/// near the limit of the file system could not have one.
+pub(crate) fn free_sibling(dst: &dyn Vfs, target: &Spec, name: &str) -> Result<Spec, VfsError> {
+    let Some(parent) = target.parent() else {
         return Err(VfsError::InvalidTarget {
             spec: target.canonical(),
             reason: "needs a file name",
         });
     };
     for attempt in 0..1000u32 {
-        let mut text = OsString::from(".");
-        text.push(&name);
-        text.push(suffix);
+        let mut text = OsString::from(name);
         if attempt > 0 {
             text.push(format!("-{attempt}"));
         }
@@ -899,25 +898,17 @@ pub(crate) fn free_sibling(dst: &dyn Vfs, target: &Spec, suffix: &str) -> Result
     })
 }
 
-/// The final component of `target` as an OS string.
-fn target_name(target: &Spec) -> Option<OsString> {
-    match target {
-        Spec::Local(path) => path.file_name().map(std::ffi::OsStr::to_os_string),
-        other => other.file_name().map(OsString::from),
-    }
-}
-
 /// Replaces the non-folder item at the target of `item` by what `create` makes there: the item is renamed to a temporary
 /// sibling, `create` runs, and the sibling is removed, or becomes the backup of the item; when `create` fails, or the
 /// backup does, the sibling is renamed back, so the target is as before (D-95: a failing item leaves its target
-/// untouched). Without `RENAME` on the back-end the item is removed first (no way to keep it aside).
+/// untouched). Its `R` goes only when the sibling does, so a failure has none to give back, and a backup keeps it.
+/// Without `RENAME` on the back-end the item is removed first (no way to keep it aside).
 fn replace_with(
     exec: &Exec<'_>,
     item: &PlanItem,
     create: impl FnOnce(&dyn Vfs) -> Result<(), VfsError>,
 ) -> Result<(), VfsError> {
     let (dst, target) = (exec.dst, &item.target);
-    let cleared = item.clear_read_only && clear_read_only_of(dst, target)?;
     let can_rename = dst
         .capabilities(target)
         .is_ok_and(|caps| caps.contains(Capabilities::RENAME));
@@ -930,18 +921,18 @@ fn replace_with(
         if let Some(backup) = &item.backup {
             write_backup(dst, target, backup, exec.ctl)?;
         }
-        dst.remove(target)?;
+        let cleared = item.clear_read_only && clear_read_only_of(dst, target)?;
+        dst.remove(target).inspect_err(|_| {
+            if cleared {
+                restore_read_only(dst, target);
+            }
+        })?;
         return create(dst);
     };
     dst.rename(target, &aside, false)?;
-    let back = |e: VfsError| {
-        if let Err(back) = dst.rename(&aside, target, false) {
-            return kept_as(target, &aside, &e, &back);
-        }
-        if cleared {
-            restore_read_only(dst, target);
-        }
-        e
+    let back = |e: VfsError| match dst.rename(&aside, target, false) {
+        Ok(()) => e,
+        Err(back) => kept_as(target, &aside, &e, &back),
     };
     if let Err(e) = create(dst) {
         return Err(back(e));
@@ -954,6 +945,9 @@ fn replace_with(
         }),
         None => {
             // The new item is in place; the old one is discarded (best effort: a leftover sibling is no loss).
+            if item.clear_read_only {
+                let _ = clear_read_only_of(dst, &aside);
+            }
             let _ = dst.remove(&aside);
             Ok(())
         }

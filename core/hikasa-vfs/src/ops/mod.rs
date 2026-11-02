@@ -630,6 +630,8 @@ pub(crate) enum Later {
         from: Spec,
         /// The side it replaces.
         to: Spec,
+        /// `clear_read_only` of the item: that side's `R` goes just before this rename.
+        clear: bool,
     },
 }
 
@@ -1039,7 +1041,7 @@ impl Exec<'_> {
                 } = &later
                 {
                     let vfs = if *on_source { self.src } else { self.dst };
-                    let _ = vfs.remove(from);
+                    exchange::drop_copy(vfs, from);
                 }
                 self.block(item);
                 continue;
@@ -1051,9 +1053,10 @@ impl Exec<'_> {
                     on_source,
                     from,
                     to,
+                    clear,
                 } => {
                     let vfs = if *on_source { self.src } else { self.dst };
-                    match exchange::finish_rename(vfs, from, to) {
+                    match exchange::finish_rename(vfs, from, to, *clear) {
                         Ok(()) => Outcome::Done(0),
                         Err(e) => Outcome::Failed(e),
                     }
