@@ -10,7 +10,7 @@ use common::{ft, host, mspec, read_to_vec};
 use hikasa_core::{CaseSensitivity, Ctl, ErrorKind, RelPath, Spec};
 use hikasa_vfs::ops::{
     self, Action, BackupNames, BackupPolicy, BackupStyle, BatchOptions, ExecOptions, ItemStatus,
-    OpKind, OpReport, Plan, PlanItem, PlanOptions, Preserve, write_backup,
+    OpKind, OpReport, Plan, PlanItem, PlanOptions, write_backup,
 };
 use hikasa_vfs::{
     ArchiveFormat, ArchiveLimits, Attrs, EntryKind, Fault, LocalVfs, MemDump, MemMeta, MemoryVfs,
@@ -664,7 +664,7 @@ fn a6_6_replacing_a_link_takes_no_mode_from_it() {
     let plan = Plan {
         op: OpKind::Batch,
         options: PlanOptions::Batch(BatchOptions {
-            preserve: Preserve::NONE,
+            preserve: ops::Preserve::NONE,
             ..BatchOptions::default()
         }),
         items: vec![item("t", Some("t.bak")), item("plain", None)],
