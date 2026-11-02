@@ -1,0 +1,19 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+1 1        indented with a tab
+2   [31m-![0m 日本語のテキストと漢[31m字[0m
+  2 [31m+![0m 日本語のテキストと漢[31m宇[0m
+3   [31m-![0m caf[31mé[0m au lait
+  3 [31m+![0m caf[31mé[0m au lait
+4   [31m-![0m The quick brown fox [31mjum[0mps over the lazy dog and 
+    [31m-![0m keeps running far beyond the edge of the column 
+    [31m-![0m width[31m.[0m
+  4 [31m+![0m The quick brown fox [31mlea[0mps over the lazy dog and 
+    [31m+![0m keeps running far beyond the edge of the column 
+    [31m+![0m width[31m![0m
+5   [31m-![0m emoji [31m😀[0m here
+  5 [31m+![0m emoji [31m😃[0m here

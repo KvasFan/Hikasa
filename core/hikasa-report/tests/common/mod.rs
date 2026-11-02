@@ -81,6 +81,36 @@ pub fn sibling_fixtures(krate: &str, suite: &str) -> PathBuf {
         .join(suite)
 }
 
+/// Report bytes with the Windows host paths of the test inputs (`C:\l\…`, `C:\r\…`, `C:\o\…`) spelled as on Unix,
+/// so the goldens of layouts without column titles hold on every platform.
+pub fn unix_paths(bytes: &[u8]) -> Vec<u8> {
+    if !cfg!(windows) {
+        return bytes.to_vec();
+    }
+    let text = String::from_utf8(bytes.to_vec()).expect("reports are UTF-8");
+    let mut out = text;
+    for base in ["l", "r", "o"] {
+        let windows = format!("C:\\{base}");
+        let mut fixed = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(at) = rest.find(&windows) {
+            fixed.push_str(&rest[..at]);
+            fixed.push('/');
+            fixed.push_str(base);
+            rest = &rest[at + windows.len()..];
+            // The path goes on to the next quote, space, `<` or line end: its separators are `/` on Unix.
+            let end = rest
+                .find(|c: char| matches!(c, '"' | ' ' | '<' | '\n' | ')' | ','))
+                .unwrap_or(rest.len());
+            fixed.push_str(&rest[..end].replace('\\', "/"));
+            rest = &rest[end..];
+        }
+        fixed.push_str(rest);
+        out = fixed;
+    }
+    out.into_bytes()
+}
+
 /// The case folders below `dir`, sorted.
 pub fn cases(dir: &Path) -> Vec<PathBuf> {
     let mut cases: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -137,6 +167,16 @@ pub fn compare_bytes(
     right: (&str, &[u8]),
     rules: &TextRules,
 ) -> TextComparison {
+    compare_bytes_with(left, right, rules, &LoadOptions::default())
+}
+
+/// [`compare_bytes`] with load options (a characters-per-line limit).
+pub fn compare_bytes_with(
+    left: (&str, &[u8]),
+    right: (&str, &[u8]),
+    rules: &TextRules,
+    load: &LoadOptions,
+) -> TextComparison {
     let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
     let format = Arc::new(CompiledFormat::everything_else());
     let mut loaded = Vec::new();
@@ -151,15 +191,8 @@ pub fn compare_bytes(
             },
         )
         .unwrap();
-        let (doc, raw) = load_document(
-            &vfs,
-            &mspec(&path),
-            &format,
-            &LoadOptions::default(),
-            None,
-            &Ctl::detached(),
-        )
-        .unwrap();
+        let (doc, raw) =
+            load_document(&vfs, &mspec(&path), &format, load, None, &Ctl::detached()).unwrap();
         loaded.push((Arc::new(doc), raw));
     }
     rules.validate(&RegexLimits::default()).unwrap();
