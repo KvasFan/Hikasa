@@ -1315,7 +1315,7 @@ fn a6_5_within_table() {
     let member = Spec::archive_member(mspec("/a/b.zip"), "m/x");
     let nested = Spec::archive_member(Spec::archive_member(mspec("/a/b.zip"), "c.tar"), "y");
     let elsewhere = Spec::archive_member(mspec("/z.zip"), "x");
-    let rows = [
+    let mut rows = vec![
         (mspec("/a"), mspec("/a/b"), true),
         (mspec("/a"), mspec("/a/b/c/d"), true),
         (mspec("/a"), mspec("/a"), false),
@@ -1349,6 +1349,17 @@ fn a6_5_within_table() {
             true,
         ),
     ];
+    // Unix keeps `..` in a spec (D-06): the text says nothing of what lies above one, so it is not below a base, and a
+    // base spelt with one holds only what is spelt alike. Windows resolved these when they were parsed.
+    if cfg!(unix) {
+        rows.extend([
+            (mspec("/a/b"), mspec("/a/b/../x"), false),
+            (mspec("/a"), mspec("/a/b/../x"), false),
+            (mspec("/a/b"), mspec("/a/b/.."), false),
+            (mspec("/a/b/../c"), mspec("/a/b/../c/x"), true),
+            (mspec("/a/b/../c"), mspec("/a/b/../c"), false),
+        ]);
+    }
     for (base, spec, expected) in rows {
         assert_eq!(
             within(&vfs, &base, &spec),
@@ -1358,6 +1369,102 @@ fn a6_5_within_table() {
             base.canonical()
         );
     }
+}
+
+/// What `run` answers, within a bound: a walk up that never ends fails here and does not hang the run.
+#[cfg(unix)]
+fn bounded<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(run());
+    });
+    finished
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("no answer: a walk up that does not end")
+}
+
+/// `/a/..` used to have the parent `/a/../..`, so a walk up met neither a base nor an end, and no token stops it.
+#[cfg(unix)]
+#[test]
+fn a6_5_a_walk_up_ends_at_dot_dot() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("base")).unwrap();
+    std::fs::create_dir_all(root.join("outside")).unwrap();
+    std::fs::write(root.join("outside/x"), b"precious").unwrap();
+    let base = common::lspec(&root.join("base"));
+    let spec = spec_of(&format!("{}/base/../outside/x", root.display()));
+    let answer = bounded(move || within(&LocalVfs::default(), &base, &spec));
+    assert!(!answer);
+}
+
+/// The same through `execute_with`: a base spelt with `..`, and a `remove` of the base itself, which §1.6.4 refuses.
+#[cfg(unix)]
+#[test]
+fn a6_5_a_base_spelt_with_dot_dot() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::create_dir_all(root.join("base")).unwrap();
+    let base = spec_of(&format!("{}/a/../base", root.display()));
+    let item = PlanItem::planned(Action::RemoveDir, EntryKind::Dir, None, base.clone(), 0);
+    let status = bounded(move || {
+        let vfs = LocalVfs::default();
+        let options = ExecOptions {
+            fence: Some(Fence {
+                bases: vec![base],
+                writes: true,
+            }),
+            ..ExecOptions::default()
+        };
+        run_with(&vfs, batch(vec![item]), &options).results[0].status
+    });
+    assert_eq!(status, ItemStatus::Failed);
+    assert!(root.join("base").is_dir());
+}
+
+/// A local spec parsed as it is, `..` kept.
+#[cfg(unix)]
+fn spec_of(text: &str) -> Spec {
+    let context = hikasa_core::SpecContext::absolute_only(hikasa_core::PathStyle::HOST);
+    Spec::parse(text, &context).unwrap()
+}
+
+/// A folder copied below itself, spelt so that no text shows it: the OS's meaning of `..` decides, links included.
+#[cfg(unix)]
+#[test]
+fn a6_5_a_target_inside_its_source_through_dot_dot() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("src/sub")).unwrap();
+    std::fs::create_dir_all(root.join("other")).unwrap();
+    // `hop/..` is `src`: a lexical reading would make it the root.
+    symlink(root.join("src/sub"), root.join("hop")).unwrap();
+    let vfs = LocalVfs::default();
+    let plan = |source: &str, target: &str| {
+        let pair = [(
+            spec_of(&format!("{}/{source}", root.display())),
+            spec_of(&format!("{}/{target}", root.display())),
+        )];
+        let options = CopyOptions {
+            recursive: true,
+            ..CopyOptions::default()
+        };
+        ops::plan_copy(&vfs, &vfs, &pair, &options, &Ctl::detached()).unwrap()
+    };
+    let refused = |source: &str, target: &str| {
+        plan(source, target).items[0]
+            .error
+            .as_ref()
+            .is_some_and(|e| e.message.contains("is inside the source folder"))
+    };
+    assert!(refused("src", "src/sub/../copied"));
+    assert!(refused("src", "other/../src/copied"));
+    assert!(refused("src", "hop/../copied"));
+    assert!(refused("other/../src", "src/copied"));
+    assert!(!refused("src", "other/../copied"));
+    assert!(!refused("src", "src/../copied"));
 }
 
 #[test]

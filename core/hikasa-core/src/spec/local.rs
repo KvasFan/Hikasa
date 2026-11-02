@@ -517,8 +517,8 @@ pub(crate) fn root_len<U: Unit>(s: &[U], style: PathStyle) -> usize {
     }
 }
 
-/// The parent of a normalised absolute path of `style` (`None` for a root). On Unix a final `..` component is
-/// kept, so the parent of `/a/..` is `/a/../..` (lexical removal is unsound across symlinks, D-06).
+/// The parent of a normalised absolute path of `style` (`None` for a root, and on Unix for a path that ends in `..`:
+/// what it names depends on the links on the way, D-06, so the text has no parent to give, and a walk up ends there).
 pub(crate) fn parent_units<U: Unit>(s: &[U], style: PathStyle) -> Option<Vec<U>> {
     let root = root_len(s, style);
     if s.len() <= root {
@@ -532,9 +532,7 @@ pub(crate) fn parent_units<U: Unit>(s: &[U], style: PathStyle) -> Option<Vec<U>>
     if style == PathStyle::Unix {
         let last = last_sep.map_or(s, |at| s.get(at + 1..).unwrap_or(&[]));
         if eq_ascii(last, b"..") {
-            let mut out = s.to_vec();
-            push_ascii(&mut out, b"/..");
-            return Some(out);
+            return None;
         }
     }
     let end = match last_sep {
@@ -695,11 +693,21 @@ impl LocalPath {
         }
     }
 
-    /// The parent directory (`None` for a root). A final `..` component is kept on Unix, so the parent of
-    /// `/a/..` is `/a/../..` (D-06).
+    /// The parent directory: `None` for a root, and on Unix for a path that ends in `..`, because its text does not say
+    /// what is above it (D-06). So every walk up ends. [`LocalPath::up`] is the folder above it as the OS reads it.
     pub fn parent(&self) -> Option<LocalPath> {
         let units = os::units(self.0.as_os_str());
         parent_units(&units, PathStyle::HOST).map(|p| LocalPath(PathBuf::from(os::from_units(p))))
+    }
+
+    /// The folder above this path, as the OS reads it: [`LocalPath::parent`], and `/a/../..` for `/a/..`. A walk over
+    /// this one has no end of its own: `/..` is `/`, which only the file system can tell. `None` for a root.
+    pub fn up(&self) -> Option<LocalPath> {
+        let up = self.parent();
+        if up.is_some() || self.file_name().is_none() {
+            return up;
+        }
+        Some(LocalPath(self.0.join("..")))
     }
 
     /// [`LocalPath::parent`] for an explicit path style, so the Windows rules of archive resolution run on every
@@ -917,10 +925,9 @@ mod tests {
         assert_eq!(parent("/", PathStyle::Unix), None);
         assert_eq!(parent("/a", PathStyle::Unix).as_deref(), Some("/"));
         assert_eq!(parent("/a/b", PathStyle::Unix).as_deref(), Some("/a"));
-        assert_eq!(
-            parent("/a/..", PathStyle::Unix).as_deref(),
-            Some("/a/../..")
-        );
+        // The text does not say what is above a `..` (D-06), and a walk up ends.
+        assert_eq!(parent("/a/..", PathStyle::Unix), None);
+        assert_eq!(parent("/a/../b", PathStyle::Unix).as_deref(), Some("/a/.."));
         assert_eq!(parent(r"C:\", PathStyle::Windows), None);
         assert_eq!(parent(r"C:\a", PathStyle::Windows).as_deref(), Some(r"C:\"));
         assert_eq!(

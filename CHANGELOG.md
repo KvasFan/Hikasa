@@ -15,6 +15,11 @@
   about 1.5 times. A power cut just after a copy can lose files the copy created; it can never lose a file that existed. A copy that replaces still
   syncs the file, and a move still syncs file and folder, because a source goes on the strength of its copy.
 
+### Fixed
+- **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
+  `a/../copy`) never ended and could not be cancelled; this goes back to 0.1.90. A `..` keeps the meaning the OS gives it
+  through links, so a folder still cannot be copied below itself by spelling.
+
 ### Internal
 - `ops::Plan` of kind `batch`, stamps, `exchange`, the fence of the base folders and backups are in place for the folder
   operations of the next parts, with subtree refresh, contents on demand and `ArchiveVfs::extract_to_cache`; no command

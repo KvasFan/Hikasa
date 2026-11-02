@@ -43,6 +43,7 @@ mod touch;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsStr;
+use std::path::Component;
 
 use hikasa_core::{Ctl, Phase, Progress, Spec, Unit, Warning, WarningCode, case};
 
@@ -65,6 +66,9 @@ use crate::vfs::{FollowLinks, Vfs};
 use guard::{Keys, Seen};
 use plan::report;
 use roots::Roots;
+
+/// Most levels [`holds_on_disk`] climbs: more than a path of the OS can hold.
+const MAX_DEPTH: usize = 4096;
 
 /// Applies the `cp`/`mv` naming rule (D-102), owned by core so the CLI, scripts and the GUI agree (T11):
 /// `target` an existing folder (a link to a folder is followed: the user named it) → each source goes to
@@ -195,7 +199,6 @@ pub(crate) fn check_name(spec: &Spec) -> Result<(), VfsError> {
 
 /// True when `path` names a file-system root once `.` and `..` are resolved lexically.
 fn lexical_is_root(path: &std::path::Path) -> bool {
-    use std::path::Component;
     let mut names = 0usize;
     for component in path.components() {
         match component {
@@ -287,18 +290,60 @@ pub(crate) fn check_nesting(
     }
     check_holder(src, dst, source, target)?;
     if source_entry.kind == EntryKind::Dir {
+        let inside = || VfsError::InvalidTarget {
+            spec: target.canonical(),
+            reason: "is inside the source folder",
+        };
         let mut cur = target.parent();
         while let Some(parent) = cur {
             if spec_key(dst, &parent) == source_key {
-                return Err(VfsError::InvalidTarget {
-                    spec: target.canonical(),
-                    reason: "is inside the source folder",
-                });
+                return Err(inside());
             }
             cur = parent.parent();
         }
+        if (spelt_with_dots(source) || spelt_with_dots(target))
+            && source_entry
+                .file_id
+                .is_some_and(|id| holds_on_disk(dst, id, target))
+        {
+            return Err(inside());
+        }
     }
     Ok(())
+}
+
+/// True for a local path with a `..` in it: its text does not say where it leads (D-06).
+fn spelt_with_dots(spec: &Spec) -> bool {
+    matches!(spec, Spec::Local(path) if path.as_path().components().any(|c| c == Component::ParentDir))
+}
+
+/// True when the folder with the identity `id` is above `target` as the OS reads it, `..` and links included. The text
+/// of such a path cannot tell, so this walks up by what each level is, to the root, which is its own parent.
+fn holds_on_disk(dst: &dyn Vfs, id: FileId, target: &Spec) -> bool {
+    let Spec::Local(path) = target else {
+        return false;
+    };
+    let mut seen = None;
+    let mut at = path.up();
+    for _ in 0..MAX_DEPTH {
+        let Some(dir) = at else {
+            return false;
+        };
+        let found = dst
+            .stat(&Spec::Local(dir.clone()), FollowLinks::Yes)
+            .ok()
+            .and_then(|entry| entry.file_id);
+        let lost = found.is_none() && dir.file_name() == Some(OsStr::new(".."));
+        if found == Some(id) {
+            return true;
+        }
+        if lost || (found.is_some() && found == seen) {
+            return false;
+        }
+        seen = found;
+        at = dir.up();
+    }
+    false
 }
 
 /// The archives around `spec`, nearest first.
