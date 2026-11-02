@@ -37,9 +37,10 @@ fn tree() -> MemoryVfs {
 }
 
 fn marked(list: &[&str]) -> FolderRules {
-    let mut rules = FolderRules::default();
-    rules.ignored = list.iter().map(|&path| path.to_owned()).collect();
-    rules
+    FolderRules {
+        ignored: list.iter().map(|&path| path.to_owned()).collect(),
+        ..FolderRules::default()
+    }
 }
 
 fn id(cmp: &FolderComparison, path: &str) -> NodeId {

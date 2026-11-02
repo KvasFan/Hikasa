@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use hikasa_core::{Ctl, Spec, Warning, WarningCode};
 
 use super::copy::{
-    Mode, Planner, TargetState, apply_preserved, copy_content, create_link_copy,
-    narrow_archive_mode, source_changed, source_file,
+    Mode, Planner, TargetState, apply_preserved, clear_read_only_of, copy_content,
+    create_link_copy, narrow_archive_mode, restore_read_only, source_changed, source_file,
 };
 use super::guard::Seen;
 use super::plan::report;
@@ -187,11 +187,19 @@ pub(crate) fn run_rename(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
-    let cleared = item.clear_read_only && item.replaces;
-    if cleared && let Err(e) = super::copy::clear_read_only_of(exec.dst, &item.target) {
-        return Outcome::Failed(e);
+    let cleared = if item.clear_read_only && item.replaces {
+        match clear_read_only_of(exec.dst, &item.target) {
+            Ok(cleared) => cleared,
+            Err(e) => return Outcome::Failed(e),
+        }
+    } else {
+        false
+    };
+    let outcome = rename_item(exec, item, source);
+    if cleared && matches!(outcome, Outcome::Failed(_)) {
+        restore_read_only(exec.dst, &item.target);
     }
-    rename_item(exec, item, source)
+    outcome
 }
 
 /// [`run_rename`] once a read-only target is out of the way.

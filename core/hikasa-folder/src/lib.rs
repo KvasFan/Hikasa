@@ -110,7 +110,7 @@ pub use rules::{
     FolderRulesPatch, Handling, NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset,
     UnixCriteria, UnixTypeFilter, UnixTypes,
 };
-pub use scan::content::{ContentItem, ContentReport, compare_contents, compute_crcs};
+pub use scan::content::{ContentItem, ContentReport, CrcResult, compare_contents, compute_crcs};
 pub use scan::refresh::{RefreshReport, refresh_into};
 pub use scan::{
     ContentEngines, FolderEnv, MAX_FOLLOW_DEPTH, SCAN_ARCHIVE_ENTRIES_MAX, compare_folders,

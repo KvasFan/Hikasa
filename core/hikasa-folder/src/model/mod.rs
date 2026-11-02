@@ -231,6 +231,11 @@ impl TreeRead<'_> {
         self.store.len()
     }
 
+    /// Records of the arena a refresh left behind (§1.6.7): a view may re-run when they pass half of [`TreeRead::len`].
+    pub fn garbage(&self) -> u32 {
+        self.store.garbage
+    }
+
     /// Always false: the root exists from the start. (Clippy's `len_without_is_empty` companion.)
     pub fn is_empty(&self) -> bool {
         self.store.len() == 0

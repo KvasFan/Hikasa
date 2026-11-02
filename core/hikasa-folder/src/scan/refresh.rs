@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::sync::Arc;
 
-use hikasa_core::RelPath;
+use hikasa_core::{ContentMethod, RelPath};
 use hikasa_vfs::{Entry, FollowLinks};
 
 use super::{
@@ -51,6 +51,10 @@ pub fn refresh_into(
 ) -> Result<RefreshReport, FolderError> {
     if model.rules().handling.flatten {
         return Err(FolderError::RefreshFlat);
+    }
+    let method = model.rules().criteria.content.method;
+    if method != ContentMethod::None && env.content.get(method).is_none() {
+        return Err(FolderError::RulesComparatorMissing);
     }
     let _claim = model.claim_refresh()?;
     let scan = Scan::for_model(env, model)?;

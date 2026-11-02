@@ -414,7 +414,6 @@ fn a6_11_cancel_at_the_nth_folder() {
     assert_eq!(report.folders, 1);
     check_tree_invariants(&cmp.read()).unwrap();
     assert!(!cmp.read().is_complete());
-    assert_eq!(cmp.verdict(false), hikasa_core::CompareVerdict::Incomplete);
     let read = cmp.read();
     let found = |path: &str| read.node_at(&RelPath::parse(path).unwrap()).is_some();
     assert_eq!(

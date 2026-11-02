@@ -148,6 +148,9 @@ pub fn compare_contents(
     Ok(report)
 }
 
+/// One result of [`compute_crcs`].
+pub type CrcResult = (NodeId, Side, Result<u32, ErrorReport>);
+
 /// FC-040: CRC-32 of the given sides: `Entry::crc32` where a back-end gives one (D-147), else read. Each result goes to
 /// the model's side table, so `EntryView::crc32` shows it; a refresh drops it with a changed row. A stop leaves the rest
 /// with the error `cancelled`.
@@ -155,7 +158,7 @@ pub fn compute_crcs(
     model: &Arc<FolderModel>,
     items: &[(NodeId, Side)],
     env: &FolderEnv<'_>,
-) -> Result<Vec<(NodeId, Side, Result<u32, ErrorReport>)>, FolderError> {
+) -> Result<Vec<CrcResult>, FolderError> {
     let _claim = model.claim_refresh()?;
     let follow = if model.rules().handling.follow_symlinks {
         FollowLinks::Yes
