@@ -56,7 +56,7 @@ struct Planner<'a, 'r> {
     builder: Builder<'a, 'r>,
     /// The level of each row (the base's children are 0).
     depth: Vec<u32>,
-    /// The sides on which a folder above the row is hidden by a filter.
+    /// The sides on which a folder above the row is hidden by a filter; either hides the row.
     hidden_above: Vec<u8>,
     /// Rows in scope (`None`: all).
     scope: Option<Vec<bool>>,
@@ -247,13 +247,15 @@ impl<'a, 'r> Planner<'a, 'r> {
         )
     }
 
-    /// True when a side of the row, or a folder above it on that side, is hidden by a filter (rule 3).
+    /// True when a side of the row, or a folder above it on either side, is hidden by a filter (rule 3).
     fn hidden(&self, id: NodeId, view: &NodeView<'_>) -> bool {
+        // A folder hidden on either side hides what lies below it on both: a row whose counterpart folder is hidden is no
+        // orphan to delete.
         let above = self.hidden_above.get(id.0 as usize).copied().unwrap_or(0);
-        [Side::Left, Side::Right].into_iter().any(|side| {
-            view.side(side)
-                .is_some_and(|entry| entry.filtered || above & bit(side) != 0)
-        })
+        above != 0
+            || [Side::Left, Side::Right]
+                .into_iter()
+                .any(|side| view.side(side).is_some_and(|entry| entry.filtered))
     }
 
     /// The situation of a row with its sides (rule 4); `None` when the comparison cannot tell.
