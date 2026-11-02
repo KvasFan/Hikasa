@@ -708,6 +708,15 @@ fn no_row(path: &str) -> ApiError {
     ))
 }
 
+/// `left side`, `right side`, `left or right side`.
+fn side_words(sides: SideSet) -> &'static str {
+    match (sides.contains(SideSet::LEFT), sides.contains(SideSet::RIGHT)) {
+        (true, false) => "left side",
+        (false, true) => "right side",
+        _ => "left or right side",
+    }
+}
+
 /// A file and a folder of one name are two rows (D-20): `row`, or its sibling of that name which has `sides`.
 fn row_on(read: &TreeRead<'_>, row: NodeId, sides: SideSet) -> NodeId {
     let has = |id: NodeId| {
@@ -769,7 +778,18 @@ impl Service {
         for (path, sides) in &req.paths {
             let row = named_row(read, path, windows)?;
             let sides = if sides.is_empty() { verb } else { *sides };
-            selection.insert(row_on(read, row, sides), sides);
+            let row = row_on(read, row, sides);
+            // A row that is not on the side named selects nothing: say so, rather than act on nothing with exit 0.
+            if !read
+                .node(row)
+                .is_some_and(|view| sides.sides().any(|side| view.side(side).is_some()))
+            {
+                return Err(ApiError::NotFound(format!(
+                    "no row `{path}` on the {} in this comparison",
+                    side_words(sides)
+                )));
+            }
+            selection.insert(row, sides);
         }
         let hidden = req.include_hidden.unwrap_or_else(|| {
             self.fresh_options()

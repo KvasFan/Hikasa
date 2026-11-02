@@ -874,3 +874,74 @@ fn a6_31_a_folder_compare_session_needs_a_preset() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(json(&out)["result"]["preset"], "update_right");
 }
+
+/// `--path` naming a row that is not on its side selects nothing: that is `not_found`, exit 100, and nothing runs; a
+/// `--select` that matches nothing is refused as nothing selected. A row on its side runs.
+#[test]
+fn a6_31_a_path_not_on_its_side_is_not_found() {
+    let s = sandbox();
+    let before = state(&s);
+    for path in ["left:right-only.txt", "right:left-only.txt", "left:gone"] {
+        let out = sync(
+            &s,
+            &[
+                "--mirror-right",
+                "--just-selection",
+                "--path",
+                path,
+                "--yes",
+                "--json",
+            ],
+        );
+        assert_eq!(code(&out), 100, "{path}: {}", stdout(&out));
+        let doc = json(&out);
+        assert_eq!(doc["error"]["kind"], "not_found", "{path}: {doc}");
+        assert_eq!(state(&s), before, "{path}");
+    }
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--just-selection",
+            "--select",
+            "all.exact.folders",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert!(
+        json(&out)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nothing selected"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(state(&s), before);
+    // `folder op` too.
+    let mut op = s.cmd();
+    op.args(["folder", "op", "delete", "--side", "left", "--path"])
+        .arg("right:left-only.txt")
+        .arg(s.join("l"))
+        .arg(s.join("r"))
+        .args(["--yes", "--json"]);
+    let out = op.output().unwrap();
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert_eq!(json(&out)["error"]["kind"], "not_found");
+    assert_eq!(state(&s), before);
+    // The row on its side.
+    let out = sync(
+        &s,
+        &[
+            "--mirror-right",
+            "--just-selection",
+            "--path",
+            "right:right-only.txt",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!s.join("r/right-only.txt").exists());
+    assert!(s.join("r/gone/inner.txt").exists());
+}

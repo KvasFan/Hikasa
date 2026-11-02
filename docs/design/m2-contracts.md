@@ -4766,8 +4766,8 @@ CONFIRM = [--yes | --confirm prompt|yes-to-all|no-to-all] [--dry-run] [--read-on
 - **Default scope.** No `--select`, no `--path`: **nothing is selected** and a plan-needing verb exits 100 "nothing
   selected: pass --select all, or a mask": a stray command must not act on the whole tree. `--display` defaults to `all`
   (not `differences`), `--no-expand` is off: a headless command sees the whole tree, as a script after `expand all`.
-- `--path <REL>`: one row by its path; prefix `left:`, `right:` for one side, else the verb's side. Unknown → exit 100
-  `not_found`. It never names the base: an empty path, and any spelling that comes to it (`.`, `/`, `left:`, `./`) is
+- `--path <REL>`: one row by its path; prefix `left:`, `right:` for one side, else the verb's side. Unknown, or a row
+  that is not on that side (W6c review: it selected nothing, exit 0) → exit 100 `not_found`, nothing runs. It never names the base: an empty path, and any spelling that comes to it (`.`, `/`, `left:`, `./`) is
   `invalid_input`, on every verb that takes `--path`; the whole tree takes `--select`.
 - `--yes` and `--dry-run` conflict (clap). `--to`, `--side`, `--method` parse through `api::vocab` (T11).
 - `folder sync --update-right` = Update Right = script `update:left->right`; `--mirror-left` = Mirror to Left =
