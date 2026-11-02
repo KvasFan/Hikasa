@@ -4,6 +4,7 @@
 //! Requests carry the user's words as they were typed (raw specs as `OsString`, rules file paths, vocabulary
 //! words); the service parses them with the core parsers (T11), so the CLI and the GUI build the same requests.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 
@@ -90,6 +91,8 @@ pub struct TextCompareRequest {
     /// The rules a missing `rules_file` means (`None`: the defaults): the effective rules of a session
     /// (`session run`, `LoadSession`; D-82). Additive (M2 W2).
     pub base_rules: Option<TextRules>,
+    /// FF-002: formats on or off for this comparison, id → enabled, as a folder row was compared (D-172).
+    pub format_overrides: BTreeMap<String, bool>,
 }
 
 impl TextCompareRequest {

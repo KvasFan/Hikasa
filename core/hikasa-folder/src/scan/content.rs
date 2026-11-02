@@ -44,7 +44,7 @@ pub struct ContentReport {
 fn pairs_of(model: &FolderModel, nodes: &[NodeId]) -> Vec<(NodeId, Spec, Spec)> {
     let read = model.read();
     let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = std::collections::BTreeSet::new();
     let mut stack: Vec<NodeId> = nodes.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
         let Some(view) = read.node(id) else { continue };

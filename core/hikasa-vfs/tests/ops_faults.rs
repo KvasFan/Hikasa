@@ -137,6 +137,7 @@ fn insert(fx: &Fx, root: &str, nodes: &[Node]) {
             ctime: None,
             attrs: Some(unix(node.mode)),
             crc32: None,
+            ..MemMeta::default()
         };
         let path = fx.text(&join(root, &node.rel));
         match node.kind {

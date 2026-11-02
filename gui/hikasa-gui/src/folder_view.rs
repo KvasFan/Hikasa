@@ -679,6 +679,11 @@ impl FolderViewModel {
         request.rules_file.clone_from(&self.request.text_rules_file);
         request.rules_patch = self.request.text_patch.clone();
         request.ignore_unimportant = self.display.ignore_unimportant;
+        if let Some(prepared) = self.prepared() {
+            request
+                .format_overrides
+                .clone_from(prepared.format_overrides());
+        }
         Some((
             request,
             ViewOptions {

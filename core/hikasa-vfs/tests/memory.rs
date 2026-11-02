@@ -34,6 +34,7 @@ fn sample() -> MemoryVfs {
             },
         }),
         crc32: None,
+        ..MemMeta::default()
     };
     vfs.insert_file(&host("/src/a.c"), b"int a;\n".to_vec(), meta.clone())
         .unwrap();

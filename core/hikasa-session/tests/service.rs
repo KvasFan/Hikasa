@@ -840,3 +840,32 @@ fn content_kinds_cover_quick_results() {
         ExitCode::for_content(&resp.outcome.result, false)
     );
 }
+
+/// A6.10: a child of a folder row opens with the format its row was compared by.
+#[test]
+fn a_text_request_takes_format_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.c", b"int a;\n");
+    let b = write(&w, "b.c", b"int b;\n");
+    let mut request = text_req(&a, &b);
+    request.format_overrides.insert("c-cpp".to_owned(), false);
+    request
+        .format_overrides
+        .insert("no-such-format".to_owned(), true);
+    let response = service
+        .text_compare(&request, &job(&service, JobKind::TextCompare), None)
+        .unwrap();
+    assert!(
+        !matches!(&response.format.reason, DetectReason::Mask { id, .. } if id.as_str() == "c-cpp"),
+        "{:?}",
+        response.format.reason
+    );
+    let unknown = response
+        .warnings
+        .iter()
+        .filter(|w| w.code == hikasa_core::WarningCode::UnknownConfigKey)
+        .count();
+    assert_eq!(unknown, 1);
+}

@@ -1610,7 +1610,7 @@ impl Store {
             self.len()
         };
         if !in_place {
-            let taken: std::collections::HashSet<u32> =
+            let taken: std::collections::BTreeSet<u32> =
                 rows.iter().filter_map(|row| row.old).collect();
             for id in old_rows.clone() {
                 if !taken.contains(&id) {

@@ -1270,7 +1270,8 @@ fn same_item(from: &Path, from_meta: &Metadata, to: &Path, to_meta: &Metadata) -
 mod tests {
     //! A6.3 (D-164): what a copy syncs, and the path of a new file, seen from inside.
 
-    use std::cell::{Cell, RefCell};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
     use std::time::{Duration, UNIX_EPOCH};
 
     use hikasa_core::{Ctl, PathStyle, SpecContext};
@@ -1279,24 +1280,30 @@ mod tests {
     use crate::ops::{self, CopyOptions, MoveOptions, OverwritePolicy, Preserve};
 
     /// What the stop before the rename does.
-    type Stop = Option<Box<dyn Fn(&Path)>>;
+    type Stop = Option<Box<dyn Fn(&Path) + Send>>;
 
-    thread_local! {
-        static SYNCS: Cell<u32> = const { Cell::new(0) };
-        static STOP: RefCell<Stop> = const { RefCell::new(None) };
+    /// One test at a time: what they count is one number.
+    static SERIAL: Mutex<()> = Mutex::new(());
+    static SYNCS: AtomicU32 = AtomicU32::new(0);
+    static STOP: Mutex<Stop> = Mutex::new(None);
+
+    fn serial() -> MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_stop(stop: Stop) {
+        *STOP.lock().unwrap_or_else(PoisonError::into_inner) = stop;
     }
 
     pub(super) fn count_sync() {
-        SYNCS.with(|count| count.set(count.get() + 1));
+        SYNCS.fetch_add(1, Ordering::Relaxed);
     }
 
     /// The stop just before the rename of `copy_new_file`.
     pub(super) fn before_rename(tmp: &Path) {
-        STOP.with(|stop| {
-            if let Some(stop) = &*stop.borrow() {
-                stop(tmp);
-            }
-        });
+        if let Some(stop) = &*STOP.lock().unwrap_or_else(PoisonError::into_inner) {
+            stop(tmp);
+        }
     }
 
     /// `(tempdir, canonical path)`; macOS' temp folder is a link.
@@ -1331,13 +1338,14 @@ mod tests {
     }
 
     fn syncs_of(run: impl FnOnce()) -> u32 {
-        SYNCS.with(|count| count.set(0));
+        SYNCS.store(0, Ordering::Relaxed);
         run();
-        SYNCS.with(Cell::get)
+        SYNCS.load(Ordering::Relaxed)
     }
 
     #[test]
     fn a_new_target_syncs_nothing_a_replaced_one_its_file_a_move_both() {
+        let _one = serial();
         let (_dir, root) = scratch();
         fs::write(root.join("a"), b"one").unwrap();
         fs::write(root.join("b"), b"two").unwrap();
@@ -1388,6 +1396,7 @@ mod tests {
 
     #[test]
     fn the_temporary_sibling_is_final_before_it_gets_its_name() {
+        let _one = serial();
         let (_dir, root) = scratch();
         let (from, to) = (root.join("from"), root.join("sub").join("to"));
         fs::create_dir(root.join("sub")).unwrap();
@@ -1396,55 +1405,55 @@ mod tests {
             mode: cfg!(unix).then_some(0o640),
             ..meta_of(&from, 1_000_000)
         };
-        let checked = std::rc::Rc::new(Cell::new(false));
-        let seen = std::rc::Rc::clone(&checked);
+        let checked = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&checked);
         let sub = root.join("sub");
-        STOP.with(|stop| {
-            *stop.borrow_mut() = Some(Box::new(move |tmp: &Path| {
-                let names: Vec<_> = fs::read_dir(&sub)
-                    .unwrap()
-                    .map(|item| item.unwrap().path())
-                    .collect();
-                assert_eq!(names, [tmp.to_path_buf()], "the temporary sibling alone");
-                assert_eq!(fs::read(tmp).unwrap(), b"content");
-                let made = fs::metadata(tmp).unwrap();
-                assert_eq!(
-                    made.modified().unwrap(),
-                    UNIX_EPOCH + Duration::from_secs(1_000_000)
-                );
-                #[cfg(unix)]
-                assert_eq!(platform::attrs(&made).unix().unwrap().mode, 0o640);
-                seen.set(true);
-            }));
-        });
+        set_stop(Some(Box::new(move |tmp: &Path| {
+            let names: Vec<_> = fs::read_dir(&sub)
+                .unwrap()
+                .map(|item| item.unwrap().path())
+                .collect();
+            assert_eq!(names, [tmp.to_path_buf()], "the temporary sibling alone");
+            assert_eq!(fs::read(tmp).unwrap(), b"content");
+            let made = fs::metadata(tmp).unwrap();
+            assert_eq!(
+                made.modified().unwrap(),
+                UNIX_EPOCH + Duration::from_secs(1_000_000)
+            );
+            #[cfg(unix)]
+            assert_eq!(platform::attrs(&made).unix().unwrap().mode, 0o640);
+            seen.store(true, Ordering::Relaxed);
+        })));
         let vfs = LocalVfs::default();
         let bytes = vfs
             .copy_new_file(&spec(&from), &spec(&to), &meta, &CancelToken::new())
             .unwrap();
-        STOP.with(|stop| *stop.borrow_mut() = None);
+        set_stop(None);
         assert_eq!(bytes, Some(7));
-        assert!(checked.get(), "the stop ran");
+        assert!(checked.load(Ordering::Relaxed), "the stop ran");
         assert_eq!(fs::read(&to).unwrap(), b"content");
     }
 
     #[test]
     fn a_cancel_before_the_rename_removes_the_temporary_file() {
+        let _one = serial();
         let (_dir, root) = scratch();
         let (from, to) = (root.join("from"), root.join("sub").join("to"));
         fs::create_dir(root.join("sub")).unwrap();
         fs::write(&from, b"content").unwrap();
         let cancel = CancelToken::new();
         let token = cancel.clone();
-        STOP.with(|stop| *stop.borrow_mut() = Some(Box::new(move |_: &Path| token.cancel())));
+        set_stop(Some(Box::new(move |_: &Path| token.cancel())));
         let vfs = LocalVfs::default();
         let result = vfs.copy_new_file(&spec(&from), &spec(&to), &meta_of(&from, 5), &cancel);
-        STOP.with(|stop| *stop.borrow_mut() = None);
+        set_stop(None);
         assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
         assert_eq!(fs::read_dir(root.join("sub")).unwrap().count(), 0);
     }
 
     #[test]
     fn a_file_over_the_limit_has_no_such_path() {
+        let _one = serial();
         let (_dir, root) = scratch();
         let (from, to) = (root.join("from"), root.join("to"));
         let file = File::create(&from).unwrap();
@@ -1466,6 +1475,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn no_mode_no_such_path() {
+        let _one = serial();
         let (_dir, root) = scratch();
         let (from, to) = (root.join("from"), root.join("to"));
         fs::write(&from, b"content").unwrap();
@@ -1480,6 +1490,7 @@ mod tests {
     /// The result of the path equals a plain copy that keeps times.
     #[test]
     fn the_result_equals_a_plain_copy() {
+        let _one = serial();
         let (_dir, root) = scratch();
         let (from, to, plain) = (root.join("from"), root.join("to"), root.join("plain"));
         fs::write(&from, vec![7u8; 100_000]).unwrap();

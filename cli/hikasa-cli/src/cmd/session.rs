@@ -14,7 +14,7 @@ use hikasa_session::api::{
 use hikasa_session::sessions::{SessionRef, SessionType};
 
 use super::{Ctx, folder, text};
-use crate::args::{FolderCompareArgs, SessionCmd, SessionRunArgs, TextCompareArgs};
+use crate::args::{FolderCompareArgs, FolderRuleArgs, SessionCmd, SessionRunArgs, TextCompareArgs};
 
 /// Exit code of a successful command.
 const OK: u8 = ExitCode::Success.code();
@@ -245,40 +245,9 @@ fn folder_args(
     request: &hikasa_session::api::FolderCompareRequest,
 ) -> FolderCompareArgs {
     FolderCompareArgs {
-        archives: None,
-        open_archive: Vec::new(),
         left: request.left.clone(),
         right: request.right.clone(),
-        filters: None,
-        rules_file: None,
-        criteria: None,
-        size: false,
-        no_size: false,
-        timestamps: false,
-        no_timestamps: false,
-        tolerance: None,
-        ignore_dst: false,
-        ignore_timezone: false,
-        filename_case: false,
-        attributes: None,
-        permissions: false,
-        owner: false,
-        group: false,
-        content: None,
-        skip_if_quick_same: false,
-        no_override_quick: false,
-        text_rules_file: None,
-        importance: crate::args::ImportanceArgs::default(),
-        case_sensitive: false,
-        case_insensitive: false,
-        align_extensions: false,
-        align_normalization: false,
-        cutoff: None,
-        size_filter: None,
-        include_protected: false,
-        follow_symlinks: false,
-        flatten: false,
-        no_scan_orphans: false,
+        rule: FolderRuleArgs::default(),
         display: args.display.clone(),
         folders: args.folders.clone(),
         ignore_unimportant: args.ignore_unimportant,

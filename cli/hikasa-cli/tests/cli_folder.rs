@@ -517,3 +517,91 @@ fn gui_sends_the_comparison_to_the_gui() {
     assert_eq!(gui.requests().len(), before);
     server.shutdown().unwrap();
 }
+
+/// A6.7: the filter flags; `none` is off; a bad word is `invalid_input`, exit 100.
+#[test]
+fn attrib_and_unixtype_filters() {
+    let s = Sandbox::new();
+    s.file("a/x.txt", "x\n");
+    s.file("b/y.txt", "y\n");
+    let args = ["--unixtype-filter", "-r", "--display", "all", "--json"];
+    let out = compare(&s, &args);
+    let doc = json(&out);
+    assert_eq!(doc["result"]["verdict"], "no_differences", "{doc}");
+    let off = compare(&s, &["--unixtype-filter", "none", "--json"]);
+    assert_eq!(json(&off)["result"]["verdict"], "differences");
+    for bad in ["--attrib-filter", "--unixtype-filter"] {
+        let out = compare(&s, &[bad, "+q"]);
+        assert_eq!(code(&out), 100, "{}", stderr(&out));
+        let out = compare(&s, &[bad, "+q", "--json"]);
+        assert_eq!(json(&out)["error"]["kind"], "invalid_input");
+    }
+    // Without DOS attributes on this platform the filter is one warning per side; with them it can only hide files.
+    let out = compare(&s, &["--attrib-filter", "-z", "--json"]);
+    assert_eq!(code(&out), 13, "{}", stderr(&out));
+}
+
+/// A6.8: `--no-auto-scan`: a pair of folders is not scanned, so the result is incomplete, not "no differences".
+#[test]
+fn no_auto_scan_is_incomplete() {
+    let s = Sandbox::new();
+    s.file("a/d/x.txt", "x\n");
+    s.file("b/d/x.txt", "x\n");
+    assert_eq!(code(&compare(&s, &[])), 2);
+    let out = compare(
+        &s,
+        &["--no-auto-scan", "--expand-on-load", "--expand-differences"],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+}
+
+/// A6.9: `--ignored`: the difference reads as same, the exit code says so, and the row shows its flag.
+#[test]
+fn ignored_paths() {
+    let s = Sandbox::new();
+    s.file("a/same.txt", "same\n");
+    s.file("b/same.txt", "same\n");
+    s.file("a/d/x.txt", "left, longer\n");
+    s.file("b/d/x.txt", "right\n");
+    s.file("b/d/keep.txt", "only here\n");
+    assert_eq!(code(&compare(&s, &[])), 13);
+    let out = compare(&s, &["--ignored", "d", "--json"]);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["result"]["verdict"], "no_differences");
+    let out = compare(&s, &["--ignored", "d", "--ignored", "!d/keep.txt"]);
+    assert_eq!(code(&out), 13, "{}", stderr(&out));
+}
+
+/// A6.10: a format turned off leaves a rules comparison to the format that then wins; an id nobody knows warns once.
+#[test]
+fn format_on_and_off() {
+    let s = Sandbox::new();
+    s.file("a/x.c", "int a; // one\n");
+    s.file("b/x.c", "int a; // two\n");
+    let rules = ["--content", "rules", "--ignore-unimportant"];
+    assert_eq!(
+        code(&compare(&s, &rules)),
+        0,
+        "a comment is unimportant in C"
+    );
+    let mut off = rules.to_vec();
+    off.extend(["--format-off", "c-cpp"]);
+    assert_eq!(code(&compare(&s, &off)), 13, "plain text has no comments");
+    let mut unknown = rules.to_vec();
+    unknown.extend([
+        "--format-off",
+        "no-such-format",
+        "--format-on",
+        "c-cpp",
+        "--json",
+    ]);
+    let out = compare(&s, &unknown);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let warnings = json(&out)["warnings"].as_array().unwrap().clone();
+    let named: Vec<_> = warnings
+        .iter()
+        .filter(|w| w["code"] == "unknown_config_key")
+        .collect();
+    assert_eq!(named.len(), 1, "{warnings:?}");
+}

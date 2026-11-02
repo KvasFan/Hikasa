@@ -13,9 +13,7 @@
 //! folder with a million entries neither multiplies its memory nor delays cancellation (§5.3, §5.7). A batch
 //! cancelled before its insertion is dropped: the folder stays not scanned and the result incomplete.
 
-#[path = "content.rs"]
 pub(crate) mod content;
-#[path = "refresh.rs"]
 pub(crate) mod refresh;
 
 use std::borrow::Cow;

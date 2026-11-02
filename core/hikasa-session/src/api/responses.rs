@@ -1,11 +1,12 @@
 //! Service responses (§1.8.4): [`QuickResponse`], [`TextCompareResponse`], [`FormatChoice`],
 //! [`PreparedFolderCompare`], [`FolderCompareResponse`].
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hikasa_core::{CompareVerdict, ContentOutcome, ContentResult, ExitCode, Pair, Spec, Warning};
 use hikasa_folder::{DisplayOptions, FolderComparison, FolderModel, FolderRules};
-use hikasa_formats::{DetectReason, FormatId, FormatKind};
+use hikasa_formats::{DetectReason, EnabledOverrides, FormatId, FormatKind};
 use hikasa_report::json::{
     DetectReasonJson, FolderCompareJson, FormatJson, TextCompareJson, folder_compare_json,
     text_compare_json,
@@ -104,6 +105,7 @@ pub struct PreparedFolderCompare {
     pub(crate) right: Spec,
     pub(crate) rules: FolderRules,
     pub(crate) text_rules: Option<TextRules>,
+    pub(crate) overrides: EnabledOverrides,
     pub(crate) ignore_unimportant: bool,
     pub(crate) model: Arc<FolderModel>,
     pub(crate) warnings: Vec<Warning>,
@@ -113,6 +115,11 @@ impl PreparedFolderCompare {
     /// The live model (empty until `folder_run` starts filling it).
     pub fn model(&self) -> &Arc<FolderModel> {
         &self.model
+    }
+
+    /// The formats this comparison turns on or off (FF-002): what a child view of a row opens with.
+    pub fn format_overrides(&self) -> &BTreeMap<String, bool> {
+        &self.rules.format_overrides
     }
 
     /// Effective folder rules.

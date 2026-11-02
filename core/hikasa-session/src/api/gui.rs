@@ -1461,6 +1461,7 @@ impl Service {
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
                         base_rules: None,
+                        ..TextCompareRequest::default()
                     },
                     view: ViewOptions {
                         filter: mode.text_filter(),

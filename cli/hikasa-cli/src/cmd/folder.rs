@@ -4,10 +4,12 @@
 //! (§3.5): defaults ← `--rules-file` ← `--criteria` ← the individual flags (the service applies them in that
 //! order). `--gui` sends the request to the GUI instead (D-50).
 
+use std::collections::BTreeMap;
+
 use hikasa_core::{JobKind, Warning};
 use hikasa_folder::{
-    CaseMode, Change, DateFilter, DisplayOptions, DosAttrs, FolderRulesPatch, NullObserver,
-    SizeFilter,
+    AttribFilter, CaseMode, Change, DateFilter, DisplayOptions, DosAttrs, FolderError,
+    FolderRulesPatch, NullObserver, SizeFilter, UnixTypeFilter,
 };
 use hikasa_report::{FolderColumns, FolderLayout, FolderReportOptions, OutputFormat};
 use hikasa_session::ApiError;
@@ -18,7 +20,7 @@ use hikasa_session::api::{
 };
 
 use super::{Ctx, gui, importance_patch, tri};
-use crate::args::FolderCompareArgs;
+use crate::args::{FolderCompareArgs, FolderRuleArgs};
 use crate::output::WriteError;
 
 /// Runs `folder compare`.
@@ -109,75 +111,112 @@ pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderComp
     ctx.human_done(written, code, FOLDER_COMPARE_SCHEMA, &warnings, op)
 }
 
+/// A filter's flag: `none` is off, anything else its expression, parsed by hikasa-folder.
+fn filter_word<T>(
+    word: Option<&str>,
+    parse: impl Fn(&str) -> Result<T, FolderError>,
+) -> Result<Option<Change<T>>, ApiError> {
+    match word {
+        None => Ok(None),
+        Some("none") => Ok(Some(Change::Clear)),
+        Some(expr) => parse(expr)
+            .map(|filter| Some(Change::Set(filter)))
+            .map_err(ApiError::from),
+    }
+}
+
+/// `--format-on`, `--format-off`: the last word for an id wins over the file's (off after on).
+fn format_words(rule: &FolderRuleArgs) -> Option<BTreeMap<String, bool>> {
+    let on = rule.format_on.iter().map(|id| (id.clone(), true));
+    let off = rule.format_off.iter().map(|id| (id.clone(), false));
+    let words: BTreeMap<String, bool> = on.chain(off).collect();
+    (!words.is_empty()).then_some(words)
+}
+
 /// The request of the flags (§1.9.2 mapping): every individual flag becomes one `FolderRulesPatch` field (the
 /// unix flags one field each, §1.8.7 item 19); filter expressions are parsed by hikasa-folder (`--cutoff` with
 /// the clock's zone), attribute letters by hikasa-vfs, the content method by the session.
 fn request(ctx: &Ctx<'_>, args: &FolderCompareArgs) -> Result<FolderCompareRequest, ApiError> {
     let zone = ctx.service.clock().now().time_zone().clone();
     let patch = FolderRulesPatch {
-        size: tri(args.size, args.no_size),
-        timestamps_enabled: tri(args.timestamps, args.no_timestamps),
-        tolerance_secs: args.tolerance,
-        ignore_dst: args.ignore_dst.then_some(true),
-        ignore_timezone: args.ignore_timezone.then_some(true),
-        filename_case: args.filename_case.then_some(true),
+        size: tri(args.rule.size, args.rule.no_size),
+        timestamps_enabled: tri(args.rule.timestamps, args.rule.no_timestamps),
+        tolerance_secs: args.rule.tolerance,
+        ignore_dst: args.rule.ignore_dst.then_some(true),
+        ignore_timezone: args.rule.ignore_timezone.then_some(true),
+        filename_case: args.rule.filename_case.then_some(true),
         dos_attributes: args
+            .rule
             .attributes
             .as_deref()
             .map(DosAttrs::parse_letters)
             .transpose()?,
-        unix_permissions: args.permissions.then_some(true),
-        unix_owner: args.owner.then_some(true),
-        unix_group: args.group.then_some(true),
+        unix_permissions: args.rule.permissions.then_some(true),
+        unix_owner: args.rule.owner.then_some(true),
+        unix_group: args.rule.group.then_some(true),
         content_method: args
+            .rule
             .content
             .as_deref()
             .map(parse_content_method)
             .transpose()?,
-        skip_if_quick_same: args.skip_if_quick_same.then_some(true),
-        override_quick: args.no_override_quick.then_some(false),
-        case: if args.case_sensitive {
+        skip_if_quick_same: args.rule.skip_if_quick_same.then_some(true),
+        override_quick: args.rule.no_override_quick.then_some(false),
+        case: if args.rule.case_sensitive {
             Some(CaseMode::Sensitive)
-        } else if args.case_insensitive {
+        } else if args.rule.case_insensitive {
             Some(CaseMode::Insensitive)
         } else {
             None
         },
-        align_extensions: args.align_extensions.then_some(true),
-        align_normalization: args.align_normalization.then_some(true),
-        name_filter: args.filters.clone(),
-        exclude_protected: args.include_protected.then_some(false),
+        align_extensions: args.rule.align_extensions.then_some(true),
+        align_normalization: args.rule.align_normalization.then_some(true),
+        name_filter: args.rule.filters.clone(),
+        exclude_protected: args.rule.include_protected.then_some(false),
         size_filter: args
+            .rule
             .size_filter
             .as_deref()
             .map(SizeFilter::parse)
             .transpose()?
             .map(Change::Set),
         date_filter: args
+            .rule
             .cutoff
             .as_deref()
             .map(|expr| DateFilter::parse(expr, &zone))
             .transpose()?
             .map(Change::Set),
-        follow_symlinks: args.follow_symlinks.then_some(true),
-        flatten: args.flatten.then_some(true),
-        scan_orphan_folders: args.no_scan_orphans.then_some(false),
+        follow_symlinks: args.rule.follow_symlinks.then_some(true),
+        flatten: args.rule.flatten.then_some(true),
+        scan_orphan_folders: args.rule.no_scan_orphans.then_some(false),
         archives: args
+            .rule
             .archives
             .as_deref()
             .map(parse_archive_handling)
             .transpose()?,
-        open_archives: (!args.open_archive.is_empty()).then(|| args.open_archive.clone()),
+        open_archives: (!args.rule.open_archive.is_empty()).then(|| args.rule.open_archive.clone()),
+        attrib_filter: filter_word(args.rule.attrib_filter.as_deref(), AttribFilter::parse)?,
+        unix_type_filter: filter_word(
+            args.rule.unix_type_filter.as_deref(),
+            UnixTypeFilter::parse,
+        )?,
+        auto_scan_subfolders: args.rule.no_auto_scan.then_some(false),
+        expand_on_load: args.rule.expand_on_load.then_some(true),
+        expand_differences_only: args.rule.expand_differences.then_some(true),
+        ignored: (!args.rule.ignored.is_empty()).then(|| args.rule.ignored.clone()),
+        format_overrides: format_words(&args.rule),
         ..FolderRulesPatch::default()
     };
     Ok(FolderCompareRequest {
         left: args.left.clone(),
         right: args.right.clone(),
-        rules_file: args.rules_file.clone(),
-        criteria: args.criteria.clone(),
+        rules_file: args.rule.rules_file.clone(),
+        criteria: args.rule.criteria.clone(),
         patch,
-        text_rules_file: args.text_rules_file.clone(),
-        text_patch: importance_patch(&args.importance, ctx.matches)?,
+        text_rules_file: args.rule.text_rules_file.clone(),
+        text_patch: importance_patch(&args.rule.importance, ctx.matches)?,
         ignore_unimportant: args.ignore_unimportant,
         base_rules: None,
         base_text_rules: None,

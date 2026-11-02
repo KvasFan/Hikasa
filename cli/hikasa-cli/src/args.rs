@@ -299,13 +299,9 @@ pub enum FolderCmd {
     Compare(Box<FolderCompareArgs>),
 }
 
-/// `hikasa folder compare <left> <right>`.
-#[derive(Debug, clap::Args)]
-pub struct FolderCompareArgs {
-    /// Left base folder, or an archive.
-    pub left: OsString,
-    /// Right base folder, or an archive.
-    pub right: OsString,
+/// The rule flags of `folder compare`, and of the folder commands that compare first: one owner, the same flags.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderRuleArgs {
     /// Archives inside the trees: files (always), opened (files, until named by --open-archive; default),
     /// folders (always).
     #[arg(long, value_name = "MODE")]
@@ -403,6 +399,46 @@ pub struct FolderCompareArgs {
     /// Do not scan folders that exist on one side only.
     #[arg(long)]
     pub no_scan_orphans: bool,
+    /// Attribute filter on regular files: `(+|-)<letters>…`, e.g. `+rh-s`, or `none`.
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub attrib_filter: Option<String>,
+    /// Unix type filter: `(+|-)<letters>…` of `b c l p r s`, e.g. `-lp`, or `none`.
+    #[arg(
+        long = "unixtype-filter",
+        value_name = "EXPR",
+        allow_hyphen_values = true
+    )]
+    pub unix_type_filter: Option<String>,
+    /// Do not scan subfolders by themselves: only the bases, and with their subtrees the orphan folders in a base.
+    #[arg(long)]
+    pub no_auto_scan: bool,
+    /// A view opens the folders of the tree when the comparison is loaded.
+    #[arg(long)]
+    pub expand_on_load: bool,
+    /// A view opens only the folders with differences.
+    #[arg(long = "expand-differences")]
+    pub expand_differences: bool,
+    /// A path relative to the bases to mark Ignored, `!path` for an exception (repeatable).
+    #[arg(long, value_name = "PATH", allow_hyphen_values = true)]
+    pub ignored: Vec<String>,
+    /// Turn on a file format for this comparison (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub format_on: Vec<String>,
+    /// Turn off a file format for this comparison (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub format_off: Vec<String>,
+}
+
+/// `hikasa folder compare <left> <right>`.
+#[derive(Debug, clap::Args)]
+pub struct FolderCompareArgs {
+    /// Left base folder, or an archive.
+    pub left: OsString,
+    /// Right base folder, or an archive.
+    pub right: OsString,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: FolderRuleArgs,
     /// Display filter (default differences).
     #[arg(long, value_name = "FILTER")]
     pub display: Option<String>,

@@ -6,7 +6,7 @@
 //! §3). Anything else is a new record with the scan's own tasks. The same rows in the same order are rewritten in place
 //! and every id stays; otherwise the folder's block moves to the tail of the arena and `renumbered` says how.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::sync::Arc;
 
@@ -59,7 +59,7 @@ pub fn refresh_into(
         complete: true,
         ..RefreshReport::default()
     };
-    let mut moved: HashMap<NodeId, NodeId> = HashMap::new();
+    let mut moved: BTreeMap<NodeId, NodeId> = BTreeMap::new();
     while let Some(node) = order.pop() {
         let node = moved.get(&node).copied().unwrap_or(node);
         if scan.cancelled() {
@@ -345,7 +345,7 @@ impl<'a> Scan<'a> {
                 .node(node)
                 .map_or_else(Vec::new, |n| n.children().collect());
             old_count = old_rows.len();
-            let mut by_key: HashMap<RowKey, u32> = HashMap::with_capacity(old_rows.len());
+            let mut by_key: BTreeMap<RowKey, u32> = BTreeMap::new();
             for &id in &old_rows {
                 let Some(old) = store.node(NodeId(id)) else {
                     continue;
