@@ -425,10 +425,13 @@ mod at_a_terminal {
     use super::{LIMIT, wait};
     use crate::common::{Sandbox, hikasa_exe};
 
-    /// `hikasa <args>` on a pty, with what it prints.
+    /// `hikasa <args>` on a pty, with what it prints. `script` runs the line through `$SHELL -c`; `exec` makes hikasa that
+    /// process, so the status is hikasa's. Without it a shell that forks for the last command (dash, `/bin/sh` on Debian and
+    /// Ubuntu) stays in the pty's foreground group, dies of the same Ctrl-C, and `script --return` reports its 130.
     fn spawn(s: &Sandbox, args: &[&str]) -> (Child, Arc<Mutex<Vec<u8>>>) {
         let quoted = |word: &str| format!("'{}'", word.replace('\'', r"'\''"));
-        let mut line = quoted(hikasa_exe().to_str().unwrap());
+        let mut line = String::from("exec ");
+        line.push_str(&quoted(hikasa_exe().to_str().unwrap()));
         line.push_str(" --config-dir ");
         line.push_str(&quoted(s.config().to_str().unwrap()));
         for arg in args {
