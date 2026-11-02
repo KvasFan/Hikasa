@@ -802,6 +802,10 @@ pub fn execute_with(
         items,
         warnings: plan_warnings,
     } = plan;
+    let clashes = backup::clashes(src, dst, &items, &options.archive_backups);
+    if !clashes.is_empty() {
+        return refused(op, plan_options, items, plan_warnings, clashes);
+    }
     let total = items.iter().map(PlanItem::bytes).sum();
     let mut exec = Exec {
         src,
@@ -949,6 +953,35 @@ pub fn execute_with(
         summary,
         cancelled,
         warnings: exec.warnings,
+    }
+}
+
+/// The report of a plan refused before any item ran: the items at fault failed, the others `not_run`.
+fn refused(
+    op: OpKind,
+    options: PlanOptions,
+    items: Vec<PlanItem>,
+    warnings: Vec<Warning>,
+    clashes: Vec<(usize, VfsError)>,
+) -> OpReport {
+    let mut results = vec![ItemResult::status(ItemStatus::NotRun); items.len()];
+    for (index, error) in clashes {
+        if let Some(result) = results.get_mut(index) {
+            *result = ItemResult::failed(report(&error));
+        }
+    }
+    let summary = plan::Summary::count(&results, 0);
+    OpReport {
+        plan: Plan {
+            op,
+            options,
+            items,
+            warnings,
+        },
+        results,
+        summary,
+        cancelled: false,
+        warnings: Vec::new(),
     }
 }
 

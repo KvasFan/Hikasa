@@ -186,6 +186,98 @@ fn a6_6_numbering_and_folders_at_planning() {
     assert!(matches!(error, VfsError::IsADirectory { .. }), "{error}");
 }
 
+/// "A backup must not be what it keeps", in the `folder` style too, whose name can be the item's own.
+#[test]
+fn a6_6_the_folder_of_the_item_itself_is_numbered() {
+    let vfs = memory();
+    let policy = BackupPolicy {
+        style: BackupStyle::Folder,
+        folder: Some(mspec("/right")),
+    };
+    let target = mspec("/right/x.txt");
+    assert_eq!(
+        policy.target(&vfs, &target, None).unwrap(),
+        mspec("/right/x-2.txt")
+    );
+    let rel = RelPath::parse("a/x.txt").unwrap();
+    let target = mspec("/right/a/x.txt");
+    assert_eq!(
+        policy.target(&vfs, &target, Some(&rel)).unwrap(),
+        mspec("/right/a/x-2.txt")
+    );
+    // By the back-end's case: `ABC.bak` is the item `abc.bak` there.
+    let insensitive = MemoryVfs::new(CaseSensitivity::Insensitive);
+    let stem = BackupPolicy {
+        style: BackupStyle::StemBak,
+        folder: None,
+    };
+    assert_eq!(
+        stem.target(&insensitive, &mspec("/d/ABC.BAK"), None).unwrap(),
+        mspec("/d/ABC-2.BAK")
+    );
+}
+
+/// `x` and `x.bak` in one plan, with `name_bak`: reserved first, a backup numbers around every path of the plan, in
+/// either order, and nothing is lost.
+#[test]
+fn a6_6_a_backup_numbers_around_the_paths_of_the_plan() {
+    let policy = BackupPolicy {
+        style: BackupStyle::NameBak,
+        folder: None,
+    };
+    for order in [["x", "x.bak"], ["x.bak", "x"]] {
+        let vfs = memory();
+        for (side, text) in [("left", "new"), ("right", "old")] {
+            for name in ["x", "x.bak"] {
+                let path = format!("/{side}/{name}");
+                let bytes = format!("{text} {name}").into_bytes();
+                vfs.insert_file(&host(&path), bytes, meta(1)).unwrap();
+            }
+        }
+        let mut names = BackupNames::default();
+        for name in order {
+            names.reserve(&vfs, &mspec(&format!("/left/{name}")));
+            names.reserve(&vfs, &mspec(&format!("/right/{name}")));
+        }
+        let mut items = Vec::new();
+        for name in order {
+            let target = mspec(&format!("/right/{name}"));
+            let mut item = PlanItem::planned(
+                Action::Copy,
+                EntryKind::File,
+                Some(mspec(&format!("/left/{name}"))),
+                target.clone(),
+                0,
+            );
+            item.replaces = true;
+            item.backup = Some(names.assign(&policy, &vfs, &target, None).unwrap());
+            items.push(item);
+        }
+        let report = run(&vfs, batch(items));
+        assert!(report.ok(), "{order:?}: {:?}", report.results);
+        assert_eq!(content(&vfs, "/right/x"), b"new x");
+        assert_eq!(content(&vfs, "/right/x.bak"), b"new x.bak");
+        assert_eq!(content(&vfs, "/right/x-2.bak"), b"old x");
+        assert_eq!(content(&vfs, "/right/x.bak.bak"), b"old x.bak");
+    }
+}
+
+/// `assign` alone knows the items it has seen, so the later of the two is the one a reserve is for.
+#[test]
+fn a6_6_an_item_assigned_earlier_keeps_its_name() {
+    let vfs = memory();
+    let policy = BackupPolicy {
+        style: BackupStyle::NameBak,
+        folder: None,
+    };
+    let mut names = BackupNames::default();
+    names.assign(&policy, &vfs, &mspec("/d/x.bak"), None).unwrap();
+    assert_eq!(
+        names.assign(&policy, &vfs, &mspec("/d/x"), None).unwrap(),
+        mspec("/d/x-2.bak")
+    );
+}
+
 // ---- execution -----------------------------------------------------------------------------------------------
 
 fn meta(secs: i64) -> MemMeta {
@@ -394,6 +486,87 @@ fn a6_6_cross_device_takes_the_copy_path() {
     assert_eq!(vfs.dump(), before, "nothing is replaced without its backup");
 }
 
+/// A hand-built plan whose backup would lose a file is refused before any item runs.
+#[test]
+fn a6_6_a_plan_whose_backup_loses_a_file_is_refused() {
+    const ITEM: &str = "is the item it backs up";
+    const PLAN: &str = "is a path of another item of the plan";
+    let second = || {
+        let mut item = PlanItem::planned(
+            Action::Copy,
+            EntryKind::File,
+            Some(mspec("/s2")),
+            mspec("/t2"),
+            0,
+        );
+        item.replaces = true;
+        item
+    };
+    let with = |backup: &str| {
+        let mut item = copy_with_backup();
+        item.backup = Some(mspec(backup));
+        item
+    };
+    let mut twice = second();
+    twice.backup = Some(mspec("/t.bak"));
+    let rows: Vec<(Vec<PlanItem>, usize, &str)> = vec![
+        (vec![with("/t")], 0, ITEM),
+        (vec![with("/s")], 0, PLAN),
+        (vec![second(), with("/t2")], 1, PLAN),
+        (vec![with("/t2"), second()], 0, PLAN),
+        (vec![with("/s2"), second()], 0, PLAN),
+        (vec![copy_with_backup(), twice], 1, PLAN),
+    ];
+    for (items, at, reason) in rows {
+        let vfs = replaced();
+        vfs.insert_file(&host("/s2"), &b"new two"[..], meta(200))
+            .unwrap();
+        vfs.insert_file(&host("/t2"), &b"old two"[..], meta(100))
+            .unwrap();
+        let before = vfs.dump();
+        vfs.set_journal(true);
+        let report = run(&vfs, batch(items));
+        assert!(!report.ok());
+        for (index, result) in report.results.iter().enumerate() {
+            if index == at {
+                assert_eq!(result.status, ItemStatus::Failed);
+                let error = result.error.as_ref().unwrap();
+                assert_eq!(error.kind, ErrorKind::InvalidInput);
+                assert!(error.message.contains(reason), "{}", error.message);
+            } else {
+                assert_eq!(result.status, ItemStatus::NotRun);
+            }
+        }
+        assert_eq!(vfs.dump(), before);
+        assert!(vfs.journal().iter().all(|(op, _)| *op == VfsOp::Stat), "no item ran");
+    }
+}
+
+/// The same on a disk: the backup is the file itself, and the old file stays.
+#[test]
+fn a6_6_a_backup_onto_itself_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("right")).unwrap();
+    std::fs::write(root.join("s"), b"new").unwrap();
+    std::fs::write(root.join("right/x"), b"old").unwrap();
+    let vfs = LocalVfs::default();
+    let target = common::lspec_new(&root.join("right/x"));
+    let mut item = PlanItem::planned(
+        Action::Copy,
+        EntryKind::File,
+        Some(common::lspec_new(&root.join("s"))),
+        target.clone(),
+        0,
+    );
+    item.replaces = true;
+    item.backup = Some(target);
+    let report = run(&vfs, batch(vec![item]));
+    assert!(!report.ok());
+    assert_eq!(std::fs::read(root.join("right/x")).unwrap(), b"old");
+    assert_eq!(std::fs::read(root.join("s")).unwrap(), b"new");
+}
+
 /// A move: the same path; `folder` parents are not items.
 #[test]
 fn a6_6_a_move_backs_up_and_parents_are_no_items() {
@@ -519,6 +692,36 @@ fn commits_of(memory: &OnMemory, path: &str) -> usize {
         .iter()
         .filter(|(op, at)| *op == VfsOp::Commit && *at == spec)
         .count()
+}
+
+/// An archive's backup that is the archive, or a path of the plan, is refused before the archive is touched.
+#[test]
+fn a6_6_an_archive_backup_that_loses_a_file_is_refused() {
+    for backup in ["/a.zip", "/other"] {
+        let memory = on_memory(ArchiveLimits::default());
+        let file = archive(&memory, "a.zip");
+        memory
+            .mem
+            .insert_file(&host("/other"), &b"o"[..], MemMeta::default())
+            .unwrap();
+        let before = memory.mem.dump();
+        let member = Spec::archive_member(file.clone(), "a");
+        let touched = PlanItem::planned(
+            Action::Touch,
+            EntryKind::File,
+            None,
+            mspec("/other"),
+            0,
+        );
+        let report = exec(
+            &*memory.vfs,
+            vec![removal(&member), touched],
+            &backups(&file, backup),
+        );
+        assert_eq!(report.results[0].status, ItemStatus::Failed, "{backup}");
+        assert_eq!(report.results[1].status, ItemStatus::NotRun);
+        assert_eq!(memory.mem.dump(), before);
+    }
 }
 
 /// One backup of the outermost file per operation, however many members change; a member has none of its own.
