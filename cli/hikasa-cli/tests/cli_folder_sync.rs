@@ -1030,7 +1030,11 @@ fn a6_31_a_copied_link_keeps_its_time_and_a_sync_settles() {
     s.dir("l");
     s.dir("r");
     // A target in the system's own spelling.
-    let target = if cfg!(windows) { r"some\where" } else { "some/where" };
+    let target = if cfg!(windows) {
+        r"some\where"
+    } else {
+        "some/where"
+    };
     if !make_link(target, &s.join("l/lnk")) {
         eprintln!("skipped: this system does not let the test make a link");
         return;
