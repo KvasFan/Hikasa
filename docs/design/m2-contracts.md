@@ -5015,8 +5015,10 @@ masks), `folder-sync` (presets, matrix, orphans, overrides, empty sources), `dia
 `exit-codes`, `json-output`, `view-folder-compare`, `archives` (operations, backups of archives). `hikasa help folder
 op` resolves through D-67.
 
-**CHANGELOG.** One `## Unreleased` entry per part, under Added, Safety, Data safety, Changed; Changed names the two
-defaults a user can meet: `include_hidden_by_default` and that a new copy no longer `fsync`s. **Version.** W6 may ship
+**CHANGELOG.** One W6 section in `## Unreleased`, under Added, Data safety, Changed, Fixed (and Internal), that a user of
+0.1.92 reads as one release: each part and each review fix updates it in place rather than adding an entry of its own,
+so it never tells of a state a later part changed (§1.6.25 *W6d after review* 9). Changed names the two defaults a user
+can meet: `include_hidden_by_default` and that a new copy no longer `fsync`s. **Version.** W6 may ship
 as pre-release **0.1.92** after W6d, by the steps of 0.1.91 (workspace version, `CHANGELOG` date, tag, packages, CI of
 all three systems first); 0.2.0 stays reserved for M2 complete. No part bumps the version on its own. Windows and macOS
 run in the pre-merge CI (§6.6 rules).
@@ -5477,8 +5479,9 @@ silent.
 3. **A stale plan does not run.** The view keeps the model (`Arc`) and its generation from the command on; the plan runs
    only if both still hold after planning and after the dialog, else a warning notice says so and nothing is written. A
    child's result and an Expand refresh wait for the task, so they cannot move the generation under a question.
-4. **Delete dialog presets.** A row on one writable side has that side chosen; a pair on two writable sides has none (OK
-   stays off until one is chosen): *Both* is never a default, nor is one side of a pair picked for the user.
+4. **Delete dialog presets.** A row on one writable side has that side chosen; a pair has none, also when one of its
+   sides is read-only (OK stays off until one is chosen; *after review* 5): *Both* is never a default, nor is one side of
+   a pair picked for the user.
    `require_side_selection_in_delete` presets nothing ever. A side the row has nothing on is greyed like a read-only one.
    Delete Permanently plans `recycle: Recycle::default()` whatever the dialog holds.
 5. **Confirmation dialog.** Enter is Yes for the operation question and No for an item's. "Do not ask again" counts with
@@ -5495,29 +5498,87 @@ silent.
    closes (what happened on disk is still true).
 7. **Rows a refresh replaced.** `renumbered` moves the open folders and the selection; a row whose facts changed gets a new
    record, which is no renumbering (a copied orphan becomes a pair), so the open folders and the selected row are also
-   found again by path. A refresh that answers flat (`report: None`), or fails after an operation, runs the comparison
-   again; so does one that leaves `garbage() > len() / 2`.
+   found again by path, where the user changed nothing while the refresh ran (*after review* 3). A refresh that answers
+   flat (`report: None`), or fails after an operation, runs the comparison again; so does one that leaves
+   `garbage() > len() / 2`.
 8. **Full re-runs keep what is open by path.** `FullRefresh` and the re-run of note 7 find the open folders and the
-   selected row again by path once the new comparison ends; before, the old ids were kept and could name other rows of the
-   new model. "A `FullRefresh` is unchanged" is read as: it still runs the comparison again.
-9. **Open on a closed archive** runs `folder_open_archive` as a job; the path joins the view's
-   `request.patch.open_archives`, which `duplicate()` gives the session, and the row opens by path once it is a folder.
+   selected row again by path once the new comparison ends (the row only when none was selected meanwhile); before, the
+   old ids were kept and could name other rows of the new model. "A `FullRefresh` is unchanged" is read as: it still runs
+   the comparison again.
+9. **Open on a closed archive** runs `folder_open_archive` as a job; once it opened (the job succeeded and the row is a
+   folder that did not fail to list), the path joins the view's `request.patch.open_archives`, which `duplicate()` gives
+   the session, and the row opens by path. An archive that cannot be read is not remembered (*after review* 7).
 10. **FC-012.** `expanded_on_load` is applied when a run ends (not with *expand all*, nor after a re-run that restores
-    paths). Expand, or the disclosure triangle, on a `NotScanned` folder refreshes it, then opens it.
+    paths). Expand, or the disclosure triangle, on a `NotScanned` folder refreshes it, then opens it; while a task of the
+    view runs it waits, by path, and runs when the task ends (*after review* 6).
 11. **FC-029(c).** The ticket is the row's path and both stamps, not its id: ids move and records are replaced. The result
     goes to the live file row at that path, through `apply_child_result`'s stamps, once per child (its first result), with
     `ContentMethod::Rules` and the child's `verdict(false)`; it waits while the view's task runs; a child closed first
     gives none; a re-run forgets the tickets. A child opened through its parent's session (a store job) is adopted when
     `finish_open` has its id.
 12. **Disable editing and `--nobackups`.** From `OpenOptions` on every `open_view` (IPC and the command line; `--ro` is
-    both sides), from the session's `[specs] read_only_*` on every session open, and copied by `TabDuplicate`.
-    `--nobackups` comes from `OpenOptions` only: a session has no such key.
-13. **Tests.** `FolderViewModel::gate` (`cfg(test)`) holds the plan and execute jobs, so Stop and the busy states are
-    tested without timers. No test calls a recycle bin: a delete to the bin is checked by its plan and cancelled, the
+    both sides), from the session's `[specs] read_only_*` on every session open, and copied by `TabDuplicate`. A view's
+    session carries its read-only sides, so Save, Save As, auto-save, the Settings dialog and a workspace keep them, and
+    Session Settings OK takes them back from that session; `--nobackups` comes from `OpenOptions` only and is never
+    written to a session, but survives Settings OK, `TabDuplicate` and a workspace (the tab's `view` table, key
+    `no_backups`). See *after review* 1.
+13. **Tests.** `FolderViewModel::gate` (`cfg(test)`) holds the plan, execute, refresh and archive-open jobs, and
+    `scan_gate` a comparison after it scanned, before it reports; `AppCore::before_wait` opens a gate once Quit waits;
+    so Stop, the busy states, a click during a refresh and an operation whose view ends are tested without timers. No test calls a recycle bin: a delete to the bin is checked by its plan and cancelled, the
     no-bin question on an archive member is answered No, and the pointer test unticks the bin and checks the model before
     OK. The child's result is tested with a CRLF pair (`rules_same`): a plain text file's inner whitespace is important.
 14. **Architecture.** `op_dialogs.rs` is in check 7's list of model files. `folder_view.rs` names no toolkit either, but
     stays out of the list as before.
+
+**W6d after review.** An independent review proved seven defects and fourteen untested behaviours (mutations that
+survived the suite); the maintainer decided the fixes, safety first. Where the text above, a help topic or a document
+said otherwise, it now says this.
+
+1. **The write policy survives every route.** Before, `AppCore::capture` built a view's session from `Specs::default()`,
+   so Save and Save As wrote a protected session without `read_only_*`, and Session ▸ Settings ▸ OK reset the view to
+   all-writable, even with nothing changed: Copy to Right then overwrote a `--ro2` side. Now `ViewCapture` carries the
+   read-only sides and its session sets `[specs] read_only_*`; Settings OK takes them from that session (the dialog has no
+   control for them, so they come back unchanged) and keeps the view's `--nobackups`; a text view keeps its sides too
+   (it writes nothing yet, but its session and its duplicate keep them). A read-only side becomes writable only by an
+   explicit change of the session (`session edit --set specs.read_only_right=false`, or the file). `--nobackups` has no
+   session key (note 12); a workspace keeps it as `no_backups = true` in the tab's own `view` table (docs/03), read only
+   when a workspace tab is restored, never from a session file. A child Text Compare of a protected folder view does not
+   inherit its sides yet: nothing writes in a text view before W10, which must pass them.
+2. **The question names its row.** The confirmation dialog shows the row's path and its sides (`a/b.txt: from the left
+   to the right`, `…: on both sides`) above the question; the Delete dialog already showed the path and what each side
+   holds. A selection that moved off the row between the command and the question (while the plan was made, or while
+   the Delete dialog was open) cancels the operation before anything is asked: a warning notice "the selection changed
+   while the operation was prepared; nothing was written". The same holds for a plan with no question left (the keys
+   off): it acts on the row it was given only while that row is still selected.
+3. **A click during a refresh wins.** A refresh (after an operation, an Expand, an archive) finds again by path only what
+   the user left as it was while it ran: a folder still open (one closed meanwhile stays closed) and the selection, unless
+   the user selected a row meanwhile (`selection_moves` counts the user's selections). A full re-run likewise keeps a row
+   selected while it compared. A folder opened during a refresh follows `renumbered`.
+4. **An operation whose view ends is reported.** Closing the tab, IPC `CloseView`, a workspace load, Session ▸ Settings
+   ▸ OK (the model is replaced) and Quit end a view's model through `FolderViewModel::retire`: an execute job is cancelled
+   and kept by the window until it has ended its current item (the cancel is cooperative, per buffer); its outcome goes
+   to the log with the tab's caption as source and one notice, `<caption> in <tab> (closed): …` or `(settings applied)`,
+   without *Show log* (the view is gone). An outcome or notice the view had not handed over yet is reported the same way.
+   Quit waits for such jobs before the Service shuts down, at most 30 s (`OPERATION_FLUSH`), so no temporary file is left;
+   one still running then is logged as an error. A plan or a question that had not run writes nothing and is dropped.
+5. **A pair has no preset side** in the Delete dialog, also when one of its sides is read-only (note 4): before, the
+   writable side was preset, and Shift+Del, Enter, Enter deleted it permanently, against `help/dialog-delete.md`.
+6. **An Expand during a task waits.** Before, an Expand on a folder not scanned while an operation or a refresh ran was
+   dropped. It is kept by path and runs when the task ends (note 10).
+7. **A failed archive open is not remembered.** Before, `open_archives` and the row to open were set before the job ran.
+   Now they are set once the archive opened; an archive that cannot be read (its folder failed to list, or the job
+   failed) gives a warning notice `Open <path>: <why>` and leaves the session as it was.
+8. **Tests the mutations asked for**, in `tests_folder_ops_fixes.rs`: a delete of one side of a pair deletes only that
+   side; the plan request carries the read-only sides and the Service's refusal shows as a warning; the view refuses a
+   copy into a read-only side by itself; "Do not ask again" then Cancel writes no key; a dialog closed mid-questions runs
+   no item, not even those without a question; a folder opened during a refresh stays open through `renumbered`; a model
+   changed while planning asks nothing; FullRefresh waits for an operation; nothing operates while a comparison runs;
+   the window passes `require_side_selection_in_delete`; a child's result waits for an open question; the read-only and
+   backup questions through the window, the move and system questions through the dialog. The "second operation
+   refused" check of `tests_folder_ops.rs` now looks at the job list and the dialog stack, so it can fail.
+9. **The CHANGELOG** keeps one W6 section in `## Unreleased` instead of one entry per part (§1.6.24 says so now): W6
+   ships as one pre-release, 0.1.92, and entries per part repeated each other and told of states a later part or a
+   review changed (the Delete dialog's presets, what a refresh keeps), which a user of 0.1.92 never sees.
 
 ### 1.7–1.14 W7–W14
 
