@@ -63,6 +63,21 @@ mod platform {
             | C::RENAME
     }
     pub(super) fn sync_dir(_dir: &Path) {}
+    pub(super) fn open_new(path: &Path) -> std::io::Result<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    }
+    pub(super) fn set_mode(_file: &std::fs::File, _mode: Option<u32>) -> std::io::Result<()> {
+        Ok(())
+    }
+    pub(super) fn with_created(
+        times: std::fs::FileTimes,
+        _created: std::time::SystemTime,
+    ) -> std::fs::FileTimes {
+        times
+    }
     pub(super) fn remove_file(path: &Path) -> std::io::Result<()> {
         std::fs::remove_file(path)
     }
@@ -107,7 +122,7 @@ mod platform {
 }
 
 use std::ffi::OsStr;
-use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
+use std::fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -117,8 +132,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, BUSY, EntryError, FollowLinks, ListOptions, Listing, NameOnly,
-    ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, BUSY, Durability, EntryError, FollowLinks, HandleMeta, ListOptions,
+    Listing, NameOnly, ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions, op_unsupported,
 };
 
 /// Files up to this size are copied by `copy_file_fast` with `std::fs::copy` (not cancellable); larger ones are
@@ -704,6 +719,113 @@ impl Vfs for LocalVfs {
         writer.commit_inner()?;
         Ok(Some(copied))
     }
+
+    /// Local → local files up to [`FAST_COPY_MAX`] (larger ones `Ok(None)`, for G4), with a mode: a file created without
+    /// one needs the default mode, which only the sequence of D-158 gives without reading the umask. The temporary
+    /// sibling is opened `create_new`, owner-only, takes the content, its final mode and time on the handle, and is
+    /// closed and renamed to `to`, so the file never shows under its name with a wrong time or mode. Windows' `R` comes
+    /// after the rename, from the usual step. The temporary file is not locked as a writer's: nothing stands at `to`, so
+    /// no rebuild of `to` looks for it, and this path has no time for it (D-164).
+    fn copy_new_file(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        meta: &HandleMeta,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        let (from_path, to_path) = (local(from)?, local(to)?);
+        cancel.check()?;
+        if cfg!(unix) && meta.mode.is_none() {
+            return Ok(None);
+        }
+        let modified = match meta.modified {
+            Some(time) => match system_time(time) {
+                Some(time) => Some(time),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        let created = match meta.created {
+            Some(time) => match system_time(time) {
+                Some(time) => Some(time),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        let size = fs::metadata(from_path.as_path())
+            .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
+        if !size.is_file() || size.len() > FAST_COPY_MAX {
+            return Ok(None);
+        }
+        let (Some(dir), Some(name)) = (to_path.as_path().parent(), to_path.as_path().file_name())
+        else {
+            return Err(VfsError::IsADirectory {
+                spec: to.canonical(),
+            });
+        };
+        let written = |e: io::Error| VfsError::from_io(to.canonical(), VfsOp::Write, e);
+        let mut source = File::open(from_path.as_path())
+            .map_err(|e| VfsError::from_io(from.canonical(), VfsOp::Open, e))?;
+        let (mut file, tmp) =
+            create_new_temp(dir, name).map_err(|e| written(below_a_file(to_path.as_path(), e)))?;
+        let temporary = NewTemp {
+            path: tmp.as_path(),
+        };
+        let copied = io::copy(&mut source, &mut file).map_err(|e| {
+            if fs::metadata(from_path.as_path()).is_err() {
+                VfsError::from_io(from.canonical(), VfsOp::Read, e)
+            } else {
+                written(e)
+            }
+        })?;
+        platform::set_mode(&file, meta.mode).map_err(written)?;
+        if modified.is_some() || created.is_some() {
+            let mut times = FileTimes::new();
+            if let Some(time) = modified {
+                times = times.set_modified(time);
+            }
+            if let Some(time) = created {
+                times = platform::with_created(times, time);
+            }
+            file.set_times(times).map_err(written)?;
+        }
+        drop(file);
+        #[cfg(test)]
+        tests::before_rename(&tmp);
+        cancel.check()?;
+        platform::rename(&tmp, to_path.as_path())
+            .map_err(|e| VfsError::from_io(to.canonical(), VfsOp::Commit, e))?;
+        std::mem::forget(temporary);
+        Ok(Some(copied))
+    }
+}
+
+/// The temporary file of [`LocalVfs::copy_new_file`]: it goes unless it was renamed.
+struct NewTemp<'a> {
+    path: &'a Path,
+}
+
+impl Drop for NewTemp<'_> {
+    fn drop(&mut self) {
+        let _ = platform::remove_file(self.path);
+    }
+}
+
+/// A new temporary file next to the target, by the names of [`create_temp`], owner-only from the start, unlocked.
+fn create_new_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
+    let base = lock::temp_base(name);
+    for attempt in 0..lock::TEMP_NAMES {
+        let tmp = dir.join(lock::temp_name(&base, attempt));
+        match platform::open_new(&tmp) {
+            Ok(file) => return Ok((file, tmp)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no free temporary file name",
+    ))
 }
 
 /// What `rename` removed from the target path first, because Windows renames onto no folder entry.
@@ -831,6 +953,7 @@ fn prepare_write(
         overwrite: opts.overwrite,
         keep_permissions: !replaces_other,
         made,
+        durability: opts.durability,
         synced: false,
         pending: true,
     }))
@@ -909,6 +1032,8 @@ struct LocalWriter {
     keep_permissions: bool,
     /// The mode the file was created with, before it was made private (Unix).
     made: Option<fs::Permissions>,
+    /// What `commit` syncs (D-164).
+    durability: Durability,
     /// Everything written so far reached the disk.
     synced: bool,
     /// The temporary file still exists and belongs to this writer.
@@ -933,8 +1058,8 @@ impl LocalWriter {
             .take()
             .ok_or_else(|| self.fail(io::Error::other("the writer was already committed")))?;
         let file = writer.into_inner().map_err(|e| self.fail(e.into_error()))?;
-        if !self.synced {
-            file.sync_all().map_err(|e| self.fail(e))?;
+        if !self.synced && self.durability != Durability::None {
+            sync_file(&file).map_err(|e| self.fail(e))?;
         }
         // Holds the lock of the temporary file until the rename is done, so no rebuild takes it for a dead writer's.
         // Windows closes it here, which leaves that moment open (`lock`).
@@ -975,9 +1100,27 @@ impl LocalWriter {
                 }
             }
         }
-        platform::sync_dir(&self.dir);
+        if self.durability == Durability::Full {
+            sync_folder(&self.dir);
+        }
         Ok(())
     }
+}
+
+/// `sync_all` of a file, counted in tests.
+fn sync_file(file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    tests::count_sync();
+    file.sync_all()
+}
+
+/// The sync of a folder after a rename, counted in tests where there is one.
+fn sync_folder(dir: &Path) {
+    #[cfg(test)]
+    if cfg!(unix) {
+        tests::count_sync();
+    }
+    platform::sync_dir(dir);
 }
 
 impl Write for LocalWriter {
@@ -1113,4 +1256,251 @@ fn same_item(from: &Path, from_meta: &Metadata, to: &Path, to_meta: &Metadata) -
             && from.parent() == to.parent();
     }
     same_file::is_same_file(from, to).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    //! A6.3 (D-164): what a copy syncs, and the path of a new file, seen from inside.
+
+    use std::cell::{Cell, RefCell};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use hikasa_core::{Ctl, PathStyle, SpecContext};
+
+    use super::*;
+    use crate::ops::{self, CopyOptions, MoveOptions, OverwritePolicy, Preserve};
+
+    /// What the stop before the rename does.
+    type Stop = Option<Box<dyn Fn(&Path)>>;
+
+    thread_local! {
+        static SYNCS: Cell<u32> = const { Cell::new(0) };
+        static STOP: RefCell<Stop> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn count_sync() {
+        SYNCS.with(|count| count.set(count.get() + 1));
+    }
+
+    /// The stop just before the rename of `copy_new_file`.
+    pub(super) fn before_rename(tmp: &Path) {
+        STOP.with(|stop| {
+            if let Some(stop) = &*stop.borrow() {
+                stop(tmp);
+            }
+        });
+    }
+
+    /// `(tempdir, canonical path)`; macOS' temp folder is a link.
+    fn scratch() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fs::canonicalize(dir.path()).unwrap();
+        (dir, path)
+    }
+
+    fn spec(path: &Path) -> Spec {
+        Spec::parse(
+            path.to_str().unwrap(),
+            &SpecContext::absolute_only(PathStyle::HOST),
+        )
+        .unwrap()
+    }
+
+    /// The times and attributes of a source; the mode where there is one.
+    fn meta_of(path: &Path, seconds: i64) -> HandleMeta {
+        let mode = fs::metadata(path)
+            .ok()
+            .and_then(|meta| platform::attrs(&meta).unix().map(|unix| unix.mode));
+        HandleMeta {
+            modified: FileTime::from_unix(seconds, 0),
+            created: None,
+            mode: if cfg!(unix) {
+                mode.or(Some(0o644))
+            } else {
+                None
+            },
+        }
+    }
+
+    fn syncs_of(run: impl FnOnce()) -> u32 {
+        SYNCS.with(|count| count.set(0));
+        run();
+        SYNCS.with(Cell::get)
+    }
+
+    #[test]
+    fn a_new_target_syncs_nothing_a_replaced_one_its_file_a_move_both() {
+        let (_dir, root) = scratch();
+        fs::write(root.join("a"), b"one").unwrap();
+        fs::write(root.join("b"), b"two").unwrap();
+        let vfs = LocalVfs::default();
+        let cp = |to: &str, overwrite: OverwritePolicy| {
+            let options = CopyOptions {
+                overwrite,
+                ..CopyOptions::default()
+            };
+            let pair = [(spec(&root.join("a")), spec(&root.join(to)))];
+            let plan = ops::plan_copy(&vfs, &vfs, &pair, &options, &Ctl::detached()).unwrap();
+            assert!(ops::execute(&vfs, &vfs, plan, &Ctl::detached()).ok());
+        };
+        assert_eq!(syncs_of(|| cp("new", OverwritePolicy::Fail)), 0);
+        assert_eq!(syncs_of(|| cp("b", OverwritePolicy::Always)), 1);
+        // No preserved attributes: the new-file path steps aside, and the durability stays.
+        let plain = CopyOptions {
+            preserve: Preserve::NONE,
+            ..CopyOptions::default()
+        };
+        let pair = [(spec(&root.join("a")), spec(&root.join("plain")))];
+        let plan = ops::plan_copy(&vfs, &vfs, &pair, &plain, &Ctl::detached()).unwrap();
+        assert_eq!(
+            syncs_of(|| assert!(ops::execute(&vfs, &vfs, plan, &Ctl::detached()).ok())),
+            0
+        );
+        // A move that has to copy: `rename` would sync nothing, so the expansion is what is asked for.
+        fs::create_dir(root.join("sub")).unwrap();
+        let moved = crate::ops::PlanItem::planned(
+            crate::ops::Action::Move,
+            EntryKind::File,
+            Some(spec(&root.join("new"))),
+            spec(&root.join("sub").join("moved")),
+            0,
+        );
+        let plan = ops::Plan {
+            op: ops::OpKind::Move,
+            options: ops::PlanOptions::Move(MoveOptions::default()),
+            items: vec![moved],
+            warnings: Vec::new(),
+        };
+        let expected = if cfg!(unix) { 2 } else { 1 };
+        assert_eq!(
+            syncs_of(|| assert!(ops::execute(&vfs, &vfs, plan, &Ctl::detached()).ok())),
+            expected
+        );
+    }
+
+    #[test]
+    fn the_temporary_sibling_is_final_before_it_gets_its_name() {
+        let (_dir, root) = scratch();
+        let (from, to) = (root.join("from"), root.join("sub").join("to"));
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::write(&from, b"content").unwrap();
+        let meta = HandleMeta {
+            mode: cfg!(unix).then_some(0o640),
+            ..meta_of(&from, 1_000_000)
+        };
+        let checked = std::rc::Rc::new(Cell::new(false));
+        let seen = std::rc::Rc::clone(&checked);
+        let sub = root.join("sub");
+        STOP.with(|stop| {
+            *stop.borrow_mut() = Some(Box::new(move |tmp: &Path| {
+                let names: Vec<_> = fs::read_dir(&sub)
+                    .unwrap()
+                    .map(|item| item.unwrap().path())
+                    .collect();
+                assert_eq!(names, [tmp.to_path_buf()], "the temporary sibling alone");
+                assert_eq!(fs::read(tmp).unwrap(), b"content");
+                let made = fs::metadata(tmp).unwrap();
+                assert_eq!(
+                    made.modified().unwrap(),
+                    UNIX_EPOCH + Duration::from_secs(1_000_000)
+                );
+                #[cfg(unix)]
+                assert_eq!(platform::attrs(&made).unix().unwrap().mode, 0o640);
+                seen.set(true);
+            }));
+        });
+        let vfs = LocalVfs::default();
+        let bytes = vfs
+            .copy_new_file(&spec(&from), &spec(&to), &meta, &CancelToken::new())
+            .unwrap();
+        STOP.with(|stop| *stop.borrow_mut() = None);
+        assert_eq!(bytes, Some(7));
+        assert!(checked.get(), "the stop ran");
+        assert_eq!(fs::read(&to).unwrap(), b"content");
+    }
+
+    #[test]
+    fn a_cancel_before_the_rename_removes_the_temporary_file() {
+        let (_dir, root) = scratch();
+        let (from, to) = (root.join("from"), root.join("sub").join("to"));
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::write(&from, b"content").unwrap();
+        let cancel = CancelToken::new();
+        let token = cancel.clone();
+        STOP.with(|stop| *stop.borrow_mut() = Some(Box::new(move |_: &Path| token.cancel())));
+        let vfs = LocalVfs::default();
+        let result = vfs.copy_new_file(&spec(&from), &spec(&to), &meta_of(&from, 5), &cancel);
+        STOP.with(|stop| *stop.borrow_mut() = None);
+        assert!(matches!(result, Err(VfsError::Cancelled)), "{result:?}");
+        assert_eq!(fs::read_dir(root.join("sub")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_file_over_the_limit_has_no_such_path() {
+        let (_dir, root) = scratch();
+        let (from, to) = (root.join("from"), root.join("to"));
+        let file = File::create(&from).unwrap();
+        file.set_len(FAST_COPY_MAX + 1).unwrap();
+        let vfs = LocalVfs::default();
+        let result = vfs
+            .copy_new_file(
+                &spec(&from),
+                &spec(&to),
+                &meta_of(&from, 5),
+                &CancelToken::new(),
+            )
+            .unwrap();
+        assert_eq!(result, None);
+        assert!(!to.exists());
+    }
+
+    /// `preserve.attrs` off: the result needs the default mode, so `ops` takes the old path.
+    #[cfg(unix)]
+    #[test]
+    fn no_mode_no_such_path() {
+        let (_dir, root) = scratch();
+        let (from, to) = (root.join("from"), root.join("to"));
+        fs::write(&from, b"content").unwrap();
+        let vfs = LocalVfs::default();
+        let meta = HandleMeta::default();
+        let result = vfs
+            .copy_new_file(&spec(&from), &spec(&to), &meta, &CancelToken::new())
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    /// The result of the path equals a plain copy that keeps times.
+    #[test]
+    fn the_result_equals_a_plain_copy() {
+        let (_dir, root) = scratch();
+        let (from, to, plain) = (root.join("from"), root.join("to"), root.join("plain"));
+        fs::write(&from, vec![7u8; 100_000]).unwrap();
+        let time = UNIX_EPOCH + Duration::from_secs(2_000_000);
+        File::options()
+            .write(true)
+            .open(&from)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        fs::copy(&from, &plain).unwrap();
+        File::options()
+            .write(true)
+            .open(&plain)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        let vfs = LocalVfs::default();
+        let source = vfs.stat(&spec(&from), FollowLinks::No).unwrap();
+        let meta = HandleMeta {
+            modified: source.mtime,
+            created: None,
+            mode: source.attrs.unix().map(|unix| unix.mode),
+        };
+        vfs.copy_new_file(&spec(&from), &spec(&to), &meta, &CancelToken::new())
+            .unwrap();
+        assert_eq!(fs::read(&to).unwrap(), fs::read(&plain).unwrap());
+        let (made, wanted) = (fs::metadata(&to).unwrap(), fs::metadata(&plain).unwrap());
+        assert_eq!(made.modified().unwrap(), wanted.modified().unwrap());
+        assert_eq!(made.permissions(), wanted.permissions());
+    }
 }

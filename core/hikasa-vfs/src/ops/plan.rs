@@ -1,11 +1,15 @@
 //! The plan of a VFS write operation and its per-item results (T12, D-103; contract M2 §1.3.4–§1.3.5).
 
-use hikasa_core::{ErrorKind, ErrorReport, Spec, Warning};
+use std::collections::BTreeMap;
+
+use hikasa_core::{ErrorKind, ErrorReport, FileTime, Spec, Warning};
 use serde::{Deserialize, Serialize};
 
 use crate::entry::{EntryKind, FileId};
 use crate::error::VfsError;
 use crate::vfs::SetTimes;
+
+use super::guard::Fence;
 
 /// What happens when a copy or move meets an existing target (D-96).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -154,6 +158,17 @@ pub struct TouchOptions {
     pub create: bool,
 }
 
+/// Options of a batch: one plan of many actions, executed once (D-162).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BatchOptions {
+    /// Metadata of copies; moves keep [`Preserve::default`], as in W3.
+    pub preserve: Preserve,
+    /// How links are copied.
+    pub links: LinkPolicy,
+    /// `move`/`moveto`: the folder items of the plan are sources of a move (two-phase, D-148).
+    pub moves: bool,
+}
+
 /// The operation of a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +183,8 @@ pub enum OpKind {
     Mkdir,
     /// `touch`.
     Touch,
+    /// A folder operation or a sync: any mix of actions (D-162).
+    Batch,
 }
 
 impl OpKind {
@@ -179,6 +196,7 @@ impl OpKind {
             OpKind::Remove => "remove",
             OpKind::Mkdir => "mkdir",
             OpKind::Touch => "touch",
+            OpKind::Batch => "batch",
         }
     }
 }
@@ -213,6 +231,8 @@ pub enum Action {
     Skip,
     /// Create an empty archive (M2 W5b, D-150).
     CreateArchive,
+    /// Swap two files or links (FC-071, D-165): `source` is the left one, `target` the right one.
+    Exchange,
 }
 
 impl Action {
@@ -232,6 +252,7 @@ impl Action {
             Action::Create => "create",
             Action::Skip => "skip",
             Action::CreateArchive => "create_archive",
+            Action::Exchange => "exchange",
         }
     }
 
@@ -266,6 +287,24 @@ pub enum SkipReason {
     SymlinksUnsupported,
     /// A folder whose child failed or was skipped is not removed.
     ChildrenFailed,
+    /// Answered no.
+    Declined,
+    /// The row is hidden by a filter.
+    Filtered,
+    /// The row failed in the comparison: a failure is not a difference (D-19).
+    CompareError,
+    /// The row lies below a folder the comparison followed (FC-013): the path leads outside the base.
+    FollowedLink,
+    /// The side is read-only.
+    ReadOnlySide,
+    /// The back-end cannot do this here.
+    Capability,
+    /// Another item of the plan has the same target.
+    DuplicateTarget,
+    /// The name does not match the mask.
+    NoMatch,
+    /// The new name is the old one.
+    SameName,
 }
 
 impl SkipReason {
@@ -278,8 +317,37 @@ impl SkipReason {
             SkipReason::Symlink => "symlink",
             SkipReason::SymlinksUnsupported => "symlinks_unsupported",
             SkipReason::ChildrenFailed => "children_failed",
+            SkipReason::Declined => "declined",
+            SkipReason::Filtered => "filtered",
+            SkipReason::CompareError => "compare_error",
+            SkipReason::FollowedLink => "followed_link",
+            SkipReason::ReadOnlySide => "read_only_side",
+            SkipReason::Capability => "capability",
+            SkipReason::DuplicateTarget => "duplicate_target",
+            SkipReason::NoMatch => "no_match",
+            SkipReason::SameName => "same_name",
         }
     }
+}
+
+/// What a plan saw of an item: execution compares it, so a plan that waited on a confirmation stays honest (D-163).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemStamp {
+    /// The kind.
+    pub kind: EntryKind,
+    /// The size (`None`: not compared; files and links only).
+    pub size: Option<u64>,
+    /// The modification time (`None`: not compared; files and links only).
+    pub mtime: Option<FileTime>,
+}
+
+/// The stamps of an item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Expect {
+    /// The source as the plan saw it.
+    pub source: Option<ItemStamp>,
+    /// The target as the plan saw it; `None` asks nothing here, and the absent-target check of D-103 stays.
+    pub target: Option<ItemStamp>,
 }
 
 /// One item of a plan, in execution order.
@@ -308,11 +376,29 @@ pub struct PlanItem {
     /// serialized (a plan read back executes without this check).
     #[serde(skip)]
     pub(crate) seen: Option<FileId>,
+    /// What the plan saw (D-163).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<Expect>,
+    /// Where the replaced target goes first (§1.6.5). `None` for members: their archive is backed up whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<Spec>,
+    /// The times of a `touch` item of a batch; other plans use [`TouchOptions`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub times: Option<SetTimes>,
+    /// The source is a link the comparison followed (FC-013): stat and read through it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_source: bool,
+    /// Answered yes to `read_only`: a DOS `R` on the target is cleared just before it is replaced or removed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_read_only: bool,
+    /// A `trash` item that may become a permanent delete when the recycle bin fails (§1.6.12).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub trash_fallback: bool,
 }
 
 impl PlanItem {
-    /// An item.
-    pub(crate) fn new(
+    /// An item with no stamps, no backup and no flags: what a planner starts from.
+    pub fn planned(
         action: Action,
         kind: EntryKind,
         source: Option<Spec>,
@@ -330,6 +416,27 @@ impl PlanItem {
             error: None,
             depth,
             seen: None,
+            expect: None,
+            backup: None,
+            times: None,
+            follow_source: false,
+            clear_read_only: false,
+            trash_fallback: false,
+        }
+    }
+
+    /// The bytes this item copies: an `exchange` copies both sides, and its target's size is in its stamp (§1.6.2).
+    pub(crate) fn bytes(&self) -> u64 {
+        if self.error.is_some() {
+            return 0;
+        }
+        match self.action {
+            Action::Copy | Action::Move => self.size.unwrap_or(0),
+            Action::Exchange => {
+                let target = self.expect.and_then(|expect| expect.target);
+                self.size.unwrap_or(0) + target.and_then(|stamp| stamp.size).unwrap_or(0)
+            }
+            _ => 0,
         }
     }
 
@@ -343,7 +450,7 @@ impl PlanItem {
     ) -> PlanItem {
         PlanItem {
             skip: Some(reason),
-            ..PlanItem::new(Action::Skip, kind, source, target, depth)
+            ..PlanItem::planned(Action::Skip, kind, source, target, depth)
         }
     }
 
@@ -358,7 +465,7 @@ impl PlanItem {
     ) -> PlanItem {
         PlanItem {
             error: Some(error),
-            ..PlanItem::new(action, kind, source, target, depth)
+            ..PlanItem::planned(action, kind, source, target, depth)
         }
     }
 }
@@ -380,6 +487,8 @@ pub enum PlanOptions {
     },
     /// `touch`.
     Touch(TouchOptions),
+    /// A folder operation or a sync.
+    Batch(BatchOptions),
 }
 
 /// A complete, serializable plan: every item of every tree, in execution order (T12).
@@ -396,14 +505,19 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// The bytes the plan copies (sizes of `copy` and `move` items without an error).
+    /// The bytes the plan copies (sizes of `copy` and `move` items without an error, both sizes of an `exchange`).
     pub fn bytes(&self) -> u64 {
-        self.items
-            .iter()
-            .filter(|i| matches!(i.action, Action::Copy | Action::Move) && i.error.is_none())
-            .filter_map(|i| i.size)
-            .sum()
+        self.items.iter().map(PlanItem::bytes).sum()
     }
+}
+
+/// What [`crate::ops::execute_with`] adds to [`crate::ops::execute`]. `Default` is `execute`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExecOptions {
+    /// Refuses what lies outside the base folders (§1.6.4).
+    pub fence: Option<Fence>,
+    /// Canonical outermost archive file → its backup (§1.6.5). Filled by the planner, so a dry run shows them.
+    pub archive_backups: BTreeMap<String, Spec>,
 }
 
 /// The status of one item.

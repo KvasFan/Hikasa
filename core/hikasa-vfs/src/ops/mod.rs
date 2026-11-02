@@ -24,8 +24,17 @@
 //! - **Archives** (D-148): `execute` is the single place an operation ends, so it opens a batch on each archive it
 //!   touches (`roots`) and finishes them once, target roots first. A move into an archive removes its sources only
 //!   after the target's rebuild. An aborted or failed rebuild turns the done items of its root into failed ones.
+//! - **Batches** (D-162): a folder operation or a sync is one plan of [`OpKind::Batch`], whatever it mixes, so an archive
+//!   is rebuilt and backed up once. Its items carry what the plan saw ([`Expect`], D-163), a backup of what they replace
+//!   ([`BackupPolicy`], D-167), and [`execute_with`] adds the [`Fence`] of the base folders (D-166) and the backups of
+//!   archives (D-168). `exchange` swaps two items and can lose neither (D-165).
+//! - **Durability** (D-164) goes by what a sync protects: a new target has none, a replaced one syncs the file, and a
+//!   move syncs both, because a source goes on the strength of its copy ([`Durability`](crate::vfs::Durability)).
 
+mod backup;
 mod copy;
+mod exchange;
+mod guard;
 mod plan;
 mod remove;
 mod rename;
@@ -37,11 +46,13 @@ use std::ffi::OsStr;
 
 use hikasa_core::{Ctl, Phase, Progress, Spec, Unit, Warning, WarningCode, case};
 
+pub use backup::{BackupNames, BackupPolicy, BackupStyle, write_backup};
 pub use copy::plan_copy;
+pub use guard::{Fence, within};
 pub use plan::{
-    Action, CopyOptions, ItemResult, ItemStatus, LinkPolicy, MoveOptions, OpKind, OpReport,
-    OverwritePolicy, Plan, PlanItem, PlanOptions, Preserve, RemoveOptions, SkipReason, Summary,
-    TouchOptions, dry_run,
+    Action, BatchOptions, CopyOptions, ExecOptions, Expect, ItemResult, ItemStamp, ItemStatus,
+    LinkPolicy, MoveOptions, OpKind, OpReport, OverwritePolicy, Plan, PlanItem, PlanOptions,
+    Preserve, RemoveOptions, SkipReason, Summary, TouchOptions, dry_run,
 };
 pub use remove::plan_remove;
 pub use rename::plan_move;
@@ -51,6 +62,7 @@ use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind, FileId, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{FollowLinks, Vfs};
+use guard::{Keys, Seen};
 use plan::report;
 use roots::Roots;
 
@@ -235,7 +247,7 @@ pub(crate) fn same_instance(a: &dyn Vfs, b: &dyn Vfs) -> bool {
 }
 
 /// The comparison key of a spec on a back-end: canonical, case-folded when the back-end is not case-sensitive.
-fn spec_key(vfs: &dyn Vfs, spec: &Spec) -> String {
+pub(crate) fn spec_key(vfs: &dyn Vfs, spec: &Spec) -> String {
     let insensitive = vfs
         .capabilities(spec)
         .is_ok_and(|caps| !caps.contains(Capabilities::CASE_SENSITIVE));
@@ -559,6 +571,23 @@ pub(crate) enum Outcome {
     Deferred,
 }
 
+/// What the second phase of an operation does, after the rebuilds (D-148).
+pub(crate) enum Later {
+    /// The source of a `move`, with the entry that was copied.
+    Moved(Entry),
+    /// A `remove_dir`.
+    Folder,
+    /// The last rename of an exchange with an archive (§1.6.2): the one on disk, of what was staged for it.
+    Rename {
+        /// On `src`, else on `dst`.
+        on_source: bool,
+        /// The hidden copy.
+        from: Spec,
+        /// The side it replaces.
+        to: Spec,
+    },
+}
+
 /// Pending metadata of a created folder, applied after its whole subtree.
 pub(crate) struct PendingDir {
     depth: u32,
@@ -573,6 +602,8 @@ pub(crate) struct Exec<'a> {
     pub(crate) dst: &'a dyn Vfs,
     pub(crate) ctl: &'a Ctl<'a>,
     pub(crate) options: PlanOptions,
+    pub(crate) exec_options: &'a ExecOptions,
+    fence: Option<Keys>,
     pub(crate) warned: BTreeSet<&'static str>,
     pub(crate) warnings: Vec<Warning>,
     pub(crate) total: u64,
@@ -590,8 +621,8 @@ pub(crate) struct Exec<'a> {
     cut: Vec<u32>,
     /// A move runs in two phases: its removals wait for the rebuild of the archive it moves into (D-148).
     pub(crate) two_phase: bool,
-    /// What the second phase removes: result indexes, in plan order, with the entry copied for a `move`.
-    pub(crate) deferred: Vec<(usize, Option<Entry>)>,
+    /// What the second phase does: result indexes, in plan order.
+    pub(crate) deferred: Vec<(usize, Later)>,
 }
 
 impl Exec<'_> {
@@ -622,7 +653,26 @@ impl Exec<'_> {
     pub(crate) fn preserve(&self) -> Preserve {
         match self.options {
             PlanOptions::Copy(opts) => opts.preserve,
+            PlanOptions::Batch(opts) if !opts.moves => opts.preserve,
             _ => Preserve::default(),
+        }
+    }
+
+    /// True when the folder items of the plan are sources of a move.
+    pub(crate) fn moving(&self) -> bool {
+        match self.options {
+            PlanOptions::Move(_) => true,
+            PlanOptions::Batch(opts) => opts.moves,
+            _ => false,
+        }
+    }
+
+    /// How the source of `item` is read: through a link the comparison followed, or the link itself.
+    pub(crate) fn source_follow(&self, item: &PlanItem) -> FollowLinks {
+        if item.follow_source {
+            FollowLinks::Yes
+        } else {
+            FollowLinks::No
         }
     }
 
@@ -684,28 +734,40 @@ impl Exec<'_> {
     }
 }
 
+/// [`execute_with`] with the default options.
+pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpReport {
+    execute_with(src, dst, plan, &ExecOptions::default(), ctl)
+}
+
 /// Executes `plan`: items in order, each re-checked against the target; per-item results (D-103). `src` is
 /// read (and its sources removed by moves), `dst` written; remove, mkdir and touch use one back-end passed as
-/// both. Below a folder item of a copy or move that failed or was skipped, and below a folder that changed since
+/// both. Below a folder item of a copy, move or batch that failed or was skipped, and below a folder that changed since
 /// the plan was made (another kind or another `FileId` than at planning), nothing runs: those items are
-/// `not_run`.
-pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpReport {
+/// `not_run`. Runs on one thread: the batches of the archives it touches belong to it (§1.6.2).
+pub fn execute_with(
+    src: &dyn Vfs,
+    dst: &dyn Vfs,
+    plan: Plan,
+    options: &ExecOptions,
+    ctl: &Ctl<'_>,
+) -> OpReport {
     let Plan {
         op,
-        options,
+        options: plan_options,
         items,
         warnings: plan_warnings,
     } = plan;
-    let total = items
-        .iter()
-        .filter(|i| matches!(i.action, Action::Copy | Action::Move) && i.error.is_none())
-        .filter_map(|i| i.size)
-        .sum();
+    let total = items.iter().map(PlanItem::bytes).sum();
     let mut exec = Exec {
         src,
         dst,
         ctl,
-        options,
+        options: plan_options,
+        exec_options: options,
+        fence: options
+            .fence
+            .as_ref()
+            .map(|fence| Keys::new(src, dst, fence)),
         warned: BTreeSet::new(),
         warnings: Vec::new(),
         total,
@@ -722,7 +784,7 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
     for item in &items {
         exec.remember_folder(item);
     }
-    let tree_op = matches!(op, OpKind::Copy | OpKind::Move);
+    let tree_op = matches!(op, OpKind::Copy | OpKind::Move | OpKind::Batch);
     let mut queue: VecDeque<PlanItem> = items.into();
     let mut done_items: Vec<PlanItem> = Vec::with_capacity(queue.len());
     let mut results: Vec<ItemResult> = Vec::with_capacity(queue.len());
@@ -754,14 +816,19 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
             continue;
         }
         let index = results.len();
-        let touched = match (&item.error, item.skip) {
-            (None, None) => roots.touch(&item),
+        // The fence comes before the archive is opened: what it refuses leaves no batch behind.
+        let refused = match (&item.error, item.skip, &exec.fence) {
+            (None, None, Some(fence)) => fence.refuses(src, dst, &item).err(),
+            _ => None,
+        };
+        let touched = match (&item.error, item.skip, &refused) {
+            (None, None, None) => roots.touch(&item),
             _ => Ok(None),
         };
-        let outcome = match (&item.error, touched) {
-            (Some(error), _) => Err(ItemResult::failed(error.clone())),
-            (None, Err(e)) => Ok(Outcome::Failed(e)),
-            (None, Ok(owned)) => {
+        let outcome = match (&item.error, touched, refused) {
+            (Some(error), _, _) => Err(ItemResult::failed(error.clone())),
+            (None, _, Some(e)) | (None, Err(e), None) => Ok(Outcome::Failed(e)),
+            (None, Ok(owned), None) => {
                 let outcome = run_item(&mut exec, &item, index);
                 if !matches!(outcome, Outcome::Expand(_)) {
                     roots.note(owned);
@@ -829,7 +896,7 @@ pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpRep
     OpReport {
         plan: Plan {
             op,
-            options,
+            options: plan_options,
             items: done_items,
             warnings: plan_warnings,
         },
@@ -850,19 +917,39 @@ impl Exec<'_> {
         allowed: &dyn Fn(usize, bool) -> bool,
     ) {
         let deferred = std::mem::take(&mut self.deferred);
-        let (moves, folders): (Vec<_>, Vec<_>) =
-            deferred.into_iter().partition(|(_, entry)| entry.is_some());
-        for (index, entry) in moves.into_iter().chain(folders) {
+        let (moves, folders): (Vec<_>, Vec<_>) = deferred
+            .into_iter()
+            .partition(|(_, later)| !matches!(later, Later::Folder));
+        for (index, later) in moves.into_iter().chain(folders) {
             let (Some(item), Some(result)) = (items.get(index), results.get_mut(index)) else {
                 continue;
             };
-            if !allowed(index, entry.is_some()) {
+            if !allowed(index, !matches!(later, Later::Folder)) {
+                // What an exchange staged for a rebuild that did not happen.
+                if let Later::Rename {
+                    on_source, from, ..
+                } = &later
+                {
+                    let vfs = if *on_source { self.src } else { self.dst };
+                    let _ = vfs.remove(from);
+                }
                 self.block(item);
                 continue;
             }
-            let outcome = match &entry {
-                Some(entry) => rename::remove_moved(self, item, entry),
-                None => remove::finish_remove(self, item),
+            let outcome = match &later {
+                Later::Moved(entry) => rename::remove_moved(self, item, entry),
+                Later::Folder => remove::finish_remove(self, item),
+                Later::Rename {
+                    on_source,
+                    from,
+                    to,
+                } => {
+                    let vfs = if *on_source { self.src } else { self.dst };
+                    match exchange::finish_rename(vfs, from, to) {
+                        Ok(()) => Outcome::Done(0),
+                        Err(e) => Outcome::Failed(e),
+                    }
+                }
             };
             *result = match outcome {
                 Outcome::Skipped(reason) => ItemResult::skipped(reason),
@@ -884,10 +971,11 @@ impl Exec<'_> {
             )
             && (item.source.is_some() || item.action == Action::RemoveDir)
         {
-            // A root link followed by `--follow-symlinks` is checked through the link (D-94 rule 7).
+            // A root link followed by `--follow-symlinks` is checked through the link (D-94 rule 7), and so is a
+            // folder the comparison followed (FC-013).
             let follow = match self.options {
                 PlanOptions::Copy(opts) if opts.follow_roots && item.depth == 0 => FollowLinks::Yes,
-                _ => FollowLinks::No,
+                _ => self.source_follow(item),
             };
             self.folders
                 .insert(own_spec(item).canonical(), (item.seen, follow));
@@ -970,6 +1058,13 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
     if let Some(reason) = item.skip {
         return Outcome::Skipped(reason);
     }
+    // The fence ran before the archive was opened (step 2 of §1.6.2); now the stamps.
+    let mut seen = Seen::default();
+    if let Some(expect) = &item.expect
+        && let Err(e) = guard::check_expect(exec, item, expect, &mut seen)
+    {
+        return Outcome::Failed(e);
+    }
     // `newer` is decided again at execution: a target that is no longer older is skipped.
     if item.replaces && exec.overwrite() == Some(OverwritePolicy::Newer) {
         match still_newer(exec, item) {
@@ -980,7 +1075,11 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
     }
     // The execution re-check (D-103): an item planned without a target never replaces one that appeared.
     if item.action.needs_absent_target() && !item.replaces {
-        match lstat_target(exec.dst_for(item.action), &item.target) {
+        let found = match seen.target.take() {
+            Some(found) => Ok(found),
+            None => lstat_target(exec.dst_for(item.action), &item.target),
+        };
+        match found {
             Ok(None) => {}
             // A case-only rename: the target "exists" as the source itself.
             Ok(Some(_))
@@ -1007,13 +1106,15 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
         return Outcome::Failed(e);
     }
     match item.action {
-        Action::CreateDir | Action::KeepDir => copy::run_dir(exec, item, index),
-        Action::Copy => copy::run_copy(exec, item).map_or_else(Outcome::Failed, Outcome::Done),
-        Action::Link => {
-            copy::run_link(exec, item).map_or_else(Outcome::Failed, |()| Outcome::Done(0))
+        Action::CreateDir | Action::KeepDir => copy::run_dir(exec, item, index, &mut seen),
+        Action::Copy => {
+            copy::run_copy(exec, item, &mut seen).map_or_else(Outcome::Failed, Outcome::Done)
         }
+        Action::Link => copy::run_link(exec, item, &mut seen)
+            .map_or_else(Outcome::Failed, |()| Outcome::Done(0)),
         Action::Rename => rename::run_rename(exec, item),
-        Action::Move => rename::run_move(exec, item, index),
+        Action::Move => rename::run_move(exec, item, index, &mut seen),
+        Action::Exchange => exchange::run_exchange(exec, item, index, &mut seen),
         Action::Remove | Action::RemoveDir | Action::Trash => remove::run_remove(exec, item, index),
         Action::Touch | Action::Create => {
             touch::run_touch(exec, item).map_or_else(Outcome::Failed, |()| Outcome::Done(0))
@@ -1051,7 +1152,7 @@ impl Exec<'_> {
     }
 
     /// The back-end an action's target lives on.
-    fn dst_for(&self, action: Action) -> &dyn Vfs {
+    pub(crate) fn dst_for(&self, action: Action) -> &dyn Vfs {
         match action {
             Action::Remove | Action::RemoveDir | Action::Trash => self.src,
             _ => self.dst,

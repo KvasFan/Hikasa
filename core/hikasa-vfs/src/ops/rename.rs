@@ -5,19 +5,20 @@ use std::collections::BTreeSet;
 use hikasa_core::{Ctl, Spec, Warning, WarningCode};
 
 use super::copy::{
-    Mode, Planner, TargetState, apply_metadata, copy_content, create_link_copy,
-    narrow_archive_mode, source_changed,
+    Mode, Planner, TargetState, apply_preserved, copy_content, create_link_copy,
+    narrow_archive_mode, source_changed, source_file,
 };
+use super::guard::Seen;
 use super::plan::report;
 use super::{
-    Action, Decision, Exec, LinkPolicy, MoveOptions, OpKind, Outcome, Plan, PlanItem, PlanOptions,
-    check_item, check_move_inside, check_nesting, check_same_archive, decide, is_blob,
-    is_respelling, lstat_target, same_instance, scanning,
+    Action, Decision, Exec, Later, LinkPolicy, MoveOptions, OpKind, Outcome, Plan, PlanItem,
+    PlanOptions, Preserve, check_item, check_move_inside, check_nesting, check_same_archive,
+    decide, is_blob, is_respelling, lstat_target, same_instance, scanning,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Entry, EntryKind};
 use crate::error::{VfsError, VfsOp};
-use crate::vfs::{FollowLinks, Vfs};
+use crate::vfs::{Durability, FollowLinks, Vfs};
 
 /// A planner for the expansion of a move.
 fn expander<'a>(
@@ -106,7 +107,7 @@ pub fn plan_move(
         }
         // A case-only rename: one `rename` to the new spelling (the target "exists" only as the source itself).
         if is_respelling(src, dst, source, target) {
-            let mut rename = PlanItem::new(
+            let mut rename = PlanItem::planned(
                 Action::Rename,
                 entry.kind,
                 Some(source.clone()),
@@ -142,7 +143,7 @@ pub fn plan_move(
                 .capabilities(target)
                 .is_ok_and(|c| c.contains(Capabilities::RENAME))
             && !devices_differ(dst, &entry, target);
-        let mut rename = PlanItem::new(
+        let mut rename = PlanItem::planned(
             Action::Rename,
             entry.kind,
             Some(source.clone()),
@@ -186,6 +187,15 @@ pub(crate) fn run_rename(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
+    let cleared = item.clear_read_only && item.replaces;
+    if cleared && let Err(e) = super::copy::clear_read_only_of(exec.dst, &item.target) {
+        return Outcome::Failed(e);
+    }
+    rename_item(exec, item, source)
+}
+
+/// [`run_rename`] once a read-only target is out of the way.
+fn rename_item(exec: &mut Exec<'_>, item: &PlanItem, source: &Spec) -> Outcome {
     if exec.create_parents(item.depth)
         && let Some(parent) = item.target.parent()
         && let Err(e) = exec.dst.create_dir(&parent, true)
@@ -224,23 +234,38 @@ pub(crate) fn run_rename(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
 /// unless it replaced a target (D-97), or the source is no longer the item copied (gone, or another item in its
 /// place): then the copy is kept and the item fails "changed during the move; the copy was kept". A move into an
 /// archive stops after the copy: the source goes only after the rebuild, in [`remove_moved`] (D-148).
-pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
+pub(crate) fn run_move(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    index: usize,
+    seen: &mut Seen,
+) -> Outcome {
     let Some(source) = item.source.as_ref() else {
         return Outcome::Failed(source_changed(&item.target));
     };
-    let entry = match exec.src.stat(source, FollowLinks::No) {
-        Ok(entry) => entry,
-        Err(e) => return Outcome::Failed(e),
+    let entry = match seen.source.take() {
+        Some(entry) => entry,
+        None => match exec.src.stat(source, FollowLinks::No) {
+            Ok(entry) => entry,
+            Err(e) => return Outcome::Failed(e),
+        },
     };
     let copied = match entry.kind {
-        EntryKind::File => copy_content(exec, source, &item.target, item.replaces, item.depth)
-            .and_then(|bytes| {
-                let mut entry = entry.clone();
-                narrow_archive_mode(exec, source, &item.target, &mut entry);
-                apply_metadata(exec, &item.target, &entry).map(|()| bytes)
-            }),
+        EntryKind::File => {
+            // A root link of a W3 move never gets here as a file; the entry is what is copied.
+            seen.source = Some(entry.clone());
+            source_file(exec, item, source, seen)
+                .and_then(|_| copy_content(exec, item, source, Durability::Full, seen))
+                .and_then(|bytes| {
+                    let mut entry = entry.clone();
+                    narrow_archive_mode(exec, source, &item.target, &mut entry);
+                    let preserve = Preserve::default();
+                    apply_preserved(exec, exec.dst, &item.target, &entry, preserve).map(|()| bytes)
+                })
+        }
         EntryKind::Symlink => {
-            create_link_copy(exec, source, &item.target, item.replaces, item.depth).map(|()| 0)
+            seen.source = Some(entry.clone());
+            create_link_copy(exec, source, item, seen).map(|()| 0)
         }
         EntryKind::Dir | EntryKind::Other => Err(source_changed(source)),
     };
@@ -256,7 +281,7 @@ pub(crate) fn run_move(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Ou
     }
     if exec.defers_removal(source, &item.target) {
         exec.two_phase = true;
-        exec.deferred.push((index, Some(entry)));
+        exec.deferred.push((index, Later::Moved(entry)));
         return Outcome::Done(bytes);
     }
     match exec.src.remove(source) {

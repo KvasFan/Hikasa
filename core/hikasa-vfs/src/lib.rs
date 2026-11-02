@@ -110,6 +110,6 @@ pub use router::{Blob, BlobFailure, VfsRouter};
 pub use source::VfsSource;
 pub use stream::{MmapPolicy, StreamOptions, compare_readers, crc32_reader};
 pub use vfs::{
-    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, ListOptions, Listing, NameOnly,
-    Prefilter, ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions,
+    AtomicWrite, AttrChange, Durability, EntryError, Finish, FollowLinks, HandleMeta, ListOptions,
+    Listing, NameOnly, Prefilter, ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions,
 };

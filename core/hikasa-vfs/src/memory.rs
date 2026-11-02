@@ -49,7 +49,8 @@
 //! `Commit`), [`MemoryVfs::trashed`] (what `move_to_trash` took, in order) and [`MemoryVfs::dump`] (a
 //! deterministic snapshot of the tree). A write without `replace_link` onto a symbolic link replaces the file the
 //! link points to (a dangling link: the file it names is created, as `LocalVfs` does); with `replace_link` the
-//! link is replaced.
+//! link is replaced. M2 W6: [`MemoryVfs::durabilities`] (what each commit was asked to sync) and
+//! [`MemoryVfs::set_journal_writes`] (the journal shows `open_write` too, as `Write`).
 //!
 //! Errors of kind not found, permission denied, not a folder, is a folder and already exists use the
 //! dedicated [`VfsError`] variants; cancelled is [`VfsError::Cancelled`]; every other kind is
@@ -72,8 +73,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
-    SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, Durability, EntryError, FollowLinks, ListOptions, Listing, NameOnly,
+    ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// Most symlinks followed in one resolution (Linux `MAXSYMLINKS`).
@@ -361,6 +362,10 @@ struct Tree {
     journal: Option<Vec<(VfsOp, String)>>,
     /// Original paths moved to the trash, in order.
     trashed: Vec<String>,
+    /// The journal shows `open_write` too.
+    journal_writes: bool,
+    /// Canonical specs of committed writes, with what each was asked to sync.
+    durabilities: Vec<(String, Durability)>,
 }
 
 /// One item of [`MemoryVfs::dump`]: everything a "target untouched" assertion compares.
@@ -934,6 +939,8 @@ impl MemoryVfs {
                     devices: Vec::new(),
                     journal: None,
                     trashed: Vec::new(),
+                    journal_writes: false,
+                    durabilities: Vec::new(),
                 }),
                 stat_calls: AtomicU64::new(0),
             }),
@@ -1062,6 +1069,16 @@ impl MemoryVfs {
     /// (`rename`: the `from` spec; a committed write: `Commit` and the target spec).
     pub fn journal(&self) -> Vec<(VfsOp, String)> {
         self.shared.read().journal.clone().unwrap_or_default()
+    }
+
+    /// The journal also shows each `open_write`, as `Write`: the moment a stage begins (M2 W6).
+    pub fn set_journal_writes(&self, on: bool) {
+        self.shared.write().journal_writes = on;
+    }
+
+    /// Every committed write, in order: the canonical spec and what it was asked to sync (D-164).
+    pub fn durabilities(&self) -> Vec<(String, Durability)> {
+        self.shared.read().durabilities.clone()
     }
 
     /// The original paths moved to the trash, in order (the items left the tree).
@@ -1368,6 +1385,9 @@ impl Vfs for MemoryVfs {
             }
         }
         let fail_after = Tree::after_fault(&tree.write_errors, &tree.path_key(&target));
+        if tree.journal_writes {
+            tree.record(VfsOp::Write, &spec_text);
+        }
         Ok(Box::new(MemWriter {
             shared: Arc::clone(&self.shared),
             target,
@@ -1375,6 +1395,7 @@ impl Vfs for MemoryVfs {
             name: write_name,
             spec: spec_text,
             overwrite: opts.overwrite,
+            durability: opts.durability,
             buf: Vec::new(),
             pos: 0,
             fail_after,
@@ -1713,6 +1734,7 @@ struct MemWriter {
     name: String,
     spec: String,
     overwrite: bool,
+    durability: Durability,
     buf: Vec<u8>,
     /// Where the next write lands.
     pos: usize,
@@ -1783,7 +1805,9 @@ impl AtomicWrite for MemWriter {
         }
         let key = tree.key(&writer.name);
         let content: Arc<[u8]> = writer.buf.into();
-        match tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
+        let durability = writer.durability;
+        let spec = writer.spec.clone();
+        let committed = match tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
             Some(existing) if tree.is_dir(existing) => {
                 Err(VfsError::IsADirectory { spec: writer.spec })
             }
@@ -1807,7 +1831,11 @@ impl AtomicWrite for MemWriter {
                 tree.record(VfsOp::Commit, &writer.spec);
                 Ok(())
             }
+        };
+        if committed.is_ok() {
+            tree.durabilities.push((spec, durability));
         }
+        committed
     }
 }
 

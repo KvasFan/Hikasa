@@ -2,9 +2,10 @@
 
 use hikasa_core::{Ctl, Spec};
 
+use super::copy::{clear_read_only_of, restore_read_only};
 use super::plan::report;
 use super::{
-    Action, Exec, OpKind, Outcome, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
+    Action, Exec, Later, OpKind, Outcome, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
     check_item, is_blob, scanning,
 };
 use crate::entry::{Entry, EntryKind};
@@ -81,7 +82,7 @@ pub fn plan_remove(
             continue;
         }
         if entry.kind != EntryKind::Dir {
-            items.push(PlanItem::new(action, entry.kind, None, spec.clone(), 0));
+            items.push(PlanItem::planned(action, entry.kind, None, spec.clone(), 0));
             continue;
         }
         if opts.recursive && !opts.trash {
@@ -96,7 +97,7 @@ pub fn plan_remove(
                 fail(&mut items, action, EntryKind::Dir, &error);
             }
             Ok(_) => {
-                let mut item = PlanItem::new(action, EntryKind::Dir, None, spec.clone(), 0);
+                let mut item = PlanItem::planned(action, EntryKind::Dir, None, spec.clone(), 0);
                 item.seen = entry.file_id;
                 items.push(item);
             }
@@ -197,7 +198,7 @@ fn tree(
             tree(vfs, &child, entry, depth + 1, ctl, items)?;
         } else {
             scanning(ctl, items.len(), &child);
-            items.push(PlanItem::new(
+            items.push(PlanItem::planned(
                 Action::Remove,
                 entry.kind,
                 None,
@@ -206,7 +207,7 @@ fn tree(
             ));
         }
     }
-    let mut item = PlanItem::new(Action::RemoveDir, EntryKind::Dir, None, dir.clone(), depth);
+    let mut item = PlanItem::planned(Action::RemoveDir, EntryKind::Dir, None, dir.clone(), depth);
     item.seen = now.file_id.or(seen.file_id);
     items.push(item);
     Ok(())
@@ -216,7 +217,7 @@ fn tree(
 /// an archive a `remove_dir` waits for the rebuild, like the sources in it (D-148).
 pub(crate) fn run_remove(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
     if item.action == Action::RemoveDir && exec.two_phase {
-        exec.deferred.push((index, None));
+        exec.deferred.push((index, Later::Folder));
         return Outcome::Deferred;
     }
     finish_remove(exec, item)
@@ -238,12 +239,26 @@ pub(crate) fn finish_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
 
 /// The removal itself.
 fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
+    // `clear_read_only` applies to `remove`, not `trash` (§1.6.12).
+    let cleared = if item.clear_read_only && item.action != Action::Trash {
+        match clear_read_only_of(exec.src, &item.target) {
+            Ok(cleared) => cleared,
+            Err(e) => return Outcome::Failed(e),
+        }
+    } else {
+        false
+    };
     let result = match item.action {
         Action::Trash => exec.src.move_to_trash(&item.target),
         _ => exec.src.remove(&item.target),
     };
     match result {
         Ok(()) => Outcome::Done(0),
-        Err(e) => Outcome::Failed(e),
+        Err(e) => {
+            if cleared {
+                restore_read_only(exec.src, &item.target);
+            }
+            Outcome::Failed(e)
+        }
     }
 }

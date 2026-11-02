@@ -42,8 +42,8 @@ use crate::entry::{Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::local::LocalVfs;
 use crate::vfs::{
-    AtomicWrite, AttrChange, Finish, FollowLinks, ListOptions, Listing, ReadSeek, SetTimes, Vfs,
-    WriteLock, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, Finish, FollowLinks, HandleMeta, ListOptions, Listing, ReadSeek,
+    SetTimes, Vfs, WriteLock, WriteOptions, op_unsupported,
 };
 
 /// In-memory content injected by an adapter (stdin bytes read once; clipboard text).
@@ -431,6 +431,19 @@ impl Vfs for VfsRouter {
     ) -> Result<Option<u64>, VfsError> {
         match (self.route(from), self.route(to)) {
             (Route::Local, Route::Local) => self.local.copy_file_fast(from, to, opts, cancel),
+            _ => Ok(None),
+        }
+    }
+
+    fn copy_new_file(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        meta: &HandleMeta,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        match (self.route(from), self.route(to)) {
+            (Route::Local, Route::Local) => self.local.copy_new_file(from, to, meta, cancel),
             _ => Ok(None),
         }
     }

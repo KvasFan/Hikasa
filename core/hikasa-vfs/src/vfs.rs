@@ -136,6 +136,19 @@ pub struct EntryError {
     pub error: ErrorReport,
 }
 
+/// What a write syncs (D-164). What a sync protects differs by case, so the case decides: two `fsync`s per file make a
+/// copy of 10,000 small files 26 × slower than a plain copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Durability {
+    /// `sync_all` of the file, then of the folder after the rename (M1, saves, settings, rebuilds, moves).
+    #[default]
+    Full,
+    /// `sync_all` of the file only: a replaced file is either the old or the new one after a power cut.
+    FileOnly,
+    /// Neither: a new file that nothing depends on yet.
+    None,
+}
+
 /// Write options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WriteOptions {
@@ -148,6 +161,19 @@ pub struct WriteOptions {
     /// writes"). `true`: the link itself is replaced by the new file and the file it pointed to is untouched
     /// (copy semantics).
     pub replace_link: bool,
+    /// What `commit` syncs (M2 W6, D-164).
+    pub durability: Durability,
+}
+
+/// Metadata a back-end can apply on the open handle, before the file gets its name (D-164).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HandleMeta {
+    /// The modification time.
+    pub modified: Option<FileTime>,
+    /// The creation time (a back-end with `SET_CREATED`).
+    pub created: Option<FileTime>,
+    /// The Unix mode.
+    pub mode: Option<u32>,
 }
 
 /// What [`Vfs::set_times`] changes; `None` keeps the current value. The access time is never changed (D-99).
@@ -335,6 +361,19 @@ pub trait Vfs: Send + Sync {
         _from: &Spec,
         _to: &Spec,
         _opts: &WriteOptions,
+        _cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        Ok(None)
+    }
+
+    /// A copy of the regular file `from` to `to`, which does not exist, with `meta` applied, or `Ok(None)` when this
+    /// back-end has no such path (D-164). Never replaces on purpose; the window against a racing creator is `rename`'s
+    /// (§1.3.1). Nothing is synced, and a failure or a cancellation leaves no file. Default: `Ok(None)`.
+    fn copy_new_file(
+        &self,
+        _from: &Spec,
+        _to: &Spec,
+        _meta: &HandleMeta,
         _cancel: &CancelToken,
     ) -> Result<Option<u64>, VfsError> {
         Ok(None)

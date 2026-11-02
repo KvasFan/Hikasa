@@ -160,6 +160,7 @@ impl Service {
                 create_parents: false,
                 overwrite: true,
                 replace_link: false,
+                ..WriteOptions::default()
             };
             let mut writer = self
                 .vfs()

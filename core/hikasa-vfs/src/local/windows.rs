@@ -105,6 +105,22 @@ pub(super) fn hold_through_rename(_file: std::fs::File) -> Option<std::fs::File>
     None
 }
 
+/// A new file; its ACL comes from its folder.
+pub(super) fn open_new(path: &Path) -> io::Result<std::fs::File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// No mode here.
+pub(super) fn set_mode(_file: &std::fs::File, _mode: Option<u32>) -> io::Result<()> {
+    Ok(())
+}
+
+/// Adds the creation time to what a handle sets.
+pub(super) fn with_created(times: fs::FileTimes, created: std::time::SystemTime) -> fs::FileTimes {
+    use std::os::windows::fs::FileTimesExt;
+    times.set_created(created)
+}
+
 /// A file's ACL comes from its folder: there is no owner-only mode to give it.
 pub(super) fn make_private(_file: &std::fs::File) -> Option<std::fs::Permissions> {
     None

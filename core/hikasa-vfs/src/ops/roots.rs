@@ -10,8 +10,9 @@ use std::cell::Cell;
 
 use hikasa_core::{Ctl, ErrorReport, Spec};
 
+use super::backup::write_backup;
 use super::plan::report;
-use super::{Action, Exec, ItemResult, ItemStatus, PlanItem, same_instance};
+use super::{Action, Exec, ItemResult, ItemStatus, Later, PlanItem, same_instance};
 use crate::error::VfsError;
 use crate::vfs::{Finish, Vfs};
 
@@ -112,6 +113,13 @@ impl<'a> Roots<'a> {
                 };
                 (self.open(Side::Dst, &item.target, true)?, source)
             }
+            Action::Exchange => {
+                let source = match &item.source {
+                    Some(source) => self.open(Side::Src, source, true)?,
+                    None => None,
+                };
+                (self.open(Side::Dst, &item.target, true)?, source)
+            }
             Action::Skip => (None, None),
             _ => (self.open(Side::Dst, &item.target, true)?, None),
         };
@@ -143,6 +151,48 @@ impl<'a> Roots<'a> {
         };
         found.open.set(false);
         self.vfs(found.side).finish_with(&found.at, how, ctl)
+    }
+
+    /// The one backup of the outermost file of `root` (D-168): when the operation names one and the root has a done
+    /// item. A rewrite touches the whole file, so what the item did to it does not matter.
+    fn back_up(
+        &self,
+        root: usize,
+        exec: &Exec<'_>,
+        results: &[ItemResult],
+    ) -> Result<(), VfsError> {
+        let Some(found) = self.roots.get(root) else {
+            return Ok(());
+        };
+        let Some(backup) = exec
+            .exec_options
+            .archive_backups
+            .get(&found.outer.canonical())
+        else {
+            return Ok(());
+        };
+        let done = |index: usize| {
+            self.belongs(index, root)
+                && results
+                    .get(index)
+                    .is_some_and(|result| result.status == ItemStatus::Done)
+        };
+        if (0..results.len()).any(done) {
+            write_backup(self.vfs(found.side), &found.outer, backup, exec.ctl)?;
+        }
+        Ok(())
+    }
+
+    /// Commits `root` behind its backup; a failed backup ends the root unchanged, with that error.
+    fn commit(&self, root: usize, exec: &Exec<'_>, results: &[ItemResult]) -> Result<(), VfsError> {
+        let ctl = exec.ctl;
+        match self.back_up(root, exec, results) {
+            Ok(()) => self.end(root, Finish::Commit, ctl),
+            Err(e) => {
+                let _ = self.end(root, Finish::Abort, ctl);
+                Err(e)
+            }
+        }
     }
 
     /// The done items of `root` lost their rebuild.
@@ -179,7 +229,11 @@ pub(super) fn finish(
         } else {
             Finish::Commit
         };
-        match (how, roots.end(root, how, ctl)) {
+        let ended = match how {
+            Finish::Commit => roots.commit(root, exec, results),
+            Finish::Abort => roots.end(root, how, ctl),
+        };
+        match (how, ended) {
             (Finish::Abort, _) => {
                 lost.push(root);
                 roots.unwind(root, results, None);
@@ -199,26 +253,34 @@ pub(super) fn finish(
         }
     }
     if *cancelled {
-        // A rebuild went through before the stop: its copies stay, and a move that kept its source is not done.
-        for (index, _) in std::mem::take(&mut exec.deferred) {
+        // A rebuild went through before the stop: its copies stay, and a move that kept its source is not done. An
+        // exchange runs to its end once its rebuild is through (§1.6.2).
+        let (ends, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut exec.deferred)
+            .into_iter()
+            .partition(|(_, later)| matches!(later, Later::Rename { .. }));
+        exec.deferred = ends;
+        for (index, _) in rest {
             if let Some(result) = results.get_mut(index) {
                 *result = ItemResult::status(ItemStatus::NotRun);
             }
         }
-    } else {
-        // A failed rebuild leaves every source in place: a folder stays even with none of its own moved.
-        let whole = lost.is_empty();
-        exec.run_deferred(items, results, &|index, moved| {
-            whole || (moved && !lost.iter().any(|&root| roots.belongs(index, root)))
-        });
     }
+    // A failed rebuild leaves every source in place: a folder stays even with none of its own moved.
+    let whole = lost.is_empty();
+    exec.run_deferred(items, results, &|index, moved| {
+        whole || (moved && !lost.iter().any(|&root| roots.belongs(index, root)))
+    });
     for root in sources {
         let how = if *cancelled || failure.is_some() {
             Finish::Abort
         } else {
             Finish::Commit
         };
-        match (how, roots.end(root, how, ctl)) {
+        let ended = match how {
+            Finish::Commit => roots.commit(root, exec, results),
+            Finish::Abort => roots.end(root, how, ctl),
+        };
+        match (how, ended) {
             (Finish::Abort, _) => roots.unwind(root, results, failure.as_ref()),
             (Finish::Commit, Ok(())) => {}
             (Finish::Commit, Err(e)) if e.is_cancelled() => {

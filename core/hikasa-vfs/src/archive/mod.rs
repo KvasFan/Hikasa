@@ -64,8 +64,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, ListOptions, Listing, NameOnly,
-    ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, HandleMeta, ListOptions, Listing,
+    NameOnly, ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// A member of at most this many bytes is decoded to memory, a larger one to a cache file.
@@ -1448,6 +1448,19 @@ impl Vfs for ArchiveVfs {
         match (from, to) {
             (Spec::ArchiveMember { .. }, _) | (_, Spec::ArchiveMember { .. }) => Ok(None),
             _ => self.core.base.copy_file_fast(from, to, opts, cancel),
+        }
+    }
+
+    fn copy_new_file(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        meta: &HandleMeta,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        match (from, to) {
+            (Spec::ArchiveMember { .. }, _) | (_, Spec::ArchiveMember { .. }) => Ok(None),
+            _ => self.core.base.copy_new_file(from, to, meta, cancel),
         }
     }
 

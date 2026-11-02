@@ -2,9 +2,9 @@
 //! of the mutating primitives (M2 W3): permission bits, symbolic links, creation times (macOS).
 
 use std::ffi::OsStr;
-use std::fs::{self, File, Metadata, Permissions};
+use std::fs::{self, File, FileTimes, Metadata, OpenOptions, Permissions};
 use std::io;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use super::AttrFailure;
@@ -67,6 +67,23 @@ pub(super) fn make_private(file: &File) -> Option<Permissions> {
     Some(made)
 }
 
+/// A new file, owner-only from the start.
+pub(super) fn open_new(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+/// Gives an open file its final mode.
+pub(super) fn set_mode(file: &File, mode: Option<u32>) -> io::Result<()> {
+    match mode {
+        Some(mode) => file.set_permissions(Permissions::from_mode(mode & 0o7777)),
+        None => Ok(()),
+    }
+}
+
 /// True when a file with these metadata can be a temporary file of this program: owner-only, as `make_private` left
 /// it. A file of the user that happens to have the name is not touched for it.
 pub(super) fn looks_private(meta: &Metadata) -> bool {
@@ -108,6 +125,19 @@ pub(super) fn set_created(path: &Path, time: std::time::SystemTime) -> Option<io
 #[cfg(not(target_os = "macos"))]
 pub(super) fn set_created(_path: &Path, _time: std::time::SystemTime) -> Option<io::Result<()>> {
     None
+}
+
+/// Adds the creation time to what a handle sets (macOS).
+#[cfg(target_os = "macos")]
+pub(super) fn with_created(times: FileTimes, created: std::time::SystemTime) -> FileTimes {
+    use std::os::macos::fs::FileTimesExt;
+    times.set_created(created)
+}
+
+/// No creation times on this platform.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn with_created(times: FileTimes, _created: std::time::SystemTime) -> FileTimes {
+    times
 }
 
 /// `Mode` → `fs::set_permissions` (the caller refused links); `Dos` → the wrong family.
