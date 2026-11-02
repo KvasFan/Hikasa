@@ -234,26 +234,11 @@ impl Builder<'_, '_> {
                 },
             );
         }
-        let stamp = if entry.stat_skipped {
-            None
-        } else {
-            let stamp = if opened {
-                None
-            } else {
-                Some(stamp_of(&entry, false))
-            };
-            stamp.map(|source| {
-                let source = if entry.followed {
-                    source
-                } else {
-                    stamp_of(&entry, true)
-                };
-                Expect {
-                    source: Some(source),
-                    target: None,
-                }
-            })
-        };
+        // A rename acts on the link of a followed row, and what a name-only row or an archive's file was, no row says.
+        let stamp = (!entry.stat_skipped && !opened).then(|| Expect {
+            source: Some(stamp_of(&entry, false)),
+            target: None,
+        });
         if let Some(folder) = folders.get_mut(&parent) {
             folder.rows.push(Ren {
                 id,

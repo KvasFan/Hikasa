@@ -12,7 +12,6 @@ use hikasa_core::{ContentKind, ContentMethod, ErrorReport, ExitCode, RelPath, Si
 use hikasa_folder::ops::{
     ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, ItemMeta, OpPlan,
     OpScope, OpSettings, OpVerb, PathStructure, QuestionKind, ReadOnlySides, TouchFrom, plan_op,
-    refresh_nodes,
 };
 use hikasa_folder::select::{
     ExcludeWhat, Include, SelectMask, SelectScope, Selection, SideSet, exclude_masks, resolve, select,
@@ -726,6 +725,7 @@ impl Service {
             meta,
             exec,
             warnings,
+            refresh,
         } = plan;
         let router = self.router();
         ops::note_shadow_drops(&*router, &*router, &mut plan);
@@ -739,7 +739,7 @@ impl Service {
             dry_run: true,
             bases: (bases.left, bases.right),
             archive_backups: backups,
-            refresh_nodes: Vec::new(),
+            refresh_nodes: refresh,
             warnings,
         }
     }
@@ -759,6 +759,7 @@ impl Service {
                 mut meta,
                 exec,
                 warnings,
+                refresh,
             } = plan;
             let router = self.router();
             let report = ops::execute_with(&*router, &*router, plan, &exec, &job.ctl());
@@ -778,15 +779,10 @@ impl Service {
                 dry_run: false,
                 bases: (bases.left, bases.right),
                 archive_backups: backups,
-                refresh_nodes: Vec::new(),
+                refresh_nodes: refresh,
                 warnings,
             })
         })
-    }
-
-    /// The folders of `meta` a refresh takes in, for an outcome of `model`.
-    pub fn folder_refresh_nodes(&self, model: &Arc<FolderModel>, meta: &[ItemMeta]) -> Vec<NodeId> {
-        refresh_nodes(&model.read(), meta)
     }
 
     /// Refreshes `nodes` in place (§1.6.7). A flat comparison has no folders to refresh: `report` is `None`, and the caller
@@ -1323,29 +1319,29 @@ pub fn item_word(item: &FolderOpItemDto) -> &'static str {
 /// The human line of an item: the side's letter, the words of §1.3.7, ` (backup <spec>)`, a dry run's conflicts.
 pub fn item_line(item: &FolderOpItemDto, dry_run: bool) -> String {
     let side = match item.side {
-        Some("left") => "L",
-        Some("right") => "R",
-        _ if item.action == "exchange" => "=",
-        _ => "-",
+        Some("left") => "L ",
+        Some("right") => "R ",
+        _ if item.action == "exchange" => "",
+        _ => "- ",
     };
     let word = item_word(item);
     let target = escape_controls(&item.target);
     let mut line = match item.status {
         ItemStatus::Failed => {
             let message = item.error.as_ref().map_or("", |e| e.message.as_str());
-            format!("{side} failed {word} {target}: {}", escape_controls(message))
+            format!("{side}failed {word} {target}: {}", escape_controls(message))
         }
-        ItemStatus::NotRun => format!("{side} not run {word} {target}"),
+        ItemStatus::NotRun => format!("{side}not run {word} {target}"),
         _ => match item.reason {
-            Some(reason) => format!("{side} skip ({}) {target}", reason.as_str()),
+            Some(reason) => format!("{side}skip ({}) {target}", reason.as_str()),
             None => match (&item.source, item.action) {
                 (Some(source), "exchange") => {
-                    format!("{side} exchange {} <-> {target}", escape_controls(source))
+                    format!("{side}exchange {} <-> {target}", escape_controls(source))
                 }
                 (Some(source), "copy" | "link" | "rename" | "move") => {
-                    format!("{side} {word} {} -> {target}", escape_controls(source))
+                    format!("{side}{word} {} -> {target}", escape_controls(source))
                 }
-                _ => format!("{side} {word} {target}"),
+                _ => format!("{side}{word} {target}"),
             },
         },
     };

@@ -651,3 +651,120 @@ fn a6_14_diff_with_an_override_is_no_difference() {
     assert_eq!(picked(&cmp, "diff"), Vec::<String>::new());
     assert_eq!(picked(&cmp, "exact.files"), ["a:lr"]);
 }
+
+// ---- A6.22: the masks of Exclude --------------------------------------------------------------------------------
+
+use hikasa_core::filter::NameFilter;
+use hikasa_core::mask::{CaseSensitivity as MaskCase, Mask, MaskOptions};
+use hikasa_folder::select::{ExcludeWhat, escape_mask, exclude_masks};
+use proptest::prelude::*;
+
+fn selected(read: &TreeRead<'_>, paths: &[&str]) -> Selection {
+    let mut sel = Selection::default();
+    for path in paths {
+        let row = id(read, path);
+        let sides = if read.node(row).unwrap().left.is_some() {
+            SideSet::LEFT
+        } else {
+            SideSet::RIGHT
+        };
+        sel.insert(row, sides);
+    }
+    sel
+}
+
+#[test]
+fn a6_22_exclude_masks_items() {
+    let vfs = bases();
+    file(&vfs, "/l/a/b.txt", b"x", 10);
+    file(&vfs, "/l/top.txt", b"x", 10);
+    vfs.insert_dir(&host("/l/a/deep"), meta(1)).unwrap();
+    vfs.insert_dir(&host("/l/top"), meta(1)).unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let read = cmp.read();
+    let sel = selected(&read, &["a/b.txt", "top.txt", "a/deep", "top"]);
+    let (files, folders) = exclude_masks(&read, &sel, ExcludeWhat::Items);
+    assert_eq!(files, [".\\top.txt", "a\\b.txt"]);
+    assert_eq!(folders, [".\\top\\", "a\\deep\\"]);
+}
+
+#[test]
+fn a6_22_exclude_masks_type_without_an_extension_and_nothing_twice() {
+    let vfs = bases();
+    file(&vfs, "/l/one.txt", b"x", 10);
+    file(&vfs, "/l/two.txt", b"x", 10);
+    file(&vfs, "/l/Makefile", b"x", 10);
+    file(&vfs, "/l/a.[x]", b"x", 10);
+    vfs.insert_dir(&host("/l/dir"), meta(1)).unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let read = cmp.read();
+    let sel = selected(&read, &["one.txt", "two.txt", "Makefile", "a.[x]", "dir"]);
+    let (files, folders) = exclude_masks(&read, &sel, ExcludeWhat::Type);
+    assert_eq!(files, ["*.[[]x]", "*.txt", ".\\Makefile"]);
+    assert!(folders.is_empty());
+}
+
+#[test]
+fn a6_22_a_path_with_syntax_in_it_is_escaped_component_by_component() {
+    let vfs = bases();
+    file(&vfs, "/l/[d]/*x", b"x", 10);
+    let cmp = compared(&vfs, &FolderRules::default());
+    let read = cmp.read();
+    let sel = selected(&read, &["[d]/*x"]);
+    let (files, _) = exclude_masks(&read, &sel, ExcludeWhat::Items);
+    assert_eq!(files, ["[[]d]\\[*]x"]);
+    let lists = hikasa_core::filter::NameFilterLists {
+        exclude_files: files,
+        ..Default::default()
+    };
+    let options = MaskOptions {
+        case: MaskCase::Sensitive,
+    };
+    let filter = NameFilter::from_lists(&lists, options).unwrap();
+    let parent = RelPath::parse("[d]").unwrap();
+    let verdict = hikasa_core::filter::FolderVerdict::Included;
+    assert!(!filter.file(&parent, "*x", verdict));
+    assert!(filter.file(&parent, "yx", verdict));
+}
+
+fn matches_name(name: &str, other: &str) -> bool {
+    let options = MaskOptions {
+        case: MaskCase::Sensitive,
+    };
+    let mask = Mask::parse(&escape_mask(name), options)
+        .unwrap_or_else(|e| panic!("{name:?}: {} ({e})", escape_mask(name)));
+    mask.matches_path(&RelPath::parse(other).unwrap())
+}
+
+proptest! {
+    #![proptest_config(common::config("tests/proptest-regressions/select.txt"))]
+
+    /// The escaped mask matches its name and no other of a generated set.
+    #[test]
+    fn a6_22_escape_mask_round_trips(
+        name in "[-a-z\\[\\]?*;! .]{1,10}",
+        others in proptest::collection::vec("[-a-z\\[\\]?*;! .]{1,10}", 0..8),
+    ) {
+        prop_assume!(!name.starts_with(' ') || name.trim() != "");
+        prop_assume!(name != "." && name != "..");
+        prop_assert!(matches_name(&name, &name), "{}", escape_mask(&name));
+        for other in others.iter().filter(|other| *other != &name) {
+            prop_assume!(other.as_str() != "." && other.as_str() != "..");
+            prop_assert!(!matches_name(&name, other), "{} matches {other}", escape_mask(&name));
+        }
+    }
+}
+
+#[test]
+fn a6_22_escape_mask_table() {
+    assert_eq!(escape_mask("a[b"), "a[[]b");
+    assert_eq!(escape_mask("a?b"), "a[?]b");
+    assert_eq!(escape_mask("a*b"), "a[*]b");
+    assert_eq!(escape_mask("a;b"), "a[;]b");
+    assert_eq!(escape_mask("-a"), "[-]a");
+    assert_eq!(escape_mask(" a"), "[ ]a");
+    assert_eq!(escape_mask("a "), "a[ ]");
+    assert_eq!(escape_mask("!a"), "!a");
+    assert_eq!(escape_mask("a."), "a[.]");
+    assert_eq!(escape_mask("plain.txt"), "plain.txt");
+}

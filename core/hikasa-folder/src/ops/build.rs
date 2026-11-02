@@ -181,6 +181,8 @@ pub(super) struct Builder<'a, 'r> {
     names: BTreeMap<(NodeId, Side), BTreeMap<String, NodeId>>,
     /// Names orphans of a folder took on a side.
     orphans: BTreeSet<(NodeId, Side, String)>,
+    /// The target of `copyto`, `moveto`: what lies below it keeps its path in a backup folder.
+    pub(super) outside: Option<Spec>,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -289,6 +291,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             folders: BTreeMap::new(),
             names: BTreeMap::new(),
             orphans: BTreeSet::new(),
+            outside: None,
         }
     }
 
@@ -1448,6 +1451,18 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.skip_row(id, kind, Some(source), target, depth, SkipReason::SpecialFile, None);
             return;
         }
+        // A link member would come out on a disk: a hostile archive's link must not (D-142).
+        let member = matches!(source, Spec::ArchiveMember { .. })
+            || matches!(target, Spec::ArchiveMember { .. });
+        if view.kind == NodeKind::Symlink && member {
+            let message = format!(
+                "{}: link members of an archive are not copied out of it",
+                source.canonical()
+            );
+            self.warn_once(WarningCode::ArchiveSymlinkSkipped, &source, message);
+            self.skip_row(id, kind, Some(source), target, depth, SkipReason::Symlink, None);
+            return;
+        }
         let mut item = PlanItem::planned(
             Action::Exchange,
             kind,
@@ -1545,12 +1560,19 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.cover(id);
             return Ok(());
         }
-        if self.lacks(&spec, Capabilities::REMOVE, "remove", Some(side)) {
+        let whole = row.whole.contains(SideSet::of(side));
+        // An opened archive that goes whole goes as the file it is, whatever its format can do to a member.
+        let opened = view.flags.contains(NodeFlags::archive_root(side));
+        let file = match (&spec, opened && whole) {
+            (Spec::ArchiveMember { archive, .. }, true) => Some((**archive).clone()),
+            _ => None,
+        };
+        let asked = file.as_ref().unwrap_or(&spec).clone();
+        if self.lacks(&asked, Capabilities::REMOVE, "remove", Some(side)) {
             self.skip_row(id, kind, None, spec, depth, SkipReason::Capability, Some(side));
             self.cover(id);
             return Ok(());
         }
-        let whole = row.whole.contains(SideSet::of(side));
         // A followed row is its link (fence rule 2), whatever it leads to.
         if view.is_folder() && !entry.followed {
             if view.scan == ScanStatus::NotScanned {
@@ -1566,12 +1588,10 @@ impl<'a, 'r> Builder<'a, 'r> {
                 self.cover(id);
                 return Ok(());
             }
-            let opened = view.flags.contains(NodeFlags::archive_root(side));
             if !whole {
                 return Ok(());
             }
-            if let (true, Spec::ArchiveMember { archive, .. }) = (opened, &spec) {
-                let file = (**archive).clone();
+            if let Some(file) = file {
                 self.delete_one(id, &view, &entry, file, EntryKind::File, depth, side, recycle);
                 self.cover(id);
                 return Ok(());
@@ -1609,10 +1629,14 @@ impl<'a, 'r> Builder<'a, 'r> {
         self.capabilities(spec).contains(Capabilities::TRASH)
     }
 
-    /// The `trash` items of `first..` may fall back.
+    /// The items of `first..`, from the disk: a `trash` may fall back, and what has no bin is its question.
     fn mark_trash(&mut self, first: usize, recycle: Recycle) {
-        for item in self.items.iter_mut().skip(first) {
+        for (item, meta) in self.items.iter_mut().zip(&mut self.meta).skip(first) {
             item.trash_fallback = item.action == Action::Trash && recycle.fallback;
+            meta.conflicts.set(
+                Conflicts::NO_RECYCLE_BIN,
+                recycle.use_bin && item.action != Action::Trash,
+            );
         }
     }
 
@@ -1840,6 +1864,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         if let Some(policy) = &self.settings.backup {
             self.assign_backups(policy, &mut exec);
         }
+        let refresh = super::refresh_nodes(self.read, &self.meta);
         let plan = Plan {
             op: OpKind::Batch,
             options: PlanOptions::Batch(BatchOptions {
@@ -1857,6 +1882,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             meta: self.meta,
             exec,
             warnings: self.warnings,
+            refresh,
         }
     }
 
@@ -1913,6 +1939,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             }
             let rel = [&self.bases.left, &self.bases.right]
                 .into_iter()
+                .chain(&self.outside)
                 .find_map(|base| rel_below(base, &item.target));
             match names.assign(policy, vfs, &item.target, rel.as_ref()) {
                 Ok(backup) => item.backup = Some(backup),

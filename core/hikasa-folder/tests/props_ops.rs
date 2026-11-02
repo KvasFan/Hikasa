@@ -14,7 +14,7 @@ use hikasa_core::{
 };
 use hikasa_folder::ops::{
     ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides,
-    Recycle, TouchFrom, plan_op, refresh_nodes,
+    Recycle, TouchFrom, plan_op,
 };
 use hikasa_folder::select::{Include, Selection, SideSet};
 use hikasa_folder::{CompareState, FolderComparison, FolderRules, NodeId, TreeRead, refresh_into};
@@ -225,7 +225,7 @@ proptest! {
         let Some(planned) = plan_for(&vfs, &cmp, &picks, &op) else {
             return Ok(());
         };
-        let nodes_to_refresh: Vec<NodeId> = refresh_nodes(&cmp.read(), &planned.meta);
+        let nodes_to_refresh: Vec<NodeId> = planned.refresh.clone();
         let planned = answered(planned, ConfirmMode::YesToAll);
         run(&vfs, planned);
         let contents = engines(1 << 30);

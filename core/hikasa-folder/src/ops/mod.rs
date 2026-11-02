@@ -273,6 +273,8 @@ pub struct OpPlan {
     pub exec: ExecOptions,
     /// What planning found.
     pub warnings: Vec<Warning>,
+    /// The folders a refresh takes in once the plan ran (additive: the ids of the model it was made from).
+    pub refresh: Vec<NodeId>,
 }
 
 /// The folders a refresh takes in after a plan ran: the parent of each row an item names, each once, parents first.

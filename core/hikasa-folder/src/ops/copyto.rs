@@ -190,8 +190,15 @@ impl Builder<'_, '_> {
         if !rows.iter().any(|row| row.sides.intersects(sides)) {
             return Err(FolderError::InvalidRules(nothing_on(sides)));
         }
+        if !matches!(target, Spec::Local(_) | Spec::ArchiveMember { .. }) {
+            return Err(FolderError::InvalidRules(format!(
+                "{}: nothing can be written there",
+                target.canonical()
+            )));
+        }
         let mut below = Below::default();
         let root = self.target_root(target, &mut below)?;
+        self.outside = Some(root.clone());
         let fold = self.folds(&root);
         for side in sides.sides() {
             self.depths.clear();
@@ -335,6 +342,8 @@ impl Builder<'_, '_> {
                 return Ok(());
             }
         };
+        // Below a folder that goes, an item blocks it by its depth.
+        let depth = depth.max(self.child_depth(view.parent));
         if let Some(reason) = self.refusal(id, &view, Some(tr.from), writes) {
             self.skip_row(id, kind, Some(from), target, depth, reason, None);
             self.cover(id);
@@ -378,12 +387,12 @@ impl Builder<'_, '_> {
         if view.is_folder() {
             // Flat: a folder is no item, and goes only when all of it has.
             if tr.moving && source.row.whole.contains(SideSet::of(tr.from)) && !entry.followed {
-                self.depths.insert(id, 0);
+                self.depths.insert(id, depth);
                 open.push(Open {
                     level: source.row.depth,
                     id,
                     spec: from,
-                    depth: 0,
+                    depth,
                     side: tr.from,
                     conflicts: Conflicts::empty(),
                 });
@@ -417,7 +426,6 @@ impl Builder<'_, '_> {
                 }
             }
         };
-        let moved_depth = self.child_depth(view.parent).max(depth);
         match self.kind_action(&view, &from, &target, None, tr.moving) {
             Ok(action) => {
                 let placed = Placed {
@@ -426,7 +434,7 @@ impl Builder<'_, '_> {
                     source: from,
                     target,
                     found,
-                    depth: moved_depth,
+                    depth,
                     side: None,
                 };
                 self.place_file(placed, &view, action, tr);
