@@ -234,6 +234,28 @@ fn cancel_of_a_rebuild_keeps_the_archive_and_leaves_no_files() {
     assert_eq!(leftovers(&s, "."), Vec::<String>::new());
 }
 
+/// `folder op` cancelled in the middle of a file: exit 100, what was done stays whole, and nothing starts after it (A6.25).
+#[test]
+fn cancel_of_a_folder_op_leaves_no_partial_target() {
+    let s = Sandbox::new();
+    s.file("l/a", b"first\n");
+    huge(&s, "l/b");
+    s.file("l/c", b"last\n");
+    s.dir("r");
+    let args = [
+        "folder", "op", "copy", "l", "r", "--to", "right", "--select", "all", "--yes",
+    ];
+    let mut child = spawn(&s, &args);
+    wait_until(&mut child, "the copy of the hole", || {
+        names(&s, "r").iter().any(|name| name != "a")
+    });
+    sigint(&child);
+    let status = wait(&mut child, LIMIT);
+    assert_eq!(status.code(), Some(100), "{status:?}");
+    assert_eq!(names(&s, "r"), ["a"]);
+    assert_eq!(std::fs::read(s.join("r/a")).unwrap(), b"first\n");
+}
+
 /// A folder's copy cancelled in the middle of a file: exit 100, what was done stays whole, the file under way leaves
 /// no temporary file and no partial target, and nothing starts after it.
 #[test]

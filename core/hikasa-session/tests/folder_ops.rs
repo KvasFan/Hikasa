@@ -572,8 +572,9 @@ fn a6_23_a_member_is_extracted_and_described_by_its_file() {
         "[[app]]\ndescription = \"one\"\ncommand = \"tool %f\"\n",
     );
     let (service, _) = with_launcher(root, Vec::new());
-    let archive =
-        hikasa_core::Spec::Local(hikasa_core::LocalPath::new(root.join("l/a.zip")).unwrap());
+    let archive = hikasa_core::Spec::Local(
+        hikasa_core::LocalPath::new(root.join("l").join("a.zip")).unwrap(),
+    );
     let member = hikasa_core::Spec::archive_member(archive.clone(), "inner.txt");
     let control = job(&service, JobKind::FolderOp);
     let commands = service
@@ -644,7 +645,8 @@ fn a6_23_a_program_that_cannot_start_and_a_programs_own_exit_code() {
 fn a6_23_associated() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let path = write(root, "l/a.txt", b"1");
+    write(root, "l/a.txt", b"1");
+    let path = root.join("l").join("a.txt");
     let (service, launcher) = with_launcher(root, Vec::new());
     let spec = hikasa_core::Spec::Local(hikasa_core::LocalPath::new(path.clone()).unwrap());
     let control = job(&service, JobKind::FolderOp);
@@ -656,7 +658,8 @@ fn a6_23_associated() {
 fn a6_23_no_launcher_is_unsupported() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    let path = write(root, "l/a.txt", b"1");
+    write(root, "l/a.txt", b"1");
+    let path = root.join("l").join("a.txt");
     let service = common::service(root);
     let spec = hikasa_core::Spec::Local(hikasa_core::LocalPath::new(path).unwrap());
     let control = job(&service, JobKind::FolderOp);

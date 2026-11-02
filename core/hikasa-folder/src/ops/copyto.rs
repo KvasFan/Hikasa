@@ -13,7 +13,7 @@ use super::PathStructure;
 use super::build::{Builder, Found, Open, Placed, Transfer, nothing_on, report, stamp_of_stat};
 use super::conflict::Conflicts;
 use crate::error::FolderError;
-use crate::model::{NodeId, ScanStatus};
+use crate::model::{NodeFlags, NodeId, ScanStatus};
 use crate::select::{Resolved, SideSet};
 
 /// The folders below a target, as the plan knows them.
@@ -505,6 +505,17 @@ impl Builder<'_, '_> {
             return Ok(());
         }
         let whole = source.row.whole.contains(SideSet::of(tr.from));
+        // An opened archive that goes whole goes as the file it is.
+        if let (true, true, None, Spec::ArchiveMember { archive, .. }) = (
+            view.flags.contains(NodeFlags::archive_root(tr.from)),
+            whole,
+            &found,
+            &from,
+        ) {
+            self.place_archive(tr, id, (**archive).clone(), target, depth, None);
+            self.cover(id);
+            return Ok(());
+        }
         if tr.moving && whole && found.is_none() && self.can_rename(&from, &target) {
             let mut item =
                 PlanItem::planned(Action::Rename, EntryKind::Dir, Some(from), target, depth);

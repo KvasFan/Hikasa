@@ -350,6 +350,28 @@ fn a6_15_an_opened_archive_that_goes_whole_goes_as_the_file_it_is() {
 }
 
 #[test]
+fn a6_19_copyto_of_an_opened_archive_copies_the_file() {
+    let world = world();
+    let bytes = tar_of(&[("x", b"1")]);
+    world
+        .mem
+        .insert_file(&host("/l/a.tar"), bytes.clone(), meta(20))
+        .unwrap();
+    world.mem.insert_dir(&host("/out"), meta(1)).unwrap();
+    let cmp = world.tree();
+    let op = FolderOp::CopyTo {
+        sides: L,
+        target: mspec("/out"),
+        structure: PathStructure::Relative,
+        overwrite: OverwritePolicy::Fail,
+    };
+    let out = plan(&world.vfs, &cmp, &[("a.tar", L)], &op);
+    let report = run(&world.vfs, out);
+    assert_eq!(report.summary.failed, 0, "{:?}", report.results);
+    assert_eq!(read(&world.mem, "/out/a.tar").unwrap(), bytes);
+}
+
+#[test]
 fn a6_15_rule11_a_single_stream_archive_is_read_only_with_one_warning() {
     // A stream holds one member: what would write it is `skip capability`.
     let world = world();

@@ -4,6 +4,7 @@
 use std::io::{BufRead, Write};
 
 use hikasa_folder::ops::{Confirmation, Reply};
+use hikasa_report::escape_controls;
 
 /// The prompt after each question.
 const CHOICES: &str = "[y]es [n]o [a]ll [s]kip all [c]ancel";
@@ -11,7 +12,7 @@ const CHOICES: &str = "[y]es [n]o [a]ll [s]kip all [c]ancel";
 /// Asks every question of `machine` on `output`, reading `input`. The end of the input is `Cancel`: nothing is assumed.
 pub fn ask(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {
     while let Some(question) = machine.next() {
-        let text = question.text.clone();
+        let text = escape_controls(&question.text).into_owned();
         let reply = loop {
             let _ = writeln!(output, "{text} {CHOICES}");
             let _ = output.flush();

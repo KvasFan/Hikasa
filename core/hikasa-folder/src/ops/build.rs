@@ -1199,7 +1199,19 @@ impl<'a, 'r> Builder<'a, 'r> {
         } else {
             (Capabilities::WRITE, "write")
         };
-        let gone = tr.moving && self.lacks(&source, Capabilities::REMOVE, "remove", Some(tr.from));
+        // An opened archive that goes whole goes as the file it is, whatever its format can do to a member.
+        let leaves = match (
+            &source,
+            view.flags.contains(NodeFlags::archive_root(tr.from)),
+        ) {
+            (Spec::ArchiveMember { archive, .. }, true)
+                if row.whole.contains(SideSet::of(tr.from)) =>
+            {
+                (**archive).clone()
+            }
+            _ => source.clone(),
+        };
+        let gone = tr.moving && self.lacks(&leaves, Capabilities::REMOVE, "remove", Some(tr.from));
         if gone || self.lacks(&target, need.0, need.1, side) {
             let depth = self.child_depth(view.parent);
             self.skip_row(
@@ -1274,15 +1286,15 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
             let file = (**archive).clone();
-            self.place_archive(tr, id, file, target, depth);
+            self.place_archive(tr, id, file, target, depth, side);
             self.cover(id);
             return Ok(());
         }
         if tr.moving
             && whole
             && absent
-            && !self.has_followed_below(row)
             && self.can_rename(&source, &target)
+            && !self.has_followed_below(row)
         {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
@@ -1325,10 +1337,9 @@ impl<'a, 'r> Builder<'a, 'r> {
         Ok(())
     }
 
-    /// An `Always` file in a folder's name is replaced by the folder only through its item; below a followed row nothing
-    /// moves, so a subtree with one is no single item.
+    /// True when a followed row lies below `row`: nothing below it moves (fence rule 1), so such a subtree is no single
+    /// item.
     fn has_followed_below(&self, row: &Resolved) -> bool {
-        // `whole` holds for a followed row's own rows too; the walk stays linear because it stops at the first.
         let read = self.read;
         let mut stack: Vec<NodeId> = read.children(row.node).collect();
         while let Some(id) = stack.pop() {
@@ -1376,7 +1387,15 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// An opened archive that leaves as one file: copied or moved by its own stamp.
-    fn place_archive(&mut self, tr: Transfer, id: NodeId, file: Spec, target: Spec, depth: u32) {
+    pub(super) fn place_archive(
+        &mut self,
+        tr: Transfer,
+        id: NodeId,
+        file: Spec,
+        target: Spec,
+        depth: u32,
+        side: Option<Side>,
+    ) {
         let action = if tr.moving {
             Action::Move
         } else {
@@ -1394,7 +1413,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             }
             Err(e) => item.error = Some(report(&e)),
         }
-        let meta = self.meta_of(id, Some(tr.to));
+        let meta = self.meta_of(id, side);
         self.push(item, meta);
     }
 
