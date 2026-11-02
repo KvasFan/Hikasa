@@ -1563,6 +1563,263 @@ fn a6_5_a_target_inside_its_source_through_dot_dot() {
     assert!(!refused("src", "src/../copied"));
 }
 
+const LINKED: &str = "is a link below a base folder, where the plan saw none";
+
+/// `/base/sub` is a link to `/out`, which holds `x`.
+fn linked_base() -> MemoryVfs {
+    let vfs = memory();
+    file(&vfs, "/base/a", b"a", 1);
+    file(&vfs, "/out/x", b"precious", 1);
+    file(&vfs, "/s", b"new", 1);
+    vfs.insert_symlink(&host("/base/sub"), "/out", MemMeta::default())
+        .unwrap();
+    vfs
+}
+
+/// Everything the fence refuses, through a link in a base and at any depth: the text of each spec is below the base.
+#[test]
+fn a6_5_a_link_in_a_base_is_refused() {
+    let moved = item(
+        Action::Move,
+        EntryKind::File,
+        Some("/base/sub/x"),
+        "/base/moved",
+        0,
+    );
+    let mut replaced = copy_item("/s", "/base/sub/x", 0);
+    replaced.replaces = true;
+    let rows = vec![
+        item(Action::Remove, EntryKind::File, None, "/base/sub/x", 0),
+        item(Action::Remove, EntryKind::File, None, "/base/sub/x", 3),
+        item(Action::Trash, EntryKind::File, None, "/base/sub/x", 0),
+        moved,
+        replaced,
+        copy_item("/s", "/base/sub/new", 0),
+        copy_item("/s", "/base/sub/deep/new", 1),
+    ];
+    for row in rows {
+        let vfs = linked_base();
+        let before = vfs.dump();
+        let report = run_with(&vfs, batch(vec![row.clone()]), &fence_of("/base", true));
+        assert_eq!(statuses(&report), [ItemStatus::Failed], "{row:?}");
+        assert!(failure(&report, 0).contains(LINKED), "{}", failure(&report, 0));
+        assert!(failure(&report, 0).contains("/base/sub"));
+        assert_eq!(vfs.dump(), before, "{row:?}");
+    }
+}
+
+fn fence_of(base: &str, writes: bool) -> ExecOptions {
+    ExecOptions {
+        fence: Some(Fence {
+            bases: vec![mspec(base)],
+            writes,
+        }),
+        ..ExecOptions::default()
+    }
+}
+
+/// What the plan may do: a link at or above a base is the user's, the item itself is not followed, and a link it reads
+/// from is the comparison's business. `writes` off leaves a target its own.
+#[test]
+fn a6_5_what_a_link_does_not_stop() {
+    // The base is a link, and one stands above a base.
+    let vfs = linked_base();
+    vfs.insert_symlink(&host("/via"), "/base", MemMeta::default())
+        .unwrap();
+    let remove = item(Action::Remove, EntryKind::File, None, "/via/a", 0);
+    let report = run_with(&vfs, batch(vec![remove]), &fence_of("/via", true));
+    assert!(report.ok(), "{:?}", report.results);
+    let remove = item(Action::Remove, EntryKind::File, None, "/via/sub/x", 0);
+    let report = run_with(&vfs, batch(vec![remove]), &fence_of("/via/sub", true));
+    assert!(report.ok(), "{:?}", report.results);
+
+    // The link is the item: removed, or replaced, as a link (§1.6.4 rule 2).
+    let vfs = linked_base();
+    let remove = item(Action::Remove, EntryKind::Symlink, None, "/base/sub", 0);
+    let report = run_with(&vfs, batch(vec![remove]), &fence_of("/base", true));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/out/x"), b"precious");
+    let vfs = linked_base();
+    let mut replaced = copy_item("/s", "/base/sub", 0);
+    replaced.replaces = true;
+    let report = run_with(&vfs, batch(vec![replaced]), &fence_of("/base", true));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/base/sub"), b"new");
+    assert_eq!(content(&vfs, "/out/x"), b"precious");
+
+    // A source that is read: a copy out of what the comparison followed.
+    let vfs = linked_base();
+    let copied = copy_item("/base/sub/x", "/base/y", 0);
+    let report = run_with(&vfs, batch(vec![copied]), &fence_of("/base", true));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/base/y"), b"precious");
+
+    // `copyto`: the target is elsewhere, by request, through a link as well.
+    let vfs = linked_base();
+    let copied = copy_item("/base/a", "/base/sub/copied", 0);
+    let report = run_with(&vfs, batch(vec![copied]), &fence_of("/base", false));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(content(&vfs, "/out/copied"), b"a");
+
+    // A plan with a new folder: the first file finds it made, and nothing else is in the way.
+    let vfs = linked_base();
+    let mut made = item(Action::CreateDir, EntryKind::Dir, None, "/base/new", 0);
+    made.depth = 0;
+    let report = run_with(
+        &vfs,
+        batch(vec![made, copy_item("/s", "/base/new/f", 1)]),
+        &fence_of("/base", true),
+    );
+    assert!(report.ok(), "{:?}", report.results);
+}
+
+/// A folder of the base moved out and left as a link after the plan was made: every stamp holds, since it is the same
+/// file, and a root item (depth 0) has no parent re-check. On a real disk.
+#[cfg(unix)]
+#[test]
+fn a6_5_a_link_swapped_in_after_planning() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("base/sub")).unwrap();
+    std::fs::create_dir_all(root.join("outside")).unwrap();
+    std::fs::write(root.join("base/sub/x"), b"precious").unwrap();
+    let vfs = LocalVfs::default();
+    let base = common::lspec(&root.join("base"));
+    let target = common::lspec_new(&root.join("base/sub/x"));
+    let entry = vfs.stat(&target, FollowLinks::No).unwrap();
+    let mut remove = PlanItem::planned(Action::Remove, EntryKind::File, None, target, 0);
+    remove.expect = Some(Expect {
+        source: None,
+        target: Some(ItemStamp {
+            kind: entry.kind,
+            size: Some(entry.size),
+            mtime: entry.mtime,
+        }),
+    });
+    std::fs::rename(root.join("base/sub"), root.join("outside/sub")).unwrap();
+    symlink(root.join("outside/sub"), root.join("base/sub")).unwrap();
+    let options = ExecOptions {
+        fence: Some(Fence {
+            bases: vec![base],
+            writes: true,
+        }),
+        ..ExecOptions::default()
+    };
+    let report = run_with(&vfs, batch(vec![remove]), &options);
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert!(failure(&report, 0).contains(LINKED));
+    assert!(root.join("outside/sub/x").exists());
+}
+
+/// Swaps `/base/sub` for a link at the first report of progress, that is, between two items of one folder.
+struct SwapFolder<'a> {
+    vfs: &'a MemoryVfs,
+    done: std::sync::atomic::AtomicBool,
+}
+
+impl ProgressSink for SwapFolder<'_> {
+    fn report(&self, _event: Progress) {
+        if !self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.vfs.rename(&mspec("/base/sub"), &mspec("/out/sub"), false).unwrap();
+            self.vfs
+                .insert_symlink(&host("/base/sub"), "/out/sub", MemMeta::default())
+                .unwrap();
+        }
+    }
+}
+
+/// What the fence knows of a folder holds for new files only: what goes, or is replaced, looks at the tree each time.
+#[test]
+fn a6_5_a_removal_trusts_no_earlier_look() {
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 1);
+    file(&vfs, "/base/sub/x", b"precious", 1);
+    vfs.insert_dir(&host("/out"), MemMeta::default()).unwrap();
+    let mut first = copy_item("/s", "/base/sub/new", 0);
+    first.size = Some(3);
+    let second = item(Action::Remove, EntryKind::File, None, "/base/sub/x", 0);
+    let sink = SwapFolder {
+        vfs: &vfs,
+        done: std::sync::atomic::AtomicBool::new(false),
+    };
+    let cancel = CancelToken::new();
+    let ctl = Ctl {
+        cancel: &cancel,
+        progress: &sink,
+    };
+    let report = ops::execute_with(
+        &vfs,
+        &vfs,
+        batch(vec![first, second]),
+        &fence_of("/base", true),
+        &ctl,
+    );
+    assert!(sink.done.load(std::sync::atomic::Ordering::SeqCst), "the sink ran");
+    assert_eq!(report.results[1].status, ItemStatus::Failed);
+    assert!(failure(&report, 1).contains(LINKED));
+    assert_eq!(content(&vfs, "/out/sub/x"), b"precious");
+}
+
+/// A link the plan itself makes ends what the fence knew of that folder.
+#[test]
+fn a6_5_a_link_of_the_plan_ends_what_was_known() {
+    let vfs = memory();
+    file(&vfs, "/s", b"new", 1);
+    file(&vfs, "/base/sub/x", b"x", 1);
+    vfs.insert_dir(&host("/out"), MemMeta::default()).unwrap();
+    vfs.insert_symlink(&host("/l"), "/out", MemMeta::default())
+        .unwrap();
+    let mut link = item(Action::Link, EntryKind::Symlink, Some("/l"), "/base/sub", 0);
+    link.replaces = false;
+    let items = vec![
+        copy_item("/s", "/base/sub/new", 0),
+        item(Action::Remove, EntryKind::File, None, "/base/sub/new", 0),
+        item(Action::Remove, EntryKind::File, None, "/base/sub/x", 0),
+        item(Action::RemoveDir, EntryKind::Dir, None, "/base/sub", 0),
+        link,
+        copy_item("/s", "/base/sub/through", 0),
+    ];
+    let report = run_with(&vfs, batch(items), &fence_of("/base", true));
+    assert_eq!(report.results[5].status, ItemStatus::Failed, "{:?}", report.results);
+    assert!(failure(&report, 5).contains(LINKED));
+    assert!(vfs.read_back(&host("/out/through")).is_none());
+}
+
+/// An archive behind a link below a base: a rewrite would land outside, so it is refused. As the base, the link stands.
+#[cfg(unix)]
+#[test]
+fn a6_5_an_archive_behind_a_link() {
+    use std::os::unix::fs::symlink;
+    let disk = on_disk(ArchiveLimits::default());
+    let tree: TreeData = vec![("gone".into(), b"gone".to_vec())];
+    std::fs::create_dir_all(disk.dir.join("base")).unwrap();
+    let real = disk.dir.join("real.zip");
+    std::fs::write(&real, bytes_of(ArchiveFormat::Zip, &tree)).unwrap();
+    let before = std::fs::read(&real).unwrap();
+    let link = disk.dir.join("base/link.zip");
+    symlink(&real, &link).unwrap();
+    let outer = common::lspec_new(&link);
+    let member = Spec::archive_member(outer.clone(), "gone");
+    let removal = PlanItem::planned(Action::Remove, EntryKind::File, None, member, 0);
+    let fence = |base: Spec| ExecOptions {
+        fence: Some(Fence {
+            bases: vec![base],
+            writes: true,
+        }),
+        ..ExecOptions::default()
+    };
+    let vfs: &dyn Vfs = &*disk.vfs;
+    let options = fence(common::lspec(&disk.dir.join("base")));
+    let report = run_with(vfs, batch(vec![removal.clone()]), &options);
+    assert_eq!(statuses(&report), [ItemStatus::Failed]);
+    assert!(failure(&report, 0).contains(LINKED));
+    assert_eq!(std::fs::read(&real).unwrap(), before);
+    let report = run_with(vfs, batch(vec![removal]), &fence(outer));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_ne!(std::fs::read(&real).unwrap(), before);
+}
+
 #[test]
 fn a6_5_case_goes_by_the_back_end() {
     let insensitive = MemoryVfs::new(CaseSensitivity::Insensitive);

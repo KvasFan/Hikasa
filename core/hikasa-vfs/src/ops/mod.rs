@@ -898,7 +898,7 @@ pub fn execute_with(
         }
         let index = results.len();
         // The fence comes before the archive is opened: what it refuses leaves no batch behind.
-        let refused = match (&item.error, item.skip, &exec.fence) {
+        let refused = match (&item.error, item.skip, &mut exec.fence) {
             (None, None, Some(fence)) => fence.refuses(src, dst, &item).err(),
             _ => None,
         };
@@ -913,6 +913,12 @@ pub fn execute_with(
                 let outcome = run_item(&mut exec, &item, index);
                 if !matches!(outcome, Outcome::Expand(_)) {
                     roots.note(owned);
+                }
+                // What the fence knows of the tree ends where the plan itself makes a link or moves a folder.
+                if (item.kind == EntryKind::Symlink || item.action == Action::Rename)
+                    && let Some(fence) = &mut exec.fence
+                {
+                    fence.forget();
                 }
                 Ok(outcome)
             }
