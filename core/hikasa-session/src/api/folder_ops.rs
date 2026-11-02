@@ -686,6 +686,29 @@ impl Service {
         })
     }
 
+    /// `ReadOnlySide` for a `copyto`, `moveto` whose target lies at or below the base of a read-only side (D-184): a target
+    /// is a path, so `written_sides` cannot say.
+    fn refuse_target(
+        &self,
+        read: &TreeRead<'_>,
+        op: &FolderOp,
+        read_only: ReadOnlySides,
+    ) -> Result<(), ApiError> {
+        let (FolderOp::CopyTo { target, .. } | FolderOp::MoveTo { target, .. }) = op else {
+            return Ok(());
+        };
+        let router = self.router();
+        for side in [Side::Left, Side::Right] {
+            let base = read.spec(NodeId::ROOT, side);
+            if read_only.get(side)
+                && base.is_some_and(|base| ops::writes_into(&*router, &base, target))
+            {
+                return Err(ApiError::ReadOnlySide { side });
+            }
+        }
+        Ok(())
+    }
+
     /// Plans a folder operation from the model: nothing is written (T12). Refuses a read-only side first, so scripts and
     /// commands cannot pass it by (D-184), and a selection with nothing in it: a stray command must not act.
     pub fn folder_op_plan(
@@ -701,13 +724,14 @@ impl Service {
             }
             let options = self.fresh_options();
             let read = model.read();
+            let op = self.resolved_op(&read, &req.op)?;
+            self.refuse_target(&read, &op, req.read_only)?;
             let (selection, include) = self.select_of(&read, &req.select, verb_sides(&req.op))?;
             if selection.is_empty() && needs_selection(&req.op) {
                 return Err(ApiError::InvalidArgument(
                     "nothing selected: pass --select all, or a mask".to_owned(),
                 ));
             }
-            let op = self.resolved_op(&read, &req.op)?;
             let preserve = req.overrides.preserve.unwrap_or(Preserve {
                 created: options.file_operations.preserve_created,
                 ..Preserve::default()

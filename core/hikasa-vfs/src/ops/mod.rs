@@ -346,6 +346,93 @@ fn holds_on_disk(dst: &dyn Vfs, id: FileId, target: &Spec) -> bool {
     false
 }
 
+/// `path` with `.` and `..` resolved by the text alone.
+fn lexical(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// `spec` as its text reads once `.` and `..` are resolved.
+fn spelt_plainly(spec: &Spec) -> Spec {
+    match spec {
+        Spec::Local(path) => hikasa_core::LocalPath::new(lexical(path.as_path()))
+            .map_or_else(|_| spec.clone(), Spec::Local),
+        other => other.clone(),
+    }
+}
+
+/// True when writing at `target` writes the base folder `base` of a side, or what lies below it: Disable editing must hold
+/// for a target that is no row (D-184). By what a path is, not by how it is spelt: `..`, a link at the base and a link on
+/// the way to `target` lead where the OS says. A member is the outermost file it lives in, which a write rewrites. Where
+/// the back-end cannot tell (an error other than "not there"), the answer is yes: this stops a write.
+pub fn writes_into(vfs: &dyn Vfs, base: &Spec, target: &Spec) -> bool {
+    let file_of = |spec: &Spec| spec.outermost_file().unwrap_or(spec).clone();
+    let (base_file, target_file) = (file_of(base), file_of(target));
+    let (plain_base, plain_target) = (spelt_plainly(&base_file), spelt_plainly(&target_file));
+    if spec_key(vfs, &plain_base) == spec_key(vfs, &plain_target)
+        || within(vfs, &plain_base, &plain_target)
+    {
+        return true;
+    }
+    let base_id = match vfs.stat(&base_file, FollowLinks::Yes) {
+        Ok(entry) => entry.file_id,
+        Err(VfsError::NotFound { .. }) => None,
+        Err(_) => return true,
+    };
+    let Some(base_id) = base_id else {
+        return false;
+    };
+    // The nearest folder that stands: what the plan makes goes below it.
+    let mut nearest = Some(target_file);
+    let mut found = None;
+    while let Some(at) = nearest {
+        match vfs.stat(&at, FollowLinks::Yes) {
+            Ok(entry) => {
+                found = Some((at, entry.file_id));
+                break;
+            }
+            Err(VfsError::NotFound { .. } | VfsError::NotADirectory { .. }) => {
+                nearest = at.parent();
+            }
+            Err(_) => return true,
+        }
+    }
+    let Some((at, id)) = found else {
+        return false;
+    };
+    if id == Some(base_id) {
+        return true;
+    }
+    // Up from there by `..`, which the OS reads through every link on the way.
+    let Spec::Local(path) = &at else {
+        return false;
+    };
+    let mut seen = id;
+    let mut up = path.as_path().to_path_buf();
+    for _ in 0..MAX_DEPTH {
+        up.push("..");
+        let Ok(dir) = hikasa_core::LocalPath::new(up.clone()) else {
+            return false;
+        };
+        match vfs.stat(&Spec::Local(dir), FollowLinks::Yes) {
+            Ok(entry) if entry.file_id == Some(base_id) => return true,
+            Ok(entry) if entry.file_id.is_none() || entry.file_id == seen => return false,
+            Ok(entry) => seen = entry.file_id,
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 /// The archives around `spec`, nearest first.
 fn levels(spec: &Spec) -> impl Iterator<Item = &Spec> {
     std::iter::successors(around(spec), |spec| around(spec))

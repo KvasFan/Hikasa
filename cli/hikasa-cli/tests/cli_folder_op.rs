@@ -309,6 +309,149 @@ fn a6_25_an_unknown_path_is_100_not_found() {
     assert_eq!(json(&out)["error"]["kind"], "not_found");
 }
 
+/// D-184: Disable editing follows where a `--target` leads, for `copyto` and `moveto`, on the left and on the right.
+#[test]
+fn a6_21_a_target_on_a_read_only_side_is_refused() {
+    let s = sandbox();
+    s.dir("r/sub");
+    let before = state(&s);
+    let spellings = [
+        s.join("r"),
+        s.join("r/sub"),
+        s.join("r/new/below"),
+        s.join("r/../r/sub"),
+        s.join("l/../r/sub"),
+    ];
+    for verb in ["copyto", "moveto"] {
+        for target in &spellings {
+            let target = target.to_str().unwrap();
+            let out = op(
+                &s,
+                &[
+                    verb,
+                    "--side",
+                    "left",
+                    "--select",
+                    "all",
+                    "--target",
+                    target,
+                    "--read-only",
+                    "right",
+                    "--overwrite",
+                    "always",
+                    "--yes",
+                    "--json",
+                ],
+            );
+            assert_eq!(code(&out), 100, "{verb} {target}");
+            assert_eq!(json(&out)["error"]["kind"], "permission_denied");
+        }
+    }
+    assert_eq!(state(&s), before);
+    // The other side stays open: nothing in it is read-only.
+    let elsewhere = s.join("elsewhere");
+    let out = op(
+        &s,
+        &[
+            "copyto",
+            "--side",
+            "left",
+            "--select",
+            "all",
+            "--target",
+            elsewhere.to_str().unwrap(),
+            "--read-only",
+            "right",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+}
+
+/// A link at the base and a link on the way say where a target leads, and a session says as `--read-only` does.
+#[cfg(unix)]
+#[test]
+fn a6_21_a_read_only_target_seen_through_links_and_a_session() {
+    use std::os::unix::fs::symlink;
+    let s = sandbox();
+    s.dir("r/sub");
+    symlink(s.join("r"), s.join("base")).unwrap();
+    symlink(s.join("r/sub"), s.join("way")).unwrap();
+    let before = state(&s);
+    let verb = |left: &Path, right: &Path, target: &Path| {
+        let mut command = s.cmd();
+        command.args(["folder", "op", "moveto"]).args([left, right]);
+        command.args(["--side", "left", "--select", "all", "--read-only", "right"]);
+        command.arg("--target").arg(target).args(["--yes", "--json"]);
+        command.output().unwrap()
+    };
+    let (l, r) = (s.join("l"), s.join("r"));
+    for (right, target) in [
+        (&r, s.join("way")),
+        (&r, s.join("way/new")),
+        (&r, s.join("base/sub")),
+        (&s.join("base"), s.join("r/sub")),
+    ] {
+        let out = verb(&l, right, &target);
+        assert_eq!(code(&out), 100, "{}", target.display());
+        assert_eq!(json(&out)["error"]["kind"], "permission_denied");
+    }
+    assert_eq!(state(&s), before);
+    // A session with the right side read-only.
+    let mut new = s.cmd();
+    new.args(["session", "new", "s", "--type", "folder-compare", "--left"]);
+    new.arg(&l).arg("--right").arg(&r);
+    assert_eq!(code(&new.output().unwrap()), 0);
+    let mut edit = s.cmd();
+    edit.args(["session", "edit", "s", "--set", "specs.read_only_right=true"]);
+    assert_eq!(code(&edit.output().unwrap()), 0);
+    for target in [s.join("r/sub"), s.join("way")] {
+        let mut command = s.cmd();
+        command.args(["folder", "op", "copyto", "--session", "s", "--side", "left"]);
+        command.args(["--select", "all", "--yes", "--json", "--target"]);
+        command.arg(&target);
+        let out = command.output().unwrap();
+        assert_eq!(code(&out), 100, "{}", target.display());
+        assert_eq!(json(&out)["error"]["kind"], "permission_denied");
+    }
+    assert_eq!(state(&s), before);
+}
+
+/// An archive that is the base, and one below it: a write to a member rewrites what is read-only.
+#[test]
+fn a6_21_a_member_of_a_read_only_side_is_refused() {
+    let s = sandbox();
+    let empty = s.join("empty.zip");
+    let made = s
+        .cmd()
+        .args(["vfs", "mkdir"])
+        .arg(&empty)
+        .output()
+        .unwrap();
+    assert_eq!(code(&made), 0, "{}", stderr(&made));
+    let moved = s.join("r/a.zip");
+    std::fs::rename(&empty, &moved).unwrap();
+    let target = format!("{}/", moved.display());
+    let out = op(
+        &s,
+        &[
+            "copyto",
+            "--side",
+            "left",
+            "--path",
+            "only.txt",
+            "--target",
+            &target,
+            "--read-only",
+            "right",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert_eq!(json(&out)["error"]["kind"], "permission_denied");
+}
+
 /// D-185: `--path` names one row. No spelling of an empty shell variable reaches the base, on any entry that takes it.
 #[test]
 fn a6_25_no_spelling_of_path_reaches_the_base() {
