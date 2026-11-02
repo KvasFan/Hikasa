@@ -9,6 +9,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{Pair, Spec, Warning, WarningCode};
+use hikasa_folder::FolderRules;
+use hikasa_folder::ops::ReadOnlySides;
 use hikasa_text::ViewOptions;
 use serde::Serialize;
 use toml::{Table, Value};
@@ -110,6 +112,21 @@ pub struct SessionWriteDto {
     /// Warnings of the call (`spec_not_saved`).
     #[serde(skip)]
     pub warnings: Vec<Warning>,
+    /// `folder op exclude`: the masks (written, or only printed by `--dry-run`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub masks: Option<ExcludeMasksDto>,
+    /// `folder op ignored`: the new list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored: Option<Vec<String>>,
+}
+
+/// The masks of `folder op exclude`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExcludeMasksDto {
+    /// For `exclude_files`.
+    pub files: Vec<String>,
+    /// For `exclude_folders`.
+    pub folders: Vec<String>,
 }
 
 /// `hikasa.workspace_write.v1`.
@@ -268,11 +285,22 @@ const EDITABLE_DEFAULTS: &[&str] = &["description", "rules", "text_rules", "disp
 
 impl Service {
     /// The program options read now (leniently: these commands never fail on a bad option).
-    fn fresh_options(&self) -> Options {
+    pub(crate) fn fresh_options(&self) -> Options {
         SettingsStore::new(self.config())
             .options(LoadMode::Lenient)
             .map(|l| l.value)
             .unwrap_or_default()
+    }
+
+    /// Disable editing of a session (FC-003).
+    pub fn session_read_only(&self, reference: &SessionRef) -> Result<ReadOnlySides, ApiError> {
+        run_guarded(|| {
+            let session = self.session_effective(reference)?;
+            Ok(ReadOnlySides {
+                left: session.specs.read_only_left,
+                right: session.specs.read_only_right,
+            })
+        })
     }
 
     /// The session store of this configuration.
@@ -858,6 +886,67 @@ impl Service {
         }
     }
 
+    /// `folder op exclude`: adds `masks` to the session's exclude lists, each entry once (FC-052). A locked session needs
+    /// `force` (D-91). Rules are immutable in a model: the view re-runs.
+    pub fn session_add_excludes(
+        &self,
+        reference: &SessionRef,
+        masks: &ExcludeMasksDto,
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        let mut dto = self.session_edit_rules(reference, force, |rules| {
+            let names = &mut rules.filters.names;
+            for (list, new) in [
+                (&mut names.exclude_files, &masks.files),
+                (&mut names.exclude_folders, &masks.folders),
+            ] {
+                for mask in new {
+                    if !list.contains(mask) {
+                        list.push(mask.clone());
+                    }
+                }
+            }
+        })?;
+        dto.masks = Some(masks.clone());
+        Ok(dto)
+    }
+
+    /// `folder op ignored`: the session's marks become `list` (FC-033). A locked session needs `force` (D-91).
+    pub fn session_set_ignored(
+        &self,
+        reference: &SessionRef,
+        list: &[String],
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        let mut dto = self.session_edit_rules(reference, force, |rules| {
+            rules.ignored = list.to_vec();
+        })?;
+        dto.ignored = Some(list.to_vec());
+        Ok(dto)
+    }
+
+    /// Changes the folder rules of a named session and saves it.
+    fn session_edit_rules(
+        &self,
+        reference: &SessionRef,
+        force: bool,
+        edit: impl FnOnce(&mut FolderRules),
+    ) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            refuse_locked(&store, reference, force)?;
+            let mut session = self.session_load(reference)?.value;
+            let SessionRules::Folder(rules) = &mut session.rules else {
+                return Err(ApiError::InvalidArgument(format!(
+                    "`{reference}` is no folder session"
+                )));
+            };
+            edit(rules);
+            rules.validate().map_err(ApiError::from_folder)?;
+            self.session_save(reference, &session, force)
+        })
+    }
+
     /// `session delete`; a locked session needs `force` (SES-004).
     pub fn session_delete(
         &self,
@@ -1366,6 +1455,8 @@ fn write_dto(
         written: text(written),
         removed: text(removed),
         warnings,
+        masks: None,
+        ignored: None,
     }
 }
 

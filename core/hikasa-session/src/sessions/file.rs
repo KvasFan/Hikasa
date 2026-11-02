@@ -192,6 +192,12 @@ pub struct Specs {
     pub left_encoding: String,
     /// Right encoding label.
     pub right_encoding: String,
+    /// Disable editing, left (FC-003). Written when set.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_only_left: bool,
+    /// Disable editing, right.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_only_right: bool,
 }
 
 /// The parent link of a child session (TC-052).
@@ -317,6 +323,7 @@ impl Session {
         let s = &mut self.specs;
         std::mem::swap(&mut s.left, &mut s.right);
         std::mem::swap(&mut s.left_encoding, &mut s.right_encoding);
+        std::mem::swap(&mut s.read_only_left, &mut s.read_only_right);
         if let Some(parent) = &mut self.parent {
             std::mem::swap(&mut parent.left, &mut parent.right);
         }

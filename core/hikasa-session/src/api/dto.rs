@@ -95,9 +95,15 @@ pub const SETTINGS_IMPORT_SCHEMA: &str = "hikasa.settings_import.v1";
 
 /// `hikasa vfs cp|mv|rm|mkdir|touch` (M2 W3, D-102).
 pub const VFS_OP_SCHEMA: &str = "hikasa.vfs_op.v1";
+/// `folder op` of a plan (M2 W6, §1.6.17).
+pub const FOLDER_OP_SCHEMA: &str = "hikasa.folder_op.v1";
+/// `folder sync` (M2 W6, §1.6.17).
+pub const FOLDER_SYNC_SCHEMA: &str = "hikasa.folder_sync.v1";
+/// `folder op compare`, `folder op crc` (M2 W6, §1.6.17).
+pub const FOLDER_CONTENTS_SCHEMA: &str = "hikasa.folder_contents.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 35] = [
+pub const SCHEMAS: [&str; 38] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -133,6 +139,9 @@ pub const SCHEMAS: [&str; 35] = [
     SETTINGS_EXPORT_SCHEMA,
     SETTINGS_IMPORT_SCHEMA,
     VFS_OP_SCHEMA,
+    FOLDER_OP_SCHEMA,
+    FOLDER_SYNC_SCHEMA,
+    FOLDER_CONTENTS_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

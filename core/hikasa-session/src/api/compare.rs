@@ -460,14 +460,15 @@ impl Service {
         run_guarded(|| self.folder_run_inner(prepared, job, observer))
     }
 
-    fn folder_run_inner(
+    /// The content engines of a comparison: the hikasa-vfs CRC and binary comparators and, with `text_rules`, hikasa-text's
+    /// `RulesComparator`.
+    pub(crate) fn content_engines(
         &self,
-        prepared: &PreparedFolderCompare,
-        job: &JobControl,
-        observer: &dyn ScanObserver,
-    ) -> Result<FolderCompareResponse, ApiError> {
+        text_rules: Option<&TextRules>,
+        overrides: &EnabledOverrides,
+    ) -> Result<ContentEngines, ApiError> {
         let stream = self.stream_options();
-        let rules_comparator = match &prepared.text_rules {
+        let rules_comparator = match text_rules {
             Some(text_rules) => {
                 let comparator = RulesComparator::new(
                     self.registry(),
@@ -475,7 +476,7 @@ impl Service {
                     self.load_options(None)?,
                 )
                 .map_err(|e| ApiError::from_text(e, Side::Left, ""))?
-                .with_overrides(prepared.overrides.clone())
+                .with_overrides(overrides.clone())
                 .with_max_bytes(DEFAULT_RULES_MAX_BYTES)
                 .with_external(self.env().temp_dir.clone(), Arc::clone(self.runner()))
                 .with_stream_options(stream);
@@ -483,7 +484,16 @@ impl Service {
             }
             None => None,
         };
-        let engines = ContentEngines::with_stream_options(stream, rules_comparator);
+        Ok(ContentEngines::with_stream_options(stream, rules_comparator))
+    }
+
+    fn folder_run_inner(
+        &self,
+        prepared: &PreparedFolderCompare,
+        job: &JobControl,
+        observer: &dyn ScanObserver,
+    ) -> Result<FolderCompareResponse, ApiError> {
+        let engines = self.content_engines(prepared.text_rules.as_ref(), &prepared.overrides)?;
         let now = self.clock().now();
         let router = self.router();
         let env = FolderEnv {

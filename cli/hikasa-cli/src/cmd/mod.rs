@@ -4,6 +4,7 @@
 
 pub mod completions;
 pub mod folder;
+pub mod folder_op;
 pub mod format;
 pub mod gui;
 pub mod help;
@@ -194,6 +195,9 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             false => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
         },
+        Command::Folder {
+            cmd: FolderCmd::Op { verb },
+        } => (folder_op::schema_of(verb), ApiOp::FolderOp),
         Command::Format { cmd } => match cmd {
             FormatCmd::List => (FORMAT_LIST_SCHEMA, ApiOp::Format),
             FormatCmd::Show { .. } => (FORMAT_SHOW_SCHEMA, ApiOp::Format),
@@ -278,6 +282,9 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Folder {
             cmd: FolderCmd::Compare(args),
         } => folder::run(ctx, args),
+        Command::Folder {
+            cmd: FolderCmd::Op { verb },
+        } => folder_op::run(ctx, verb),
         Command::Format { cmd } => format::run(ctx, cmd),
         Command::Vfs { cmd } => vfs::run(ctx, cmd),
         Command::Gui { cmd } => gui::run(ctx, cmd, open),

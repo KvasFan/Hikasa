@@ -874,6 +874,7 @@ pub fn execute_with(
     let mut results: Vec<ItemResult> = Vec::with_capacity(queue.len());
     let mut item_bytes: Vec<u64> = Vec::with_capacity(queue.len());
     let mut cancelled = false;
+    let mut expanded = Vec::new();
     while let Some(item) = queue.pop_front() {
         exec.flush_dirs(item.depth, &mut results);
         while exec.cut.last().is_some_and(|&d| d >= item.depth) {
@@ -933,9 +934,10 @@ pub fn execute_with(
         let result = match outcome {
             Err(result) => result,
             Ok(Outcome::Expand(expansion)) => {
-                for expanded in expansion.into_iter().rev() {
-                    exec.remember_folder(&expanded);
-                    queue.push_front(expanded);
+                expanded.push((index, expansion.len()));
+                for item in expansion.into_iter().rev() {
+                    exec.remember_folder(&item);
+                    queue.push_front(item);
                 }
                 continue;
             }
@@ -1004,6 +1006,7 @@ pub fn execute_with(
         summary,
         cancelled,
         warnings: exec.warnings,
+        expanded,
     }
 }
 
@@ -1033,6 +1036,7 @@ fn refused(
         summary,
         cancelled: false,
         warnings: Vec::new(),
+        expanded: Vec::new(),
     }
 }
 

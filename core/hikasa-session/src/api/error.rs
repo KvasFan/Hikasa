@@ -34,6 +34,12 @@ pub enum ApiError {
     /// `invalid_data`).
     #[error("{0}")]
     InvalidData(String),
+    /// A folder operation that writes a read-only side (FC-003, D-184): nothing is planned.
+    #[error("the {side} side is read-only")]
+    ReadOnlySide {
+        /// The side.
+        side: Side,
+    },
     /// Spec syntax.
     #[error(transparent)]
     Spec(#[from] SpecError),
@@ -111,6 +117,7 @@ impl ApiError {
             ApiError::AlreadyExists(_) => ErrorKind::AlreadyExists,
             ApiError::Unsupported(_) => ErrorKind::Unsupported,
             ApiError::InvalidData(_) => ErrorKind::InvalidData,
+            ApiError::ReadOnlySide { .. } => ErrorKind::PermissionDenied,
             ApiError::Spec(e) => e.kind(),
             ApiError::LoadFailed { source, .. } | ApiError::Vfs(source) => source.kind(),
             ApiError::Format(e) => e.kind(),
@@ -131,7 +138,7 @@ impl ApiError {
     ///
     /// | op | error | code |
     /// |---|---|---|
-    /// | `FolderCompare` | `FolderError::BaseNotLoadable`/`BaseNotFolder`, `LoadFailed` (a base) | 107 |
+    /// | `FolderCompare`, `FolderOp`, `FolderSync` | `FolderError::BaseNotLoadable`/`BaseNotFolder`, `LoadFailed` (a base) | 107 |
     /// | `GuiOpen { wait }` | `Ipc(NotRunning)` | 102 when `wait`, else 100 |
     /// | `GuiOpen { .. }` | `Ipc(LaunchTimeout)`, `Ipc(ConnectionLost)` | 102 |
     /// | any | `GuiNotFound`, `GuiNotStartable` | 103 |
@@ -140,7 +147,7 @@ impl ApiError {
         match self {
             ApiError::GuiNotFound | ApiError::GuiNotStartable(_) => ExitCode::GuiNotFound,
             ApiError::LoadFailed { .. } => match op {
-                ApiOp::FolderCompare => ExitCode::LoadFailed,
+                ApiOp::FolderCompare | ApiOp::FolderOp | ApiOp::FolderSync => ExitCode::LoadFailed,
                 ApiOp::Quick
                 | ApiOp::TextCompare
                 | ApiOp::Format
@@ -150,7 +157,7 @@ impl ApiError {
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::Folder(e) => match op {
-                ApiOp::FolderCompare => match e {
+                ApiOp::FolderCompare | ApiOp::FolderOp | ApiOp::FolderSync => match e {
                     FolderError::BaseNotLoadable { .. } | FolderError::BaseNotFolder { .. } => {
                         ExitCode::LoadFailed
                     }
@@ -191,6 +198,8 @@ impl ApiError {
                 ApiOp::Quick
                 | ApiOp::TextCompare
                 | ApiOp::FolderCompare
+                | ApiOp::FolderOp
+                | ApiOp::FolderSync
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiControl
@@ -201,6 +210,7 @@ impl ApiError {
             | ApiError::AlreadyExists(_)
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
+            | ApiError::ReadOnlySide { .. }
             | ApiError::Spec(_)
             | ApiError::Vfs(_)
             | ApiError::Format(_)
@@ -232,6 +242,7 @@ impl ApiError {
             | ApiError::AlreadyExists(_)
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
+            | ApiError::ReadOnlySide { .. }
             | ApiError::Spec(_)
             | ApiError::Format(_)
             | ApiError::Text(_)

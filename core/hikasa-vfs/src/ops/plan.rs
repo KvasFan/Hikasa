@@ -633,6 +633,9 @@ pub struct OpReport {
     pub cancelled: bool,
     /// Warnings of the execution (`capability_missing`); the plan's own are in `plan.warnings`.
     pub warnings: Vec<Warning>,
+    /// What took the place of an item at execution, in order: its index in this report and how many items stand there
+    /// (a `rename` that met `CrossDevice`, a `trash` that fell back). A planner's parallel lists follow by it.
+    pub expanded: Vec<(usize, usize)>,
 }
 
 impl OpReport {
@@ -663,6 +666,7 @@ pub fn dry_run(plan: Plan) -> OpReport {
         summary,
         cancelled: false,
         warnings: Vec::new(),
+        expanded: Vec::new(),
     }
 }
 

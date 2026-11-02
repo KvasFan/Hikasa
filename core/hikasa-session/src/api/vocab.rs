@@ -17,10 +17,13 @@
 //! | `--lines <a>-<b>` | [`parse_line_range`] |
 //! | `--display`/`--context` defaults (text) | [`resolve_text_display`] |
 //! | `--display`/`--folders`/`--suppress-filters` defaults (folders) | [`resolve_folder_display`] |
+//! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
+//! | `--path` | [`parse_select_path`] |
 
 use std::ops::RangeInclusive;
 
-use hikasa_core::ContentMethod;
+use hikasa_core::{ContentMethod, Side};
+use hikasa_folder::select::SideSet;
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
@@ -175,9 +178,53 @@ pub fn resolve_folder_display(
     })
 }
 
+/// Parses `--to`, `--side` of one side: `left`, `lt`, `right`, `rt` (ASCII case-insensitive).
+pub fn parse_side(word: &str) -> Result<Side, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "left" | "lt" => Ok(Side::Left),
+        "right" | "rt" => Ok(Side::Right),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown side {word:?} (valid: left, right)"
+        ))),
+    }
+}
+
+/// Parses `--side`, `--read-only`: `left`, `right`, `both`.
+pub fn parse_sides(word: &str) -> Result<SideSet, ApiError> {
+    if word.trim().eq_ignore_ascii_case("both") {
+        return Ok(SideSet::all());
+    }
+    parse_side(word)
+        .map(SideSet::of)
+        .map_err(|_| ApiError::InvalidArgument(format!("unknown side {word:?} (valid: left, right, both)")))
+}
+
+/// Parses `--path <REL>`: a row by its path, with `left:` or `right:` for one side, else the verb's side: `(path, sides)`,
+/// sides empty for the verb's.
+pub fn parse_select_path(word: &str) -> (String, SideSet) {
+    if let Some(rest) = word.strip_prefix("left:") {
+        (rest.to_owned(), SideSet::LEFT)
+    } else if let Some(rest) = word.strip_prefix("right:") {
+        (rest.to_owned(), SideSet::RIGHT)
+    } else {
+        (word.to_owned(), SideSet::empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn side_words() {
+        assert_eq!(parse_side("LT").unwrap(), Side::Left);
+        assert_eq!(parse_sides("both").unwrap(), SideSet::all());
+        assert_eq!(parse_sides("right").unwrap(), SideSet::RIGHT);
+        assert!(parse_side("both").is_err());
+        assert!(parse_sides("up").is_err());
+        assert_eq!(parse_select_path("left:a/b"), ("a/b".to_owned(), SideSet::LEFT));
+        assert_eq!(parse_select_path("a/b"), ("a/b".to_owned(), SideSet::empty()));
+    }
 
     #[test]
     fn folder_mode_words() {

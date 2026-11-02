@@ -27,6 +27,7 @@
 mod compare;
 pub mod dto;
 mod error;
+pub mod folder_ops;
 pub mod gui;
 pub mod human;
 mod info;
@@ -83,9 +84,15 @@ pub use vfs_ops::{
     TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
     parse_overwrite, parse_time,
 };
+pub use folder_ops::{
+    ContentsDto, ContentsKind, ContentsRequest, ExpandWords, FolderOpDto, FolderOpOutcome,
+    FolderOpRequest, FolderSyncOutcome, OpOverrides, OpRequest, OpenTarget, OpenWithRequest,
+    RefreshDto, SelectRequest,
+};
 pub use vocab::{
     parse_algorithm, parse_archive_handling, parse_content_method, parse_folder_mode,
-    parse_line_range, resolve_folder_display, resolve_text_display,
+    parse_line_range, parse_select_path, parse_side, parse_sides, resolve_folder_display,
+    resolve_text_display,
 };
 
 use crate::clipboard::{
@@ -93,6 +100,7 @@ use crate::clipboard::{
 };
 use crate::formats::FormatStore;
 use crate::host::{Clock, EnvFacts};
+use crate::launcher::{AppLauncher, NoLauncher};
 use crate::ipc::Endpoint;
 use crate::jobs::{
     JobControl, JobHandle, LossySink, PROGRESS_CAPACITY, PROGRESS_INTERVAL, run_guarded,
@@ -170,6 +178,9 @@ pub struct ServiceInit {
     /// per service) and by [`Service::read_clipboard`]. Adapters pass `host::clipboard_provider`; tests a
     /// `FixedClipboard`. [`ServiceInit::new`] sets [`NoClipboard`].
     pub clipboard: Arc<dyn ClipboardProvider>,
+    /// What starts programs (M2 W6, §1.6.18). Adapters pass `host::SystemLauncher`; tests a `RecordingLauncher`.
+    /// [`ServiceInit::new`] sets [`NoLauncher`].
+    pub launcher: Arc<dyn AppLauncher>,
 }
 
 impl ServiceInit {
@@ -188,6 +199,7 @@ impl ServiceInit {
             runner,
             options_mode: LoadMode::Strict,
             clipboard: Arc::new(NoClipboard),
+            launcher: Arc::new(NoLauncher),
         }
     }
 }
@@ -213,6 +225,10 @@ pub enum ApiOp {
     TextCompare,
     /// `folder compare`.
     FolderCompare,
+    /// `folder op` (M2 W6): the base folders are loaded by its comparison.
+    FolderOp,
+    /// `folder sync` (M2 W6).
+    FolderSync,
     /// `format …`.
     Format,
     /// `vfs …`.
@@ -259,6 +275,8 @@ struct Inner {
     clipboard: Arc<dyn ClipboardProvider>,
     /// The clipboard snapshot: `None` until the first `clipboard://` spec (or `read_clipboard`).
     clipboard_state: Mutex<Option<Result<Blob, BlobFailure>>>,
+    /// What starts programs (M2 W6).
+    launcher: Arc<dyn AppLauncher>,
     /// The archive back-end (M2 W5): the router of every generation shares it.
     archives: Arc<ArchiveVfs>,
 }
@@ -364,6 +382,7 @@ impl Service {
             runner,
             options_mode,
             clipboard,
+            launcher,
         } = init;
         let exists = |p: &std::path::Path| p.is_file();
         let config = resolve_config_dir(&env, config_dir.as_deref(), &exists)?;
@@ -445,9 +464,15 @@ impl Service {
                 stdin: OnceLock::new(),
                 clipboard,
                 clipboard_state: Mutex::new(None),
+                launcher,
                 archives,
             }),
         })
+    }
+
+    /// What starts programs.
+    pub(crate) fn launcher(&self) -> &Arc<dyn AppLauncher> {
+        &self.inner.launcher
     }
 
     /// Configuration folder.

@@ -14,6 +14,7 @@
 //! | [`options`] | `options.toml` (D-25, D-31) |
 //! | [`formats`] | [`FormatStore`]: built-ins + user formats + `order.toml` (§2.12.4, D-21) |
 //! | [`jobs`] | [`JobControl`], [`JobHandle`], [`run_guarded`] (§5.6) |
+//! | [`launcher`] | [`launcher::AppLauncher`]: starting programs (FC-062; M2 W6) |
 //! | [`api`] | [`api::Service`] and its requests, responses, DTOs (§4) and the `gui open` parser |
 //! | [`ipc`] | protocol v1, framing, endpoint, server and client (§4.4, §2.23) |
 //! | [`commands`] | the command catalogue of every view type (ARCH-070; M2 W0) |
@@ -42,6 +43,7 @@ pub mod help;
 pub mod host;
 pub mod ipc;
 pub mod jobs;
+pub mod launcher;
 pub mod log;
 pub mod options;
 pub mod package;
@@ -56,7 +58,7 @@ pub use atomic::{TEMP_NAME_PREFIX_MAX, write_atomic};
 pub use error::SessionError;
 pub use formats::FormatStore;
 pub use host::{Clock, EnvFacts, FixedClock, Platform};
-pub use host::{SystemClipboard, SystemClock, capture_env, clipboard_provider};
+pub use host::{SystemClipboard, SystemClock, SystemLauncher, capture_env, clipboard_provider};
 pub use jobs::{JobControl, JobHandle, run_guarded};
 pub use options::{OPTION_SECTIONS, OptionsLoad, ProgramOptions, load_options};
 pub use paths::{

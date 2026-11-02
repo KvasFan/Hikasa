@@ -137,87 +137,94 @@ fn format_words(rule: &FolderRuleArgs) -> Option<BTreeMap<String, bool>> {
 /// unix flags one field each, §1.8.7 item 19); filter expressions are parsed by hikasa-folder (`--cutoff` with
 /// the clock's zone), attribute letters by hikasa-vfs, the content method by the session.
 fn request(ctx: &Ctx<'_>, args: &FolderCompareArgs) -> Result<FolderCompareRequest, ApiError> {
+    let mut request = rules_request(ctx, &args.rule)?;
+    request.left = args.left.clone();
+    request.right = args.right.clone();
+    request.ignore_unimportant = args.ignore_unimportant;
+    Ok(request)
+}
+
+/// The request of the rule flags, without the sides: one owner of the flags of `folder compare` and `folder op`.
+pub fn rules_request(
+    ctx: &Ctx<'_>,
+    rule: &FolderRuleArgs,
+) -> Result<FolderCompareRequest, ApiError> {
     let zone = ctx.service.clock().now().time_zone().clone();
     let patch = FolderRulesPatch {
-        size: tri(args.rule.size, args.rule.no_size),
-        timestamps_enabled: tri(args.rule.timestamps, args.rule.no_timestamps),
-        tolerance_secs: args.rule.tolerance,
-        ignore_dst: args.rule.ignore_dst.then_some(true),
-        ignore_timezone: args.rule.ignore_timezone.then_some(true),
-        filename_case: args.rule.filename_case.then_some(true),
-        dos_attributes: args
-            .rule
+        size: tri(rule.size, rule.no_size),
+        timestamps_enabled: tri(rule.timestamps, rule.no_timestamps),
+        tolerance_secs: rule.tolerance,
+        ignore_dst: rule.ignore_dst.then_some(true),
+        ignore_timezone: rule.ignore_timezone.then_some(true),
+        filename_case: rule.filename_case.then_some(true),
+        dos_attributes: rule
             .attributes
             .as_deref()
             .map(DosAttrs::parse_letters)
             .transpose()?,
-        unix_permissions: args.rule.permissions.then_some(true),
-        unix_owner: args.rule.owner.then_some(true),
-        unix_group: args.rule.group.then_some(true),
-        content_method: args
-            .rule
+        unix_permissions: rule.permissions.then_some(true),
+        unix_owner: rule.owner.then_some(true),
+        unix_group: rule.group.then_some(true),
+        content_method: rule
             .content
             .as_deref()
             .map(parse_content_method)
             .transpose()?,
-        skip_if_quick_same: args.rule.skip_if_quick_same.then_some(true),
-        override_quick: args.rule.no_override_quick.then_some(false),
-        case: if args.rule.case_sensitive {
+        skip_if_quick_same: rule.skip_if_quick_same.then_some(true),
+        override_quick: rule.no_override_quick.then_some(false),
+        case: if rule.case_sensitive {
             Some(CaseMode::Sensitive)
-        } else if args.rule.case_insensitive {
+        } else if rule.case_insensitive {
             Some(CaseMode::Insensitive)
         } else {
             None
         },
-        align_extensions: args.rule.align_extensions.then_some(true),
-        align_normalization: args.rule.align_normalization.then_some(true),
-        name_filter: args.rule.filters.clone(),
-        exclude_protected: args.rule.include_protected.then_some(false),
-        size_filter: args
-            .rule
+        align_extensions: rule.align_extensions.then_some(true),
+        align_normalization: rule.align_normalization.then_some(true),
+        name_filter: rule.filters.clone(),
+        exclude_protected: rule.include_protected.then_some(false),
+        size_filter: rule
             .size_filter
             .as_deref()
             .map(SizeFilter::parse)
             .transpose()?
             .map(Change::Set),
-        date_filter: args
-            .rule
+        date_filter: rule
             .cutoff
             .as_deref()
             .map(|expr| DateFilter::parse(expr, &zone))
             .transpose()?
             .map(Change::Set),
-        follow_symlinks: args.rule.follow_symlinks.then_some(true),
-        flatten: args.rule.flatten.then_some(true),
-        scan_orphan_folders: args.rule.no_scan_orphans.then_some(false),
-        archives: args
-            .rule
+        follow_symlinks: rule.follow_symlinks.then_some(true),
+        flatten: rule.flatten.then_some(true),
+        scan_orphan_folders: rule.no_scan_orphans.then_some(false),
+        archives: rule
             .archives
             .as_deref()
             .map(parse_archive_handling)
             .transpose()?,
-        open_archives: (!args.rule.open_archive.is_empty()).then(|| args.rule.open_archive.clone()),
-        attrib_filter: filter_word(args.rule.attrib_filter.as_deref(), AttribFilter::parse)?,
+        open_archives: (!rule.open_archive.is_empty()).then(|| rule.open_archive.clone()),
+        attrib_filter: filter_word(rule.attrib_filter.as_deref(), AttribFilter::parse)?,
         unix_type_filter: filter_word(
-            args.rule.unix_type_filter.as_deref(),
+            rule.unix_type_filter.as_deref(),
             UnixTypeFilter::parse,
         )?,
-        auto_scan_subfolders: args.rule.no_auto_scan.then_some(false),
-        expand_on_load: args.rule.expand_on_load.then_some(true),
-        expand_differences_only: args.rule.expand_differences.then_some(true),
-        ignored: (!args.rule.ignored.is_empty()).then(|| args.rule.ignored.clone()),
-        format_overrides: format_words(&args.rule),
+        auto_scan_subfolders: rule.no_auto_scan.then_some(false),
+        expand_on_load: rule.expand_on_load.then_some(true),
+        expand_differences_only: rule.expand_differences.then_some(true),
+        ignored: (!rule.ignored.is_empty()).then(|| rule.ignored.clone()),
+        format_overrides: format_words(rule),
         ..FolderRulesPatch::default()
     };
     Ok(FolderCompareRequest {
-        left: args.left.clone(),
-        right: args.right.clone(),
-        rules_file: args.rule.rules_file.clone(),
-        criteria: args.rule.criteria.clone(),
+        left: std::ffi::OsString::new(),
+        right: std::ffi::OsString::new(),
+        rules_file: rule.rules_file.clone(),
+        criteria: rule.criteria.clone(),
         patch,
-        text_rules_file: args.rule.text_rules_file.clone(),
-        text_patch: importance_patch(&args.rule.importance, ctx.matches)?,
-        ignore_unimportant: args.ignore_unimportant,
+        text_rules_file: rule.text_rules_file.clone(),
+        text_patch: importance_patch(&rule.importance, ctx.matches)?,
+        ignore_unimportant: false,
         base_rules: None,
         base_text_rules: None,
     })

@@ -217,8 +217,10 @@ settings_section! {
         confirm_merge: bool = true,
         /// Synchronize confirmations.
         sync_confirmations: SyncConfirmations = SyncConfirmations::Prompt,
-        /// Include hidden items by default.
-        include_hidden_by_default: bool = true,
+        /// Include hidden items by default (D-176: operations honour the filters).
+        include_hidden_by_default: bool = false,
+        /// Copy the creation date too (FC-070).
+        preserve_created: bool = false,
     }
 }
 
