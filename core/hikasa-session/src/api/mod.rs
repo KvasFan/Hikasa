@@ -280,6 +280,8 @@ struct Inner {
     launcher: Arc<dyn AppLauncher>,
     /// The archive back-end (M2 W5): the router of every generation shares it.
     archives: Arc<ArchiveVfs>,
+    /// Warnings of the Service's own reads since the last [`Service::take_warnings`]: a session's unknown keys.
+    pending: Mutex<Vec<Warning>>,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -467,6 +469,7 @@ impl Service {
                 clipboard_state: Mutex::new(None),
                 launcher,
                 archives,
+                pending: Mutex::new(Vec::new()),
             }),
         })
     }
@@ -558,7 +561,14 @@ impl Service {
     /// The warnings of the back-ends since the last call (D-145): adapters drain them at the end of a command, so
     /// `warnings` in JSON is complete and a listing stays pure.
     pub fn take_warnings(&self) -> Vec<Warning> {
-        self.router().take_warnings()
+        let mut warnings = std::mem::take(&mut *self.inner.pending.lock());
+        warnings.extend(self.router().take_warnings());
+        warnings
+    }
+
+    /// Queues a warning for the next [`Service::take_warnings`].
+    pub(crate) fn note(&self, warning: Warning) {
+        self.inner.pending.lock().push(warning);
     }
 
     /// Warnings collected during construction (unknown config sections, skipped user formats).

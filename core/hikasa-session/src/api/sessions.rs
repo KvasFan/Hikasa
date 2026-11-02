@@ -5,6 +5,7 @@
 //! Every call reads the configuration fresh. A session's specs are stored as canonical absolute specs; `-` and
 //! `clipboard://` are never stored (the side stays empty, warning `spec_not_saved`).
 
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -1155,9 +1156,84 @@ impl Service {
         reference: &SessionRef,
     ) -> Result<SessionRunRequest, ApiError> {
         run_guarded(|| {
+            self.check_unknown_keys(reference)?;
             let session = self.session_effective(reference)?;
             run_request(&session)
         })
+    }
+
+    /// The unknown keys of a session's file that is about to run. D-70 keeps them, and each is one `unknown_config_key`
+    /// warning naming the nearest known key, always (not only with `--verbose`). In a folder-sync session an unknown key
+    /// in `[specs]` or `[rules]` refuses the run instead (`invalid_data`): `read_only = true` for `read_only_right`, or a
+    /// newer version's key, may change what a sync deletes. Other types only warn (T13).
+    fn check_unknown_keys(&self, reference: &SessionRef) -> Result<(), ApiError> {
+        let store = self.session_store();
+        let actual = store
+            .resolve(reference)
+            .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
+        let loaded = store.load(&actual, LoadMode::Strict)?;
+        let session = &loaded.value;
+        let known_table = match Value::try_from(&session.full_doc()) {
+            Ok(Value::Table(table)) => table,
+            _ => Table::new(),
+        };
+        // The typed rules are read from a table that keeps what it does not know: the file against the full document says
+        // what this version ignores there, as `ignored_keys` says it elsewhere.
+        let raw: Table = std::fs::read_to_string(store.path(&actual))
+            .ok()
+            .and_then(|text| toml::from_str(&text).ok())
+            .unwrap_or_default();
+        let mut unknown: BTreeSet<String> = loaded.ignored_keys.iter().cloned().collect();
+        for path in tree::unknown_paths(&raw, &known_table) {
+            match tree::get_in(&raw, &path) {
+                Some(Value::Table(inner)) => {
+                    for (sub, _) in tree::leaves(inner, false) {
+                        let mut full = path.clone();
+                        full.extend(sub);
+                        unknown.insert(tree::display_path(&full));
+                    }
+                }
+                _ => {
+                    unknown.insert(tree::display_path(&path));
+                }
+            }
+        }
+        unknown.remove("schema_version");
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let known: Vec<String> = tree::leaves(&known_table, false)
+            .into_iter()
+            .map(|(path, _)| tree::display_path(&path))
+            .collect();
+        let nearest = |key: &str| -> String {
+            known
+                .iter()
+                .min_by_key(|candidate| edit_distance(candidate, key))
+                .map(|near| format!("; the nearest known key is `{near}`"))
+                .unwrap_or_default()
+        };
+        for key in &unknown {
+            let guarded = key.starts_with("specs.") || key.starts_with("rules.");
+            if session.kind == SessionType::FolderSync && guarded {
+                return Err(ApiError::InvalidData(format!(
+                    "session `{reference}`: unknown key `{key}`{}: a key this version does not know may change what a \
+                     sync deletes, so the session does not run; fix or remove it",
+                    nearest(key)
+                )));
+            }
+        }
+        for key in &unknown {
+            self.note(Warning {
+                code: WarningCode::UnknownConfigKey,
+                message: format!(
+                    "session `{reference}`: unknown key `{key}` (kept){}",
+                    nearest(key)
+                ),
+                spec: None,
+            });
+        }
+        Ok(())
     }
 
     /// What the GUI opens for a named session (`LoadSession`, D-89): Text and Folder Compare sessions; other

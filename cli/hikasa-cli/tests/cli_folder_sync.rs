@@ -1042,3 +1042,71 @@ fn a6_31_case_insensitive_alignment_settles() {
     );
     assert_eq!(json(&out)["result"]["counts"]["ambiguous"], 1);
 }
+
+/// A session file as text, in `<config>/sessions/<name>.toml`, with the sandbox's sides.
+fn session_file(s: &Sandbox, name: &str, kind: &str, extra_specs: &str, rules: &str) {
+    let sessions = s.config().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let l = s.join("l").display().to_string().replace('\\', "\\\\");
+    let r = s.join("r").display().to_string().replace('\\', "\\\\");
+    std::fs::write(
+        sessions.join(format!("{name}.toml")),
+        format!(
+            "schema_version = 1\ntype = \"{kind}\"\n\n[specs]\nleft = \"{l}\"\nright = \"{r}\"\n{extra_specs}\n{rules}"
+        ),
+    )
+    .unwrap();
+}
+
+/// Unknown keys of a session: a folder-sync session whose `[specs]` or rules hold a key this version does not know does not
+/// run (it may be what protects a side, or a newer version's key that changes what is deleted), naming the key and the
+/// nearest known one; nothing is written. Other keys, and other session types, run with a warning, always.
+#[test]
+fn a6_30_unknown_keys_of_a_sync_session_are_refused_and_others_warned() {
+    let cases = [
+        ("ro", "read_only = true", "[rules.sync]\npreset = \"mirror_right\"\n", "specs.read_only", "specs.read_only_"),
+        ("typo", "", "[rules.sync]\npreset = \"mirror_right\"\npresett = \"update_right\"\n", "rules.sync.presett", "rules.sync.preset`"),
+        ("rule", "", "[rules]\nfutur_filter = 1\n[rules.sync]\npreset = \"mirror_right\"\n", "rules.futur_filter", "nearest known key"),
+    ];
+    for (name, specs, rules, key, near) in cases {
+        let s = sandbox();
+        session_file(&s, name, "folder-sync", specs, rules);
+        let before = state(&s);
+        for command in [
+            vec!["session", "run", name, "--yes", "--json"],
+            vec!["folder", "sync", "--session", name, "--yes", "--json"],
+        ] {
+            let out = s.cmd().args(&command).output().unwrap();
+            assert_eq!(code(&out), 100, "{command:?}: {}", stdout(&out));
+            let doc = json(&out);
+            let message = doc["error"]["message"].as_str().unwrap().to_owned();
+            assert!(message.contains(&format!("`{key}`")), "{message}");
+            assert!(message.contains(near), "{message}");
+            assert_eq!(state(&s), before, "{command:?}");
+        }
+    }
+    // An unknown section of a sync session, and an unknown key of a folder-compare session: a warning, always.
+    let s = sandbox();
+    session_file(&s, "later", "folder-sync", "", "[rules.sync]\npreset = \"update_right\"\n\n[gui_layout]\nzoom = 2\n");
+    let out = s.cmd().args(["session", "run", "later", "--dry-run", "--json"]).output().unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let warnings = json(&out)["warnings"].clone();
+    assert!(
+        warnings
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["code"] == "unknown_config_key"
+                && w["message"].as_str().unwrap().contains("gui_layout.zoom")),
+        "{warnings}"
+    );
+    let s = sandbox();
+    session_file(&s, "cmp", "folder-compare", "read_only = true", "[rules]\n");
+    let out = s.cmd().args(["session", "run", "cmp"]).output().unwrap();
+    assert!(code(&out) < 100, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("unknown key `specs.read_only`"),
+        "{}",
+        stderr(&out)
+    );
+}
