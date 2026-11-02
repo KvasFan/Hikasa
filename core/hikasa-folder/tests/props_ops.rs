@@ -81,7 +81,7 @@ fn operation(which: u8) -> FolderOp {
 }
 
 fn mode(which: u8) -> ConfirmMode {
-    if which % 2 == 0 {
+    if which.is_multiple_of(2) {
         ConfirmMode::YesToAll
     } else {
         ConfirmMode::NoToAll

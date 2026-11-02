@@ -604,7 +604,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             return Ok(Found {
                 kind: stat.kind,
                 stamp: stamp_of_stat(&stat),
-                attrs: stat.attrs.clone(),
+                attrs: stat.attrs,
                 mtime: stat.mtime,
                 row: Some(id),
             });

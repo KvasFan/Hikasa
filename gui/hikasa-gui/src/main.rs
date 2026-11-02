@@ -75,7 +75,7 @@ use hikasa_session::api::{
 };
 use hikasa_session::ipc::{IpcError, IpcServer, RetryPolicy};
 use hikasa_session::{
-    ApiOp, Platform, Service, ServiceInit, StdinSource, SystemClock, capture_env,
+    ApiOp, Platform, Service, ServiceInit, StdinSource, SystemClock, SystemLauncher, capture_env,
     clipboard_provider,
 };
 
@@ -177,6 +177,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         runner: Arc::new(StdProcessRunner),
         options_mode: hikasa_session::settings::LoadMode::Strict,
         clipboard,
+        launcher: Arc::new(SystemLauncher),
     }) {
         Ok(service) => service,
         Err(e) => {

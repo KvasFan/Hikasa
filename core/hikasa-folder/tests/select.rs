@@ -11,8 +11,8 @@ use hikasa_folder::select::{
     SideSet, open_pair, resolve, select, select_all_files,
 };
 use hikasa_folder::{
-    Criteria, DisplayOptions, FilterRules, FolderComparison, FolderDisplayFilter, FolderError,
-    FolderMode, FolderRules, NodeId, ScanStatus, TreeRead,
+    DisplayOptions, FilterRules, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
+    FolderRules, NodeId, ScanStatus, TreeRead,
 };
 use hikasa_vfs::{MemMeta, MemoryVfs};
 
@@ -707,15 +707,9 @@ fn a6_14_diff_with_an_override_is_no_difference() {
     file(&vfs, "/l/a", b"same", 20);
     file(&vfs, "/r/a", b"same", 10);
     let mut rules = FolderRules::default();
-    rules.criteria = Criteria {
-        content: hikasa_folder::ContentRule {
-            method: hikasa_core::ContentMethod::Binary,
-            skip_if_quick_same: false,
-            override_quick: true,
-            ..rules.criteria.content
-        },
-        ..rules.criteria
-    };
+    rules.criteria.content.method = hikasa_core::ContentMethod::Binary;
+    rules.criteria.content.skip_if_quick_same = false;
+    rules.criteria.content.override_quick = true;
     let cmp = compared(&vfs, &rules);
     assert_eq!(picked(&cmp, "diff"), Vec::<String>::new());
     assert_eq!(picked(&cmp, "exact.files"), ["a:lr"]);

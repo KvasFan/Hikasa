@@ -51,16 +51,21 @@ pub fn schema_of(verb: &FolderOpVerb) -> &'static str {
 pub fn run(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> u8 {
     match run_verb(ctx, verb) {
         Ok(code) => code,
-        Err((e, warnings)) => ctx.fail(schema_of(verb), &e, OP, &warnings),
+        Err(failure) => ctx.fail(schema_of(verb), &failure.0, OP, &failure.1),
     }
 }
 
 /// A failure, with the warnings seen so far.
-type Failure = (ApiError, Vec<Warning>);
+type Failure = Box<(ApiError, Vec<Warning>)>;
+
+/// `error`, with the warnings seen so far.
+fn failure(error: ApiError, warnings: &[Warning]) -> Failure {
+    Box::new((error, warnings.to_vec()))
+}
 
 /// An error with no warnings.
 fn bare<T>(result: Result<T, ApiError>) -> Result<T, Failure> {
-    result.map_err(|e| (e, Vec::new()))
+    result.map_err(|e| failure(e, &[]))
 }
 
 fn run_verb(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> Result<u8, Failure> {
@@ -118,7 +123,7 @@ fn run_verb(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> Result<u8, Failure> {
                 },
                 _ => {
                     let e = "rename needs one of --name, --mask, --regex";
-                    return Err((ApiError::InvalidArgument(e.into()), Vec::new()));
+                    return Err(failure(ApiError::InvalidArgument(e.into()), &[]));
                 }
             };
             let op = OpRequest::Op(FolderOp::Rename {
@@ -366,11 +371,11 @@ fn compared(
     let response = ctx
         .service
         .folder_run(&prepared, &job, &NullObserver)
-        .map_err(|e| (e, prepared.warnings().to_vec()))?;
+        .map_err(|e| failure(e, prepared.warnings()))?;
     let warnings = response.warnings.clone();
     ctx.progress.clear();
     if job.cancel.is_cancelled() {
-        return Err((ApiError::Cancelled, warnings));
+        return Err(failure(ApiError::Cancelled, &warnings));
     }
     Ok((prepared, warnings))
 }
@@ -449,15 +454,15 @@ fn plan_verb(
     let plan = ctx
         .service
         .folder_op_plan(prepared.model(), &request, &job)
-        .map_err(|e| (e, warnings.clone()))?;
+        .map_err(|e| failure(e, &warnings))?;
     ctx.progress.clear();
     let outcome = if confirm.dry_run {
         ctx.service.folder_op_dry_run(plan)
     } else {
-        let plan = answered(ctx, plan, mode).map_err(|e| (e, warnings.clone()))?;
+        let plan = answered(ctx, plan, mode).map_err(|e| failure(e, &warnings))?;
         ctx.service
             .folder_op_execute(plan, &job)
-            .map_err(|e| (e, warnings.clone()))?
+            .map_err(|e| failure(e, &warnings))?
     };
     ctx.progress.clear();
     let code = outcome.exit_code().code();
@@ -494,7 +499,7 @@ fn contents(ctx: &mut Ctx<'_>, common: &FolderOpCommon, kind: ContentsKind) -> R
     let dto: ContentsDto = ctx
         .service
         .folder_contents(prepared.model(), &request, &job)
-        .map_err(|e| (e, warnings.clone()))?;
+        .map_err(|e| failure(e, &warnings))?;
     ctx.progress.clear();
     let code = if dto.ok() {
         OK
@@ -571,7 +576,7 @@ fn exclude(
     let session = bare(session_of(common, dry_run))?;
     let select = bare(select_request(&common.select, common.select.include_hidden))?;
     let (prepared, warnings) = compared(ctx, common)?;
-    let fail = |e: ApiError| (e, warnings.clone());
+    let fail = |e: ApiError| failure(e, &warnings);
     let (files, folders) = ctx
         .service
         .folder_exclude_masks(prepared.model(), &select, what)
@@ -601,7 +606,7 @@ fn ignored(
     let session = bare(session_of(common, dry_run))?;
     let select = bare(select_request(&common.select, common.select.include_hidden))?;
     let (prepared, warnings) = compared(ctx, common)?;
-    let fail = |e: ApiError| (e, warnings.clone());
+    let fail = |e: ApiError| failure(e, &warnings);
     let rows = ctx
         .service
         .folder_selected_rows(prepared.model(), &select)
@@ -651,10 +656,10 @@ fn open_with(
         .collect();
     if paths.is_empty() {
         let e = ApiError::InvalidArgument("open-with needs --path".to_owned());
-        return Err((e, Vec::new()));
+        return Err(failure(e, &[]));
     }
     let (prepared, warnings) = compared(ctx, common)?;
-    let fail = |e: ApiError| (e, warnings.clone());
+    let fail = |e: ApiError| failure(e, &warnings);
     let items = ctx
         .service
         .folder_open_items(prepared.model(), &paths, sides)

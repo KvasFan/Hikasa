@@ -221,35 +221,31 @@ impl Builder<'_, '_> {
         };
         let fold = self.folds(&parent_spec);
         let parent = view.parent.unwrap_or(NodeId::ROOT);
-        if !folders.contains_key(&parent) {
-            let taken = self.names_of(parent, side, &parent_spec);
-            folders.insert(
-                parent,
-                Folder {
-                    parent: Some(parent_spec),
-                    taken,
-                    rows: Vec::new(),
-                },
-            );
-        }
+        let taken = match folders.get(&parent) {
+            Some(_) => BTreeSet::new(),
+            None => self.names_of(parent, side, &parent_spec),
+        };
+        let folder = folders.entry(parent).or_insert(Folder {
+            parent: Some(parent_spec),
+            taken,
+            rows: Vec::new(),
+        });
         // A rename acts on the link of a followed row, and what a name-only row or an archive's file was, no row says.
         let stamp = (!entry.stat_skipped && !opened).then(|| Expect {
             source: Some(stamp_of(&entry, false)),
             target: None,
         });
-        if let Some(folder) = folders.get_mut(&parent) {
-            folder.rows.push(Ren {
-                id,
-                source,
-                target,
-                kind,
-                from_key: key_of(entry.name, fold),
-                to_key: key_of(&name, fold),
-                stamped: stamp,
-                size: (kind == EntryKind::File).then_some(entry.size),
-                live: true,
-            });
-        }
+        folder.rows.push(Ren {
+            id,
+            source,
+            target,
+            kind,
+            from_key: key_of(entry.name, fold),
+            to_key: key_of(&name, fold),
+            stamped: stamp,
+            size: (kind == EntryKind::File).then_some(entry.size),
+            live: true,
+        });
     }
 
     /// The collision table of §1.6.13, for one folder.

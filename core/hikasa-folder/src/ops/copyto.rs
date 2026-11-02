@@ -1,5 +1,6 @@
 //! `copyto`, `moveto` (rule 16, FC-072): the target is no row, so what stands there is looked at; the rest is the builder's.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 
@@ -246,8 +247,8 @@ impl Builder<'_, '_> {
         let mut at = root.clone();
         let mut depth = 0;
         let mut new_parent = below.folders.contains_key(&root.canonical());
-        let mut level = source.names.len() - 1 - kept.len();
-        for folder in kept {
+        let first = source.names.len() - 1 - kept.len();
+        for (index, folder) in kept.iter().enumerate() {
             at = self.vfs.child(&at, &FileName::from_os(folder))?;
             let key = at.canonical();
             let known = match below.folders.get(&key) {
@@ -255,7 +256,7 @@ impl Builder<'_, '_> {
                 None => {
                     let made = !new_parent && lstat(self.vfs, &at)?.is_none() || new_parent;
                     let known = if made {
-                        self.folder_on_the_way(tr, source, level, &at, depth);
+                        self.folder_on_the_way(tr, source, first + index, &at, depth);
                         Some(depth)
                     } else {
                         None
@@ -266,7 +267,6 @@ impl Builder<'_, '_> {
             };
             new_parent = known.is_some();
             depth = known.map_or(0, |depth| depth + 1);
-            level += 1;
         }
         let target = self.vfs.child(&at, &FileName::from_os(name))?;
         Ok((target, depth, new_parent))
@@ -439,7 +439,7 @@ impl Builder<'_, '_> {
                 Ok(found) => found.map(|stat| Found {
                     kind: stat.kind,
                     stamp: stamp_of_stat(&stat),
-                    attrs: stat.attrs.clone(),
+                    attrs: stat.attrs,
                     mtime: stat.mtime,
                     row: None,
                 }),
@@ -530,11 +530,12 @@ impl Builder<'_, '_> {
                 let found = found.map(|stat| Found {
                     kind: stat.kind,
                     stamp: stamp_of_stat(&stat),
-                    attrs: stat.attrs.clone(),
+                    attrs: stat.attrs,
                     mtime: stat.mtime,
                     row: None,
                 });
-                if !below.folders.contains_key(&key) {
+                if let Entry::Vacant(slot) = below.folders.entry(key) {
+                    slot.insert(Some(depth));
                     let placed = Placed {
                         id,
                         entry,
@@ -545,7 +546,6 @@ impl Builder<'_, '_> {
                         side: None,
                     };
                     self.create_dir(placed, tr.overwrite);
-                    below.folders.insert(key, Some(depth));
                     self.depths.insert(id, depth);
                 }
             }
