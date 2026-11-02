@@ -229,6 +229,9 @@ pub(super) struct Builder<'a, 'r> {
     /// A sync: the entries of rows this plan deletes, by row (bit 1 left, 2 right). Their names are free for what the plan
     /// copies after its deletes (D-182: a file `x` replacing a folder `x`), so a copy expects no target there.
     pub(super) freed: Vec<u8>,
+    /// A sync: what stands there is replaced only when it is the row's own entry. Another row's entry is no target of this
+    /// row's action (Update never removes), and a file a delete frees is not there any more.
+    pub(super) own_only: bool,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -353,6 +356,16 @@ impl<'a, 'r> Builder<'a, 'r> {
             made: BTreeMap::new(),
             taken: BTreeSet::new(),
             freed: Vec::new(),
+            own_only: false,
+        }
+    }
+
+    /// The overwrite policy of an item of the row `id` onto `found`: `own_only` turns it to `Fail` for another row's entry.
+    fn policy_onto(&self, tr: Transfer, id: NodeId, found: &Found) -> OverwritePolicy {
+        if self.own_only && found.row != Some(id) {
+            OverwritePolicy::Fail
+        } else {
+            tr.overwrite
         }
     }
 
@@ -799,7 +812,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                 item.skip = Some(SkipReason::Filtered);
                 return self.push(item, meta);
             }
-            if tr.overwrite != OverwritePolicy::Always {
+            if self.policy_onto(tr, id, &found) != OverwritePolicy::Always {
                 let error = VfsError::AlreadyExists {
                     spec: target.canonical(),
                 };
@@ -1079,7 +1092,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                 .read
                 .node(id)
                 .is_some_and(|view| self.newer(&view, entry, &found, tr.from).0);
-            match tr.overwrite {
+            match self.policy_onto(tr, id, &found) {
                 OverwritePolicy::Fail => {
                     item.error = Some(report(&VfsError::AlreadyExists {
                         spec: target.canonical(),

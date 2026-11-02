@@ -658,6 +658,7 @@ impl<'a, 'r> Planner<'a, 'r> {
             }
         }
         self.builder.freed = freed;
+        self.builder.own_only = true;
         let recycle = Recycle {
             use_bin: self.request.options.recycle,
             fallback: self.request.options.recycle_fallback,

@@ -756,6 +756,42 @@ fn a6_27_deletes_then_right_then_left_and_a_file_replaces_a_folder_of_its_name()
 }
 
 #[test]
+fn a6_27_update_replaces_only_a_rows_own_counterpart() {
+    // A left folder `y` and a right file `y` are two rows. Update Right leaves the right file (Update never removes), so
+    // the folder cannot be made there: the item fails, and the file stays.
+    let vfs = memory(CaseSensitivity::Sensitive);
+    dir(&vfs, "/l/y");
+    file(&vfs, "/l/y/in.txt", b"in", 10);
+    file(&vfs, "/r/y", b"a right file", 99);
+    file(&vfs, "/l/x", b"a left file", 10);
+    dir(&vfs, "/r/x");
+    file(&vfs, "/r/x/keep.txt", b"keep", 10);
+    let options = preset(SyncPreset::UpdateRight);
+    let cmp = sync_compare(&vfs, &FolderRules::default(), &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    assert!(
+        out.op.plan.items.iter().all(|item| !item.replaces),
+        "{:?}",
+        items(&out)
+    );
+    let report = execute(&vfs, &out);
+    assert!(!report.ok());
+    assert_eq!(read(&vfs, "/r/y").unwrap(), b"a right file");
+    assert_eq!(read(&vfs, "/r/x/keep.txt").unwrap(), b"keep");
+    // A case-sensitive comparison on a file system that folds: `b.txt` must not overwrite `B.txt`, which Update keeps.
+    let vfs = memory(CaseSensitivity::Insensitive);
+    file(&vfs, "/l/b.txt", b"lower", 20);
+    file(&vfs, "/r/B.txt", b"upper", 10);
+    let mut rules = FolderRules::default();
+    rules.alignment.case = CaseMode::Sensitive;
+    let cmp = sync_compare(&vfs, &rules, &options);
+    let out = plan(&vfs, &cmp, &request(&options));
+    assert!(out.op.plan.items.iter().all(|item| !item.replaces));
+    execute(&vfs, &out);
+    assert_eq!(read(&vfs, "/r/B.txt").unwrap(), b"upper");
+}
+
+#[test]
 fn a6_27_case_only_names() {
     // A case-insensitive comparison pairs `A.txt` with `a.txt`: the right keeps its name and takes the content.
     let vfs = memory(CaseSensitivity::Insensitive);
