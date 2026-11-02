@@ -303,7 +303,7 @@ impl Builder<'_, '_> {
             depth,
             side: None,
         };
-        self.create_dir(placed, OverwritePolicy::Fail);
+        self.create_dir(placed, tr);
     }
 
     /// One row of a `copyto` or `moveto`.
@@ -556,7 +556,7 @@ impl Builder<'_, '_> {
                         depth,
                         side: None,
                     };
-                    self.create_dir(placed, tr.overwrite);
+                    self.create_dir(placed, tr);
                     self.depths.insert(id, depth);
                 }
             }

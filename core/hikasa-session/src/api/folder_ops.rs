@@ -1354,6 +1354,10 @@ pub fn summary_text(
         summary.failed,
         summary.bytes
     );
+    let not_run = summary.planned - summary.done - summary.skipped - summary.failed;
+    if not_run > 0 {
+        text.push_str(&format!(", {not_run} not run"));
+    }
     if let Some(seconds) = seconds {
         text.push_str(&format!(", {seconds:.1} s"));
     }
@@ -1363,9 +1367,11 @@ pub fn summary_text(
 /// The word of an item (§1.3.7's, and `exchange`).
 pub fn item_word(item: &FolderOpItemDto) -> &'static str {
     match item.action {
+        "create_dir" if item.replaces => "replace with folder",
         "create_dir" => "mkdir",
         "keep_dir" => "exists",
         "copy" if item.replaces => "replace",
+        "link" if item.replaces => "replace with link",
         "remove_dir" => "rmdir",
         "create_archive" => "mkarchive",
         other => other,

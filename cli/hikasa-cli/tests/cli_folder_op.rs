@@ -309,6 +309,72 @@ fn a6_25_an_unknown_path_is_100_not_found() {
     assert_eq!(json(&out)["error"]["kind"], "not_found");
 }
 
+/// §1.6.11: a folder that replaces a file asks what a file that replaces it asks, and a text dry run says so.
+#[test]
+fn a6_16_a_folder_that_replaces_a_file_is_a_conflict() {
+    let fresh = || {
+        let s = Sandbox::new();
+        s.file_at("l/n/in", "in", 1_000_000);
+        s.settle("l");
+        s.file_at("r/n", "my newer work", 4_000_000_000);
+        s
+    };
+    for (verb, words) in [
+        ("copy", "[overwrite_newer]"),
+        ("move", "[overwrite_newer,replace_during_move]"),
+    ] {
+        let s = fresh();
+        let before = state(&s);
+        let out = op(&s, &[verb, "--to", "right", "--select", "all", "--dry-run"]);
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        let text = stdout(&out);
+        assert!(text.contains("replace with folder"), "{text}");
+        assert!(text.contains(words), "{text}");
+        // `no-to-all` keeps it, and what lies below stays by the same answer.
+        let out = op(
+            &s,
+            &[
+                verb,
+                "--to",
+                "right",
+                "--select",
+                "all",
+                "--confirm",
+                "no-to-all",
+            ],
+        );
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        assert_eq!(state(&s), before);
+    }
+    let s = fresh();
+    let out = op(&s, &["move", "--to", "right", "--select", "all", "--yes"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/n/in")).unwrap(), b"in");
+}
+
+/// A folder that cannot go is no reason for what follows it: a plan runs what it showed (p04 of the review).
+#[cfg(unix)]
+#[test]
+fn a6_15_a_skipped_folder_cuts_nothing_of_its_neighbours() {
+    let s = Sandbox::new();
+    s.file("real/f", "r");
+    s.file("l/B/x", "bx");
+    s.file("r/B/o", "o");
+    std::os::unix::fs::symlink("../real", s.join("l/A")).unwrap();
+    let flags = ["--to", "right", "--select", "all", "--follow-symlinks"];
+    let mut args = vec!["move"];
+    args.extend(flags);
+    args.extend(["--yes", "--json"]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    let items = doc["result"]["items"].as_array().unwrap();
+    assert!(items.iter().all(|item| item["status"] != "not_run"), "{doc}");
+    assert_eq!(std::fs::read(s.join("r/B/x")).unwrap(), b"bx");
+    assert!(!s.join("l/B").exists());
+    assert!(s.join("l/A").exists());
+}
+
 /// D-184: Disable editing follows where a `--target` leads, for `copyto` and `moveto`, on the left and on the right.
 #[test]
 fn a6_21_a_target_on_a_read_only_side_is_refused() {

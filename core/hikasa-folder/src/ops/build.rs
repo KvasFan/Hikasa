@@ -711,7 +711,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             depth,
             side: Some(tr.to),
         };
-        self.create_dir(placed, tr.overwrite);
+        self.create_dir(placed, tr);
     }
 
     /// What stands on the side written under the name of a row that has no entry there (rule 8).
@@ -733,8 +733,8 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// A `create_dir` with its source, so its metadata is applied after its subtree; a file or link in its place is an error
-    /// unless the policy is `Always` (rule 8).
-    pub(super) fn create_dir(&mut self, placed: Placed<'_>, overwrite: OverwritePolicy) {
+    /// unless the policy is `Always` (rule 8), and then what it replaces asks what a file that replaces it would.
+    pub(super) fn create_dir(&mut self, placed: Placed<'_>, tr: Transfer) {
         let Placed {
             id,
             entry,
@@ -766,14 +766,14 @@ impl<'a, 'r> Builder<'a, 'r> {
                 // Another spelling of a folder that stands there: nothing to make.
                 return;
             }
-            if overwrite != OverwritePolicy::Always {
+            if tr.overwrite != OverwritePolicy::Always {
                 let error = VfsError::AlreadyExists {
                     spec: target.canonical(),
                 };
                 item.error = Some(report(&error));
             } else {
                 item.replaces = true;
-                meta.conflicts = Conflicts::of_attrs(&found.attrs);
+                meta.conflicts = self.replacing(id, entry, &found, tr);
                 if let Some(expect) = &mut item.expect {
                     expect.target = Some(found.stamp);
                 }
@@ -819,6 +819,23 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     // ---- files ---------------------------------------------------------------------------------------------------------
+
+    /// What an item that replaces `found` needs asked (§1.6.11), a file's or a folder's alike.
+    fn replacing(
+        &self,
+        id: NodeId,
+        entry: &EntryView<'_>,
+        found: &Found,
+        tr: Transfer,
+    ) -> Conflicts {
+        let mut conflicts = Conflicts::of_attrs(&found.attrs);
+        if let Some(view) = self.read.node(id) {
+            let (_, target_newer) = self.newer(&view, entry, found, tr.from);
+            conflicts.set(Conflicts::OVERWRITE_NEWER, target_newer);
+        }
+        conflicts.set(Conflicts::REPLACE_DURING_MOVE, tr.moving);
+        conflicts
+    }
 
     /// True when the source of a row is strictly newer than `found`, and when `found` is strictly newer than the source, by
     /// the row's `TimeRelation`: unknown is neither (rule 9).
@@ -925,7 +942,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                 }));
                 return self.push(item, meta);
             }
-            let (source_newer, target_newer) = self.newer(view, entry, &found, tr.from);
+            let (source_newer, _) = self.newer(view, entry, &found, tr.from);
             match tr.overwrite {
                 OverwritePolicy::Fail => {
                     item.error = Some(report(&VfsError::AlreadyExists {
@@ -963,10 +980,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             }
             item.replaces = true;
             expect.target = Some(found.stamp);
-            meta.conflicts = Conflicts::of_attrs(&found.attrs);
-            meta.conflicts.set(Conflicts::OVERWRITE_NEWER, target_newer);
-            meta.conflicts
-                .set(Conflicts::REPLACE_DURING_MOVE, tr.moving);
+            meta.conflicts = self.replacing(id, entry, &found, tr);
         }
         item.expect = Some(expect);
         self.push(item, meta);
