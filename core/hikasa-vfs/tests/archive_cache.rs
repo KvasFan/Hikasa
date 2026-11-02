@@ -751,6 +751,29 @@ fn a6_13_same_member_one_file_new_stamp_new_file() {
 
 /// Never evicted under pressure; a member over `cache_max` leaves nothing, and a member that only fits once its spool
 /// is gone is taken.
+/// A program deleted the file it was given: the next call makes a new one, at a path that exists, and what the old one
+/// counted is given back, or a few rounds would fill the cache with files that are gone.
+#[test]
+fn a6_13_an_extraction_whose_file_went_is_made_again() {
+    let disk = on_disk(ArchiveLimits {
+        cache_max: 6000,
+        ..ArchiveLimits::default()
+    });
+    let file = disk.put("a.zip", &stored(1, 4096));
+    let spec = Spec::archive_member(file, "m0");
+    let cancel = CancelToken::new();
+    for _ in 0..4 {
+        let path = disk.vfs.extract_to_cache(&spec, &cancel).unwrap();
+        assert_eq!(fs::read(&path).unwrap().len(), 4096, "{}", path.display());
+        assert_eq!(disk.vfs.cache_used(), 4096);
+        let mut unlocked = fs::metadata(&path).unwrap().permissions();
+        #[expect(clippy::permissions_set_readonly_false, reason = "a test's scratch file")]
+        unlocked.set_readonly(false);
+        fs::set_permissions(&path, unlocked).unwrap();
+        fs::remove_file(&path).unwrap();
+    }
+}
+
 #[test]
 fn a6_13_never_evicted_and_over_the_limit() {
     let limits = ArchiveLimits {

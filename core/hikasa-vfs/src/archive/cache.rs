@@ -262,11 +262,25 @@ impl Cache {
         }
     }
 
-    /// The path of the extraction of `key`, while its file is there.
+    /// The path of the extraction of `key`, while its file is there. One a program deleted leaves the table, with what it
+    /// counted, and the next call extracts anew.
     pub(crate) fn extracted(&self, archive: u64, key: &str) -> Option<PathBuf> {
-        let state = self.lock();
-        let found = state.extracted.get(&(archive, Box::from(key)))?;
-        found.path.is_file().then(|| found.path.clone())
+        let key = (archive, Box::from(key));
+        let mut state = self.lock();
+        let found = state.extracted.get(&key)?;
+        if found.path.is_file() {
+            return Some(found.path.clone());
+        }
+        let gone = state.extracted.remove(&key)?;
+        drop(state);
+        self.forget(&gone);
+        None
+    }
+
+    /// Gives back what an extraction whose file went held.
+    fn forget(&self, gone: &Extracted) {
+        self.used.fetch_sub(gone.len, Ordering::Relaxed);
+        let _ = fs::remove_dir(&gone.folder);
     }
 
     /// Writes what `reader` gives, `size` bytes, to `x<k>/<name>`, read-only, and keeps it until [`Cache::cleanup`]:
@@ -328,18 +342,22 @@ impl Cache {
         file.flush().map_err(fail)?;
         make_read_only(&file).map_err(fail)?;
         drop(file);
+        let key = (archive, Box::from(key));
         let mut state = self.lock();
-        let entry = state.extracted.entry((archive, Box::from(key)));
-        if let std::collections::hash_map::Entry::Occupied(found) = &entry {
+        if let Some(found) = state.extracted.get(&key).filter(|found| found.path.is_file()) {
             // Another thread did the same: one file, as for any second call.
-            return Ok(found.get().path.clone());
+            return Ok(found.path.clone());
         }
         let keep = Extracted {
             folder,
             path: path.clone(),
             len: written,
         };
-        entry.or_insert(keep);
+        let gone = state.extracted.insert(key, keep);
+        drop(state);
+        if let Some(gone) = gone {
+            self.forget(&gone);
+        }
         self.used.fetch_sub(size - written, Ordering::Relaxed);
         job.folder = None;
         job.path = None;
