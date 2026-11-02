@@ -6,11 +6,13 @@
 - **Copy and delete in the Folder Compare view.** Select one row, then Actions ▸ Copy to Right (Ctrl+R), Copy to Left
   (Ctrl+L), Delete (Del) or Delete Permanently (Shift+Del). The Delete dialog chooses the sides and the recycle bin; a
   confirmation dialog asks the operation's questions one at a time (Yes, No, Yes to All, No to All, Cancel, and "Do not
-  ask again"). The job can be stopped; its summary and failures go to the log, a notice sums it up (*Show log* when an
-  item failed), and the rows it wrote are read again, with the open folders and the selected row kept. The rest of the
-  Actions menu, and selecting more than one row, come later.
+  ask again"); both name the row and its sides. The job can be stopped; its summary and failures go to the log, a notice
+  sums it up (*Show log* when an item failed), and the rows it wrote are read again, with the open folders and the
+  selected row kept, unless you selected another row or closed a folder meanwhile. The rest of the Actions menu, and
+  selecting more than one row, come later.
 - **The Folder Compare view reads less again.** Open on a closed archive opens it in place instead of comparing
-  everything again; a folder that was not compared yet (`--no-auto-scan`) is read when it is opened; `expand_on_load` and
+  everything again, and the session remembers it once it opened (one that cannot be read gives a warning); a folder that
+  was not compared yet (`--no-auto-scan`) is read when it is opened, after an operation that runs; `expand_on_load` and
   `expand_differences_only` open folders when a comparison ends; a Text Compare opened from a row gives its result back
   to the row.
 - **`folder compare` flags.** `--attrib-filter` and `--unixtype-filter` hide items by DOS attribute and by Unix type;
@@ -35,7 +37,7 @@
   `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`; `session edit --set rules.sync.overrides."<path>"=<action>`
   sets a per-row override. A folder-sync file of an earlier version reads as before.
 - **`--sync` and `--nobackups`** of `gui open` and `hikasa-gui` are understood. `--nobackups` turns backups off for the
-  operations of that view; `folder sync --gui` sends the sync to the GUI, which says it cannot show a Folder Sync view yet
+  operations of that view, its duplicates and its tab in a saved workspace (a session does not keep it); `folder sync --gui` sends the sync to the GUI, which says it cannot show a Folder Sync view yet
   (exit 100).
 
 ### Data safety
@@ -44,7 +46,8 @@
   replaces a file, a change in a read-only archive, a backup over a file the plan did not make. What lies in a folder
   answered no stays with it. `folder op delete` asks whatever `confirm_delete` says; without a terminal or `--yes` nothing
   is touched and the command exits 100. In the window, a dialog closed with a question open is a Cancel, and "Do not ask
-  again" counts only with a yes.
+  again" counts only with a yes. A question is about the row it names: if you select another row while the plan is made,
+  or while the Delete dialog is open, nothing is asked or written.
 - **A plan keeps what it saw.** A file changed since the comparison is not overwritten or deleted, and the rest go on. Nothing
   below a followed link, and nothing outside the base folders, is written or deleted; a row whose comparison failed is
   never touched. A rename never replaces. A folder is removed or sent to the recycle bin whole only when nothing below it
@@ -54,10 +57,15 @@
 - **Disable editing** per side (`--ro`, `--ro1`, `--ro2`, `--read-only`, a session's `read_only_left`, `read_only_right`)
   is enforced before anything is planned, also for a `copyto` or `moveto` whose target leads into that side, by `..` or
   through a link. In the window the commands that would write such a side are off, `Del` included, and the Delete dialog
-  greys it.
+  greys it. It stays so through Session Settings, Save, Save As, Duplicate Tab and workspaces, and a session saved from
+  the window keeps `read_only_left`, `read_only_right`: a side becomes writable only when you change that key.
 - **The recycle bin is what you chose.** A failing recycle bin fails the item unless `--recycle-fallback` (in the window,
   *If the recycle bin fails, delete permanently*) was given, and then deletes only what the plan saw: a file that came
-  into a folder since, or changed, stays, and so does its folder. The Delete dialog never chooses both sides for you.
+  into a folder since, or changed, stays, and so does its folder. The Delete dialog never chooses both sides for you, nor
+  one side of a row that is on both, even when the other side is read-only.
+- **An operation that is cut short is still reported.** Closing its tab, loading a workspace, applying Session Settings
+  or quitting while an operation runs stops it after its current item; its summary and failures still go to the log,
+  with a notice naming the tab. Quitting waits for it, so no temporary file is left behind.
 - **`--path` never means the whole tree.** An empty `--path` (a shell variable that came out empty), `.`, `/` or `left:` is an
   error, and a `--path` that is not on its side is `not_found`; the whole tree takes `--select all`.
 - **Filters win in folders the comparison did not list.** Such a folder is listed when the plan is made, through the same
@@ -90,7 +98,8 @@
   10,000 small files took 26 times a plain copy, and now takes about 1.4 to 1.5 times. A power cut just after a copy can
   lose files the copy created. It does not lose a file that existed: a copy that replaces still syncs the file before the
   rename, and a move syncs the file, its folder and the name of every folder it made before the source goes.
-- **Full Refresh keeps the open folders and the selected row** of the Folder Compare view, found again by their paths.
+- **Full Refresh keeps the open folders and the selected row** of the Folder Compare view, found again by their paths; a
+  row you select while it compares stays selected.
 
 ### Fixed
 - **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
