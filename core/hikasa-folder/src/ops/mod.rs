@@ -10,6 +10,8 @@ mod copyto;
 pub mod rename;
 mod renames;
 
+use std::collections::BTreeSet;
+
 use hikasa_core::{Ctl, FileTime, Pair, Side, Spec, Warning};
 use hikasa_vfs::Vfs;
 use hikasa_vfs::ops::{
@@ -271,6 +273,20 @@ pub struct OpPlan {
     pub exec: ExecOptions,
     /// What planning found.
     pub warnings: Vec<Warning>,
+}
+
+/// The folders a refresh takes in after a plan ran: the parent of each row an item names, each once, parents first.
+pub fn refresh_nodes(read: &TreeRead<'_>, meta: &[ItemMeta]) -> Vec<NodeId> {
+    let mut seen = BTreeSet::new();
+    for node in meta.iter().filter_map(|meta| meta.node) {
+        seen.insert(read.node(node).and_then(|view| view.parent).unwrap_or(NodeId::ROOT));
+    }
+    let mut folders: Vec<(usize, NodeId)> = seen
+        .into_iter()
+        .map(|folder| (read.ancestors(folder).len(), folder))
+        .collect();
+    folders.sort();
+    folders.into_iter().map(|(_, folder)| folder).collect()
 }
 
 /// Plans `op` on the selection of `scope`, from the model: **nothing is written**. Directory I/O only where the model has
