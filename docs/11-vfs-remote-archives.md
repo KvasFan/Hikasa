@@ -134,8 +134,10 @@ to directly, which cannot be atomic.
 **Durability (M2 W6, D-164).** What a sync protects differs by case, so the case decides. A new target of a copy is not
 synced: it is written under a temporary name with its time and mode and then renamed, so it never shows under its name
 with a wrong time or mode. A replaced target syncs the file. A move syncs file and folder, because a source is removed on
-the strength of the copy. Saves, settings and archive rebuilds stay as they were. **A power cut just after a copy can lose
-files the copy created; it can never lose a file that existed**, and no source is removed before its copy is on disk.
+the strength of the copy, with the name of a moved link and of each folder the move made. Saves, settings and archive
+rebuilds stay as they were. **A power cut just after a copy can lose files the copy created; it does not lose a file that
+existed**: what replaces it was synced before the rename, and no source is removed before its copy is on disk. A new file
+takes its name by a rename that cannot replace, so a file another program creates there meanwhile stays.
 
 **Batches, the fence, backups (M2 W6, D-162…D-168).** A folder operation or a sync is one plan of kind `batch`, executed
 once, so an archive is rebuilt and backed up once. Items carry what the plan saw: a file changed since then is refused,

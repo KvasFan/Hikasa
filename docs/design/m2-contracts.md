@@ -145,7 +145,7 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-163 | **A plan carries stamps; it is not re-planned** (hook of §1.5.19 W5b note 7). Items carry `Expect` (kind, size, time of source and target as the model saw them); `run_item` compares them with one `lstat` and fails `changed since the plan was made`. Stamps serialize, unlike `PlanItem::seen`. | Plans are made from the model, so a re-plan repeats stale facts unless it re-scans, which moves the items under an answered confirmation. A stamp costs no system call beyond D-103's re-check, and an archive's other members are safe because `begin` reads the archive's stamp itself. | 11 |
 | D-164 | **Durability by case** (revises D-95). `Durability::{Full, FileOnly, None}` in `WriteOptions`, `Vfs::copy_new_file`. A new target: no `fsync`, metadata set on the handle before the rename. A replaced target: the file only. A move: `Full`, because a source goes on the strength of the copy. Saves, settings and rebuilds stay `Full`. `vfs cp` follows, as it is the same code. | Two `fsync`s per file made a copy of 10,000 small files 26 × slower than a plain copy (6.2 s against 240 ms), which rules out G7 whatever else is tuned. A power cut can now lose files a copy created, never one that existed. | 11 |
 | D-165 | **Exchange** (FC-071) = `Action::Exchange`: copy left to a hidden sibling on the right, right to one on the left, then two renames. No backup. An orphan moves. Folder pairs exchange row by row. | Neither side can be lost at any step, across file systems and into archives; a failure before the third step leaves both sides as they were. | 04 |
-| D-166 | **Fence** (plan acceptance: a mirror never deletes outside the bases). `ExecOptions::fence` refuses at execution any removal, source removal and (with `writes`) any write outside the bases; a base itself is never removed. The planner refuses what the fence cannot see: rows below a **followed** folder, and rows Unknown, Error or below a failed folder, which are never written or deleted. | The model may be old, and with FC-013 a path below a followed link leads elsewhere while its text stays inside the base. A failure is never a difference (D-19). | 04, 11 |
+| D-166 | **Fence** (plan acceptance: a mirror never deletes outside the bases). `ExecOptions::fence` refuses at execution any removal, source removal and (with `writes`) any write outside the bases, by the text and by the tree (no link from the base down to the item's folder); a base itself is never removed. The planner refuses what the fence cannot see: rows below a **followed** folder, and rows Unknown, Error or below a failed folder, which are never written or deleted. | The model may be old, and with FC-013 a path below a followed link leads elsewhere while its text stays inside the base. A failure is never a difference (D-19). | 04, 11 |
 | D-167 | **Backups keep what a copy or move replaces** (FC §8, OPT-008). Not removes: a `.bak` left by a delete is an orphan the next mirror would delete and back up, for ever; deletes have the recycle bin (§1.3.10 named it there). Names are final at planning. New content is staged, the old file renamed to its backup just before the commit, renamed back if that fails; another disk → a copy first. `folder` naming keeps the path below the base. A failed backup fails the item. One generation on disk. | Costs one rename and no disk; the target is missing for one rename only, and nothing is replaced without its backup. A flat folder would let `a/x.txt` overwrite the backup of `b/x.txt`. | 04, 15 |
 | D-168 | **One backup of the outermost file per operation; none per member** (§1.5.17). `ops/roots.rs::finish`, just before `end(root, Commit)`, for target and source-only roots, from `ExecOptions::archive_backups`, which the planner fills so a dry run shows it. A failure aborts that root. | A member cannot be renamed aside cheaply, and the archive holds them all; a rebuild rewrites the whole file anyway. | 11 |
 | D-169 | **Attribute and Unix-type filters** (plan A5). `filters.other.attrib`, `.unix_type`, parsed by core from `+rh-s`-style text; `attrib` on regular files only, `unix_type` on everything but folders; `Entry::special` for `b c p s`. The content filter stays P1. | SCR-001's `filter` vocabulary is P0 although FC-053 is P1. A filter that hid folders would hide their subtrees; `EntryKind::Other` cannot tell a FIFO from a device. | 04, 12 |
@@ -1553,7 +1553,7 @@ documented, user-visible override):
   also check the raw `rm` items and `mv` sources (`api::is_dot_name`; `.`, `x/.`, `../`): a whole-command
   `invalid_input` before planning. `cp x .` still copies into the current folder (the item is `./x`).
 - **Review fixes (replacing).** Replacing a file or link by a link (`link`, the `move` of a link) or by a folder
-  (`create_dir` with `replaces`) renames the old item to a free hidden sibling `.<name>.hikasa-old[-n]`, creates
+  (`create_dir` with `replaces`) renames the old item to a free hidden sibling `.hikasa-old[-n]`, creates
   the new one, then removes the sibling (best effort: a sibling that cannot be removed is left, never the
   data lost); when the creation fails the sibling is renamed back, so the target is
   as before (a back-end without `RENAME` removes first). The window in which the target is the sibling is
@@ -3422,9 +3422,9 @@ part. `docs/reference/commands.md` is unchanged.
    side of a folder pair is an opened archive: `TreeRead::spec` needs it to build a member's spec, and an archive against
    a real folder of the same name has one on one side only. `spec` now serves archive bases and flatten folders.
 9. **`FolderEnv::archive_entries_max`** injects the budget of step 5; the session passes `SCAN_ARCHIVE_ENTRIES_MAX`.
-10. **Resolution stops at `..`.** `parent_in` of `/a/..` is `/a/../..` (D-06), so step 3 returns the spec as soon as the name
-    in front of `rest` is `..`; every path through step 4 would have given that answer. New `LocalPath::parent_in`,
-    `file_name_in` (explicit style).
+10. **Resolution stops at `..`.** A path that ends in `..` has no parent by its text (D-06; §1.6.25 note 32), so step 3 returns
+    the spec as soon as the name in front of `rest` is `..`; every path through step 4 would have given that answer. New
+    `LocalPath::parent_in`, `file_name_in` (explicit style).
 11. **Jobs.** `Service::parse_spec_in` passes the job's token in `vfs ls`, `vfs stat`, `vfs cat`, `vfs cp`, `vfs mv`, `quick`,
     `text compare` and `folder_prepare_in`, as §1.5.4 asks; those commands then `prepare` before they `stat` (§1.5.5).
     Not cancellable, and bounded by the limits: `Service::parse_spec` and `folder_prepare` without a job, and the target of a
@@ -3752,7 +3752,7 @@ archives, so `ops/exchange.rs` makes both copies first:
 
 | Step | Call | On failure |
 |---|---|---|
-| 1 | copy `source` to `T1`, a free hidden sibling of `target` (`.<name>.hikasa-xchg[-n]`), metadata applied | remove `T1`; both sides untouched; item fails |
+| 1 | copy `source` to `T1`, a free hidden sibling of `target` (`.hikasa-xchg[-n]`), metadata applied | remove `T1`; both sides untouched; item fails |
 | 2 | copy `target` to `T2`, a free hidden sibling of `source`, metadata applied | remove `T1`, `T2`; both sides untouched; item fails |
 | 3 | `rename(T1, target, replace = true)` | remove `T1`, `T2`; both sides untouched; item fails |
 | 4 | `rename(T2, source, replace = true)` | `target` holds the new content; `T2` is left in place and the item fails with `InvalidTarget "changed during the move; the copy was kept"` naming `T2`: the other side's old content is that file |
@@ -3792,7 +3792,7 @@ pub struct WriteOptions { /* … W3 … */ pub durability: Durability }       //
 pub struct HandleMeta { pub modified: Option<FileTime>, pub created: Option<FileTime>, pub mode: Option<u32> }
 pub trait Vfs: Send + Sync {
     /// A copy of the regular file `from` to `to`, which does not exist, with `meta` applied, or `Ok(None)` when this
-    /// back-end has no such path. Never replaces on purpose; the window against a racing creator is `rename`'s (§1.3.1).
+    /// back-end has no such path. Never replaces: a target that appeared meanwhile stays, and this is `AlreadyExists`.
     fn copy_new_file(&self, _from: &Spec, _to: &Spec, _meta: &HandleMeta, _cancel: &CancelToken)
         -> Result<Option<u64>, VfsError> { Ok(None) }
 }
@@ -3809,17 +3809,19 @@ pub trait Vfs: Send + Sync {
 `LocalVfs::copy_new_file` (files ≤ `FAST_COPY_MAX`; larger ones `Ok(None)`, for G4): the temporary sibling is opened
 `create_new` with the final mode already on Unix (`OpenOptionsExt::mode(0o600)`, then `File::set_permissions` to
 `meta.mode` before the rename, which replaces D-158's read of the first mode for this path only: `meta.mode` is the
-result), `std::io::copy`, `File::set_modified` (and `FileTimesExt::set_created` where `SET_CREATED`), close, `rename` to
-the target. So the file never shows under its name with a wrong time or mode. Windows closes the handle before the
+result), `std::io::copy`, `File::set_modified` (and `FileTimesExt::set_created` where `SET_CREATED`), close, a rename to
+the target that cannot replace (§1.6.25 note 8). So the file never shows under its name with a wrong time or mode, and a
+file another program creates there meanwhile stays. Windows closes the handle before the
 rename, as elsewhere, and the DOS `R` bit is applied after it by the usual step. No such path when `preserve.attrs` is
 off (the result needs the default mode, which only the D-158 sequence gives without reading the umask). `ops` skips the
 metadata step of §1.3.4 after `Ok(Some(_))`, except `R`.
 
 Measured with this sequence on `/var/tmp` (Linux, 10,000 files of 4 KiB in 100 folders, three runs each, no pool): plain
 copy keeping times 240 ms, W3 sequence without `fsync` 425 ms (1.8 ×), this path 340 ms (1.45 ×), with both `fsync` 6.2
-s (26 ×). **A power cut just after a copy can lose files the copy created; it can never lose a file that existed**, and
-no source is removed before its copy is on disk. `docs/11` says so. `vfs cp` takes the same path, since it runs the same
-code.
+s (26 ×). **A power cut just after a copy can lose files the copy created; it does not lose a file that existed**: what
+replaces it was synced before the rename, and no source is removed before its copy is on disk, with the name of the copy
+and of each folder the operation made for it (§1.6.25 note 34). That rests on the file system's rename being atomic, as
+everything here does. `docs/11` says so. `vfs cp` takes the same path, since it runs the same code.
 
 #### 1.6.4 Fence (D-166)
 
@@ -3832,6 +3834,7 @@ refuses it again, because the planner works from a model that may be old.
 pub struct Fence { pub bases: Vec<Spec>, pub writes: bool }
 /// True when `spec` lies strictly below `base`: `Spec::parent` is walked up (it leaves an archive through its root,
 /// §1.5.2) and canonical texts compared, case-folded when the back-end is not `CASE_SENSITIVE`. Never true for `base` itself.
+/// Texts only: what the tree holds is `run_item`'s, below.
 pub fn within(vfs: &dyn Vfs, base: &Spec, spec: &Spec) -> bool;
 ```
 
@@ -3840,6 +3843,16 @@ the source of a `move`, `rename`, `exchange`; and with `writes`, every target. `
 (their target is elsewhere, by request); every other folder operation and every sync set `true`. A base itself is never
 removed. A backup with `naming = "folder"` lies outside the bases on purpose: backups are not items, and the fence does
 not see them.
+
+**The tree (§1.6.25 note 33).** A text can be below a base while the path leads elsewhere, because a folder of the base was
+moved out and left as a link after the plan was made; every stamp holds then, as it is the same file. So each spec the
+fence looks at is walked too: from the base down to the spec's folder, one `lstat` a level, at any depth, no component may
+be a link, or `InvalidTarget "is a link below a base folder, where the plan saw none"` names it. A link at or above a base
+is the user's choice and stays. The item itself is no component: a link to remove or replace is that link, and rule 2
+below stands. A folder that is not there ends the walk, and the item fails as it would. What is removed, moved or replaced
+is looked at each time; a new file takes what was seen of its folder in this batch, for G7, until an item of the plan makes
+a link or renames something. Members are not walked: a member cannot be swapped for a link. The file of an archive is: an
+archive behind a link below a base would be rewritten outside it.
 
 **What the fence cannot see, the planner refuses (normative for every folder plan):**
 
@@ -3852,7 +3865,8 @@ not see them.
 | 5 | An empty or incomplete source | §1.6.14 "Empty sources" |
 
 Rule 1 refuses what W3's D-94 rule 5 refuses for copies: a link is never written through. Execution has the D-103 parent
-re-check for what changes after planning, which narrows the race and cannot close it (§1.3.3 rule 3).
+re-check and the walk above for what changes after planning, which narrow the race and cannot close it (§1.3.3 rule 3):
+a link swapped in between the `lstat` and the call is not seen.
 
 #### 1.6.5 Backups (D-167, D-168)
 
@@ -3874,6 +3888,15 @@ impl BackupPolicy {
 }
 /// A copy of `item` at `backup`, parents created, replacing a backup that is there (atomic, `Durability::FileOnly`).
 pub fn write_backup(vfs: &dyn Vfs, item: &Spec, backup: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError>;
+/// The names of one plan's backups.
+#[derive(Debug, Default)] pub struct BackupNames { /* … */ }
+impl BackupNames {
+    /// Keeps a path the plan writes, removes or reads from every backup of the plan: the planner calls it for each target
+    /// and source of the plan, first.
+    pub fn reserve(&mut self, vfs: &dyn Vfs, spec: &Spec);
+    /// The backup of `item` in this plan, numbered around what is taken. A folder at that name → `IsADirectory`.
+    pub fn assign(&mut self, policy: &BackupPolicy, vfs: &dyn Vfs, item: &Spec, rel: Option<&RelPath>) -> Result<Spec, VfsError>;
+}
 ```
 
 `hikasa_session::settings::BackupNaming` maps one to one to `BackupStyle` (`impl From`); `Service` builds the policy; a
@@ -3896,12 +3919,17 @@ the backup of `b/x.txt`.
 
 **Rules.**
 
-- **Plan.** The planner sets `PlanItem::backup` on every `copy`, `move`, `link` and `create_dir` with `replaces`,
-  outside archives. Names are final at planning, so a dry run shows them and two items can be told apart: a name a
-  previous item of the plan took gets `-2`, `-3` … before its extension (`abc.bak`, `abc-2.bak`), in plan order, for
-  `abc.txt` and `abc.doc` with `stem_bak` and for `left` and `right` of one path with `folder`. On disk one generation
-  is kept: an existing file or link at that name is replaced. A folder there fails the item `is_a_directory` at
-  planning.
+- **Plan.** The planner sets `PlanItem::backup` on every `copy`, `move`, `rename`, `link` and `create_dir` with
+  `replaces`, outside archives. Names are final at planning, so a dry run shows them and two items can be told apart: a
+  name another path of the plan has gets `-2`, `-3` … before its extension (`abc.bak`, `abc-2.bak`), in plan order, for
+  `abc.txt` and `abc.doc` with `stem_bak`, for `left` and `right` of one path with `folder`, and for `x` next to a target
+  `x.bak`, which is why every path of the plan is reserved first. A name that comes out as the item itself is numbered in
+  every style, `folder` included (the item's own folder as the backup folder). On disk one generation is kept: an
+  existing file or link at that name is replaced. A folder there fails the item `is_a_directory` at planning.
+- **Execution refuses what would lose a file.** `execute_with` checks the plan first, hand-built plans too: a backup that
+  is its own item, or the target or source of any item, or another item's backup, or the outermost file of an archive
+  whose backup it is. The item fails `InvalidTarget` (`is the item it backs up`, `is a path of another item of the plan`)
+  and the rest are `not_run`: nothing has run.
 - **Execution, the order matters.** `copy_content` with `backup` always streams: the new content goes to the temporary
   sibling, and just before `commit`: `rename(target, backup, replace = true)` (parents created for `folder`), then
   `commit`. A failure of the stream leaves target and backup as they were. A failed `commit` renames the backup back; if
@@ -3914,7 +3942,8 @@ the backup of `b/x.txt`.
   per operation** replaces per-member backups, as §1.5.17 proposes, because members cannot be renamed aside cheaply and
   the archive holds them all. `ops/roots.rs::finish` runs it in both loops, for the target roots and the source-only
   roots, just before `end(root, Commit)`: when `options.archive_backups` names `root.outer` and the root has a `Done`
-  item: `write_backup`. A failure ends that root with `Finish::Abort` and fails its done items with that error, so an
+  item: a copy of the file's bytes, through a link that leads to it (`write_backup` keeps a link as a link, and a link
+  would lead to the rewritten file). A failure ends that root with `Finish::Abort` and fails its done items with that error, so an
   archive is never rewritten without its backup. A cancelled root has no backup. `write_backup` runs under the writer's
   lock (D-157), which only keeps other writers out: the file reads as usual. The planner fills the map for every
   outermost file an item of the plan writes, removes or moves out of, whether or not that item replaces: a rewrite
@@ -3990,8 +4019,9 @@ found), as D-19 asks of anything unknown. It is scanned by a refresh of its own 
 Expand. Glyphs are W9. Flatten ignores both keys. CLI: `--no-auto-scan`, `--expand-on-load`, `--expand-differences`.
 
 **Ignored marks (FC-033, D-171).** `FolderRules::ignored` is a list of base-relative paths, `/`-separated, in the
-spelling of `open_archives`: `a/b.txt`, `a` (a folder and all below it), and an exception `!a/b.txt`. **The longest path
-that names a node or an ancestor decides.** Keys go through `path_key`, so case follows the comparison's alignment. The
+spelling of `open_archives`: `a/b.txt`, `a` (a folder and all below it), and an exception `!a/b.txt`. A path whose first
+name starts with `!` is written `./!x`; an exception needs no such thing (`!!x`). **The longest path that names a node or an
+ancestor decides.** Keys go through `path_key`, so case follows the comparison's alignment. The
 flag is set in `plan_pair` and inherited from the parent, unless the path is an exception. A flag never changes
 `CompareState`, `diffs` or content results: `TreeRead::category` (via `own_category_of`) maps `LeftNewer`, `RightNewer`,
 `Different`, `LeftOrphan`, `RightOrphan` of an `IGNORED` node to `Same`, so counters, verdict, exit code, display
@@ -4063,7 +4093,9 @@ refresh and a scan cannot disagree):
    their results, and `check_tree_invariants` and every read from the root skip them. Arena space of dropped nodes is
    not reused: `Store::garbage` counts it, a view may re-run when it passes half the arena. A long-lived view pays one
    scan, at most, for that.
-8. `Ctl` as the scan: cancellation leaves rows `NotScanned`, `complete: false`, verdict `incomplete`.
+8. `Ctl` as the scan: cancellation leaves rows `NotScanned`, `complete: false`, verdict `incomplete`, and a mark on what
+   was asked for and not reached. A later refresh that covers what is marked restores the verdict; one of another subtree
+   does not (§1.6.25 note 21).
 
 A refresh of a folder inside an opened archive lists it through `ArchiveVfs`, whose new stamp brings a new index
 (§1.5.17). `FolderComparison::verdict` and `stats` read the live store. `TreeRead::len` counts dropped nodes; nothing
@@ -4097,7 +4129,8 @@ impl FolderModel {
 
 `Store::apply_content` today assumes one result per node: it gains the step that takes the old kind out of
 `content_counts` and drops an old outcome, so a repeated test counts once. `CONTENT_PENDING` is set per pair while its
-test runs and cleared by the outcome; a cancelled run restores the old state. CRCs go to the `crcs` side table
+test runs and cleared by the outcome; a cancelled run restores the old state, and its report lists only the pairs it
+tested. CRCs go to the `crcs` side table
 (`EntryView::crc32`) and `SideRec`'s `CRC` bit; a refresh drops them with a changed row. Option
 `confirm_content_compare` (OPT-009) is a `Prompt` of W9's dialog; the CLI writes nothing here and does not ask. The
 results dialog is W9.
@@ -4962,9 +4995,14 @@ numbered per part.
 2. **`execute_with` refuses two archives too.** The builder's item error is W6b; a hand-built plan gets `unsupported` from
    `run_exchange`, for the reason §1.6.2 gives.
 3. **Clear read-only.** `clear_read_only` forces the stream path, so `R` goes just before `commit` and comes back if the
-   commit fails. `exchange` clears both sides before step 3: a read-only left side would otherwise fail step 4 on Windows,
-   the one step that leaves a hidden copy behind. `run_rename` clears a replaced target; `link` and `create_dir` clear it
-   before the item goes aside.
+   commit fails. With a backup `R` travels with the file to the backup, and only a backup on another disk clears the target,
+   which then still stands. `exchange` clears both sides on disk before step 3, a read-only left side would otherwise fail
+   step 4 on Windows, and gives `R` back on both at any failure, the left side's at step 4 too; a plain side against a member
+   clears it just before its rename, after the rebuild; a member has none to clear. `run_rename` clears a replaced target,
+   or goes by a backup as a copy does. `link` and `create_dir` move the item aside with its `R`, and clear it only as that
+   sibling is removed, so a failure has nothing to give back and a backup keeps it; without `RENAME` the item is cleared just
+   before it is removed. A hidden copy of an exchange that took `R` from its side is cleared before it is removed. `remove`
+   clears and gives back; `trash` does not.
 4. **A stamp reads once.** `Seen` carries the two `lstat`s into the action. `run_copy` also keeps the source entry for the
    metadata step, so a copy reads the source once, where W3 read it twice; the metadata is what was seen before the
    content. A source changed in between gets its copy with the older time, which a later comparison shows.
@@ -4977,15 +5015,26 @@ numbered per part.
    itself is refused. W6b's builder must not plan one.
 8. **`copy_new_file`'s temporary file is not locked.** `create_temp`'s `try_lock` and `still_named` cost a tenth of the
    path, and exist so that a rebuild's `reap` can tell a live writer: `reap` looks only beside an existing target, and this
-   target does not exist. It keeps the names of `create_temp`. A rename that loses a race with a creator is §1.6.3's window.
+   target does not exist. It keeps the names of `create_temp`. **Its rename cannot replace:** Linux `renameat2` with
+   `RENAME_NOREPLACE`, macOS `renamex_np` with `RENAME_EXCL`, Windows `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`, so a
+   program that creates the target during the copy keeps its file, and the item fails `already_exists`. This costs what a
+   rename costs. `unsafe` stays in `mmap.rs`, so these come through `tempfile`'s `TempPath::persist_noclobber`, which
+   falls back to a hard link on `EINVAL` and `ENOSYS`: `tempfile` is a dependency of `hikasa-vfs` for this one call, and
+   brings no new crate into `Cargo.lock`. A file system with neither (FAT) looks, then renames: only there a racing creator
+   can get in between. `LocalWriter` commits a new file the same way.
 9. **`copy_new_file` needs one back-end and no `create_parents`:** a root of `cp --parents` takes the next path, with the same
    durability. An `mtime` a `SystemTime` cannot hold answers `Ok(None)`, for `filetime` to try.
 10. **Backups.** `BackupNames` is additive: it is W6b's call for "names are final at planning", with the numbering and the
-    `is_a_directory` of a folder at the name, and A6.6 tests it here. `BackupPolicy::target` numbers a name that would be the
-    item itself (`abc.bak` with `stem_bak` gives `abc-2.bak`), or the rename would lose the file. With `--no-preserve` the
-    target keeps its mode across a backup by a `set_attrs` after the commit: the writer finds no old file to copy it from.
-    `write_backup` of a link goes through a temporary sibling, to be atomic. `replace_with` without `RENAME` takes
-    `write_backup` first. Its old backup is replaced only once the new item stands.
+    `is_a_directory` of a folder at the name, and A6.6 tests it here. The planner calls `reserve` for every target and source
+    of the plan before the first `assign`; without that, only the items assigned so far are known. `BackupPolicy::target`
+    numbers a name that would be the item itself, in every style (`abc.bak` with `stem_bak` gives `abc-2.bak`; the item's own
+    folder with `folder` gives `x-2.txt`), or the rename would lose the file. With `--no-preserve` a regular target keeps its
+    mode across a backup by a `set_attrs` after the commit: the writer finds no old file to copy it from. A link or a special
+    file hands on no mode: the new file has the default, as without a backup. `write_backup` of a link goes through a
+    temporary sibling, to be atomic. `replace_with` without `RENAME` takes `write_backup` first. Its old backup is replaced
+    only once the new item stands. `rename` with a backup goes through the same `with_backup` as a copy, and a `rename` that
+    meets another disk expands to a `move` that keeps its backup and its `clear_read_only`; in a batch that expansion
+    replaces, because the item says the plan decided so (§1.6.2 had `MoveOptions::default()`, which would fail it).
 11. **`trash_fallback` is a field only.** Its execution is §1.6.12, W6b, with `WarningCode::TrashFallback`.
 12. **`extract_to_cache`.** A name over 255 bytes does not fit one path component, so it counts as unsafe. The reservation
     may pass `cache_max` by what readers hold, or a zip member over half the limit could not be extracted while its own spool
@@ -5010,8 +5059,12 @@ numbered per part.
     loses "parent is older" for "every live node is reachable once", and `canonical::build`, the recounts and the reference
     rows walk `Store::post_order`.
 21. **A kept row keeps its old record whole;** a kept folder's own time is not updated, as `to_canonical` has none. A row
-    `CONTENT_PENDING`, or a folder left `NotScanned` that a scan would enter, is not kept, so a second refresh repairs a
-    cancelled one. An opened archive whose `mtime` moved counts as changed (*a new stamp below one*).
+    `CONTENT_PENDING`, or a folder left `NotScanned` that a scan would enter, is not kept. **What a stop leaves is in the
+    tree:** `internal::UNLISTED` is on a folder with a listing to come (from its row's planning until the listing is in) and
+    on what a refresh was asked for and did not reach, `CONTENT_PENDING` on a row with a result to come. A refresh of a model
+    that is not complete goes down to all of these below what it was asked for, because a kept row is not entered, and the
+    verdict comes back when no live node has either; a refresh of another subtree leaves it `incomplete`. The check walks
+    the arena, and only after a stop. An opened archive whose `mtime` moved counts as changed (*a new stamp below one*).
 22. **Refresh and followed links.** A folder followed through a link is one folder at two paths, and a refresh lists the one it
     is asked for. P-REFRESH runs without following; §1.6.4 rule 1 keeps operations from writing through them.
 23. **A refresh of a `NotScanned` folder opens it,** by §1.6.7, so a refreshed tree can hold more than a fresh one with auto-scan
@@ -5029,6 +5082,35 @@ numbered per part.
     `.flatten()` over it never ends. The walks in `cache.rs` and `lock::reap` now stop at the first failure
     (`map_while(Result::ok)`). A sweep clears `R` in the `x*` folders of a dead session only; a session's own `cleanup` has
     removed them, so its exit lists nothing more than it did before W6a.
+29. **`extract_to_cache` after a program deleted its file.** The table entry leaves with what it counted, so the next call
+    extracts anew at a path that exists, and a cache does not fill with files that are gone.
+30. **Hidden siblings have fixed names:** `.hikasa-xchg[-n]`, `.hikasa-old[-n]`, `.hikasa-tmp[-n]` (of a backup's link), not
+    `.<name><suffix>`, which made an exchange fail on a name near the limit of a file system while a copy worked. A leftover
+    no longer shows whose it is by name; the item that left it names it.
+31. **A move's source is checked again** after the copy, on the plain path too, as `remove_moved` does: the same kind, size,
+    time and identity, through a link the comparison followed. A changed source stays, the copy stays, and the item fails
+    `changed during the move; the copy was kept`, which is D-163 for what changed during the copy. It costs one `stat` a move.
+32. **`..` (D-06).** `LocalPath::parent` of a path that ends in `..` is `None`: its text does not say what is above it, and
+    `/a/../..` made every walk up endless, with no token check (`vfs cp -r src a/../copied` hung, since W3). So a spec with a
+    `..` is below no base but one spelt the same way up to there (`within`), which is the safe side, and the walks of §1.3.4
+    and the fence end. `..` is not removed: **the OS's meaning is kept**. A target or source spelt with `..` is checked for
+    nesting by what each level is on disk (`LocalPath::up`, `FileId`, to the root, which is its own parent), so a folder
+    cannot be copied below itself by spelling, through a link either. Windows has resolved `..` at parsing, as ever.
+33. **The fence and the tree.** §1.6.4 is the rule. The walk replaces the text walk for items, so the two cost one: the folder
+    of the last item is compared, and a batch of new files in one folder walks once. Measured on the path of note 27 before
+    and after: no change beyond the noise.
+34. **Names on disk.** `Vfs::sync_folder` (additive, a no-op but on a disk) syncs what no writer does: a moved link's folder; the
+    parent of each folder the operation made (`Exec::new_folders`), once, before the first source that depends on it goes;
+    and in an `exchange` the folder of `T2` before step 3 and the target's before step 4, because across two disks a rename
+    could reach one disk with the copy that keeps its old content not yet on the other. `Durability::FileOnly` on `T1`, `T2`
+    stays for the files. A move into new folders therefore syncs file, folder and each new name, which A6.3 counts.
+35. **A plan refused as a whole** (§1.6.5) reports `failed` on the items at fault and `not_run` on the others: no item ran, and
+    no archive was opened. It is checked only when the plan names a backup.
+36. **`set_ignored` while a scan runs.** A scan and a refresh keep a copy of the marks; `Store::marks_set` tells them it is old, and
+    each insertion then re-marks its rows under its own write lock, so no row falls between `set_ignored`'s walk of the tree
+    and the insertion. A scan that sees no change pays one comparison per folder.
+37. **`./!x`** was chosen over a backslash escape because `.` is no file name: no list that exists holds such a path, so old
+    lists read as they did. Only a first name starting with `!` takes it; `a/!x` needs none.
 
 ### 1.7–1.14 W7–W14
 
@@ -5514,7 +5596,9 @@ Rules for every item:
   the builder's item error (W6b). Cancel at each step. Metadata travels both ways.
 - A6.5 **Fence (D-166) [W6a].** `within`: table of local paths in host syntax, a member, a nested member, an opened
   archive inside a base, a base inside an archive, a case-insensitive back-end, `a/b` against `a/bc`, the base itself
-  false; drive-letter rows `cfg(windows)`. `execute_with`: a hand-built plan with a `remove` outside the base fails `is
+  false, `..` rows `cfg(unix)`, bounded so that a walk that does not end fails; drive-letter rows `cfg(windows)`. A link
+  in a base refused at any depth, swapped in after planning on a disk, between two items of one folder for a removal; a
+  link at or above a base, the item itself and a source only read go through. `execute_with`: a hand-built plan with a `remove` outside the base fails `is
   outside the base folders`, nothing removed; `writes` on and off; a `trash`, a `move` source, an `exchange`. Plan rule
   tests: A6.27.
 - A6.6 **Backups (D-167, D-168) [W6a].** `core/hikasa-vfs/tests/backups.rs`. Naming: the whole table of §1.6.5, a name

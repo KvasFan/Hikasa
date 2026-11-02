@@ -58,8 +58,9 @@ the file.
 - **Results.** One line per item, then a summary such as `copied 4 of 4 items (0 skipped, 0 failed)`. With
   `--json` the document is `hikasa.vfs_op.v1`; failed items keep `ok: true` and the exit code is 100.
 
-A copy that creates its target does not sync it to disk: a power cut just after it can lose files it created, never a
-file that existed. A copy that replaces syncs the file, and a move syncs it and its folder before the source goes.
+A copy that creates its target does not sync it to disk: a power cut just after it can lose files it created, not a
+file that existed. A copy that replaces syncs the file, and a move syncs it, its folder and any folder it made before the
+source goes. A target that appears while the copy runs stays, and the copy fails `already_exists`.
 
 ## Specs
 

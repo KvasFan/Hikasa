@@ -12,8 +12,9 @@
 ### Changed
 - **A new copy no longer syncs to disk.** `vfs cp`, and every copy that creates its target, writes a file with its final
   time and mode under a temporary name and renames it. Copying 10,000 small files took 26 times a plain copy, and now takes
-  about 1.5 times. A power cut just after a copy can lose files the copy created; it can never lose a file that existed. A copy that replaces still
-  syncs the file, and a move still syncs file and folder, because a source goes on the strength of its copy.
+  about 1.5 times. A power cut just after a copy can lose files the copy created. It does not lose a file that existed: a
+  copy that replaces still syncs the file before the rename, and a move syncs the file, its folder and the name of every
+  folder it made before the source goes.
 
 ### Fixed
 - **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
