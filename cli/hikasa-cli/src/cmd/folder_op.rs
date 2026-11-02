@@ -18,8 +18,8 @@ use hikasa_session::api::{
     ApiOp, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest, FolderOpRequest,
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, PreparedFolderCompare, SelectRequest,
     SessionRunRequest, SessionWriteDto, human, parse_confirm_mode, parse_content_method,
-    parse_exclude_what, parse_link_policy, parse_overwrite, parse_select_path, parse_side,
-    parse_sides, parse_structure, parse_time, resolve_folder_display,
+    parse_exclude_what, parse_link_policy, parse_mkdir_name, parse_overwrite, parse_select_path,
+    parse_side, parse_sides, parse_structure, parse_time, resolve_folder_display,
 };
 use hikasa_session::launcher::OpenCommandDto;
 use hikasa_session::sessions::SessionRef;
@@ -163,11 +163,11 @@ fn run_verb(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> Result<u8, Failure> {
             into,
             name,
         } => {
-            let folder = name.ends_with('/') || (cfg!(windows) && name.ends_with('\\'));
+            let (name, folder) = bare(parse_mkdir_name(name, cfg!(windows)))?;
             let op = OpRequest::MkdirIn {
                 sides: bare(parse_sides(side))?,
                 parent: into.clone().unwrap_or_default(),
-                name: name.trim_end_matches(['/', '\\']).to_owned(),
+                name,
                 folder,
             };
             plan_verb(ctx, common, confirm, op, OpOverrides::default())

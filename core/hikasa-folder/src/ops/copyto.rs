@@ -10,7 +10,9 @@ use hikasa_vfs::{Capabilities, EntryKind, FileName, FollowLinks, Vfs, VfsError};
 
 use super::ItemMeta;
 use super::PathStructure;
-use super::build::{Builder, Open, Placed, Transfer, found_of_stat, nothing_on, report};
+use super::build::{
+    Builder, Open, Placed, Transfer, found_of_stat, nothing_on, report, view_of_entry,
+};
 use super::conflict::Conflicts;
 use super::unlisted::Walk;
 use crate::error::FolderError;
@@ -24,6 +26,8 @@ struct Below {
     folders: BTreeMap<String, Option<u32>>,
     /// The targets taken, as compared.
     taken: BTreeSet<String>,
+    /// The folders planned only as the way to a source, by item: they stay only if something goes there.
+    way: BTreeSet<usize>,
 }
 
 /// One row with its own path below the base.
@@ -80,6 +84,14 @@ impl Builder<'_, '_> {
                     names.extend(self.read.raw_name(id, side));
                     at = view.and_then(|view| view.parent);
                 }
+                // In a flat comparison the folders of a row are no rows.
+                let dir = self.read.node(row.node).and_then(|view| view.side(side)?.dir);
+                let folders = dir.iter().flat_map(|dir| dir.rsplit('/'));
+                names.extend(
+                    folders
+                        .filter(|name| !name.is_empty())
+                        .map(OsString::from),
+                );
                 names.reverse();
                 Source {
                     row: *row,
@@ -92,7 +104,12 @@ impl Builder<'_, '_> {
 
     /// The target folder: existing, or its chain at depth 0, ending in `create_archive` when its final name has a writable
     /// mask (D-150). What children go into: an archive's root for an archive.
-    fn target_root(&mut self, target: &Spec, below: &mut Below) -> Result<Spec, FolderError> {
+    fn target_root(
+        &mut self,
+        target: &Spec,
+        folder: bool,
+        below: &mut Below,
+    ) -> Result<Spec, FolderError> {
         let not_folder =
             || FolderError::InvalidRules(format!("{}: is not a folder", target.canonical()));
         // A member's root: the file around it says what there is.
@@ -119,18 +136,20 @@ impl Builder<'_, '_> {
             Some(_) => Err(not_folder()),
             None => {
                 self.target_chain(on_disk, below)?;
-                let action =
-                    if writes_archive && (file.is_some() || matches!(target, Spec::Local(_))) {
-                        Action::CreateArchive
-                    } else {
-                        Action::CreateDir
-                    };
+                let archive =
+                    !folder && writes_archive && (file.is_some() || matches!(target, Spec::Local(_)));
+                let action = if archive {
+                    Action::CreateArchive
+                } else {
+                    Action::CreateDir
+                };
                 let kind = if action == Action::CreateArchive {
                     EntryKind::File
                 } else {
                     EntryKind::Dir
                 };
                 let item = PlanItem::planned(action, kind, None, on_disk.clone(), 0);
+                below.way.insert(self.items.len());
                 self.push_outside(item, on_disk);
                 below.folders.insert(on_disk.canonical(), Some(0));
                 if action == Action::CreateArchive {
@@ -138,7 +157,7 @@ impl Builder<'_, '_> {
                     below.folders.insert(root.canonical(), Some(0));
                     return Ok(root);
                 }
-                Ok(target.clone())
+                Ok(on_disk.clone())
             }
         }
     }
@@ -159,6 +178,7 @@ impl Builder<'_, '_> {
         }
         for dir in missing.into_iter().rev() {
             let item = PlanItem::planned(Action::CreateDir, EntryKind::Dir, None, dir.clone(), 0);
+            below.way.insert(self.items.len());
             self.push_outside(item, &dir);
             below.folders.insert(dir.canonical(), Some(0));
         }
@@ -177,12 +197,15 @@ impl Builder<'_, '_> {
         self.push(item, meta);
     }
 
-    /// `CopyTo`, `MoveTo`: each side in turn, left before right; a second source of one target path stays.
+    /// `CopyTo`, `MoveTo`: each side in turn, left before right; a second source of one target path stays. A folder planned
+    /// only as the way to a source goes when nothing goes there: a refused move leaves nothing behind.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn copy_to(
         &mut self,
         rows: &[Resolved],
         sides: SideSet,
         target: &Spec,
+        folder: bool,
         structure: PathStructure,
         overwrite: OverwritePolicy,
         moving: bool,
@@ -197,7 +220,7 @@ impl Builder<'_, '_> {
             )));
         }
         let mut below = Below::default();
-        let root = self.target_root(target, &mut below)?;
+        let root = self.target_root(target, folder, &mut below)?;
         self.outside = Some(root.clone());
         let fold = self.folds(&root);
         for side in sides.sides() {
@@ -229,7 +252,48 @@ impl Builder<'_, '_> {
             }
             self.close_open(&mut open, 0);
         }
+        self.drop_unused_way(&below.way);
         Ok(())
+    }
+
+    /// Takes the folders of `way` no item needs out of the plan.
+    fn drop_unused_way(&mut self, way: &BTreeSet<usize>) {
+        let mut needed = BTreeSet::new();
+        for (index, item) in self.items.iter().enumerate() {
+            if way.contains(&index) || item.error.is_some() || item.skip.is_some() {
+                continue;
+            }
+            for dir in std::iter::successors(item.target.parent(), Spec::parent) {
+                if let Spec::ArchiveMember { archive, .. } = &dir {
+                    needed.insert(archive.canonical());
+                }
+                if !needed.insert(dir.canonical()) {
+                    break;
+                }
+            }
+        }
+        let unused: BTreeSet<usize> = way
+            .iter()
+            .copied()
+            .filter(|index| {
+                self.items
+                    .get(*index)
+                    .is_some_and(|item| !needed.contains(&item.target.canonical()))
+            })
+            .collect();
+        if unused.is_empty() {
+            return;
+        }
+        let mut at = 0;
+        self.items.retain(|_| {
+            at += 1;
+            !unused.contains(&(at - 1))
+        });
+        at = 0;
+        self.meta.retain(|_| {
+            at += 1;
+            !unused.contains(&(at - 1))
+        });
     }
 
     /// The target of a source: `<root>/<names without the first drop>`, every folder on the way planned, once.
@@ -257,6 +321,7 @@ impl Builder<'_, '_> {
                 None => {
                     let made = !new_parent && lstat(self.vfs, &at)?.is_none() || new_parent;
                     let known = if made {
+                        below.way.insert(self.items.len());
                         self.folder_on_the_way(tr, source, first + index, &at, depth);
                         Some(depth)
                     } else {
@@ -284,6 +349,30 @@ impl Builder<'_, '_> {
     ) {
         let read = self.read;
         let mut id = source.row.node;
+        let flat = read
+            .node(id)
+            .is_some_and(|view| view.side(tr.from).is_some_and(|entry| entry.dir.is_some()));
+        if flat {
+            // The folder is no row: the source's own path says which, and a `stat` what it is.
+            let mut from = read.spec(id, tr.from);
+            for _ in level + 1..source.names.len() {
+                from = from.and_then(|spec| spec.parent());
+            }
+            let Some(from) = from else { return };
+            if let Ok(stat) = self.vfs.stat(&from, FollowLinks::No) {
+                let placed = Placed {
+                    id,
+                    entry: &view_of_entry(&stat),
+                    source: from,
+                    target: target.clone(),
+                    found: None,
+                    depth,
+                    side: None,
+                };
+                self.create_dir(placed, tr);
+            }
+            return;
+        }
         for _ in level + 1..source.names.len() {
             id = read
                 .node(id)
@@ -365,8 +454,9 @@ impl Builder<'_, '_> {
         if source.root {
             let checked = self.vfs.stat(&from, FollowLinks::No).and_then(|stat| {
                 ops::check_nesting(self.vfs, self.vfs, &from, &stat, &target)?;
+                // A file into the archive it is: a copy would rebuild it around itself.
+                ops::check_move_inside(self.vfs, self.vfs, &from, &target)?;
                 if tr.moving {
-                    ops::check_move_inside(self.vfs, self.vfs, &from, &target)?;
                     ops::check_same_archive(self.vfs, self.vfs, &from, &target)?;
                 }
                 Ok(())
@@ -396,10 +486,31 @@ impl Builder<'_, '_> {
         } else {
             (Capabilities::WRITE, "write")
         };
-        let gone = tr.moving && self.lacks(&from, Capabilities::REMOVE, "remove", Some(tr.from));
+        let opened = view.flags.contains(NodeFlags::archive_root(tr.from))
+            && source.row.whole.contains(SideSet::of(tr.from));
+        let leaves = match (&from, opened) {
+            (Spec::ArchiveMember { archive, .. }, true) => (**archive).clone(),
+            _ => from.clone(),
+        };
+        let gone = tr.moving && self.lacks(&leaves, Capabilities::REMOVE, "remove", Some(tr.from));
         if gone || self.lacks(&target, bit.0, bit.1, None) {
             let reason = SkipReason::Capability;
             self.skip_row(id, kind, Some(from), target, depth, reason, None);
+            self.cover(id);
+            return Ok(());
+        }
+        // An opened archive that goes whole goes as the file it is.
+        if let (true, Spec::ArchiveMember { archive, .. }) = (opened, &from)
+            && (tr.moving || flat)
+        {
+            let key = target.canonical();
+            let duplicate = !below.taken.insert(key);
+            if duplicate {
+                let reason = SkipReason::DuplicateTarget;
+                self.skip_row(id, kind, Some(from), target, depth, reason, None);
+            } else {
+                self.place_archive(tr, id, (**archive).clone(), target, depth, None);
+            }
             self.cover(id);
             return Ok(());
         }

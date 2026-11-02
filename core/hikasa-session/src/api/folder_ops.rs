@@ -449,6 +449,15 @@ fn written_sides(op: &OpRequest) -> SideSet {
     }
 }
 
+/// True when a typed target ends in a separator: `x.zip/` is a folder, whatever its name looks like.
+fn ends_in_a_separator(target: &std::ffi::OsStr, windows: bool) -> bool {
+    match target.as_encoded_bytes().last() {
+        Some(b'/') => true,
+        Some(b'\\') => windows,
+        _ => false,
+    }
+}
+
 /// The side `--path` means without a prefix: what the verb reads.
 fn verb_sides(op: &OpRequest) -> SideSet {
     match op {
@@ -545,6 +554,11 @@ fn row_on(read: &TreeRead<'_>, row: NodeId, sides: SideSet) -> NodeId {
 }
 
 impl Service {
+    /// True on Windows: there `\\` separates.
+    fn windows(&self) -> bool {
+        self.env().platform == crate::host::Platform::Windows
+    }
+
     /// What a selection in words holds on `read`, with what it takes in.
     fn select_of(
         &self,
@@ -669,6 +683,7 @@ impl Service {
             } => FolderOp::CopyTo {
                 sides: *sides,
                 target: self.parse_spec_as(target, SpecUse::Folder)?,
+                folder: ends_in_a_separator(target, self.windows()),
                 structure: *structure,
                 overwrite: *overwrite,
             },
@@ -680,6 +695,7 @@ impl Service {
             } => FolderOp::MoveTo {
                 sides: *sides,
                 target: self.parse_spec_as(target, SpecUse::Folder)?,
+                folder: ends_in_a_separator(target, self.windows()),
                 structure: *structure,
                 overwrite: *overwrite,
             },
@@ -1087,12 +1103,13 @@ impl Service {
             for (path, own) in paths {
                 let row = named_row(&read, path, windows)?;
                 let on = if own.is_empty() { sides } else { *own };
+                let row = row_on(&read, row, on);
                 for side in on.sides() {
-                    if let (Some(spec), Some(base)) =
-                        (read.spec(row, side), read.spec(NodeId::ROOT, side))
-                    {
-                        items.push((spec, base));
-                    }
+                    let missing = || ApiError::NotFound(format!("no `{path}` on the {side}"));
+                    let present = read.node(row).is_some_and(|view| view.side(side).is_some());
+                    let spec = read.spec(row, side).filter(|_| present);
+                    let base = read.spec(NodeId::ROOT, side);
+                    items.push((spec.ok_or_else(missing)?, base.ok_or_else(missing)?));
                 }
             }
             Ok(items)
@@ -1265,8 +1282,8 @@ fn command_of(
         ApiError::InvalidArgument(format!("`{}` has no command", app.description))
     })?;
     Ok(OpenCommand {
-        program: OsString::from(program),
-        args: words.map(OsString::from).collect(),
+        program,
+        args: words.collect(),
         cwd: working_folder,
     })
 }

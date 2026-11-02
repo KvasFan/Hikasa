@@ -135,6 +135,8 @@ pub enum FolderOp {
         sides: SideSet,
         /// The target.
         target: Spec,
+        /// A trailing separator was given: a folder, whatever the name looks like.
+        folder: bool,
         /// The layout.
         structure: PathStructure,
         /// What an existing target means.
@@ -146,6 +148,8 @@ pub enum FolderOp {
         sides: SideSet,
         /// The target.
         target: Spec,
+        /// A trailing separator was given: a folder, whatever the name looks like.
+        folder: bool,
         /// The layout.
         structure: PathStructure,
         /// What an existing target means.

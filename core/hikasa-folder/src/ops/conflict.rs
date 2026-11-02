@@ -18,16 +18,19 @@ bitflags::bitflags! {
         const REPLACE_DURING_MOVE = 8;
         /// A removal with the bin whose spec has none.
         const NO_RECYCLE_BIN = 16;
+        /// A backup takes the place of a file this plan did not make (D-167: one generation, §1.6.5).
+        const OVERWRITE_BACKUP = 32;
     }
 }
 
 /// JSON names of the conflicts, in bit order.
-const NAMES: [(Conflicts, &str); 5] = [
+const NAMES: [(Conflicts, &str); 6] = [
     (Conflicts::READ_ONLY, "read_only"),
     (Conflicts::SYSTEM, "system"),
     (Conflicts::OVERWRITE_NEWER, "overwrite_newer"),
     (Conflicts::REPLACE_DURING_MOVE, "replace_during_move"),
     (Conflicts::NO_RECYCLE_BIN, "no_recycle_bin"),
+    (Conflicts::OVERWRITE_BACKUP, "overwrite_backup"),
 ];
 
 impl Conflicts {

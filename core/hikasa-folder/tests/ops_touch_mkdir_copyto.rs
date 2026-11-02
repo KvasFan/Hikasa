@@ -358,6 +358,7 @@ fn copy_to(sides: SideSet, target: &str, structure: PathStructure) -> FolderOp {
     FolderOp::CopyTo {
         sides,
         target: mspec(target),
+        folder: false,
         structure,
         overwrite: OverwritePolicy::Fail,
     }
@@ -487,6 +488,7 @@ fn a6_19_copyto_the_overwrite_policy_looks_at_the_target() {
     let with = |overwrite| FolderOp::CopyTo {
         sides: L,
         target: mspec("/out"),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite,
     };
@@ -571,6 +573,7 @@ fn a6_19_moveto_as_one_rename_then_row_by_row_across_devices() {
     let op = FolderOp::MoveTo {
         sides: L,
         target: mspec("/out"),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
@@ -630,6 +633,7 @@ fn a6_19_script_example_four() {
     let op = FolderOp::CopyTo {
         sides: L,
         target: mspec("/out/2026-11-02.zip"),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
@@ -684,6 +688,7 @@ fn a6_19_members_are_copied_out_of_an_archive() {
     let copy = FolderOp::CopyTo {
         sides: L,
         target: Spec::archive_member(mspec("/l/made.zip"), ""),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };

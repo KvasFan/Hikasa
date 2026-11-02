@@ -58,6 +58,9 @@ struct Ren {
     live: bool,
 }
 
+/// One real folder: the row above, and in a flat comparison, where every row hangs from the base, its path.
+type FolderKey = (NodeId, String);
+
 /// The rows of one folder on one side.
 struct Folder {
     parent: Option<Spec>,
@@ -100,17 +103,17 @@ impl Builder<'_, '_> {
             ));
         }
         for side in sides.sides() {
-            let mut folders: BTreeMap<NodeId, Folder> = BTreeMap::new();
+            let mut folders: BTreeMap<FolderKey, Folder> = BTreeMap::new();
             for (_, id) in picked.iter().filter(|(on, _)| *on == side) {
                 self.ctl.check()?;
                 self.rename_row(side, *id, &namer, &mut folders);
             }
             // What lies deepest goes first: a folder renamed before its rows would take their paths with it.
-            let mut ordered: Vec<(usize, NodeId, Folder)> = folders
+            let mut ordered: Vec<(usize, FolderKey, Folder)> = folders
                 .into_iter()
-                .map(|(parent, folder)| (self.read.ancestors(parent).len(), parent, folder))
+                .map(|(key, folder)| (self.read.ancestors(key.0).len(), key, folder))
                 .collect();
-            ordered.sort_by_key(|(depth, parent, _)| (std::cmp::Reverse(*depth), *parent));
+            ordered.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
             for (_, _, folder) in ordered {
                 self.rename_folder(side, folder);
             }
@@ -118,15 +121,21 @@ impl Builder<'_, '_> {
         Ok(())
     }
 
-    /// The names of a folder on `side`, as compared.
-    fn names_of(&mut self, parent: NodeId, side: Side, at: &Spec) -> BTreeSet<String> {
+    /// The names of a folder on `side`, as compared: in a flat comparison the rows of one real folder (`dir`).
+    fn names_of(
+        &mut self,
+        parent: NodeId,
+        side: Side,
+        at: &Spec,
+        dir: Option<&str>,
+    ) -> BTreeSet<String> {
         let fold = self.folds(at);
         let read = self.read;
         read.children(parent)
             .filter_map(|child| {
                 let view = read.node(child)?;
-                let name = view.side(side)?.name;
-                Some(key_of(name, fold))
+                let entry = view.side(side)?;
+                (entry.dir == dir).then(|| key_of(entry.name, fold))
             })
             .collect()
     }
@@ -137,7 +146,7 @@ impl Builder<'_, '_> {
         side: Side,
         id: NodeId,
         namer: &Namer<'_>,
-        folders: &mut BTreeMap<NodeId, Folder>,
+        folders: &mut BTreeMap<FolderKey, Folder>,
     ) {
         let read = self.read;
         let Some(view) = read.node(id) else { return };
@@ -221,11 +230,12 @@ impl Builder<'_, '_> {
         };
         let fold = self.folds(&parent_spec);
         let parent = view.parent.unwrap_or(NodeId::ROOT);
-        let taken = match folders.get(&parent) {
+        let key = (parent, entry.dir.unwrap_or_default().to_owned());
+        let taken = match folders.get(&key) {
             Some(_) => BTreeSet::new(),
-            None => self.names_of(parent, side, &parent_spec),
+            None => self.names_of(parent, side, &parent_spec, entry.dir),
         };
-        let folder = folders.entry(parent).or_insert(Folder {
+        let folder = folders.entry(key).or_insert(Folder {
             parent: Some(parent_spec),
             taken,
             rows: Vec::new(),

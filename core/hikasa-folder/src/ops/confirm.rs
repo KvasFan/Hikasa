@@ -25,16 +25,19 @@ pub enum QuestionKind {
     ReplaceDuringMove,
     /// No recycle bin for the item.
     NoRecycleBin,
+    /// A backup replaces a file this plan did not make.
+    OverwriteBackup,
 }
 
 impl QuestionKind {
     /// The classes of the items' questions, in the order they are asked.
-    pub const ITEMS: [QuestionKind; 5] = [
+    pub const ITEMS: [QuestionKind; 6] = [
         QuestionKind::ReadOnly,
         QuestionKind::System,
         QuestionKind::OverwriteNewer,
         QuestionKind::ReplaceDuringMove,
         QuestionKind::NoRecycleBin,
+        QuestionKind::OverwriteBackup,
     ];
 
     /// The stable word of the class.
@@ -46,6 +49,7 @@ impl QuestionKind {
             QuestionKind::OverwriteNewer => "overwrite_newer",
             QuestionKind::ReplaceDuringMove => "replace_during_move",
             QuestionKind::NoRecycleBin => "no_recycle_bin",
+            QuestionKind::OverwriteBackup => "overwrite_backup",
         }
     }
 
@@ -58,6 +62,7 @@ impl QuestionKind {
             QuestionKind::OverwriteNewer => Conflicts::OVERWRITE_NEWER,
             QuestionKind::ReplaceDuringMove => Conflicts::REPLACE_DURING_MOVE,
             QuestionKind::NoRecycleBin => Conflicts::NO_RECYCLE_BIN,
+            QuestionKind::OverwriteBackup => Conflicts::OVERWRITE_BACKUP,
         }
     }
 
@@ -71,6 +76,9 @@ impl QuestionKind {
             QuestionKind::ReplaceDuringMove => format!("Replace {path} with the moved file?"),
             QuestionKind::NoRecycleBin => {
                 format!("{path} cannot go to the recycle bin. Delete it permanently?")
+            }
+            QuestionKind::OverwriteBackup => {
+                format!("The backup of {path} would replace a file that stands there. Replace it?")
             }
         }
     }
@@ -185,7 +193,7 @@ impl ConfirmPolicy {
             QuestionKind::Operation | QuestionKind::NoRecycleBin => true,
             QuestionKind::ReadOnly => self.read_only,
             QuestionKind::System => self.system,
-            QuestionKind::OverwriteNewer => self.overwrite_newer,
+            QuestionKind::OverwriteNewer | QuestionKind::OverwriteBackup => self.overwrite_newer,
             QuestionKind::ReplaceDuringMove => self.replace_during_move,
         }
     }

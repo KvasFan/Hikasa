@@ -245,9 +245,33 @@ pub fn parse_select_path(word: &str) -> (String, SideSet) {
     }
 }
 
+/// The name of `mkdir --name`, with whether it ended in a separator: a folder, whatever it looks like. Off Windows a final
+/// `\\` is no separator, and dropping it would make another name than the one typed; keeping it would make a name nobody
+/// meant, so it is refused.
+pub fn parse_mkdir_name(name: &str, windows: bool) -> Result<(String, bool), ApiError> {
+    if !windows && name.ends_with('\\') {
+        return Err(ApiError::InvalidArgument(format!(
+            "`{name}` ends in a backslash, which separates nothing here: use `/` for a folder"
+        )));
+    }
+    let separator = |c: char| c == '/' || (windows && c == '\\');
+    let bare = name.trim_end_matches(separator);
+    Ok((bare.to_owned(), bare.len() != name.len()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mkdir_names() {
+        assert_eq!(parse_mkdir_name("x", false).unwrap(), ("x".into(), false));
+        assert_eq!(parse_mkdir_name("x/", false).unwrap(), ("x".into(), true));
+        assert_eq!(parse_mkdir_name("x\\", true).unwrap(), ("x".into(), true));
+        assert_eq!(parse_mkdir_name("a\\b", false).unwrap(), ("a\\b".into(), false));
+        assert!(parse_mkdir_name("x\\", false).is_err());
+        assert!(parse_mkdir_name("x\\/", false).unwrap().0.ends_with('\\'));
+    }
 
     #[test]
     fn side_words() {

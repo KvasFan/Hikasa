@@ -216,6 +216,9 @@ pub(super) struct Builder<'a, 'r> {
     orphans: BTreeSet<(NodeId, Side, String)>,
     /// The target of `copyto`, `moveto`: what lies below it keeps its path in a backup folder.
     pub(super) outside: Option<Spec>,
+    /// Folders a flat comparison needs on a side, by their path: the depth of what lies in one the plan makes (`None`: it
+    /// stands).
+    flat_folders: BTreeMap<(Side, String), Option<u32>>,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -281,19 +284,21 @@ pub(super) fn plan(
         FolderOp::CopyTo {
             sides,
             target,
+            folder,
             structure,
             overwrite,
         } => {
-            builder.copy_to(&rows, *sides, target, *structure, *overwrite, false)?;
+            builder.copy_to(&rows, *sides, target, *folder, *structure, *overwrite, false)?;
             OpVerb::CopyTo
         }
         FolderOp::MoveTo {
             sides,
             target,
+            folder,
             structure,
             overwrite,
         } => {
-            builder.copy_to(&rows, *sides, target, *structure, *overwrite, true)?;
+            builder.copy_to(&rows, *sides, target, *folder, *structure, *overwrite, true)?;
             OpVerb::MoveTo
         }
     };
@@ -332,6 +337,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             names: BTreeMap::new(),
             orphans: BTreeSet::new(),
             outside: None,
+            flat_folders: BTreeMap::new(),
         }
     }
 
@@ -789,7 +795,12 @@ impl<'a, 'r> Builder<'a, 'r> {
         }
         let parent = view.parent.unwrap_or(NodeId::ROOT);
         if let Some(target) = self.flat_target(tr, view)? {
-            return Ok((target, None));
+            let found = match self.vfs.stat(&target, FollowLinks::No) {
+                Ok(stat) => Some(found_of_stat(&stat)),
+                Err(VfsError::NotFound { .. } | VfsError::NotADirectory { .. }) => None,
+                Err(e) => return Err(e),
+            };
+            return Ok((target, found));
         }
         let dir = self.folder_spec(tr, parent)?;
         let target = self.new_child(&dir, id, tr.from)?;
@@ -797,7 +808,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         Ok((target, found))
     }
 
-    /// In a flat comparison a row's folder is no row: `<base>/<folder>/<name>`, made by what the disk holds (§1.6.25).
+    /// In a flat comparison a row's folder is no row: `<base>/<folder>/<name>`, whose folders [`Builder::flat_depth`] plans.
     fn flat_target(&mut self, tr: Transfer, view: &NodeView<'_>) -> Result<Option<Spec>, VfsError> {
         let Some(dir) = view.side(tr.from).and_then(|entry| entry.dir) else {
             return Ok(None);
@@ -807,6 +818,53 @@ impl<'a, 'r> Builder<'a, 'r> {
             at = self.vfs.child(&at, &FileName::new(name)?)?;
         }
         self.new_child(&at, view.id, tr.from).map(Some)
+    }
+
+    /// The folders on the way to a flat row, from the base: no row says which stand, so the disk does, once per folder. One
+    /// that is missing gets rule 3's `create_dir`. The depth of what lies in the last one.
+    fn flat_depth(&mut self, tr: Transfer, id: NodeId, dir: &str) -> u32 {
+        let mut at = self.base(tr.to).clone();
+        let mut from = self.base(tr.from).clone();
+        let mut way = String::new();
+        let mut depth = 0;
+        for name in dir.split('/').filter(|name| !name.is_empty()) {
+            way.push('/');
+            way.push_str(name);
+            let Ok(file) = FileName::new(name) else {
+                return depth;
+            };
+            let (Ok(next), Ok(source)) = (self.vfs.child(&at, &file), self.vfs.child(&from, &file))
+            else {
+                return depth;
+            };
+            at = next;
+            from = source;
+            let key = (tr.to, way.clone());
+            let known = match self.flat_folders.get(&key) {
+                Some(known) => *known,
+                None => {
+                    let stood = self.vfs.stat(&at, FollowLinks::No).ok();
+                    let made = !stood.as_ref().is_some_and(|it| it.kind == EntryKind::Dir);
+                    if made && let Ok(stat) = self.vfs.stat(&from, FollowLinks::No) {
+                        let placed = Placed {
+                            id,
+                            entry: &view_of_entry(&stat),
+                            source: from.clone(),
+                            target: at.clone(),
+                            found: stood.as_ref().map(found_of_stat),
+                            depth,
+                            side: Some(tr.to),
+                        };
+                        self.create_dir(placed, tr);
+                    }
+                    let known = made.then_some(depth);
+                    self.flat_folders.insert(key, known);
+                    known
+                }
+            };
+            depth = known.map_or(0, |depth| depth + 1);
+        }
+        depth
     }
 
     // ---- files ---------------------------------------------------------------------------------------------------------
@@ -1178,7 +1236,11 @@ impl<'a, 'r> Builder<'a, 'r> {
                 .and_then(|found| found.row)
                 .and_then(|other| read.node(other))
                 .is_some_and(|other| other.side(tr.from).is_some());
-            let folded = key_of(entry.name, self.folds(&target));
+            let spelt = match entry.dir {
+                Some(dir) => format!("{dir}/{}", entry.name),
+                None => entry.name.to_owned(),
+            };
+            let folded = key_of(&spelt, self.folds(&target));
             if paired || !self.orphans.insert((parent, tr.to, folded)) {
                 let depth = self.child_depth(view.parent);
                 let reason = SkipReason::DuplicateTarget;
@@ -1202,25 +1264,29 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.cover(id);
             return Ok(());
         }
-        let need = if view.is_folder() {
+        // An opened archive that goes whole goes as the file it is, whatever its format can do to a member.
+        let whole = row.whole.contains(SideSet::of(tr.from));
+        let file = match (
+            &source,
+            view.flags.contains(NodeFlags::archive_root(tr.from)) && whole,
+        ) {
+            (Spec::ArchiveMember { archive, .. }, true) => Some((**archive).clone()),
+            _ => None,
+        };
+        let leaves = file.clone().unwrap_or_else(|| source.clone());
+        let as_a_file = file.is_some() && (tr.moving || view.side(tr.to).is_none());
+        let written = if as_a_file {
+            outer_of(&target)
+        } else {
+            target.clone()
+        };
+        let need = if view.is_folder() && !as_a_file {
             (Capabilities::MKDIR, "mkdir")
         } else {
             (Capabilities::WRITE, "write")
         };
-        // An opened archive that goes whole goes as the file it is, whatever its format can do to a member.
-        let leaves = match (
-            &source,
-            view.flags.contains(NodeFlags::archive_root(tr.from)),
-        ) {
-            (Spec::ArchiveMember { archive, .. }, true)
-                if row.whole.contains(SideSet::of(tr.from)) =>
-            {
-                (**archive).clone()
-            }
-            _ => source.clone(),
-        };
         let gone = tr.moving && self.lacks(&leaves, Capabilities::REMOVE, "remove", Some(tr.from));
-        if gone || self.lacks(&target, need.0, need.1, side) {
+        if gone || self.lacks(&written, need.0, need.1, side) {
             let depth = self.child_depth(view.parent);
             self.skip_row(
                 id,
@@ -1238,7 +1304,10 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.transfer_folder(tr, row, &view, &entry, source, target, found, open)
         } else {
             self.ensure_folder(tr, parent);
-            let depth = self.child_depth(view.parent);
+            let depth = match entry.dir.filter(|_| view.side(tr.to).is_none()) {
+                Some(dir) => self.flat_depth(tr, id, dir),
+                None => self.child_depth(view.parent),
+            };
             match self.kind_action(view.kind, &source, &target, side, tr.moving) {
                 Ok(action) => {
                     let placed = Placed {
@@ -1279,6 +1348,26 @@ impl<'a, 'r> Builder<'a, 'r> {
         let parent = view.parent.unwrap_or(NodeId::ROOT);
         let whole = row.whole.contains(SideSet::of(tr.from));
         let absent = view.side(tr.to).is_none() && found.is_none();
+        // A move of a folder onto or into itself: what `same_file` refuses for a file (rule 7 has no such check of its own).
+        let opened = view.flags.contains(NodeFlags::archive_root(tr.from));
+        if tr.moving
+            && !(opened && whole)
+            && let Err(e) = self.same_file(&source, &target, entry.followed, true)
+        {
+            let depth = self.child_depth(view.parent);
+            self.fail_row(
+                id,
+                Action::Move,
+                EntryKind::Dir,
+                Some(source),
+                target,
+                depth,
+                report(&e),
+                side,
+            );
+            self.cover(id);
+            return Ok(());
+        }
         if view.scan == ScanStatus::NotScanned {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
@@ -1287,15 +1376,14 @@ impl<'a, 'r> Builder<'a, 'r> {
             self.cover(id);
             return Ok(());
         }
-        // An opened archive that goes whole goes as the file it is.
-        let opened = view.flags.contains(NodeFlags::archive_root(tr.from));
+        // An opened archive that goes whole goes as the file it is, also onto its pair when it moves.
         if let (true, true, Spec::ArchiveMember { archive, .. }) =
-            (opened, whole && absent, &source)
+            (opened, whole && (absent || tr.moving), &source)
         {
             self.ensure_folder(tr, parent);
             let depth = self.child_depth(view.parent);
             let file = (**archive).clone();
-            self.place_archive(tr, id, file, target, depth, side);
+            self.place_archive(tr, id, file, outer_of(&target), depth, side);
             self.cover(id);
             return Ok(());
         }
@@ -1374,7 +1462,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         self.push(item, meta);
     }
 
-    /// An opened archive that leaves as one file: copied or moved by its own stamp.
+    /// An opened archive that leaves as one file: copied or moved by its own stamp, onto what stands there as any file is.
     pub(super) fn place_archive(
         &mut self,
         tr: Transfer,
@@ -1389,20 +1477,31 @@ impl<'a, 'r> Builder<'a, 'r> {
         } else {
             Action::Copy
         };
-        let mut item =
-            PlanItem::planned(action, EntryKind::File, Some(file.clone()), target, depth);
-        match self.vfs.stat(&file, FollowLinks::No) {
-            Ok(stat) => {
-                item.size = Some(stat.size);
-                item.expect = Some(Expect {
-                    source: Some(stamp_of_stat(&stat)),
-                    target: None,
-                });
+        let looked = self.vfs.stat(&file, FollowLinks::No).and_then(|stat| {
+            match self.vfs.stat(&target, FollowLinks::No) {
+                Ok(found) => Ok((stat, Some(found))),
+                Err(VfsError::NotFound { .. }) => Ok((stat, None)),
+                Err(e) => Err(e),
             }
-            Err(e) => item.error = Some(report(&e)),
+        });
+        match looked {
+            Ok((stat, found)) => {
+                let placed = Placed {
+                    id,
+                    entry: &view_of_entry(&stat),
+                    source: file,
+                    target,
+                    found: found.as_ref().map(found_of_stat),
+                    depth,
+                    side,
+                };
+                self.place_file(placed, NodeKind::File, action, tr);
+            }
+            Err(e) => {
+                let kind = EntryKind::File;
+                self.fail_row(id, action, kind, Some(file), target, depth, report(&e), side);
+            }
         }
-        let meta = self.meta_of(id, side);
-        self.push(item, meta);
     }
 
     // ---- exchange ----------------------------------------------------------------------------------------------------
@@ -2051,6 +2150,7 @@ impl<'a, 'r> Builder<'a, 'r> {
 
     /// The plan: backups by their final names, around every path of the plan (§1.6.5), the fence.
     fn finish(mut self, verb: OpVerb, writes: bool, moves: bool) -> OpPlan {
+        self.ask_for_archives();
         let mut exec = ExecOptions {
             fence: Some(Fence {
                 bases: vec![self.bases.left.clone(), self.bases.right.clone()],
@@ -2080,6 +2180,24 @@ impl<'a, 'r> Builder<'a, 'r> {
             exec,
             warnings: self.warnings,
             refresh,
+        }
+    }
+
+    /// A change of a member rewrites the file around it: what that file's attributes ask, each item that changes it asks
+    /// (§1.6.11). One `stat` per outermost file.
+    fn ask_for_archives(&mut self) {
+        let vfs = self.vfs;
+        let mut files: BTreeMap<String, Conflicts> = BTreeMap::new();
+        for (item, meta) in self.items.iter().zip(&mut self.meta) {
+            if item.error.is_some() || item.skip.is_some() {
+                continue;
+            }
+            for outer in changed_files(item) {
+                meta.conflicts |= *files.entry(outer.canonical()).or_insert_with(|| {
+                    vfs.stat(outer, FollowLinks::No)
+                        .map_or(Conflicts::empty(), |stat| Conflicts::of_attrs(&stat.attrs))
+                });
+            }
         }
     }
 
@@ -2124,7 +2242,7 @@ impl<'a, 'r> Builder<'a, 'r> {
                 }
             }
         }
-        for item in &mut self.items {
+        for (item, meta) in self.items.iter_mut().zip(&mut self.meta) {
             let backed = matches!(
                 item.action,
                 Action::Copy | Action::Move | Action::Rename | Action::Link | Action::CreateDir
@@ -2142,7 +2260,11 @@ impl<'a, 'r> Builder<'a, 'r> {
                 .chain(&self.outside)
                 .find_map(|base| rel_below(base, &item.target));
             match names.assign(policy, vfs, &item.target, rel.as_ref()) {
-                Ok(backup) => item.backup = Some(backup),
+                Ok(backup) => {
+                    meta.conflicts
+                        .set(Conflicts::OVERWRITE_BACKUP, stands(vfs, &backup));
+                    item.backup = Some(backup);
+                }
                 Err(e) => {
                     item.error = Some(report(&e));
                     item.replaces = false;
@@ -2153,9 +2275,21 @@ impl<'a, 'r> Builder<'a, 'r> {
             let rel = self.rel_of(&outer);
             match names.assign(policy, vfs, &outer, rel.as_ref()) {
                 Ok(backup) => {
+                    if stands(vfs, &backup) {
+                        self.ask_for_backup(&outer);
+                    }
                     exec.archive_backups.insert(outer.canonical(), backup);
                 }
                 Err(e) => self.fail_archive(&outer, &e),
+            }
+        }
+    }
+
+    /// What stands at the backup of `outer` is lost by its rewrite: each item that rewrites it asks.
+    fn ask_for_backup(&mut self, outer: &Spec) {
+        for (item, meta) in self.items.iter().zip(&mut self.meta) {
+            if item.error.is_none() && item.skip.is_none() && changed_files(item).contains(&outer) {
+                meta.conflicts |= Conflicts::OVERWRITE_BACKUP;
             }
         }
     }
@@ -2169,6 +2303,35 @@ impl<'a, 'r> Builder<'a, 'r> {
                 item.error = Some(report(error));
             }
         }
+    }
+}
+
+/// The outermost files `item` rewrites: its target's, and that of a source it takes away.
+fn changed_files(item: &PlanItem) -> Vec<&Spec> {
+    let moved_out = matches!(
+        item.action,
+        Action::Move | Action::Rename | Action::Exchange
+    );
+    let source = item.source.as_ref().filter(|_| moved_out);
+    let mut files: Vec<&Spec> = [Some(&item.target), source]
+        .into_iter()
+        .flatten()
+        .filter_map(Spec::outermost_file)
+        .collect();
+    files.dedup();
+    files
+}
+
+/// True when something stands at a backup's name: this plan did not make it, for `BackupNames` keeps its own apart.
+fn stands(vfs: &dyn Vfs, backup: &Spec) -> bool {
+    vfs.stat(backup, FollowLinks::No).is_ok()
+}
+
+/// What a row of an opened archive stands for on the side written: the file, for an archive's root.
+fn outer_of(target: &Spec) -> Spec {
+    match target {
+        Spec::ArchiveMember { archive, member } if member.is_empty() => (**archive).clone(),
+        other => other.clone(),
     }
 }
 

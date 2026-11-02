@@ -359,6 +359,10 @@ fn result_matches(
         for side in [Side::Left, Side::Right] {
             let hit = if !view.is_folder() {
                 file_matches(&view, read.category(node_id, iu), state, side)
+            } else if view.side(side).is_some() && view.scan == ScanStatus::Failed {
+                // What cannot be read is no match of anything said about it, but `all` takes error rows: a plan has to show
+                // it, or `--select all` passes over a folder that failed and calls that a success.
+                state == SelState::All
             } else if view.side(side).is_none() || view.scan != ScanStatus::Scanned {
                 false
             } else {

@@ -428,6 +428,436 @@ fn a6_15_a_skipped_folder_cuts_nothing_of_its_neighbours() {
     assert!(s.join("l/A").exists());
 }
 
+/// A zip at `rel` with `members`.
+fn zip_at(s: &Sandbox, rel: &str, members: &[&str]) {
+    let archive = s.join(rel);
+    let made = s.cmd().args(["vfs", "mkdir"]).arg(&archive).output().unwrap();
+    assert_eq!(code(&made), 0, "{}", stderr(&made));
+    for name in members {
+        let file = s.file(&format!("zip-input/{name}"), *name);
+        let copied = s
+            .cmd()
+            .args(["vfs", "cp"])
+            .arg(file)
+            .arg(format!("{}/{name}", archive.display()))
+            .output()
+            .unwrap();
+        assert_eq!(code(&copied), 0, "{}", stderr(&copied));
+    }
+}
+
+fn zip_members(s: &Sandbox, rel: &str) -> String {
+    let listed = s.cmd().args(["vfs", "ls"]).arg(s.join(rel)).output().unwrap();
+    assert_eq!(code(&listed), 0, "{}", stderr(&listed));
+    stdout(&listed)
+}
+
+/// §1.6.11: a change of a member rewrites the file around it, and a read-only file says so.
+#[cfg(unix)]
+#[test]
+fn a6_16_a_read_only_archive_is_a_conflict() {
+    let s = Sandbox::new();
+    s.dir("l");
+    s.dir("r");
+    zip_at(&s, "l/a.zip", &["m.txt", "n.txt"]);
+    common::set_mode(&s.join("l/a.zip"), 0o444);
+    let flags = [
+        "--archives",
+        "folders",
+        "--side",
+        "left",
+        "--path",
+        "a.zip/m.txt",
+    ];
+    let mut dry = vec!["delete"];
+    dry.extend(flags);
+    dry.push("--dry-run");
+    let out = op(&s, &dry);
+    assert!(stdout(&out).contains("[read_only]"), "{}", stdout(&out));
+    let mut keep = vec!["delete"];
+    keep.extend(flags);
+    keep.extend(["--confirm", "no-to-all"]);
+    let before = std::fs::read(s.join("l/a.zip")).unwrap();
+    let out = op(&s, &keep);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("l/a.zip")).unwrap(), before);
+    let mut go = vec!["delete"];
+    go.extend(flags);
+    go.push("--yes");
+    let out = op(&s, &go);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!zip_members(&s, "l/a.zip").contains("m.txt"));
+}
+
+/// An opened archive that goes whole is the file it is, onto its pair too: the plan does what it showed (p09).
+#[test]
+fn a6_15_a_move_of_an_archive_open_on_both_sides() {
+    let s = Sandbox::new();
+    s.dir("l");
+    s.dir("r");
+    zip_at(&s, "l/a.zip", &["left.txt"]);
+    zip_at(&s, "r/a.zip", &["right.txt"]);
+    let flags = ["--to", "right", "--select", "all", "--archives", "folders"];
+    let mut dry = vec!["move"];
+    dry.extend(flags);
+    dry.extend(["--dry-run", "--json"]);
+    let shown = op(&s, &dry);
+    assert_eq!(code(&shown), 0, "{}", stderr(&shown));
+    let items = json(&shown)["result"]["items"].clone();
+    assert_eq!(items.as_array().unwrap().len(), 1, "{items}");
+    assert_eq!(items[0]["action"], "move");
+    assert_eq!(items[0]["replaces"], true);
+    let conflicts = items[0]["conflicts"].to_string();
+    assert!(conflicts.contains("replace_during_move"), "{conflicts}");
+    let mut go = vec!["move"];
+    go.extend(flags);
+    go.push("--yes");
+    let out = op(&s, &go);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!s.join("l/a.zip").exists());
+    assert!(zip_members(&s, "r/a.zip").contains("left.txt"));
+}
+
+/// The same through `moveto`, and flat: nothing asks to remove an archive's root (p09).
+#[test]
+fn a6_19_moveto_of_an_opened_archive_goes_as_its_file() {
+    for structure in ["relative", "none"] {
+        let s = Sandbox::new();
+        s.dir("l");
+        s.dir("r");
+        s.file("out/a.zip", "something else");
+        zip_at(&s, "l/a.zip", &["m.txt"]);
+        let target = s.join("out");
+        let out = op(
+            &s,
+            &[
+                "moveto",
+                "--side",
+                "left",
+                "--select",
+                "all",
+                "--archives",
+                "folders",
+                "--target",
+                target.to_str().unwrap(),
+                "--structure",
+                structure,
+                "--overwrite",
+                "always",
+                "--yes",
+            ],
+        );
+        assert_eq!(code(&out), 0, "{structure}: {}", stderr(&out));
+        assert!(!s.join("l/a.zip").exists());
+        assert!(zip_members(&s, "out/a.zip").contains("m.txt"));
+    }
+}
+
+/// Flat rows have real folders: names of two folders do not collide, and a missing folder is planned (p08).
+#[test]
+fn a6_15_a_flat_comparison_uses_real_parents() {
+    let s = Sandbox::new();
+    s.file("l/a/x", "1");
+    s.file("l/b/y", "2");
+    s.dir("r/a");
+    s.dir("r/b");
+    let out = op(
+        &s,
+        &[
+            "rename", "--side", "left", "--select", "all", "--flatten", "--mask", "q*", "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("l/a/q").exists() && s.join("l/b/q").exists());
+    // A name taken in its own folder still is.
+    let s = Sandbox::new();
+    s.file("l/a/x", "1");
+    s.file("l/a/q", "kept");
+    s.dir("r");
+    let out = op(
+        &s,
+        &[
+            "rename", "--side", "left", "--select", "all", "--flatten", "--mask", "q*", "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(std::fs::read(s.join("l/a/q")).unwrap(), b"kept");
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+
+    let s = Sandbox::new();
+    s.file("l/a/deep/x", "1");
+    s.file("l/b/x", "2");
+    s.dir("r");
+    let out = op(
+        &s,
+        &[
+            "copy", "--to", "right", "--select", "all", "--flatten", "--yes", "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/a/deep/x")).unwrap(), b"1");
+    assert_eq!(std::fs::read(s.join("r/b/x")).unwrap(), b"2");
+    let doc = json(&out);
+    let made = doc["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["action"] == "create_dir")
+        .count();
+    assert_eq!(made, 3, "{doc}");
+    // `copyto` keeps the folders of a flat row by its structure.
+    let target = s.join("kept");
+    let out = op(
+        &s,
+        &[
+            "copyto",
+            "--side",
+            "left",
+            "--select",
+            "all",
+            "--flatten",
+            "--target",
+            target.to_str().unwrap(),
+            "--structure",
+            "base",
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("kept/a/deep/x")).unwrap(), b"1");
+    assert_eq!(std::fs::read(s.join("kept/b/x")).unwrap(), b"2");
+}
+
+/// A move onto itself: nothing goes, folders no more than files, by any spelling (p12).
+#[test]
+fn a6_15_a_move_onto_itself_is_refused() {
+    let s = Sandbox::new();
+    s.file("l/d/x", "a");
+    s.dir("l/e");
+    s.dir("r");
+    let before = tree(&s.join("l"));
+    for right in [s.join("l"), s.join("r/../l")] {
+        let out = s
+            .cmd()
+            .args(["folder", "op", "move"])
+            .arg(s.join("l"))
+            .arg(&right)
+            .args(["--to", "right", "--select", "all", "--yes"])
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 100, "{}", stdout(&out));
+        assert!(stdout(&out).contains("is the source itself"), "{}", stdout(&out));
+        assert_eq!(tree(&s.join("l")), before);
+    }
+}
+
+/// §1.6.5: a file at the backup's name this plan did not make asks, a dry run shows it, and `--yes` replaces it (p13).
+#[test]
+fn a6_16_a_backup_over_a_file_of_nobody_asks() {
+    let s = Sandbox::new();
+    s.file_at("l/x.txt", "new", 2_000_000);
+    s.file_at("r/x.txt", "old", 1_000_000);
+    s.file("r/x.txt.bak", "my own notes");
+    let flags = ["--to", "right", "--select", "all", "--backup"];
+    let mut args = vec!["copy"];
+    args.extend(flags);
+    args.push("--dry-run");
+    let out = op(&s, &args);
+    assert!(stdout(&out).contains("[overwrite_backup]"), "{}", stdout(&out));
+    let mut args = vec!["copy"];
+    args.extend(flags);
+    args.extend(["--confirm", "no-to-all"]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/x.txt")).unwrap(), b"old");
+    assert_eq!(std::fs::read(s.join("r/x.txt.bak")).unwrap(), b"my own notes");
+    let mut args = vec!["copy"];
+    args.extend(flags);
+    args.push("--yes");
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/x.txt")).unwrap(), b"new");
+    assert_eq!(std::fs::read(s.join("r/x.txt.bak")).unwrap(), b"old");
+    // A backup with nothing at its name asks nothing.
+    let s = Sandbox::new();
+    s.file_at("l/x.txt", "new", 2_000_000);
+    s.file_at("r/x.txt", "old", 1_000_000);
+    let mut args = vec!["copy"];
+    args.extend(flags);
+    args.extend(["--confirm", "no-to-all"]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(std::fs::read(s.join("r/x.txt.bak")).unwrap(), b"old");
+}
+
+/// A refused move leaves nothing behind (p15), and a folder on the way to nothing is not made.
+#[test]
+fn a6_19_a_refused_moveto_makes_no_folder() {
+    let s = Sandbox::new();
+    s.file("l/a/x", "1");
+    s.dir("r");
+    let before = tree(&s.join("l"));
+    let target = s.join("l/a/inside");
+    let out = op(
+        &s,
+        &[
+            "moveto",
+            "--side",
+            "left",
+            "--path",
+            "a",
+            "--target",
+            target.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert_eq!(tree(&s.join("l")), before);
+    // What is needed stays: a second row goes there.
+    s.file("l/b", "2");
+    let out = op(
+        &s,
+        &[
+            "moveto",
+            "--side",
+            "left",
+            "--select",
+            "all",
+            "--target",
+            target.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert_eq!(std::fs::read(s.join("l/a/inside/b")).unwrap(), b"2");
+}
+
+/// The small refusals: a `rename` into itself (p17.1), an archive copied into itself (p17.2).
+#[test]
+fn a6_15_a_folder_into_itself_is_refused_at_planning() {
+    let s = Sandbox::new();
+    s.file("l/sub/a", "b");
+    let out = s
+        .cmd()
+        .args(["folder", "op", "move"])
+        .arg(s.join("l"))
+        .arg(s.join("l/sub"))
+        .args(["--to", "right", "--path", "sub", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    let doc = json(&out);
+    assert_eq!(doc["result"]["items"][0]["status"], "failed", "{doc}");
+}
+
+#[test]
+fn a6_19_an_archive_into_itself_is_an_item_error() {
+    let s = Sandbox::new();
+    s.dir("l");
+    s.dir("r");
+    zip_at(&s, "l/a.zip", &["m.txt"]);
+    let before = std::fs::read(s.join("l/a.zip")).unwrap();
+    let target = format!("{}/", s.join("l/a.zip").display());
+    let out = op(
+        &s,
+        &[
+            "copyto", "--side", "left", "--path", "a.zip", "--target", &target, "--yes",
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert_eq!(std::fs::read(s.join("l/a.zip")).unwrap(), before);
+}
+
+/// `--select all` over a folder that failed to list says so: never 0 (p17.3).
+#[cfg(unix)]
+#[test]
+fn a6_25_select_all_over_a_failed_folder_is_not_a_success() {
+    let s = Sandbox::new();
+    s.file("l/A/a", "a");
+    s.file("r/A/a", "a");
+    s.file("l/B/x", "x");
+    s.dir("r/B");
+    common::set_mode(&s.join("l/A"), 0o000);
+    // Only a process the mode stops can see this.
+    if std::fs::read_dir(s.join("l/A")).is_err() {
+        let out = op(&s, &["copy", "--to", "right", "--select", "all", "--dry-run"]);
+        assert_eq!(code(&out), 100, "{}", stdout(&out));
+        assert!(stdout(&out).contains("compare_error"), "{}", stdout(&out));
+    }
+    common::set_mode(&s.join("l/A"), 0o755);
+}
+
+/// `x.zip/` is a folder, whatever its name looks like; `x.zip` is an archive (D-150).
+#[test]
+fn a6_19_a_trailing_separator_makes_a_folder() {
+    let s = sandbox();
+    let target = format!("{}/", s.join("out.zip").display());
+    let flags = ["--side", "left", "--path", "only.txt", "--yes"];
+    let mut args = vec!["copyto"];
+    args.extend(flags);
+    args.extend(["--target", &target]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.join("out.zip").is_dir());
+    assert_eq!(
+        std::fs::read(s.join("out.zip/only.txt")).unwrap(),
+        b"only\n"
+    );
+    let s = sandbox();
+    let target = s.join("out.zip");
+    let mut args = vec!["copyto"];
+    args.extend(flags);
+    args.extend(["--target", target.to_str().unwrap()]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(target.is_file());
+    assert!(zip_members(&s, "out.zip").contains("only.txt"));
+}
+
+/// Open With: no name reaches a program as an option (p14), a row missing on a side starts nothing, and it takes a target.
+#[test]
+fn a6_23_open_with_refusals() {
+    let s = sandbox();
+    s.file("l/-rf", "x");
+    std::fs::create_dir_all(s.config()).unwrap();
+    std::fs::write(
+        s.config().join("openwith.toml"),
+        "schema_version = 1\n[[app]]\ndescription = \"view\"\ncommand = \"viewer %n %F %P\"\n",
+    )
+    .unwrap();
+    let flags = ["--path=-rf", "--app", "view", "--dry-run", "--json"];
+    let mut args = vec!["open-with"];
+    args.extend(flags);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    for word in doc["result"]["commands"][0]["args"].as_array().unwrap() {
+        assert_eq!(word, "./-rf");
+    }
+    let mut args = vec!["open-with"];
+    args.extend(flags);
+    args.extend(["--side", "right"]);
+    let out = op(&s, &args);
+    assert_eq!(code(&out), 100);
+    assert_eq!(json(&out)["error"]["kind"], "not_found");
+    // Neither `--app` nor `--associated`: a usage error, before anything is compared.
+    let out = op(&s, &["open-with", "--path", "only.txt", "--json"]);
+    assert_eq!(code(&out), 100);
+    assert!(stdout(&out).contains("hikasa.usage_error.v1"), "{}", stdout(&out));
+}
+
+/// `mkdir --name 'x\\'` is no `x`: off Windows the name is refused, and nothing is made.
+#[cfg(not(windows))]
+#[test]
+fn a6_19_a_trailing_backslash_is_refused() {
+    let s = sandbox();
+    let before = state(&s);
+    let out = op(&s, &["mkdir", "--side", "left", "--name", "x\\", "--yes", "--json"]);
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    assert_eq!(json(&out)["error"]["kind"], "invalid_input");
+    assert_eq!(state(&s), before);
+}
+
 /// D-184: Disable editing follows where a `--target` leads, for `copyto` and `moveto`, on the left and on the right.
 #[test]
 fn a6_21_a_target_on_a_read_only_side_is_refused() {

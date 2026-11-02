@@ -13,6 +13,7 @@
 //! A substituted path is always inside one word, so it is exactly one argument whatever it contains.
 //! ```
 
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -305,8 +306,9 @@ pub fn check_template(template: &str) -> Result<(), ExpandError> {
     Ok(())
 }
 
-/// Expands a command line into the program and its arguments (D-76).
-pub fn expand_command(template: &str, ctx: &ExpandContext) -> Result<Vec<String>, ExpandError> {
+/// Expands a command line into the program and its arguments (D-76). The words are OS strings: a name that is not Unicode
+/// reaches the program as it stands on disk.
+pub fn expand_command(template: &str, ctx: &ExpandContext) -> Result<Vec<OsString>, ExpandError> {
     split_words(template)?
         .iter()
         .map(|word| expand_word(word, ctx))
@@ -314,18 +316,18 @@ pub fn expand_command(template: &str, ctx: &ExpandContext) -> Result<Vec<String>
 }
 
 /// Expands the variables of one word.
-fn expand_word(word: &str, ctx: &ExpandContext) -> Result<String, ExpandError> {
-    let mut out = String::new();
+fn expand_word(word: &str, ctx: &ExpandContext) -> Result<OsString, ExpandError> {
+    let mut out = OsString::new();
     let mut chars = word.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '%' {
-            out.push(c);
+            out.push(c.encode_utf8(&mut [0; 4]));
             continue;
         }
         let v = match chars.next() {
             None => return Err(ExpandError::DanglingPercent),
             Some('%') => {
-                out.push('%');
+                out.push("%");
                 continue;
             }
             Some(v) if VARIABLES.contains(v) => v,
@@ -346,46 +348,100 @@ fn expand_word(word: &str, ctx: &ExpandContext) -> Result<String, ExpandError> {
         };
         let value = match v {
             'l' => {
-                out.push_str(&ctx.line.unwrap_or(1).to_string());
+                out.push(ctx.line.unwrap_or(1).to_string());
                 continue;
             }
-            'f' => text(&item.path),
+            'f' => item.path.as_os_str().to_os_string(),
             'n' => name(&item.path),
-            'p' => item.path.parent().map(text).unwrap_or_default(),
-            'x' => split_ext(&name(&item.path)).1.to_owned(),
-            'b' => split_ext(&name(&item.path)).0.to_owned(),
-            'F' => text(&relative(&item.path, &ctx.working_folder)),
-            _ => text(&relative(&item.path, &item.base)),
+            'p' => item
+                .path
+                .parent()
+                .map(|parent| parent.as_os_str().to_os_string())
+                .unwrap_or_default(),
+            'x' => split_ext(&name(&item.path)).1,
+            'b' => split_ext(&name(&item.path)).0,
+            'F' => relative(&item.path, &ctx.working_folder).into_os_string(),
+            _ => relative(&item.path, &item.base).into_os_string(),
+        };
+        // Relative text that begins a word and starts with `-` would reach the program as an option.
+        let value = if out.is_empty() && matches!(v, 'n' | 'b' | 'F' | 'P') {
+            guarded(value)
+        } else {
+            value
         };
         match ctx.path_delimiter {
-            Some(d) => out.extend(
-                value
-                    .chars()
-                    .map(|c| if c == '/' || c == '\\' { d } else { c }),
-            ),
-            None => out.push_str(&value),
+            Some(d) => out.push(with_delimiter(&value, d)),
+            None => out.push(value),
         }
     }
     Ok(out)
 }
 
-/// A path as text (lossy for names that are not Unicode).
-fn text(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+/// `./-rf` for `-rf`: still the same relative path, and no option of the program.
+fn guarded(value: OsString) -> OsString {
+    if value.as_encoded_bytes().first() != Some(&b'-') {
+        return value;
+    }
+    let mut out = OsString::from("./");
+    out.push(value);
+    out
+}
+
+/// `value` with each `/` and `\\` replaced by `delimiter`, and the rest as it is.
+fn with_delimiter(value: &OsStr, delimiter: char) -> OsString {
+    if let Some(text) = value.to_str() {
+        let swapped = text.chars().map(|c| {
+            if c == '/' || c == '\\' {
+                delimiter
+            } else {
+                c
+            }
+        });
+        return OsString::from(swapped.collect::<String>());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let mut own = [0; 4];
+        let own = delimiter.encode_utf8(&mut own).as_bytes();
+        let mut out = Vec::with_capacity(value.len());
+        for byte in value.as_bytes() {
+            if matches!(byte, b'/' | b'\\') {
+                out.extend_from_slice(own);
+            } else {
+                out.push(*byte);
+            }
+        }
+        OsString::from_vec(out)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let mut own = [0; 2];
+        let own = delimiter.encode_utf16(&mut own);
+        let mut out = Vec::with_capacity(value.len());
+        for unit in value.encode_wide() {
+            if unit == u16::from(b'/') || unit == u16::from(b'\\') {
+                out.extend_from_slice(own);
+            } else {
+                out.push(unit);
+            }
+        }
+        OsString::from_wide(&out)
+    }
 }
 
 /// The last component of a path.
-fn name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
+fn name(path: &Path) -> OsString {
+    path.file_name().map(OsStr::to_os_string).unwrap_or_default()
 }
 
 /// A name split at its last `.` (a leading `.` starts no extension: `.bashrc` has none).
-fn split_ext(name: &str) -> (&str, &str) {
-    match name.rfind('.') {
-        Some(at) if at > 0 => (&name[..at], &name[at + 1..]),
-        _ => (name, ""),
+fn split_ext(name: &OsStr) -> (OsString, OsString) {
+    let path = Path::new(name);
+    match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(extension)) => (stem.to_os_string(), extension.to_os_string()),
+        _ => (name.to_os_string(), OsString::new()),
     }
 }
 
@@ -588,9 +644,62 @@ mod tests {
             let mut c = ctx();
             change(&mut c);
             let got = expand_command(template, &c);
-            let expected = expected.map(|w| w.into_iter().map(String::from).collect::<Vec<_>>());
+            let expected = expected.map(|w| w.into_iter().map(OsString::from).collect::<Vec<_>>());
             assert_eq!(got, expected, "{template}");
         }
+    }
+
+    /// What `%n`, `%F`, `%P` and `%b` give starts no option: at the start of a word, a `-` becomes `./-`.
+    #[test]
+    fn a_value_that_starts_a_word_is_no_option() {
+        let dash = |c: &mut ExpandContext| {
+            c.first = item("/w/-rf.txt", "/w");
+            c.working_folder = PathBuf::from("/w");
+        };
+        for (template, word) in [
+            ("x %n", "./-rf.txt"),
+            ("x %F", "./-rf.txt"),
+            ("x %P", "./-rf.txt"),
+            ("x %b", "./-rf"),
+            ("x %f", "/w/-rf.txt"),
+            ("x --file=%n", "--file=-rf.txt"),
+            ("x %p/%n", "/w/-rf.txt"),
+        ] {
+            let mut c = ctx();
+            dash(&mut c);
+            let got = expand_command(template, &c).unwrap();
+            assert_eq!(got[1], OsString::from(word), "{template}");
+        }
+        let mut c = ctx();
+        dash(&mut c);
+        c.path_delimiter = Some('\\');
+        assert_eq!(
+            expand_command("x %n", &c).unwrap()[1],
+            OsString::from(".\\-rf.txt")
+        );
+    }
+
+    /// A name that is not Unicode reaches the program as it stands on disk (W6d's window can reach this).
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_unicode_stays_as_it_is() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let raw = OsString::from_vec(b"/w/caf\xe9.t\xe9t".to_vec());
+        let mut c = ctx();
+        c.first = ExpandItem {
+            path: PathBuf::from(&raw),
+            base: PathBuf::from("/w"),
+        };
+        c.working_folder = PathBuf::from("/w");
+        let at = |template: &str, c: &ExpandContext| expand_command(template, c).unwrap()[1].clone();
+        assert_eq!(at("x %f", &c), raw);
+        assert_eq!(at("x %n", &c).as_bytes(), b"caf\xe9.t\xe9t");
+        assert_eq!(at("x %F", &c).as_bytes(), b"caf\xe9.t\xe9t");
+        assert_eq!(at("x %b", &c).as_bytes(), b"caf\xe9");
+        assert_eq!(at("x %x", &c).as_bytes(), b"t\xe9t");
+        assert_eq!(at("x a%n", &c).as_bytes(), b"acaf\xe9.t\xe9t");
+        c.path_delimiter = Some('\\');
+        assert_eq!(at("x %f", &c).as_bytes(), b"\\w\\caf\xe9.t\xe9t");
     }
 
     #[test]

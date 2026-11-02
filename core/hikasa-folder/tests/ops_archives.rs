@@ -257,6 +257,7 @@ fn a6_19_a_move_into_a_tar_removes_its_sources_after_the_rebuild() {
     let op = FolderOp::MoveTo {
         sides: L,
         target: mspec("/out.tar"),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
@@ -280,6 +281,7 @@ fn a6_19_a_move_into_a_tar_removes_its_sources_after_the_rebuild() {
         } => FolderOp::MoveTo {
             sides,
             target: spec,
+            folder: false,
             structure,
             overwrite,
         },
@@ -362,6 +364,7 @@ fn a6_19_copyto_of_an_opened_archive_copies_the_file() {
     let op = FolderOp::CopyTo {
         sides: L,
         target: mspec("/out"),
+        folder: false,
         structure: PathStructure::Relative,
         overwrite: OverwritePolicy::Fail,
     };
