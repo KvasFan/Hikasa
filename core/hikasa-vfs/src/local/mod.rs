@@ -1586,10 +1586,11 @@ mod tests {
             );
             assert_changed(result, &from, name);
         }
-        let mut expected = vec!["grew".to_owned(), "shrank".to_owned()];
+        let expected = vec!["grew".to_owned(), "shrank".to_owned()];
         assert_eq!(sources(&root), expected);
         #[cfg(unix)]
         {
+            let mut expected = expected;
             fs::create_dir(root.join("folder")).unwrap();
             let from = root.join("folder");
             let result = vfs.copy_new_file(
