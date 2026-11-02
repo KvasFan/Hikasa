@@ -42,7 +42,7 @@ const fn unreserved(b: u8) -> bool {
 /// A relative link from its segments (normative, §1.7.8): each segment's bytes, the RFC 3986 unreserved bytes
 /// (`A–Z a–z 0–9 - . _ ~`) kept and every other byte `%XX` (upper-case hex), the segments joined by `/`. So a link is
 /// never absolute, never `file:`, never holds `\`, `\\?\` or a drive letter, and a name that is not UTF-8 still links.
-/// A segment `..` stays `..` (the back link of a pair report); the caller passes final names only.
+/// A segment `..` stays `..` (the back link of a pair report); the caller passes final names only, none empty.
 pub fn href<S: AsRef<[u8]>>(segments: &[S]) -> String {
     let mut out = String::new();
     for (i, segment) in segments.iter().enumerate() {

@@ -240,10 +240,12 @@ pub fn check(bytes: &[u8]) -> Result<(), String> {
                         node.attribute("path").unwrap_or_default(),
                         up.attribute("path").unwrap_or_default(),
                     );
-                    if !path
+                    // A child is its folder's path plus one name.
+                    let child = path
                         .strip_prefix(above)
-                        .is_some_and(|rest| rest.starts_with('/'))
-                    {
+                        .and_then(|rest| rest.strip_prefix('/'))
+                        .is_some_and(|name| !name.is_empty() && !name.contains('/'));
+                    if !child {
                         return Err(format!("{path} nested in {above}"));
                     }
                 }

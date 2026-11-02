@@ -11,16 +11,16 @@
   <tree flat="true">
     <folder name="sub" path="sub" state="error" marker="E">
       <left name="sub" error="/l/sub: permission denied"/>
-      <entry name="w.txt" path="sub/w.txt" state="unknown" marker="?" kind="file">
-        <right name="w.txt" size="1" modified="2026-01-01T00:00:00Z"/>
-      </entry>
-      <entry name="x.txt" path="sub/x.txt" state="unknown" marker="?" kind="file">
-        <right name="x.txt" size="1" modified="2026-01-01T00:00:00Z"/>
-      </entry>
-      <entry name="y.txt" path="sub/deep/y.txt" state="unknown" marker="?" kind="file">
-        <right name="y.txt" size="1" modified="2026-01-01T00:00:00Z"/>
-      </entry>
     </folder>
+    <entry name="w.txt" path="sub/w.txt" state="unknown" marker="?" kind="file">
+      <right name="w.txt" size="1" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="x.txt" path="sub/x.txt" state="unknown" marker="?" kind="file">
+      <right name="x.txt" size="1" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="y.txt" path="sub/deep/y.txt" state="unknown" marker="?" kind="file">
+      <right name="y.txt" size="1" modified="2026-01-01T00:00:00Z"/>
+    </entry>
   </tree>
   <summary verdict="incomplete" complete="true">
     <count group="files" name="same" value="2"/>

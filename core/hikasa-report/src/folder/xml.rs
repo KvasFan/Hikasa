@@ -250,7 +250,13 @@ pub(super) fn write(
                     out.push_str("</folder>\n");
                 }
                 if push_row(&mut out, &read, *row, 2 + open.len(), iu, links) {
-                    open.push(path.to_owned());
+                    if flat {
+                        // A flat tree nests nothing: a folder row (one that failed to list) holds only its sides.
+                        xml::indent(&mut out, 2 + open.len());
+                        out.push_str("</folder>\n");
+                    } else {
+                        open.push(path.to_owned());
+                    }
                 }
                 w.write_all(out.as_bytes())?;
             }
