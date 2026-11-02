@@ -54,6 +54,8 @@ topics!(
     "wizard-export",
     "wizard-import",
     "wizard-restore",
+    "dialog-confirm",
+    "dialog-delete",
     "view-folder-compare",
     "view-text-compare",
 );
