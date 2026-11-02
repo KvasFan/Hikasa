@@ -25,7 +25,18 @@
   item with no recycle bin. `folder op delete` asks whatever `confirm_delete` says; without a terminal or `--yes` nothing is
   touched and the command exits 100. A failing recycle bin fails the item unless `--recycle-fallback` was given.
 - **Disable editing** per side, `specs.read_only_left`, `read_only_right` and `--read-only`, is enforced before anything is
-  planned.
+  planned, also for a `copyto` or `moveto` whose target leads into that side, by `..` or through a link.
+- **`--path` never means the whole tree.** An empty `--path` (a shell variable that came out empty), `.`, `/` or `left:` is an
+  error; the whole tree takes `--select all`.
+- **Filters win in folders the comparison did not list.** Such a folder is listed when the plan is made, through the same
+  filters: what they hide is not touched, a folder that keeps something stays, and its files are stamped and asked about
+  as rows are, so a file edited while a question is open is not deleted.
+- **`--recycle-fallback` deletes only what the plan saw.** A file that came into a folder since, or changed, stays, and so
+  does its folder.
+- **More questions:** a folder that replaces a file, a change in a read-only archive, and a backup over a file the plan did
+  not make each ask, and `--confirm no-to-all` keeps them. What lies in a folder answered no stays with it.
+- **A plan runs what it shows.** An item that does not run, with no cancel, is no success (exit 100), and a summary says how
+  many did not run; a folder that cannot go no longer stops its neighbours.
 
 ### Changed
 - **`include_hidden_by_default` is now false.** Operations honour the filters unless a dialog or `--include-hidden` says
@@ -37,6 +48,13 @@
   folder it made before the source goes.
 
 ### Fixed
+- **`folder op` (unreleased) after review.** Ctrl-C at a question ends it at once. A move of an archive opened on both sides
+  replaces the file instead of failing. A move of a folder onto itself, and a rename of a folder into itself, are refused
+  when planned. In a flat comparison, names in two folders no longer collide and a missing folder is made. `copyto` of an
+  archive into itself is refused, and a refused `moveto` leaves no new folder. `--target x.zip/` makes a folder. `--select
+  all` over a folder that could not be read exits 100. Open With gives a name that starts with `-` as `./-…`, carries names
+  that are not Unicode, and refuses a row missing on the side asked for. `mkdir --name 'x\'` is refused rather than making
+  `x`.
 - **A path with `..` no longer hangs.** `vfs cp -r` and `vfs mv` of a folder to a target spelt with `..` (`../copy`,
   `a/../copy`) never ended and could not be cancelled; this goes back to 0.1.90. A `..` keeps the meaning the OS gives it
   through links, so a folder still cannot be copied below itself by spelling.
