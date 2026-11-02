@@ -821,7 +821,7 @@ fn descendants(root: u32) -> Vec<u32> {
         return Vec::new();
     };
     let mut parent_of = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries.map_while(Result::ok) {
         let Some(pid) = entry
             .file_name()
             .to_str()
