@@ -146,6 +146,10 @@ fn exchange(
         give_back(src, source, cleared_source);
         drop_both(e)
     };
+    // Each side's old content lives on in the other's hidden copy, whose file is synced: its name goes first (§1.6.3).
+    if let Some(folder) = t2.parent() {
+        src.sync_folder(&folder);
+    }
     if source_member && !target_member {
         src.rename(&t2, source, true).map_err(undo)?;
         exec.deferred.push((
@@ -171,6 +175,9 @@ fn exchange(
             },
         ));
         return Ok(Outcome::Done(bytes));
+    }
+    if let Some(folder) = target.parent() {
+        dst.sync_folder(&folder);
     }
     src.rename(&t2, source, true).map_err(|_| {
         give_back(src, source, cleared_source);

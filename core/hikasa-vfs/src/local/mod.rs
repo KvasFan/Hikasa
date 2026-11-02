@@ -1576,6 +1576,30 @@ mod tests {
         assert!(!root.join("file").exists());
     }
 
+    /// `exchange`: across two disks neither rename may reach the disk without the copy that keeps what it replaces.
+    #[test]
+    fn an_exchange_syncs_each_copy_and_its_name() {
+        let _one = serial();
+        let (_dir, root) = scratch();
+        fs::create_dir(root.join("l")).unwrap();
+        fs::create_dir(root.join("r")).unwrap();
+        fs::write(root.join("l").join("f"), b"left").unwrap();
+        fs::write(root.join("r").join("f"), b"right").unwrap();
+        let action = crate::ops::Action::Exchange;
+        let (left, right) = (spec(&root.join("l").join("f")), spec(&root.join("r").join("f")));
+        let item = crate::ops::PlanItem::planned(action, EntryKind::File, Some(left), right, 0);
+        let plan = ops::Plan {
+            op: ops::OpKind::Batch,
+            options: ops::PlanOptions::Batch(ops::BatchOptions::default()),
+            items: vec![item],
+            warnings: Vec::new(),
+        };
+        let vfs = LocalVfs::default();
+        let expected = if cfg!(unix) { 4 } else { 2 };
+        let syncs = syncs_of(|| assert!(ops::execute(&vfs, &vfs, plan, &Ctl::detached()).ok()));
+        assert_eq!(syncs, expected);
+    }
+
     /// A program that creates the target while the copy runs keeps its file: the rename never replaces.
     #[test]
     fn a_file_created_during_the_copy_is_not_replaced() {
