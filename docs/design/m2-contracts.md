@@ -5341,7 +5341,8 @@ text was silent.
 10. **Words.** `--custom`'s base is the stored matrix, else all `leave`; `custom` is no base word. `--recycle-fallback` needs
     `--recycle`. `--select`, `--path` without `--just-selection` are refused (exit 100) rather than passed by; `--just-selection`
     that selects nothing is refused as in `folder op`. `--visible` shows what `--display` (default `all`) shows. A preset is
-    needed unless `--session`, whose `[rules.sync]` is the base (a folder-compare session gives the defaults). The human lines
+    needed unless a folder-sync `--session`, whose `[rules.sync]` is the base (a folder-compare session needs one: see
+    *after review* 3). The human lines
     leave out `same` rows, `--all-rows` too (JSON has them), and a row left says ` (<reason>)`.
 11. **`session run`.** `SessionRunRequest::Sync { request, options }` (additive); its read-only sides come from the session.
     `--yes`, `--confirm`, `--dry-run`, `--allow-empty-source`, `--all-rows` on another type are refused: a comparison would pass
@@ -5395,6 +5396,8 @@ text was silent.
    sync reads are those the contract names: `[backups]` (§1.6.5), `preserve_created`, and the confirmation keys
    (`sync_confirmations` for a view, `confirm_*` for the per-item questions, §1.6.11; the CLI asks the operation question
    whatever `confirm_delete` says).
+3. **Note 10's default preset is rejected.** `folder sync --session <folder-compare session>` without a preset flag is a
+   usage error (`invalid_input`, exit 100), with `--gui` too, before any contact: only a folder-sync session holds a preset.
 
 ### 1.7–1.14 W7–W14
 

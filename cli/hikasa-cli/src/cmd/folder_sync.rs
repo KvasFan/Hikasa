@@ -85,11 +85,12 @@ pub fn run(ctx: &mut Ctx<'_>, args: &FolderSyncArgs) -> u8 {
     }
 }
 
-/// The session's sync and comparison, or the defaults and the two sides.
+/// The session's sync and comparison, or the two sides. The sync is `None` when nothing holds one: no session, or a
+/// folder-compare session; then a preset flag is required.
 fn base_of(
     ctx: &Ctx<'_>,
     args: &FolderSyncArgs,
-) -> Result<(FolderCompareRequest, SyncOptions, ReadOnlySides), ApiError> {
+) -> Result<(FolderCompareRequest, Option<SyncOptions>, ReadOnlySides), ApiError> {
     let common = &args.common;
     let mut request = super::folder::rules_request(ctx, &common.rule)?;
     request.ignore_unimportant = common.select.ignore_unimportant;
@@ -97,8 +98,8 @@ fn base_of(
         (Some(reference), _, _) => {
             let reference = SessionRef::parse(reference)?;
             let (session, options) = match ctx.service.session_run_request(&reference)? {
-                SessionRunRequest::Sync { request, options } => (request, options),
-                SessionRunRequest::Folder(request) => (request, SyncOptions::default()),
+                SessionRunRequest::Sync { request, options } => (request, Some(options)),
+                SessionRunRequest::Folder(request) => (request, None),
                 SessionRunRequest::Text(_) => {
                     return Err(ApiError::InvalidArgument(format!(
                         "`{reference}` is no folder session"
@@ -114,7 +115,7 @@ fn base_of(
         (None, Some(left), Some(right)) => {
             request.left = left.clone();
             request.right = right.clone();
-            (SyncOptions::default(), ReadOnlySides::default())
+            (None, ReadOnlySides::default())
         }
         _ => {
             return Err(ApiError::InvalidArgument(
@@ -125,21 +126,26 @@ fn base_of(
     Ok((request, options, read_only))
 }
 
-/// The sync of the flags, checked before anything is compared: the words, a preset (or a session's), `--select` only with
-/// `--just-selection`.
+/// The sync of the flags, checked before anything is compared: the words, a preset (or a folder-sync session's),
+/// `--select` only with `--just-selection`. A folder-compare session holds no sync: its preset is not Update Right by
+/// default, it is a usage error (§1.6.17).
 fn sync_of(
     ctx: &Ctx<'_>,
     args: &FolderSyncArgs,
-    base: &SyncOptions,
+    base: Option<&SyncOptions>,
 ) -> Result<SyncOptions, ApiError> {
     let words = words(args);
     let named = words.preset.is_some() || words.custom.is_some();
-    if !named && args.common.session.is_none() {
-        return Err(ApiError::InvalidArgument(
-            "a sync needs its preset: --update-left, --update-right, --update-both, --mirror-left, --mirror-right \
-             or --custom"
-                .to_owned(),
-        ));
+    if !named && base.is_none() {
+        let held = if args.common.session.is_some() {
+            " (this session is no folder-sync session and holds none)"
+        } else {
+            ""
+        };
+        return Err(ApiError::InvalidArgument(format!(
+            "a sync needs its preset{held}: --update-left, --update-right, --update-both, --mirror-left, \
+             --mirror-right or --custom"
+        )));
     }
     let select = &args.common.select;
     if !args.just_selection && (!select.select.is_empty() || !select.path.is_empty()) {
@@ -148,13 +154,14 @@ fn sync_of(
         ));
     }
     let windows = ctx.service.env().platform == hikasa_session::host::Platform::Windows;
-    sync_options(&words, base, windows)
+    let defaults = SyncOptions::default();
+    sync_options(&words, base.unwrap_or(&defaults), windows)
 }
 
 /// The sync of `folder sync`'s flags.
 fn prepare(ctx: &Ctx<'_>, args: &FolderSyncArgs) -> Result<SyncRun, Failure> {
     let (compare, base, mut read_only) = bare(base_of(ctx, args))?;
-    let options = bare(sync_of(ctx, args, &base))?;
+    let options = bare(sync_of(ctx, args, base.as_ref()))?;
     if let Some(word) = &args.confirm.read_only {
         let named = bare(parse_sides(word))?;
         read_only.left |= named.contains(SideSet::LEFT);
@@ -213,7 +220,7 @@ fn mode_of(yes: bool, confirm: Option<&str>) -> Result<ConfirmMode, ApiError> {
 fn gui_request(ctx: &Ctx<'_>, args: &FolderSyncArgs) -> Result<GuiOpenRequest, ApiError> {
     let (compare, base, mut read_only) = base_of(ctx, args)?;
     // The session's sync with the flags on top travels whole, in words the GUI reads back with the same parser.
-    let options = sync_of(ctx, args, &base)?;
+    let options = sync_of(ctx, args, base.as_ref())?;
     let words = sync_words_of(&options, args.allow_empty_source);
     let view = ViewWords {
         display: args.common.select.display.clone(),

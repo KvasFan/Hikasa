@@ -814,3 +814,63 @@ fn a6_31_the_include_hidden_preference_does_not_reach_a_sync() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(read(&s, "r/f"), "tiny\n");
 }
+
+/// A folder-compare session holds no sync: `folder sync --session` of one needs a preset flag, as the two sides do; it is
+/// never Update Right by default. `--gui` refuses it too, before any contact.
+#[test]
+fn a6_31_a_folder_compare_session_needs_a_preset() {
+    let s = sandbox();
+    let mut compare = s.cmd();
+    compare.args([
+        "session",
+        "new",
+        "cmp",
+        "--type",
+        "folder-compare",
+        "--left",
+    ]);
+    compare.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&compare.output().unwrap()), 0);
+    let before = state(&s);
+    for extra in [&["--yes", "--json"][..], &["--gui", "--no-launch", "--json"]] {
+        let mut command = s.cmd();
+        command.args(["folder", "sync", "--session", "cmp"]);
+        command.args(extra);
+        let out = command.output().unwrap();
+        assert_eq!(code(&out), 100, "{extra:?} {}", stdout(&out));
+        let doc = json(&out);
+        assert_eq!(doc["ok"], false);
+        assert_eq!(doc["error"]["kind"], "invalid_input", "{doc}");
+        assert!(
+            doc["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("a sync needs its preset"),
+            "{doc}"
+        );
+        assert_eq!(state(&s), before);
+    }
+    // With a preset flag it runs, from the session's sides.
+    let mut command = s.cmd();
+    command.args([
+        "folder",
+        "sync",
+        "--session",
+        "cmp",
+        "--update-right",
+        "--yes",
+    ]);
+    let out = command.output().unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s, "r/left-only.txt"), "left only\n");
+    // A folder-sync session holds one (its default is Update Right).
+    let mut new = s.cmd();
+    new.args(["session", "new", "fs", "--type", "folder-sync", "--left"]);
+    new.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&new.output().unwrap()), 0);
+    let mut command = s.cmd();
+    command.args(["folder", "sync", "--session", "fs", "--dry-run", "--json"]);
+    let out = command.output().unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(json(&out)["result"]["preset"], "update_right");
+}
