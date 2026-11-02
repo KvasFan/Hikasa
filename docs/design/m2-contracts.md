@@ -182,7 +182,7 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-200 | **Links to file reports** (RPT-001, §1.7.8). Folder side-by-side HTML only. Every shown file pair present on both sides whose category is newer or different gets a side-by-side HTML text report with the folder report's palette, compared through `Service::pair_text_request` (the GUI's child request, moved to core: text rules, format overrides, ignore-unimportant) and the content budget (D-174); pairs over the rules-based size limit or binary are listed as skipped. Files `<safe stem>_files/<n>-<safe name>.html`; hrefs relative, `/`-separated, percent-encoded; each file report links back. | Numbers keep names distinct on case-insensitive file systems; safe names stay readable and portable (Windows device names, `#`, `%`, controls); relative links survive moving the report with its folder. | 13 |
 | D-201 | **A linked report is written by a plan** (T12, §1.7.9). The main file is the one named (replaced as `--output`); its files folder only when absent or **ours** (a marker `.hikasa-report.toml` names the main file and stamps the files it wrote, and the folder holds exactly those); else the first free `<…>_files-<k>`, warning `report_folder_renamed`. Nothing not ours is written, replaced or removed. Execution: pair files into a hidden staging sibling, the main file into its temporary file, then the old folder aside, the staging folder in, the main file committed, the old folder removed; a failure or cancel before the end restores everything. `--dry-run` prints the plan; durability by D-164's cases. | A report that writes thousands of files must not overwrite what the user did not ask for, and a re-run should replace its own output rather than pile up copies; the renames give a folder `--output`'s all-or-nothing. | 12, 13 |
 | D-202 | **Reports stream** (§1.7.9). A file or stdout target renders through a 64 KiB buffer straight into the VFS's atomic writer (`write_output_with`); a `CancelWriter` checks the token every MiB, so renderers stay pure. Only the clipboard holds a report, at most 128 MiB (`too_large`). `write_output` stays as a wrapper. | A 1M-line side-by-side HTML report is ≈ 280 MB, which M1 rendered into a `Vec` first; G4 holds without a `Ctl` in every renderer. | 12 |
-| D-203 | **Clipboard target** (§1.7.10). The Service returns a `ClipboardPayload` (text; for an HTML layout the HTML plus the same layout as plain text); the adapter writes it through the new `ClipboardProvider::write_payload` (`SystemClipboard`: arboard `set_text`/`set_html`; `FileClipboard`: a file target's bytes; `FixedClipboard` records). The Service never writes the clipboard; links are refused. | The plan's *byte payload returned to the adapter*: the GUI writes its own clipboard, the CLI's arboard handle belongs to the adapter, and tests read `HIKASA_CLIPBOARD_FILE`. | 12 |
+| D-203 | **Clipboard target** (§1.7.10). The Service returns a `ClipboardPayload` (text; for an HTML layout the HTML plus the same layout as plain text); the adapter writes it through the new `ClipboardProvider::write_payload` (`SystemClipboard`: arboard `set_text`/`set_html`; `FileClipboard`: a file target's bytes; `FixedClipboard` records). The Service never writes the clipboard; links are refused. On Linux (X11, Wayland) the content outlives `hikasa`: `SystemClipboard` hands the payload to a helper process (`hikasa` through a hidden internal entry) that owns the selection with arboard's wait mode until another program takes it, then exits; no new runtime dependency (maintainer's order after the first text). | The plan's *byte payload returned to the adapter*: the GUI writes its own clipboard, the CLI's arboard handle belongs to the adapter, and tests read `HIKASA_CLIPBOARD_FILE`. | 12 |
 | D-204 | **Printer and browser** (Q6 = a, D-62; §1.7.11). Both write the HTML report and its files into a fresh `<cache>/print/<date>-<time>-<n>/` and open it through `AppLauncher::open_associated` (D-186); `printer` adds the print block (orientation, print palette). Folders there older than seven days are pruned at the next such report. Layouts without HTML are refused; no native printing. W13's *Print Preview* and *View in Browser* are these targets. | The maintainer chose the browser for printing; a folder per report keeps links and never races another print. | 13 |
 | D-205 | **`hikasa report text\|folder`** (§1.7.15). Specs or `--session`, the compare subcommand's rule flags, and the shared `ReportArgs` (`--layout`/`--report`, `--options`, `--output-options`, `--output-to`, `--title`, M1's report flags, `--lines` or `--select`/`--path`, `--dry-run`), which `text compare`, `folder compare` and `session run` flatten too. Default layout side-by-side, every other default the compare subcommand's, so `report text a b` ≡ `text compare a b --report side-by-side` byte for byte. Exit code: the comparison's. `--json`: `hikasa.report.v1` (`SCHEMAS` 39), refused with the stdout target. | The subcommand is the script commands' CLI form (W8 maps one to one) and where W12's types go; the shortcut stays. One flag group, one owner. | 12 |
 | D-206 | **Report time** (extends D-24; §1.7.12). One instant per report job, shared by the folder report and its file reports: `SOURCE_DATE_EPOCH` when set (seconds, shown in UTC; captured by `capture_env`), else the clock in the user's zone; a bad value warns `source_date_epoch_invalid`. | Reproducible reports for archives and builds; tests compare the CLI and the Service byte for byte without stripping the header. | 12, 13 |
@@ -5924,7 +5924,8 @@ change of meaning is version 2 with the namespace `urn:hikasa:report:2`. Both ru
 - **Against the XSD, on Linux and macOS CI.** The same test runs `xmllint --noout --schema
   docs/schemas/hikasa-report-1.xsd` on the goldens and on 64 generated documents. `HIKASA_REQUIRE_XMLLINT=1` makes a
   missing `xmllint` a failure; `ci.yml` sets it for the Linux and macOS test jobs, and the Linux job installs
-  `libxml2-utils` first (macOS ships `xmllint`). On Windows the check is skipped with one line on stderr: the bytes are
+  `libxml2-utils` first (macOS ships `xmllint` with its libxml2). The maintainer approved the CI package, the variable and
+  `roxmltree` as a test-only dependency (standing order after the first text). On Windows the check is skipped with one line on stderr: the bytes are
   the same on every platform (INV-RPT-1), which the goldens prove there.
 - **The check can fail.** A negative case feeds `xmllint` a golden with one required attribute removed and one unknown
   attribute added and expects both rejections; the XSD itself is validated by `xmllint --noout` against the XML Schema
@@ -6084,11 +6085,18 @@ pub trait ClipboardProvider: Send + Sync {
 - **Payload.** A layout without an HTML form: `text` = the report's bytes. An HTML report: `html` = the report's bytes,
   `text` = the same request rendered as plain text (same layout, palette `text`), so a plain editor pastes a readable
   report; XML, CSV, JSON, patches: `text` only. Bytes as the file target's (`\n` line ends on every platform).
-- **Providers.** `SystemClipboard`: arboard `set_text`, or `set_html(html, Some(text))`; on X11 arboard hands the content
-  to a running clipboard manager when the handle drops, and without one the content lasts while `hikasa` runs: help
-  `report` says so and suggests a file. `FileClipboard` (`HIKASA_CLIPBOARD_FILE`): writes `html` when present, else
+- **Providers.** `SystemClipboard`: arboard `set_text`, or `set_html(html, Some(text))`. **On Linux (X11 and Wayland) the
+  content outlives `hikasa`** (maintainer's order, after the first text): `write_payload` hands the payload to a small
+  helper process, `hikasa` itself started through a hidden internal entry (not in `--help`, the reference or the help
+  topics), which reads the payload from its stdin, places it with arboard's Linux wait mode (`SetExtLinux::wait`), owns
+  the selection until another program takes it, then exits, as the usual command-line clipboard tools do. The CLI
+  returns once the helper reports the payload placed (one status line on its stdout) and does not wait for it to end;
+  a helper that cannot start or reports a failure is `Failed` (`io`), nothing placed. No new runtime dependency: the
+  helper uses the arboard the clipboard adapter already links; it is spawned only by the adapter (`host.rs`), never by
+  core. Windows and macOS keep the content after the process ends without a helper. `FileClipboard` (`HIKASA_CLIPBOARD_FILE`): writes `html` when present, else
   `text`, atomically, so a CLI test reads back exactly a file target's bytes. `FixedClipboard` records every payload.
-  `NoClipboard`: `Unavailable`.
+  `NoClipboard`: `Unavailable`. Help `report` says that on Linux a helper keeps the content until something else is
+  copied.
 - **Who writes.** `report_execute` returns the payload in `ReportOutcome::clipboard`; the CLI calls `write_payload` on the
   provider it gave `ServiceInit`; the GUI (W13) writes its own clipboard; the script interpreter (W8) hands the payload
   to its adapter. Errors map as §1.3.6 (`Unavailable` → `unsupported`, `Failed` → `io`), exit 100.
@@ -6289,8 +6297,9 @@ folder, XML, printing and the clipboard's limits on Linux, `--dry-run`); updated
 resolves through D-67; the new topic is in `help.rs`'s list.
 
 **CHANGELOG.** One W7 section in `## Unreleased` (Added, Fixed for D-194, Changed for M1's refusal moving before the
-comparison), updated in place by each part and review, as §1.6.24. **Version.** W7 bumps nothing; whether 0.1.93 ships
-after W7 is the maintainer's call (§6.7 A7.24). No product name of docs/17 §5 anywhere: grep before each commit.
+comparison), updated in place by each part and review, as §1.6.24. **Version.** The parts bump nothing; W7 ships as the
+pre-release 0.1.93 after W7b (maintainer's standing order), and the orchestrator, not a part's implementer, bumps the
+version and tags it after W7b's review (§6.7 A7.24). No product name of docs/17 §5 anywhere: grep before each commit.
 
 #### 1.7.20 W7 notes (implementation)
 
@@ -7110,7 +7119,12 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
 - A7.15 **Clipboard (D-203) [W7b].** `FixedClipboard` records `{text}` for each text layout and `{html, text}` for each
   HTML layout, the alternative equal to the plain-text rendering; the CLI with `HIKASA_CLIPBOARD_FILE` writes a file
   target's exact bytes (`cli_report.rs`); `NoClipboard` → exit 100; 128 MiB cap; architecture check: no `write_payload`
-  in `core/` outside the clipboard module and `host.rs`.
+  in `core/` outside the clipboard module and `host.rs`. Linux helper: the hidden entry reads a payload from stdin and
+  reports it placed, tested headless with a fake placer (never the real clipboard); the adapter's spawn passes the
+  payload and returns after the status line while the helper runs on, and a helper that fails to start or reports a
+  failure maps to `io` (a test with a helper command that exits at once); the entry is absent from `--help`, the
+  reference and the help topics; a manual check on X11 and Wayland (a paste after `hikasa` exited) is recorded in
+  §1.7.20.
 - A7.16 **Printer and browser (D-204) [W7b].** `RecordingLauncher` receives one `open_associated` with the main file
   below `<cache>/print/`; the files equal a file target's with the implied words (A7.17); two reports in one second get
   two folders; pruning removes only folders of the pattern older than seven days by the injected clock and keeps others
@@ -7149,5 +7163,6 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
   Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, architecture
   test), the Windows tests under wine and the heavy proptests before a push, its §1.7.19 documents, its CHANGELOG
   entry and its §1.7.20 notes. W7b: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
-  `smoke-test.sh` passing. No version bump; a 0.1.93 pre-release only on the maintainer's word. The product name of
+  `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.93 and publishes the pre-release
+  after W7b's review (§1.7.19). The product name of
   docs/17 §5 appears nowhere: grep before each commit.
