@@ -719,6 +719,7 @@ mod tests {
 
     fn member(path: &str, kind: MemberKind, at: usize) -> RawMember {
         RawMember {
+            special: None,
             path: Ok(path.to_owned()),
             kind,
             lossy: false,

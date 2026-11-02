@@ -6,11 +6,12 @@
 use egui::{Align, Align2, Button, CursorIcon, Label, Layout, RichText, Sense, Ui, Vec2, vec2};
 
 use crate::dialog::{AboutDialog, ButtonRole, DialogModel, Prompt};
+use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
 use crate::session_dialog::{NameDialog, SaveSessionDialog, SessionSettingsDialog};
 use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
-use crate::ui::{options, session_dialog, wizards, workspace};
+use crate::ui::{op_dialogs, options, session_dialog, wizards, workspace};
 use crate::wizards::{ExportWizard, ImportWizard, RestoreWizard};
 use crate::workspace::{ManageWorkspacesDialog, SaveWorkspaceDialog};
 
@@ -118,6 +119,10 @@ pub fn show(
             fixed_body(ui, height, |ui| wizards::import(ui, d, pal));
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RestoreWizard>() {
             fixed_body(ui, height, |ui| wizards::restore(ui, d, pal));
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
+            op_dialogs::confirm(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<DeleteDialog>() {
+            op_dialogs::delete(ui, d, pal);
         }
         ui.add_space(12.0);
         // A row of its own height: a layout that fills what is left would centre the buttons in it.

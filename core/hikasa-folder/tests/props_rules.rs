@@ -136,6 +136,8 @@ fn rules() -> impl Strategy<Value = FolderRules> {
                     exclude_protected,
                     size: size.map(|(cmp, bytes)| SizeFilter { cmp, bytes }),
                     date: date.map(|(cmp, cutoff)| DateFilter { cmp, cutoff }),
+                    attrib: Some(hikasa_folder::AttribFilter::parse("+rh-s").unwrap()),
+                    unix_type: Some(hikasa_folder::UnixTypeFilter::parse("-lp").unwrap()),
                 },
             },
         );
@@ -145,6 +147,9 @@ fn rules() -> impl Strategy<Value = FolderRules> {
             flatten,
             scan_orphan_folders,
             archives: ArchiveHandling::default(),
+            auto_scan_subfolders: follow_symlinks,
+            expand_on_load: flatten,
+            expand_differences_only: scan_orphan_folders,
         },
     );
     (0u32..=1, criteria, alignment, filters, handling).prop_map(
@@ -155,6 +160,8 @@ fn rules() -> impl Strategy<Value = FolderRules> {
             filters,
             handling,
             open_archives: Vec::new(),
+            ignored: vec!["a/b".into(), "!a/b/c".into()],
+            format_overrides: [("cpp".to_owned(), false)].into(),
         },
     )
 }

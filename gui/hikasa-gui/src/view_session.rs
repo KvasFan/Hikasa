@@ -155,10 +155,13 @@ pub struct ViewCapture {
     pub parent: Option<ParentLink>,
     /// Its description.
     pub description: String,
+    /// Its read-only sides (Disable editing): the session keeps them as `[specs] read_only_*`.
+    pub read_only: hikasa_folder::ops::ReadOnlySides,
 }
 
 impl ViewCapture {
-    /// `Service::session_for_view` with the view's description.
+    /// `Service::session_for_view` with the view's description and read-only sides (a session saved from a protected
+    /// view stays protected).
     pub fn session(&self, service: &Service) -> Result<(Session, Vec<Warning>), ApiError> {
         let (mut session, warnings) = service.session_for_view(
             &self.request,
@@ -167,6 +170,8 @@ impl ViewCapture {
             self.parent.clone(),
         )?;
         session.description.clone_from(&self.description);
+        session.specs.read_only_left = self.read_only.left;
+        session.specs.read_only_right = self.read_only.right;
         Ok((session, warnings))
     }
 }

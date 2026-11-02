@@ -15,6 +15,7 @@
 
 mod args;
 mod cmd;
+mod confirm;
 mod interrupt;
 mod launcher;
 mod output;
@@ -34,7 +35,7 @@ use hikasa_session::api::{OpenArgs, normalize_legacy_args, open_usage, parse_ope
 use hikasa_session::settings::LoadMode;
 use hikasa_session::{
     ApiError, ApiOp, EnvFacts, Platform, Service, ServiceInit, StdinSource, SystemClock,
-    capture_env, clipboard_provider, run_guarded,
+    SystemLauncher, capture_env, clipboard_provider, run_guarded,
 };
 use hikasa_vfs::{VfsError, VfsOp};
 
@@ -181,6 +182,7 @@ fn execute(
                     LoadMode::Strict
                 },
                 clipboard,
+                launcher: Arc::new(SystemLauncher),
             };
             match Service::new(init) {
                 Ok(service) => {

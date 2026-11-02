@@ -477,6 +477,67 @@ fn a3_1_set_times_created_local() {
     }
 }
 
+/// A read-only file and a read-only folder take new times, and stay read-only: on Windows the handle that sets them asks
+/// for `FILE_WRITE_ATTRIBUTES` only, as an open for writing is refused by `R` (`hikasa vfs touch` of such a file, a sync
+/// keeping times on one). Wine refuses even that open on a read-only file, and drops `R` from a folder, so only real
+/// Windows proves the access mode.
+#[test]
+fn a3_1_set_times_on_read_only_entries_local() {
+    if cfg!(windows) && std::env::var_os("WINEPREFIX").is_some() {
+        eprintln!(
+            "skipped: wine opens a FILE_WRITE_ATTRIBUTES handle for writing, which `R` refuses"
+        );
+        return;
+    }
+    let fx = Fx::local();
+    tree(&fx);
+    let (t1, t2) = (ft(1_600_000_000), ft(1_500_000_000));
+    let caps = fx.vfs().capabilities(&fx.spec("")).unwrap();
+    let created = caps.contains(Capabilities::SET_CREATED).then_some(t2);
+    let changes = |dir: bool| -> (AttrChange, AttrChange) {
+        if cfg!(windows) {
+            (
+                AttrChange::Dos {
+                    set: DosAttrs::READONLY,
+                    clear: DosAttrs::empty(),
+                },
+                AttrChange::Dos {
+                    set: DosAttrs::empty(),
+                    clear: DosAttrs::READONLY,
+                },
+            )
+        } else if dir {
+            (AttrChange::Mode(0o555), AttrChange::Mode(0o755))
+        } else {
+            (AttrChange::Mode(0o444), AttrChange::Mode(0o644))
+        }
+    };
+    for (rel, dir) in [("file", false), ("empty", true)] {
+        let (lock, unlock) = changes(dir);
+        let spec = fx.spec(rel);
+        fx.vfs().set_attrs(&spec, &lock).unwrap();
+        let got = fx.vfs().set_times(
+            &spec,
+            &SetTimes {
+                modified: Some(t1),
+                created,
+            },
+        );
+        let entry = fx.lstat(rel).unwrap();
+        fx.vfs().set_attrs(&spec, &unlock).unwrap();
+        got.unwrap_or_else(|e| panic!("set_times of the read-only {rel}: {e}"));
+        assert_eq!(entry.mtime, Some(t1), "{rel}");
+        if created.is_some() {
+            assert_eq!(entry.ctime, created, "{rel}");
+        }
+        match entry.attrs {
+            Attrs::Dos { attrs } => assert!(attrs.contains(DosAttrs::READONLY), "{rel}"),
+            Attrs::Unix { meta } => assert_eq!(meta.mode & 0o222, 0, "{rel}"),
+            Attrs::None => {}
+        }
+    }
+}
+
 // ---- A3.1 set_attrs ----------------------------------------------------------------------------------------
 
 fn mode_of(fx: &Fx, rel: &str) -> Option<u32> {

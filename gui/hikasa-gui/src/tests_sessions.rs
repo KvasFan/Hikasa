@@ -533,6 +533,35 @@ fn select_pair(app: &mut TestApp, view: ViewId) {
     assert!(pair.is_some(), "the fixture has a pair");
 }
 
+/// A6.10, FF-002: a child view opens with the format its row was compared by; the choice is the core's (D-172), this is
+/// the one copy the window makes of it.
+#[test]
+fn a6_10_a_child_request_has_the_overrides_of_its_row() {
+    let world = World::new();
+    let mut session = folder_session(&world);
+    let SessionRules::Folder(rules) = &mut session.rules else {
+        panic!("a folder session");
+    };
+    rules.format_overrides.insert("c-cpp".to_owned(), false);
+    save(&world, "tree", &session);
+    let mut app = started(&world);
+    let view = open_named(&world, &mut app, "tree");
+    select_pair(&mut app, view);
+    let rows = crate::tests::folder_model(&mut app, view);
+    let (request, _) = rows.open_request().expect("a pair");
+    let expected = std::collections::BTreeMap::from([("c-cpp".to_owned(), false)]);
+    assert_eq!(request.format_overrides, expected);
+
+    // A session that says nothing: nothing is carried.
+    let plain = folder_session(&world);
+    save(&world, "plain", &plain);
+    let view = open_named(&world, &mut app, "plain");
+    select_pair(&mut app, view);
+    let rows = crate::tests::folder_model(&mut app, view);
+    let (request, _) = rows.open_request().expect("a pair");
+    assert!(request.format_overrides.is_empty());
+}
+
 /// A4.11, FC-062: a child with the parent link.
 #[test]
 fn opening_a_pair_gives_a_child_of_the_folder_session() {

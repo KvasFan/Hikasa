@@ -126,7 +126,7 @@ pub(crate) fn store_stamp(config: &ConfigLocation) -> u64 {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
-        for entry in entries.flatten() {
+        for entry in entries.map_while(Result::ok) {
             let Ok(meta) = entry.metadata() else {
                 continue;
             };

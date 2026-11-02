@@ -81,12 +81,15 @@ mod display;
 mod error;
 mod events;
 mod model;
+pub mod ops;
 mod quick;
 mod resolve;
 mod rules;
 mod scan;
+pub mod select;
 pub mod state;
 mod stats;
+pub mod sync;
 mod time_cmp;
 
 pub use align::{AlignInput, AlignOptions, align_flat, align_names};
@@ -101,14 +104,17 @@ pub use events::{ChannelObserver, NullObserver, ScanEvent, ScanObserver};
 pub use model::{
     BaseInfo, CanonicalEntry, CanonicalError, CanonicalNode, CanonicalTree, ContentSummary,
     EntryView, FolderComparison, FolderModel, NodeError, NodeFlags, NodeId, NodeKind, NodeView,
-    ScanStatus, TreeRead, check_tree_invariants,
+    ScanStatus, TreeRead, check_tree_invariants, expanded_on_load,
 };
 pub use quick::{DiffFlags, quick_tests};
 pub use rules::{
-    ArchiveHandling, CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec, DateCutoff,
-    DateFilter, FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules, FolderRulesPatch, Handling,
-    NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset, UnixCriteria,
+    ArchiveHandling, AttribFilter, CaseMode, Change, Cmp, ContentRule, Criteria, CriteriaSpec,
+    DateCutoff, DateFilter, FOLDER_RULES_SCHEMA_VERSION, FilterRules, FolderRules,
+    FolderRulesPatch, Handling, NameAlignment, OtherFilters, SizeFilter, TimestampRule, TzOffset,
+    UnixCriteria, UnixTypeFilter, UnixTypes,
 };
+pub use scan::content::{ContentItem, ContentReport, CrcResult, compare_contents, compute_crcs};
+pub use scan::refresh::{RefreshReport, refresh_into};
 pub use scan::{
     ContentEngines, FolderEnv, MAX_FOLLOW_DEPTH, SCAN_ARCHIVE_ENTRIES_MAX, compare_folders,
     compare_into,

@@ -59,14 +59,14 @@ pub fn plan_mkdir(vfs: &dyn Vfs, specs: &[Spec], parents: bool) -> Plan {
             .and_then(|name| vfs.archive_format(&name))
             .is_some_and(|format| format.writable());
         match found {
-            None if archive => items.push(PlanItem::new(
+            None if archive => items.push(PlanItem::planned(
                 Action::CreateArchive,
                 EntryKind::File,
                 None,
                 spec.clone(),
                 0,
             )),
-            None => items.push(PlanItem::new(
+            None => items.push(PlanItem::planned(
                 Action::CreateDir,
                 EntryKind::Dir,
                 None,
@@ -74,7 +74,7 @@ pub fn plan_mkdir(vfs: &dyn Vfs, specs: &[Spec], parents: bool) -> Plan {
                 0,
             )),
             Some(entry) if entry.kind == EntryKind::Dir && parents => {
-                items.push(PlanItem::new(
+                items.push(PlanItem::planned(
                     Action::KeepDir,
                     EntryKind::Dir,
                     None,
@@ -130,7 +130,7 @@ pub fn plan_touch(vfs: &dyn Vfs, specs: &[Spec], opts: &TouchOptions) -> Plan {
             continue;
         }
         match vfs.stat(spec, FollowLinks::No) {
-            Ok(entry) => items.push(PlanItem::new(
+            Ok(entry) => items.push(PlanItem::planned(
                 Action::Touch,
                 entry.kind,
                 None,
@@ -138,7 +138,7 @@ pub fn plan_touch(vfs: &dyn Vfs, specs: &[Spec], opts: &TouchOptions) -> Plan {
                 0,
             )),
             Err(VfsError::NotFound { .. }) if opts.create => {
-                items.push(PlanItem::new(
+                items.push(PlanItem::planned(
                     Action::Create,
                     EntryKind::File,
                     None,
@@ -176,15 +176,19 @@ pub(crate) fn run_create_archive(exec: &mut Exec<'_>, item: &PlanItem) -> Result
 
 /// `touch` (`set_times`) and `create` (an empty file through `open_write`, then `set_times`).
 pub(crate) fn run_touch(exec: &mut Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
-    let times = match exec.options {
-        PlanOptions::Touch(opts) => opts.times,
-        _ => return Ok(()),
+    debug_assert!(
+        item.times.is_some() || !matches!(exec.options, PlanOptions::Batch(_)),
+        "a touch item of a batch has its times"
+    );
+    let times = match (item.times, exec.options) {
+        (Some(times), _) => times,
+        (None, PlanOptions::Touch(opts)) => opts.times,
+        (None, _) => return Ok(()),
     };
     if item.action == Action::Create {
         let opts = WriteOptions {
-            create_parents: false,
-            overwrite: false,
             replace_link: true,
+            ..WriteOptions::default()
         };
         exec.dst.open_write(&item.target, &opts)?.commit()?;
     }

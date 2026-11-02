@@ -33,6 +33,15 @@ A value is TOML (`true`, `5`, `"text"`, `["Ctrl+Q", "F2"]`); a text value may be
 file, so a later change of the default reaches you. Keys Hikasa does not know are kept in the file; a wrong
 value is refused with a message.
 
+## File operations
+
+`[file_operations]` holds the questions of folder operations, each a `confirm_*` key (`confirm_copy`, `confirm_move`,
+`confirm_delete`, `confirm_read_only`, `confirm_system`, `confirm_overwrite_newer`, `confirm_replace_during_move`; the
+window's "Do not ask again" sets one to `false`), `sync_confirmations` (`prompt`, `yes_to_all`, `no_to_all`, for a sync
+in the window), `require_side_selection_in_delete`, `include_hidden_by_default` (false: operations honour the filters)
+and `preserve_created` (copy the creation date too). `[backups]` says whether a replaced file is kept first
+(`back_up_before_copy`) and how it is named. See [hikasa folder op](topic:folder-op).
+
 ## Repairing a file
 
 Every other command stops when a settings file holds a value of the wrong type or out of range. The `settings`

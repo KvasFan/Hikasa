@@ -362,13 +362,35 @@ locked = false
 favorite = false               # SES-031 Favorite
 saved_at = ""                  # RFC 3339; auto-saved files only
 [parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
-[specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding
-[rules]                        # folder-compare: the TOML of --rules-file; text types: TextRules; others: kept as is
+[specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding,
+                               # read_only_left, read_only_right (FC-003, per side)
+[rules]                        # folder-compare: the TOML of --rules-file; folder-sync: the same, and [rules.sync];
+                               # text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests
 [display]                      # display filter state (SES-010)
 [view]                         # view layout and state
 [[override]]                   # folder types: scope = "pair" | "type", left, right, type, [override.rules]
 ```
+
+A folder-sync session (*M2 W6c, D-183*) keeps its sync below `[rules]`, beside the folder rules, schema version unchanged:
+
+```toml
+[rules.sync]
+preset = "update_right"        # update_left | update_right | update_both | mirror_left | mirror_right | custom
+orphans = "added"              # added | deleted: how an item on one side only is read
+create_empty = false
+within_archives = false
+recycle = false
+recycle_fallback = false
+[rules.sync.matrix]            # read with `custom`; eight keys, sparse against all `leave`
+newer_left = "copy_right"
+[rules.sync.overrides]         # a path below the bases → its action; a folder covers its subtree
+"a/b.txt" = "leave"
+```
+
+A matrix cell that names a side its item is not on (`added_left = "copy_left"`) is refused by `session edit` and by an
+import. A folder-sync file written before W6 had an empty `[rules]`, which reads as the defaults. `hikasa session run` of a
+folder-sync session runs the sync (`12-cli-and-scripting.md`).
 
 `[rules]`, `[text_rules]` and `[override.rules]` hold only what differs from the defaults of the type **at save
 time**, so a later change of the defaults reaches every session that did not change that rule. `hikasa session
@@ -382,7 +404,7 @@ schema_version = 1
 shortcut = ""
 [[window]]                     # width, height, x, y, maximized, active_tab
 [[window.tab]]                 # session = "<ref>"  or  [window.tab.inline] (a session table without schema_version)
-[window.tab.view]              # the tab's layout
+[window.tab.view]              # the tab's layout; no_backups = true keeps --nobackups of the tab's view (M2 W6d)
 ```
 
 A tab has exactly one of `session` and `inline`, and `active_tab` names one of the tabs (lenient loading resets
@@ -486,3 +508,7 @@ P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog fram
 
 *M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
 the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.
+
+**Folder rules added in M2 W6 (sparse, schema version unchanged).** `[rules.filters.other] attrib = "+rh-s"`, `unix_type = "-lp"`
+(`false` is off); `[rules.handling] auto_scan_subfolders`, `expand_on_load`, `expand_differences_only`; `ignored`, a list of
+base-relative paths with `!path` exceptions (FC-033); `[rules.format_overrides]`, format id → enabled (FF-002).

@@ -32,6 +32,8 @@ FileFormat {
   first *enabled* format (top to bottom) whose mask matches the file name wins. Items
   shadowed by an earlier item are shown in red; disabled in grey; empty mask = manual
   selection only. "Everything Else" is the implicit default text format.
+- **FF-002, M2 (D-172):** `[rules.format_overrides]`, or `--format-on`, `--format-off` on `folder compare`; an unknown id
+  warns once and is kept, and a child view opens with the format its row was compared by.
 - **FF-002** (P0): Folder sessions can override the enabled state of formats
   (Rules ▸ Misc ▸ Enabled file formats; bold when different from global).
 - **FF-003** (P0): File views show the detected format ("Detected (C/C++ Source)") in

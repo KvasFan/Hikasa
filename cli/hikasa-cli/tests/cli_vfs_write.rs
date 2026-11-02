@@ -523,12 +523,12 @@ fn a3_11_cli_equals_the_service() {
 }
 
 #[test]
-fn a3_11_version_lists_35_schemas_and_help_resolves() {
+fn a3_11_version_lists_the_schemas_and_help_resolves() {
     let s = Sandbox::new();
     let out = s.cmd().args(["version", "--json"]).output().unwrap();
     let doc = json(&out);
     let schemas = doc["result"]["schemas"].as_array().unwrap();
-    assert_eq!(schemas.len(), 35);
+    assert_eq!(schemas.len(), 38);
     assert!(schemas.iter().any(|v| v == "hikasa.vfs_op.v1"));
     let out = s
         .cmd()
@@ -686,6 +686,45 @@ fn fix_blob_targets_are_unsupported() {
             "{message}"
         );
     }
+}
+
+/// A target spelt with `..` used to hang every walk up (`/a/..` had the parent `/a/../..`). `..` keeps the OS's meaning, so
+/// `gone/..` fails where the OS says so, and a folder cannot be copied below itself by spelling.
+#[cfg(unix)]
+#[test]
+fn fix_a_path_with_dots_ends_and_keeps_its_meaning() {
+    let bounded = |s: &Sandbox, args: &[&str]| {
+        s.cmd()
+            .args(args)
+            .arg("--json")
+            .timeout(std::time::Duration::from_secs(60))
+            .output()
+            .unwrap()
+    };
+    let s = sandbox();
+    s.file("a/keep", "k\n");
+    let out = bounded(&s, &["vfs", "cp", "-r", "src", "a/../copied"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(s.path().join("copied/sub/b.txt")).unwrap(),
+        b"beta\n"
+    );
+    let out = bounded(&s, &["vfs", "mv", "copied", "a/../moved"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.path().join("moved/a.txt").is_file());
+    let out = bounded(&s, &["vfs", "cp", "-r", "a/../src", "again"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(s.path().join("again/a.txt").is_file());
+    let out = bounded(&s, &["folder", "compare", "a/../src", "again"]);
+    assert_eq!(code(&out), ExitCode::RulesSame as i32, "{}", stderr(&out));
+
+    let before = tree(s.path());
+    let out = bounded(&s, &["vfs", "cp", "-r", "src", "src/sub/../copied"]);
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(stdout(&out).contains("is inside the source folder"));
+    let out = bounded(&s, &["vfs", "cp", "-r", "src", "gone/../copied"]);
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert_eq!(tree(s.path()), before);
 }
 
 #[cfg(unix)]

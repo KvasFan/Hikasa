@@ -219,6 +219,7 @@ fn atomic_writes() {
         create_parents: false,
         overwrite: true,
         replace_link: false,
+        ..WriteOptions::default()
     };
     let mut w = vfs.open_write(&spec, &replace).unwrap();
     w.write_all(b"final").unwrap();
@@ -251,6 +252,7 @@ fn atomic_writes() {
                 create_parents: true,
                 overwrite: false,
                 replace_link: false,
+                ..WriteOptions::default()
             },
         )
         .unwrap();
@@ -523,6 +525,7 @@ mod unix {
                     create_parents: false,
                     overwrite: true,
                     replace_link: false,
+                    ..WriteOptions::default()
                 },
             )
             .unwrap();
@@ -536,6 +539,7 @@ mod unix {
         create_parents: false,
         overwrite: true,
         replace_link: false,
+        durability: hikasa_vfs::Durability::Full,
     };
 
     /// Writes `bytes` to `spec` with overwrite and commits.

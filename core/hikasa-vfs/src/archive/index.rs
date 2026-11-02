@@ -18,7 +18,7 @@ use hikasa_core::{Ctl, FileTime};
 use super::codec::Pass;
 use super::name::{Refusal, escape_name};
 use super::tar_walk::Damage;
-use crate::entry::{Attrs, Entry, EntryKind, FileName};
+use crate::entry::{Attrs, Entry, EntryKind, FileName, SpecialKind};
 use crate::error::VfsError;
 
 /// The most `<refused-N>` rows of a listing; the warning has the total.
@@ -131,6 +131,8 @@ pub(crate) struct RawMember {
     /// The clean path, or the escaped raw name and why it is refused.
     pub(crate) path: Result<String, (String, Refusal)>,
     pub(crate) kind: MemberKind,
+    /// What an `Other` member is, where the archive says (D-169).
+    pub(crate) special: Option<SpecialKind>,
     /// The path's text replaced bytes that do not decode.
     pub(crate) lossy: bool,
     pub(crate) encrypted: bool,
@@ -155,6 +157,7 @@ pub(crate) struct Node {
     /// Where the last component starts.
     name_at: u32,
     pub(crate) kind: MemberKind,
+    pub(crate) special: Option<SpecialKind>,
     pub(crate) lossy: bool,
     pub(crate) encrypted: bool,
     /// The record of [`Tree::records`] this node stands for; [`NO_RECORD`] for a synthesized folder.
@@ -178,6 +181,7 @@ impl Node {
             len: u32::try_from(path.len()).unwrap_or(0),
             text: path,
             kind: raw.kind,
+            special: raw.special,
             lossy: raw.lossy,
             encrypted: raw.encrypted,
             record: u32::try_from(record).unwrap_or(NO_RECORD),
@@ -198,6 +202,7 @@ impl Node {
             len: u32::try_from(path.len()).unwrap_or(0),
             text: Arc::clone(text),
             kind: MemberKind::Dir,
+            special: None,
             lossy,
             encrypted: false,
             record: NO_RECORD,
@@ -231,6 +236,7 @@ impl Node {
         entry.attrs = self.attrs;
         entry.link_target = self.link_target.as_deref().map(str::to_owned);
         entry.crc32 = self.crc32;
+        entry.special = self.special;
         entry
     }
 }
@@ -762,6 +768,7 @@ mod tests {
 
     fn raw(path: &str, kind: MemberKind, id: u64) -> RawMember {
         RawMember {
+            special: None,
             path: Ok(path.to_owned()),
             kind,
             lossy: false,
@@ -996,6 +1003,7 @@ mod tests {
     #[test]
     fn a_hard_link_needs_a_member_that_stayed() {
         let hard = |path: &str, target: &str, id| RawMember {
+            special: None,
             hard_target: Some(target.to_owned()),
             ..raw(path, MemberKind::HardLink, id)
         };
@@ -1038,6 +1046,7 @@ mod tests {
     #[test]
     fn lossy_twins_are_refused_not_shadowed() {
         let twin = |id| RawMember {
+            special: None,
             lossy: true,
             ..file("a\u{FFFD}", id)
         };

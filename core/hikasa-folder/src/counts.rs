@@ -147,6 +147,32 @@ impl Aggregates {
         }
     }
 
+    /// Adds `other`, field by field.
+    pub(crate) fn add(&mut self, other: &Aggregates) {
+        for iu in [false, true] {
+            let theirs = *other.get(iu);
+            let mine = self.get_mut(iu);
+            mine.files = mine.files.plus(&theirs.files);
+            mine.folders = mine.folders.plus(&theirs.folders);
+        }
+    }
+
+    /// What turns `old` into these counters.
+    pub(crate) fn minus(&self, old: &Aggregates) -> AggDelta {
+        let mut delta = AggDelta::default();
+        for iu in [false, true] {
+            let (new, old) = (self.get(iu), old.get(iu));
+            for c in Category::ALL {
+                let change = |a: &CategoryCounts, b: &CategoryCounts| {
+                    i64::from(a.get(c)) - i64::from(b.get(c))
+                };
+                delta.add(iu, Slot::Files, c, change(&new.files, &old.files));
+                delta.add(iu, Slot::Folders, c, change(&new.folders, &old.folders));
+            }
+        }
+        delta
+    }
+
     /// Applies a delta to both aggregates.
     pub(crate) fn apply(&mut self, delta: &AggDelta) {
         for (iu, d) in [(false, &delta.all), (true, &delta.ignoring)] {
@@ -179,6 +205,22 @@ impl SideTotals {
     /// True when every field is zero.
     pub(crate) fn is_zero(&self) -> bool {
         self.files == 0 && self.folders == 0 && self.bytes == 0
+    }
+
+    /// `old`, which is part of these totals, gives way to `new`.
+    pub(crate) fn replace(&mut self, old: &SideTotals, new: &SideTotals) {
+        self.files = self
+            .files
+            .saturating_sub(old.files)
+            .saturating_add(new.files);
+        self.folders = self
+            .folders
+            .saturating_sub(old.folders)
+            .saturating_add(new.folders);
+        self.bytes = self
+            .bytes
+            .saturating_sub(old.bytes)
+            .saturating_add(new.bytes);
     }
 }
 

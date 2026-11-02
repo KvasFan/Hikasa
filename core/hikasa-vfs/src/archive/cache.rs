@@ -15,6 +15,10 @@
 //! - A folder that cannot be removed keeps its lock file, so a later sweep finds it (a file open on Windows).
 //! - Each file starts with [`STAMP`] bytes naming its session and number, checked at every open: whatever else goes
 //!   wrong in the folder, a reader gets an error and never the bytes of another file.
+//!
+//! One call extends the numeric names (D-186): an external program needs a name and an extension, so
+//! [`Cache::extract`] writes `x<k>/<safe name>`, a fresh folder per extraction, the name checked by `name::safe_name`.
+//! Such a file has no stamp, is read-only, stays until [`Cache::cleanup`] and is never evicted.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -24,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use hikasa_core::CancelToken;
 use same_file::Handle;
 
 use super::codec::STEP;
@@ -135,10 +140,19 @@ impl Session {
     }
 }
 
+/// A file extraction left for a program (D-186).
+struct Extracted {
+    folder: PathBuf,
+    path: PathBuf,
+    len: u64,
+}
+
 #[derive(Default)]
 struct State {
     session: Option<Session>,
     files: HashMap<Key, Slot>,
+    /// By the archive at its stamp, and the member at its own.
+    extracted: HashMap<Key, Extracted>,
     tick: u64,
     next: u64,
 }
@@ -206,25 +220,181 @@ impl Cache {
 
     /// Makes room for `bytes` more, evicting least recently used files no reader holds; else `ArchiveLimit`.
     fn reserve(&self, bytes: u64, cache_max: u64, spec: &str) -> Result<(), VfsError> {
+        self.reserve_past(bytes, cache_max, 0, spec)
+    }
+
+    /// [`Cache::reserve`] that may pass the limit by `past`, what is on its way out.
+    fn reserve_past(
+        &self,
+        bytes: u64,
+        cache_max: u64,
+        past: u64,
+        spec: &str,
+    ) -> Result<(), VfsError> {
         let mut state = self.lock();
-        while self.used().saturating_add(bytes) > cache_max {
-            let victim = state
-                .files
-                .iter()
-                .filter(|(_, slot)| Arc::strong_count(&slot.file) == 1)
-                .min_by_key(|(_, slot)| slot.last_use)
-                .map(|(key, _)| key.clone());
-            let Some(key) = victim else {
+        while self.used().saturating_add(bytes) > cache_max.saturating_add(past) {
+            if !Cache::evict_one(&mut state) {
                 return Err(VfsError::ArchiveLimit {
                     spec: spec.to_owned(),
                     limit: "cache",
                     value: cache_max,
                 });
-            };
-            state.files.remove(&key);
+            }
         }
         self.used.fetch_add(bytes, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Evicts the least recently used file no reader holds; `false` when there is none.
+    fn evict_one(state: &mut State) -> bool {
+        let victim = state
+            .files
+            .iter()
+            .filter(|(_, slot)| Arc::strong_count(&slot.file) == 1)
+            .min_by_key(|(_, slot)| slot.last_use)
+            .map(|(key, _)| key.clone());
+        match victim {
+            Some(key) => {
+                state.files.remove(&key);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The path of the extraction of `key`, while its file is there. One a program deleted leaves the table, with what it
+    /// counted, and the next call extracts anew.
+    pub(crate) fn extracted(&self, archive: u64, key: &str) -> Option<PathBuf> {
+        let key = (archive, Box::from(key));
+        let mut state = self.lock();
+        let found = state.extracted.get(&key)?;
+        if found.path.is_file() {
+            return Some(found.path.clone());
+        }
+        let gone = state.extracted.remove(&key)?;
+        drop(state);
+        self.forget(&gone);
+        None
+    }
+
+    /// Gives back what an extraction whose file went held.
+    fn forget(&self, gone: &Extracted) {
+        self.used.fetch_sub(gone.len, Ordering::Relaxed);
+        let _ = fs::remove_dir(&gone.folder);
+    }
+
+    /// Writes what `reader` gives, `size` bytes, to `x<k>/<name>`, read-only, and keeps it until [`Cache::cleanup`]:
+    /// counted in `used` and never evicted. A member that does not fit is `ArchiveLimit`, a failure or a cancellation
+    /// leaves nothing. A reader may hold a spool of the same bytes for now: that one goes when the reader does, so the
+    /// limit stands once this call has returned.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn extract(
+        self: &Arc<Cache>,
+        root: &Path,
+        cache_max: u64,
+        spec: &str,
+        (archive, key): (u64, &str),
+        name: &str,
+        size: u64,
+        reader: &mut dyn Read,
+        cancel: &CancelToken,
+    ) -> Result<PathBuf, VfsError> {
+        let held = self.held();
+        self.reserve_past(size, cache_max, held, spec)?;
+        let mut job = Extraction {
+            cache: self,
+            folder: None,
+            path: None,
+            reserved: size,
+        };
+        let fail = |e: io::Error| VfsError::from_io(spec, VfsOp::Write, e);
+        let (dir, number) = self.next_in_session(root).map_err(fail)?;
+        let folder = dir.join(format!("x{number}"));
+        create_private_dir(&folder).map_err(fail)?;
+        job.folder = Some(folder.clone());
+        let path = folder.join(name);
+        job.path = Some(path.clone());
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(fail)?;
+        let mut buffer = vec![0u8; STEP as usize];
+        let mut written = 0u64;
+        loop {
+            cancel.check()?;
+            let n = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(VfsError::from_io(spec, VfsOp::Read, e)),
+            };
+            written += n as u64;
+            if written > size {
+                return Err(VfsError::ArchiveCorrupt {
+                    spec: spec.to_owned(),
+                    reason: "size mismatch".to_owned(),
+                });
+            }
+            file.write_all(buffer.get(..n).unwrap_or_default())
+                .map_err(fail)?;
+        }
+        file.flush().map_err(fail)?;
+        make_read_only(&file).map_err(fail)?;
+        drop(file);
+        let key = (archive, Box::from(key));
+        let mut state = self.lock();
+        if let Some(found) = state
+            .extracted
+            .get(&key)
+            .filter(|found| found.path.is_file())
+        {
+            // Another thread did the same: one file, as for any second call.
+            return Ok(found.path.clone());
+        }
+        let keep = Extracted {
+            folder,
+            path: path.clone(),
+            len: written,
+        };
+        let gone = state.extracted.insert(key, keep);
+        drop(state);
+        if let Some(gone) = gone {
+            self.forget(&gone);
+        }
+        self.used.fetch_sub(size - written, Ordering::Relaxed);
+        job.folder = None;
+        job.path = None;
+        job.reserved = 0;
+        Ok(path)
+    }
+
+    /// Bytes of the files in the table that a reader holds.
+    fn held(&self) -> u64 {
+        self.lock()
+            .files
+            .values()
+            .filter(|slot| Arc::strong_count(&slot.file) > 1)
+            .map(|slot| slot.file.len)
+            .sum()
+    }
+
+    /// Back under the limit, once the reader of an extraction has let go of its spool (best effort).
+    pub(crate) fn trim(&self, cache_max: u64) {
+        let mut state = self.lock();
+        while self.used() > cache_max && Cache::evict_one(&mut state) {}
+    }
+
+    /// The session's folder and a new number, the session opened if there is none yet.
+    fn next_in_session(&self, root: &Path) -> io::Result<(PathBuf, u64)> {
+        let mut state = self.lock();
+        if state.session.is_none() {
+            state.session = Some(open_session(root)?);
+        }
+        state.next += 1;
+        let number = state.next;
+        let dir = state.session.as_ref().map(|s| s.dir.clone());
+        Ok((dir.unwrap_or_default(), number))
     }
 
     /// Starts a cache file. `known` is its length when known: it is reserved at once, so a member over the limit
@@ -321,9 +491,33 @@ impl Cache {
     pub(crate) fn cleanup(&self) {
         let mut state = self.lock();
         state.files.clear();
+        for (_, extracted) in state.extracted.drain() {
+            let _ = remove_extracted(&extracted.folder, &extracted.path);
+            self.used.fetch_sub(extracted.len, Ordering::Relaxed);
+        }
         if let Some(session) = state.session.take() {
             session.close();
         }
+    }
+}
+
+/// An extraction under way: dropped before its end, it leaves nothing and gives its reservation back.
+struct Extraction<'a> {
+    cache: &'a Cache,
+    folder: Option<PathBuf>,
+    path: Option<PathBuf>,
+    reserved: u64,
+}
+
+impl Drop for Extraction<'_> {
+    fn drop(&mut self) {
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+        if let Some(folder) = &self.folder {
+            let _ = fs::remove_dir(folder);
+        }
+        self.cache.used.fetch_sub(self.reserved, Ordering::Relaxed);
     }
 }
 
@@ -535,8 +729,9 @@ fn claim(root: &Path) -> io::Result<(u64, PathBuf, Handle)> {
 /// Removes the folder and the lock file of every other session whose lock can be taken: its owner is gone. A lock
 /// that fails with any error counts as held.
 fn sweep(root: &Path, own: u64) -> io::Result<()> {
-    for item in fs::read_dir(root)? {
-        let Ok(item) = item else { continue };
+    // An entry that fails ends the walk: on Windows a folder going away under the listing fails every next entry, for
+    // ever, and a later session sweeps what this one did not reach.
+    for item in fs::read_dir(root)?.map_while(Result::ok) {
         let name = item.file_name();
         let Some(number) = name.to_str().and_then(session_number) else {
             continue;
@@ -553,12 +748,74 @@ fn sweep(root: &Path, own: u64) -> io::Result<()> {
         };
         if lock.as_file().try_lock().is_ok()
             && is_at(&lock, &path)
-            && remove_tree(&root.join(format!("s{number}"))).is_ok()
+            && remove_dead(&root.join(format!("s{number}"))).is_ok()
         {
             let _ = fs::remove_file(&path);
         }
     }
     Ok(())
+}
+
+/// `0400`, or the DOS `R`: an edit by the program is not written back, and the mode says so.
+#[cfg(unix)]
+fn make_read_only(file: &File) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(fs::Permissions::from_mode(0o400))
+}
+
+/// `0400`, or the DOS `R`.
+#[cfg(not(unix))]
+fn make_read_only(file: &File) -> io::Result<()> {
+    let mut permissions = file.metadata()?.permissions();
+    permissions.set_readonly(true);
+    file.set_permissions(permissions)
+}
+
+/// Windows removes no file that carries `R`.
+#[cfg(not(unix))]
+fn make_writable(path: &Path) {
+    let Ok(meta) = fs::metadata(path) else {
+        return;
+    };
+    let mut permissions = meta.permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    let _ = fs::set_permissions(path, permissions);
+}
+
+/// A folder is what lets a file go here, whatever its mode.
+#[cfg(unix)]
+fn make_writable(_path: &Path) {}
+
+/// Removes the file of an extraction and its folder.
+fn remove_extracted(folder: &Path, path: &Path) -> io::Result<()> {
+    make_writable(path);
+    fs::remove_file(path)?;
+    fs::remove_dir(folder)
+}
+
+/// The files of the `x<k>` folders of a session in `dir`, made removable.
+fn release_extracted(dir: &Path) {
+    let Ok(items) = fs::read_dir(dir) else {
+        return;
+    };
+    for item in items.map_while(Result::ok) {
+        let name = item.file_name();
+        if name.to_string_lossy().starts_with('x')
+            && let Ok(files) = fs::read_dir(item.path())
+        {
+            for file in files.map_while(Result::ok) {
+                make_writable(&file.path());
+            }
+        }
+    }
+}
+
+/// The folder of a dead session: it kept its extractions, whose `R` is in the way on Windows. A session of its own has
+/// removed them by then ([`Cache::cleanup`]), so only a sweep looks.
+fn remove_dead(dir: &Path) -> io::Result<()> {
+    release_extracted(dir);
+    remove_tree(dir)
 }
 
 /// `remove_dir_all`; a folder that is not there is removed.

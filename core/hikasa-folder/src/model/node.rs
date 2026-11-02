@@ -97,11 +97,13 @@ bitflags::bitflags! {
         const LEFT_ARCHIVE_ROOT = 1024;
         /// The same on the right.
         const RIGHT_ARCHIVE_ROOT = 2048;
+        /// Marked Ignored (FC-033): statistics, verdict and filters read a difference here as `same`.
+        const IGNORED = 4096;
     }
 }
 
 /// JSON names of the node flags in bit order (§4.1 rule 9).
-const FLAG_NAMES: [(NodeFlags, &str); 10] = [
+const FLAG_NAMES: [(NodeFlags, &str); 11] = [
     (NodeFlags::LEFT_FILTERED, "left_filtered"),
     (NodeFlags::RIGHT_FILTERED, "right_filtered"),
     (NodeFlags::LEFT_STAT_SKIPPED, "left_stat_skipped"),
@@ -112,6 +114,7 @@ const FLAG_NAMES: [(NodeFlags, &str); 10] = [
     (NodeFlags::RULES_SKIPPED_SIZE, "rules_skipped_size"),
     (NodeFlags::CONTENT_SKIPPED, "content_skipped"),
     (NodeFlags::ARCHIVE, "archive"),
+    (NodeFlags::IGNORED, "ignored"),
 ];
 
 impl NodeFlags {
@@ -293,7 +296,7 @@ mod tests {
             (NodeFlags::SYMLINK_LOOP | NodeFlags::LEFT_FILTERED).names(),
             ["left_filtered", "symlink_loop"]
         );
-        assert_eq!(NodeFlags::all().names().len(), 10);
+        assert_eq!(NodeFlags::all().names().len(), 11);
         assert_eq!(
             NodeFlags::archive_root(Side::Right),
             NodeFlags::RIGHT_ARCHIVE_ROOT

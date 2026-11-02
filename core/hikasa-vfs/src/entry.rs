@@ -51,6 +51,20 @@ impl fmt::Display for EntryKind {
     }
 }
 
+/// What an entry of kind [`EntryKind::Other`] is, where the back-end says (D-169).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialKind {
+    /// A block device.
+    Block,
+    /// A character device.
+    Char,
+    /// A FIFO.
+    Fifo,
+    /// A socket.
+    Socket,
+}
+
 /// A file name. `as_str()` is the UTF-8 form, lossy when needed, used for matching and display.
 /// `raw` keeps the exact OS name when that conversion was lossy (INV-NAME-1: `raw.is_some()` ⇔ lossy).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -381,6 +395,8 @@ pub struct Entry {
     pub crc32: Option<u32>,
     /// Identity for loop detection (Unix and `MemoryVfs`; `None` elsewhere).
     pub file_id: Option<FileId>,
+    /// What an `Other` entry is (`Some` only with that kind; `None` on Windows and in zip).
+    pub special: Option<SpecialKind>,
 }
 
 impl Entry {
@@ -399,6 +415,7 @@ impl Entry {
             followed: false,
             crc32: None,
             file_id: None,
+            special: None,
         }
     }
 

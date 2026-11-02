@@ -29,12 +29,13 @@ use crate::dialog::{
     AboutDialog, ButtonRole, DialogModel, DialogRequest, DialogStep, Followup, Prompt, SettingsBody,
 };
 use crate::dnd::{DropOutcome, DropTarget, FieldId, decide};
-use crate::folder_view::FolderViewModel;
+use crate::folder_view::{ChildTicket, FolderEvent, FolderViewModel, OpenPair, WritePolicy};
 use crate::fonts::{FontLoader, FontSource, FontStep, LoadedFont, named_families};
 use crate::home::HomeOpen;
 use crate::job::Job;
 use crate::mailbox::Mailbox;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
+use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
@@ -47,6 +48,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod flow;
 
+pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
 pub use flow::OpenHow;
 pub use flow::{Catalog, OpenedSession, PanelAction, load_named};
@@ -259,6 +261,28 @@ pub struct AppCore {
     views_built: u64,
     /// The theme of the Options dialog's working copies while it differs from the files (D-130).
     preview: Option<Preview>,
+    /// FC-029(c): each child Text Compare view whose result its folder view waits for, with that view.
+    child_parents: std::collections::HashMap<ViewId, ViewId>,
+    /// The view the last `OpenHow::Target` opened (a child view's id, once its session is read).
+    last_opened: Option<ViewId>,
+    /// Operations whose view ended while they wrote: cancelled, they end after their current item, and their outcome
+    /// goes to the log with one notice (§1.6.25 W6d after review).
+    orphans: Vec<OrphanOp>,
+    /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
+    #[cfg(test)]
+    pub before_wait: Option<Box<dyn FnOnce() + Send>>,
+}
+
+/// An operation whose view ended (the tab closed, the view was replaced, the window quits).
+struct OrphanOp {
+    /// The view it ran in.
+    view: ViewId,
+    /// The view's caption: the source of its log entries.
+    source: String,
+    /// How the view ended (`closed`, `settings applied`), for the notice.
+    why: &'static str,
+    /// The job, cancelled.
+    op: crate::folder_view::RunningOp,
 }
 
 /// The theme preview of the Options dialog (D-130).
@@ -354,6 +378,11 @@ impl AppCore {
             startup: None,
             views_built: 0,
             preview: None,
+            child_parents: std::collections::HashMap::new(),
+            last_opened: None,
+            orphans: Vec::new(),
+            #[cfg(test)]
+            before_wait: None,
         };
         let root = app.new_window(None);
         app.new_home_tab(root);
@@ -846,7 +875,7 @@ impl AppCore {
             let mut state = self.state.clone();
             let name = match &request {
                 ViewRequest::Text { .. } => Scope::Text,
-                ViewRequest::Folder { .. } => Scope::Folder,
+                ViewRequest::Folder { .. } | ViewRequest::Sync { .. } => Scope::Folder,
             }
             .view_name()
             .unwrap_or_default();
@@ -880,6 +909,22 @@ impl AppCore {
                 m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
             }
+            // A Folder Sync view is W9's: a GUI answers `unsupported_view` before a sync request is built (D-190), so none
+            // arrives here; were one to, the window shows the comparison of its bases, which writes nothing.
+            ViewRequest::Sync {
+                request, display, ..
+            } => {
+                let mut m = FolderViewModel::new(
+                    &self.service,
+                    request,
+                    display,
+                    false,
+                    titles,
+                    self.wake(),
+                );
+                m.apply_layout(layout);
+                ViewModel::Folder(Box::new(m))
+            }
         }
     }
 
@@ -893,7 +938,9 @@ impl AppCore {
         target: OpenTarget,
     ) -> WindowId {
         let titles = [options.titles[0].clone(), options.titles[1].clone()];
-        let model = self.build_model(request, titles);
+        let mut model = self.build_model(request, titles);
+        // Disable editing and `--nobackups` of the command line and of IPC `ReadOnly` (§1.6.20).
+        set_write(&mut model, WritePolicy::of_open(options));
         let scope = model.scope();
         let mut tab = Tab::live(view, model, self.toolbar_default(scope));
         tab.session = Some(crate::view_session::ViewSession::unnamed(self.timer_now));
@@ -1097,6 +1144,7 @@ impl AppCore {
         let service = self.service.clone();
         let mut opened: Vec<(WindowId, usize, HomeOpen)> = Vec::new();
         let mut notes: Vec<(WindowId, ViewId, bool, String, Vec<LogNote>)> = Vec::new();
+        let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
         for w in &mut self.windows {
             let active = w.active;
             for (index, tab) in w.tabs.iter_mut().enumerate() {
@@ -1123,6 +1171,10 @@ impl AppCore {
                     }
                     Some(ViewModel::Folder(m)) => {
                         m.poll(&service);
+                        let e = m.take_events();
+                        if !e.is_empty() {
+                            events.push((w.id, id, caption.clone(), e));
+                        }
                         let n = m.take_notes();
                         if !n.is_empty() {
                             notes.push((w.id, id, index == active, caption, n));
@@ -1164,6 +1216,11 @@ impl AppCore {
                 self.log_entry(note.kind, &caption, note.text);
             }
         }
+        for (window, view, caption, list) in events {
+            effects.extend(self.folder_events(window, view, &caption, list));
+        }
+        self.poll_orphans();
+        self.child_results();
         effects.extend(self.poll_jobs());
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
         // a settings job in the frame the job ended.
@@ -1173,6 +1230,207 @@ impl AppCore {
         effects.extend(self.dialog_requests());
         self.flush_log();
         effects
+    }
+
+    /// What a folder view's operation asks of its window (§1.6.20): a dialog on the window's stack; a notice with its
+    /// log entry; an outcome's log entries (`op_log_entries`, D-116) and one notice (D-117), information when every item
+    /// ran, a warning with *Show log* when one failed, did not run or the operation was stopped.
+    fn folder_events(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        source: &str,
+        list: Vec<FolderEvent>,
+    ) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for event in list {
+            match event {
+                FolderEvent::Dialog(dialog) => {
+                    // The question is about this view's row: its tab comes to the front with it.
+                    if let Some(index) = self.window(window).and_then(|w| w.index_of(view)) {
+                        self.activate(window, index);
+                    }
+                    if let Some(w) = self.window_mut(window) {
+                        w.dialogs.push(dialog);
+                        effects.push(Effect::Raise(window));
+                    }
+                }
+                FolderEvent::Notice { kind, text } => {
+                    let log = if kind == NoticeKind::Info {
+                        LogKind::Summary
+                    } else if kind == NoticeKind::Warning {
+                        LogKind::Warning
+                    } else {
+                        LogKind::Error
+                    };
+                    let notice = Notice::new(format!("op:{}", view.0), kind, text)
+                        .with_actions(vec![NoticeAction::ShowLog(view)]);
+                    self.notify(window, notice, source, log);
+                }
+                FolderEvent::Outcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => self.op_outcome(window, view, None, source, &caption, &outcome, elapsed),
+            }
+        }
+        effects
+    }
+
+    /// An operation's outcome: its entries in the log (`op_log_entries`, D-116) and one notice (D-117), information
+    /// when every item ran, a warning when one failed, did not run or the operation was stopped; with *Show log* while
+    /// the view lives (`ended` is `None`). The notice of a view that ended names its tab and how it ended.
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn op_outcome(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        ended: Option<&str>,
+        source: &str,
+        caption: &str,
+        outcome: &hikasa_session::api::FolderOpOutcome,
+        elapsed: std::time::Duration,
+    ) {
+        let time = self.service.clock().now();
+        let filter = self.log.filter();
+        let entries =
+            hikasa_session::log::op_log_entries(outcome, &time, source, Some(elapsed), &filter);
+        for entry in entries {
+            self.log.push(entry);
+        }
+        let summary = hikasa_session::api::folder_ops::summary_text(
+            outcome.verb,
+            false,
+            &outcome.report.summary,
+            None,
+        );
+        let clean = outcome.ok();
+        let what = match ended {
+            None => caption.to_owned(),
+            Some(why) => format!("{caption} in {source} ({why})"),
+        };
+        let text = if outcome.report.cancelled {
+            format!("{what}: stopped; {summary}.")
+        } else {
+            format!("{what}: {summary}.")
+        };
+        let key = format!("op:{}", view.0);
+        let notice = if clean {
+            Notice::new(key, NoticeKind::Info, text)
+        } else if ended.is_none() {
+            Notice::new(key, NoticeKind::Warning, text)
+                .with_actions(vec![NoticeAction::ShowLog(view)])
+        } else {
+            Notice::new(key, NoticeKind::Warning, text)
+        };
+        self.push_notice(window, notice);
+    }
+
+    /// A folder view ends while it may still write (§1.6.25 W6d after review): what it did not hand over yet is
+    /// reported now (an outcome, a notice; a dialog is dropped: its view is gone), and its running operation, cancelled,
+    /// is kept until it ends, so its outcome reaches the log too.
+    pub(crate) fn retire_folder(
+        &mut self,
+        view: ViewId,
+        source: &str,
+        why: &'static str,
+        m: &mut FolderViewModel,
+    ) {
+        let retired = m.retire();
+        let window = self.window_of(view).unwrap_or_else(|| self.focused());
+        for event in retired.events {
+            match event {
+                FolderEvent::Dialog(_) => {}
+                FolderEvent::Notice { kind, text } => {
+                    let log = match kind {
+                        NoticeKind::Info => LogKind::Summary,
+                        NoticeKind::Warning => LogKind::Warning,
+                        NoticeKind::Error => LogKind::Error,
+                    };
+                    let notice = Notice::new(format!("op:{}", view.0), kind, text);
+                    self.notify(window, notice, source, log);
+                }
+                FolderEvent::Outcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => self.op_outcome(window, view, Some(why), source, &caption, &outcome, elapsed),
+            }
+        }
+        for note in m.take_notes() {
+            self.log_entry(note.kind, source, note.text);
+        }
+        if let Some(op) = retired.running {
+            self.orphans.push(OrphanOp {
+                view,
+                source: source.to_owned(),
+                why,
+                op,
+            });
+        }
+    }
+
+    /// The orphaned operations that ended: their outcomes go to the log, each with one notice. True while some run.
+    fn poll_orphans(&mut self) -> bool {
+        let mut i = 0;
+        while i < self.orphans.len() {
+            let Some(result) = self.orphans[i].op.job.try_result() else {
+                i += 1;
+                continue;
+            };
+            let orphan = self.orphans.remove(i);
+            let window = self.focused();
+            let caption = &orphan.op.caption;
+            match result {
+                Ok(outcome) => self.op_outcome(
+                    window,
+                    orphan.view,
+                    Some(orphan.why),
+                    &orphan.source,
+                    caption,
+                    &outcome,
+                    orphan.op.began.elapsed(),
+                ),
+                Err(e) => {
+                    let text = format!("{caption} in {} ({}): {e}", orphan.source, orphan.why);
+                    let notice =
+                        Notice::new(format!("op:{}", orphan.view.0), NoticeKind::Error, text);
+                    self.notify(window, notice, &orphan.source, LogKind::Error);
+                }
+            }
+        }
+        !self.orphans.is_empty()
+    }
+
+    /// Waits (at most `limit`) for the orphaned operations to end, so none is cut off mid-item with a temporary file
+    /// left (Quit). One still running after `limit` is logged as an error.
+    fn wait_operations(&mut self, limit: std::time::Duration) {
+        if self.orphans.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        if let Some(hook) = self.before_wait.take() {
+            hook();
+        }
+        let began = std::time::Instant::now();
+        while self.poll_orphans() {
+            if began.elapsed() >= limit {
+                let mut errors = Vec::new();
+                for orphan in &self.orphans {
+                    let text = format!(
+                        "{} in {} was still running at exit: it may have stopped mid-item.",
+                        orphan.op.caption, orphan.source
+                    );
+                    tracing::error!(target: "hikasa::gui", "{text}");
+                    errors.push((orphan.source.clone(), text));
+                }
+                for (source, text) in errors {
+                    self.log_entry(LogKind::Error, &source, text);
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
     /// `TextDirty` for every text view whose panes must refetch, `FolderScroll` for every tree that must
@@ -1415,42 +1673,57 @@ impl AppCore {
                     }
                 }
             }
+            CommandId::CopyRight
+            | CommandId::CopyLeft
+            | CommandId::Delete
+            | CommandId::PermanentDelete => self.start_operation(window, inv.id),
             id => {
-                let open = {
+                let (open, parent_view) = {
                     let Some(tab) = self.active_tab_mut(window) else {
                         return Vec::new();
                     };
-                    match tab.model_mut() {
+                    let parent_view = tab.id;
+                    let open = match tab.model_mut() {
                         Some(ViewModel::Text(m)) => {
                             m.execute(&service, id);
                             None
                         }
                         Some(ViewModel::Folder(m)) => m.execute(&service, id).flatten(),
                         _ => None,
-                    }
+                    };
+                    (open, parent_view)
                 };
-                if let Some((request, view)) = open {
+                if let Some(OpenPair {
+                    request,
+                    view,
+                    ticket,
+                }) = open
+                {
                     let parent = self.child_link(window, &request);
                     let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window {
                         OpenTarget::NewWindow
                     } else {
                         OpenTarget::Window(window)
                     };
+                    let child = ticket.map(|t| (parent_view, t));
                     if let Some(parent) = parent {
-                        self.open_child(ViewRequest::Text { request, view }, parent, target);
+                        self.open_child(ViewRequest::Text { request, view }, parent, target, child);
                         return effects;
                     }
                     let specs = vec![
                         request.left.to_string_lossy().into_owned(),
                         request.right.to_string_lossy().into_owned(),
                     ];
-                    self.open_local(
+                    let opened = self.open_local(
                         ViewKind::TextCompare,
                         ViewRequest::Text { request, view },
                         &OpenOptions::default(),
                         specs,
                         target,
                     );
+                    if let Some((parent_view, ticket)) = child {
+                        self.adopt_child(opened, parent_view, ticket);
+                    }
                 }
             }
         }
@@ -1458,6 +1731,69 @@ impl AppCore {
         effects.extend(self.new_viewports(&before));
         effects.extend(self.dirty_effects());
         effects
+    }
+
+    /// `CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete` on the active folder view's selected row (§1.6.20): the view
+    /// plans in a job, or asks the sides of a delete first.
+    fn start_operation(&mut self, window: WindowId, id: CommandId) {
+        let service = self.service.clone();
+        let caption = self.tables.caption(Scope::Folder, id);
+        let require_side = self
+            .options()
+            .file_operations
+            .require_side_selection_in_delete;
+        let dialog = {
+            let Some(tab) = self.active_tab_mut(window) else {
+                return;
+            };
+            let view = tab.id;
+            match tab.model_mut() {
+                Some(ViewModel::Folder(m)) => {
+                    m.start_operation(&service, view, id, &caption, require_side)
+                }
+                _ => None,
+            }
+        };
+        if let (Some(dialog), Some(w)) = (dialog, self.window_mut(window)) {
+            w.dialogs.push(dialog);
+        }
+    }
+
+    /// A child Text Compare view of the folder view `parent` opened for a row (FC-029(c)): its result goes to the row
+    /// when its comparison ends.
+    pub(crate) fn adopt_child(&mut self, child: ViewId, parent: ViewId, ticket: ChildTicket) {
+        if let Some(ViewModel::Folder(m)) = self.tab_mut(parent).and_then(|t| t.model_mut()) {
+            m.adopt_child(child, ticket);
+            self.child_parents.insert(child, parent);
+        }
+    }
+
+    /// Hands the result of each child view whose comparison ended to its folder view (FC-029(c)), once.
+    fn child_results(&mut self) {
+        if self.child_parents.is_empty() {
+            return;
+        }
+        let mut done = Vec::new();
+        for (&child, &parent) in &self.child_parents {
+            match self.tab(child).and_then(Tab::model) {
+                Some(ViewModel::Text(m)) => {
+                    if let Some(response) = m.response() {
+                        done.push((child, parent, Some(response.comparison.verdict(false))));
+                    }
+                }
+                // The child closed, or became something else: no result.
+                _ => done.push((child, parent, None)),
+            }
+        }
+        for (child, parent, result) in done {
+            self.child_parents.remove(&child);
+            let Some(result) = result else {
+                continue;
+            };
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(parent).and_then(|t| t.model_mut()) {
+                m.child_result(child, crate::folder_view::child_outcome(result));
+            }
+        }
     }
 
     /// The parent link of a pair opened from the folder view of `window` (FC-062, TC-052): the view's reference
@@ -1486,14 +1822,17 @@ impl AppCore {
         let Some(tab) = self.active_tab(window) else {
             return;
         };
+        let mut write = WritePolicy::default();
         let copy = match tab.model() {
             Some(ViewModel::Home(h)) => Err(h.copy_fields()),
             Some(ViewModel::Text(m)) => {
                 let (request, titles) = m.duplicate();
+                write = m.write_policy();
                 Ok((ViewKind::TextCompare, request, titles, m.inputs().to_vec()))
             }
             Some(ViewModel::Folder(m)) => {
                 let (request, titles) = m.duplicate();
+                write = m.write_policy();
                 Ok((ViewKind::FolderCompare, request, titles, m.specs()))
             }
             None => return,
@@ -1519,7 +1858,8 @@ impl AppCore {
                     },
                     None,
                 );
-                let model = self.build_model(request, titles);
+                let mut model = self.build_model(request, titles);
+                set_write(&mut model, write);
                 let mut tab = Tab::live(view, model, toolbar);
                 tab.toolbar = toolbar;
                 tab.session = Some(crate::view_session::ViewSession::unnamed(now));
@@ -1711,10 +2051,11 @@ impl AppCore {
             let (result, code) = ViewOutcome::close_unopened(reason);
             self.shared.close(id, result, code);
         }
+        let source = tab.caption();
         let outcome = match tab.model_mut() {
             Some(ViewModel::Folder(m)) => {
                 let outcome = m.outcome(&service);
-                m.cancel();
+                self.retire_folder(id, &source, "closed", m);
                 Some(outcome)
             }
             Some(ViewModel::Text(m)) => {
@@ -2005,6 +2346,8 @@ impl AppCore {
                 self.close_model(&mut tab, CloseReason::Shutdown);
             }
         }
+        // An operation that was writing ends its current item first (no temporary file is left), and is logged.
+        self.wait_operations(OPERATION_FLUSH);
         self.persist_state(geometry);
         self.send_watch(WatchCmd::Stop);
         if let Some(server) = self.server.take()
@@ -2250,8 +2593,25 @@ impl AppCore {
         }
     }
 
-    /// A dialog left its stack: the Options dialog's preview ends with the applied theme, its page is remembered.
-    fn dialog_closed(&mut self, closed: Box<dyn DialogModel>) -> Vec<Effect> {
+    /// A dialog left its stack: the Options dialog's preview ends with the applied theme, its page is remembered; the
+    /// dialogs of a folder operation hand their answers to their view (§1.6.20), however they closed.
+    fn dialog_closed(&mut self, mut closed: Box<dyn DialogModel>) -> Vec<Effect> {
+        if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
+            let (view, answers) = (d.view, d.take_confirmation());
+            let service = self.service.clone();
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                m.confirmed(&service, answers);
+            }
+            return Vec::new();
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<DeleteDialog>() {
+            let (view, choice) = (d.view, d.take_choice());
+            let service = self.service.clone();
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                m.delete_chosen(&service, view, choice);
+            }
+            return Vec::new();
+        }
         let Some(options) = closed.as_any().downcast_ref::<OptionsDialog>() else {
             return Vec::new();
         };
@@ -2666,6 +3026,18 @@ impl AppCore {
                 return effects;
             }
             NoticeAction::OpenOptions => return self.open_options(window, None),
+            NoticeAction::ShowLog(view) => {
+                if let Some(w) = self.window_of(view) {
+                    let index = self.window(w).and_then(|x| x.index_of(view));
+                    if let Some(index) = index {
+                        self.activate(w, index);
+                    }
+                    self.focus(w);
+                }
+                if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    m.show_log_panel();
+                }
+            }
             // The dialog keeps its old stamp: the next Apply meets `Conflict` (D-128).
             NoticeAction::KeepMine | NoticeAction::Dismiss => {}
         }
@@ -3165,10 +3537,23 @@ impl AppCore {
 /// How long an exit nobody can refuse waits for a settings write (an import, a restore).
 const SETTINGS_FLUSH: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long Quit waits for a cancelled operation to end its current item (the cancel is checked per buffer).
+const OPERATION_FLUSH: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// `tabs.warn_when_closing_multiple_tabs` (the prompts' "Do not ask again").
 const WARN_TABS: &str = "tabs.warn_when_closing_multiple_tabs";
 /// `tabs.warn_when_closing_multiple_windows`.
 const WARN_WINDOWS: &str = "tabs.warn_when_closing_multiple_windows";
+
+/// Sets what a view may write (FC-003, CLI-003). A text view writes nothing yet, but keeps its read-only sides for its
+/// session (`[specs] read_only_*`) and its duplicate.
+pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
+    match model {
+        ViewModel::Folder(m) => m.set_write_policy(write),
+        ViewModel::Text(m) => m.set_write_policy(write),
+        ViewModel::Home(_) => {}
+    }
+}
 
 /// Sets one of the boolean option keys the window's prompts and messages bind (in memory).
 fn set_bool(o: &mut Options, key: &str, value: bool) {
@@ -3176,6 +3561,18 @@ fn set_bool(o: &mut Options, key: &str, value: bool) {
         WARN_TABS => o.tabs.warn_when_closing_multiple_tabs = value,
         WARN_WINDOWS => o.tabs.warn_when_closing_multiple_windows = value,
         "next_difference.show_message_panel" => o.next_difference.show_message_panel = value,
+        // The keys of the confirmation dialog's "Do not ask again" (§1.6.20).
+        "file_operations.confirm_copy" => o.file_operations.confirm_copy = value,
+        "file_operations.confirm_move" => o.file_operations.confirm_move = value,
+        "file_operations.confirm_delete" => o.file_operations.confirm_delete = value,
+        "file_operations.confirm_read_only" => o.file_operations.confirm_read_only = value,
+        "file_operations.confirm_system" => o.file_operations.confirm_system = value,
+        "file_operations.confirm_overwrite_newer" => {
+            o.file_operations.confirm_overwrite_newer = value
+        }
+        "file_operations.confirm_replace_during_move" => {
+            o.file_operations.confirm_replace_during_move = value
+        }
         _ => {}
     }
 }

@@ -66,6 +66,34 @@ pub struct MaskOptions {
     pub case: CaseSensitivity,
 }
 
+/// The items of a list: split at each `;` outside a set, so `[;]` is a name and no separator. A `[` that no `]` closes stays
+/// text here, and its item reports it.
+pub(crate) fn split_items(list: &str) -> impl Iterator<Item = &str> {
+    let chars: Vec<(usize, char)> = list.char_indices().collect();
+    let letters: Vec<char> = chars.iter().map(|(_, c)| *c).collect();
+    let mut cuts = Vec::new();
+    let mut i = 0;
+    while let Some(&(at, c)) = chars.get(i) {
+        match c {
+            ';' => cuts.push(at),
+            '[' => {
+                if let Some(close) = set_end(&letters, i, letters.len()) {
+                    i = close;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let ends = cuts.iter().copied().chain(std::iter::once(list.len()));
+    let starts = std::iter::once(0).chain(cuts.iter().map(|cut| cut + 1));
+    starts
+        .zip(ends)
+        .map(|(start, end)| list.get(start..end).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
 /// What a mask item applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -496,7 +524,7 @@ impl MaskList {
     /// Parses a list.
     pub fn parse(list: &str, opts: MaskOptions) -> Result<MaskList, MaskError> {
         let mut masks = Vec::new();
-        for item in list.split(';') {
+        for item in split_items(list) {
             if trim_item(item).is_empty() {
                 continue;
             }

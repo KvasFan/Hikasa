@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9f99f52fb47e67e5e3a6250cb32be5e1dfbd480fe13b026e41660c67779c3f73 # shrinks to Case { nodes: [Node { name: 0, left: Some(0), right: Some(1), content: [0, 0], mtime: [0, 0], children: [Node { name: 0, left: None, right: Some(0), content: [0, 0], mtime: [0, 0], children: [] }] }], preset: 1, cells: [0, 0, 0, 0, 0, 0, 0, 0], orphans: false, create_empty: false, filtered: false, include_hidden: false, read_only: 1, over: None, no_to_all: false, empty: 2, allow_empty: false }
+cc 79121530304047409a02be8292dfe6f8dcfcf250e3e284ceade14a4b80fb776f # shrinks to Case { nodes: [Node { name: 4, left: Some(0), right: Some(0), content: [0, 0], mtime: [1, 1], children: [] }], preset: 5, cells: [0, 0, 0, 0, 0, 0, 0, 77], orphans: false, create_empty: false, filtered: true, include_hidden: true, read_only: 1, over: None, no_to_all: false, empty: 2, allow_empty: false }
+cc 2fc15b4846b471f8a253c3e08890b4d13c16d9837fb94fbf88139d5536478b85 # shrinks to Case { nodes: [Node { name: 0, left: Some(1), right: Some(0), content: [0, 0], mtime: [0, 0], children: [] }], preset: 2, cells: [0, 0, 0, 0, 0, 0, 0, 0], orphans: false, create_empty: true, filtered: true, include_hidden: false, read_only: 0, over: None, no_to_all: false, empty: 2, allow_empty: false }

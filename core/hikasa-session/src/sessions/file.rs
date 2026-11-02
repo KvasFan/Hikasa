@@ -10,6 +10,7 @@
 use std::fmt;
 
 use hikasa_folder::FolderRules;
+use hikasa_folder::sync::SyncRules;
 use hikasa_text::TextRules;
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
@@ -120,13 +121,13 @@ impl SessionType {
     pub fn builtin_rules(self) -> SessionRules {
         match self {
             SessionType::FolderCompare => SessionRules::Folder(FolderRules::default()),
+            SessionType::FolderSync => SessionRules::Sync(SyncRules::default()),
             SessionType::TextCompare | SessionType::TextEdit => {
                 SessionRules::Text(TextRules::default())
             }
-            SessionType::FolderSync
-            | SessionType::TableCompare
-            | SessionType::HexCompare
-            | SessionType::PictureCompare => SessionRules::Opaque(Table::new()),
+            SessionType::TableCompare | SessionType::HexCompare | SessionType::PictureCompare => {
+                SessionRules::Opaque(Table::new())
+            }
         }
     }
 }
@@ -144,7 +145,10 @@ pub enum SessionRules {
     Folder(FolderRules),
     /// Text Compare and Text Edit.
     Text(TextRules),
-    /// Folder Sync, Table, Hex and Picture until their engine waves: kept as it is.
+    /// Folder Sync (§1.6.15, D-183): the folder rules and `[rules.sync]`. A file written before W6 reads as it is: its
+    /// table had this shape, or was empty.
+    Sync(SyncRules),
+    /// Table, Hex and Picture until their engine waves: kept as it is.
     Opaque(Table),
 }
 
@@ -153,6 +157,7 @@ impl SessionRules {
     pub fn to_value(&self) -> Value {
         let value = match self {
             SessionRules::Folder(rules) => Value::try_from(rules),
+            SessionRules::Sync(rules) => Value::try_from(rules),
             SessionRules::Text(rules) => Value::try_from(rules),
             SessionRules::Opaque(table) => Ok(Value::Table(table.clone())),
         };
@@ -166,6 +171,10 @@ impl SessionRules {
                 .try_into()
                 .map(SessionRules::Folder)
                 .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Sync(_) => value
+                .try_into()
+                .map(SessionRules::Sync)
+                .map_err(|e: toml::de::Error| one_line(e.message())),
             SessionRules::Text(_) => value
                 .try_into()
                 .map(SessionRules::Text)
@@ -176,6 +185,70 @@ impl SessionRules {
             },
         }
     }
+}
+
+/// A folder-sync file written before W6 kept `[rules]` as it was written (D-81's opaque table), so its shape may be an
+/// older one. Where that shape has one meaning now it is read as that: `filters.names` given as a filter text
+/// (`"*.c;-obj\\"`) is those name filters, and a string where a list is expected is that one item. What has none fails,
+/// naming the key: `mode` (no preset can be told from it), and a value whose type is not the one of its key now.
+fn old_sync_shape(rules: &mut Table, now: &Value) -> Result<(), ApiError> {
+    if let Some(mode) = rules.get("mode") {
+        return Err(ApiError::InvalidData(format!(
+            "rules.mode = {mode}: a key of folder-sync files written before this version, which says no preset now; \
+             set rules.sync.preset (update_right, update_left, update_both, mirror_right, mirror_left) and remove it"
+        )));
+    }
+    if let Some(Value::Table(filters)) = rules.get_mut("filters")
+        && let Some(Value::String(text)) = filters.get("names").cloned()
+    {
+        let mut parsed = FolderRules::default();
+        parsed
+            .apply(&hikasa_folder::FolderRulesPatch {
+                name_filter: Some(text.clone()),
+                ..hikasa_folder::FolderRulesPatch::default()
+            })
+            .map_err(|e| ApiError::InvalidData(format!("rules.filters.names = {text:?}: {e}")))?;
+        let lists = Value::try_from(&parsed.filters.names)
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        filters.insert("names".to_owned(), lists);
+    }
+    // Lists a default leaves out of the file (empty): a string is that one item too.
+    for key in ["ignored", "open_archives"] {
+        if let Some(Value::String(text)) = rules.get(key).cloned() {
+            rules.insert(key.to_owned(), Value::Array(vec![Value::String(text)]));
+        }
+    }
+    fn walk(path: &mut Vec<String>, written: &mut Table, now: &Table) -> Result<(), ApiError> {
+        for (key, value) in written.iter_mut() {
+            let Some(known) = now.get(key) else { continue };
+            path.push(key.clone());
+            let name = path.join(".");
+            match (&mut *value, known) {
+                (Value::Table(inner), Value::Table(known_inner)) => walk(path, inner, known_inner)?,
+                (Value::String(text), Value::Array(_)) => {
+                    *value = Value::Array(vec![Value::String(text.clone())])
+                }
+                (found, known)
+                    if std::mem::discriminant(&*found) != std::mem::discriminant(known)
+                    // A map of the new shape (overrides, matrix, format overrides) holds what it likes.
+                    && !matches!(known, Value::Table(t) if t.is_empty()) =>
+                {
+                    return Err(ApiError::InvalidData(format!(
+                        "rules.{name}: a {} where this version reads a {}",
+                        found.type_str(),
+                        known.type_str()
+                    )));
+                }
+                _ => {}
+            }
+            path.pop();
+        }
+        Ok(())
+    }
+    if let Value::Table(now) = now {
+        walk(&mut Vec::new(), rules, now)?;
+    }
+    Ok(())
 }
 
 /// The inputs of a session (canonical spec strings; `""` = not set).
@@ -192,6 +265,10 @@ pub struct Specs {
     pub left_encoding: String,
     /// Right encoding label.
     pub right_encoding: String,
+    /// Disable editing, left (FC-003).
+    pub read_only_left: bool,
+    /// Disable editing, right.
+    pub read_only_right: bool,
 }
 
 /// The parent link of a child session (TC-052).
@@ -317,6 +394,7 @@ impl Session {
         let s = &mut self.specs;
         std::mem::swap(&mut s.left, &mut s.right);
         std::mem::swap(&mut s.left_encoding, &mut s.right_encoding);
+        std::mem::swap(&mut s.read_only_left, &mut s.read_only_right);
         if let Some(parent) = &mut self.parent {
             std::mem::swap(&mut parent.left, &mut parent.right);
         }
@@ -372,6 +450,7 @@ impl Session {
         };
         let shape = match &self.rules {
             SessionRules::Folder(_) => RulesShape::FOLDER,
+            SessionRules::Sync(_) => RulesShape::SYNC,
             SessionRules::Text(_) => RulesShape::TEXT,
             SessionRules::Opaque(_) => RulesShape::OPAQUE,
         };
@@ -413,7 +492,11 @@ impl Session {
             }
         };
         let mut rules = base.rules.to_value();
-        tree::overlay(&mut rules, &Value::Table(doc.rules.clone()));
+        let mut written = doc.rules.clone();
+        if kind == SessionType::FolderSync {
+            old_sync_shape(&mut written, &rules)?;
+        }
+        tree::overlay(&mut rules, &Value::Table(written));
         let rules = SessionRules::from_value(&base.rules, rules)
             .map_err(|e| ApiError::InvalidData(format!("rules: {e}")))?;
         let text_rules = if kind.is_folder() {
@@ -488,6 +571,16 @@ impl RulesShape {
             &["filters", "other", "date"],
         ],
         maps: &[],
+        opaque: false,
+    };
+    /// `hikasa_folder::sync::SyncRules`: the folder rules, and `[rules.sync]`, whose overrides are a map.
+    const SYNC: RulesShape = RulesShape {
+        optional: &[
+            &["criteria", "timestamps", "offset"],
+            &["filters", "other", "size"],
+            &["filters", "other", "date"],
+        ],
+        maps: &[&["sync", "overrides"]],
         opaque: false,
     };
     /// `hikasa_text::TextRules`.

@@ -1,0 +1,2 @@
+viewer --line 1 changed.txt
+viewer --line 1 changed.txt

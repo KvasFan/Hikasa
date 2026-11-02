@@ -7,14 +7,15 @@ use hikasa_core::ExitCode;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{
     FOLDER_COMPARE_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
+    TEXT_COMPARE_SCHEMA,
 };
 use hikasa_session::api::{
     ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_assignment,
 };
 use hikasa_session::sessions::{SessionRef, SessionType};
 
-use super::{Ctx, folder, text};
-use crate::args::{FolderCompareArgs, SessionCmd, SessionRunArgs, TextCompareArgs};
+use super::{Ctx, folder, folder_sync, text};
+use crate::args::{FolderCompareArgs, FolderRuleArgs, SessionCmd, SessionRunArgs, TextCompareArgs};
 
 /// Exit code of a successful command.
 const OK: u8 = ExitCode::Success.code();
@@ -184,16 +185,41 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         SessionRef::parse(&args.reference).and_then(|r| ctx.service.session_run_request(&r));
     match request {
         Ok(SessionRunRequest::Text(mut request)) => {
+            if let Err(e) = only_for_sync(args) {
+                return ctx.fail(TEXT_COMPARE_SCHEMA, &e, ApiOp::TextCompare, &[]);
+            }
             request.ignore_unimportant = args.ignore_unimportant;
             text::execute(ctx, &text_args(args, &request), &request)
         }
         Ok(SessionRunRequest::Folder(mut request)) => {
+            if let Err(e) = only_for_sync(args) {
+                return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::FolderCompare, &[]);
+            }
             request.ignore_unimportant = args.ignore_unimportant;
             folder::execute(ctx, &folder_args(args, &request), &request)
+        }
+        Ok(SessionRunRequest::Sync { request, options }) => {
+            folder_sync::run_session(ctx, args, request, options)
         }
         // The kind of the session is not known yet: the folder schema stands for both (exit 100 either way).
         Err(e) => ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::Other, &[]),
     }
+}
+
+/// `--yes`, `--confirm`, `--dry-run`, `--allow-empty-source`, `--all-rows` mean something to a folder-sync session only: a
+/// comparison would pass them by in silence.
+fn only_for_sync(args: &SessionRunArgs) -> Result<(), ApiError> {
+    if args.yes
+        || args.confirm.is_some()
+        || args.dry_run
+        || args.allow_empty_source
+        || args.all_rows
+    {
+        return Err(ApiError::InvalidArgument(
+            "--yes, --confirm, --dry-run, --allow-empty-source and --all-rows apply to folder-sync sessions".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// The `text compare` arguments of `session run` (only the presentation words are read by `text::execute`).
@@ -245,40 +271,9 @@ fn folder_args(
     request: &hikasa_session::api::FolderCompareRequest,
 ) -> FolderCompareArgs {
     FolderCompareArgs {
-        archives: None,
-        open_archive: Vec::new(),
         left: request.left.clone(),
         right: request.right.clone(),
-        filters: None,
-        rules_file: None,
-        criteria: None,
-        size: false,
-        no_size: false,
-        timestamps: false,
-        no_timestamps: false,
-        tolerance: None,
-        ignore_dst: false,
-        ignore_timezone: false,
-        filename_case: false,
-        attributes: None,
-        permissions: false,
-        owner: false,
-        group: false,
-        content: None,
-        skip_if_quick_same: false,
-        no_override_quick: false,
-        text_rules_file: None,
-        importance: crate::args::ImportanceArgs::default(),
-        case_sensitive: false,
-        case_insensitive: false,
-        align_extensions: false,
-        align_normalization: false,
-        cutoff: None,
-        size_filter: None,
-        include_protected: false,
-        follow_symlinks: false,
-        flatten: false,
-        no_scan_orphans: false,
+        rule: FolderRuleArgs::default(),
         display: args.display.clone(),
         folders: args.folders.clone(),
         ignore_unimportant: args.ignore_unimportant,

@@ -17,16 +17,24 @@
 //! | `--lines <a>-<b>` | [`parse_line_range`] |
 //! | `--display`/`--context` defaults (text) | [`resolve_text_display`] |
 //! | `--display`/`--folders`/`--suppress-filters` defaults (folders) | [`resolve_folder_display`] |
+//! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
+//! | `--path` | [`parse_select_path`] |
+//! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
+//! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
 
-use hikasa_core::ContentMethod;
+use hikasa_core::{ContentMethod, Side};
+use hikasa_folder::ops::{ConfirmMode, PathStructure};
+use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
 use hikasa_text::AlgorithmChoice;
 
 use super::ApiError;
+use crate::ipc::SyncWords;
+use hikasa_folder::sync::{OrphanReading, SyncAction, SyncMatrix, SyncOptions, SyncPreset};
 
 /// The default folder display filter of `folder compare` and of a folder view (§1.9.2 amendment): show the
 /// differences (the §4.3.3 examples).
@@ -175,9 +183,219 @@ pub fn resolve_folder_display(
     })
 }
 
+/// Parses `--to`, `--side` of one side: `left`, `lt`, `right`, `rt` (ASCII case-insensitive).
+pub fn parse_side(word: &str) -> Result<Side, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "left" | "lt" => Ok(Side::Left),
+        "right" | "rt" => Ok(Side::Right),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown side {word:?} (valid: left, right)"
+        ))),
+    }
+}
+
+/// Parses `--side`, `--read-only`: `left`, `right`, `both`.
+pub fn parse_sides(word: &str) -> Result<SideSet, ApiError> {
+    if word.trim().eq_ignore_ascii_case("both") {
+        return Ok(SideSet::all());
+    }
+    parse_side(word).map(SideSet::of).map_err(|_| {
+        ApiError::InvalidArgument(format!("unknown side {word:?} (valid: left, right, both)"))
+    })
+}
+
+/// Parses `--structure relative|base|none`.
+pub fn parse_structure(word: &str) -> Result<PathStructure, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "relative" => Ok(PathStructure::Relative),
+        "base" => Ok(PathStructure::Base),
+        "none" => Ok(PathStructure::None),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown structure {word:?} (valid: relative, base, none)"
+        ))),
+    }
+}
+
+/// Parses `--confirm prompt|yes-to-all|no-to-all`.
+pub fn parse_confirm_mode(word: &str) -> Result<ConfirmMode, ApiError> {
+    ConfirmMode::parse(word).ok_or_else(|| {
+        ApiError::InvalidArgument(format!(
+            "unknown confirmation {word:?} (valid: prompt, yes-to-all, no-to-all)"
+        ))
+    })
+}
+
+/// Parses `--what items|type`.
+pub fn parse_exclude_what(word: &str) -> Result<ExcludeWhat, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "items" => Ok(ExcludeWhat::Items),
+        "type" => Ok(ExcludeWhat::Type),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} (valid: items, type)"
+        ))),
+    }
+}
+
+/// Parses `--path <REL>`: a row by its path, with `left:` or `right:` for one side, else the verb's side: `(path, sides)`,
+/// sides empty for the verb's.
+pub fn parse_select_path(word: &str) -> (String, SideSet) {
+    if let Some(rest) = word.strip_prefix("left:") {
+        (rest.to_owned(), SideSet::LEFT)
+    } else if let Some(rest) = word.strip_prefix("right:") {
+        (rest.to_owned(), SideSet::RIGHT)
+    } else {
+        (word.to_owned(), SideSet::empty())
+    }
+}
+
+/// The name of `mkdir --name`, with whether it ended in a separator: a folder, whatever it looks like. Off Windows a final
+/// `\\` is no separator, and dropping it would make another name than the one typed; keeping it would make a name nobody
+/// meant, so it is refused.
+pub fn parse_mkdir_name(name: &str, windows: bool) -> Result<(String, bool), ApiError> {
+    if !windows && name.ends_with('\\') {
+        return Err(ApiError::InvalidArgument(format!(
+            "`{name}` ends in a backslash, which separates nothing here: use `/` for a folder"
+        )));
+    }
+    let separator = |c: char| c == '/' || (windows && c == '\\');
+    let bare = name.trim_end_matches(separator);
+    Ok((bare.to_owned(), bare.len() != name.len()))
+}
+
+/// The sync of `words` over `base` (a session's `[rules.sync]`, or the defaults), one parser for `folder sync`, `session run`
+/// and an `OpenView` of `folder_sync` (T11, D-190). A preset word replaces the base's preset; `--custom` writes on the base's
+/// matrix (a preset name may come first as its base) and makes the preset `custom`; flags only turn options on; an
+/// override `<PATH>=<ACTION>` replaces the base's for that path (`\` separates on Windows too). The result is validated: a
+/// bad word, a repeated situation, an invalid cell and an override of the base are `invalid_input`.
+pub fn sync_options(
+    words: &SyncWords,
+    base: &SyncOptions,
+    windows: bool,
+) -> Result<SyncOptions, ApiError> {
+    let folder = |e: hikasa_folder::FolderError| ApiError::InvalidArgument(e.to_string());
+    let mut options = base.clone();
+    if let Some(word) = &words.preset {
+        options.preset = SyncPreset::parse(word)
+            .filter(|preset| *preset != SyncPreset::Custom)
+            .ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "unknown sync preset {word:?} (valid: update-left, update-right, update-both, mirror-left, \
+                     mirror-right)"
+                ))
+            })?;
+    }
+    if let Some(text) = &words.custom {
+        options.matrix = SyncMatrix::parse(text, base.matrix).map_err(folder)?;
+        options.preset = SyncPreset::Custom;
+    }
+    if let Some(word) = &words.orphans {
+        options.orphans = OrphanReading::parse(word).ok_or_else(|| {
+            ApiError::InvalidArgument(format!(
+                "unknown orphan reading {word:?} (valid: added, deleted)"
+            ))
+        })?;
+    }
+    options.create_empty |= words.create_empty;
+    options.within_archives |= words.within_archives;
+    options.recycle |= words.recycle;
+    options.recycle_fallback |= words.recycle_fallback;
+    if options.recycle_fallback && !options.recycle {
+        return Err(ApiError::InvalidArgument(
+            "--recycle-fallback needs --recycle".to_owned(),
+        ));
+    }
+    for word in &words.overrides {
+        let Some((path, action)) = word.rsplit_once('=') else {
+            return Err(ApiError::InvalidArgument(format!(
+                "--override {word:?}: expected <PATH>=<ACTION>"
+            )));
+        };
+        let action = SyncAction::parse(action).ok_or_else(|| {
+            ApiError::InvalidArgument(format!(
+                "--override {word:?}: unknown action {action:?} (valid: leave, copy-right, copy-left, delete-left, \
+                 delete-right)"
+            ))
+        })?;
+        let path = if windows {
+            path.replace('\\', "/")
+        } else {
+            path.to_owned()
+        };
+        options.overrides.insert(path, action);
+    }
+    options.validate().map_err(folder)?;
+    Ok(options)
+}
+
+/// The words of `options`, which [`sync_options`] reads back to them over the defaults: what `folder sync --gui` sends, so a
+/// session's sync and the flags on top of it reach the GUI whole (D-190). `custom` sends its eight cells.
+pub fn sync_words_of(options: &SyncOptions, allow_empty_source: bool) -> SyncWords {
+    let (preset, custom) = match options.preset {
+        SyncPreset::Custom => {
+            let cells: Vec<String> = hikasa_folder::sync::Situation::ALL
+                .into_iter()
+                .map(|situation| {
+                    format!(
+                        "{}={}",
+                        situation.as_str(),
+                        options.matrix.get(situation).as_str()
+                    )
+                })
+                .collect();
+            (None, Some(cells.join(",")))
+        }
+        preset => (Some(preset.as_str().to_owned()), None),
+    };
+    SyncWords {
+        preset,
+        custom,
+        orphans: Some(options.orphans.as_str().to_owned()),
+        create_empty: options.create_empty,
+        within_archives: options.within_archives,
+        recycle: options.recycle,
+        recycle_fallback: options.recycle_fallback,
+        overrides: options
+            .overrides
+            .iter()
+            .map(|(path, action)| format!("{path}={}", action.as_str()))
+            .collect(),
+        allow_empty_source,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mkdir_names() {
+        assert_eq!(parse_mkdir_name("x", false).unwrap(), ("x".into(), false));
+        assert_eq!(parse_mkdir_name("x/", false).unwrap(), ("x".into(), true));
+        assert_eq!(parse_mkdir_name("x\\", true).unwrap(), ("x".into(), true));
+        assert_eq!(
+            parse_mkdir_name("a\\b", false).unwrap(),
+            ("a\\b".into(), false)
+        );
+        assert!(parse_mkdir_name("x\\", false).is_err());
+        assert!(parse_mkdir_name("x\\/", false).unwrap().0.ends_with('\\'));
+    }
+
+    #[test]
+    fn side_words() {
+        assert_eq!(parse_side("LT").unwrap(), Side::Left);
+        assert_eq!(parse_sides("both").unwrap(), SideSet::all());
+        assert_eq!(parse_sides("right").unwrap(), SideSet::RIGHT);
+        assert!(parse_side("both").is_err());
+        assert!(parse_sides("up").is_err());
+        assert_eq!(
+            parse_select_path("left:a/b"),
+            ("a/b".to_owned(), SideSet::LEFT)
+        );
+        assert_eq!(
+            parse_select_path("a/b"),
+            ("a/b".to_owned(), SideSet::empty())
+        );
+    }
 
     #[test]
     fn folder_mode_words() {

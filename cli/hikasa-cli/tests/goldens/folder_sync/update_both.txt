@@ -1,0 +1,16 @@
+---- leave empty (matrix)
+R>L copy_left gone/inner.txt
+R>L copy_left gone
+<!> leave different.txt (matrix)
+L>R copy_right left-only.txt
+L>R copy_right newer-left.txt
+R>L copy_left newer-right.txt
+R>L copy_left right-only.txt
+R copy <TMP>/l/left-only.txt -> <TMP>/r/left-only.txt
+R replace <TMP>/l/newer-left.txt -> <TMP>/r/newer-left.txt
+L mkdir <TMP>/l/gone
+L copy <TMP>/r/gone/inner.txt -> <TMP>/l/gone/inner.txt
+L replace <TMP>/r/newer-right.txt -> <TMP>/l/newer-right.txt
+L copy <TMP>/r/right-only.txt -> <TMP>/l/right-only.txt
+synchronized 6 of 6 items (0 skipped, 0 failed), 48 bytes
+# 2 copies right, 4 copies left, 0 deletes left, 0 deletes right, 1 conflicts, 0 unresolved

@@ -14,6 +14,8 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa settings](topic:settings): read and change the settings files; export and import settings packages.
 - [hikasa session](topic:session): named sessions, defaults, auto-saved sessions; run a saved comparison.
 - [hikasa workspace](topic:workspace): saved sets of windows and tabs.
+- [hikasa folder op](topic:folder-op): copy, move, delete, rename and more, on what a comparison shows.
+- [hikasa folder sync](topic:folder-sync): update or mirror one folder from another, by a preset or a matrix.
 - [hikasa vfs](topic:vfs): list, inspect and read any spec.
 - [Archives](topic:archives): zip, tar and compressed streams as specs and folder sides.
 - [hikasa gui](topic:gui): open views in the window and control it.
@@ -27,5 +29,6 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
   [Workspaces](topic:dialog-workspaces).
 - [Options](topic:dialog-options), and the settings wizards [Export](topic:wizard-export),
   [Import](topic:wizard-import) and [Restore Factory Defaults](topic:wizard-restore).
-- [The Folder Compare view](topic:view-folder-compare).
+- [The Folder Compare view](topic:view-folder-compare), with its file operations: [Confirm an
+  operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
 - [The Text Compare view](topic:view-text-compare).

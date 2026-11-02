@@ -11,6 +11,7 @@ use tar::Header;
 
 use super::codec::{BUFFER, Failure, read_full};
 use super::time::{pax_time, tar_time};
+use crate::entry::SpecialKind;
 use crate::error::VfsError;
 
 /// A tar block.
@@ -29,8 +30,8 @@ pub(crate) enum TarKind {
     Symlink,
     /// A hard link.
     HardLink,
-    /// A device, a FIFO or an unknown type.
-    Other,
+    /// A device, a FIFO or an unknown type; what it is, where the type flag says (D-169).
+    Other(Option<SpecialKind>),
     /// A GNU sparse file: listed, never read.
     Sparse,
 }
@@ -381,7 +382,10 @@ impl Walker<'_> {
             b'2' => TarKind::Symlink,
             b'1' => TarKind::HardLink,
             b'S' => TarKind::Sparse,
-            _ => TarKind::Other,
+            b'3' => TarKind::Other(Some(SpecialKind::Char)),
+            b'4' => TarKind::Other(Some(SpecialKind::Block)),
+            b'6' => TarKind::Other(Some(SpecialKind::Fifo)),
+            _ => TarKind::Other(None),
         };
         if kind == TarKind::File && name.last() == Some(&b'/') {
             kind = TarKind::Dir;

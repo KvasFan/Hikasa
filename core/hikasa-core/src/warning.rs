@@ -80,6 +80,12 @@ pub enum WarningCode {
     ArchiveScanLimit,
     /// NUL bytes followed a compressed stream and were ignored, as `gzip` does (M2 W5, §1.5.7 rule 9).
     ArchiveTrailingZeros,
+    /// The recycle bin failed and the items were deleted permanently, as chosen beforehand (M2 W6, §1.6.12).
+    TrashFallback,
+    /// A sync left a row alone because its side is read-only (M2 W6, D-184).
+    ReadOnlySide,
+    /// A sync ran on a comparison that did not finish (M2 W6, §1.6.14).
+    SyncIncomplete,
 }
 
 impl WarningCode {
@@ -114,6 +120,9 @@ impl WarningCode {
             WarningCode::ArchiveSymlinkSkipped => "archive_symlink_skipped",
             WarningCode::ArchiveScanLimit => "archive_scan_limit",
             WarningCode::ArchiveTrailingZeros => "archive_trailing_zeros",
+            WarningCode::TrashFallback => "trash_fallback",
+            WarningCode::ReadOnlySide => "read_only_side",
+            WarningCode::SyncIncomplete => "sync_incomplete",
         }
     }
 }
@@ -160,6 +169,9 @@ mod tests {
             WarningCode::ArchiveSymlinkSkipped,
             WarningCode::ArchiveScanLimit,
             WarningCode::ArchiveTrailingZeros,
+            WarningCode::TrashFallback,
+            WarningCode::ReadOnlySide,
+            WarningCode::SyncIncomplete,
         ];
         for code in all {
             assert_eq!(

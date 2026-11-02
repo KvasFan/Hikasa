@@ -26,11 +26,13 @@
 //! | `--format=v` | forced format |
 //! | `--iu` ← `--ignoreunimportant`, `--ignore-unimportant` | ignore unimportant differences |
 //! | `--stdin-name=v` | name hint of `-` (D-15, D-49) |
+//! | `--sync` | a Folder Sync view (CLI-003; with `--fv` the last wins, D-190) |
+//! | `--nobackups` | the view's operations keep no backups (`OpenOptions::no_backups`) |
 //! | `--solo` | force a new GUI instance (`hikasa-gui` only) |
 //! | `--json`, `--quiet` ← `-q`, `--no-color` | output flags |
 //! | `--config-dir=v`, `--log=v`, `--verbose` | meaningful for `hikasa-gui` |
 //! | `--help` ← `-h`, `/?` | usage |
-//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--closescript`, `--silent`, `--edit`, `--sync`, `--nobackups`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
+//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--closescript`, `--silent`, `--edit`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -39,6 +41,7 @@ use std::time::Duration;
 use hikasa_core::{
     CompareVerdict, ContentResult, ExitCode, Pair, Spec, SpecContext, Warning, WarningCode,
 };
+use hikasa_folder::sync::{SyncOptions, sync_folder_rules};
 use hikasa_folder::{DisplayOptions, FolderRulesPatch};
 use hikasa_formats::{EnabledOverrides, FormatKind};
 use hikasa_text::{TextRulesPatch, ViewOptions};
@@ -47,12 +50,12 @@ use hikasa_vfs::{EntryKind, FollowLinks, Vfs};
 use super::dto::GuiPingDto;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
 use super::responses::PreparedFolderCompare;
-use super::vocab::{resolve_folder_display, resolve_text_display};
+use super::vocab::{resolve_folder_display, resolve_text_display, sync_options};
 use super::{ApiError, Service};
 use crate::host::{EnvFacts, Platform};
 use crate::ipc::{
     CloseReason, IpcClient, OpenOptions, REQUEST_TIMEOUT, Request, Response, RetryPolicy,
-    ServerInfo, ViewId, ViewInfo, ViewKind, ViewResult, connect_or_launch,
+    ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult, connect_or_launch,
 };
 use crate::jobs::run_guarded;
 
@@ -349,6 +352,22 @@ impl GuiOpenRequest {
     }
 }
 
+impl GuiOpenRequest {
+    /// `folder sync … --gui` (D-190): the comparison as [`GuiOpenRequest::for_folder`] has it, kind `folder_sync`, and the
+    /// sync in words (`OpenOptions::sync`), which the GUI parses with the same core parser as the CLI.
+    pub fn for_sync(
+        req: &FolderCompareRequest,
+        sync: &SyncWords,
+        view: &ViewWords,
+        wait: bool,
+    ) -> GuiOpenRequest {
+        let mut open = GuiOpenRequest::for_folder(req, view, wait);
+        open.kind = Some(ViewKind::FolderSync);
+        open.options.sync = Some(sync.clone());
+        open
+    }
+}
+
 /// Copies the view words into the options.
 fn apply_words(options: &mut OpenOptions, view: &ViewWords) {
     options.display.clone_from(&view.display);
@@ -471,6 +490,18 @@ pub enum ViewRequest {
         display: DisplayOptions,
         /// `--expand-all` / `--expandall`.
         expand_all: bool,
+    },
+    /// A Folder Sync view (D-190): what W9's view runs. Until then a GUI answers `unsupported_view` before it gets here;
+    /// the CLI builds it to check the words before it contacts the GUI.
+    Sync {
+        /// The comparison (`Service::folder_sync_prepare` + `folder_run`).
+        request: FolderCompareRequest,
+        /// The sync.
+        options: SyncOptions,
+        /// `--allow-empty-source`.
+        allow_empty_source: bool,
+        /// The initial display options.
+        display: DisplayOptions,
     },
 }
 
@@ -617,6 +648,10 @@ enum Action {
     Log,
     Verbose,
     Help,
+    /// `--sync`: the view is a Folder Sync (D-190).
+    Sync,
+    /// `--nobackups`.
+    NoBackups,
     /// Recognised but not implemented in M1: forwarded with `switch_ignored`.
     Forward,
 }
@@ -819,8 +854,20 @@ const SWITCHES: &[Switch] = &[
     sw("closescript", &[], Arity::Flag, Action::Forward, ""),
     sw("silent", &[], Arity::Flag, Action::Forward, ""),
     sw("edit", &[], Arity::Flag, Action::Forward, ""),
-    sw("sync", &[], Arity::Flag, Action::Forward, ""),
-    sw("nobackups", &[], Arity::Flag, Action::Forward, ""),
+    sw(
+        "sync",
+        &[],
+        Arity::Flag,
+        Action::Sync,
+        "a Folder Sync view of two folders (with --fv, the last wins)",
+    ),
+    sw(
+        "nobackups",
+        &[],
+        Arity::Flag,
+        Action::NoBackups,
+        "the view's operations keep no backups",
+    ),
     sw(
         "qc",
         &["quickcompare"],
@@ -1082,6 +1129,8 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
         Action::Log => parsed.log = value.map(PathBuf::from),
         Action::Verbose => parsed.verbose = true,
         Action::Help => parsed.help = true,
+        Action::Sync => parsed.request.kind = Some(ViewKind::FolderSync),
+        Action::NoBackups => options.no_backups = true,
         Action::Forward => {
             let value = text(value)?;
             options.extra.insert(switch.name.to_owned(), value);
@@ -1365,7 +1414,7 @@ impl Service {
     /// file, `--criteria`, the patch and the text rules of `--content rules`. Kinds other than Text and Folder
     /// Compare are left to the GUI (`unsupported_view`).
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
-        if !resolved.kind.is_served_in_m1() {
+        if !resolved.kind.is_served_in_m1() && resolved.kind != ViewKind::FolderSync {
             return Ok(());
         }
         let mut warnings = Vec::new();
@@ -1384,6 +1433,12 @@ impl Service {
             }
             ViewRequest::Folder { request, .. } => {
                 self.folder_rules(&request, &mut warnings)?;
+            }
+            ViewRequest::Sync {
+                request, options, ..
+            } => {
+                let effective = self.folder_rules(&request, &mut warnings)?;
+                sync_folder_rules(&effective.rules, &options).map_err(ApiError::from_folder)?;
             }
         }
         Ok(())
@@ -1461,6 +1516,7 @@ impl Service {
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
                         base_rules: None,
+                        ..TextCompareRequest::default()
                     },
                     view: ViewOptions {
                         filter: mode.text_filter(),
@@ -1469,7 +1525,7 @@ impl Service {
                     },
                 })
             }
-            ViewKind::FolderCompare => {
+            ViewKind::FolderCompare | ViewKind::FolderSync => {
                 let mut patch = options.folder_rules.clone().unwrap_or_default();
                 if let Some(filters) = &options.filters {
                     patch.name_filter = Some(filters.clone());
@@ -1480,7 +1536,7 @@ impl Service {
                     options.suppress_filters,
                     options.ignore_unimportant,
                 )?;
-                Ok(ViewRequest::Folder {
+                let view = ViewRequest::Folder {
                     request: FolderCompareRequest {
                         left: pair.left,
                         right: pair.right,
@@ -1495,6 +1551,23 @@ impl Service {
                     },
                     display,
                     expand_all: options.expand_all,
+                };
+                if kind == ViewKind::FolderCompare {
+                    return Ok(view);
+                }
+                let ViewRequest::Folder {
+                    request, display, ..
+                } = view
+                else {
+                    return Ok(view);
+                };
+                let words = options.sync.clone().unwrap_or_default();
+                let windows = self.env().platform == Platform::Windows;
+                Ok(ViewRequest::Sync {
+                    request,
+                    options: sync_options(&words, &SyncOptions::default(), windows)?,
+                    allow_empty_source: words.allow_empty_source,
+                    display,
                 })
             }
             other => Err(ApiError::InvalidArgument(format!(

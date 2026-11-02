@@ -1,0 +1,44 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "open_with",
+    "dry_run": true,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [],
+    "backups": [],
+    "summary": {
+      "planned": 0,
+      "done": 0,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 0
+    },
+    "commands": [
+      {
+        "program": "viewer",
+        "args": [
+          "--line",
+          "1",
+          "changed.txt"
+        ],
+        "cwd": "<TMP>/l"
+      },
+      {
+        "program": "viewer",
+        "args": [
+          "--line",
+          "1",
+          "changed.txt"
+        ],
+        "cwd": "<TMP>/r"
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

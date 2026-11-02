@@ -1,0 +1,90 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "copy",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [
+      {
+        "action": "create_dir",
+        "kind": "dir",
+        "side": "right",
+        "path": "sub",
+        "source": "<TMP>/l/sub",
+        "target": "<TMP>/r/sub",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "sub/inner.txt",
+        "source": "<TMP>/l/sub/inner.txt",
+        "target": "<TMP>/r/sub/inner.txt",
+        "size": 6,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "changed.txt",
+        "source": "<TMP>/l/changed.txt",
+        "target": "<TMP>/r/changed.txt",
+        "size": 9,
+        "replaces": true,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      },
+      {
+        "action": "copy",
+        "kind": "file",
+        "side": "right",
+        "path": "only.txt",
+        "source": "<TMP>/l/only.txt",
+        "target": "<TMP>/r/only.txt",
+        "size": 5,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "backups": [],
+    "summary": {
+      "planned": 4,
+      "done": 4,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 20
+    },
+    "commands": null
+  },
+  "warnings": [],
+  "error": null
+}

@@ -80,7 +80,7 @@ pub fn resolve_with(probe: &dyn Probe, spec: Spec, use_: SpecUse, style: PathSty
     while let Some(at) = parent {
         if rest.first().is_some_and(|n| n == "..") {
             // `..` stays in a Unix path (D-06), so nothing below it can name a member: a spec never walks out of
-            // an archive. This also ends the walk, because the parent of `/a/..` is `/a/../..`.
+            // an archive.
             return spec;
         }
         let holder = Spec::Local(at.clone());

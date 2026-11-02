@@ -49,7 +49,8 @@
 //! `Commit`), [`MemoryVfs::trashed`] (what `move_to_trash` took, in order) and [`MemoryVfs::dump`] (a
 //! deterministic snapshot of the tree). A write without `replace_link` onto a symbolic link replaces the file the
 //! link points to (a dangling link: the file it names is created, as `LocalVfs` does); with `replace_link` the
-//! link is replaced.
+//! link is replaced. M2 W6: [`MemoryVfs::durabilities`] (what each commit was asked to sync) and
+//! [`MemoryVfs::set_journal_writes`] (the journal shows `open_write` too, as `Write`).
 //!
 //! Errors of kind not found, permission denied, not a folder, is a folder and already exists use the
 //! dedicated [`VfsError`] variants; cancelled is [`VfsError::Cancelled`]; every other kind is
@@ -69,11 +70,11 @@ use hikasa_core::{
 };
 
 use crate::caps::Capabilities;
-use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
+use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, SpecialKind, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, FollowLinks, ListOptions, Listing, NameOnly, ReadSeek,
-    SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, Durability, EntryError, FollowLinks, ListOptions, Listing, NameOnly,
+    ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// Most symlinks followed in one resolution (Linux `MAXSYMLINKS`).
@@ -96,6 +97,8 @@ pub struct MemMeta {
     pub attrs: Option<Attrs>,
     /// Back-end CRC (simulates archives).
     pub crc32: Option<u32>,
+    /// What an entry of [`MemoryVfs::insert_other`] is.
+    pub special: Option<SpecialKind>,
 }
 
 /// Listing order produced by `MemoryVfs::list`. It exposes bugs that depend on order (INV-VFS-1).
@@ -310,6 +313,8 @@ enum NodeKind {
     Dir,
     File(Arc<[u8]>),
     Symlink(String),
+    /// A device, a FIFO or a socket: listed, never opened.
+    Other,
 }
 
 impl NodeKind {
@@ -318,6 +323,7 @@ impl NodeKind {
             NodeKind::Dir => EntryKind::Dir,
             NodeKind::File(_) => EntryKind::File,
             NodeKind::Symlink(_) => EntryKind::Symlink,
+            NodeKind::Other => EntryKind::Other,
         }
     }
 }
@@ -361,6 +367,10 @@ struct Tree {
     journal: Option<Vec<(VfsOp, String)>>,
     /// Original paths moved to the trash, in order.
     trashed: Vec<String>,
+    /// The journal shows `open_write` too.
+    journal_writes: bool,
+    /// Canonical specs of committed writes, with what each was asked to sync.
+    durabilities: Vec<(String, Durability)>,
 }
 
 /// One item of [`MemoryVfs::dump`]: everything a "target untouched" assertion compares.
@@ -558,6 +568,7 @@ impl Tree {
                 target.len() as u64,
                 Some(target.clone()),
             ),
+            NodeKind::Other => (EntryKind::Other, 0, link),
         };
         Entry {
             name,
@@ -575,6 +586,10 @@ impl Tree {
                 dev: self.dev_of(idx),
                 ino: idx as u64 + 1,
             }),
+            special: match node.kind {
+                NodeKind::Other => node.meta.special,
+                _ => None,
+            },
         }
     }
 
@@ -675,9 +690,11 @@ impl Tree {
                     }
                     Ok(())
                 }
-                NodeKind::File(_) | NodeKind::Symlink(_) => Err(VfsError::IsADirectory {
-                    spec: spec.to_owned(),
-                }),
+                NodeKind::File(_) | NodeKind::Symlink(_) | NodeKind::Other => {
+                    Err(VfsError::IsADirectory {
+                        spec: spec.to_owned(),
+                    })
+                }
             };
         };
         let Comp::Name(name) = last else {
@@ -934,6 +951,8 @@ impl MemoryVfs {
                     devices: Vec::new(),
                     journal: None,
                     trashed: Vec::new(),
+                    journal_writes: false,
+                    durabilities: Vec::new(),
                 }),
                 stat_calls: AtomicU64::new(0),
             }),
@@ -968,6 +987,14 @@ impl MemoryVfs {
         self.shared
             .write()
             .insert(&parsed, NodeKind::Symlink(target.to_owned()), meta, path)
+    }
+
+    /// Inserts an entry of kind `Other` (creating parents); `meta.special` says what it is (D-169).
+    pub fn insert_other(&self, path: &str, meta: MemMeta) -> Result<(), VfsError> {
+        let parsed = insert_path(path)?;
+        self.shared
+            .write()
+            .insert(&parsed, NodeKind::Other, meta, path)
     }
 
     /// Sets the listing order.
@@ -1022,7 +1049,7 @@ impl MemoryVfs {
         let idx = tree.resolve(&parsed, true).ok()?;
         match &tree.node(idx)?.kind {
             NodeKind::File(content) => Some(Arc::clone(content)),
-            NodeKind::Dir | NodeKind::Symlink(_) => None,
+            NodeKind::Dir | NodeKind::Symlink(_) | NodeKind::Other => None,
         }
     }
 
@@ -1064,6 +1091,16 @@ impl MemoryVfs {
         self.shared.read().journal.clone().unwrap_or_default()
     }
 
+    /// The journal also shows each `open_write`, as `Write`: the moment a stage begins (M2 W6).
+    pub fn set_journal_writes(&self, on: bool) {
+        self.shared.write().journal_writes = on;
+    }
+
+    /// Every committed write, in order: the canonical spec and what it was asked to sync (D-164).
+    pub fn durabilities(&self) -> Vec<(String, Durability)> {
+        self.shared.read().durabilities.clone()
+    }
+
     /// The original paths moved to the trash, in order (the items left the tree).
     pub fn trashed(&self) -> Vec<String> {
         self.shared.read().trashed.clone()
@@ -1092,6 +1129,7 @@ impl MemoryVfs {
                     None,
                     Some(target.clone()),
                 ),
+                NodeKind::Other => (EntryKind::Other, 0, None, None),
             };
             out.push(MemDump {
                 path: tree.node_path(idx).to_string_lossy().into_owned(),
@@ -1282,7 +1320,7 @@ impl Vfs for MemoryVfs {
         let content = match tree.node(idx).map(|n| &n.kind) {
             Some(NodeKind::File(content)) => Arc::clone(content),
             Some(NodeKind::Dir) => return Err(VfsError::IsADirectory { spec: spec_text }),
-            Some(NodeKind::Symlink(_)) | None => {
+            Some(NodeKind::Symlink(_) | NodeKind::Other) | None => {
                 return Err(VfsError::NotFound { spec: spec_text });
             }
         };
@@ -1368,6 +1406,9 @@ impl Vfs for MemoryVfs {
             }
         }
         let fail_after = Tree::after_fault(&tree.write_errors, &tree.path_key(&target));
+        if tree.journal_writes {
+            tree.record(VfsOp::Write, &spec_text);
+        }
         Ok(Box::new(MemWriter {
             shared: Arc::clone(&self.shared),
             target,
@@ -1375,6 +1416,7 @@ impl Vfs for MemoryVfs {
             name: write_name,
             spec: spec_text,
             overwrite: opts.overwrite,
+            durability: opts.durability,
             buf: Vec::new(),
             pos: 0,
             fail_after,
@@ -1713,6 +1755,7 @@ struct MemWriter {
     name: String,
     spec: String,
     overwrite: bool,
+    durability: Durability,
     buf: Vec<u8>,
     /// Where the next write lands.
     pos: usize,
@@ -1783,7 +1826,9 @@ impl AtomicWrite for MemWriter {
         }
         let key = tree.key(&writer.name);
         let content: Arc<[u8]> = writer.buf.into();
-        match tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
+        let durability = writer.durability;
+        let spec = writer.spec.clone();
+        let committed = match tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
             Some(existing) if tree.is_dir(existing) => {
                 Err(VfsError::IsADirectory { spec: writer.spec })
             }
@@ -1807,7 +1852,11 @@ impl AtomicWrite for MemWriter {
                 tree.record(VfsOp::Commit, &writer.spec);
                 Ok(())
             }
+        };
+        if committed.is_ok() {
+            tree.durabilities.push((spec, durability));
         }
+        committed
     }
 }
 

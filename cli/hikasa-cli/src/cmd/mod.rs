@@ -4,6 +4,8 @@
 
 pub mod completions;
 pub mod folder;
+pub mod folder_op;
+pub mod folder_sync;
 pub mod format;
 pub mod gui;
 pub mod help;
@@ -18,10 +20,10 @@ pub mod workspace;
 use clap::ArgMatches;
 use hikasa_core::{JobKind, Warning};
 use hikasa_session::api::dto::{
-    COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FORMAT_DETECT_SCHEMA, FORMAT_EXPORT_SCHEMA,
-    FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA, FORMAT_TOKENS_SCHEMA,
-    FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA, GUI_PING_SCHEMA,
-    GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SESSION_LIST_SCHEMA,
+    COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, FORMAT_DETECT_SCHEMA,
+    FORMAT_EXPORT_SCHEMA, FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA,
+    FORMAT_TOKENS_SCHEMA, FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SESSION_LIST_SCHEMA,
     SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA,
     SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
     TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA,
@@ -194,6 +196,15 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             false => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
         },
+        Command::Folder {
+            cmd: FolderCmd::Op { verb },
+        } => (folder_op::schema_of(verb), ApiOp::FolderOp),
+        Command::Folder {
+            cmd: FolderCmd::Sync(args),
+        } => match args.gui {
+            true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
+            false => (FOLDER_SYNC_SCHEMA, ApiOp::FolderSync),
+        },
         Command::Format { cmd } => match cmd {
             FormatCmd::List => (FORMAT_LIST_SCHEMA, ApiOp::Format),
             FormatCmd::Show { .. } => (FORMAT_SHOW_SCHEMA, ApiOp::Format),
@@ -278,6 +289,12 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Folder {
             cmd: FolderCmd::Compare(args),
         } => folder::run(ctx, args),
+        Command::Folder {
+            cmd: FolderCmd::Op { verb },
+        } => folder_op::run(ctx, verb),
+        Command::Folder {
+            cmd: FolderCmd::Sync(args),
+        } => folder_sync::run(ctx, args),
         Command::Format { cmd } => format::run(ctx, cmd),
         Command::Vfs { cmd } => vfs::run(ctx, cmd),
         Command::Gui { cmd } => gui::run(ctx, cmd, open),

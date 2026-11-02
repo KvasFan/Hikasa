@@ -107,6 +107,7 @@ mod listing {
                 },
             }),
             crc32: None,
+            ..MemMeta::default()
         };
         vfs.insert_dir(&host("/p"), unix(0o755)).unwrap();
         vfs.insert_dir(&host("/p/src"), unix(0o755)).unwrap();
@@ -130,6 +131,7 @@ mod listing {
                     attrs: DosAttrs::ARCHIVE | DosAttrs::HIDDEN,
                 }),
                 crc32: Some(0x0BAD_F00D),
+                ..MemMeta::default()
             },
         )
         .unwrap();

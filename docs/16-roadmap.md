@@ -45,7 +45,7 @@ Moved to M2 (done in M2 wave 0):
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Version 0.1.91 is a pre-release of 0.2.0 with waves 0–5 and the packages;
+contract `docs/design/m2-contracts.md`. Wave 6 ran in four parts, all done: W6a (foundations), W6b (operations: every file operation headless, `folder op`), W6c (sync: the matrix, presets and overrides, `folder sync`, folder-sync sessions, `--sync` up to the GUI, gate G7) and W6d (GUI hooks: Copy to Right/Left, Delete and Delete Permanently on one selected row with the confirmation and Delete dialogs, the log and notices, refresh in the view with `renumbered`, Open on an archive in place, FC-012 on load, a child view's result on its row, Disable editing and `--nobackups` in the window; the rest of the Actions menu and the Folder Sync view are W9). Version 0.1.92 is a pre-release of 0.2.0 with waves 0–6 and the packages (0.1.91 had waves 0–5);
 0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
 `xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
 typed, versioned and written sparsely with unknown keys kept, change detection by

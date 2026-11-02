@@ -34,6 +34,7 @@ fn sample() -> MemoryVfs {
             },
         }),
         crc32: None,
+        ..MemMeta::default()
     };
     vfs.insert_file(&host("/src/a.c"), b"int a;\n".to_vec(), meta.clone())
         .unwrap();
@@ -519,6 +520,7 @@ fn atomic_writes() {
         create_parents: true,
         overwrite: false,
         replace_link: false,
+        ..WriteOptions::default()
     };
     let mut w = vfs.open_write(&target, &create).unwrap();
     w.write_all(b"hello ").unwrap();
@@ -574,6 +576,7 @@ fn atomic_writes() {
         create_parents: false,
         overwrite: true,
         replace_link: false,
+        ..WriteOptions::default()
     };
     let mut w = vfs.open_write(&mspec("/out/keep.txt"), &overwrite).unwrap();
     w.write_all(b"new!").unwrap();
@@ -709,6 +712,7 @@ fn fault_injection_matrix() {
                         create_parents: false,
                         overwrite: true,
                         replace_link: false,
+                        ..WriteOptions::default()
                     };
                     let err = vfs.open_write(&mspec(file), &opts).map(|_| ()).unwrap_err();
                     assert_eq!(err.kind(), want, "{context}");
@@ -718,6 +722,7 @@ fn fault_injection_matrix() {
                         create_parents: false,
                         overwrite: true,
                         replace_link: false,
+                        ..WriteOptions::default()
                     };
                     let mut w = vfs.open_write(&mspec(file), &opts).unwrap();
                     w.write_all(b"new").unwrap();

@@ -64,8 +64,8 @@ use crate::caps::Capabilities;
 use crate::entry::{Attrs, Entry, EntryKind, FileId, FileName, UnixMeta};
 use crate::error::{VfsError, VfsOp};
 use crate::vfs::{
-    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, ListOptions, Listing, NameOnly,
-    ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
+    AtomicWrite, AttrChange, EntryError, Finish, FollowLinks, HandleMeta, ListOptions, Listing,
+    NameOnly, ReadSeek, SetTimes, Vfs, WriteOptions, op_unsupported,
 };
 
 /// A member of at most this many bytes is decoded to memory, a larger one to a cache file.
@@ -349,6 +349,63 @@ impl ArchiveVfs {
     pub fn cleanup(&self) {
         lock(&self.core.batches).clear();
         self.core.cache.cleanup();
+    }
+
+    /// A real path of the member `spec`, for a program that needs a name and an extension (D-186, §1.6.18):
+    /// `s<n>/x<k>/<safe name>` in the session's cache, read-only, valid for the session. Same member, same stamp: the same
+    /// path. It counts in the cache and is never evicted, so a member that does not fit `cache_max` is `ArchiveLimit`.
+    /// Links, encrypted and sparse members give the errors of `open_read`. An edit is not written back.
+    pub fn extract_to_cache(&self, spec: &Spec, cancel: &CancelToken) -> Result<PathBuf, VfsError> {
+        let Spec::ArchiveMember { archive, member } = spec else {
+            return Err(VfsError::Unsupported {
+                spec: spec.canonical(),
+                what: "extracting what is not a member",
+            });
+        };
+        let config = self.core.enter(spec)?;
+        let entry = self.stat(spec, FollowLinks::No)?;
+        let text = spec.canonical();
+        let progress = NullProgress;
+        let ctl = Ctl {
+            cancel,
+            progress: &progress,
+        };
+        let (slot, _) = self.core.index_of(archive, &config, ctl)?;
+        // A staged member of an open batch has the archive's stamp: its own tells it apart.
+        let time = entry
+            .mtime
+            .map(|time| (time.unix_seconds(), time.subsec_nanos()));
+        let key = format!("{member}\0{}\0{time:?}", entry.size);
+        if entry.kind == EntryKind::File
+            && let Some(path) = self.core.cache.extracted(slot.id, &key)
+        {
+            return Ok(path);
+        }
+        if entry.size > config.limits.cache_max {
+            return Err(VfsError::ArchiveLimit {
+                spec: text,
+                limit: "cache",
+                value: config.limits.cache_max,
+            });
+        }
+        let mut reader = self.open_read_with(spec, cancel)?;
+        if entry.kind != EntryKind::File {
+            return Err(op_unsupported(spec, VfsOp::Open));
+        }
+        let name = entry.name.as_str();
+        let path = self.core.cache.extract(
+            &config.cache_root,
+            config.limits.cache_max,
+            &text,
+            (slot.id, &key),
+            &name::safe_name(name),
+            entry.size,
+            &mut reader,
+            cancel,
+        )?;
+        drop(reader);
+        self.core.cache.trim(config.limits.cache_max);
+        Ok(path)
     }
 
     /// What this back-end has done so far.
@@ -979,12 +1036,16 @@ fn link_text(link: &[u8]) -> Option<Box<str>> {
 
 /// A tar record as a [`RawMember`].
 fn tar_member(item: TarItem) -> RawMember {
+    let special = match item.kind {
+        TarKind::Other(special) => special,
+        _ => None,
+    };
     let kind = match item.kind {
         TarKind::File => MemberKind::File,
         TarKind::Dir => MemberKind::Dir,
         TarKind::Symlink => MemberKind::Symlink,
         TarKind::HardLink => MemberKind::HardLink,
-        TarKind::Other => MemberKind::Other,
+        TarKind::Other(_) => MemberKind::Other,
         TarKind::Sparse => MemberKind::Sparse,
     };
     let lossy = std::str::from_utf8(&item.name).is_err();
@@ -997,6 +1058,7 @@ fn tar_member(item: TarItem) -> RawMember {
         .flatten()
         .map(|clean| tar_text(&clean));
     RawMember {
+        special,
         path,
         kind,
         lossy,
@@ -1147,6 +1209,7 @@ fn index_single(
     let mut members = Vec::new();
     if damage.is_none() {
         members.push(RawMember {
+            special: None,
             path: Ok(stream_member_name(name)),
             kind: MemberKind::File,
             lossy: false,
@@ -1448,6 +1511,25 @@ impl Vfs for ArchiveVfs {
         match (from, to) {
             (Spec::ArchiveMember { .. }, _) | (_, Spec::ArchiveMember { .. }) => Ok(None),
             _ => self.core.base.copy_file_fast(from, to, opts, cancel),
+        }
+    }
+
+    fn copy_new_file(
+        &self,
+        from: &Spec,
+        to: &Spec,
+        meta: &HandleMeta,
+        cancel: &CancelToken,
+    ) -> Result<Option<u64>, VfsError> {
+        match (from, to) {
+            (Spec::ArchiveMember { .. }, _) | (_, Spec::ArchiveMember { .. }) => Ok(None),
+            _ => self.core.base.copy_new_file(from, to, meta, cancel),
+        }
+    }
+
+    fn sync_folder(&self, dir: &Spec) {
+        if !matches!(dir, Spec::ArchiveMember { .. }) {
+            self.core.base.sync_folder(dir);
         }
     }
 

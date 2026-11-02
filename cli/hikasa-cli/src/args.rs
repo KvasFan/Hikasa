@@ -297,15 +297,390 @@ pub struct TextCompareArgs {
 pub enum FolderCmd {
     /// Compare two folders.
     Compare(Box<FolderCompareArgs>),
+    /// Compare, then run a file operation on what is selected.
+    Op {
+        /// The operation.
+        #[command(subcommand)]
+        verb: Box<FolderOpVerb>,
+    },
+    /// Compare, then synchronize the two sides by a preset or a matrix.
+    Sync(Box<FolderSyncArgs>),
 }
 
-/// `hikasa folder compare <left> <right>`.
-#[derive(Debug, clap::Args)]
-pub struct FolderCompareArgs {
+/// The preset of `folder sync`: exactly one, unless `--session` holds one.
+#[derive(Debug, Clone, Default, clap::Args)]
+#[group(multiple = false)]
+pub struct SyncPresetArgs {
+    /// Update Left: what is newer or new on the right goes left.
+    #[arg(long)]
+    pub update_left: bool,
+    /// Update Right: what is newer or new on the left goes right.
+    #[arg(long)]
+    pub update_right: bool,
+    /// Update Both.
+    #[arg(long)]
+    pub update_both: bool,
+    /// Mirror to Left: the left becomes what the right is (deletes on the left).
+    #[arg(long)]
+    pub mirror_left: bool,
+    /// Mirror to Right: the right becomes what the left is (deletes on the right).
+    #[arg(long)]
+    pub mirror_right: bool,
+    /// A matrix: `<situation>=<action>,…`, a preset first as its base (`mirror-right,same=leave`).
+    #[arg(long, value_name = "MATRIX")]
+    pub custom: Option<String>,
+}
+
+/// `hikasa folder sync [<LEFT> <RIGHT>]` (§1.6.17).
+#[derive(Debug, Clone, clap::Args)]
+pub struct FolderSyncArgs {
+    /// The sides, the rules and `SELECT` (with `--just-selection`).
+    #[command(flatten)]
+    pub common: FolderOpCommon,
+    /// `CONFIRM`.
+    #[command(flatten)]
+    pub confirm: FolderConfirmArgs,
+    /// The preset.
+    #[command(flatten)]
+    pub preset: SyncPresetArgs,
+    /// An item on one side only is `added` there (default) or `deleted` on the other.
+    #[arg(long, value_name = "READING")]
+    pub orphans: Option<String>,
+    /// Empty folders are made and deleted too.
+    #[arg(long)]
+    pub create_empty: bool,
+    /// Archives are folders: their members are synced.
+    #[arg(long)]
+    pub within_archives: bool,
+    /// Deletes go to the recycle bin where there is one.
+    #[arg(long)]
+    pub recycle: bool,
+    /// A delete the bin refuses becomes permanent.
+    #[arg(long, requires = "recycle")]
+    pub recycle_fallback: bool,
+    /// An action for a path and what lies below it (repeatable): `<PATH>=<ACTION>`.
+    #[arg(long = "override", value_name = "PATH=ACTION")]
+    pub overrides: Vec<String>,
+    /// Only the rows `--select` and `--path` choose (else a sync ignores them).
+    #[arg(long)]
+    pub just_selection: bool,
+    /// Only the rows `--display` shows.
+    #[arg(long)]
+    pub visible: bool,
+    /// A side with nothing on it may make the other empty.
+    #[arg(long)]
+    pub allow_empty_source: bool,
+    /// Keep what is replaced, as `[backups]` names it.
+    #[arg(long, conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// Keep no backup, whatever `[backups]` says.
+    #[arg(long)]
+    pub no_backup: bool,
+    /// The output shows every row, `same` ones and folders too.
+    #[arg(long)]
+    pub all_rows: bool,
+    /// Show the sync in the GUI instead of running it here.
+    #[arg(long, conflicts_with_all = ["dry_run", "yes", "confirm", "all_rows"])]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes and exit with its code.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI when it is not running.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// What every `folder op` verb takes: the sides and the rules, the selection.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderOpCommon {
     /// Left base folder, or an archive.
-    pub left: OsString,
+    #[arg(requires = "right")]
+    pub left: Option<OsString>,
     /// Right base folder, or an archive.
-    pub right: OsString,
+    pub right: Option<OsString>,
+    /// A session gives the specs, the rules, read-only and Ignored marks; flags apply on top.
+    #[arg(long, value_name = "REF", conflicts_with_all = ["left", "right"])]
+    pub session: Option<String>,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: FolderRuleArgs,
+    /// The selection.
+    #[command(flatten)]
+    pub select: FolderSelectArgs,
+}
+
+/// `SELECT` of `folder op` (§1.6.17): nothing selected acts on nothing.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderSelectArgs {
+    /// A mask: `left.diff.files`, `all`, `empty.folders`… (repeatable; the masks add up).
+    #[arg(long, value_name = "MASK")]
+    pub select: Vec<String>,
+    /// One row by its path; `left:`, `right:` for one side, else the verb's (repeatable).
+    #[arg(long, value_name = "REL")]
+    pub path: Vec<String>,
+    /// A selected folder also brings what filters and the display hide.
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// A folder is one row: `--select` does not see below it.
+    #[arg(long)]
+    pub no_expand: bool,
+    /// Only these folders are open for `--select` (repeatable).
+    #[arg(long, value_name = "REL", conflicts_with = "no_expand")]
+    pub expand: Vec<String>,
+    /// What `--select` sees (default all).
+    #[arg(long, value_name = "FILTER")]
+    pub display: Option<String>,
+    /// Treat unimportant differences as same.
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+}
+
+/// `CONFIRM` of `folder op` (§1.6.17).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderConfirmArgs {
+    /// Answer every question yes.
+    #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// prompt, yes-to-all or no-to-all (no-to-all lets the items without a question go).
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Print the plan and each item's conflicts; nothing is written.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Refuse to write this side: left, right or both.
+    #[arg(long, value_name = "SIDE")]
+    pub read_only: Option<String>,
+}
+
+/// The flags of what copies (`folder op copy`, `move`).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderCopyFlags {
+    /// The side written: left or right.
+    #[arg(long, value_name = "SIDE")]
+    pub to: String,
+    /// What an existing target means: fail, skip, always (default) or newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+    /// Keep no times or attributes.
+    #[arg(long, conflicts_with = "preserve_created")]
+    pub no_preserve: bool,
+    /// Keep the creation date too.
+    #[arg(long)]
+    pub preserve_created: bool,
+    /// Links: copy (default) or skip.
+    #[arg(long, value_name = "POLICY")]
+    pub symlinks: Option<String>,
+    /// Keep what is replaced, as `[backups]` names it.
+    #[arg(long, conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// Keep no backup, whatever `[backups]` says.
+    #[arg(long)]
+    pub no_backup: bool,
+}
+
+/// The flags of `folder op copyto`, `moveto`.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderCopyToFlags {
+    /// The sides read: left, right or both.
+    #[arg(long, value_name = "SIDE")]
+    pub side: String,
+    /// The folder, or archive, written; missing, it is made.
+    #[arg(long, value_name = "SPEC")]
+    pub target: OsString,
+    /// relative (default), base or none.
+    #[arg(long, value_name = "WORD")]
+    pub structure: Option<String>,
+    /// What an existing target means: fail (default), skip, always or newer.
+    #[arg(long, value_name = "POLICY")]
+    pub overwrite: Option<String>,
+}
+
+/// `hikasa folder op <VERB>`.
+#[derive(Debug, clap::Subcommand)]
+pub enum FolderOpVerb {
+    /// Copy what is selected to the other side.
+    Copy {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        #[command(flatten)]
+        flags: FolderCopyFlags,
+    },
+    /// Move what is selected to the other side.
+    Move {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        #[command(flatten)]
+        flags: FolderCopyFlags,
+    },
+    /// Swap both sides of what is selected; nothing is lost at any step.
+    Exchange {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+    },
+    /// Delete what is selected, on the sides named.
+    Delete {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: String,
+        /// Use the recycle bin where there is one.
+        #[arg(long)]
+        recycle: bool,
+        /// If the recycle bin fails, delete permanently.
+        #[arg(long, requires = "recycle")]
+        recycle_fallback: bool,
+    },
+    /// Rename what is selected: one name, a DOS mask or a regular expression.
+    Rename {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: String,
+        /// The new name of one row.
+        #[arg(long, value_name = "NEW", conflicts_with_all = ["mask", "regex"])]
+        name: Option<String>,
+        /// A DOS mask: `*_old.*`, `abc?.bak`.
+        #[arg(long, value_name = "MASK", conflicts_with = "regex")]
+        mask: Option<String>,
+        /// A regular expression over the whole name and what replaces it.
+        #[arg(long, num_args = 2, value_names = ["OLD", "NEW"])]
+        regex: Vec<String>,
+    },
+    /// Set the times of what is selected.
+    Touch {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: String,
+        /// This time (RFC 3339).
+        #[arg(long, value_name = "TIME", conflicts_with_all = ["now", "from_other"])]
+        time: Option<String>,
+        /// The time now (default).
+        #[arg(long, conflicts_with = "from_other")]
+        now: bool,
+        /// The other side's time, on `--side`.
+        #[arg(long)]
+        from_other: bool,
+    },
+    /// Make a folder, or an archive by its name; a trailing separator wants a folder.
+    Mkdir {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: String,
+        /// The row it goes into (default the base).
+        #[arg(long = "in", value_name = "REL")]
+        into: Option<String>,
+        /// Its name.
+        #[arg(long, value_name = "NAME")]
+        name: String,
+    },
+    /// Copy what is selected to a folder outside the comparison.
+    Copyto {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        #[command(flatten)]
+        flags: FolderCopyToFlags,
+    },
+    /// Move what is selected to a folder outside the comparison.
+    Moveto {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        #[command(flatten)]
+        flags: FolderCopyToFlags,
+    },
+    /// Run a content test on what is selected.
+    Compare {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        /// crc, binary or rules.
+        #[arg(long, value_name = "METHOD")]
+        method: String,
+    },
+    /// Compute CRC-32 of what is selected.
+    Crc {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        /// left, right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: String,
+    },
+    /// Add what is selected to the session's exclude lists.
+    Exclude {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        /// items (default) or type.
+        #[arg(long, value_name = "WORD")]
+        what: Option<String>,
+        /// Print the masks; nothing is written.
+        #[arg(long)]
+        dry_run: bool,
+        /// Rewrite a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Mark what is selected Ignored in the session.
+    Ignored {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        /// Clear the mark.
+        #[arg(long)]
+        off: bool,
+        /// Print the list; nothing is written.
+        #[arg(long)]
+        dry_run: bool,
+        /// Rewrite a locked session.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Open the rows of `--path` with an application of `openwith.toml`.
+    OpenWith {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        /// An application: its description, or its place in the list.
+        #[arg(
+            long,
+            value_name = "NAME|INDEX",
+            required_unless_present = "associated"
+        )]
+        app: Option<String>,
+        /// The associated application.
+        #[arg(long, conflicts_with = "app")]
+        associated: bool,
+        /// left (default), right or both.
+        #[arg(long, value_name = "SIDE")]
+        side: Option<String>,
+        /// Print the commands; nothing starts.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// The rule flags of `folder compare`, and of the folder commands that compare first: one owner, the same flags.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct FolderRuleArgs {
     /// Archives inside the trees: files (always), opened (files, until named by --open-archive; default),
     /// folders (always).
     #[arg(long, value_name = "MODE")]
@@ -403,6 +778,46 @@ pub struct FolderCompareArgs {
     /// Do not scan folders that exist on one side only.
     #[arg(long)]
     pub no_scan_orphans: bool,
+    /// Attribute filter on regular files: `(+|-)<letters>…`, e.g. `+rh-s`, or `none`.
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub attrib_filter: Option<String>,
+    /// Unix type filter: `(+|-)<letters>…` of `b c l p r s`, e.g. `-lp`, or `none`.
+    #[arg(
+        long = "unixtype-filter",
+        value_name = "EXPR",
+        allow_hyphen_values = true
+    )]
+    pub unix_type_filter: Option<String>,
+    /// Do not scan subfolders by themselves: only the bases, and with their subtrees the orphan folders in a base.
+    #[arg(long)]
+    pub no_auto_scan: bool,
+    /// A view opens the folders of the tree when the comparison is loaded.
+    #[arg(long)]
+    pub expand_on_load: bool,
+    /// A view opens only the folders with differences.
+    #[arg(long = "expand-differences")]
+    pub expand_differences: bool,
+    /// A path relative to the bases to mark Ignored, `!path` for an exception (repeatable).
+    #[arg(long, value_name = "PATH", allow_hyphen_values = true)]
+    pub ignored: Vec<String>,
+    /// Turn on a file format for this comparison (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub format_on: Vec<String>,
+    /// Turn off a file format for this comparison (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub format_off: Vec<String>,
+}
+
+/// `hikasa folder compare <left> <right>`.
+#[derive(Debug, clap::Args)]
+pub struct FolderCompareArgs {
+    /// Left base folder, or an archive.
+    pub left: OsString,
+    /// Right base folder, or an archive.
+    pub right: OsString,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: FolderRuleArgs,
     /// Display filter (default differences).
     #[arg(long, value_name = "FILTER")]
     pub display: Option<String>,
@@ -850,6 +1265,21 @@ pub struct SessionRunArgs {
     /// Write the report to FILE (atomically) instead of stdout.
     #[arg(long, value_name = "FILE")]
     pub output: Option<OsString>,
+    /// Folder Sync: answer every question yes.
+    #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// Folder Sync: prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Folder Sync: print the plan; nothing is written.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Folder Sync: a side with nothing on it may make the other empty.
+    #[arg(long)]
+    pub allow_empty_source: bool,
+    /// Folder Sync: the output shows every row.
+    #[arg(long)]
+    pub all_rows: bool,
 }
 
 /// `hikasa workspace …`.
@@ -1137,6 +1567,34 @@ mod tests {
     use clap::CommandFactory;
 
     use super::*;
+
+    /// The long flags of `command`, sorted.
+    fn long_flags(command: &clap::Command) -> Vec<String> {
+        let mut flags: Vec<String> = command
+            .get_arguments()
+            .filter_map(|arg| arg.get_long().map(str::to_owned))
+            .collect();
+        flags.sort();
+        flags
+    }
+
+    #[test]
+    fn a6_25_rule_flags_equal_folder_compares() {
+        use clap::Args as _;
+        let cli = Cli::command();
+        let folder = cli.find_subcommand("folder").unwrap();
+        let rules = long_flags(&FolderRuleArgs::augment_args(clap::Command::new("rules")));
+        assert!(rules.contains(&"attrib-filter".to_owned()), "{rules:?}");
+        let compare = long_flags(folder.find_subcommand("compare").unwrap());
+        let op = folder.find_subcommand("op").unwrap();
+        for verb in op.get_subcommands() {
+            let own = long_flags(verb);
+            for flag in &rules {
+                assert!(compare.contains(flag), "compare: {flag}");
+                assert!(own.contains(flag), "{}: {flag}", verb.get_name());
+            }
+        }
+    }
 
     #[test]
     fn the_command_tree_is_valid() {

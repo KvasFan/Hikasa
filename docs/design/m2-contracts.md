@@ -10,12 +10,12 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-155, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-192, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
-  dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6–§1.14 W6–W14 (outline in plan §6, written before each
-  wave)
-- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5
+  dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
+  Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7–§1.14 W7–W14 (outline in plan §6, written before each wave)
+- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6
 
 ---
 
@@ -140,6 +140,38 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-159 | **Ctrl-C in the CLI** (M1 Appendix C 15, plan §5.3). `ctrlc` 3 in `hikasa-cli` only, named only in `interrupt.rs`. The first job of a command arms the handler (`Ctx::job`), so a command without a job keeps the OS's behaviour: Ctrl-C ends it at once. All jobs of the process share one `CancelToken`: the first Ctrl-C cancels it, on a terminal with a line saying a second one exits at once; a rebuild aborts and removes its temporary and lock files, a `vfs` operation stops and reports its `not_run` items, a comparison stops at its next check. The command ends through its usual path with **exit 100**: `ApiError::Cancelled` and `VfsOpDto::ok() == false` already gave it, and no new code joins CLI-004. A folder comparison keeps what it saw for the GUI, and `Ok` with an incomplete model would print the verdict of that part, so the adapter checks the token before it renders: `--output` stays as it was. A process that inherits SIGINT as ignored (`cmd &` without job control) stays that way: the handler goes in with `try_set_handler`, over the default action only. The second Ctrl-C exits 100 where the process stands, as a kill would (D-158 covers what it leaves). No `termination` feature: SIGTERM and SIGHUP stay as they were. A Ctrl-C after the job ended, while the result prints, is not seen until the second one. | The handler belongs to the adapter, core only sees the token (T1, T11). A job that cannot see the cancel, such as one blocked on standard input, must not trap the user: hence the second press. | 12 §4, 02 |
 | D-160 | **Named fonts** (revises D-113, D-133). `fontique`, already in `Cargo.lock` through eframe's system font fallback, becomes a direct dependency of `hikasa-gui` at the same version and features, named only in `fonts.rs`; no package is added. Each distinct non-empty family of the four slots is looked up by name (any case, the face nearest regular), on a thread of its own, one lookup at a time, the newest theme winning; `use_system` keeps the folder's family out. The answers come through the mailbox (`UiMsg::Fonts`); `Effect::ApplyFonts` rebuilds egui's definitions once when what the slots show changes, never for a colour or a family not found. Each slot is a named egui family: its font, then the whole built-in chain, then eframe's system fallback, so icons and CJK keep working. The enumeration is dropped after each lookup, only the files in use stay mapped (`FontData::from_blob`, no copy), and a family no slot names is forgotten. The Options dialog's preview looks families up as they are typed but reports a missing one only once applied. `FontSource` is injected: tests register font data and never see the system's fonts. | A font file is not a comparison input: this is the GUI's own look, so it stays out of `Service` and of D-105's list while keeping D-105's rule that the UI thread never reads a disk. Parsing is not enough: a file that parses can still panic where egui draws it, on the UI thread, at every start (a font of 0 units per em does; one with a broken table panics in the hinter). So a font with 0 units per em counts as not found, and each font that passes draws a sample in a throwaway egui context on the lookup's thread, under `run_guarded`; one that fails counts as not found, with the notice and the built-in font. A file can be broken at any glyph, and the sample is printable ASCII and some Latin: a panic at a glyph outside it still reaches the window. | 14 §2, 02 |
 | D-155 | **G6** (§1.5.16). List 100,000 zip entries < 1 s; a 10,000-file tree against its zip by CRC < 2 s; the index of a 1 GiB `tar.gz` ≤ 1.3 × the raw decode, CRC included; G2 unchanged; RSS budgets. Headless, release, idle machine, fixtures generated; G4 holds for long decodes. | Plan §5.2 confirmed; the first figure already measured at 15 ms for the crate's part. | 02 |
+| D-161 | **W6 in four sequential parts.** W6a *Foundations* (`ops` batch, stamps, durability, fence, backups, exchange, filters, Ignored, refresh, contents on demand), W6b *Operations* (selection, plans, confirmation, `folder op`), W6c *Sync* (`folder sync`, session type, G7), W6d *GUI hooks* (dialogs, four commands, refresh in the view, docs). Each ends green, with its own acceptance list. | Each part is additive and depends on the one before: W6b's plans need the batch, W6c needs the builder, W6d shows the plans. | 16 |
+| D-162 | **One batch plan per operation** (T12, revises D-103's one operation per plan). `OpKind::Batch`, `BatchOptions`, `Action::Exchange`, `PlanItem` fields `expect`, `backup`, `times`, `follow_source`, `clear_read_only`, `trash_fallback`; `ops::execute_with(.., &ExecOptions, ..)`, of which `execute` is the default form. A folder operation or sync is one `ops::Plan`, executed on one thread. | A sync copies both ways and deletes; two `execute` calls would mean two rebuilds and two backups of an archive. The item runners already dispatch on `Action`. | 11 |
+| D-163 | **A plan carries stamps; it is not re-planned** (hook of §1.5.19 W5b note 7). Items carry `Expect` (kind, size, time of source and target as the model saw them); `run_item` compares them with one `lstat` and fails `changed since the plan was made`. Stamps serialize, unlike `PlanItem::seen`. | Plans are made from the model, so a re-plan repeats stale facts unless it re-scans, which moves the items under an answered confirmation. A stamp costs no system call beyond D-103's re-check, and an archive's other members are safe because `begin` reads the archive's stamp itself. | 11 |
+| D-164 | **Durability by case** (revises D-95). `Durability::{Full, FileOnly, None}` in `WriteOptions`, `Vfs::copy_new_file`. A new target: no `fsync`, metadata set on the handle before the rename. A replaced target: the file only. A move: `Full`, because a source goes on the strength of the copy. Saves, settings and rebuilds stay `Full`. `vfs cp` follows, as it is the same code. | Two `fsync`s per file made a copy of 10,000 small files 26 × slower than a plain copy (6.2 s against 240 ms), which rules out G7 whatever else is tuned. A power cut can now lose files a copy created, never one that existed. | 11 |
+| D-165 | **Exchange** (FC-071) = `Action::Exchange`: copy left to a hidden sibling on the right, right to one on the left, then two renames. No backup. An orphan moves. Folder pairs exchange row by row. | Neither side can be lost at any step, across file systems and into archives; a failure before the third step leaves both sides as they were. | 04 |
+| D-166 | **Fence** (plan acceptance: a mirror never deletes outside the bases). `ExecOptions::fence` refuses at execution any removal, source removal and (with `writes`) any write outside the bases, by the text and by the tree (no link from the base down to the item's folder); a base itself is never removed. The planner refuses what the fence cannot see: rows below a **followed** folder, and rows Unknown, Error or below a failed folder, which are never written or deleted. | The model may be old, and with FC-013 a path below a followed link leads elsewhere while its text stays inside the base. A failure is never a difference (D-19). | 04, 11 |
+| D-167 | **Backups keep what a copy or move replaces** (FC §8, OPT-008). Not removes: a `.bak` left by a delete is an orphan the next mirror would delete and back up, for ever; deletes have the recycle bin (§1.3.10 named it there). Names are final at planning. New content is staged, the old file renamed to its backup just before the commit, renamed back if that fails; another disk → a copy first. `folder` naming keeps the path below the base. A failed backup fails the item. One generation on disk. | Costs one rename and no disk; the target is missing for one rename only, and nothing is replaced without its backup. A flat folder would let `a/x.txt` overwrite the backup of `b/x.txt`. | 04, 15 |
+| D-168 | **One backup of the outermost file per operation; none per member** (§1.5.17). `ops/roots.rs::finish`, just before `end(root, Commit)`, for target and source-only roots, from `ExecOptions::archive_backups`, which the planner fills so a dry run shows it. A failure aborts that root. | A member cannot be renamed aside cheaply, and the archive holds them all; a rebuild rewrites the whole file anyway. | 11 |
+| D-169 | **Attribute and Unix-type filters** (plan A5). `filters.other.attrib`, `.unix_type`, parsed by core from `+rh-s`-style text; `attrib` on regular files only, `unix_type` on everything but folders; `Entry::special` for `b c p s`. The content filter stays P1. | SCR-001's `filter` vocabulary is P0 although FC-053 is P1. A filter that hid folders would hide their subtrees; `EntryKind::Other` cannot tell a FIFO from a device. | 04, 12 |
+| D-170 | **FC-012 keys.** `handling.auto_scan_subfolders` (true), `expand_on_load`, `expand_differences_only`; `scan_orphan_folders` keeps its meaning. Not scanned = `NotScanned`, verdict incomplete; a refresh scans it. | Defaults give M1's results; an unscanned folder claims nothing (D-19). | 04 |
+| D-171 | **Ignored marks** (FC-033): `rules.ignored`, paths with `!` exceptions, longest path wins; `NodeFlags::IGNORED`; only `category` changes, not state, diffs or content. `FolderModel::set_ignored` is in place. Errors and unknown stay. | In the rules because they change the verdict, as `open_archives` does; the columns still show why. Exceptions keep the list short when one child leaves an ignored folder. | 04 |
+| D-172 | **FF-002**: `rules.format_overrides` (id → bool), plain data in `hikasa-folder`; the Service turns it into `EnabledOverrides` for `RulesComparator` and for child views. | The M1 seam `with_overrides` existed; a child opens with the format its row was compared by. | 10 |
+| D-173 | **Subtree refresh** (plan §5.3, §1.5.17). `refresh_into` re-lists one folder level, keeps rows whose facts are equal (with their subtrees, content and CRC), and descends only into rows that changed. Same rows: in place, ids stable. Else a new block at the arena's tail, kept children re-parented, `renumbered` returned. Dropped nodes are marked, not reused; a flat model re-runs. Property: equal to a fresh comparison. | The arena's children are contiguous, which readers rely on; a re-run costs a whole scan to learn a few rows, and a whole-subtree rescan would make a copy into a base a full scan. | 04 |
+| D-174 | **Contents on demand** (FC-029 b, c; FC-040). `compare_contents`, `compute_crcs`, `apply_child_result` update the model in place; a repeated test counts once; a child's result applies only while the pair's stamps hold. | Same engines, budget and pool as a scan; a stale child result must not overwrite a row. | 04 |
+| D-175 | **Selection engine** = `hikasa_folder::select`, one parser of the script's words (T11): masks OR-ed, `diff` = differences other than time, folders match only if all contents match, collapsed folders are one row. | SCR-002 as normative; O(rows) in one bottom-up pass, for G7 and W9's rows. | 04, 12 |
+| D-176 | **Visible contents; `include_hidden_by_default` flips to false** (revises OPT-009). `select::resolve` is the one definition: a folder gives its visible rows, a child selected with its folder wins, `whole` means nothing is left out. The option keeps working, and each dialog and `--include-hidden` overrides it. | docs/04 §8 and plan W6 say filters are honoured by default, docs/15 says `true`: they cannot both hold. Acting on what the user cannot see is how data is lost. | 04, 15 |
+| D-177 | **One builder, from the model** (T11, G7). Targets are the counterpart's own spec; an orphan goes under the other side's own folder; directory I/O only for a folder the model has no contents for; one `rename`, `trash` or `remove_dir` only for a `whole` subtree; `hikasa_vfs::ops` executes. | `x.txt` ↔ `x.csv`, NFC ↔ NFD and case pairs stay aligned, names that are not UTF-8 survive, and a plan of 100,000 items costs no I/O. | 04 |
+| D-178 | **Confirmation is data**: `Conflicts` per item, `Confirmation` as a question machine, driven by the CLI, dialogs and scripts; a reply `YesToAll` is per class, a mode per plan; `NoToAll` lets clean items go. CLI without a terminal or `--yes` → exit 100, nothing touched. `delete` and a sync that deletes or replaces always ask, whatever `confirm_delete` says (D-77). | Yes to read-only must not mean yes to system. A script's safety must not depend on a settings file. | 04, 12 |
+| D-179 | **Recycle bin** (FC-073, FS-005). `Recycle { use_bin, fallback }`. A spec without `TRASH` is the question `no_recycle_bin`; a `trash` that fails at execution fails the item unless `fallback` was chosen beforehand, then it expands into the permanent removals stamped at planning, never a listing at execution, with a warning. Off by default. | §1.3.10 made the fallback a confirmation choice; a silent permanent delete on a share is the worst way to learn a bin was missing. | 04 |
+| D-180 | **Rename masks** (FC-074). `dos_rename`, `base_mask` by normative tables; regex over the whole name through `hikasa_formats::Pattern` (additive `captures_at`), so `regex` first and `fancy-regex` only for backreferences and look-around, with T9's limits; an in-house `$` expansion. A rename never replaces; chains are ordered, cycles broken by a hidden name. `hikasa-folder` gains `hikasa-formats`. | One engine policy (T11); the two crates expand `$1a` differently. | 04 |
+| D-181 | **Sync matrix** (FS-002). Five presets as a normative table; a left-only item is `added_left` by default, `deleted_right` with `orphans = "deleted"`; invalid cells are refused; *different* under Update is a conflict, left alone. | FS-002 has eight rows, and without Sync Memory (P1) two are indistinguishable from two others: the user says which, and FS-003 later says per item. Nothing tells which of two different files wins. | 04 |
+| D-182 | **Sync plan.** Deletes (post-order), then copies right, then left, one batch. Effective rules force scanning and `archives = Always` or `AsFiles` by *within archives*; flatten is refused. Empty folders follow `create_empty`; a folder wholly deleted goes. `EmptySource` is refused unless `--allow-empty-source`, which `--yes` does not imply; a mirror on an incomplete comparison is refused; error rows give `sync_incomplete`, exit 100. | A name freed by a delete may be needed by a copy, and deletes free the disk. A mirror from a failed mount would delete everything. | 04 |
+| D-183 | **Sessions.** `SessionRules::Sync(SyncRules)` = `FolderRules` + `[rules.sync]`, replacing `Opaque`; `Specs::read_only_left/right`; schema version unchanged. | D-81's *until W6*. Per side, because `--ro1`, `--ro2` exist. | 03 |
+| D-184 | **Disable editing is enforced in the Service** (FC-003). `ApiError::ReadOnlySide` (`permission_denied`) for a `folder op`; row by row for a sync; `CopyTo` out of a read-only side is allowed, a `copyto` or `moveto` whose target leads at or below a read-only base is not; child views carry the flag to W11. | Scripts and views cannot pass it by; a sync is previewed per row, a named operation is refused whole. | 04 |
+| D-185 | **`folder op`, `folder sync`.** Rule flags shared with `folder compare`. No `--select` and no `--path` selects nothing and exits 100; `--path` names one row, never the base. `--display all` and everything expanded by default. Exit 0, 100, 107, as `vfs`. `hikasa.folder_op.v1`, `.folder_sync.v1`, `.folder_contents.v1`; `SCHEMAS` 38. | A stray command must not act on a whole tree. Failed items keep `ok: true` (W3). | 12 |
+| D-186 | **Open With** (FC-062). `AppLauncher` injected, `SystemLauncher` adapter-only; `open` 5.4.5 for the associated application. `extract_to_cache` extends D-140: a numeric folder and a checked real name, read-only, kept for the session, never evicted. | A program needs a name and an extension. Tests never start a program. | 04, 11 |
+| D-187 | **Find Filename and Compare To have no subcommand.** `Finder` and `open_pair` are pure and D-105 lets a view call them; `gui open` and `quick` are the headless forms. | Navigation needs a view; adding commands would duplicate existing ones. | 04, 12 |
+| D-188 | **Operation log** (FC-100). `op_log_entries`, `sync_log_entries`: a summary, every failure, details by OPT-018 up to 10,000. | D-116's book is bounded, but a run should not push a million lines into it. | 04 |
+| D-189 | **GUI of W6**: `CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete` over a one-row selection, `PlanConfirmDialog`, `DeleteDialog`, log, notices, refresh with `renumbered`, `Open` on an archive by refresh, FC-012 on load, FC-029(c). `Del` and the caption of `PermanentDelete` enter the catalogue. | The dialogs of §1.4.18 need a way in; W9 owns the rest. | 14 |
+| D-190 | **`--sync`, `folder sync --gui`** are W6 up to IPC: parsed, sent, `ViewRequest::Sync`; the window answers `unsupported` until W9. | The Folder Sync view is W9; CLI-003 and CLI-G03 are checked at the boundary. | 12 |
+| D-191 | **Dependencies.** `open` 5.4.5 in `hikasa-session`; `hikasa-folder` += `hikasa-formats`. Check 2 and 7 rules. | `open` was approved in plan §3; §0.4's *W7/W13* is overtaken by FC-062. | 02 |
+| D-192 | **G7.** Copy of 10,000 files ≤ 1.5 × a plain recursive copy that keeps times, on a prepared plan; sync plan of 100,000 files < 0.5 s. A failure is reported, not relaxed. | A scratch run of §1.6.3's sequence gave 1.45 ×. The comparison is not part of the gate, as its cost is G2's. | 02 |
 
 ### 0.4 Dependencies
 
@@ -159,6 +191,9 @@ architecture test gains one check-7 rule (§1.4.16 rule 4).
 `hikasa-vfs` += `zip`, `tar`, `flate2`, `bzip2`, `lzma-rust2`, `zstd`, `jiff`. `lzma-rust2` and `zstd` follow `zip`'s requirements, so one
 copy of each is in `Cargo.lock`. `deny.toml` gains one crate-scoped exception (`libbz2-rs-sys`, `bzip2-1.0.6`), the only new licence;
 `zstd-sys` brings the only C code, built by the `cc` crate with the target's C compiler; check 2 gains one confinement rule.
+**W6** (D-191) adds `open` 5.4.5 to `hikasa-session` (`default-features = false`; named only in `host.rs`; it was to wait for W7/W13, but FC-062's
+associated application is W6) and gives `hikasa-folder` the edge to `hikasa-formats`, for `Pattern` (D-180). Member manifests: `hikasa-session` += `open`,
+`hikasa-folder` += `hikasa-formats`. `cargo deny` must pass without new exceptions; check 2 and check 7 gain the rules of §1.6.21.
 
 ### 0.5 Documentation updates of W0
 
@@ -1518,7 +1553,7 @@ documented, user-visible override):
   also check the raw `rm` items and `mv` sources (`api::is_dot_name`; `.`, `x/.`, `../`): a whole-command
   `invalid_input` before planning. `cp x .` still copies into the current folder (the item is `./x`).
 - **Review fixes (replacing).** Replacing a file or link by a link (`link`, the `move` of a link) or by a folder
-  (`create_dir` with `replaces`) renames the old item to a free hidden sibling `.<name>.hikasa-old[-n]`, creates
+  (`create_dir` with `replaces`) renames the old item to a free hidden sibling `.hikasa-old[-n]`, creates
   the new one, then removes the sibling (best effort: a sibling that cannot be removed is left, never the
   data lost); when the creation fails the sibling is renamed back, so the target is
   as before (a back-end without `RENAME` removes first). The window in which the target is the sibling is
@@ -3387,9 +3422,9 @@ part. `docs/reference/commands.md` is unchanged.
    side of a folder pair is an opened archive: `TreeRead::spec` needs it to build a member's spec, and an archive against
    a real folder of the same name has one on one side only. `spec` now serves archive bases and flatten folders.
 9. **`FolderEnv::archive_entries_max`** injects the budget of step 5; the session passes `SCAN_ARCHIVE_ENTRIES_MAX`.
-10. **Resolution stops at `..`.** `parent_in` of `/a/..` is `/a/../..` (D-06), so step 3 returns the spec as soon as the name
-    in front of `rest` is `..`; every path through step 4 would have given that answer. New `LocalPath::parent_in`,
-    `file_name_in` (explicit style).
+10. **Resolution stops at `..`.** A path that ends in `..` has no parent by its text (D-06; §1.6.25 note 32), so step 3 returns
+    the spec as soon as the name in front of `rest` is `..`; every path through step 4 would have given that answer. New
+    `LocalPath::parent_in`, `file_name_in` (explicit style).
 11. **Jobs.** `Service::parse_spec_in` passes the job's token in `vfs ls`, `vfs stat`, `vfs cat`, `vfs cp`, `vfs mv`, `quick`,
     `text compare` and `folder_prepare_in`, as §1.5.4 asks; those commands then `prepare` before they `stat` (§1.5.5).
     Not cancellable, and bounded by the limits: `Service::parse_spec` and `folder_prepare` without a job, and the target of a
@@ -3580,7 +3615,1981 @@ maintainer may want to look at it first.
 carry its stamp: note 7. Sources of `OpPlan` items on one thread: note 6. `Fate`, `Overlay` and `Origin` are crate-private, and
 `Vfs::create_archive`, `begin`, `finish_with` are the whole surface.
 
-### 1.6–1.14 W6–W14
+### 1.6 W6 — Folder operations and sync engine
+
+**Ids.** FC-003, FC-012 (the options; glyphs W9), FC-029 (b, c), FC-033, FC-040 (CRC on demand), FC-052, FC-060
+(selection engine), FC-061 (Find Filename), FC-062 (Open With expansion, Compare To), FC-070, FC-071, FC-072, FC-073,
+FC-074, FC-076, FC-077, FC-078, FC-100 (operation log model), FS-001, FS-002, FS-004, FS-005 (the engine; the view is
+W9), FF-002, CLI-003 (`--sync`, `--nobackups`), CLI-G03 (`folder sync --gui`), plan A5 (attribute and Unix-type
+filters), T12, ARCH-101, gate G7. Decisions D-161…D-192. Out of scope: every view, list and tree of W9 (selection by
+pointer, preview lists, Folder Sync view, columns, Legend, browse dialog), FS-003 Sync Memory (P1), FC-075 Attributes
+(P1, §1.6.23), FC-082 re-stat of a whole view (P1), ACL and 8.3 options (D-59), FC-081 (D-59).
+
+**Files.** `core/hikasa-core/src/` (`job.rs`, `warning.rs`); `core/hikasa-vfs/src/` (`vfs.rs`, `entry.rs`, `router.rs`,
+`memory.rs`, `local/mod.rs`, `local/unix.rs`, `local/windows.rs`, `archive/mod.rs`, `archive/cache.rs`,
+`archive/index.rs`, `ops/mod.rs`, `ops/plan.rs`, `ops/copy.rs`, `ops/rename.rs`, `ops/remove.rs`, `ops/touch.rs`,
+`ops/roots.rs`, new `ops/backup.rs`, new `ops/exchange.rs`); `core/hikasa-formats/src/regex_engine.rs`;
+`core/hikasa-folder/src/` (`rules.rs`, `resolve.rs`, `scan.rs`, `stats.rs`, `model/mod.rs`, `model/node.rs`,
+`model/store.rs`, `lib.rs`, new `refresh.rs`, `content.rs`, `select.rs`, new `ops/` with `mod.rs`, `build.rs`,
+`conflict.rs`, `confirm.rs`, `rename.rs`, `copyto.rs`, new `sync.rs`); `core/hikasa-session/src/`
+(`settings/options.rs`, `sessions/file.rs`, `sessions/scope.rs`, `host.rs`, `log.rs`, `api/mod.rs`, `api/compare.rs`,
+`api/requests.rs`, `api/dto.rs`, `api/human.rs`, `api/vocab.rs`, `api/gui.rs`, `api/sessions.rs`, new
+`api/folder_ops.rs`, new `launcher.rs`, and `core/hikasa-session/catalogue/commands.toml`); `cli/hikasa-cli/src/`
+(`args.rs`, `cmd/folder.rs`, `cmd/session.rs`, new `cmd/folder_op.rs`, new `cmd/folder_sync.rs`, new `confirm.rs`,
+`main.rs`); `gui/hikasa-gui/src/` (`folder_view.rs`, `commands.rs`, new `op_dialogs.rs`, `ui/dialog.rs`, `ipc.rs`,
+`main.rs`); workspace `Cargo.toml`, `Cargo.lock`, `core/hikasa-session/Cargo.toml`, `core/hikasa-folder/Cargo.toml`,
+`core/hikasa-session/tests/architecture.rs`; `help/` (§1.6.24); tests of §6.6.
+
+#### 1.6.1 Parts (D-161)
+
+W6 is one wave in four sequential parts, one implementer each; a part starts when the previous one is committed on
+`feat/m2` and ends with the tree green. W7 may run beside it: the only files both touch are `SCHEMAS` in `api/dto.rs`
+and `args.rs`, and each appends.
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W6a Foundations** | batch plans, stamps, exchange, durability, fence, backups in `hikasa_vfs::ops`; `extract_to_cache`; the A5 filters, FC-012 keys, FF-002, Ignored marks with their flags (`FolderRuleArgs`, §1.6.17); subtree refresh; contents on demand | §1.6.2–§1.6.8, `extract_to_cache` of §1.6.18 | A6.1…A6.13, A6.35 | `vfs` commands as before, faster; `folder compare` with its new flags; no new subcommand. Everything else is additive API with tests |
+| **W6b Operations** | selection, planning, confirmation, delete, rename, Disable editing, Service, `folder op`, `hikasa.folder_op.v1`, `hikasa.folder_contents.v1`, Exclude, Open With, the log model | §1.6.9–§1.6.13, §1.6.15 (specs), §1.6.16–§1.6.19, §1.6.21 | A6.14…A6.25, A6.35 | every file operation headless, with `--dry-run`; the window unchanged |
+| **W6c Sync** | matrix, presets, overrides, sync plan, `SessionRules::Sync`, `folder sync`, `session run` of a sync, `--sync` and `--gui` up to IPC, G7 | §1.6.14, §1.6.15 (rules), §1.6.17 (sync), §1.6.22 | A6.26…A6.32, A6.35 | sync headless and from a session |
+| **W6d GUI hooks** | confirmation and delete dialogs, four commands, log and notices, refresh in the view, the child result of FC-029(c); docs, 0.1.92 | §1.6.20, §1.6.24 | A6.33…A6.35 | a selected row can be copied and deleted in the window; the rest of the Actions menu stays `planned` until W9 |
+
+Each cut is additive: W6a adds nothing a user meets but flags, W6b nothing but subcommands, so the tree stays green and
+shippable after each. The order is forced: W6b's plans need W6a's batch, W6c's sync plan is built by W6b's builder, W6d
+shows W6b's plans. Green is claimed per part (§1.5.19 W5a note 21).
+
+#### 1.6.2 Batch plans and execution (D-162, D-163, D-165)
+
+`hikasa_vfs::ops` stays the only place that writes. A folder operation is **not** a sequence of `ops` calls: a sync
+copies both ways and deletes, and two `execute` calls would mean two rebuilds and two backups of one archive. It is one
+`ops::Plan` of a new kind, executed once.
+
+```rust
+// hikasa_vfs::ops::plan (additive)
+pub enum OpKind { Copy, Move, Remove, Mkdir, Touch, Batch }                  // as_str "batch"
+pub enum PlanOptions { /* … */ Batch(BatchOptions) }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BatchOptions {
+    pub preserve: Preserve,   // metadata of copies; moves keep Preserve::default() as in W3
+    pub links: LinkPolicy,
+    pub moves: bool,          // `move`/`moveto`: the folder items of the plan are sources of a move (two-phase, D-148)
+}
+pub enum Action { /* … */ Exchange }                                          // as_str "exchange"; needs_absent_target false
+pub enum SkipReason { /* … W3 */ Declined, Filtered, CompareError, FollowedLink, ReadOnlySide, Capability,
+                      DuplicateTarget, NoMatch, SameName }                    // declined, filtered, compare_error, followed_link,
+                                                                              // read_only_side, capability, duplicate_target,
+                                                                              // no_match, same_name
+
+/// What a plan saw of an item: execution compares it, so a plan that waited on a confirmation stays honest (D-163).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemStamp { pub kind: EntryKind, pub size: Option<u64>, pub mtime: Option<FileTime> }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Expect { pub source: Option<ItemStamp>, pub target: Option<ItemStamp> }
+
+pub struct PlanItem {
+    /* … W3 fields unchanged … */
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub expect: Option<Expect>,
+    /// Where the replaced target goes first (§1.6.5). `None` for members: their archive is backed up whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub backup: Option<Spec>,
+    /// The times of a `touch` item of a batch; other plans use `TouchOptions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub times: Option<SetTimes>,
+    /// The source is a link the comparison followed (FC-013): stat and read through it.
+    #[serde(default)] pub follow_source: bool,
+    /// Answered yes to `read_only`: a DOS `R` on the target is cleared just before it is replaced or removed.
+    #[serde(default)] pub clear_read_only: bool,
+    /// A `trash` item that may become a permanent delete when the recycle bin fails (§1.6.12).
+    #[serde(default)] pub trash_fallback: bool,
+}
+impl PlanItem { pub fn planned(action: Action, kind: EntryKind, source: Option<Spec>, target: Spec, depth: u32) -> PlanItem; }
+
+/// What `execute_with` adds to `execute`. `Default` is `execute`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExecOptions {
+    pub fence: Option<Fence>,                     // §1.6.4
+    /// Canonical outermost archive file → its backup (§1.6.5). Filled by the planner, so a dry run shows them.
+    pub archive_backups: BTreeMap<String, Spec>,
+}
+pub fn execute_with(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, options: &ExecOptions, ctl: &Ctl<'_>) -> OpReport;
+pub fn execute(src: &dyn Vfs, dst: &dyn Vfs, plan: Plan, ctl: &Ctl<'_>) -> OpReport;   // execute_with(.., &Default::default(), ..)
+```
+
+`PlanItem::seen` stays private and unserialized. Folder plans leave it `None` (the model holds no `FileId`), so the
+folder re-check falls back to "every planned folder above is still a folder" (§1.3.12).
+
+**Batch semantics in `Exec`.** A batch is a tree operation (`tree_op`: the cut of §1.3.12 applies; roots are depth 0, so
+a failed folder cuts its own subtree only). `Exec::preserve` = `BatchOptions::preserve`; `Exec::overwrite` = `None`: a
+replacement was decided at planning and confirmed, so `newer` is not decided again, the stamp does that job.
+`create_parents` is false: the plan holds a `create_dir` for every missing folder. Every `matches!(options,
+PlanOptions::Move(_))` of `ops/copy.rs` becomes `exec.moving()` (`Move(_)`, or `Batch` with `moves`). `run_rename`'s
+fallback expansion takes `MoveOptions::default()`. `run_touch` takes `item.times`, then `TouchOptions`; a `touch` item
+of a batch always has `times` (the builder sets it, a debug assertion says so). `Exec::total` and `Plan::bytes` count
+both sizes of an `exchange`. `ops::execute` runs on **one thread**: the batches of §1.5.19 W5b note 6 belong to it. The
+Service never hands execution to a pool, and the GUI runs it in one job thread per view.
+
+**Order of checks in `run_item`** (the first that fails decides; steps 2 and 3 are new):
+
+1. `item.skip` → `Skipped`.
+2. Fence (§1.6.4).
+3. `item.expect`. `source` and `target` are compared with an `lstat` (`stat` through the link with `follow_source`):
+   same `kind`; for `File` and `Symlink` same `size` where `Some` and the same `mtime` where `Some`, exactly; for `Dir`
+   the kind only (a folder's time moves with its children). A gone item, or any other value → `InvalidTarget "changed
+   since the plan was made"`. `Expect::target` set and the target absent is the same error; `None` asks nothing here,
+   and the absent-target check of D-103 stays. The `lstat`s are reused by the copy that follows, so a stamp costs no
+   system call beyond W3's re-check.
+4. The W3 re-checks, then the action.
+
+**Why stamps, not a re-plan (D-163).** Hook of §1.5.19 W5b note 7: a plan that waits on a confirmation re-plans or
+carries a stamp. Plans are built from the model (§1.6.10), so a re-plan would repeat the same stale facts unless it
+re-scanned, and a re-scan moves the items under a confirmation the user already answered. A stamp costs nothing and
+refuses exactly what changed: a file modified after the comparison is never overwritten or deleted on the strength of an
+old row, and the item says so. Other items go on (ARCH-101). For archives the stamp is the member's: `begin` reads the
+archive's own stamp afterwards (D-157), so a change to *other* members since the plan is kept by the rebuild and cannot
+be lost. On Windows, a directory listing can show an out-of-date size or time for a file with an open handle or a hard
+link: the item then fails `changed since the plan was made`, which is the safe side; a refresh clears it.
+
+**Exchange (D-165).** `Action::Exchange` has `source` = the left file or link, `target` = the right one, `replaces =
+true`, both stamps. FC-071's "swap both sides" must not lose either side at any step, across file systems and into
+archives, so `ops/exchange.rs` makes both copies first:
+
+| Step | Call | On failure |
+|---|---|---|
+| 1 | copy `source` to `T1`, a free hidden sibling of `target` (`.hikasa-xchg[-n]`), metadata applied | remove `T1`; both sides untouched; item fails |
+| 2 | copy `target` to `T2`, a free hidden sibling of `source`, metadata applied | remove `T1`, `T2`; both sides untouched; item fails |
+| 3 | `rename(T1, target, replace = true)` | remove `T1`, `T2`; both sides untouched; item fails |
+| 4 | `rename(T2, source, replace = true)` | `target` holds the new content; `T2` is left in place and the item fails with `InvalidTarget "changed during the move; the copy was kept"` naming `T2`: the other side's old content is that file |
+
+Links are copied as links (`create_symlink`); steps 3 and 4 rename them like files. No backup is taken: nothing is lost.
+A pair of folders is not an item: the builder exchanges their contents row by row, and an orphan inside is an ordinary
+`Action::Move` to the other side. Cancellation is checked before steps 1, 2 and 3; after step 3 the item runs to its
+end. `Roots::touch` opens the root of either side, each as a target.
+
+**Exchange and archives.** Both sides in one archive: one batch, one rebuild, atomic. A plain file against a member:
+step 4 joins `exec.deferred` and runs after the rebuild, as a move's removal does (D-148); a failed rebuild removes `T2`
+and leaves the plain file. Members of **two different archives** cannot be exchanged safely: when the second rebuild
+fails the first has already lost its old member. The builder gives such an item the error `unsupported` ("exchanging
+between two archives"): copy, or move, instead.
+
+#### 1.6.3 Durability and the copy path (D-164)
+
+W3's `LocalWriter::commit` calls `sync_all` on the file and on its folder, one pair of `fsync` per file. Copying 10,000
+small files that way took 26 × a plain copy on the reference machine, so G7 cannot be met by tuning anything else;
+macOS's `F_FULLFSYNC` and Windows' `FlushFileBuffers` are slower still. What a sync protects differs by case, so the
+case decides:
+
+```rust
+// hikasa_vfs::vfs (additive)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Durability {
+    /// `sync_all` of the file, then of the folder after the rename (M1, saves, settings, rebuilds, moves).
+    #[default] Full,
+    /// `sync_all` of the file only: a replaced file is either the old or the new one after a power cut.
+    FileOnly,
+    /// Neither: a new file that nothing depends on yet.
+    None,
+}
+pub struct WriteOptions { /* … W3 … */ pub durability: Durability }       // literals use `..Default::default()`
+/// Metadata a back-end can apply on the open handle, before the file gets its name.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HandleMeta { pub modified: Option<FileTime>, pub created: Option<FileTime>, pub mode: Option<u32> }
+pub trait Vfs: Send + Sync {
+    /// A copy of the regular file `from` to `to`, which does not exist, with `meta` applied, or `Ok(None)` when this
+    /// back-end has no such path. Never replaces: a target that appeared meanwhile stays, and this is `AlreadyExists`.
+    fn copy_new_file(&self, _from: &Spec, _to: &Spec, _meta: &HandleMeta, _cancel: &CancelToken)
+        -> Result<Option<u64>, VfsError> { Ok(None) }
+    /// Makes what happened in the folder `dir` durable, best effort: names, not contents (§1.6.25 note 34).
+    fn sync_folder(&self, _dir: &Spec) {}
+}
+```
+
+| Item (`ops/copy.rs::copy_content`) | Durability | Path |
+|---|---|---|
+| `copy`: target absent | `None` | `copy_new_file`, else `copy_file_fast`, else stream |
+| `copy`: `replaces` | `FileOnly` | `copy_file_fast`, else stream; with `backup` always stream (§1.6.5) |
+| `move` (either) | `Full` | a source is removed on the strength of the copy, so the copy must be on disk first |
+| `exchange` | `FileOnly` on `T1`, `T2` | `copy_file_fast`, else stream |
+| `open_write` outside `ops` (save, `--output`) | `Full` | unchanged |
+
+`LocalVfs::copy_new_file` (files ≤ `FAST_COPY_MAX`; larger ones `Ok(None)`, for G4): the temporary sibling is opened
+`create_new` with the final mode already on Unix (`OpenOptionsExt::mode(0o600)`, then `File::set_permissions` to
+`meta.mode` before the rename, which replaces D-158's read of the first mode for this path only: `meta.mode` is the
+result), `std::io::copy`, `File::set_modified` (and `FileTimesExt::set_created` where `SET_CREATED`), close, a rename to
+the target that cannot replace (§1.6.25 note 8). So the file never shows under its name with a wrong time or mode, and a
+file another program creates there meanwhile stays. Windows closes the handle before the
+rename, as elsewhere, and the DOS `R` bit is applied after it by the usual step. No such path when `preserve.attrs` is
+off (the result needs the default mode, which only the D-158 sequence gives without reading the umask). `ops` skips the
+metadata step of §1.3.4 after `Ok(Some(_))`, except `R`.
+
+Measured with this sequence on `/var/tmp` (Linux, 10,000 files of 4 KiB in 100 folders, three runs each, no pool): plain
+copy keeping times 240 ms, W3 sequence without `fsync` 425 ms (1.8 ×), this path 340 ms (1.45 ×), with both `fsync` 6.2
+s (26 ×). **A power cut just after a copy can lose files the copy created; it does not lose a file that existed**: what
+replaces it was synced before the rename, and no source is removed before its copy is on disk, with the name of the copy
+and of each folder the operation made for it (§1.6.25 note 34). That rests on the file system's rename being atomic, as
+everything here does. `docs/11` says so. `vfs cp` takes the same path, since it runs the same code.
+
+#### 1.6.4 Fence (D-166)
+
+A mirror must never delete outside the base folders, whatever the tree holds. The planner guarantees that, and execution
+refuses it again, because the planner works from a model that may be old.
+
+```rust
+// hikasa_vfs::ops
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fence { pub bases: Vec<Spec>, pub writes: bool }
+/// True when `spec` lies strictly below `base`: `Spec::parent` is walked up (it leaves an archive through its root,
+/// §1.5.2) and canonical texts compared, case-folded when the back-end is not `CASE_SENSITIVE`. Never true for `base` itself.
+/// Texts only: what the tree holds is `run_item`'s, below.
+pub fn within(vfs: &dyn Vfs, base: &Spec, spec: &Spec) -> bool;
+```
+
+`run_item` refuses, with `InvalidTarget "is outside the base folders"`: every `remove`, `remove_dir`, `trash` target;
+the source of a `move`, `rename`, `exchange`; and with `writes`, every target. `copyto`/`moveto` set `writes = false`
+(their target is elsewhere, by request); every other folder operation and every sync set `true`. A base itself is never
+removed. A backup with `naming = "folder"` lies outside the bases on purpose: backups are not items, and the fence does
+not see them.
+
+**The tree (§1.6.25 note 33).** A text can be below a base while the path leads elsewhere, because a folder of the base was
+moved out and left as a link after the plan was made; every stamp holds then, as it is the same file. So each spec the
+fence looks at is walked too: from the base down to the spec's folder, one `lstat` a level, at any depth, no component may
+be a link, or `InvalidTarget "is a link below a base folder, where the plan saw none"` names it. A link at or above a base
+is the user's choice and stays. The item itself is no component: a link to remove or replace is that link, and rule 2
+below stands. A folder that is not there ends the walk, and the item fails as it would. What is removed, moved or replaced
+is looked at each time; a new file takes what was seen of its folder in this batch, for G7, until an item of the plan makes
+a link or renames something. Members are not walked: a member cannot be swapped for a link. The file of an archive is: an
+archive behind a link below a base would be rewritten outside it.
+
+**What the fence cannot see, the planner refuses (normative for every folder plan):**
+
+| # | Case | Rule |
+|---|---|---|
+| 1 | A row below a folder the comparison **followed** (FC-013), on the side being written or deleted | never touched: the path leads outside the base. `skip`, reason `followed_link` |
+| 2 | A followed link itself | `remove`, replace: act on the link (D-94 rule 1 and 4) |
+| 3 | Rows in state Unknown or Error, and rows below a folder that failed on either side | never written, never deleted: a failure is not a difference (D-19). `skip`, reason `compare_error` |
+| 4 | A folder not scanned (cancelled comparison, auto-scan off) in a **sync** | as rule 3. In a `folder op` the user named it: §1.6.10 rule 6 |
+| 5 | An empty or incomplete source | §1.6.14 "Empty sources" |
+
+Rule 1 refuses what W3's D-94 rule 5 refuses for copies: a link is never written through. Execution has the D-103 parent
+re-check and the walk above for what changes after planning, which narrow the race and cannot close it (§1.3.3 rule 3):
+a link swapped in between the `lstat` and the call is not seen.
+
+#### 1.6.5 Backups (D-167, D-168)
+
+Option `[backups] back_up_before_copy` (OPT-008), `--backup`, `--no-backup`, legacy `--nobackups`. **A backup keeps what
+a copy or move replaces.** Deletes have the recycle bin: `Action::Remove` is not backed up (§1.3.10 named it as the
+recycle point). A `.bak` left by a delete would be an orphan of the next mirror, deleted and backed up in its turn, for
+ever.
+
+```rust
+// hikasa_vfs::ops::backup
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupStyle { NameTilde, StemTilde, NameBak, TildeName, StemBak, StemBakExt, Folder }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupPolicy { pub style: BackupStyle, pub folder: Option<Spec> }   // `folder` for Folder
+impl BackupPolicy {
+    /// The backup of `item`: a sibling, or `<folder>/<rel>`; `rel` is the path below the base (`None`: the file name,
+    /// as a save of W10 uses it). `Folder` without a folder → `InvalidTarget "needs a backup folder"`.
+    pub fn target(&self, vfs: &dyn Vfs, item: &Spec, rel: Option<&RelPath>) -> Result<Spec, VfsError>;
+}
+/// A copy of `item` at `backup`, parents created, replacing a backup that is there (atomic, `Durability::FileOnly`).
+pub fn write_backup(vfs: &dyn Vfs, item: &Spec, backup: &Spec, ctl: &Ctl<'_>) -> Result<(), VfsError>;
+/// The names of one plan's backups.
+#[derive(Debug, Default)] pub struct BackupNames { /* … */ }
+impl BackupNames {
+    /// Keeps a path the plan writes, removes or reads from every backup of the plan: the planner calls it for each target
+    /// and source of the plan, first.
+    pub fn reserve(&mut self, vfs: &dyn Vfs, spec: &Spec);
+    /// The backup of `item` in this plan, numbered around what is taken. A folder at that name → `IsADirectory`.
+    pub fn assign(&mut self, policy: &BackupPolicy, vfs: &dyn Vfs, item: &Spec, rel: Option<&RelPath>) -> Result<Spec, VfsError>;
+}
+```
+
+`hikasa_session::settings::BackupNaming` maps one to one to `BackupStyle` (`impl From`); `Service` builds the policy; a
+relative `[backups] folder` is `invalid_input`, an empty one with `folder` too. **The core owns the name, the session
+the choice.**
+
+| `naming` | `abc.txt` | `Makefile` | `.bashrc` | `a.tar.gz` |
+|---|---|---|---|---|
+| `name_tilde` | `abc.txt~` | `Makefile~` | `.bashrc~` | `a.tar.gz~` |
+| `stem_tilde` | `abc~.txt` | `Makefile~` | `.bashrc~` | `a.tar~.gz` |
+| `name_bak` (default) | `abc.txt.bak` | `Makefile.bak` | `.bashrc.bak` | `a.tar.gz.bak` |
+| `tilde_name` | `~abc.txt` | `~Makefile` | `~.bashrc` | `~a.tar.gz` |
+| `stem_bak` | `abc.bak` | `Makefile.bak` | `.bashrc.bak` | `a.tar.bak` |
+| `stem_bak_ext` | `abc.bak.txt` | `Makefile.bak` | `.bashrc.bak` | `a.tar.bak.gz` |
+| `folder` | `<folder>/<rel>/abc.txt` | same | same | same |
+
+Extensions as D-07: a `.` that is neither first nor last; the last one counts. The `folder` form keeps the path below
+the base, a choice of this contract (docs/15 says "in this folder"), because a flat folder would let `a/x.txt` overwrite
+the backup of `b/x.txt`.
+
+**Rules.**
+
+- **Plan.** The planner sets `PlanItem::backup` on every `copy`, `move`, `rename`, `link` and `create_dir` with
+  `replaces`, outside archives. Names are final at planning, so a dry run shows them and two items can be told apart: a
+  name another path of the plan has gets `-2`, `-3` … before its extension (`abc.bak`, `abc-2.bak`), in plan order, for
+  `abc.txt` and `abc.doc` with `stem_bak`, for `left` and `right` of one path with `folder`, and for `x` next to a target
+  `x.bak`, which is why every path of the plan is reserved first. A name that comes out as the item itself is numbered in
+  every style, `folder` included (the item's own folder as the backup folder). On disk one generation is kept: an
+  existing file or link at that name is replaced. A folder there fails the item `is_a_directory` at planning.
+- **Execution refuses what would lose a file.** `execute_with` checks the plan first, hand-built plans too: a backup that
+  is its own item, or the target or source of any item, or another item's backup, or the outermost file of an archive
+  whose backup it is. The item fails `InvalidTarget` (`is the item it backs up`, `is a path of another item of the plan`)
+  and the rest are `not_run`: nothing has run.
+- **Execution, the order matters.** `copy_content` with `backup` always streams: the new content goes to the temporary
+  sibling, and just before `commit`: `rename(target, backup, replace = true)` (parents created for `folder`), then
+  `commit`. A failure of the stream leaves target and backup as they were. A failed `commit` renames the backup back; if
+  that fails too the item's message names the backup. No extra copy, no extra disk, and the target is missing for one
+  rename only. `CrossDevice` or `OperationUnsupported` from that rename (a `folder` on another disk): `write_backup`
+  while the target is intact, then `commit`. **A failed backup fails the item and the target stays:** nothing is
+  replaced without its backup. `link` and `create_dir` go through `replace_with` (§1.3.12), whose hidden sibling becomes
+  the backup instead of being removed.
+- **Archives (D-168).** A `replaces` item inside an archive gets no `backup`: **one backup of `root.outermost_file()`
+  per operation** replaces per-member backups, as §1.5.17 proposes, because members cannot be renamed aside cheaply and
+  the archive holds them all. `ops/roots.rs::finish` runs it in both loops, for the target roots and the source-only
+  roots, just before `end(root, Commit)`: when `options.archive_backups` names `root.outer` and the root has a `Done`
+  item: a copy of the file's bytes, through a link that leads to it (`write_backup` keeps a link as a link, and a link
+  would lead to the rewritten file). A failure ends that root with `Finish::Abort` and fails its done items with that error, so an
+  archive is never rewritten without its backup. A cancelled root has no backup. `write_backup` runs under the writer's
+  lock (D-157), which only keeps other writers out: the file reads as usual. The planner fills the map for every
+  outermost file an item of the plan writes, removes or moves out of, whether or not that item replaces: a rewrite
+  touches the whole file. An outermost file that is not below a base (the base is the archive) takes `rel = None`. Its
+  size is reported in `Phase::Writing`.
+- `create_dir` of `Folder` parents is not an item and is not counted. Backups are not comparison rows: a later refresh
+  shows them as the orphans they are.
+
+#### 1.6.6 Rules and scan (D-169…D-172)
+
+Every key below is sparse and additive: `FOLDER_RULES_SCHEMA_VERSION` stays 1, defaults reproduce M1's results, and the
+folder goldens do not change.
+
+```rust
+// hikasa_folder::rules (additive)
+/// `attrib:(+|-)<letters>…`, FC-053's DOS attribute test. `set`: an item must have them all; `clear`: none of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)] pub struct AttribFilter { pub set: DosAttrs, pub clear: DosAttrs }
+bitflags! { pub struct UnixTypes: u8 { BLOCK = 1; CHAR = 2; LINK = 4; FIFO = 8; REGULAR = 16; SOCKET = 32; } }   // letters b c l p r s
+/// `unixtype:(+|-)<letters>…`. `include` not empty: only these; `exclude`: not these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)] pub struct UnixTypeFilter { pub include: UnixTypes, pub exclude: UnixTypes }
+impl AttribFilter { pub fn parse(text: &str) -> Result<AttribFilter, FolderError>; }     // serialized as this text
+impl UnixTypeFilter { pub fn parse(text: &str) -> Result<UnixTypeFilter, FolderError>; }  // serialized as this text
+pub struct OtherFilters { /* … */ pub attrib: Option<AttribFilter>, pub unix_type: Option<UnixTypeFilter> }  // `false` = off, D-90
+pub struct Handling { /* … */ pub auto_scan_subfolders: bool /* true */, pub expand_on_load: bool /* false */,
+                      pub expand_differences_only: bool /* false */ }
+pub struct FolderRules { /* … */
+    pub ignored: Vec<String>,                       // FC-033, §below
+    pub format_overrides: BTreeMap<String, bool>,   // FF-002: format id → enabled
+}
+pub struct FolderRulesPatch { /* … */ pub attrib_filter: Option<Change<AttribFilter>>,
+    pub unix_type_filter: Option<Change<UnixTypeFilter>>, pub auto_scan_subfolders: Option<bool>,
+    pub expand_on_load: Option<bool>, pub expand_differences_only: Option<bool>,
+    pub ignored: Option<Vec<String>>, pub format_overrides: Option<BTreeMap<String, bool>> }
+// hikasa_vfs::entry (additive; every struct literal of `Entry` is inside hikasa-vfs)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all = "snake_case")]
+pub enum SpecialKind { Block, Char, Fifo, Socket }
+pub struct Entry { /* … */ pub special: Option<SpecialKind> }     // `Some` only with `kind == Other`
+// hikasa_folder::NodeFlags
+NodeFlags::IGNORED = 4096                                          // name "ignored"; FLAG_NAMES grows to 11
+```
+
+**Attribute and Unix-type filters (A5, D-169).** The filter vocabulary of SCR-001 (`filter attrib:…`, `filter
+unixtype:…`) is P0 while FC-053 is P1, so the two tests are in M2; the content filter stays P1. Grammar: one or more
+groups of a sign and letters: `+rh-s`; `attrib` uses `DosAttrs::parse_letters`, `unixtype` the letters `b c l p r s`; a
+letter on both signs, a group without letters or an unknown letter → `InvalidRules` (CLI: `invalid_input`, exit 100);
+`none` (script, flags) is `Change::Off`. TOML: `[rules.filters.other] attrib = "+rh-s"`, `unix_type = "-lp"`, `false`
+off (`off_or`, D-90).
+
+| Filter | Applies to | Facts |
+|---|---|---|
+| `attrib` | regular files, as size and date filters (a folder stays, or the subtree would vanish) | `Attrs::Dos` only. On a back-end without DOS attributes it has no effect, with one `capability_missing` warning per side |
+| `unix_type` | everything but folders; `d` is not a letter | `File` → `r`, `Symlink` → `l` (an unfollowed link; a followed one is its target's type), `Other` → `Entry::special`. `Other` without `special` matches no letter: `+p` hides it, `-p` keeps it |
+
+`ResolvedRules::other_filtered` gains `special` and tests both, so the scan's two call sites and INV-FOLDER-7 stay one
+predicate (T11). `Entry::special`: `LocalVfs` on Unix from `FileTypeExt`; `ArchiveVfs` from tar type flags 3, 4, 6;
+`MemoryVfs` from `MemMeta::special`; `None` on Windows and in zip. Name-only entries (D-45) are not tested, as the other
+filters. The filtered row is teal as ever (FC-054).
+
+**Folder handling (FC-012, D-170).** `expand_on_load` and `expand_differences_only` change no result:
+`hikasa_folder::expanded_on_load(read: &TreeRead, handling: &Handling) -> Vec<NodeId>` is what the view opens (and
+`--expand-all` wins). `auto_scan_subfolders` keeps its M1 result when true; `scan_orphan_folders` keeps its M1 meaning
+(any orphan folder), which contains FC-012's *top-level orphan*:
+
+| `auto_scan_subfolders` | `scan_orphan_folders` | Scanned |
+|---|---|---|
+| true | true | everything (M1) |
+| true | false | folder pairs; orphan folders stay `NotScanned` (M1 `--no-scan-orphans`) |
+| false | true | the bases, and orphan folders directly in a base with their subtrees (FC-012's "top-level") |
+| false | false | the bases only |
+
+A folder not scanned is `NotScanned`, state Unknown: its verdict is `incomplete` (exit 100 unless differences were
+found), as D-19 asks of anything unknown. It is scanned by a refresh of its own (§1.6.7), which is what the view does on
+Expand. Glyphs are W9. Flatten ignores both keys. CLI: `--no-auto-scan`, `--expand-on-load`, `--expand-differences`.
+
+**Ignored marks (FC-033, D-171).** `FolderRules::ignored` is a list of base-relative paths, `/`-separated, in the
+spelling of `open_archives`: `a/b.txt`, `a` (a folder and all below it), and an exception `!a/b.txt`. A path whose first
+name starts with `!` is written `./!x`; an exception needs no such thing (`!!x`). **The longest path that names a node or an
+ancestor decides.** Keys go through `path_key`, so case follows the comparison's alignment. The
+flag is set in `plan_pair` and inherited from the parent, unless the path is an exception. A flag never changes
+`CompareState`, `diffs` or content results: `TreeRead::category` (via `own_category_of`) maps `LeftNewer`, `RightNewer`,
+`Different`, `LeftOrphan`, `RightOrphan` of an `IGNORED` node to `Same`, so counters, verdict, exit code, display
+filters and statistics see *same*, and the columns still show why. `Unknown`, `Error` and `Filtered` stay: a failure is
+never hidden (D-19). `FolderStats::ignored` counts them. A sync sees `same` (§1.6.14); a selected ignored row is still
+operated on.
+
+```rust
+impl FolderModel {
+    /// Sets or clears the mark on nodes and everything below them, updates the counters of every ancestor in one mutation,
+    /// and returns the new minimal list for the session (a path under an equal ancestor is dropped, `!` only where needed).
+    pub fn set_ignored(&self, nodes: &[NodeId], on: bool) -> Vec<String>;
+}
+```
+
+The list lives in the store from the start of a scan (`Store::ignored`), because `FolderModel::rules` is immutable. CLI:
+repeatable `--ignored <PATH>` on `folder compare`, and `folder op ignored`, §1.6.18.
+
+**Enabled formats (FF-002, D-172).** `format_overrides` is a key of the folder rules, plain data, so `hikasa-folder`
+needs no format type: `[rules.format_overrides] cpp = false`. `Service::folder_rules` turns it into `EnabledOverrides`,
+passes it to `RulesComparator::with_overrides` (the M1 seam) and to `TextCompareRequest::format_overrides` (new,
+`choose_format` uses it), so a child session opens with the format its row was compared by. An id the registry does not
+know gives one `unknown_config_key` warning and is kept (Q11). CLI: repeatable `--format-on <ID>`, `--format-off <ID>`.
+W9 draws the list (bold when different from the global state).
+
+#### 1.6.7 Subtree refresh (D-173)
+
+`FolderModel` was frozen after a run (plan §5.3). After an operation, and for `Open` on an archive row (§1.5.17), a
+re-run costs a whole scan to learn a few rows. A refresh re-reads **one folder level** and only descends where a row
+changed.
+
+```rust
+// hikasa_folder::refresh
+pub struct RefreshReport { pub folders: u32, pub rows_changed: u32, pub content_tests: u32,
+                           pub renumbered: Vec<(NodeId, NodeId)>, pub complete: bool }
+/// Refreshes the folders `nodes` (each a `Folder` node; file nodes count as their parent), on `env`'s pool. A second call while one runs →
+/// `FolderError::RefreshBusy`. In a flat comparison → `FolderError::RefreshFlat`: the caller re-runs.
+pub fn refresh_into(model: &Arc<FolderModel>, nodes: &[NodeId], env: &FolderEnv<'_>) -> Result<RefreshReport, FolderError>;
+impl FolderModel { pub fn open_archive(&self, path: &str); }       // adds to what `opens_archive` consults (Store::opened)
+impl TreeRead<'_> { pub fn node_at(&self, path: &RelPath) -> Option<NodeId>; }
+```
+
+**Algorithm** (`refresh.rs`, on the `Scan` of `scan.rs`, built from the model's rules and `Store::resolved`, so a
+refresh and a scan cannot disagree):
+
+1. Claim the refresh (`AtomicBool`, separate from the one-shot `claim`). A model still scanning is `RefreshBusy`.
+2. Remove duplicates from the list; each folder is refreshed once, one level, parents before children.
+3. For each folder F: `list_pair`, then the scan's own path: `items`, `pair_items`, `plan`, giving the new rows in final
+   order. A listing that fails takes the scan's error path: F becomes `Failed` with its `NodeError` and side flag, the
+   other side's entries become *unknown* rows, and the counters follow.
+4. Match new rows to old ones by `(kind, left raw name, right raw name)`. Per row:
+
+| Old → new | Result |
+|---|---|
+| same presence; `size`, `mtime`, `attrs`, link target equal on both sides | **kept**: node, content result, CRC, subtree untouched |
+| file-like, a side changed or appeared | new record; quick tests of `plan_pair`; a `ContentTask` when the rules ask for one (its CRC side-table entries go) |
+| folder, same presence | kept: its children are not listed (a folder's own time says nothing, §3) |
+| folder, a side appeared or went | new record, `NotScanned`, a `FolderTask`: its subtree is scanned anew |
+| a file becomes an opened archive (`Store::opened`, or a new stamp below one) | new record, `FolderTask` |
+| old row without a new one | dropped with its subtree |
+| new row without an old one | as a scan: `FolderTask` for folders, content task for pairs |
+
+5. Same rows in the same order → records are rewritten in place: every id stays. Otherwise a new contiguous block goes
+   to the tail of the arena under one write lock, kept folders move there, the `parent` of their children is rewritten,
+   and `renumbered` lists `(old, new)`. Node ids of F's block are the only ones that change.
+6. Counters: F's `Aggregates` and totals are recomputed from its rows, the difference goes up through `propagate`.
+   INV-FOLDER-5 holds after every write.
+7. Dropped nodes get `internal::GONE`, their side-table entries are removed, `Store::content_counts` is decreased by
+   their results, and `check_tree_invariants` and every read from the root skip them. Arena space of dropped nodes is
+   not reused: `Store::garbage` counts it, a view may re-run when it passes half the arena. A long-lived view pays one
+   scan, at most, for that.
+8. `Ctl` as the scan: cancellation leaves rows `NotScanned`, `complete: false`, verdict `incomplete`, and a mark on what
+   was asked for and not reached. A later refresh that covers what is marked restores the verdict; one of another subtree
+   does not (§1.6.25 note 21).
+
+A refresh of a folder inside an opened archive lists it through `ArchiveVfs`, whose new stamp brings a new index
+(§1.5.17). `FolderComparison::verdict` and `stats` read the live store. `TreeRead::len` counts dropped nodes; nothing
+but `check` and benches use it. A folder not scanned (auto-scan off) is refreshed by the same call: every row is new.
+**Property P-REFRESH:** after any operation script, `to_canonical` of the refreshed model equals that of a fresh
+comparison.
+
+**Which folders.** `FolderOpOutcome::refresh_nodes` (§1.6.16): the parent node of every row a done item changed, from
+`ItemMeta::node`, without a path lookup. So copying 10,000 files in 100 folders lists 100 folders twice, and copying one
+file into a base lists the base's own level, not the tree.
+
+#### 1.6.8 Contents on demand (FC-029, FC-040; D-174)
+
+```rust
+// hikasa_folder::content
+pub struct ContentItem { pub node: NodeId, pub path: String, pub kind: ContentKind }
+pub struct ContentReport { pub counts: ContentCounts, pub items: Vec<ContentItem>, pub complete: bool }
+/// FC-029(b): the content test `method` on the file pairs of `nodes` (a folder: its pairs below it, by §1.6.9 "visible
+/// contents"). Results enter the model in place. Runs on `env.pool` with the shared budget (D-25), as a scan's content tasks.
+pub fn compare_contents(model: &Arc<FolderModel>, nodes: &[NodeId], method: ContentMethod, env: &FolderEnv<'_>)
+    -> Result<ContentReport, FolderError>;
+/// FC-040: CRC-32 of the given sides: `Entry::crc32` where a back-end gives one (D-147), else read.
+pub fn compute_crcs(model: &Arc<FolderModel>, items: &[(NodeId, Side)], env: &FolderEnv<'_>)
+    -> Result<Vec<(NodeId, Side, Result<u32, ErrorReport>)>, FolderError>;
+impl FolderModel {
+    /// FC-029(c): the result of a child view for its pair. Applied only while both sides still have `stamps` (size and time);
+    /// `false` otherwise. A result of a method the row already has is replaced.
+    pub fn apply_child_result(&self, node: NodeId, stamps: Pair<ItemStamp>, outcome: ContentOutcome) -> bool;
+}
+```
+
+`Store::apply_content` today assumes one result per node: it gains the step that takes the old kind out of
+`content_counts` and drops an old outcome, so a repeated test counts once. `CONTENT_PENDING` is set per pair while its
+test runs and cleared by the outcome; a cancelled run restores the old state, and its report lists only the pairs it
+tested. CRCs go to the `crcs` side table
+(`EntryView::crc32`) and `SideRec`'s `CRC` bit; a refresh drops them with a changed row. Option
+`confirm_content_compare` (OPT-009) is a `Prompt` of W9's dialog; the CLI writes nothing here and does not ask. The
+results dialog is W9.
+
+#### 1.6.9 Selection (FC-060, FC-061; D-175, D-176)
+
+`hikasa_folder::select` is the one owner of the script `select` vocabulary (T11): the CLI's `--select`, W8's `select`
+and W9's Edit menu call it.
+
+```rust
+// hikasa_folder::select
+bitflags! { #[derive(Serialize, Deserialize)] pub struct SideSet: u8 { LEFT = 1; RIGHT = 2; } }
+pub enum SelSide { Left, Right, All }
+pub enum SelState { All, Exact, Diff, Newer, Older, Orphan }
+pub enum SelKind { All, Files, Folders }
+pub enum SelectMask { Result { side: SelSide, state: SelState, kind: SelKind }, EmptyFolders }
+impl SelectMask { pub fn parse(word: &str) -> Result<SelectMask, FolderError>; }     // Display gives the canonical word
+/// What `select` sees. `expanded(node)`: `None` = every folder is open (a headless `expand all`).
+pub struct SelectScope<'a> { pub display: &'a DisplayOptions, pub expanded: Option<&'a dyn Fn(NodeId) -> bool> }
+#[derive(Debug, Clone, Default, PartialEq, Eq)] pub struct Selection { /* BTreeMap<NodeId, SideSet> */ }
+impl Selection {
+    pub fn insert(&mut self, node: NodeId, sides: SideSet); pub fn remove(&mut self, node: NodeId, sides: SideSet);
+    pub fn get(&self, node: NodeId) -> SideSet; pub fn is_empty(&self) -> bool; pub fn len(&self) -> usize;
+    pub fn iter(&self) -> impl Iterator<Item = (NodeId, SideSet)> + '_;
+    pub fn restrict(&mut self, side: Side);                                          // Shift+Left/Right
+    pub fn invert(&mut self, read: &TreeRead<'_>, scope: &SelectScope<'_>);          // every shown row, every present side
+}
+/// The masks are OR-ed (SCR-002). Adds to `into`, which starts empty for script `select`.
+pub fn select(read: &TreeRead<'_>, scope: &SelectScope<'_>, masks: &[SelectMask], iu: bool, into: &mut Selection);
+pub fn select_all_files(read: &TreeRead<'_>, scope: &SelectScope<'_>, into: &mut Selection);
+/// FC-062: what `Open`, `Compare To` compare. Two selected items anywhere → those two, in tree order; one item with both
+/// sides → its pair; one item and a Space `mark` → those two. Otherwise `None`.
+pub fn open_pair(read: &TreeRead<'_>, sel: &Selection, mark: Option<(NodeId, Side)>) -> Option<Pair<Spec>>;
+```
+
+**Words.** One word per mask, `.`-separated, case-insensitive, `lt` and `rt` for `left` and `right`. The three slots are
+in order and optional; a word fills the first slot it fits, so a leading `all` is the side:
+
+| Word | Mask |
+|---|---|
+| `all`, `all.all.all` | every side, state, kind |
+| `left`, `lt` | side left, all, all |
+| `left.diff.files` | as written |
+| `diff`, `diff.files` | side all |
+| `files`, `all.files`, `all.all.files` | side all, state all, files |
+| `newer.folders` | side all, newer, folders |
+| `empty.folders` | `EmptyFolders` |
+| `left.left`, `files.left`, `bogus`, an empty word | `InvalidRules` naming the word |
+
+**Matching, file-like nodes.** With side `s`; `All` tries both sides and selects each that matches. The node must be
+present on `s`; the category is `read.category(id, iu)`. Only `all` matches `Unknown`, `Error` and `Filtered`.
+
+| State | Matches when |
+|---|---|
+| `exact` | category `Same`, both sides present |
+| `diff` | both sides present, category not `Same`, and `diffs` minus `TIME` is not empty (or a content result that differs): *differences other than timestamp*, SCR-002 |
+| `newer` | `s` is the newer side (`LeftNewer` on left, `RightNewer` on right) |
+| `older` | the other side is the newer one |
+| `orphan` | `LeftOrphan` on left, `RightOrphan` on right |
+| `all` | present |
+
+**Folders** match a result mask with kind `all` or `folders` only if all their contents match (SCR-002), on the same
+side: present on `s`, scanned, and every shown row below it matches by these tables, recursively; a folder's own state
+plays no part. A folder that failed to list matches state `all` and no other: it is an error row, so `--select all`
+brings it to the plan, which shows it as `skip compare_error` and exits 100. An empty folder matches `all`, `orphan` when it is one, `exact` when it is on both sides. `EmptyFolders`:
+a folder with no file below it, on each present side. **Scope:** rows are `read.visible_rows(scope.display, …)`. A
+collapsed folder is one row: it can match, its children are not selected (*`expand` is required before `select` sees
+subfolder contents*), and its match still reads all that is below it, shown or not expanded. The pass is one bottom-up
+walk, O(rows).
+
+**Visible contents (D-176).** What a selection means to an operation is one function, used by every plan:
+
+```rust
+pub struct Include { pub hidden: bool, pub display: DisplayOptions }
+pub struct Resolved { pub node: NodeId, pub sides: SideSet, /** sides on which the node's whole subtree is included */ pub whole: SideSet }
+pub fn resolve(read: &TreeRead<'_>, sel: &Selection, include: &Include) -> Vec<Resolved>;      // pre-order
+```
+
+1. A folder selected on a side contributes its **visible** contents: the rows `include.display` shows, without items
+   hidden by file filters. With `include.hidden` it contributes everything: filtered rows, rows the display filter
+   hides, and name-only items (D-45). The same holds below a folder the model has no contents for: rule 6 of §1.6.10
+   lists it through the comparison's filters, and what they hide is not touched without `include.hidden`.
+2. A folder and any row below it selected on one side: only the rows below count, on that side (docs/04 §8).
+3. `whole` holds a side when nothing below the folder on that side is left out: no filtered row, no hidden row, no
+   `NotScanned` folder, no error row. A row a filter or the display hides leaves its folder not `whole` even when it is
+   selected by itself. Only then may a plan treat the subtree as one item (one `rename`, one `trash`, one `remove_dir`).
+
+**`include_hidden_by_default` flips to `false` (revises OPT-009's default).** docs/04 §8 and plan W6 say operations
+honour the filters by default, docs/15 says the option is `true`, and both cannot be. Operating on what the user cannot
+see is how data is lost, so the safe reading wins, and the option remains for those who want it. Explicit values in
+`options.toml` keep working; every dialog and `--include-hidden` overrides it.
+
+**Find Filename (FC-061).** Navigation has no CLI form; the pure function is the core part, the Find panel is W9:
+
+```rust
+pub struct FindQuery { pub text: String, pub case: bool, pub whole_word: bool, pub regex: bool, pub wrap: bool, pub up: bool, pub sides: SideSet }
+pub struct Finder { /* Pattern or folded text */ }
+impl Finder {
+    pub fn new(query: &FindQuery) -> Result<Finder, FolderError>;       // a bad regex: `invalid_input`
+    /// The next row after `from` in direction `up`, wrapping with `wrap`; matches the name on `sides`.
+    pub fn next(&self, read: &TreeRead<'_>, rows: &[VisibleRow], from: Option<usize>) -> Option<usize>;
+}
+```
+
+Names match by `hikasa_core::case::fold` substring without `case`, by `hikasa_formats::Pattern` with `regex`.
+`whole_word` tests the neighbours of a match against letters, digits and `_`.
+
+#### 1.6.10 Planning operations (FC-070…FC-074, FC-076, FC-077; D-177)
+
+Every folder operation is built by **one** builder (`ops/build.rs`), which reads the model and calls the VFS only as
+rule 6 says. `hikasa_folder::ops` plans; `hikasa_vfs::ops` executes.
+
+```rust
+// hikasa_folder::ops
+pub enum PathStructure { Relative, Base, None }                    // FC-072; script path:(relative|base|none)
+pub enum TouchFrom { At(FileTime), OtherSide { to: Side } }        // "now" is resolved by the Service (T1)
+pub struct Recycle { pub use_bin: bool, pub fallback: bool }       // §1.6.12
+pub enum RenameMask { Name(String), Dos(String), Regex { old: String, new: String } }
+pub enum FolderOp {
+    Copy { to: Side, overwrite: OverwritePolicy },            // default Always: the operation names the replacement
+    Move { to: Side, overwrite: OverwritePolicy },
+    Exchange,
+    Delete { sides: SideSet, recycle: Recycle },
+    Rename { sides: SideSet, mask: RenameMask },
+    Touch { sides: SideSet, from: TouchFrom },
+    Mkdir { sides: SideSet, parent: NodeId, name: String, folder: bool },   // `folder`: a trailing separator was given
+    CopyTo { sides: SideSet, target: Spec, folder: bool, structure: PathStructure, overwrite: OverwritePolicy },  // default Fail
+    MoveTo { sides: SideSet, target: Spec, folder: bool, structure: PathStructure, overwrite: OverwritePolicy },  // `folder`: a trailing separator
+}
+pub struct OpScope { pub selection: Selection, pub include: Include, pub iu: bool, pub read_only: ReadOnlySides }
+pub struct ReadOnlySides { pub left: bool, pub right: bool }
+pub struct OpSettings { pub preserve: Preserve, pub links: LinkPolicy, pub backup: Option<BackupPolicy> }
+pub enum OpVerb { Copy, Move, Exchange, Delete, Rename, Touch, Mkdir, CopyTo, MoveTo, Sync }   // snake_case in JSON
+pub struct ItemMeta { pub side: Option<Side>, pub node: Option<NodeId>, pub path: String, pub conflicts: Conflicts,
+                      pub answer: Option<bool> }
+pub struct OpPlan {
+    pub verb: OpVerb,
+    pub bases: Pair<Spec>,
+    pub plan: hikasa_vfs::ops::Plan,  // `OpKind::Batch`
+    pub meta: Vec<ItemMeta>,          // same length and order as `plan.items`
+    pub exec: ExecOptions,            // fence, archive backups
+    pub warnings: Vec<Warning>,
+}
+pub fn plan_op(read: &TreeRead<'_>, vfs: &dyn Vfs, scope: &OpScope, op: &FolderOp, settings: &OpSettings, ctl: &Ctl<'_>)
+    -> Result<OpPlan, FolderError>;
+```
+
+An `OpPlan` is plain data with `Serialize`, `Clone` and no borrow of the model: a GUI dialog holds it across frames. **A
+dry run prints this value, and execution takes this value.**
+
+**Builder rules (normative).**
+
+1. **Sources.** `resolve(read, selection, include)`, restricted to the operation's source side. A row selected only on
+   the other side is no source. No source at all → `InvalidRules "nothing selected on the <side>"` (`invalid_input`).
+2. **Targets are the counterpart's.** A pair writes to the other side's own spec (`TreeRead::spec`), whatever the name
+   looks like: `x.txt` ↔ `x.csv`, NFC ↔ NFD, `A.txt` ↔ `a.txt`. An orphan writes to `vfs.child(<target folder>, <raw
+   source name>)`, where the target folder is the other side's own folder of the parent row. So nothing joins strings,
+   an aligned pair stays aligned, and a name that is not UTF-8 survives.
+3. **Missing folders.** Going down from the base, a row absent on the target side gets a `create_dir` (source = its
+   folder, so its metadata is applied after its subtree) at the depth it reaches, once. With only `a/b/c.txt` selected
+   in an orphan `a/b`, the plan creates `a`, `a/b`, then copies. A folder that exists gets no item: items below it are
+   depth 0. In a flat comparison a row's folders are no rows: the plan `lstat`s each folder on the way to an orphan's
+   target once and plans the missing ones the same way, from the source's own folder.
+4. **Order within a side:** pre-order for copies, moves, touches and renames that do not chain; post-order for deletes;
+   `move`'s `remove_dir` of a source folder after its contents, only for folders whose subtree is `whole`. Sync order:
+   §1.6.14. What lies in a folder item the plan skips (a refusal, a declined answer) is skipped for the same reason, at
+   planning: a plan shows what will not run, and execution leaves nothing `not_run` that the plan let through.
+5. **Kinds.** A file row → `copy`; an unfollowed link row → `link` with `LinkPolicy::Copy`, else `skip symlink`; a
+   followed row → `copy` with `follow_source`, its children read through the link; `Other` → `skip special_file`. Inside
+   an archive source a link row is skipped with `archive_symlink_skipped` (D-142).
+6. **Rows the model has no contents for.** A selected folder that is `NotScanned`, or a filtered one with
+   `include.hidden` that was never listed (D-45), is listed once, at planning (`ops/unlisted.rs`), in the comparison's
+   order and through the comparison's filters (`Store::resolved`): what they hide is not touched without
+   `include.hidden`. From then on its entries are what rows are: rule 5's kinds, rules 8 and 9 against what an `lstat`
+   finds, a target the filters hide kept as `skip filtered`, stamps from the listing (rule 10), conflicts by §1.6.11. A
+   folder goes as one `rename` (rule 7), `trash` or `remove_dir` only when nothing below it stays (a filtered entry, an
+   entry the listing could not read); otherwise item by item, and a folder that keeps something stays. `structure none`
+   places each file by its name. The first item keeps the row's `node`, the others name no row and carry their path.
+   That and the checks of rule 8 are the only directory I/O of a plan; name-only entries are `stat`'d once for their
+   stamp. `Ctl` as for W3's planning: `Err(Cancelled)` before anything is written. `touch` and `exchange` take no rule 6:
+   a touch of such a folder sets its own time, an exchange of a pair of them is `skip compare_error`.
+7. **One item for a whole subtree.** `Move`, `MoveTo`: a folder `whole` on the source side whose target is absent
+   becomes one `rename`, under D-97's conditions (same back-end, `RENAME` on both sides, device ids not known to differ:
+   one `stat` per such root). At execution `CrossDevice` expands in place (`Outcome::Expand`), as W3. `Delete` with the
+   bin: §1.6.12. Without `whole`, row by row: hidden items stay, and so does their folder. A folder that would move onto
+   or into itself (two bases that are one folder, by any spelling) is an item error at planning, as a file is
+   (`check_nesting`). An opened archive that goes `whole` is the file it is: with no target, and in a move also onto its
+   pair or what stands at its name, which it replaces as a file does (§1.6.25 W6b note 10).
+8. **Conflict with a row of another kind.** Different kinds never align (D-20), so a file may meet a folder of its name
+   in a sibling row. The builder looks up the name among the parent's children on the target side: a folder target →
+   item error `is_a_directory`, whatever the policy (D-96). A file or link target for a folder source → item error
+   `already_exists` unless the policy is `Always`, then `create_dir` with `replaces`, its backup, and the conflicts a file
+   that replaced it would have (§1.6.11): the human line says `replace with folder`. A target a filter hides is `skip
+   filtered` here too.
+9. **Overwrite policy** as D-96, decided from the model: `Fail` → item error `already_exists`; `Skip` → `skip exists`;
+   `Newer` → the row's `TimeRelation` with the rules' tolerance, `skip not_newer` otherwise (unknown → not newer);
+   `Always` → `replaces`. A replaced target gets `conflicts` by §1.6.11.
+10. **Stamps.** Every item made from a row carries `expect`: `source` and `target` from `EntryView`; `create_dir` and
+    `remove_dir` carry the kind only. An item of rule 6 carries what the listing and its `lstat` saw, for a delete, a move
+    and a replace alike. A followed source is compared through the link (`follow_source`), a followed
+    target stamps only `kind: Symlink`, since a replace acts on the link. A name-only side (D-45) is stat'd by rule 6.
+11. **Capabilities.** `vfs.capabilities(spec)`, memoized per base and per archive root: a row whose side lacks the bit
+    it needs (`WRITE`, `REMOVE`, `RENAME`, `MKDIR`, `SET_TIMES`) is `skip capability` and one `capability_missing`
+    warning names the side, so a single-stream archive is read-only with no case of its own (§1.5.17).
+12. **Fence rule 1 and 3** (§1.6.4) are applied here as `skip followed_link`, `skip compare_error`.
+13. **Move** = `Action::Move`, Exchange = `Action::Exchange` on a pair and `Action::Move` on an orphan, in pre-order
+    over folder pairs.
+14. **Touch.** `At`: every resolved row with `Action::Touch`, `times.modified`; folders too, *where the OS allows*: a
+    failure is that item's. `OtherSide`: rows with both sides; `to` is the side touched; its time is the other side's
+    `mtime` from the model; a row with one side gives no item. `created` stays `None`.
+15. **Mkdir (FC-077).** One name per chosen side under `parent`'s own folder on that side; a parent missing on a side
+    gets rule 3's chain. `ops::plan_mkdir`'s D-150 rule decides between `create_dir` and `create_archive` (`folder` =
+    the trailing separator). Name checks: §1.6.13's.
+16. **CopyTo, MoveTo (FC-072).** The target is resolved with `SpecUse::Folder`; missing: its chain is planned at depth
+    0, ending in `create_archive` when its final name has a writable mask (D-150), as `plan_mkdir` does. A path:
+
+| `structure` | `a/b/x.txt` with the selection's common folder `a` | Note |
+|---|---|---|
+| `Base` | `<target>/a/b/x.txt` | |
+| `Relative` | `<target>/b/x.txt` | *minimum common structure*: the longest folder prefix common to all sources of that side, in whole components; rows of two sides use their own |
+| `None` | `<target>/x.txt` | flat |
+
+   Folders needed below the target get rule 3's items; a file in the way is rule 8. Two sources with one target path
+   (flat names, or `sides` both): the first in plan order goes, left before right, and the others are `skip
+   duplicate_target`; a file and a folder of one path count as two sources, while two folders merge into the one the plan
+   makes, and what a folder renamed whole takes along counts as gone there. `check_nesting`, `check_holder` and
+   `check_move_inside` (W3, W5) run for each root, so a target inside a selected source, and an archive copied into itself,
+   are item errors. A folder planned only as the way to a source is dropped when nothing goes there: a refused `moveto`
+   leaves no folder behind. `folder` (a trailing separator on `--target`) makes a missing target a folder whatever its name
+   looks like, as `mkdir`'s.
+17. **Archives.** A plan into, out of or within an archive needs nothing more: `Spec`s are members, `begin`, two-phase
+    moves and rebuilds happen in `execute_with`. `archive_backups` of §1.6.5.
+
+#### 1.6.11 Conflicts and confirmation (D-178)
+
+Confirmation is data (plan: *prompt / yes-to-all / no-to-all as data*), so the CLI, the dialogs and W8's `option
+confirm:` are three drivers of one machine.
+
+```rust
+// hikasa_folder::ops::conflict
+bitflags! { #[derive(Serialize, Deserialize)] pub struct Conflicts: u8 {
+    READ_ONLY = 1; SYSTEM = 2; OVERWRITE_NEWER = 4; REPLACE_DURING_MOVE = 8; NO_RECYCLE_BIN = 16; OVERWRITE_BACKUP = 32; } }
+// hikasa_folder::ops::confirm
+pub enum QuestionKind { Operation, ReadOnly, System, OverwriteNewer, ReplaceDuringMove, NoRecycleBin, OverwriteBackup }
+pub struct Declined;                                     // Cancel, or No to the operation: nothing runs
+pub struct Question { pub kind: QuestionKind, pub item: Option<u32>, pub remaining: u64, pub text: String }
+pub enum Reply { Yes, No, YesToAll, NoToAll, Cancel }
+pub enum ConfirmMode { Prompt, YesToAll, NoToAll }
+/// `[file_operations]` as data; `hikasa_session` fills it (`ConfirmPolicy::from_options`).
+#[derive(Debug, Clone, Copy)] pub struct ConfirmPolicy { pub copy: bool, pub move_: bool, pub delete: bool,
+    pub read_only: bool, pub system: bool, pub overwrite_newer: bool, pub replace_during_move: bool }
+pub struct Confirmation { /* cursor over the questions */ }
+impl Confirmation {
+    pub fn new(plan: &OpPlan, policy: &ConfirmPolicy, mode: ConfirmMode) -> Confirmation;
+    pub fn next(&self) -> Option<&Question>;               // `None`: nothing left to ask
+    pub fn reply(&mut self, reply: Reply);
+    /// The plan with its answers: declined items become `Action::Skip`, reason `declined`; `clear_read_only` as answered.
+    /// `Err(Declined)` after `Cancel` or a `No` to `Operation`.
+    pub fn finish(self, plan: OpPlan) -> Result<OpPlan, Declined>;
+}
+```
+
+| Conflict | Set when an item… | Policy key (`[file_operations]`) | Question |
+|---|---|---|---|
+| `READ_ONLY` | replaces or removes a target with DOS `R`, or a Unix mode without any write bit (`mode & 0o222 == 0`; owner is not resolved, T1); changes a member of an archive whose outermost file is so (each such item, one `stat` per file); one `trash` of a folder with such an entry below it, as the model or rule 6's listing knows it | `confirm_read_only` | Replace or delete read-only `<path>`? |
+| `SYSTEM` | replaces or removes a target with DOS `S` | `confirm_system` | Replace or delete system file `<path>`? |
+| `OVERWRITE_NEWER` | replaces a target strictly newer than its source, by the row's `TimeRelation` | `confirm_overwrite_newer` | Overwrite newer `<path>`? |
+| `REPLACE_DURING_MOVE` | a `move` with `replaces` | `confirm_replace_during_move` | Replace `<path>` with the moved file? |
+| `NO_RECYCLE_BIN` | a removal with `use_bin` whose spec lacks `TRASH` (§1.6.12) | always asked in `Prompt` | `<path>` cannot go to the recycle bin. Delete it permanently? |
+| `OVERWRITE_BACKUP` | its backup (§1.6.5) takes the name of a file this plan did not make; for an archive's backup, each item that rewrites it | `confirm_overwrite_newer` | The backup of `<path>` would replace a file that stands there. Replace it? |
+
+Conflicts come from the row's `EntryView`; a key that is `false` drops that question: the item proceeds. A `create_dir`
+that replaces a file has the conflicts of a file that would replace it. **Operation
+question:** one, first: `confirm_copy` for copy and copyto; `confirm_move` for move, exchange, moveto; `confirm_delete`
+for delete; none for rename, touch, mkdir, where each item is named; sync: always (*confirmation shows counts*, FS-005),
+unless the mode is not `Prompt`. Its text carries items and bytes per action.
+
+**Modes and replies.** Items are asked in plan order, then class by class per item (read-only, system, newer, replace,
+bin). `YesToAll` and `NoToAll` as a **reply** answer the remaining questions of that kind: yes to read-only is not yes
+to system. As a **mode**: `YesToAll` answers everything yes; `NoToAll` answers `Operation` yes and every item question
+no, so the items without a conflict proceed. A declined item blocks its parents' `remove_dir` (`children_failed`,
+D-103), and what lies in a declined folder, from any source, is declined with it. `Cancel` writes nothing. FC-078's *Prompt / Yes to All / No to All* is the mode, with `sync_confirmations`
+(OPT-009) as its default in sync plans.
+
+| Adapter | Mode | With a question left in `Prompt` |
+|---|---|---|
+| CLI, `--yes` or `--confirm yes-to-all` | `YesToAll` | none |
+| CLI, `--confirm no-to-all` | `NoToAll` | none |
+| CLI, default, a terminal on stdin | `Prompt` | one line per question on stderr, `[y]es [n]o [a]ll [s]kip all [c]ancel`, read by `cli/hikasa-cli/src/confirm.rs` on a thread of its own; Ctrl-C ends the prompt at once as `Cancel`, exit 100 |
+| CLI, default, no terminal | `Prompt` | exit 100 `invalid_input`, nothing touched: "`<n>` questions need an answer: pass --yes or --confirm no-to-all, or --dry-run to see the plan", with the kinds and counts |
+| CLI `--dry-run` | none | the plan and each item's conflicts; no answers |
+| GUI | `Prompt` | dialogs, §1.6.20; W9's list shows conflicts |
+| Scripts (W8) | `option confirm:` | `silent` + `Prompt`: "Attempted to open a dialog when running silently" (SCR-003) |
+
+**Rule of D-77 stands.** In the CLI `delete`, and a sync that deletes or replaces, ask their `Operation` question
+whatever `confirm_delete` says, so a script's safety never depends on a settings file.
+
+#### 1.6.12 Delete and the recycle bin (FC-073; D-179)
+
+`Delete { sides, recycle }` removes on each chosen side, post-order, from the model. `Recycle::use_bin` = *Use recycle
+bin if possible*, `fallback` = *may fall back*.
+
+| Row | `use_bin = false` | `use_bin = true` |
+|---|---|---|
+| file, link, special file | `remove` | `trash` |
+| folder, `whole` | `remove` of its contents, `remove_dir`: post-order from the model | **one** `trash` of the root (D-98), where capability allows; it asks for what lies below it (§1.6.11), and right before it acts, checks that what lies below is what the plan saw (`verify_below`) |
+| folder, not `whole` | its visible contents row by row; the folder stays | same with `trash` per item |
+| spec without `TRASH` (a member, a blob) | `remove` | `remove` with conflict `NO_RECYCLE_BIN`: *a member is deleted for good only after a rebuild* (§1.5.17) |
+
+W3's primitive never falls back, and neither does the plan unless told to: a `trash` that fails at execution (no bin on
+that mount, a share) fails the item with the file in place. With `trash_fallback` it becomes `Outcome::Expand` into
+permanent items, in place, with one `trash_fallback` warning naming the count, so the report shows what happened. Those
+items are only what the plan saw, as it saw it: a file by its own stamp, a folder by the items stamped at planning
+(`PlanItem::fallback`, post-order). Nothing lists at execution: a file that came since is no item and stays, and its
+folder's `remove_dir` fails with it; a changed file fails as its stamp says; a `trash` with no such items fails. **A whole
+folder's `trash`** (W6c review) takes everything below it, so the planner always stamps that subtree in `fallback`, with
+or without the fallback, and sets `PlanItem::verify_below`: right before the `trash`, execution walks the folder (links
+not entered) and requires the same names, the same stamps and nothing added; any difference fails the item "changed since
+the plan was made", naming what differs, and nothing moves. An entry the comparison never saw (a name filter's) is such a
+difference: that folder is not trashed whole, as its `remove_dir` would fail without the bin. `fallback` is the CLI's `--recycle-fallback`, a dialog's check box *If the recycle bin
+fails, delete permanently*, and off by default: *if possible* in the docs is answered at planning for what is known, and
+never silently at run time. `clear_read_only` applies to `remove`, not `trash`. FS-005's *Delete to recycle bin if
+possible* is this table.
+
+*Require explicit side selection* (`require_side_selection_in_delete`) is the GUI's; the CLI has `--side` as a required
+flag. `Delete` removes a side's item and leaves the other side's: the row becomes an orphan on refresh.
+
+#### 1.6.13 Rename (FC-074; D-180)
+
+```rust
+// hikasa_folder::ops::rename (pure; tables below, §6.6 A6.18)
+pub fn dos_rename(name: &str, mask: &str) -> String;
+/// FC-074's *computed base mask*: per part, `?` where the names differ, `*` where their lengths differ.
+pub fn base_mask(names: &[&str]) -> String;
+pub struct RegexRename { /* compiled */ }
+impl RegexRename {
+    pub fn new(old: &str, new: &str) -> Result<RegexRename, FolderError>;
+    pub fn apply(&self, name: &str) -> Result<Option<String>, FolderError>;   // `None`: no match
+}
+// hikasa_formats::regex_engine (additive; D-180)
+impl Pattern {
+    pub fn group_names(&self) -> Vec<Option<String>>;
+    /// Byte ranges of the groups of the first match at or after `start`; group 0 is the match.
+    pub fn captures_at(&self, haystack: &str, start: usize) -> Result<Option<Vec<Option<Range<usize>>>>, PatternError>;
+}
+```
+
+**DOS masks (normative).** Split a name at its last `.` by D-07 (`stem`, `ext`; `.bashrc` and `a.` have none). A mask
+**with** a `.` is split at its last `.`; the result is `expand(stem, mask stem)`, then `.` + `expand(ext, mask ext)`
+when that is not empty. A mask **without** one is `expand(whole name, mask)`. `expand(part, m)`: position `i = 0`; for
+each mask character: `?` copies `part[i]` if there is one, `i += 1`; `*` copies the rest of `part`, `i = len`; any other
+character is written, `i += 1`. Characters are Unicode scalar values.
+
+| Name | Mask | Result | | Name | Mask | Result |
+|---|---|---|---|---|---|---|
+| `abc1.txt` | `abc?.bak` | `abc1.bak` | | `a.txt` | `*.` | `a` |
+| `abcd.txt` | `x?cd.*` | `xbcd.txt` | | `Makefile` | `*.bak` | `Makefile.bak` |
+| `report.txt` | `*_old.*` | `report_old.txt` | | `Makefile` | `*.*` | `Makefile` |
+| `a.tar.gz` | `*.zip` | `a.tar.zip` | | `.bashrc` | `*.bak` | `.bashrc.bak` |
+| `a.txt` | `b` | `b` | | `abc.txt` | `?` | `a` |
+| `a.txt` | `b*` | `b.txt` | | `a.txt` | `??.t?` | `a.tx` |
+| `longname.txt` | `?????.*` | `longn.txt` | | `é.txt` | `?x.*` | `éx.txt` |
+
+`base_mask`: stems and extensions separately. Per position: all equal → that character, else `?`; lengths differ → `*`
+after the common length. Extensions are joined with `.` when any name has one. `["abc1.txt", "abc2.txt"]` → `abc?.txt`;
+`["a.txt", "bb.txt"]` → `?*.txt`; one name → itself.
+
+**Regular expressions.** `old` matches the **whole** name: `Pattern::compile("^(?:<old>)$", false,
+&RegexLimits::default())`, so `regex` first and `fancy-regex` only where backreferences or look-around ask for it, with
+the limits of user patterns (T9). `(?i)` is written in the pattern. `new`: `$1`, `${1}`, `${name}`, `$$`; anything else
+after a `$`, a group that does not exist → `invalid_input` at planning. The expansion is in-house, the same over both
+engines (the crates' own treat `$1a` differently). A backtrack limit at run time fails that item. A name without a
+match: `skip no_match`.
+
+**`hikasa_formats::Pattern` is reused** rather than `regex` being added to `hikasa-folder`: one engine policy (T11),
+which is why `hikasa-folder` gains `hikasa-formats` (§1.6.21) and not two crates. `fancy-regex` itself is approved
+(`docs/02`, M1) and in the workspace; plan §3 lists only M2's new crates.
+
+**Plan.** Each resolved row on each chosen side gets one `rename` of the row itself, never its contents (a selected
+folder is one item; rule 2 of §1.6.9 still holds). `RenameMask::Name` needs one row. The new name must not be empty,
+hold a `/`, or be `.` or `..`, and `vfs.child(parent, name)` must accept it, which on Windows applies
+`windows_name_problem` (§1.5.7) and refuses `\`: otherwise an item error `invalid_input`. A name unchanged: `skip
+same_name`. A name that is not valid UTF-8: item error (nothing can be matched in it). **Collisions**, per folder and
+side:
+
+| Case | Result |
+|---|---|
+| Two items reach one name (folded when the back-end is case-insensitive) | the first in plan order goes on; the others fail `already_exists` at planning. A folder is a real one: in a flat comparison rows of two folders never collide |
+| An existing item that is not being renamed holds the name | item fails `already_exists`: **a rename never replaces** |
+| A chain, `a → b`, `b → c` | ordered: the free end first (`b → c`, then `a → b`) |
+| A cycle, `a → b`, `b → a` | broken by a hidden name: `a → .<a>.hikasa-ren[-n]`, `b → a`, `.<a>… → b` |
+| Case-only on a case-insensitive back-end | one `rename` (W3, `is_respelling`) |
+
+#### 1.6.14 Sync engine (FC-078, FS-001, FS-002, FS-004, FS-005; D-181, D-182)
+
+```rust
+// hikasa_folder::sync
+pub enum SyncPreset { UpdateLeft, UpdateRight, UpdateBoth, MirrorLeft, MirrorRight, Custom }   // default UpdateRight
+pub enum SyncAction { Leave, CopyRight, CopyLeft, DeleteLeft, DeleteRight }  // leave, copy_right, copy_left, delete_left, delete_right
+pub enum Situation { NewerLeft, NewerRight, AddedLeft, AddedRight, DeletedLeft, DeletedRight, Different, Same }
+pub struct SyncMatrix { pub newer_left: SyncAction, pub newer_right: SyncAction, pub added_left: SyncAction, pub added_right: SyncAction,
+                        pub deleted_left: SyncAction, pub deleted_right: SyncAction, pub different: SyncAction, pub same: SyncAction }
+impl SyncMatrix { pub fn of(preset: SyncPreset) -> Option<SyncMatrix>; pub fn parse(text: &str, base: SyncMatrix) -> Result<SyncMatrix, FolderError>;
+                  pub fn get(&self, s: Situation) -> SyncAction; pub fn validate(&self) -> Result<(), FolderError>; }
+pub enum OrphanReading { #[default] Added, Deleted }
+pub struct SyncOptions { pub preset: SyncPreset, pub matrix: SyncMatrix /* for Custom */, pub orphans: OrphanReading,
+    pub create_empty: bool, pub within_archives: bool, pub recycle: bool, pub recycle_fallback: bool,
+    pub overrides: BTreeMap<String, SyncAction> }                       // FS-004, base-relative path; a folder covers its subtree
+pub struct SyncRules { #[serde(flatten)] pub folder: FolderRules, pub sync: SyncOptions }   // `[rules]` of a folder-sync session
+pub struct SyncRequest<'a> { pub options: &'a SyncOptions, pub just_selection: Option<&'a Selection>,
+    pub visible: Option<DisplayOptions>, pub include_hidden: bool, pub iu: bool, pub read_only: ReadOnlySides,
+    pub allow_empty_source: bool, pub settings: OpSettings }
+pub enum LeaveReason { Same, Matrix, Filtered, CompareError, FollowedLink, ReadOnlySide, Capability, OutOfScope,
+                       AmbiguousName /* W6c review */ }
+pub struct SyncRow { pub node: NodeId, pub situation: Option<Situation>, pub action: SyncAction,
+                     pub reason: Option<LeaveReason>, pub overridden: bool, pub conflict: bool }    // ≤ 16 bytes
+#[derive(Default)] pub struct SyncCounts { pub copy_right: u64, pub copy_left: u64, pub delete_left: u64, pub delete_right: u64,
+                     pub leave: u64, pub conflicts: u64, pub unresolved: u64, pub bytes_right: u64, pub bytes_left: u64,
+                     pub ambiguous: u64 /* W6c review */ }
+pub struct SyncPlan { pub rows: Vec<SyncRow> /* tree order */, pub op: OpPlan, pub counts: SyncCounts, pub warnings: Vec<Warning> }
+impl SyncPlan { /** FS-001's folder summaries: O(1) after the plan. */ pub fn folder(&self, node: NodeId) -> SyncCounts; }
+pub fn sync_folder_rules(rules: &FolderRules, options: &SyncOptions) -> Result<FolderRules, FolderError>;
+pub fn plan_sync(read: &TreeRead<'_>, vfs: &dyn Vfs, request: &SyncRequest<'_>, ctl: &Ctl<'_>) -> Result<SyncPlan, FolderError>;
+```
+
+**Presets (normative).** `→` = `copy_right`, `←` = `copy_left`, `del L/R` = delete left or right, `—` = leave.
+
+| Situation | Item is… | Update Right | Update Left | Update Both | Mirror to Right | Mirror to Left |
+|---|---|---|---|---|---|---|
+| `newer_left` | both sides, left newer | → | — | → | → | ← |
+| `newer_right` | both sides, right newer | — | ← | ← | → | ← |
+| `added_left` | left only | → | — | → | → | del L |
+| `added_right` | right only | — | ← | ← | del R | ← |
+| `deleted_left` | right only | — | — | — | del R | ← |
+| `deleted_right` | left only | — | — | — | → | del L |
+| `different` | both, no time difference | — | — | — | → | ← |
+| `same` | both, same | — | — | — | — | — |
+
+*Update* never removes and never overwrites a newer file; *different* under Update is a **conflict** (FS-004's
+Next/Previous Conflict): nothing says which side wins, so it is left, marked `conflict`. A mirror overwrites: that is
+what it is.
+
+**Deleted against added (D-181).** Without Sync Memory (FS-003, P1) an item on one side only can be new there or gone
+from the other; FS-003 says so itself. FS-002's matrix has both rows, so both stay valid, stored and honoured: `orphans
+= "added"` (default) reads a left-only item as `added_left`, a right-only as `added_right`; `orphans = "deleted"`
+(`--orphans deleted`) reads them as `deleted_right`, `deleted_left`. The user who knows what happened says so, every
+cell of plan W6's 8 × 5 table is reachable, and FS-003 later decides per item.
+
+**Valid cells.** A cell must name an existing side: the left-only situations (`added_left`, `deleted_right`) take
+`copy_right`, `delete_left`, `leave`; the right-only ones `copy_left`, `delete_right`, `leave`; the others all five.
+`validate` refuses any other cell with `invalid_input`.
+
+**`--custom <matrix>`.** A comma-separated list of `<situation>=<action>`, kebab or snake case:
+`newer-left=copy-right,added-right=delete-right`. The base is the session's matrix, else all `leave`; a preset name may
+come first as the base: `mirror-right,same=leave`. An unknown word, a repeated situation, an invalid cell → exit 100.
+
+**Effective rules (`sync_folder_rules`).** Facts a plan needs are not left to the view: `auto_scan_subfolders = true`,
+`scan_orphan_folders = true`; `flatten` → `invalid_input` ("a sync needs the folder structure"); `archives = Always`
+with `within_archives` (FS-005 *Sync within archives*, over `SpecUse::Folder` bases, D-151), else `AsFiles`, so an
+archive is a file to copy. An archive base is a folder either way.
+
+**Row algorithm (normative).** Tree order, every file-like row; folders after their children:
+
+1. Scope: `just_selection` (FC-078 *Just selection*; `resolve`) and `visible` (script `sync visible`) keep a row, else
+   `Leave`/`OutOfScope`. `sync` otherwise ignores the selection (SCR-002).
+2. Category `Unknown`, `Error`, or below a failed or unscanned folder: `Leave`/`CompareError`, `unresolved += 1`. Below
+   such a folder nothing is an orphan, so nothing is deleted.
+3. A side hidden by a file filter, unless `include_hidden`: `Leave`/`Filtered`. Both sides hidden are not rows, as for
+   the display.
+4. Situation from `read.category(id, iu)` and `orphans`. An Ignored row is `same`.
+5. Action: `overrides` (longest path, §1.6.6's rule), else the matrix. An override impossible for the row (`copy_left`
+   on left-only) is dropped with one `switch_ignored` warning per path.
+6. Feasibility on the side the action writes: read-only side, `Leave`/`ReadOnlySide` and one `read_only_side` warning
+   per side; capability, `Leave`/`Capability`; a followed folder above, `Leave`/`FollowedLink`.
+
+`conflict` = situation `different` with action `leave`, by the matrix, not by an override.
+
+**Folders.** A folder has no row of its own in the matrix; `SyncPlan::folder` adds up its children. An empty folder on
+one side reads the matrix as a file would, and its `copy_*` or `delete_*` happens only with `create_empty` (FS-005 *Sync
+empty folders*; script `create-empty`); non-empty ones appear through their contents (builder rule 3). After deletes: a
+folder all of whose rows are deleted, on a side it alone has, gets `remove_dir` (or is one `trash` root with `recycle`):
+a mirror leaves no empty shells. A folder keeping a filtered or left row stays.
+
+**Plan order (D-182).** `delete_left`, `delete_right` (post-order), then `copy_right`, then `copy_left` (pre-order), as
+one `OpKind::Batch`, one `execute_with`, so one rebuild and one backup per archive (D-148). Deletes first: a file `x`
+replacing a folder `x` needs the name free (D-20 keeps them two rows), and a full disk is the usual failure of a mirror.
+Nothing a copy reads is deleted, since a row has one action.
+
+**Empty sources.** A mirror from a side with nothing on it deletes everything on the other: usually a mount that failed.
+`plan_sync` returns `FolderError::EmptySource { side }` (`invalid_input`, exit 100) when the plan would delete on one
+side and the other base holds no file once the filters are applied (W6c review; folders emptied entirely are shown, not
+refused: §1.6.25 *W6c after review* 6), unless `allow_empty_source`; `--yes` does not answer it. **A comparison that
+did not finish is refused** (`is_complete() == false` → `InvalidRules "the comparison is not complete"`) for any plan
+with deletes. Error rows do not refuse, they are `compare_error`: warning `sync_incomplete` with the count, exit 100.
+
+**Confirmation.** As §1.6.11, verb `sync`. Conflicts per item: `READ_ONLY`, `SYSTEM`, `OVERWRITE_NEWER` (a mirror over a
+newer file), `NO_RECYCLE_BIN`. Backups as §1.6.5. Fence with `writes = true` over both bases, so a sync writes nowhere
+else.
+
+#### 1.6.15 Sessions and Disable editing (FC-003; D-183, D-184)
+
+```toml
+[specs]
+read_only_left = false         # FC-003, per side: `--ro` sets both, `--ro1`, `--ro2` one
+read_only_right = false
+[rules]                        # folder-compare: FolderRules, with the keys of §1.6.6
+ignored = ["vendor", "!vendor/keep.txt"]
+[rules.format_overrides]
+cpp = false
+[rules.sync]                   # folder-sync: FolderRules + this table; schema version unchanged
+preset = "update_right"        # update_left | update_right | update_both | mirror_left | mirror_right | custom
+orphans = "added"
+create_empty = false
+within_archives = false
+recycle = false
+recycle_fallback = false
+[rules.sync.matrix]            # read with `custom`; eight keys, sparse against all `leave`
+newer_left = "copy_right"
+[rules.sync.overrides]
+"a/b.txt" = "leave"
+```
+
+`SessionRules` gains `Sync(SyncRules)`, replacing `Opaque` for `folder-sync` (D-81's *until W6*);
+`SessionType::builtin_rules`, `to_value`, `from_value`, `effective_rules` and sparse writes (D-90) treat it as `Folder`.
+A folder-sync file written before W6 reads as it is: its table is that shape or empty. `Specs` gains `read_only_left`,
+`read_only_right` (`Session::swap_sides` swaps them, `is_dirty` counts them).
+
+**Disable editing is enforced by the Service, not by a view (D-184).** `hikasa_folder::ops::ReadOnlySides` comes from
+the session, `--read-only`, or IPC `ReadOnly`, with `--ro` as both. In `folder_op_plan`:
+
+| Case | Result |
+|---|---|
+| A `folder op` that writes a read-only side (`Delete` with that side, the target of `Copy`, both sides of `Move`, `Exchange`, `Rename`, `Touch`, `Mkdir` on it; sources of `MoveTo`) | `ApiError::ReadOnlySide { side }`, kind `permission_denied`, exit 100, nothing planned |
+| `CopyTo` out of a read-only side | allowed: nothing there is written |
+| `CopyTo`, `MoveTo` with a `target` at or below a read-only side's base | `ApiError::ReadOnlySide`, as above, before anything is planned. By what the path is (`ops::writes_into`): `..`, a link at the base and links on the way to the target lead where the OS says, a member is the outermost file it lives in, and what cannot be told is refused |
+| `folder op ignored`, `exclude` | allowed: they change a session, not a file |
+| A sync | row by row: `Leave`/`ReadOnlySide`, warning `read_only_side`; the other side goes on, as a plan is previewed |
+| Child sessions | `TextCompareRequest::read_only` is carried to the view; W11 refuses edits with it |
+
+The check is in `Service`, before the builder, so W8's scripts and W9's commands cannot pass it by. A view greys its
+commands from the same value (`Ctx`).
+
+#### 1.6.16 Service
+
+```rust
+// hikasa_session::api::folder_ops
+/// `FolderOp` before resolution: the clock's now, a target as typed, a parent by its path.
+pub enum OpRequest { Op(FolderOp), TouchNow { sides: SideSet },
+    MkdirIn { sides: SideSet, parent: String, name: String, folder: bool },
+    CopyTo { sides: SideSet, target: OsString, structure: PathStructure, overwrite: OverwritePolicy },
+    MoveTo { sides: SideSet, target: OsString, structure: PathStructure, overwrite: OverwritePolicy } }
+pub struct FolderOpRequest { pub op: OpRequest, pub select: SelectRequest, pub read_only: ReadOnlySides,
+                             pub overrides: OpOverrides }
+pub struct SelectRequest { pub masks: Vec<String>, pub paths: Vec<(String, SideSet)>, pub selection: Option<Selection>,
+                           pub include_hidden: Option<bool>, pub display: Option<DisplayOptions>, pub expand: ExpandWords, pub iu: bool }
+pub enum ExpandWords { All, None, Paths(Vec<String>) }
+pub struct OpOverrides { pub backup: Option<bool>, pub preserve: Option<Preserve>, pub links: Option<LinkPolicy> }
+pub struct FolderOpOutcome { pub report: OpReport, pub meta: Vec<ItemMeta>, pub verb: OpVerb, pub dry_run: bool,
+                             pub archive_backups: Vec<(Spec, Spec)>, pub refresh_nodes: Vec<NodeId>, pub warnings: Vec<Warning> }
+impl FolderOpOutcome { pub fn ok(&self) -> bool; pub fn exit_code(&self) -> ExitCode; pub fn dto(&self) -> FolderOpDto; }
+pub struct FolderSyncRequest { pub options: SyncOptions, pub select: Option<SelectRequest> /* --just-selection */,
+                               pub visible: Option<DisplayOptions>, pub include_hidden: Option<bool>, pub iu: bool,
+                               pub read_only: ReadOnlySides, pub allow_empty_source: bool, pub overrides: OpOverrides }
+pub struct FolderSyncOutcome { pub op: FolderOpOutcome, pub rows: Vec<SyncRow>, pub counts: SyncCounts }
+pub enum ContentsKind { Compare(ContentMethod), Crc(SideSet) }
+pub struct ContentsRequest { pub select: SelectRequest, pub kind: ContentsKind }
+pub struct ContentsDto { /* hikasa.folder_contents.v1 */ }
+pub struct RefreshDto { pub report: Option<RefreshReport> /* None: flat, the caller re-runs */, pub warnings: Vec<Warning> }
+pub enum OpenTarget { App(usize), Named(String), Associated }
+pub struct OpenWithRequest { pub target: OpenTarget, pub items: Vec<(Spec, Spec)> /* item, its base */, pub line: Option<u64> }
+impl Service {
+    pub fn folder_op_plan(&self, model: &Arc<FolderModel>, req: &FolderOpRequest, job: &JobControl) -> Result<OpPlan, ApiError>;
+    pub fn folder_confirmation(&self, plan: &OpPlan, mode: Option<ConfirmMode>) -> Confirmation;   // mode: else options
+    pub fn folder_op_dry_run(&self, plan: OpPlan) -> FolderOpOutcome;
+    pub fn folder_op_execute(&self, plan: OpPlan, job: &JobControl) -> Result<FolderOpOutcome, ApiError>;
+    pub fn folder_refresh(&self, model: &Arc<FolderModel>, nodes: &[NodeId], job: &JobControl, observer: &dyn ScanObserver)
+        -> Result<RefreshDto, ApiError>;
+    pub fn folder_open_archive(&self, model: &Arc<FolderModel>, node: NodeId, job: &JobControl, observer: &dyn ScanObserver)
+        -> Result<RefreshDto, ApiError>;
+    pub fn folder_contents(&self, model: &Arc<FolderModel>, req: &ContentsRequest, job: &JobControl) -> Result<ContentsDto, ApiError>;
+    pub fn folder_sync_prepare(&self, req: &FolderCompareRequest, sync: &SyncOptions, job: &JobControl) -> Result<PreparedFolderCompare, ApiError>;
+    pub fn folder_sync_plan(&self, model: &Arc<FolderModel>, req: &FolderSyncRequest, job: &JobControl) -> Result<SyncPlan, ApiError>;
+    pub fn folder_sync_execute(&self, plan: SyncPlan, job: &JobControl) -> Result<FolderSyncOutcome, ApiError>;
+    pub fn folder_set_ignored(&self, model: &Arc<FolderModel>, nodes: &[NodeId], on: bool) -> Vec<String>;
+    pub fn open_with_commands(&self, req: &OpenWithRequest, job: &JobControl) -> Result<Vec<OpenCommand>, ApiError>;  // §1.6.18
+    pub fn open_with_run(&self, commands: &[OpenCommand], wait_for_previous: bool, job: &JobControl) -> Result<(), ApiError>;
+    pub fn open_associated(&self, spec: &Spec, job: &JobControl) -> Result<(), ApiError>;
+}
+```
+
+Each runs through `run_guarded`; `folder_op_execute` calls `execute_with` on the calling thread, with `vfs =
+&*self.router()` as both `src` and `dst`, so `same_instance` holds, `copy_file_fast` works and an archive on both sides
+is one batch. `FolderError` gains `RefreshBusy`, `RefreshFlat`, `EmptySource { side }`, all `invalid_input` through
+`ApiError::from_folder`. Settings: backups from `[backups]`, unless `overrides`; `preserve.created` from the new
+`[file_operations] preserve_created` (bool, false, OPT-009; FC-070's *creation date (option)*). The CLI's `folder op`,
+W8's interpreter and W9's commands all reach these calls: nothing else plans (T11). `hikasa_core::JobKind` gains
+`FolderOp` (`folder_op`), `FolderSync` (`folder_sync`), `FolderRefresh` (`folder_refresh`). `Phase::Scanning` while
+planning a tree (rule 6), `Phase::Writing` while executing, `Phase::ComparingContent`, `Phase::Hashing` for §1.6.8.
+`ApiOp::FolderOp`, `ApiOp::FolderSync`. `WarningCode` gains `TrashFallback` (`trash_fallback`), `ReadOnlySide`
+(`read_only_side`), `SyncIncomplete` (`sync_incomplete`). `ApiError::ReadOnlySide { side }`: kind `permission_denied`,
+exit 100. Item errors keep their `ErrorKind`.
+
+#### 1.6.17 CLI and JSON (D-185, D-190)
+
+```
+hikasa folder op <VERB> [<LEFT> <RIGHT>] [--session <REF>] <rule flags of folder compare> [SELECT] [CONFIRM] [verb flags]
+hikasa folder sync [<LEFT> <RIGHT>] [--session <REF>] (--update-left|--update-right|--update-both|--mirror-left|--mirror-right|--custom <MATRIX>)
+    [--orphans added|deleted] [--create-empty] [--within-archives] [--recycle [--recycle-fallback]] [--override <PATH>=<ACTION>…]
+    [--just-selection SELECT] [--visible] [--include-hidden] [--allow-empty-source] [--backup|--no-backup] [--read-only left|right|both]
+    [--all-rows] <rule flags> [CONFIRM] [--gui [--wait] [--no-launch]]
+SELECT  = [--select <MASK>…] [--path <REL>…] [--include-hidden] [--no-expand] [--expand <REL>…] [--display <FILTER>] [--ignore-unimportant]
+CONFIRM = [--yes | --confirm prompt|yes-to-all|no-to-all] [--dry-run] [--read-only left|right|both]
+```
+
+| Verb | Flags | Plan |
+|---|---|---|
+| `copy` | `--to left\|right` (required), `--overwrite`, `--no-preserve`, `--preserve-created`, `--symlinks copy\|skip`, `--backup`, `--no-backup` | FC-070 |
+| `move` | as `copy` | FC-071 |
+| `exchange` | `--backup` refused | FC-071 |
+| `delete` | `--side left\|right\|both` (required), `--recycle`, `--recycle-fallback` | FC-073 |
+| `rename` | `--side`, one of `--name <NEW>`, `--mask <MASK>`, `--regex <OLD> <NEW>` | FC-074 |
+| `touch` | `--side`; `--time <RFC 3339>` \| `--now` (default) \| `--from-other` | FC-076 |
+| `mkdir` | `--side`, `--in <REL>` (default the base), `--name <NAME>` | FC-077 |
+| `copyto`, `moveto` | `--side`, `--target <SPEC>` (required), `--structure relative\|base\|none` (default `relative`), `--overwrite` | FC-072 |
+| `compare` | `--method crc\|binary\|rules` | FC-029(b) |
+| `crc` | `--side` | FC-040 |
+| `exclude` | `--what items\|type`, needs `--session` unless `--dry-run` | FC-052 |
+| `ignored` | `--off`, needs `--session` unless `--dry-run` | FC-033 |
+| `open-with` | `--path <REL>`, `--app <NAME\|INDEX>` \| `--associated`, `--side`, `--dry-run` | FC-062 |
+
+- `<LEFT> <RIGHT>` or `--session <REF>`: a session gives specs, effective rules (D-82), read-only and Ignored marks;
+  flags apply on top, as for `session run`. Both forms run `folder_prepare_in` + `folder_run`, then plan, with
+  `JobKind::FolderCompare` first.
+- **Default scope.** No `--select`, no `--path`: **nothing is selected** and a plan-needing verb exits 100 "nothing
+  selected: pass --select all, or a mask": a stray command must not act on the whole tree. `--display` defaults to `all`
+  (not `differences`), `--no-expand` is off: a headless command sees the whole tree, as a script after `expand all`.
+- `--path <REL>`: one row by its path; prefix `left:`, `right:` for one side, else the verb's side. Unknown, or a row
+  that is not on that side (W6c review: it selected nothing, exit 0) → exit 100 `not_found`, nothing runs. It never names the base: an empty path, and any spelling that comes to it (`.`, `/`, `left:`, `./`) is
+  `invalid_input`, on every verb that takes `--path`; the whole tree takes `--select`.
+- `--yes` and `--dry-run` conflict (clap). `--to`, `--side`, `--method` parse through `api::vocab` (T11).
+- `folder sync --update-right` = Update Right = script `update:left->right`; `--mirror-left` = Mirror to Left =
+  `mirror:right->left`; `update:all` = `--update-both`. Exactly one is required, unless `--session` holds a preset.
+- `--just-selection` with `SELECT`; without it `--select` is refused: `sync` ignores the selection (SCR-002).
+  `--all-rows` adds `same` rows and folders to the output.
+- `session run <REF>` of a `folder-sync` session: `folder sync` with the session's options, `--dry-run`, `--yes`,
+  `--confirm`, `--allow-empty-source`; without a terminal and without `--yes` it exits 100, as `folder sync`.
+- **`--sync` and `--gui` (CLI-003, CLI-G03; D-190).** `--sync` is now parsed: `OpenArgs::kind = FolderSync` (with `--fv`
+  the last wins), `--nobackups` sets `OpenOptions::no_backups` (additive, `#[serde(default)]`, D-46). `folder sync
+  --gui` builds `GuiOpenRequest::for_sync` and sends `OpenView { kind: FolderSync, … }`, with preset, matrix and flags
+  in `OpenOptions::sync: Option<SyncWords>`. `open_view_request` gains `ViewRequest::Sync`. **The view is W9:** until
+  then the GUI answers `Error{unsupported}`, "this window cannot show a Folder Sync view yet", exit 100, as for a
+  session type it cannot show. The switch, the IPC and the checks are W6's; what opens is W9's.
+
+**Exit codes** (ARCH-101, M1 §2.21; `ExitCode` needs no new row):
+
+| Outcome | Exit | Envelope |
+|---|---|---|
+| every item done or skipped; dry run with no item error | 0 | `ok: true` |
+| a failed item, an item `not_run` (also without a cancel), cancelled, a `compare_error` row (also in a dry run), a failed rebuild | 100 | `ok: true`, `error: null`, the failures in `items` (as `hikasa.vfs_op.v1`) |
+| a base that cannot be loaded | 107 | failure envelope |
+| a bad word, nothing selected, unanswered questions, `ReadOnlySide`, `EmptySource` | 100 | failure envelope, nothing written |
+| a comparison cancelled before the plan | 100 | failure envelope |
+
+**Human output.** One line per item in plan order, as §1.3.7 with the same words and `escape_controls`, prefixed by the
+side's letter where the item has one (`L `, `R `, `- ` for a target outside the bases); new words `exchange <left> <->
+<right>`, `skip (<reason>) <target>` with the new reasons; `replace with folder <target>` and `replace with link …`
+where a folder or a link replaces a file; ` (backup <spec>)` after a replacing line; ` [read_only,overwrite_newer]` on a
+dry run's conflicts; `, <n> not run` at the end of a summary that has such items. Summary as §1.3.7 with verbs `copied`, `moved`, `exchanged`,
+`deleted`, `renamed`, `touched`, `created`, and a dry run's `would copy …`. Sync adds one line per non-`same` row:
+`<marker> <action> <path>` with `L>R`, `R>L`, `delL`, `delR`, `----`, `<!>` for a conflict, then `# <n> copies right,
+<n> copies left, <n> deletes left, <n> deletes right, <n> conflicts, <n> unresolved`.
+
+**JSON.** Appended to `SCHEMAS`, 35 → 38:
+
+| Schema | `result` |
+|---|---|
+| `hikasa.folder_op.v1` | `{op, dry_run, cancelled, left, right, items: [{action, kind, side: "left"\|"right"\|null, path, source, target, size, replaces, backup, conflicts: [str], answer: bool\|null, status, reason, error}], backups: [{file, backup}], summary: {planned, done, skipped, failed, bytes}, commands: [{program, args, cwd}]\|null}` |
+| `hikasa.folder_sync.v1` | `{preset, matrix: {newer_left, newer_right, added_left, added_right, deleted_left, deleted_right, different, same}, orphans, dry_run, cancelled, left, right, rows: [{path, kind, situation, action, overridden, conflict, reason}], items: [as folder_op], counts: {copy_right, copy_left, delete_left, delete_right, leave, conflicts, unresolved, bytes_right, bytes_left, ambiguous}, backups, summary}` |
+| `hikasa.folder_contents.v1` | `{op: "compare"\|"crc", method, cancelled, items: [{path, side, result, crc32, error}], counts: {binary_same, rules_same, unimportant_only, important_differences, binary_different, error}}` |
+
+`exclude` and `ignored` print `hikasa.session_write.v1`, or with `--dry-run` `{masks}`/`{ignored}` in it. `rows` hold
+`leave` rows with a reason other than `same`, unless `--all-rows`. `action` gains `exchange` and `reason` the new words
+in `hikasa.vfs_op.v1` too: additive, and only `folder` commands produce them. `write_json` (§1.5.13) keeps hostile names
+safe.
+
+`FolderCompareArgs`' rule flags move to a `#[command(flatten)] FolderRuleArgs` used by `compare`, `op` and `sync`: one
+owner, the same flags, and the new ones: `--attrib-filter <EXPR>`, `--unixtype-filter <EXPR>`, `--no-auto-scan`,
+`--expand-on-load`, `--expand-differences`, `--ignored <PATH>…`, `--format-on <ID>…`, `--format-off <ID>…`.
+
+#### 1.6.18 Open With, Compare To, Exclude (FC-052, FC-062; D-186, D-187)
+
+**Open With.** D-76's `expand_command` exists; this adds the items and the launch.
+
+```rust
+// hikasa_session::launcher (pure trait; like ClipboardProvider, D-100)
+pub struct OpenCommand { pub program: OsString, pub args: Vec<OsString>, pub cwd: PathBuf }
+pub trait AppLauncher: Send + Sync {
+    /// Starts the program and returns when it has ended (a job thread waits: `refresh_when_finished`, `wait_for_previous`).
+    fn run(&self, command: &OpenCommand) -> Result<i32, ApiError>;
+    /// FC-062 *Associated Application*.
+    fn open_associated(&self, path: &Path) -> Result<(), ApiError>;
+}
+pub struct NoLauncher;                 // `unsupported`; `ServiceInit::new`'s default
+pub struct RecordingLauncher { /* tests: records, answers from a script */ }
+// hikasa_session::host (adapter-only, like SystemClipboard)
+pub struct SystemLauncher;             // std::process::Command (no shell, stdio null); `open::that_detached`
+// hikasa_vfs::archive (§1.5.17)
+impl ArchiveVfs { pub fn extract_to_cache(&self, spec: &Spec, cancel: &CancelToken) -> Result<PathBuf, VfsError>; }
+```
+
+- **Items.** `Local` specs give their path and base. A member goes through `extract_to_cache`, and its `ExpandItem` is
+  that path with its folder as base: `%f`, `%p`, `%n`, `%x` describe the extracted file, `%P` is its name.
+  `ExpandContext` is built by `Service::open_with_commands`, `InstanceMode` decides the number of commands: per item, or
+  per pair with `%…2` variables. A `%…2` without a second item is `invalid_input` (D-76). The words are OS strings: a
+  name that is not Unicode reaches the program unchanged. A relative value of `%n`, `%b`, `%F` or `%P` that begins a word
+  and starts with `-` is given as `./-…`, so it reaches a program as a path and not as an option. A row missing on a side
+  `--side` names is `not_found`, exit 100, and nothing starts.
+- **`extract_to_cache`.** An external program needs a name and an extension, which D-140's numeric names do not have, so
+  this one call extends D-140: `s<n>/x<k>/<safe name>`, `k` numeric, a fresh folder per extraction. `<safe name>` is the
+  member's final name if it passes rules 1–4 and 17 of §1.5.7 and `windows_name_problem`, else `member` plus its
+  extension if that passes, else `member`. The file is written through the spool, read-only (`0400`, DOS `R`). It stays
+  until `cleanup`: valid for the session (§1.5.17), counted in `used`, never evicted, and a member that does not fit
+  `cache_max` is `ArchiveLimit`. Links, encrypted and sparse members: the errors of `open_read`. Same member, same
+  stamp: the same path. An edit by the program is not written back (W10/W11 own editing), and the read-only mode says
+  so.
+- **Run.** `open-with` prints the commands with `--dry-run`, else runs them through `AppLauncher`, `wait_for_previous`
+  one after another, the default all at once, each on a job thread; `--associated` calls `open_associated`. Exit 0, or
+  100 when a program cannot start; a program's own exit code is not Hikasa's.
+- **`refresh_when_finished`** is the view's: it refreshes the rows' parents when the job ends (W9).
+- Tests use `RecordingLauncher`, never a real program. Only `cli/` and `gui/` name `SystemLauncher`.
+
+**View types of Open With, Compare To.** `Open With ▸ Text, Table, …` are `ViewRequest`s over `select::open_pair` with a
+forced kind (W9); views that do not exist yet are `planned`. **No new subcommand for Compare To:** `hikasa gui open a b`
+is its headless form, and a comparison of two named items is `quick`. D-105 lets the view call the pure `open_pair`.
+
+**Exclude (FC-052).** Pure, in `select.rs`:
+
+```rust
+pub enum ExcludeWhat { Items, Type }
+/// FC-052: masks for the exclude lists, in `NameFilterLists` form: (`exclude_files`, `exclude_folders`).
+pub fn exclude_masks(read: &TreeRead<'_>, sel: &Selection, what: ExcludeWhat) -> (Vec<String>, Vec<String>);
+pub fn escape_mask(name: &str) -> String;
+```
+
+`Items`: a file → its anchored relative mask (`a\b.txt`, with `.\b.txt` in the base), a folder → `a\b\` in
+`exclude_folders`. `Type`: `*.<ext>` per distinct extension of the selected files, D-07's extension; a file without one
+is excluded as an item. Names are escaped: `[`, `?`, `*`, `;`, `!` at the start, a leading blank and a leading `-` as
+one-character sets (`[[]`, `[?]`, `[ ]`). `escape_mask` round-trips: the mask matches that name and no other (a
+property). An entry already in the list is not added. FS-004's *Exclude removes items from the plan* is this: rules
+change, the view re-runs. Rules are immutable in a model, so Exclude is the one operation that **re-runs**, not
+refreshes.
+
+#### 1.6.19 Log model (FC-100; D-188)
+
+```rust
+// hikasa_session::log (pure, additive)
+pub fn op_log_entries(outcome: &FolderOpOutcome, time: &jiff::Zoned, source: &str, elapsed: Option<Duration>, filter: &LogFilter) -> Vec<LogEntry>;
+pub fn sync_log_entries(outcome: &FolderSyncOutcome, time: &jiff::Zoned, source: &str, elapsed: Option<Duration>, filter: &LogFilter) -> Vec<LogEntry>;
+```
+
+One `Summary` entry: `<verb> <done> of <planned> items (<skipped> skipped, <failed> failed), <bytes>[, <seconds> s]`,
+the text of §1.6.17's summary (one function, T11). One `Error` entry per failed item: `failed <word> <target>:
+<message>`, which D-116 always keeps. With `filter.details`, one `Detail` per done or skipped item, the human line, at
+most `LOG_DETAILS_MAX` = 10,000 per operation, then `… and <n> more`. Warnings by `push_warnings`. The CLI has `--log`
+for diagnostics and no use for this; W8's `log` command does. Ordering is plan order. `elapsed` comes from the adapter
+(T1).
+
+#### 1.6.20 GUI hooks (W6d; D-189)
+
+The hooks §1.4.18 and §1.5.17 name, no more. The window gets what a **one-row selection** can do, and nothing that W9's
+lists and selection will replace:
+
+- **Commands.** `CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete` of section `folder-compare` become `implemented`;
+  `Delete` gains its documented shortcut `Del` and `PermanentDelete` its caption *Delete Permanently*, both missing from
+  the catalogue; `docs/reference/commands.md` is regenerated. New predicates `SideWritable(Side)` and `RowSelected`. All
+  other Actions stay `planned`.
+- **`op_dialogs.rs`** (no egui; check 7): `PlanConfirmDialog`, a `DialogModel` over `Confirmation`: title and text of
+  `Question`, counts of the plan, buttons Yes, No, Yes to All, No to All, Cancel; "Do not ask again" sets the question's
+  option key (`Prompt`'s `do_not_ask`, D-112), `sync_confirmations` excepted. `DeleteDialog`: sides (Left, Right, Both;
+  none preset with `require_side_selection_in_delete`, OK disabled until one is chosen), *Use recycle bin if possible*,
+  *If the recycle bin fails, delete permanently* (hidden for `PermanentDelete`, where the first is off and disabled),
+  counts, read-only sides greyed. Both drive `Service` calls off the UI thread (D-105) and are refused while a dialog's
+  job runs. Help topics `dialog-confirm`, `dialog-delete`.
+- **Flow in `folder_view.rs`.** Command → `Service::spawn` plan job → dialog → `Service::spawn` execute job
+  (`JobKind::FolderOp` in the job list, Stop cancels: D-115) → `op_log_entries` into the log book → one notice (`W6
+  operation results`, D-117: info when clean, warning with *Show log* when items failed) → `folder_refresh` job with
+  `refresh_nodes`, then `rebuild`. The window's paths written by an operation are not acknowledged: an open text view of
+  such a file sees the change (D-118), which is true.
+- **Ids move.** `renumbered` updates the view's open set and selection. A `FullRefresh` is unchanged. `Store::garbage`
+  above half the arena after a refresh: the view runs a full refresh.
+- **`Open` on a closed archive** calls `folder_open_archive` instead of the re-run of §1.5.14; `rules.open_archives` in
+  the view's session is updated, so it round-trips.
+- **FC-012.** `expanded_on_load` opens folders after a run; Expand on a `NotScanned` folder runs a refresh of it.
+- **FC-029(c).** `Open` remembers `(child view, node, stamps)`; when the child's comparison ends, `apply_child_result`
+  updates the row. Its result is the child's: rules-based.
+- **Disable editing.** `Ctx` gets the sides; `ReadOnly` from IPC is honoured.
+- `--nobackups` of a view: `OpOverrides::backup = Some(false)` for all its operations.
+
+Everything is tested through the catalogue without a window (§1.4.16). W9 replaces the dialogs' text body by the plan's
+lists; the models stay.
+
+#### 1.6.21 Dependencies and architecture test (D-191)
+
+- **`open`** 5.4.5 (MIT; checked with `cargo info` on 2026-11-02): `open = { version = "5.4.5", default-features = false
+  }`, used by `hikasa-session`, named only in `host.rs` (plan §3 approved it for FC-062; §0.4's *waits for W7/W13* is
+  overtaken, since FC-062's associated application is W6). `cargo deny check` must pass; a new licence stops the part
+  and is reported.
+- **`hikasa-folder`** manifest += `hikasa-formats` (§1.6.13; no cycle: `hikasa-formats` depends only on `hikasa-core`
+  among the crates). `hikasa-session` manifest += `open`. No other crate. `fancy-regex`, `regex` stay in
+  `hikasa-formats` and `hikasa-text`.
+- **Architecture test.** Manifest table as above. Check 2 gains: the token `open::` only in
+  `core/hikasa-session/src/host.rs`; `SystemLauncher` joins the adapter-only names (`cli/`, `gui/` and hikasa-session's
+  own tests; refused in every test file of `core/`, `cli/`, `gui/`, as `SystemClipboard`). Check 7's list of files
+  without egui gains `op_dialogs.rs`, and the T11 rule: `execute_with` is called only from
+  `hikasa_session::api::folder_ops`; `hikasa_vfs::ops::execute` also from `vfs_ops.rs`.
+- No `unsafe`. `std::process` in `host.rs` is allowed (the banned tokens name `process::exit` only).
+
+#### 1.6.22 Gate G7 and budgets (D-192)
+
+Measured at the end of W6c on an idle machine, release build, fixtures generated by the test; recorded in `docs/02`;
+`bench.yml` runs the benches.
+
+| Item | Measure | Where | Threshold |
+|---|---|---|---|
+| G7 copy | `folder_op_execute` of a prepared plan copying 10,000 files of 4 KiB in 100 folders, local → local, targets absent, against a plain recursive copy in the same test (`fs::copy` + `File::set_modified`, no `fsync`, no temporary name), median of three each, on the same file system | `core/hikasa-session/tests/perf_g7.rs`, `#[ignore]` | ≤ 1.5 × |
+| G7 plan | `plan_sync` of a compared tree of 100,000 files, half differing, Mirror to Right | `core/hikasa-folder/benches/sync_plan_100k.rs` | < 0.5 s |
+| Memory | `SyncRow` ≤ 16 bytes; `OpPlan` for 100,000 items < 64 MiB (a test on a counting allocator) | `core/hikasa-folder/tests/ops_memory.rs` | listed |
+| Refresh | a refresh of one level of 1,000 rows in a tree of 100,000 lists only that level (`MemoryVfs` journal of `list`) | `refresh.rs` tests | one `list` per side |
+| Cancel | a hook cancels at byte n of a streamed copy: at most one buffer more is read (`MemoryVfs` counter), the target is untouched; no clock, name holds `cancel` | `ops_batch.rs` | G4 by construction |
+
+G2 and G4 are unchanged. G7 copy has little room (§1.6.3: 1.45 × in a scratch run), so a failure is reported with the
+figures, as a failed gate (`docs/17` §7.1), not worked around by relaxing a guarantee. Copies that replace have no gate:
+they `fsync`, on purpose.
+
+#### 1.6.23 Hooks for later waves
+
+- **W8.** Script commands map one to one to the calls of §1.6.16, by the same words (`api::vocab`, `SelectMask::parse`,
+  `SyncMatrix::parse`):
+
+| Script | Call |
+|---|---|
+| `select <mask>…` | `select::select`, with `expanded` from `expand`/`collapse` |
+| `copy left->right`, `move …` | `FolderOp::Copy { to: Right, overwrite: Always }`, `Move` |
+| `copyto …`, `moveto …` | `CopyTo`, `MoveTo`; `path:relative` = `Relative` |
+| `delete recyclebin=yes all` | `Delete { sides: LEFT\|RIGHT, recycle: { use_bin: true, fallback: false } }` |
+| `rename regexpr <old> <new>` | `RenameMask::Regex` |
+| `touch left->right`, `touch all:now` | `TouchFrom::OtherSide`, `At(clock)` |
+| `compare crc` | `folder_contents` |
+| `sync create-empty mirror:left->right` | `folder_sync_plan` with `MirrorRight`, `create_empty`; `visible` = `SyncRequest::visible` |
+| `filter attrib:…`, `filter unixtype:…` | `AttribFilter::parse`, `UnixTypeFilter::parse` |
+| `option confirm:…` | `ConfirmMode` |
+
+  `attrib` of the script is FC-075 (P1) in `docs/04` and P0 vocabulary in `docs/12` and plan W8: W8 decides, W6 gives it
+  no call. Its primitive `set_attrs` is there.
+- **W9.** Selection by pointer feeds `Selection`; dialogs render `OpPlan` and `SyncPlan` unchanged (`SyncPlan::folder`
+  for FS-001's summaries); `OpPlan::meta` carries the rows; `Ignored`, `Exclude`, `Rename`, `Touch`, `NewFolder`,
+  `CopyTo`, `MoveTo`, `Move*`, `Update*`, `Mirror*`, `Sync*` become `implemented`; `ConflictNext/Prev` walk
+  `SyncRow::conflict`; FC-012's glyphs read `ScanStatus`; the results dialog reads `ContentReport`;
+  `[tweaks.file_operations] beep_after_long_operations` (OPT-015) at the end of a job; FC-082's *re-stat of a view* can
+  build on `refresh_into`. The view of `--sync` and `folder sync --gui`.
+- **W10.** Save takes `BackupPolicy::target` with `rel = None` and `write_backup` (`back_up_before_save`).
+- **FS-003 (M3).** Sync Memory replaces `OrphanReading` per row: the matrix does not change.
+
+#### 1.6.24 Documentation and version
+
+`docs/01` §3.2 (the new trait methods, `Durability`); `docs/02` (the `open` line, §1.6.22's figures); `docs/03` (session
+`[rules.sync]`, `read_only_*`, `ignored`, `format_overrides`, OPT-009 flip); `docs/04` FC-003, FC-012, FC-029, FC-033,
+FC-040, FC-052, FC-060…FC-062, FC-070…FC-074, FC-076…FC-078, FC-100, §8 (visible contents, backups, confirmation), §10
+FS-001, FS-002, FS-004, FS-005 (presets table, orphans, order, empty sources), §6.2 (attribute and Unix-type filters;
+A5); `docs/10` FF-002; `docs/11` (mutations: durability and what a power cut can lose, batches, the fence, backups; the
+extraction folder); `docs/12` §1 (the `folder op` row, `attrib` left out with a pointer, `folder sync`), §2 (`--sync`,
+`--nobackups`, CLI-G03), §4 (flags table, human table, schemas, 38 in all, exit codes), `session run`; `docs/14` (the
+four commands, dialogs, notices, the log); `docs/15` OPT-008 (`folder` keeps the path), OPT-009
+(`include_hidden_by_default` default, `preserve_created`); `docs/16` M2 progress; `docs/reference/commands.md`
+regenerated.
+
+**Help** (`cargo xtask help-check` clean): new `folder-op` (verbs, selection, confirmation, backups, recycle bin,
+masks), `folder-sync` (presets, matrix, orphans, overrides, empty sources), `dialog-confirm`, `dialog-delete`; updated
+`folder-compare` (new flags, Ignored, filters), `index`, `session` (`session run`), `settings`, `vfs` (durability),
+`exit-codes`, `json-output`, `view-folder-compare`, `archives` (operations, backups of archives). `hikasa help folder
+op` resolves through D-67.
+
+**CHANGELOG.** One W6 section in `## Unreleased`, under Added, Data safety, Changed, Fixed (and Internal), that a user of
+0.1.92 reads as one release: each part and each review fix updates it in place rather than adding an entry of its own,
+so it never tells of a state a later part changed (§1.6.25 *W6d after review* 9). Changed names the two defaults a user
+can meet: `include_hidden_by_default` and that a new copy no longer `fsync`s. **Version.** W6 may ship
+as pre-release **0.1.92** after W6d, by the steps of 0.1.91 (workspace version, `CHANGELOG` date, tag, packages, CI of
+all three systems first); 0.2.0 stays reserved for M2 complete. No part bumps the version on its own. Windows and macOS
+run in the pre-merge CI (§6.6 rules).
+
+#### 1.6.25 W6 notes (implementation)
+
+*To be written by each part*, as §1.5.19: every point where the implementation interpreted or extended the text above,
+numbered per part.
+
+**W6a.** Where the implementation interpreted or extended §1.6.2–§1.6.8 and §1.6.18, and why.
+
+1. **Exchange with an archive, the other way round.** §1.6.2 defers step 4 only. That is right when `target` is the member.
+   With `source` the member and `target` the plain file, step 3 would replace the file on disk before the rebuild, and a
+   failed rebuild would lose it. So the rename **on disk** comes last in either direction: the member's rename runs in the
+   overlay, the disk's joins `exec.deferred`. After a cancellation, an exchange whose rebuild went through still runs its
+   last rename, as "after step 3 the item runs to its end" asks.
+2. **`execute_with` refuses two archives too.** The builder's item error is W6b; a hand-built plan gets `unsupported` from
+   `run_exchange`, for the reason §1.6.2 gives.
+3. **Clear read-only.** `clear_read_only` forces the stream path, so `R` goes just before `commit` and comes back if the
+   commit fails. With a backup `R` travels with the file to the backup, and only a backup on another disk clears the target,
+   which then still stands. `exchange` clears both sides on disk before step 3, a read-only left side would otherwise fail
+   step 4 on Windows, and gives `R` back on both at any failure, the left side's at step 4 too; a plain side against a member
+   clears it just before its rename, after the rebuild; a member has none to clear. `run_rename` clears a replaced target,
+   or goes by a backup as a copy does. `link` and `create_dir` move the item aside with its `R`, and clear it only as that
+   sibling is removed, so a failure has nothing to give back and a backup keeps it; without `RENAME` the item is cleared just
+   before it is removed. A hidden copy of an exchange that took `R` from its side is cleared before it is removed. `remove`
+   clears and gives back; `trash` does not.
+4. **A stamp reads once.** `Seen` carries the two `lstat`s into the action. `run_copy` also keeps the source entry for the
+   metadata step, so a copy reads the source once, where W3 read it twice; the metadata is what was seen before the
+   content. A source changed in between gets its copy with the older time, which a later comparison shows.
+5. **The fence runs before `Roots::touch`,** so a refused item opens no archive. It is step 2 all the same: nothing between
+   them looks at the item. Keys of the bases are built once per execution, as an item would otherwise fold each base.
+6. **`within` of an archive file.** `Spec::parent` of an archive's root skips the file, so a base given as the file
+   (`/a/b.zip`, not `/a/b.zip/`) would never hold its members. `within` compares that file too. The root of an archive is
+   not below its own file: it is the same thing.
+7. **The fence and a base as a write target.** "Every target" is literal: with `writes`, a `keep_dir` or `touch` of a base
+   itself is refused. W6b's builder must not plan one.
+8. **`copy_new_file`'s temporary file is not locked.** `create_temp`'s `try_lock` and `still_named` cost a tenth of the
+   path, and exist so that a rebuild's `reap` can tell a live writer: `reap` looks only beside an existing target, and this
+   target does not exist. It keeps the names of `create_temp`. **Its rename cannot replace:** Linux `renameat2` with
+   `RENAME_NOREPLACE`, macOS `renamex_np` with `RENAME_EXCL`, Windows `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`, so a
+   program that creates the target during the copy keeps its file, and the item fails `already_exists`. This costs what a
+   rename costs. `unsafe` stays in `mmap.rs`, so these come through `tempfile`'s `TempPath::persist_noclobber`, which
+   falls back to a hard link on `EINVAL` and `ENOSYS`: `tempfile` is a dependency of `hikasa-vfs` for this one call, and
+   brings no new crate into `Cargo.lock`. A file system with neither (FAT) looks, then renames: only there a racing creator
+   can get in between. `LocalWriter` commits a new file the same way.
+9. **`copy_new_file` needs one back-end and no `create_parents`:** a root of `cp --parents` takes the next path, with the same
+   durability. An `mtime` a `SystemTime` cannot hold answers `Ok(None)`, for `filetime` to try.
+10. **Backups.** `BackupNames` is additive: it is W6b's call for "names are final at planning", with the numbering and the
+    `is_a_directory` of a folder at the name, and A6.6 tests it here. The planner calls `reserve` for every target and source
+    of the plan before the first `assign`; without that, only the items assigned so far are known. `BackupPolicy::target`
+    numbers a name that would be the item itself, in every style (`abc.bak` with `stem_bak` gives `abc-2.bak`; the item's own
+    folder with `folder` gives `x-2.txt`), or the rename would lose the file. With `--no-preserve` a regular target keeps its
+    mode across a backup by a `set_attrs` after the commit: the writer finds no old file to copy it from. A link or a special
+    file hands on no mode: the new file has the default, as without a backup. `write_backup` of a link goes through a
+    temporary sibling, to be atomic. `replace_with` without `RENAME` takes `write_backup` first. Its old backup is replaced
+    only once the new item stands. `rename` with a backup goes through the same `with_backup` as a copy, and a `rename` that
+    meets another disk expands to a `move` that keeps its backup and its `clear_read_only`; in a batch that expansion
+    replaces, because the item says the plan decided so (§1.6.2 had `MoveOptions::default()`, which would fail it).
+11. **`trash_fallback` is a field only.** Its execution is §1.6.12, W6b, with `WarningCode::TrashFallback`.
+12. **`extract_to_cache`.** A name over 255 bytes does not fit one path component, so it counts as unsafe. The reservation
+    may pass `cache_max` by what readers hold, or a zip member over half the limit could not be extracted while its own spool
+    is open; the limit stands again when the reader lets go (`Cache::trim`), and only spools can be evicted for it. A sweep
+    clears `R` in `x*` folders of a dead session.
+13. **`Entry::special` inside a batch.** `Overlay::entry` does not carry it, so a device member reads `None` while a batch is
+    open. Nothing filters there.
+14. **`attrib` text** is written in lower case, `+hr-s`, and read in any case, as `parse_letters`. `unix_type` letters are
+    lower case only, as the contract lists them.
+15. **`handling` keys are skipped when they hold their default,** as `ignored` and `format_overrides`, so `to_toml` of old
+    rules, session files and goldens stay byte for byte.
+16. **A `NotScanned` orphan stays an orphan** (M1's `--no-scan-orphans`); only a pair is Unknown. A child orphan of a refreshed
+    pair stays `NotScanned` with auto-scan off: "directly in a base" holds there too.
+17. **`--expand-differences` works alone,** as *only expand subfolders with differences* would; it needs no `--expand-on-load`.
+18. **`FolderStats::ignored`** counts rows whose category the mark changed, and is left out of JSON at 0. It walks the tree when
+    there are marks (O(nodes)) and is 0 without: a counter would have to follow every content result for a figure only a
+    statistics dialog shows. Marks are placed in `Scan::insert`, not `plan_pair`: that is where a parent's path is known,
+    once per folder.
+19. **Modules.** `refresh.rs` and `content.rs` are `scan/refresh.rs`, `scan/content.rs`: they need the scanner's private types,
+    and the architecture test bans `#[path]`.
+20. **Ids no longer rise from parent to child.** A kept folder moved to the tail stands above its children, so INV-FOLDER-1
+    loses "parent is older" for "every live node is reachable once", and `canonical::build`, the recounts and the reference
+    rows walk `Store::post_order`.
+21. **A kept row keeps its old record whole;** a kept folder's own time is not updated, as `to_canonical` has none. A row
+    `CONTENT_PENDING`, or a folder left `NotScanned` that a scan would enter, is not kept. **What a stop leaves is in the
+    tree:** `internal::UNLISTED` is on a folder with a listing to come (from its row's planning until the listing is in) and
+    on what a refresh was asked for and did not reach, `CONTENT_PENDING` on a row with a result to come. A refresh of a model
+    that is not complete goes down to all of these below what it was asked for, because a kept row is not entered, and the
+    verdict comes back when no live node has either; a refresh of another subtree leaves it `incomplete`. The check walks
+    the arena, and only after a stop. An opened archive whose `mtime` moved counts as changed (*a new stamp below one*).
+22. **Refresh and followed links.** A folder followed through a link is one folder at two paths, and a refresh lists the one it
+    is asked for. P-REFRESH runs without following; §1.6.4 rule 1 keeps operations from writing through them.
+23. **A refresh of a `NotScanned` folder opens it,** by §1.6.7, so a refreshed tree can hold more than a fresh one with auto-scan
+    off. P-REFRESH refreshes scanned folders only.
+24. **On-demand tests leave the state alone until the outcome.** `CONTENT_PENDING` is set and cleared, the stored state stays,
+    so a cancelled run has nothing to restore. `apply_content` also clears `CONTENT_SKIPPED` and `DiffFlags::CONTENT`, or a
+    repeated test would keep a difference it no longer finds. A run claims the model like a refresh: `RefreshBusy`.
+25. **"Visible contents" of `compare_contents`** is, until W6b's `select::resolve`, every file pair below a folder with neither
+    side hidden. W6b should route it through that one definition.
+26. **`compute_crcs` runs in sequence on the calling thread.** It is one read per side, and a back-end's CRC needs no read.
+27. **D-164's figure.** At the `ops` level, stamped batch with fence against the plain copy of §1.6.22: **1.48 ×** (363.6 ms
+    against 244.9 ms, median of three, release build, `/var/tmp`, 10,000 files of 4 KiB in 100 folders;
+    `core/hikasa-vfs/tests/perf_copy.rs`). G7 is W6c's, through the Service.
+28. **A listing that keeps failing.** `ReadDir` on Windows answers each `next` with the error of a folder that went away, so
+    `.flatten()` over it never ends. The walks in `cache.rs` and `lock::reap` now stop at the first failure
+    (`map_while(Result::ok)`). A sweep clears `R` in the `x*` folders of a dead session only; a session's own `cleanup` has
+    removed them, so its exit lists nothing more than it did before W6a.
+29. **`extract_to_cache` after a program deleted its file.** The table entry leaves with what it counted, so the next call
+    extracts anew at a path that exists, and a cache does not fill with files that are gone.
+30. **Hidden siblings have fixed names:** `.hikasa-xchg[-n]`, `.hikasa-old[-n]`, `.hikasa-tmp[-n]` (of a backup's link), not
+    `.<name><suffix>`, which made an exchange fail on a name near the limit of a file system while a copy worked. A leftover
+    no longer shows whose it is by name; the item that left it names it.
+31. **A move's source is checked again** after the copy, on the plain path too, as `remove_moved` does: the same kind, size,
+    time and identity, through a link the comparison followed. A changed source stays, the copy stays, and the item fails
+    `changed during the move; the copy was kept`, which is D-163 for what changed during the copy. It costs one `stat` a move.
+32. **`..` (D-06).** `LocalPath::parent` of a path that ends in `..` is `None`: its text does not say what is above it, and
+    `/a/../..` made every walk up endless, with no token check (`vfs cp -r src a/../copied` hung, since W3). So a spec with a
+    `..` is below no base but one spelt the same way up to there (`within`), which is the safe side, and the walks of §1.3.4
+    and the fence end. `..` is not removed: **the OS's meaning is kept**. A target or source spelt with `..` is checked for
+    nesting by what each level is on disk (`LocalPath::up`, `FileId`, to the root, which is its own parent), so a folder
+    cannot be copied below itself by spelling, through a link either. Windows has resolved `..` at parsing, as ever.
+33. **The fence and the tree.** §1.6.4 is the rule. The walk replaces the text walk for items, so the two cost one: the folder
+    of the last item is compared, and a batch of new files in one folder walks once. Measured on the path of note 27 before
+    and after: no change beyond the noise.
+34. **Names on disk.** `Vfs::sync_folder` (additive, a no-op but on a disk) syncs what no writer does: a moved link's folder; the
+    parent of each folder the operation made (`Exec::new_folders`), once, before the first source that depends on it goes;
+    and in an `exchange` the folder of `T2` before step 3 and the target's before step 4, because across two disks a rename
+    could reach one disk with the copy that keeps its old content not yet on the other. `Durability::FileOnly` on `T1`, `T2`
+    stays for the files. A move into new folders therefore syncs file, folder and each new name, which A6.3 counts.
+35. **A plan refused as a whole** (§1.6.5) reports `failed` on the items at fault and `not_run` on the others: no item ran, and
+    no archive was opened. It is checked only when the plan names a backup.
+36. **`set_ignored` while a scan runs.** A scan and a refresh keep a copy of the marks; `Store::marks_set` tells them it is old, and
+    each insertion then re-marks its rows under its own write lock, so no row falls between `set_ignored`'s walk of the tree
+    and the insertion. A scan that sees no change pays one comparison per folder.
+37. **`./!x`** was chosen over a backslash escape because `.` is no file name: no list that exists holds such a path, so old
+    lists read as they did. Only a first name starting with `!` takes it; `a/!x` needs none.
+
+**W6b.** Where the implementation interpreted or extended §1.6.9–§1.6.13, §1.6.15–§1.6.19 and §1.6.21, and why.
+
+1. **`Resolved::depth` and rows of `resolve`.** `Resolved` gains `depth` (additive): post-order, and the `remove_dir` of a folder
+   after its contents, come from one pre-order pass over the list. The list holds every row a selection contributes, not
+   only roots. The root is never a row: selected, it passes its rows down, so no `keep_dir` or `touch` of a base can be planned
+   (note W6a 7). A row selected by itself counts whatever hides it; the builder gives a filtered one `skip filtered`.
+2. **Rule 2 of §1.6.9 reads as docs/04 §8 has it: "some of its children".** A folder selected with all it shows on that side
+   selected too is the folder. Read literally, `--select all` (which selects each row) would make every folder "a folder
+   with a row below it", so `delete --select all` and `move --select all` would leave the empty folders behind, and
+   `--include-hidden` would change nothing. What is hidden does not count for "all", and `whole` still decides what may be
+   one item. `whole` of a folder is off for a hidden, filtered, failed or `NotScanned` row present **on that side**; a row only
+   on the other side leaves nothing out here.
+3. **Matching a folder: rows the side does not have play no part.** "On the same side … every shown row below it matches" is read
+   per side. Read as every row, `left.all` would refuse a folder with one right orphan, and a collapsed folder could not be
+   selected by `all`. A folder with no row of its own side shown is empty: `all`, `orphan`, `exact`.
+4. **`diff` of §1.6.9** takes `UnimportantOnly`, `ImportantDifferences`, `BinaryDifferent` as "a content result that differs".
+5. **`--path` and a same-named row.** A file and a folder of one name are two rows (D-20), and `node_at` finds the first. `--path`
+   takes the sibling that has the side asked for.
+6. **Depths.** A folder that exists gets no item (rule 3), but a move's `remove_dir` must see what failed below it, so the items
+   below a source folder that goes are one level deeper than its `remove_dir`, with no `keep_dir`. `exec.block` then does its
+   work, and rule 4 holds as written. A depth is a count of levels and nothing more: the rows of a folder that exists follow
+   a sibling's at the depth of that sibling's contents. So execution cuts by path, not by depth (note 30).
+7. **A skipped folder with a source holds items.** `Confirmation::finish` turns a declined `create_dir` into `Action::Skip`, and
+   `run_item`'s cut looked at the action, so what lay below ran into a folder that was not made. `execute_with` now cuts below
+   a `Skip` of kind `Dir` with a source (`holds_items`); a skipped `remove_dir` has none, and what follows it is no child of it.
+   Since the review the plan itself skips what lies in such a folder (note 30), so the cut finds nothing left to stop.
+8. **`same_file`.** A replacing item also runs `check_nesting` (with `check_move_inside`, `check_same_archive` for a move): one
+   `stat` of the source, on items that sync a file anyway. The model cannot see that two bases are one folder, through a link
+   too, and a move onto itself would lose the file. `check_nesting`, `check_move_inside`, `check_same_archive`, `spec_key`
+   became public for this and for rule 16.
+9. **Rule 13 and rule 5, followed rows and link members.** An exchange skips a pair with a followed side (`followed_link`): there
+   is no file to swap on a side that is a link to elsewhere. A pair of links with a member on a side is `skip symlink`, with
+   `archive_symlink_skipped`, or a hostile archive's link would land on a disk (D-142). A move of a followed folder is `skip
+   followed_link`: its contents cannot go (fence rule 1). Rule 5 as written skips every link member, where W3's planner keeps
+   a link between two archives; the rule stands, for rule 6's listing too.
+10. **An opened archive that goes whole goes as the file it is.** A row of an opened archive, `whole`, with no target: `copy`,
+    `move`, `remove`, `trash` or `rename` of the file, stamped by one `stat`. As a folder it would copy its members to a
+    folder of that name, and `check_item` refuses to remove an archive's root.
+11. **Rename order and `Action::Rename` for folders only in a move.** Folders of a rename go deepest first, or a folder renamed
+    before its rows would take their paths along (rule 2 above lets both be selected). A file `move` stays `Action::Move`, as
+    rule 13 says, also on one disk: it is a copy and a removal, so a large file on one disk is slower than a `rename` would
+    be. A later part may plan `rename` under D-97's conditions: `run_rename` keeps the backup, W6a note 10.
+12. **`.<a>.hikasa-ren`** falls back to `.hikasa-ren[-n]` for a name near 255 bytes (W6a note 30's lesson). The hidden name is
+    numbered around every name of the folder and every target.
+13. **Confirmation.** A plan where nothing runs asks no operation question. `finish` declines an item whose question is still
+    open, and `Err(Declined)` with the operation's open: what was not answered does not run. `folder_confirmation_strict`
+    carries D-77: `confirm_delete` as `true`, for adapters that must not depend on a settings file.
+14. **`ConfirmPolicy::from_options`** is the free function `api::folder_ops::confirm_policy`: the type is `hikasa_folder`'s and
+    `Options` the session's. `OpPlan` gains `refresh` (the parents of the rows it names): `folder_op_execute` has no model.
+15. **`OpReport::expanded`** (additive): where an item grew at execution, so `meta` follows without a clone of each item's spec.
+16. **`trash_fallback`.** One warning per operation names the items planned for a permanent delete. `NotFound` and a stop do not
+    fall back. `clear_read_only` of the root goes to each expanded item. *Revised by the review:* the expansion is what the
+    plan stamped (`PlanItem::fallback`, filled only with the fallback on, from the model or rule 6's listing; a file by its own
+    stamp) and nothing lists at execution, so a file added since stays, with its folder, and the item fails. A bin that takes
+    the whole folder would have taken it along: that is the bin's to give back, a permanent delete is not.
+17. **`escape_mask` and `!`.** `[!]` is no set (`!` after `[` negates), and no one-character set can hold `!`, so a leading `!` stays
+    literal: it has no meaning in a mask, and the property holds. `escape_mask` also takes `\\`, `/`, a trailing blank and a
+    trailing `.` (which would mean "no extension"). `;` in a set needed lists split outside sets: `mask::split_items`, in
+    `MaskList::parse`, `NameFilter::parse` and `from_lists`. A base-level folder is `.\\x\\`: `x\\` would match at any depth.
+18. **`folder_contents`** takes `ContentsRequest::text_rules` (additive): the comparison's, else the defaults, as `model` has none.
+    `compare_contents` keeps its signature and reads `resolve` with `Include::visible()`.
+19. **`FolderSyncOutcome`** holds `op` only until W6c adds `rows` and `counts`, and `sync_log_entries` is `op_log_entries`.
+20. **Flat comparisons.** A row's folder is no row, so an orphan's target is `<base>/<dir>/<name>`. *Revised by the review:* the
+    folders on the way are `lstat`ed once each and the missing ones planned (rule 3); a rename's collisions and `copy`'s
+    `duplicate_target` go by the real folder (`dir`), and `copyto` keeps a row's folders in its structure. A move leaves the
+    source's folders, which are no rows. `folder_refresh` gives `report: None`.
+21. **Conflicts of rule 6's items.** *Revised by the review:* rule 6 lists at planning and computes every conflict of §1.6.11 from
+    what it listed and what an `lstat` found, as for a row, with stamps for each item. `copyto` and `moveto` read the target by
+    `lstat`, as it is no row.
+22. **`--target x.zip/`.** `FolderOp::CopyTo` and `MoveTo` have `folder`, from a trailing separator of the typed target (`\` too
+    on Windows): a missing `x.zip/` is a folder, `x.zip` an archive, as `folder op mkdir`.
+23. **`hikasa folder op open-with --associated --dry-run`** prints `associated <spec>` per item; `commands` of the JSON the same.
+24. **Session keys.** `read_only_left`, `read_only_right` are always written, as the contract's example has them, so
+    `session edit --set specs.read_only_right=true` finds its key. `session_add_excludes`, `session_set_ignored` are the Service's
+    writes of `exclude` and `ignored`; `SessionWriteDto` gains `masks`, `ignored`.
+25. **`parse_side`, `parse_sides`, `parse_structure`, `parse_confirm_mode`, `parse_exclude_what`, `parse_select_path`, `Reply::parse`,
+    `ConfirmMode::parse`** hold the words in core, for check 7.
+26. **Figures.** Probe of `folder_op_execute` on 10,000 files of 4 KiB in 100 folders through `plan_op` on a loaded machine, release,
+    median of three: **1.45 ×** a plain copy (391 ms against 270 ms), which is the path of W6a note 27: `folder_op_execute` adds
+    `execute_with` and one walk of `expanded`. `plan_op` of those 10,100 items takes 12–14 ms, so about 1.3 µs an item. The
+    official G7 stays W6c's.
+27. **Architecture.** `check_confined_crates` also keeps `execute_with` and `plan_op` to `api/folder_ops.rs`, `ops::execute` to
+    `vfs_ops.rs`, in `hikasa-session`; `op_dialogs.rs` joins check 7 with W6d, which adds the file.
+
+**W6b after review.** Decisions of the review of W6b, where the contract was silent or let data go; safety won each time.
+
+28. **`--path` names one row** (D-185). `named_row` refuses an empty path and every spelling that is only separators, `.` and `..`
+    (`""`, `.`, `/`, `./`, `left:`, `right:/`), before a row is looked up, and any path that comes to the base after it; one
+    function for `op`, `compare`, `crc`, `exclude`, `ignored` and `open-with`. A name of dots (`...`) is a name. `--in` of
+    `mkdir` and `--expand` are no `--path`: an empty one is the base there, which selects nothing.
+29. **Disable editing and a target** (D-184). `ops::writes_into(vfs, base, target)`: the outermost files of both (a write to a member
+    rewrites its archive); equal or below by the text once `.` and `..` are resolved; then by identity: the nearest folder that
+    stands on the way to the target, and each `..` above it as the OS resolves it, which follows every link on the way, against
+    the base's identity through a link. An error other than "not there" answers yes. Checked in `folder_op_plan` after the target
+    is resolved and before the selection, for the CLI, a session and IPC alike. Without file identities (some back-ends) only the
+    text speaks.
+30. **What a plan shows runs.** Execution cuts below a failed or skipped folder item by path (`Cut::holds`: a target below its
+    target; a source, or a `remove_dir`, below its source), so rows of a folder that exists, which follow a sibling at a deeper
+    depth, are no longer cut. At planning `skip_below` gives what lies in a skipped folder item (a refusal, rule 8, a declined
+    answer, from any source of that folder) the folder's reason, so nothing the plan let through is left `not_run`. An item
+    `not_run` with no cancel is no success: `OpReport::ok` and `VfsOpDto::ok` say so (exit 100), and a summary ends with `, <n>
+    not run`. This applies to `vfs` commands too, where a folder that changed during a run left its contents `not_run` with exit 0.
+31. **Rule 6 lists at planning** (`ops/unlisted.rs`), and W3's `plan_copy`, `plan_move`, `plan_remove` are no longer used by the
+    builder. The listing is sorted as a comparison sorts rows (kind, folded name), so "the first of two sources" is the same for a
+    listed folder as for rows. Filters are the comparison's own, compiled once at its scan (`Store::resolved`, with its date
+    cutoff); an archive inside a listed folder is judged as the file it is, and the display filter has no states to judge, so it
+    takes no part. A folder that keeps something stays; a moved folder is one `rename` only when nothing in it stays. `touch` sets
+    a listed folder's own time only, as rule 14 touches rows, and an exchange of two listed folders stays `skip compare_error`: both
+    say what they do, and neither is a loss.
+32. **A folder that replaces a file** has a file's conflicts (time of the folder against the file's, read-only, system, a move),
+    and the human line names it: `replace with folder`; a link that replaces: `replace with link`.
+33. **A read-only archive.** Each item that changes a member of an archive whose outermost file is read-only (DOS `R`, or no
+    write bit) asks `read_only`, one `stat` per file. A yes lets the rebuild run as the platform allows: on Unix the rebuild
+    replaces the file by rename and keeps its mode; on Windows the `R` of the outer file is not cleared, and the rebuild fails
+    as its replace does, with the archive as it was (not tested here: wine does not model it).
+34. **An opened archive moved onto its pair** goes as the file it is and replaces the other side's file, as a file does:
+    `replace_during_move` asks, a backup keeps the old one, and the right side's own members go with it. A member-by-member move
+    would keep them, but it cannot remove the source's root, and the plan has to do what it shows. `copy` of a pair stays member
+    by member, which is what a copy of two folders does.
+35. **`overwrite_backup`** (bit 32) is the conflict of a backup whose name a file holds that this plan did not make (D-167 keeps
+    one generation): asked under `confirm_overwrite_newer`, declined by `no-to-all`, shown in a dry run, and replaced by `--yes`.
+    For an archive's one backup every item that rewrites the archive carries it.
+36. **Two sources of one place in `copyto`, `moveto`.** The plan records the folders it makes (`made`, folded as the back-end
+    compares names, also those a `rename` takes along) and the file targets it takes (`taken`). A second folder merges into the
+    first (`keep_dir`), a file where the plan makes a folder, or a folder where it writes a file, is `skip duplicate_target`,
+    and a folder on the way over a file of the plan fails the source. A folder planned only as the way to a source goes when
+    nothing goes there, and a way folder that cannot be made fails the source at its own depth, so its folder stays.
+37. **Ctrl-C at a prompt.** The CLI reads a person's lines on a thread of its own and looks at the job's cancel token every 20 ms,
+    so the first Ctrl-C ends the prompt as `Cancel` (exit 100, nothing written) without a line typed. The thread stays blocked
+    in its read until the process ends. Tested on a real terminal through util-linux's `script` (Linux only); the end of the
+    input and the replies stay unit tests.
+38. **Open With.** `expand_command` gives OS strings, so a name that is not Unicode reaches the program; `%b`, `%x` split by
+    `Path::file_stem` and `extension`, which keep D-07's reading. A value of `%n`, `%b`, `%F` or `%P` that begins a word and
+    starts with `-` becomes `./-…`; `%f`, `%p` are absolute. A row missing on a side asked for is `not_found` before anything
+    starts. `open-with` with neither `--app` nor `--associated` was already a usage error (clap), now tested.
+39. **`--select all` takes a folder that failed to list**, and only `all`: the plan shows it `skip compare_error` and exits 100. A
+    folder that was not scanned still matches no mask (§1.6.9 "scanned"): `--select all --no-scan-orphans` does not bring
+    unlisted folders, and `--path` does.
+40. **`mkdir --name 'x\'`** is refused off Windows (`parse_mkdir_name`): a final `\` separates nothing there, and dropping it would
+    make another name than the one typed.
+41. **P-OPS** compares the tree with a model of each verb (`props_ops_model.rs`), on a case-sensitive `MemoryVfs` with Unix modes,
+    files and folders (links and case folding are the conservation property's). It found the bugs of notes 30 and 36, a whole
+    rename that took a filtered file along (a row a filter hides now leaves its folder not `whole`, §1.6.9 rule 3), a folder of
+    rule 8 that replaced a file a filter hides, and a flat `copyto` that passed over an unlisted folder.
+42. **A source that writes nothing claims no place** (P-OPS on CI, seed `a049c850`). Rule 16 drops a folder planned only as the
+    way to sources when nothing goes there, and that decides duplicates too: a way folder whose sources all stay (filtered,
+    refused, failed) is no folder of the plan, so a file of the other side at its path is no `duplicate_target`; it goes, with
+    the folders above it (`holds_folder`). Sides are planned one after the other, so when that file comes every source that
+    could still go into the folder has been planned. A folder source of the other side that lands on a way folder makes it its
+    own, and it is made though nothing goes in, as a copied empty folder is. The mirror case: a row refused for its own reason
+    (`filtered`, `compare_error`, `followed_link`) that a file of the plan stands in the way of is that skip, not an item error
+    `not_a_directory`. Which way folders are needed is decided as names compare (folded when the comparison or the back-end
+    folds case), so a folder used only by its other spelling stays.
+
+**W6c.** Where the implementation interpreted or extended §1.6.14–§1.6.17 (sync), §1.6.22, and why. Safety won where the
+text was silent.
+
+1. **One planner.** The types and `plan_sync` are `hikasa_folder::sync`; the planner is `ops/sync.rs`, which drives
+   `ops::build::Builder` (`delete_row` per side, `transfer` per direction, `close_open`, `finish` with `writes = true`), whose
+   helpers are private to `ops`. A sync therefore has the builder's conflicts, stamps, filters, fence, backups (`reserve`),
+   `same_file` and capability checks; `depths` and `covered` are reset between the four phases, as `delete` does per side.
+2. **Rows.** `SyncPlan::rows` has one row per node but the base, in post-order. A pair of folders has situation `None` and no
+   reason (`compare_error` when it failed), and is not counted in `leave`. A folder on one side with contents takes the action
+   of its rows: all deleted on its side → its own delete (`remove_dir` after them, or one `trash` with the bin, `whole`);
+   any copied → `copy_*` (made by rule 3; `whole` when all are, so an opened archive goes as its file); else `leave` with the
+   reason of its rows that says most. An empty folder on one side reads the matrix, and its action becomes `leave`, reason
+   `matrix`, without `create_empty`. `counts` count every row with an action, folders too; `SyncPlan::folder(node)` is the
+   sum of the rows strictly below `node`, and `folder(ROOT) == counts`.
+3. **Additive API.** `SyncPlan::{preset, matrix, orphans}` and the same on `FolderSyncOutcome`, whose `dto(read, all_rows)`
+   takes the comparison for paths and kinds (a `SyncRow` is its id and 8 bytes of decision: 12 bytes);
+   `Service::folder_sync_dry_run`; `SyncAction::{reads, writes, deletes}`, `Situation::{only_on, allows}`,
+   `SyncMatrix::set`, `SyncCounts::{add, of_row}`, `SyncOptions::{effective_matrix, validate}`; `FolderSyncRequest` derives
+   `Default`; `api::{FolderSyncDto, SyncRowDto, sync_options}`, `folder_ops::{sync_counts_text, sync_marker}`,
+   `human::folder_sync_lines`.
+4. **Rule 3 is stricter than written.** A folder a filter hides on **either** side hides what lies below it on both: a
+   right-only file in a folder the left's filters hide (a protected folder, `exclude_protected`) is no orphan a mirror
+   deletes. A row every present side of which a filter hides is no row of the sync ("both sides hidden are not rows"), with
+   `--include-hidden` too, which brings the hidden side of a pair only; a name filter hides both sides at once, so it matters
+   for the size, date and attribute filters.
+5. **Rule 2.** A folder that is not `Scanned` (one a model not made by `sync_folder_rules` left unscanned, or one that failed)
+   is `compare_error`, as is everything below a failed folder; a sync never lists at planning (§1.6.10 rule 6 is not used).
+6. **Overrides** are keyed as the comparison aligns names (`path_key`, as Ignored marks). An override of the base (empty,
+   `.`, `/`, a `..` anywhere) is `invalid_input`, before a scan: `--path`'s lesson. One that names no row gets one
+   `switch_ignored`, as one a row cannot take does; `--override` on Windows takes `\` too. An override on a folder decides its
+   rows; the folder follows them (note 2).
+7. **A followed folder on one side is its link.** When the matrix deletes it, the link goes (fence rule 2) and its rows are
+   left `followed_link`; otherwise its rows are copied through it: reading through a link is allowed, writing below one is not.
+8. **Freed names, own counterparts** (`Builder::freed`, `Builder::own_only`, off for `folder op`). A copy's target held by the
+   entry of a row this plan deletes is free: no target stamp, no `replaces`, which the order of D-182 makes true; a delete
+   declined at the question leaves the copy to fail `already_exists`. A copy replaces only its row's own counterpart, never
+   an entry of another row: Update Right of a left folder `y` onto a right file `y` (two rows, D-20), or of `b.txt` onto a
+   `B.txt` that a case-sensitive comparison keeps apart on a file system that folds, fails `already_exists`, and the file
+   stays: Update never removes. Found by P-SYNC's model.
+9. **Refusals.** ~~"The other base has no item at all" counts every entry, filtered or not~~ (rejected by the review: a
+   base is empty when it holds no file after filters, *after review* 6), and refuses only a plan that deletes on the other
+   side. An unfinished comparison refuses a plan that deletes; one that only copies plans, its rows not
+   reached being `compare_error`. The stored `[rules.sync.matrix]` is validated whatever the preset, so `session edit` and an
+   import refuse a bad cell before `custom` could put it in effect.
+10. **Words.** `--custom`'s base is the stored matrix, else all `leave`; `custom` is no base word. `--recycle-fallback` needs
+    `--recycle`. `--select`, `--path` without `--just-selection` are refused (exit 100) rather than passed by; `--just-selection`
+    that selects nothing is refused as in `folder op`. `--visible` shows what `--display` (default `all`) shows. A preset is
+    needed unless a folder-sync `--session`, whose `[rules.sync]` is the base (a folder-compare session needs one: see
+    *after review* 3). The human lines
+    leave out `same` rows, `--all-rows` too (JSON has them), and a row left says ` (<reason>)`.
+11. **`session run`.** `SessionRunRequest::Sync { request, options }` (additive); its read-only sides come from the session.
+    `--yes`, `--confirm`, `--dry-run`, `--allow-empty-source`, `--all-rows` on another type are refused: a comparison would pass
+    them by in silence. `folder op --session` takes a folder-sync session's folder rules (`SessionRunRequest::folder_request`).
+12. **Sessions.** `RulesShape::SYNC` is `FOLDER` with the map `sync.overrides`, so an override removed in memory leaves the
+    file. A folder-sync file written before W6 had an empty `[rules]` (nothing could add a key to the opaque table), which
+    reads as the defaults; a hand-made one whose typed key has another type is now `invalid_data`, as for folder-compare.
+    Unknown keys stay (D-70).
+13. **Confirmation.** `folder_confirmation(plan, None)` of a sync takes `sync_confirmations`; the CLI passes its mode to
+    `folder_confirmation_strict`, so a script never depends on that key (D-77).
+14. **IPC (D-190).** `OpenOptions::{no_backups, sync: Option<SyncWords>}` are left out of the wire while off, so the wire
+    goldens and older peers see the same messages. `open_view_request` makes `ViewRequest::Sync` of a `folder_sync` view, the
+    words parsed by `api::vocab::sync_options`, the CLI's parser; `check_open` checks a sync before any contact. The server and
+    the GUI answer `unsupported_view`, "this window cannot show a Folder Sync view yet" (`ipc::unserved_view`); the error kind is
+    `unsupported`, exit 100. The GUI's arms of `ViewRequest::Sync` are never reached; were one, it would show the comparison of
+    the bases, which writes nothing. W9 replaces them. `--sync` and `--nobackups` are no longer forwarded with `switch_ignored`.
+    `folder sync --gui` sends the sync in effect (a session's `[rules.sync]` with the flags on top) as words,
+    `api::sync_words_of`, which `sync_options` reads back to the same options, and `--read-only`, `--no-backup` in
+    `OpenOptions`. An `OpenView` carries no base rules, so with `--session` the session's folder rules do not travel (as for
+    `folder compare --gui`); W9's view should open a session by `LoadSession`.
+15. **Log.** `sync_log_entries` adds, after the operation's summary, a second `Summary`: the counts, `sync_counts_text`, the
+    text of the human `#` line (T11).
+16. **Archives.** Within archives, a member of a single stream that differs is `leave`/`capability`; a single-stream archive on
+    one side stays for the same reason, though its file could go whole (its members cannot be removed one by one). Without
+    *within archives* an archive is a file.
+17. **G7 copy** failed first: 1.52, 1.58, 1.52 × (load 5) and 1.54, 1.55, 1.53 × (load 1.8) on W6b's path. Two calls per new
+    file were repeats: `copy_new_file` stat'ed its source by path a moment after the stamp's `lstat` (now `HandleMeta::size`,
+    additive), and `run_item` `lstat`ed an absent target that the rename that cannot replace checks again at the commit
+    (W6a note 8); a copy now makes D-103's check in `run_copy`, by that rename on the new-file path (its `AlreadyExists` becomes
+    "changed since the plan was made") and by the `lstat` before streaming otherwise. After: 1.39–1.48 × in six rounds (loads
+    1.2 and 6). The other extra calls are guarantees and stay: the folder above each item (D-94 rule 3), the stamp, a
+    temporary name and its rename. Figures in `docs/02`.
+18. **Memory.** The first count of an `OpPlan` of 101,000 items was 91.9 MiB: the vectors kept the capacity they grew to, and a
+    `Spec` was 112 bytes for URL variants no plan holds. `finish` now shrinks them, and `Spec::Remote`, `Spec::Http` hold a
+    `Box` (a `Spec` is 56 bytes, a `PlanItem` 472): 56.2 MiB, and 57.5 MiB for the `SyncPlan` of that tree.
+19. **P-SYNC** (`props_sync.rs`) compares the disk with a model of §1.6.14 written from the tree before and the options alone,
+    with its own table of the presets; 384 cases by default (about half run an item), 4,000 once. It also checks the rows'
+    decisions, dry-run statuses against the run's, the re-comparison of each copied or deleted row, a refresh against a fresh
+    comparison, and that a second run of a preset plans nothing that runs (items below a folder the plan cannot make excepted:
+    execution cuts them). It fails when the plan's items are dropped, when Mirror to Right and to Left swap their rows, and when
+    the copies' direction is flipped. A6.28 (`props_sync_fence.rs`) fails when the planner's and the builder's followed-link
+    refusals and the fence are taken out.
+
+**W6c after review.** Decisions of the review of W6c, where the contract was silent or let data go; safety won each time.
+
+1. **A whole folder's `trash` checks what lies below it** (§1.6.12, `PlanItem::verify_below`): the subtree is always
+   stamped, and a name, a stamp or an entry added since fails the item before the bin is called. `folder op delete
+   --recycle` and a sync alike, listed by the comparison or by rule 6.
+2. **`include_hidden_by_default` is no sync's.** `FolderSyncRequest::include_hidden` is the sync's own flag, `None` = off,
+   for rule 3 and for `--just-selection`'s selection; the folder-op preference never reaches a sync. The other options a
+   sync reads are those the contract names: `[backups]` (§1.6.5), `preserve_created`, and the confirmation keys
+   (`sync_confirmations` for a view, `confirm_*` for the per-item questions, §1.6.11; the CLI asks the operation question
+   whatever `confirm_delete` says).
+3. **Note 10's default preset is rejected.** `folder sync --session <folder-compare session>` without a preset flag is a
+   usage error (`invalid_input`, exit 100), with `--gui` too, before any contact: only a folder-sync session holds a preset.
+4. **A copied link keeps its time** (D-94 rule 6, with `Preserve::times`): after `create_symlink`, `set_times` on the link
+   itself (no-follow: `utimensat` with `AT_SYMLINK_NOFOLLOW` on Unix, the link opened as a reparse point on Windows, the
+   member's time in an archive), so a second sync plans nothing and Update Both does not copy a link back and forth.
+   Every back-end of this build can time a link; one that answers `OperationUnsupported` leaves the link made with one
+   `capability_missing` warning. A comparison of links by target and kind instead of time is therefore not built: no
+   back-end needs it.
+5. **Case-insensitive alignment settles.** With `criteria.filename_case` a sync that replaces a counterpart whose name
+   differs from the source's (by case, under a folding alignment) plans one `rename` after the copy, to the source's
+   spelling, expecting what the copy wrote (the source's size, and its time when times are kept); a copy that did not run
+   leaves the old name. `folder op` does not. **Two source names of one key** are not the plan's to choose: a row whose
+   source name shares its aligned key with a sibling's and that has no entry of its own on the other side (and every row
+   below such a folder on one side) is left at planning with the new `LeaveReason::AmbiguousName` (`ambiguous_name`),
+   counted in `SyncCounts::ambiguous` (additive in `counts`), and the `#` line ends `, <n> left as ambiguous names (two
+   names align to one)` when there are any. No item is planned, so nothing is skipped at execution, and a second run is
+   the same. The pair the comparison aligned goes on as usual.
+6. **Empty sources, wider (note 9 rejected).** A source base is empty when, the filters applied, it holds no file at all:
+   only empty folders (a `lost+found` of a mount point that failed), only entries a filter hides (name filters never reach
+   the model; size, date, attribute filters mark them; a folder hidden on that side hides its contents). A followed link
+   and an opened archive count as files; a folder the comparison could not read counts as holding files (it is unknown,
+   not empty, and its rows are left by rule 2). `EmptySource` then refuses a plan that deletes on the other side, unless
+   `allow_empty_source`. **Folders emptied entirely**: a pair of folders whose source side holds no such file while the
+   plan deletes files below the other side's is not refused but listed (`SyncPlan::emptied`, outermost only, tree order),
+   in the human output before the items (`# emptied entirely: <path> on the <side> (the <side> holds no file there)`), on
+   stderr before the CLI's question, and in JSON as `result.emptied: [{path, empty, emptied}]` (additive). The confirmation
+   model (`Confirmation`) does not carry it: W9's dialog renders `SyncPlan` and shows it there.
+7. **Unknown keys of a session that runs** (`Service::session_run_request`, so `session run`, `folder sync --session`,
+   `folder op --session`): each key this version does not know, found against the session's full document (the typed
+   rules keep their own table, so `ignored_keys` alone does not see them), is one `unknown_config_key` warning naming the
+   nearest known key, always, not only with `--verbose`. In a **folder-sync** session a key in `[specs]` or `[rules]`
+   (the sync's rules, folder and `[rules.sync]`) refuses the run instead, `invalid_data`, exit 100, naming the key and the
+   nearest known one: `[specs] read_only = true` meant to protect a side, or `presett`, would otherwise run another sync.
+   Other sections and other session types warn only (T13); the keys stay in the file (D-70).
+8. **The fast path of a new file trusts no more than the stamp** (note 17's `HandleMeta::size`). `LocalVfs::copy_new_file`
+   reads the opened source through `take(size + 1)`: what is not the file the caller's `lstat` saw (a link to a FIFO a
+   writer feeds, a file that grew or shrank) cannot stream past it, and a count other than the stamp's is "changed since
+   the plan was made", naming the source, the temporary file removed. A read that fails on what is not a regular file (a
+   folder swapped in) names the source too, by an `fstat` of the handle on that error path only. Nothing is added to the
+   path that succeeds, so G7 is unchanged within its noise (§1.6.22 figures in `docs/02`). Without a size the back-end
+   stats the source as before. Not covered: a FIFO swapped in between the stamp's check and the `open`, with no writer,
+   blocks that `open` (as on the stream path); a no-follow, non-blocking open needs flags this workspace has no crate for.
+9. **P-SYNC after review.** The generator now makes pairs with one side hidden by a size filter, a pair folder hidden on
+   one side (protected attributes), links, folders whose listing fails on one side, a case-insensitive alignment with two
+   spellings, an Ignored path, *Just selection* of a path, and comparisons stopped part-way; the model knows each rule
+   (rule 1 scope, rule 2 failures, rule 3 both ways, Ignored as `same`, conflicts) and the empty-source rule of *after
+   review* 6. The second-run check is the model on the tree the first run left, for custom matrices, overrides and
+   no-to-all too; presets still plan nothing that runs. It asserts shares of cases that ran (a third of the plans not
+   refused), deleted, hid one side, held links, aligned two spellings, failed a listing, had a scope or an Ignored path,
+   and refused an unfinished comparison. The mutations of the review fail it (see the review's report).
+10. **A folder-sync file of the old shape** (§1.6.15's "reads as it is"; note 12). Before W6 `[rules]` of a folder-sync
+    session was kept as written, so a file may hold an older shape; the pre-W6 golden is kept as a fixture
+    (`folder-sync-before-w6.toml`) beside the new one. Where the old shape has one meaning now it is read as that:
+    `filters.names` as a filter text (`"*.c;-obj\\"`), a string where a list is expected as that one item. What has none
+    fails at load, `invalid_data`, naming the key: `rules.mode` (no preset can be told from `"mirror"`), and a value whose
+    type is not its key's now.
+11. **`IpcHandler::seen`** (additive, default nothing): the server shows a handler every request after the handshake,
+    also those it answers itself (an `OpenView` of a kind it does not serve), so a test records the wire of `folder sync
+    --gui` instead of reading it back from an error message.
+
+**W6d.** Where the implementation interpreted or extended §1.6.20 and §1.6.24, and why. Safety won where the text was
+silent.
+
+1. **Predicates.** `Ctx` gains `row_selected` (one row selected in a comparison that has finished or stopped, with no
+   job of the view and no operation under way), `row_on` (the row has an item on the left, on the right) and `writable`
+   (Disable editing). `SideWritable(side)` holds when that side is writable and the row has an item on the other side (a
+   copy needs a source); `RowSelected` when the row has an item on a writable side. `Busy` covers an operation's jobs,
+   so Stop cancels them. `FullRefresh` while an operation is under way does nothing: its outcome and its refresh come
+   first.
+2. **One task per view.** *Choosing* (the Delete dialog), *Planning* (one job: `folder_op_plan`, then
+   `folder_confirmation`, which reads `options.toml`, D-105), *Asking* (the view keeps the plan, the dialog only the
+   `Confirmation`), *Executing* (`JobKind::FolderOp`), *Refreshing* (`JobKind::FolderRefresh`). The four commands are off
+   for all of it, and `start_operation` refuses by itself as well, so neither a second dialog nor a second job can start.
+   A plan with no question left (the keys off) runs at once.
+3. **A stale plan does not run.** The view keeps the model (`Arc`) and its generation from the command on; the plan runs
+   only if both still hold after planning and after the dialog, else a warning notice says so and nothing is written. A
+   child's result and an Expand refresh wait for the task, so they cannot move the generation under a question.
+4. **Delete dialog presets.** A row on one writable side has that side chosen; a pair has none, also when one of its
+   sides is read-only (OK stays off until one is chosen; *after review* 5): *Both* is never a default, nor is one side of
+   a pair picked for the user.
+   `require_side_selection_in_delete` presets nothing ever. A side the row has nothing on is greyed like a read-only one.
+   Delete Permanently plans `recycle: Recycle::default()` whatever the dialog holds.
+5. **Confirmation dialog.** Enter is Yes for the operation question and No for an item's. "Do not ask again" counts with
+   Yes and Yes to All only (the key's `false` means "proceed"), is written by `Followup::DisableOption` once the last
+   question is answered and only when the operation was not cancelled, and changes the next operation, not the questions
+   of this one. The recycle bin's question and a sync's (`sync_confirmations`) have no box. A dialog that leaves with a
+   question open (the window's close button) is a Cancel. The counts under the question are per action, items and bytes
+   (bytes only where items carry a size: a removal has none), then what the plan leaves and what cannot run.
+6. **Notices.** Key `op:<view>`. Information when `FolderOpOutcome::ok()`; a warning with the new `NoticeAction::ShowLog`
+   (it brings the view's tab and opens its log panel) otherwise, and when stopped (`<caption>: stopped; …`). A plan the
+   Service refuses is a warning notice with its log entry. The outcome's entries are `op_log_entries` with the tab's
+   caption as source; the notice is not logged again, the summary entry stands for it (D-117). When a plan's dialog
+   appears, the view's tab comes to the front: the question is about its row. An operation's notice stays when its tab
+   closes (what happened on disk is still true).
+7. **Rows a refresh replaced.** `renumbered` moves the open folders and the selection; a row whose facts changed gets a new
+   record, which is no renumbering (a copied orphan becomes a pair), so the open folders and the selected row are also
+   found again by path, where the user changed nothing while the refresh ran (*after review* 3). A refresh that answers
+   flat (`report: None`), or fails after an operation, runs the comparison again; so does one that leaves
+   `garbage() > len() / 2`.
+8. **Full re-runs keep what is open by path.** `FullRefresh` and the re-run of note 7 find the open folders and the
+   selected row again by path once the new comparison ends (the row only when none was selected meanwhile); before, the
+   old ids were kept and could name other rows of the new model. "A `FullRefresh` is unchanged" is read as: it still runs
+   the comparison again.
+9. **Open on a closed archive** runs `folder_open_archive` as a job; once it opened (the job succeeded and the row is a
+   folder that did not fail to list), the path joins the view's `request.patch.open_archives`, which `duplicate()` gives
+   the session, and the row opens by path. An archive that cannot be read is not remembered (*after review* 7).
+10. **FC-012.** `expanded_on_load` is applied when a run ends (not with *expand all*, nor after a re-run that restores
+    paths). Expand, or the disclosure triangle, on a `NotScanned` folder refreshes it, then opens it; while a task of the
+    view runs it waits, by path, and runs when the task ends (*after review* 6).
+11. **FC-029(c).** The ticket is the row's path and both stamps, not its id: ids move and records are replaced. The result
+    goes to the live file row at that path, through `apply_child_result`'s stamps, once per child (its first result), with
+    `ContentMethod::Rules` and the child's `verdict(false)`; it waits while the view's task runs; a child closed first
+    gives none; a re-run forgets the tickets. A child opened through its parent's session (a store job) is adopted when
+    `finish_open` has its id.
+12. **Disable editing and `--nobackups`.** From `OpenOptions` on every `open_view` (IPC and the command line; `--ro` is
+    both sides), from the session's `[specs] read_only_*` on every session open, and copied by `TabDuplicate`. A view's
+    session carries its read-only sides, so Save, Save As, auto-save, the Settings dialog and a workspace keep them, and
+    Session Settings OK takes them back from that session; `--nobackups` comes from `OpenOptions` only and is never
+    written to a session, but survives Settings OK, `TabDuplicate` and a workspace (the tab's `view` table, key
+    `no_backups`). See *after review* 1.
+13. **Tests.** `FolderViewModel::gate` (`cfg(test)`) holds the plan, execute, refresh and archive-open jobs, and
+    `scan_gate` a comparison after it scanned, before it reports; `AppCore::before_wait` opens a gate once Quit waits;
+    so Stop, the busy states, a click during a refresh and an operation whose view ends are tested without timers. No test calls a recycle bin: a delete to the bin is checked by its plan and cancelled, the
+    no-bin question on an archive member is answered No, and the pointer test unticks the bin and checks the model before
+    OK. The child's result is tested with a CRLF pair (`rules_same`): a plain text file's inner whitespace is important.
+14. **Architecture.** `op_dialogs.rs` is in check 7's list of model files. `folder_view.rs` names no toolkit either, but
+    stays out of the list as before.
+
+**W6d after review.** An independent review proved seven defects and fourteen untested behaviours (mutations that
+survived the suite); the maintainer decided the fixes, safety first. Where the text above, a help topic or a document
+said otherwise, it now says this.
+
+1. **The write policy survives every route.** Before, `AppCore::capture` built a view's session from `Specs::default()`,
+   so Save and Save As wrote a protected session without `read_only_*`, and Session ▸ Settings ▸ OK reset the view to
+   all-writable, even with nothing changed: Copy to Right then overwrote a `--ro2` side. Now `ViewCapture` carries the
+   read-only sides and its session sets `[specs] read_only_*`; Settings OK takes them from that session (the dialog has no
+   control for them, so they come back unchanged) and keeps the view's `--nobackups`; a text view keeps its sides too
+   (it writes nothing yet, but its session and its duplicate keep them). A read-only side becomes writable only by an
+   explicit change of the session (`session edit --set specs.read_only_right=false`, or the file). `--nobackups` has no
+   session key (note 12); a workspace keeps it as `no_backups = true` in the tab's own `view` table (docs/03), read only
+   when a workspace tab is restored, never from a session file. A child Text Compare of a protected folder view does not
+   inherit its sides yet: nothing writes in a text view before W10, which must pass them.
+2. **The question names its row.** The confirmation dialog shows the row's path and its sides (`a/b.txt: from the left
+   to the right`, `…: on both sides`) above the question; the Delete dialog already showed the path and what each side
+   holds. A selection that moved off the row between the command and the question (while the plan was made, or while
+   the Delete dialog was open) cancels the operation before anything is asked: a warning notice "the selection changed
+   while the operation was prepared; nothing was written". The same holds for a plan with no question left (the keys
+   off): it acts on the row it was given only while that row is still selected.
+3. **A click during a refresh wins.** A refresh (after an operation, an Expand, an archive) finds again by path only what
+   the user left as it was while it ran: a folder still open (one closed meanwhile stays closed) and the selection, unless
+   the user selected a row meanwhile (`selection_moves` counts the user's selections). A full re-run likewise keeps a row
+   selected while it compared. A folder opened during a refresh follows `renumbered`.
+4. **An operation whose view ends is reported.** Closing the tab, IPC `CloseView`, a workspace load, Session ▸ Settings
+   ▸ OK (the model is replaced) and Quit end a view's model through `FolderViewModel::retire`: an execute job is cancelled
+   and kept by the window until it has ended its current item (the cancel is cooperative, per buffer); its outcome goes
+   to the log with the tab's caption as source and one notice, `<caption> in <tab> (closed): …` or `(settings applied)`,
+   without *Show log* (the view is gone). An outcome or notice the view had not handed over yet is reported the same way.
+   Quit waits for such jobs before the Service shuts down, at most 30 s (`OPERATION_FLUSH`), so no temporary file is left;
+   one still running then is logged as an error. A plan or a question that had not run writes nothing and is dropped.
+5. **A pair has no preset side** in the Delete dialog, also when one of its sides is read-only (note 4): before, the
+   writable side was preset, and Shift+Del, Enter, Enter deleted it permanently, against `help/dialog-delete.md`.
+6. **An Expand during a task waits.** Before, an Expand on a folder not scanned while an operation or a refresh ran was
+   dropped. It is kept by path and runs when the task ends (note 10).
+7. **A failed archive open is not remembered.** Before, `open_archives` and the row to open were set before the job ran.
+   Now they are set once the archive opened; an archive that cannot be read (its folder failed to list, or the job
+   failed) gives a warning notice `Open <path>: <why>` and leaves the session as it was.
+8. **Tests the mutations asked for**, in `tests_folder_ops_fixes.rs`: a delete of one side of a pair deletes only that
+   side; the plan request carries the read-only sides and the Service's refusal shows as a warning; the view refuses a
+   copy into a read-only side by itself; "Do not ask again" then Cancel writes no key; a dialog closed mid-questions runs
+   no item, not even those without a question; a folder opened during a refresh stays open through `renumbered`; a model
+   changed while planning asks nothing; FullRefresh waits for an operation; nothing operates while a comparison runs;
+   the window passes `require_side_selection_in_delete`; a child's result waits for an open question; the read-only and
+   backup questions through the window, the move and system questions through the dialog. The "second operation
+   refused" check of `tests_folder_ops.rs` now looks at the job list and the dialog stack, so it can fail.
+9. **The CHANGELOG** keeps one W6 section in `## Unreleased` instead of one entry per part (§1.6.24 says so now): W6
+   ships as one pre-release, 0.1.92, and entries per part repeated each other and told of states a later part or a
+   review changed (the Delete dialog's presets, what a refresh keeps), which a user of 0.1.92 never sees.
+
+### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -4002,3 +6011,253 @@ reads the real clock, zone or home folder (T1). The part of each item is in brac
   architectures once, `check-linux-binaries.sh` clean (glibc floor ≤ 2.31, baseline code), `smoke-test.sh`. Maintainer's
   run on Windows and macOS through CI before W5 merges (plan §5.1). The documentation updates of §1.5.18 done, the §1.5.19
   notes written, the `docs/16` progress line updated.
+
+### 6.6 W6 acceptance
+
+Rules for every item:
+
+- **Platforms.** Every test runs on Linux, Windows and macOS unless it says otherwise; Windows and macOS are exercised
+  only by CI and wine, so what differs is stated. Core logic runs on `MemoryVfs` with case sensitivity as a parameter,
+  so a case rule never depends on the host: Windows and macOS temp folders are case-insensitive, and no disk test may
+  assume a case. Disk tests use `tempfile`, canonicalized (macOS' temp folder is a link), with specs from `Spec::parse`;
+  goldens normalize the temp prefix and separators as the existing CLI tests do.
+- **Unix only (`cfg(unix)`):** modes, FIFOs, devices, sockets, `Entry::special` from disk. **Windows only
+  (`cfg(windows)`):** DOS `R`, `S`, `H` set with real attributes. The rest of the attribute tables run on `MemoryVfs`
+  with `Attrs::Dos`, everywhere. Real symbolic links: `cfg(unix)`, or on Windows skipped when `create_symlink` answers
+  `PermissionDenied`, as A3.6; link rules are also tested on `MemoryVfs`. The four tests that fail only under wine
+  (`a3_1_rename_case_only`, `a3_1_set_times_created_local`, `a3_6_rule4`, `a3_6_rule9`) are not a W6 regression; no new
+  test may depend on wine's rename or file times: such a check goes behind `cfg(not(windows))` with a note, and runs on
+  real Windows in CI.
+- **Times.** A test sets times with `set_times` to whole seconds; never relies on a file system's granularity, nor on
+  "now". Real clock, zone and home folder are never read (T1). `created` is `cfg(any(windows, target_os = "macos"))` or
+  `MemoryVfs`.
+- **No timers.** Tests do not sleep or race a clock. Cancellation is deterministic: a `ProgressSink` or fault hook
+  cancels the token at the n-th item or byte, and the test asserts results, not time. W6 needs no wall-clock assertion.
+  One that a part must add goes through `tests/common/timing.rs::meets_in_some_round(bound, measure)`, with `cancel` in
+  the test's name (D-69): one round and the bound on Linux; on macOS and Windows up to six rounds, the fastest meeting
+  the bound and the worst meeting G4, the rule of `core/hikasa-folder/tests/budget.rs`, because shared runners deliver
+  wake-ups late for seconds at a time. Waiting on a job polls a state, bounded by count, never by a fixed sleep.
+- **Faults.** `MemoryVfs` hooks of §1.3.8; `dump()` proves "untouched". New test-only hooks are allowed on `MemoryVfs`.
+  Recycle bin on `MemoryVfs::trashed()`, as CI has no usable bin; a real bin stays in `tests/trash.rs`'s existing cases.
+  Programs, clipboard, terminal: `RecordingLauncher`, `FixedClipboard`, and a scripted line source; no real program, no
+  PTY.
+- **GUI.** Headless through the models (§1.4.16); window tests only under `env -u WAYLAND_DISPLAY xvfb-run -a`.
+- **Gates** run on Linux only, `#[ignore]`, by hand. Everything else is on CI. The part of each item is in brackets.
+
+**W6a — Foundations**
+
+- A6.1 **Batch plans (D-162) [W6a].** `core/hikasa-vfs/tests/ops_batch.rs`. A hand-built `OpKind::Batch` mixing
+  `create_dir`, `copy`, `link`, `move`, `remove`, `remove_dir`, `touch` runs on `MemoryVfs`: journal order equals plan
+  order; `times` per item; `Preserve` of `BatchOptions`; a failed folder cuts its subtree and no sibling root
+  (`not_run`); declined `skip` blocks a parent's `remove_dir` (`children_failed`). `moves` gives two-phase behaviour
+  into an archive. `execute` still equals `execute_with` with default options on every existing W3 and W5 test.
+  `PlanItem` round-trips through JSON with and without the new fields, a W3 plan text reads. `hikasa.vfs_op.v1` goldens
+  unchanged. A panic inside `execute_with` aborts batches as A5.14.
+- A6.2 **Stamps (D-163) [W6a].** `ops_batch.rs`. Every field × source and target: changed size, time, kind, a gone item,
+  a new item where none was stamped → that item fails `changed since the plan was made`, the target byte for byte
+  (`dump()`), other items run. A folder stamp ignores time. `follow_source` stamps through the link. Call count: the
+  journal and a `stat` counter show one `lstat` per side per item, not two. Member stamps in an archive; a member the
+  plan does not touch changed by another operation since planning survives the rebuild. Windows: a local test on a file
+  changed through a held handle accepts either a pass or `changed since the plan was made`, never a lost change.
+- A6.3 **Durability (D-164) [W6a].** Unit tests in `local/mod.rs` count sync calls through a `#[cfg(test)]` counter: new
+  target 0, replaced target 1 (file), move 2 on Unix (1 on Windows, which has no folder sync). `MemoryVfs` records the
+  option. `copy_new_file` on a tempdir: a `#[cfg(test)]` stop before the rename shows the temporary sibling alone in the
+  folder, already with final content, mode and time; `preserve.attrs` off takes the old path; over `FAST_COPY_MAX`
+  returns `Ok(None)`. Cancel before the rename removes the temporary file. Result equals `fs::copy` + times in bytes,
+  mode (`cfg(unix)`), `mtime`. Windows and macOS: `R` is set after the rename, `set_created` on macOS and Windows where
+  `preserve.created`. `vfs cp` goldens unchanged.
+- A6.4 **Exchange (D-165) [W6a].** Files, links (Unix), a file with a link, different sizes, across `set_device`
+  devices, both sides in one archive, one side in an archive. A fault at each of the four steps of §1.6.2: rows 1–3
+  leave both sides byte-identical and no hidden sibling, row 4 leaves `T2` holding the other side's content and the
+  message naming it. A plain file against a member with a failing rebuild keeps both sides, no `T2` left. Two archives:
+  the builder's item error (W6b). Cancel at each step. Metadata travels both ways.
+- A6.5 **Fence (D-166) [W6a].** `within`: table of local paths in host syntax, a member, a nested member, an opened
+  archive inside a base, a base inside an archive, a case-insensitive back-end, `a/b` against `a/bc`, the base itself
+  false, `..` rows `cfg(unix)`, bounded so that a walk that does not end fails; drive-letter rows `cfg(windows)`. A link
+  in a base refused at any depth, swapped in after planning on a disk, between two items of one folder for a removal; a
+  link at or above a base, the item itself and a source only read go through. `execute_with`: a hand-built plan with a `remove` outside the base fails `is
+  outside the base folders`, nothing removed; `writes` on and off; a `trash`, a `move` source, an `exchange`. Plan rule
+  tests: A6.27.
+- A6.6 **Backups (D-167, D-168) [W6a].** `core/hikasa-vfs/tests/backups.rs`. Naming: the whole table of §1.6.5, a name
+  with no stem, a trailing dot, a non-UTF-8 name (`cfg(unix)`), `Folder` with `rel` and without. Execution: a replaced
+  file ends at its backup with old content, times and mode; the journal order is stage, rename, commit. A second run
+  replaces the backup. Faults: a stream fault leaves target and old backup; `Fault { op: Rename }` fails the item with
+  target intact; `Fault { op: Commit }` puts the target back, and a second fault there names the backup in the message.
+  `CrossDevice` takes the copy path, a failing `write_backup` fails the item. `link` and `create_dir` replacing. A
+  folder at the backup name: planning error. Numbering of duplicates, `abc.txt` with `abc.doc`. Remove has no backup.
+  Archives: one `write_backup` of the outermost file per operation, by `ArchiveCounters` and journal, also for a nested
+  chain and a source-only root; none when nothing was done or on `Abort`; a failing backup aborts, the archive unchanged
+  (`dump()`), items failed, exit 100; a `replaces` member has `backup: None`. Windows: rename onto a read-only backup
+  fails the item, target intact.
+- A6.7 **Filters (D-169) [W6a].** `core/hikasa-folder/tests/filters_attrib.rs`. Parsers: table of good and bad texts,
+  TOML round trip, `false` off, sparse. `attrib` on `MemoryVfs` DOS attributes: `+r`, `-h`, `+rh-s`, on files, not on
+  folders; on a Unix back-end: no effect and one `capability_missing` per side. `unix_type`: every letter on `MemoryVfs`
+  with `MemMeta::special`, `Other` with none, followed links; a folder never hidden. A hidden side is teal (FC-054), and
+  its folder pair still aligns. INV-FOLDER-7 by `check_tree_invariants`. Unix: a real FIFO and socket are `p`, `s`
+  (`cfg(unix)`). Tar devices through `ArchiveVfs`. Windows: letters `b c p s` never match on disk; that is asserted, not
+  skipped. `--attrib-filter`, `--unixtype-filter` CLI rows and an unknown letter → 100.
+- A6.8 **FC-012 (D-170) [W6a].** The four rows of the table, on a fixture, states and scan status each; defaults equal
+  M1 (existing goldens unchanged); verdict `incomplete`; `expanded_on_load` table, differences only, flat; a refresh of
+  a `NotScanned` folder fills it.
+- A6.9 **Ignored (D-171) [W6a].** `core/hikasa-folder/tests/ignored.rs`. Paths, folder inheritance, `!` exceptions,
+  longest path, case by alignment. `state`, `diffs`, `content` unchanged, `category` same: verdict, exit code, display
+  filter, statistics, `FolderStats::ignored`. Error and Unknown stay. `set_ignored` keeps counters equal to a recount
+  (INV-FOLDER-5), and its list round-trips through a new scan to equal states; the list stays minimal. JSON flag
+  `ignored`; `FLAG_NAMES` 11; TOML sparse.
+- A6.10 **FF-002 (D-172) [W6a].** A rules-based folder comparison with a format off gives the result of the format that
+  then wins; a child request has the overrides; an unknown id warns once and is kept; `--format-on`, `--format-off`.
+- A6.11 **Refresh (D-173) [W6a].** `core/hikasa-folder/tests/refresh.rs`. Each row of the table of §1.6.7, on
+  `MemoryVfs`: journal shows one `list` per side per refreshed folder, a kept subtree unread, a kept pair not re-read
+  for content. Ids stable when rows are unchanged; `renumbered` right otherwise, and every read through a mapped id
+  works. Counters equal a recount after each write. Side tables hold nothing for dropped ids, `content_counts` follow.
+  Archive: rebuilt, re-read through the new stamp; `open_archive` makes a closed row a folder in place of a re-run.
+  Failing listing: the error row. Cancel at the n-th folder: `complete: false`. `RefreshBusy`, `RefreshFlat`. Property
+  P-REFRESH: random small trees, random scripts of `MemoryVfs` changes, refreshed `to_canonical` equals a fresh
+  comparison, with content method CRC too. Disk variant on a tempdir: one fixed script, all platforms.
+- A6.12 **Contents on demand (D-174) [W6a].** `compare_contents` on a pair and a folder, each method, a pair already
+  tested counted once; budget shared (`ByteBudget` tests); a failing read is an error row; cancellation restores the old
+  state, no pending rows; `compute_crcs` uses a zip's CRC with nothing decoded (journal) and reads a local file;
+  `apply_child_result` with equal and changed stamps. Statistics equal a recount.
+- A6.13 **`extract_to_cache` (D-186) [W6a].** Members with plain, hostile and Windows-reserved names: path inside
+  `s<n>/x<k>/`, the name rule of §1.6.18, extension kept where safe. Read-only (`0400` `cfg(unix)`, `R` `cfg(windows)`).
+  Same member twice, one file; a new stamp, a new file. Never evicted under pressure; a member over `cache_max` →
+  `ArchiveLimit`, nothing left. `cleanup` removes it, on Windows after the read-only bit is cleared. A link, an
+  encrypted, a sparse member → their errors. Cancel mid-stream leaves nothing.
+
+**W6b — Operations**
+
+- A6.14 **Selection (D-175, D-176) [W6b].** `core/hikasa-folder/tests/select.rs`. Word table of §1.6.9, every row,
+  `lt`/`rt`, case. A fixture holding every category × file, folder, empty folder, link: matching table per side and
+  `all`; `diff` with time only, size, content, override; collapsed folders; a folder with one non-matching child;
+  `empty.folders`; `iu`. OR of masks; `select_all_files`; `invert` twice is the identity on shown rows; `restrict`.
+  `resolve`: a folder and a child, a hidden row, filtered rows with and without `include.hidden`, `whole` on and off for
+  each reason. `open_pair` table. `Finder`: substring, folded, whole word, regex, wrap, up, sides, non-matching; a bad
+  regex errors. The W8 examples `left.diff.files left.orphan.files` parse.
+- A6.15 **Planning (D-177) [W6b].** `core/hikasa-folder/tests/ops_plan.rs`: one test per builder rule 1–17, on
+  `MemoryVfs`: pairs with different names (extension and NFC rows, case rows with a case-insensitive instance), raw
+  names (`cfg(unix)` on disk; `MemoryVfs` elsewhere), missing folders once, orders, kinds, a followed source, rule 6's
+  listing (journal: no `list` otherwise) with its filters, stamps, conflicts and rule 8, a target a filter hides, `whole` move as one `rename` and its expansion on `CrossDevice`, a same-named
+  row of another kind, each overwrite policy, stamps, capability on a single-stream archive with one warning. The plan
+  never writes (`dump()` before and after). `OpPlan` is `Clone`, serializes, reads back and executes the same.
+- A6.16 **Confirmation (D-178) [W6b].** `core/hikasa-folder/tests/confirm.rs`. Conflict table: every row × file
+  attribute (DOS on `MemoryVfs`, Unix mode), key on and off. `Confirmation`: order; replies per class; modes; `Cancel`
+  and `No` to `Operation` → `Declined`; `finish` output per answer; a read-only yes clears `R` before replace and remove
+  (`cfg(windows)` on disk, `MemoryVfs` everywhere). `delete` asks with `confirm_delete = false` through the CLI. A
+  scripted line source drives the CLI's prompt path (`cli/hikasa-cli/src/confirm.rs`, unit tests: `y`, `n`, `a`, `s`,
+  `c`, EOF = cancel, junk asks again). No terminal, no `--yes`: exit 100, tree unchanged. On a real terminal
+  (`cli_interrupt.rs`, `script` of util-linux, Linux only): Ctrl-C at a prompt ends it at once, exit 100, nothing written;
+  a file of rule 6 edited at the prompt stays. A folder that replaces a file, a read-only archive, a backup over a file of
+  nobody: each asks, `no-to-all` keeps it, a text dry run shows it. On Windows stdin of a CI
+  process is not a terminal, as elsewhere; the test passes a piped stdin explicitly.
+- A6.17 **Recycle bin (D-179) [W6b].** Table of §1.6.12 on `MemoryVfs`: one `trash` for a `whole` folder, per item
+  otherwise, the folder staying; member → `no_recycle_bin` yes and no; `trashed()`. A failing `trash` without `fallback`
+  fails with the item in place; with it, the report shows `remove` items and one `trash_fallback` warning, and only what the
+  plan stamped goes: a file that came since stays with its folder, a changed file stays, a `trash` with no stamped items
+  fails; the same for a folder of rule 6. One `trash` asks for a read-only file below it, scanned or listed. `--recycle`
+  on an archive through the CLI with `--yes`.
+- A6.18 **Rename (D-180) [W6b].** `core/hikasa-folder/tests/rename_masks.rs`. Every row of the DOS table; `base_mask`
+  table; a property: `dos_rename(n, "*.*") == n` and `dos_rename(n, "*") == n` for every name. Regex: groups, `${name}`,
+  `$$`, `$1a`, a missing group, whole-name anchoring, `(?i)`, a backreference through `fancy-regex`
+  (`EngineKind::Fancy`), a backtrack limit fails the item only. Name checks on `MemoryVfs`; `CON.txt` and a trailing dot
+  fail on disk `cfg(windows)`, and `windows_name_problem` stays tested as a pure function on every platform. Collision
+  table: every row; chains of 3, cycles of 2 and 3 end as asked, with no hidden name left, on `MemoryVfs` and a tempdir;
+  a fault in a cycle's middle reports the hidden name.
+- A6.19 **Touch, mkdir, copyto (FC-072, FC-076, FC-077) [W6b].** Rules 14–16: `OtherSide` on pairs, folders; a folder
+  whose `set_times` fails is that item's failure (`Fault`). Mkdir on both sides, a missing parent, `x.zip`, `x.zip/`,
+  `x.gz`. Copyto: `Base`, `Relative`, `None` per side; the common prefix in whole components (`ab/x`, `ac/y` → none); a
+  new zip target created once; duplicates `skip duplicate_target`; a target inside a selected source; script example 4's
+  shape (`left.diff.files left.orphan.files`, relative, a `.zip` named by date in the test).
+- A6.20 **Property P-OPS (T12) [W6b].** `core/hikasa-folder/tests/props_ops_model.rs`: random trees × selection ×
+  operation × answers on `MemoryVfs`, every verb that plans items (copy, move, delete with and without the bin, exchange,
+  rename, touch, mkdir, copyto and moveto in each structure) with `YesToAll`, `NoToAll` and scripted per-question
+  replies, with and without a name filter and unlisted folders: (a) the plan writes nothing; (b) the tree after execution
+  equals, file by file (kind, bytes, time, mode), what a model of the verb computes from the tree before and the selection
+  alone, never from the plan; (c) every item the plan let through runs: `not_run` only below a folder that failed, a
+  failure only where the plan showed one; a share of the cases must run an item (asserted). `props_ops.rs`: conservation
+  over random trees with links, filters, both cases and unlisted folders (what a verb may not touch stays, bytes are not
+  lost, a declined target stays, what a filter hides stays); a refresh equals a re-comparison; cross-device moves with a
+  source-removal fault lose nothing; backups hold what they replaced. Each of them fails when execution is stubbed out.
+  Regressions in `proptest-regressions`.
+- A6.21 **Disable editing (D-184) [W6b].** Every row of the table in §1.6.15, through `Service`, not a view:
+  `ReadOnlySide`, exit 100, nothing planned; `CopyTo` allowed; a `copyto` or `moveto` whose `--target` lies at or below
+  a read-only base, by the CLI and by a session, through `..`, a link at the base, a link on the way and a member of an
+  archive that is the base, refused; a session's `read_only_*` and `--read-only`;
+  `swap_sides`. Grep-style: `folder_op_plan` is the only caller of `plan_op` in `hikasa-session` (architecture check 7).
+- A6.22 **Exclude (FC-052) [W6b].** `exclude_masks` for a file, a folder, a base file, `Type`, no extension;
+  `escape_mask` property: the escaped mask matches its name and no other of a generated set, for names with `[ ? * ; !
+  -` and blanks; nothing added twice; `folder op exclude --session` rewrites `[rules]`, refuses a locked session without
+  `--force` (D-91), and a re-comparison hides the item; `--dry-run` prints the masks.
+- A6.23 **Open With (D-186) [W6b].** `RecordingLauncher`: per item and per pair, variables through D-76, a member's
+  extraction, a folder app, `accepts_files`, `wait_for_previous` order by recording, `--dry-run`, `--associated`, a
+  program that cannot start (exit 100), the program's own exit code ignored. `SystemLauncher` is refused in tests by the
+  architecture check.
+- A6.24 **Log model (D-188) [W6b].** Golden lines of `op_log_entries` and `sync_log_entries`; OPT-018 filters;
+  `LOG_DETAILS_MAX` with `… and <n> more`; failures always; time from the injected clock. The summary text equals the
+  human summary (one function).
+- A6.25 **`folder op` (D-185) [W6b].** `cli/hikasa-cli/tests/cli_folder_op.rs`: each verb row, text and `--json`
+  goldens; `--select`, `--path`, `left:`, `--no-expand`, `--expand`, `--include-hidden`, `--display`; nothing selected →
+  100; `--dry-run` writes nothing and its items equal a run's; exit codes 0, 100, 107; item failure `ok: true`;
+  `--session`, flags on top; `--yes --dry-run` refused; a Ctrl-C cancels as `vfs` (`cli_interrupt.rs`, D-159: a
+  `cfg(unix)` signal test, as the existing ones; Windows by the token test). `SCHEMAS` 38; `hikasa version --json`;
+  `hikasa help folder op`; `help-check`. T11: `folder op copy` and the same plan through `Service` give the same tree.
+  `compare`, `crc` schemas, and text and JSON goldens of `copyto`, `moveto`, `compare`, `crc`, `exclude`, `ignored`,
+  `open-with`. No spelling of `--path` reaches the base. Rule flags equal `folder compare`'s by a clap reflection test. Paths in goldens normalized
+  for Windows.
+
+**W6c — Sync**
+
+- A6.26 **Matrix (D-181) [W6c].** `core/hikasa-folder/tests/sync_matrix.rs`. **8 situations × 5 actions:** a fixture
+  holds each situation; for each cell: valid cells produce the action and its effect on `MemoryVfs`, invalid ones are
+  refused by `validate`, in both `orphans` readings. The five presets: the table of §1.6.14, row by row, as data and as
+  an executed run. `parse`: words, kebab and snake, a base preset, repeats, unknown. Round trip through TOML.
+- A6.27 **Plan rules (D-182, D-166) [W6c].** `core/hikasa-folder/tests/sync_plan.rs`. Row algorithm steps 1–6 one by
+  one. `conflict` rows. Ignored rows `same`. Overrides: a path, a folder covers its subtree, an impossible one warned.
+  Folders: `create_empty` on and off both ways, a wholly deleted folder, a folder keeping a filtered child; `whole`
+  `trash`. Order: deletes, right, left; a file replacing a folder of its name runs. Effective rules: flatten refused,
+  `within_archives` both ways, single-stream `Leave`/`Capability`. `EmptySource` refused, `--allow-empty-source`, an
+  empty base with `update_*` fine; incomplete comparison refused; error rows: `sync_incomplete`, nothing below them
+  touched, exit 100. Read-only sides. `SyncPlan::folder` equals a recount. One rebuild and one backup per archive in a
+  sync (`ArchiveCounters`).
+- A6.28 **Mirror never leaves the bases (D-166) [W6c].** Property over random trees on `MemoryVfs` with links, followed
+  links (FC-013), opened archives and hostile member names: after `mirror` either way, `dump()` of everything outside
+  the two bases is unchanged, whatever the filters, overrides and archive mode. Unix disk variant with a real link to a
+  folder outside the base and `--follow-symlinks`: the outside folder keeps every file (`cfg(unix)`; on Windows the same
+  with a folder link where `create_symlink` is allowed, else skipped).
+- A6.29 **Property P-SYNC (T12) [W6c].** `core/hikasa-folder/tests/props_sync.rs`: random trees × presets × options:
+  dry-run items equal executed items; after execution a re-comparison gives the plan's predicted row (mirror: no
+  difference and no orphan on the rows in scope; update: no row newer on the source side); a second run plans nothing
+  (idempotence); P-REFRESH holds.
+- A6.30 **Sessions (D-183) [W6c].** A `folder-sync` session: `session new --type folder-sync`, `session edit --set
+  rules.sync.preset=mirror_right`, an old file with an empty `[rules]`, sparse save, `effective_rules` with defaults, a
+  bad cell refused, `session show`. `session run` with `--dry-run`, `--yes`, without either (100). `read_only_*` round
+  trip. Package round trip (D-86). `SessionRules::Opaque` still serves its other types.
+- A6.31 **`folder sync` and the boundary (D-185, D-190) [W6c].** `cli/hikasa-cli/tests/cli_folder_sync.rs`: each preset
+  flag, `--custom`, `--orphans`, `--create-empty`, `--recycle`, `--within-archives`, `--override`, `--just-selection`,
+  `--visible`, `--all-rows`, goldens, exit codes, `--dry-run` plans equal runs. A base missing → 107. `--sync` and
+  `--fv`: `parse_open_args` table (`legacy_args.rs`). `folder sync --gui`: a fake IPC server receives `OpenView { kind:
+  folder_sync }`, and an `unsupported` answer exits 100 with the message; the words are checked before any contact, as
+  D-50. `--nobackups`. `hikasa help folder sync`.
+- A6.32 **G7 (D-192) [W6c].** `perf_g7.rs` and `sync_plan_100k`, Linux, release, idle: thresholds of §1.6.22, recorded
+  in `docs/02`. `SyncRow` size, `ops_memory.rs`. G2 and G4 unchanged. A failed gate stops the part and is reported.
+
+**W6d — GUI hooks and release**
+
+- A6.33 **Dialogs (D-189) [W6d].** `gui/hikasa-gui/src/tests_folder_ops.rs`, through the catalogue, no window. Catalogue
+  parity (§1.4.16 rule 1) for the four commands, and the `Del` shortcut in the shortcut table and menu goldens.
+  `PlanConfirmDialog`: each question, reply, "Do not ask again" writes the key, Esc = Cancel, F1 = its topic.
+  `DeleteDialog`: sides, `require_side_selection_in_delete` keeps OK off, read-only sides greyed, checkboxes,
+  `PermanentDelete`. A copy and a delete of a row end with the row updated, a log entry and a notice; a failed item
+  gives the warning notice; Stop cancels. Commands are off for a read-only side. Refused while a dialog's job runs.
+- A6.34 **Refresh in the view (D-173, D-189) [W6d].** After a copy the view's rows equal a re-run's, open folders and
+  the selected row stay, through `renumbered`; `Open` on a closed archive refreshes (one `list`, no new `folder_run`),
+  and the session keeps `open_archives`. Expand on a `NotScanned` folder. `expanded_on_load`. A child's result updates
+  its row; a pair changed meanwhile keeps its old result. Garbage above half the arena runs a full refresh. A pointer
+  test in `ui/tests_pointer.rs` deletes a row by its dialog (xvfb). ARCH-GUI-003 unaffected: the folder gate of M1 is
+  re-measured.
+- A6.35 **Part and wave end.** Each part: whole workspace green as A4.23 (`fmt`, `clippy -D warnings`, `nextest`, doc
+  tests, `doc`, `deny`, `cargo xtask commands-doc --check`, `help-check`, architecture test), its §1.6.24 documents, its
+  `CHANGELOG` entry and its §1.6.25 notes. Clippy also for the Windows and macOS targets. W6d: packaging
+  (`packaging/build-linux.sh`, `build-windows.sh` both architectures, `check-linux-binaries.sh`, `smoke-test.sh`),
+  pre-push scripts, and the maintainer's CI on Windows and macOS before 0.1.92 is tagged. The product name of `docs/17`
+  §5 appears nowhere: grep before each commit. No part bumps the version; 0.1.92 is W6d's last step, 0.2.0 stays for M2
+  complete.

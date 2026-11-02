@@ -152,9 +152,14 @@ impl VfsOpDto {
         }
     }
 
-    /// No item failed and nothing was cancelled (exit 0; else 100).
+    /// No item failed, every item ran and nothing was cancelled (exit 0; else 100).
     pub fn ok(&self) -> bool {
-        self.summary.failed == 0 && !self.cancelled
+        self.summary.failed == 0
+            && !self.cancelled
+            && !self
+                .items
+                .iter()
+                .any(|item| item.status == ItemStatus::NotRun)
     }
 }
 

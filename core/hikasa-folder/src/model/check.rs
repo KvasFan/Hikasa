@@ -25,6 +25,7 @@ fn fail(id: &'static str, detail: String) -> Result<(), InvariantViolation> {
 pub(crate) fn check(tree: &TreeRead<'_>) -> Result<(), InvariantViolation> {
     let store = tree.store();
     structure(store)?;
+    reachable(store)?;
     kinds_and_orphans(store)?;
     canonical_order(store)?;
     counters(store)?;
@@ -34,8 +35,14 @@ pub(crate) fn check(tree: &TreeRead<'_>) -> Result<(), InvariantViolation> {
     monotonicity(store)
 }
 
+/// The nodes reachable from the root, each after its parent, the root first (ids say nothing: a refresh can move a
+/// folder above its children).
 fn nodes(store: &Store) -> impl Iterator<Item = (u32, &Node)> + '_ {
-    (0..store.len()).filter_map(|id| store.node(NodeId(id)).map(|n| (id, n)))
+    store
+        .post_order()
+        .into_iter()
+        .rev()
+        .filter_map(|id| store.node(NodeId(id)).map(|n| (id, n)))
 }
 
 /// INV-FOLDER-1: parent and child links agree; the root has no parent.
@@ -47,12 +54,6 @@ fn structure(store: &Store) -> Result<(), InvariantViolation> {
                 return fail("INV-FOLDER-1", "the root has a parent".into());
             }
         } else {
-            if node.parent >= id {
-                return fail(
-                    "INV-FOLDER-1",
-                    format!("node {id}: parent {} is not older", node.parent),
-                );
-            }
             let Some(parent) = store.node(NodeId(node.parent)) else {
                 return fail("INV-FOLDER-1", format!("node {id}: missing parent"));
             };
@@ -77,6 +78,22 @@ fn structure(store: &Store) -> Result<(), InvariantViolation> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// INV-FOLDER-1, the other way: every live node is reachable from the root, once.
+fn reachable(store: &Store) -> Result<(), InvariantViolation> {
+    let reached = store.post_order().len();
+    let live = (0..store.len())
+        .filter_map(|id| store.node(NodeId(id)))
+        .filter(|node| node.internal & super::store::internal::GONE == 0)
+        .count();
+    if reached != live {
+        return fail(
+            "INV-FOLDER-1",
+            format!("{live} live nodes, {reached} reachable from the root"),
+        );
     }
     Ok(())
 }
@@ -190,10 +207,11 @@ fn counters(store: &Store) -> Result<(), InvariantViolation> {
     let mut agg: Vec<Aggregates> = vec![Aggregates::default(); len];
     let mut totals: Vec<Pair<SideTotals>> = vec![Pair::default(); len];
     let mut content = ContentCounts::default();
-    for id in (1..len).rev() {
-        let Some(node) = store.node(NodeId(id as u32)) else {
+    for id in store.post_order().into_iter().filter(|&id| id != 0) {
+        let Some(node) = store.node(NodeId(id)) else {
             continue;
         };
+        let id = id as usize;
         let (cats, slot) = if node.is_folder() {
             let own = agg.get(id).copied().unwrap_or_default();
             let cats = [
@@ -303,7 +321,7 @@ fn filters(store: &Store) -> Result<(), InvariantViolation> {
     let Some(rules) = store.resolved.as_ref() else {
         return Ok(());
     };
-    // Path and verdict of every folder side (top-down: parents have smaller ids).
+    // Path and verdict of every folder side (top-down).
     let mut folders: BTreeMap<u32, [Option<(RelPath, FolderVerdict)>; 2]> = BTreeMap::new();
     folders.insert(
         0,
@@ -355,7 +373,7 @@ fn filters(store: &Store) -> Result<(), InvariantViolation> {
             let kind = rec.kind();
             let names_ok = rules.names_accept(&parent_path, parent_verdict, name, kind);
             let other = !rec.has(bits::STAT_SKIPPED)
-                && rules.other_filtered(kind, rec.size(), rec.mtime(), &rec.attrs());
+                && rules.other_filtered(kind, rec.size(), rec.mtime(), &rec.attrs(), rec.special());
             if rec.has(bits::FILTERED) != (!names_ok || other) {
                 return fail(
                     "INV-FOLDER-7",

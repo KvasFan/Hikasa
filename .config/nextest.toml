@@ -12,6 +12,10 @@ test-group = 'timing'
 
 [profile.ci]
 fail-fast = false
+# A test that hangs fails in five minutes, and the others of the run go on. The slowest healthy tests of the last CI runs,
+# proptests at their default case count: 33 s on Windows and macOS, 28 s on Linux (2026-10-31), so this leaves nine times
+# that for a crowded runner. A run by hand with `PROPTEST_CASES` in the thousands uses `cargo test`, not this profile.
+slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
 filter = 'test(/cancel|latency|budget|within_|timeout|abandoned/)'

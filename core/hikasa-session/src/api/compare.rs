@@ -1,5 +1,6 @@
 //! `quick`, `text compare` and `folder compare` (§3.1–§3.3).
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::sync::Arc;
 
@@ -7,12 +8,13 @@ use hikasa_core::{
     CancelToken, Cancelled, ContentComparator, ContentMethod, ContentOutcome, ContentResult,
     ContentSource, ExitCode, Pair, ReadError, Side, Spec, Warning, WarningCode,
 };
+use hikasa_folder::sync::{SyncOptions, sync_folder_rules};
 use hikasa_folder::{
     ArchiveHandling, ContentEngines, Criteria, FolderEnv, FolderModel, FolderRules, ScanObserver,
     compare_into,
 };
 use hikasa_formats::{
-    CompiledFormat, DetectReason, Detection, EnabledOverrides, FormatError, FormatKind,
+    CompiledFormat, DetectReason, Detection, EnabledOverrides, FormatError, FormatId, FormatKind,
     TextEncoding,
 };
 use hikasa_text::{
@@ -44,6 +46,8 @@ pub(crate) struct EffectiveFolderRules {
     pub(crate) rules: FolderRules,
     pub(crate) text_rules: Option<TextRules>,
     pub(crate) ignore_unimportant: bool,
+    /// FF-002: the formats this comparison turns on or off.
+    pub(crate) overrides: EnabledOverrides,
 }
 
 /// The effective format of a file comparison with its per-side detections and warnings (D-15).
@@ -233,8 +237,12 @@ impl Service {
             &mut warnings,
         )?;
         let names = Pair::new(self.detection_name(&left), self.detection_name(&right));
-        let chosen =
-            self.choose_format(req.format.as_deref(), names.as_ref().map(Option::as_deref))?;
+        let overrides = self.enabled_overrides(&req.format_overrides, &mut warnings);
+        let chosen = self.choose_format_with(
+            req.format.as_deref(),
+            names.as_ref().map(Option::as_deref),
+            &overrides,
+        )?;
         warnings.extend(chosen.warnings.iter().cloned());
         let load = Pair::new(
             self.load_options(req.encodings.left.as_deref())?,
@@ -313,16 +321,44 @@ impl Service {
         run_guarded(|| self.folder_prepare_inner(req, &job.cancel))
     }
 
+    /// The comparison of a sync (§1.6.14): [`Service::folder_prepare_in`] with the rules `sync_folder_rules` makes of the
+    /// request's (every folder scanned, archives by *Sync within archives*, flatten refused). The sync's words are checked
+    /// here, before anything is scanned.
+    pub fn folder_sync_prepare(
+        &self,
+        req: &FolderCompareRequest,
+        sync: &SyncOptions,
+        job: &JobControl,
+    ) -> Result<PreparedFolderCompare, ApiError> {
+        run_guarded(|| {
+            sync.validate().map_err(ApiError::from_folder)?;
+            self.folder_prepare_with(req, &job.cancel, Some(sync))
+        })
+    }
+
     fn folder_prepare_inner(
         &self,
         req: &FolderCompareRequest,
         cancel: &CancelToken,
     ) -> Result<PreparedFolderCompare, ApiError> {
+        self.folder_prepare_with(req, cancel, None)
+    }
+
+    fn folder_prepare_with(
+        &self,
+        req: &FolderCompareRequest,
+        cancel: &CancelToken,
+        sync: Option<&SyncOptions>,
+    ) -> Result<PreparedFolderCompare, ApiError> {
         // A base is a folder: `a.zip` is the archive's root, whatever the handling mode (FC-001).
         let left = self.parse_spec_in(&req.left, SpecUse::Folder, cancel)?;
         let right = self.parse_spec_in(&req.right, SpecUse::Folder, cancel)?;
         let mut warnings = Vec::new();
-        let effective = self.folder_rules(req, &mut warnings)?;
+        let mut effective = self.folder_rules(req, &mut warnings)?;
+        if let Some(sync) = sync {
+            effective.rules =
+                sync_folder_rules(&effective.rules, sync).map_err(ApiError::from_folder)?;
+        }
         let model = FolderModel::new(left.clone(), right.clone(), effective.rules.clone())
             .map_err(ApiError::from_folder)?;
         Ok(PreparedFolderCompare {
@@ -330,6 +366,7 @@ impl Service {
             right,
             rules: effective.rules,
             text_rules: effective.text_rules,
+            overrides: effective.overrides,
             ignore_unimportant: effective.ignore_unimportant,
             model,
             warnings,
@@ -399,11 +436,40 @@ impl Service {
             }
             None
         };
+        let overrides = self.enabled_overrides(&rules.format_overrides, warnings);
         Ok(EffectiveFolderRules {
             rules,
             text_rules,
             ignore_unimportant,
+            overrides,
         })
+    }
+
+    /// The overrides of FF-002, from plain data (D-172). An id the registry does not know gives one `unknown_config_key`
+    /// warning and is kept (Q11): the format can come back, and then the session means it.
+    pub(crate) fn enabled_overrides(
+        &self,
+        words: &BTreeMap<String, bool>,
+        warnings: &mut Vec<Warning>,
+    ) -> EnabledOverrides {
+        let registry = self.registry();
+        let mut overrides = BTreeMap::new();
+        for (id, enabled) in words {
+            let known = FormatId::new(id.clone())
+                .ok()
+                .inspect(|format| {
+                    overrides.insert(format.clone(), *enabled);
+                })
+                .is_some_and(|format| registry.get(&format).is_some());
+            if !known {
+                warnings.push(Warning {
+                    code: WarningCode::UnknownConfigKey,
+                    message: format!("format_overrides: unknown format id `{id}`"),
+                    spec: None,
+                });
+            }
+        }
+        EnabledOverrides(overrides)
     }
 
     /// Folder compare, step 2: scans into the prepared model (§3.3).
@@ -423,14 +489,15 @@ impl Service {
         run_guarded(|| self.folder_run_inner(prepared, job, observer))
     }
 
-    fn folder_run_inner(
+    /// The content engines of a comparison: the hikasa-vfs CRC and binary comparators and, with `text_rules`, hikasa-text's
+    /// `RulesComparator`.
+    pub(crate) fn content_engines(
         &self,
-        prepared: &PreparedFolderCompare,
-        job: &JobControl,
-        observer: &dyn ScanObserver,
-    ) -> Result<FolderCompareResponse, ApiError> {
+        text_rules: Option<&TextRules>,
+        overrides: &EnabledOverrides,
+    ) -> Result<ContentEngines, ApiError> {
         let stream = self.stream_options();
-        let rules_comparator = match &prepared.text_rules {
+        let rules_comparator = match text_rules {
             Some(text_rules) => {
                 let comparator = RulesComparator::new(
                     self.registry(),
@@ -438,6 +505,7 @@ impl Service {
                     self.load_options(None)?,
                 )
                 .map_err(|e| ApiError::from_text(e, Side::Left, ""))?
+                .with_overrides(overrides.clone())
                 .with_max_bytes(DEFAULT_RULES_MAX_BYTES)
                 .with_external(self.env().temp_dir.clone(), Arc::clone(self.runner()))
                 .with_stream_options(stream);
@@ -445,7 +513,19 @@ impl Service {
             }
             None => None,
         };
-        let engines = ContentEngines::with_stream_options(stream, rules_comparator);
+        Ok(ContentEngines::with_stream_options(
+            stream,
+            rules_comparator,
+        ))
+    }
+
+    fn folder_run_inner(
+        &self,
+        prepared: &PreparedFolderCompare,
+        job: &JobControl,
+        observer: &dyn ScanObserver,
+    ) -> Result<FolderCompareResponse, ApiError> {
+        let engines = self.content_engines(prepared.text_rules.as_ref(), &prepared.overrides)?;
         let now = self.clock().now();
         let router = self.router();
         let env = FolderEnv {
@@ -516,9 +596,18 @@ impl Service {
         forced: Option<&str>,
         names: Pair<Option<&str>>,
     ) -> Result<ChosenFormat, ApiError> {
+        self.choose_format_with(forced, names, &EnabledOverrides::default())
+    }
+
+    /// [`Service::choose_format`] with a comparison's own overrides (FF-002).
+    pub(crate) fn choose_format_with(
+        &self,
+        forced: Option<&str>,
+        names: Pair<Option<&str>>,
+        overrides: &EnabledOverrides,
+    ) -> Result<ChosenFormat, ApiError> {
         let registry = self.registry();
-        let overrides = EnabledOverrides::default();
-        let detect = |name: &str| registry.detect(name, &overrides);
+        let detect = |name: &str| registry.detect(name, overrides);
         let mut warnings = Vec::new();
         if let Some(forced) = forced {
             let detection = registry.force(forced)?;

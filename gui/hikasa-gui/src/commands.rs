@@ -7,6 +7,7 @@
 //!
 //! This module holds no toolkit type (§1.4.16 rule 4); `ui/` draws what it describes.
 
+use hikasa_core::Side;
 use hikasa_session::commands::{EffectiveCommand, ViewCommands, catalogue, effective};
 use hikasa_session::settings::{CommandOverrides, Shortcut};
 
@@ -146,6 +147,14 @@ command_ids! {
     CollapseAll,
     /// Folder: opens the selected file pair in a Text Compare view (FC-062).
     Open,
+    /// Folder: copies the selected row from left to right (M2 W6d, FC-070).
+    CopyRight,
+    /// Folder: copies the selected row from right to left (M2 W6d, FC-070).
+    CopyLeft,
+    /// Folder: deletes the selected row on the sides the Delete dialog names (M2 W6d, FC-073).
+    Delete,
+    /// Folder: deletes the selected row without the recycle bin (M2 W6d, FC-073).
+    PermanentDelete,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -293,6 +302,12 @@ pub struct Ctx {
     pub open_folder_selected: bool,
     /// A file pair (both sides present) is selected.
     pub pair_selected: bool,
+    /// Folder (M2 W6d): one row is selected in a finished comparison, and no job of the view and no operation runs.
+    pub row_selected: bool,
+    /// Folder (M2 W6d): the selected row has an item on the left, on the right.
+    pub row_on: [bool; 2],
+    /// Folder (M2 W6d, FC-003): the view may write the left side, the right side (Disable editing, `--ro`).
+    pub writable: [bool; 2],
     /// A difference exists after the current position.
     pub next_difference: bool,
     /// A difference exists before the current position.
@@ -334,6 +349,11 @@ pub enum Predicate {
     FolderSelected,
     /// A file pair is selected.
     PairSelected,
+    /// A selected row can be written on this side from the other (M2 W6d): the side is writable and the row has an
+    /// item on the other side (`CopyRight`, `CopyLeft`).
+    SideWritable(Side),
+    /// A selected row has an item on a writable side (M2 W6d: `Delete`, `PermanentDelete`).
+    RowSelected,
     /// A next difference exists.
     NextDifference,
     /// A previous difference exists.
@@ -371,6 +391,13 @@ impl Predicate {
             Predicate::OpenFolderSelected => ctx.open_folder_selected,
             Predicate::FolderSelected => ctx.closed_folder_selected || ctx.open_folder_selected,
             Predicate::PairSelected => ctx.pair_selected,
+            Predicate::SideWritable(side) => match side_index(side) {
+                Some(k) => ctx.row_selected && ctx.writable[k] && ctx.row_on[1 - k],
+                None => false,
+            },
+            Predicate::RowSelected => {
+                ctx.row_selected && (0..2).any(|k| ctx.row_on[k] && ctx.writable[k])
+            }
             Predicate::NextDifference => ctx.next_difference,
             Predicate::PrevDifference => ctx.prev_difference,
             Predicate::HomeReady => ctx.home_ready,
@@ -383,6 +410,15 @@ impl Predicate {
             Predicate::TreeRenamable => ctx.tree_named || ctx.tree_folder,
             Predicate::TreeEditable => ctx.tree_named || ctx.tree_new,
         }
+    }
+}
+
+/// The index of a folder side in [`Ctx::row_on`] and [`Ctx::writable`] (`None`: not a side of a folder view).
+pub fn side_index(side: Side) -> Option<usize> {
+    match side {
+        Side::Left => Some(0),
+        Side::Right => Some(1),
+        Side::Center | Side::Output => None,
     }
 }
 
@@ -890,6 +926,42 @@ pub const PRESENTATION: &[Row] = &[
         None,
         G::None,
         P::FolderSelected,
+        NONE,
+    ),
+    row(
+        C::CopyRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::SideWritable(Side::Right),
+        NONE,
+    ),
+    row(
+        C::CopyLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::SideWritable(Side::Left),
+        NONE,
+    ),
+    row(
+        C::Delete,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::PermanentDelete,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
         NONE,
     ),
     row(
@@ -1940,6 +2012,42 @@ mod tests {
         assert_eq!(
             run(&tables, Scope::Home, "Ctrl+F", FocusArea::Root),
             Some(CommandId::Find)
+        );
+        // M2 W6d: Del and Shift+Del delete the selected row of the focused folder tree; a read-only side takes no key.
+        let row = Ctx {
+            row_selected: true,
+            row_on: [true, true],
+            writable: [true, true],
+            ..ctx(Scope::Folder)
+        };
+        let at = |ctx: &Ctx, key: &str, area| tables.dispatch(Scope::Folder, ctx, &sc(key), area);
+        assert_eq!(
+            at(&row, "Del", FocusArea::ViewMain),
+            Some(CommandId::Delete)
+        );
+        assert_eq!(
+            at(&row, "Shift+Del", FocusArea::ViewMain),
+            Some(CommandId::PermanentDelete)
+        );
+        assert_eq!(at(&row, "Del", FocusArea::Root), None);
+        assert_eq!(
+            at(&row, "Ctrl+R", FocusArea::Root),
+            Some(CommandId::CopyRight)
+        );
+        let read_only = Ctx {
+            writable: [false, false],
+            ..row
+        };
+        assert_eq!(at(&read_only, "Del", FocusArea::ViewMain), None);
+        assert_eq!(at(&read_only, "Ctrl+R", FocusArea::Root), None);
+        let right_only = Ctx {
+            writable: [true, false],
+            ..row
+        };
+        assert_eq!(at(&right_only, "Ctrl+R", FocusArea::Root), None);
+        assert_eq!(
+            at(&right_only, "Ctrl+L", FocusArea::Root),
+            Some(CommandId::CopyLeft)
         );
         // The tree's keys belong to the tree (W4b).
         let tree = Ctx {

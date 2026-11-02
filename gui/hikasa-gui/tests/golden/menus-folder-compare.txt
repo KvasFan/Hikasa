@@ -23,6 +23,11 @@ Edit
   Collapse All
   Full Refresh	Ctrl+F5
 Actions
+  Copy to Right	Ctrl+R (disabled)
+  Copy to Left	Ctrl+L (disabled)
+  Delete	Del (disabled)
+  Delete Permanently	Shift+Del (disabled)
+  ---
   Open Folder	Right (disabled)
   Close Folder	Left (disabled)
   Open Subfolders (disabled)

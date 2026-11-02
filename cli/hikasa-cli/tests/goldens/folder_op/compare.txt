@@ -1,0 +1,3 @@
+binary_different changed.txt
+binary_same same.txt
+1 binary same, 0 rules same, 0 unimportant only, 0 important differences, 1 binary different, 0 errors

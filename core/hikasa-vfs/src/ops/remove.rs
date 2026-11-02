@@ -1,11 +1,15 @@
 //! Remove and trash planning and execution (D-98, D-94 rule 3).
 
+use std::collections::HashMap;
+
 use hikasa_core::{Ctl, Spec};
 
-use super::plan::report;
+use super::copy::{clear_read_only_of, restore_read_only};
+use super::guard::{changed, holds};
+use super::plan::{ItemStamp, report};
 use super::{
-    Action, Exec, OpKind, Outcome, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
-    check_item, is_blob, scanning,
+    Action, Exec, Later, OpKind, Outcome, Plan, PlanItem, PlanOptions, RemoveOptions, SkipReason,
+    check_item, is_blob, scanning, spec_key,
 };
 use crate::entry::{Entry, EntryKind};
 use crate::error::{VfsError, VfsOp};
@@ -81,7 +85,7 @@ pub fn plan_remove(
             continue;
         }
         if entry.kind != EntryKind::Dir {
-            items.push(PlanItem::new(action, entry.kind, None, spec.clone(), 0));
+            items.push(PlanItem::planned(action, entry.kind, None, spec.clone(), 0));
             continue;
         }
         if opts.recursive && !opts.trash {
@@ -96,7 +100,7 @@ pub fn plan_remove(
                 fail(&mut items, action, EntryKind::Dir, &error);
             }
             Ok(_) => {
-                let mut item = PlanItem::new(action, EntryKind::Dir, None, spec.clone(), 0);
+                let mut item = PlanItem::planned(action, EntryKind::Dir, None, spec.clone(), 0);
                 item.seen = entry.file_id;
                 items.push(item);
             }
@@ -197,7 +201,7 @@ fn tree(
             tree(vfs, &child, entry, depth + 1, ctl, items)?;
         } else {
             scanning(ctl, items.len(), &child);
-            items.push(PlanItem::new(
+            items.push(PlanItem::planned(
                 Action::Remove,
                 entry.kind,
                 None,
@@ -206,7 +210,7 @@ fn tree(
             ));
         }
     }
-    let mut item = PlanItem::new(Action::RemoveDir, EntryKind::Dir, None, dir.clone(), depth);
+    let mut item = PlanItem::planned(Action::RemoveDir, EntryKind::Dir, None, dir.clone(), depth);
     item.seen = now.file_id.or(seen.file_id);
     items.push(item);
     Ok(())
@@ -216,7 +220,7 @@ fn tree(
 /// an archive a `remove_dir` waits for the rebuild, like the sources in it (D-148).
 pub(crate) fn run_remove(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
     if item.action == Action::RemoveDir && exec.two_phase {
-        exec.deferred.push((index, None));
+        exec.deferred.push((index, Later::Folder));
         return Outcome::Deferred;
     }
     finish_remove(exec, item)
@@ -236,14 +240,115 @@ pub(crate) fn finish_remove(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
     remove_now(exec, item)
 }
 
+/// True when a `trash` that failed with `error` may become a permanent delete: not for a stop, and not for an item that
+/// is simply gone, which has nothing left to delete and says so.
+fn falls_back(item: &PlanItem, error: &VfsError) -> bool {
+    item.trash_fallback
+        && item.action == Action::Trash
+        && !error.is_cancelled()
+        && !matches!(error, VfsError::NotFound { .. })
+}
+
+/// The permanent items of a root the recycle bin refused, at its place in the plan (§1.6.12). Only what the plan saw, and
+/// only as it saw it: a file by its stamp, a folder by the items stamped at planning. Nothing here lists, so a file that
+/// came since is no item: it stays, and so does its folder. With no such items the `trash` fails. What the plan answered
+/// of the root holds for them, and the count ends in one `trash_fallback` warning of the operation.
+fn fall_back(exec: &mut Exec<'_>, item: &PlanItem, error: VfsError) -> Outcome {
+    let mut items = if !item.fallback.is_empty() {
+        item.fallback.clone()
+    } else if item.kind != EntryKind::Dir && item.expect.is_some_and(|e| e.target.is_some()) {
+        let mut remove = PlanItem::planned(Action::Remove, item.kind, None, item.target.clone(), 0);
+        remove.expect = item.expect;
+        vec![remove]
+    } else {
+        return Outcome::Failed(error);
+    };
+    for expanded in &mut items {
+        expanded.depth += item.depth;
+        expanded.clear_read_only = item.clear_read_only;
+    }
+    exec.trash_fallbacks += items.len() as u64;
+    Outcome::Expand(items)
+}
+
 /// The removal itself.
 fn remove_now(exec: &mut Exec<'_>, item: &PlanItem) -> Outcome {
+    // `clear_read_only` applies to `remove`, not `trash` (§1.6.12).
+    let cleared = if item.clear_read_only && item.action != Action::Trash {
+        match clear_read_only_of(exec.src, &item.target) {
+            Ok(cleared) => cleared,
+            Err(e) => return Outcome::Failed(e),
+        }
+    } else {
+        false
+    };
+    if item.verify_below
+        && let Err(e) = check_below(exec, item)
+    {
+        return Outcome::Failed(e);
+    }
     let result = match item.action {
         Action::Trash => exec.src.move_to_trash(&item.target),
         _ => exec.src.remove(&item.target),
     };
     match result {
         Ok(()) => Outcome::Done(0),
-        Err(e) => Outcome::Failed(e),
+        Err(e) => {
+            if cleared {
+                restore_read_only(exec.src, &item.target);
+            }
+            if falls_back(item, &e) {
+                return fall_back(exec, item, e);
+            }
+            Outcome::Failed(e)
+        }
+    }
+}
+
+/// The check of a whole folder's `trash` (`PlanItem::verify_below`): below the folder stands exactly what the plan saw, by
+/// the names and stamps of `fallback`, nothing more and nothing less. A link is not entered, as the plan did not enter it.
+/// The first difference fails the item, naming what differs; nothing has moved then. Deletes are not in G7: one walk.
+fn check_below(exec: &Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
+    let vfs = exec.src;
+    let root = spec_key(vfs, &item.target);
+    let mut expected: HashMap<String, (&Spec, Option<ItemStamp>)> = HashMap::new();
+    for below in &item.fallback {
+        let key = spec_key(vfs, &below.target);
+        if key == root {
+            continue;
+        }
+        // A stamp that planning could not take vouches for nothing.
+        let stamp = below
+            .expect
+            .and_then(|expect| expect.target)
+            .filter(|_| below.error.is_none());
+        expected.insert(key, (&below.target, stamp));
+    }
+    let mut folders = vec![item.target.clone()];
+    while let Some(dir) = folders.pop() {
+        exec.ctl.check()?;
+        let listing = vfs.list(&dir, &NO_FOLLOW, exec.ctl.cancel)?;
+        if let Some(failed) = listing.errors.first() {
+            let child = vfs
+                .child(&dir, &failed.name)
+                .unwrap_or_else(|_| dir.clone());
+            return Err(changed(&child));
+        }
+        for entry in &listing.entries {
+            let child = vfs.child(&dir, &entry.name)?;
+            let Some((_, stamp)) = expected.remove(&spec_key(vfs, &child)) else {
+                return Err(changed(&child));
+            };
+            if !stamp.is_some_and(|stamp| holds(&stamp, entry)) {
+                return Err(changed(&child));
+            }
+            if entry.kind == EntryKind::Dir {
+                folders.push(child);
+            }
+        }
+    }
+    match expected.values().next() {
+        Some((gone, _)) => Err(changed(gone)),
+        None => Ok(()),
     }
 }

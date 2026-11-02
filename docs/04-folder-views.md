@@ -15,7 +15,13 @@ replaces free-form actions with a planned operation per item.
   an MRU dropdown; a Browse button opens the folder picker (local or "Browse Using
   Profile"); Enter accepts. Typing a non-existent folder offers to create it.
 - **FC-003** (P0): "Disable editing" per session makes every file operation and
-  child-session editing read-only.
+  child-session editing read-only. *M2 W6b (D-184):* per side (`specs.read_only_left`, `read_only_right`, `--read-only`), and
+  enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
+  planned, so no view or script can pass it by. `copyto` out of it is allowed, as `ignored` and `exclude` are: they change a
+  session, not a file. *M2 W6d:* the window takes the sides from `--ro`, `--ro1`, `--ro2`, IPC `ReadOnly` and the
+  session, and turns off the commands that would write them. They survive Session Settings, Save, Save As, Duplicate
+  Tab and workspaces; a session saved from the window keeps `read_only_*`, and a side becomes writable again only by an
+  explicit change of that key.
 - **FC-004** (P0): "Up One Level" (Left/Right/Both/All), "Set as Base Folder(s)",
   "Set as Base on Other Side", "Compare Parent Folders", "Merge Base Folders",
   "Sync Base Folders", "Compare Base Folders" (from Sync), "Compare to Output"
@@ -181,6 +187,11 @@ Tests that require reading files:
   selected), the centre column shows the content-comparison result icon when a
   content test ran (binary same, binary different, rules same, similar/unimportant,
   important difference) and the comparison direction arrows.
+- **FC-012, M2 (D-170).** `auto_scan_subfolders` off scans the bases, and with `scan_orphan_folders` the orphan folders
+  directly in a base with their subtrees. A folder pair not scanned is unknown, so the verdict is `incomplete`; a refresh of
+  it scans it. `expand_on_load` and `expand_differences_only` change no result. *M2 W6d:* the window opens the folders
+  `expanded_on_load` names when a comparison ends, and Expand on a folder not scanned refreshes it first (after an
+  operation or refresh of the view that runs).
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
   (persisted in the session).
 
@@ -204,6 +215,13 @@ Tests that require reading files:
 
 ## 5. Columns
 
+- **FC-029 (b, c), FC-040 on demand (D-174).** `compare_contents` and `compute_crcs` run on rows of a finished comparison,
+  on the same engines and budget as a scan, and update it in place; a repeated test counts once, a cancelled one leaves the
+  old state. A child view's result applies only while the pair's size and time hold. *M2 W6d:* the window remembers the
+  row and its stamps at Open and applies the child Text Compare's rules-based verdict when its comparison ends, after
+  any operation or refresh of the folder view.
+- **Refresh (D-173).** A refresh lists one folder level and goes down only where a row changed. Rows with equal facts keep
+  their content result and CRC; an Ignored mark and FC-054's rules hold as in a scan. It equals a fresh comparison.
 - **FC-040** (P0): Columns per side: Name, Ext, Size (folder size = sum once scanned),
   Modified, Attributes (DOS letters `A C D E H I L M N O P R S T U Z` or Unix mode
   `-rwxr-xr-x`), CRC (computed on demand), Version (executables), Owner, Group,
@@ -232,7 +250,9 @@ folders and bytes of each side, and the content-test results.
   depth). Simple masks apply to any item whose parent is included; the base folder is
   always included; folders containing included files are included.
 - **FC-052** (P0): **Exclude** action: offers to exclude the selected item(s), or all
-  files of that type (`-*.ext`), adding to the session's exclude lists.
+  files of that type (`-*.ext`), adding to the session's exclude lists. *M2 W6b:* `select::exclude_masks` writes anchored
+  masks (`a\\b.txt`, `.\\b.txt` in the base, `a\\b\\` for a folder) with every name escaped so it matches that name and no
+  other; `folder op exclude --session` rewrites `[rules]`, and the comparison re-runs: rules are immutable in a model.
 
 **Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
 is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
@@ -283,6 +303,12 @@ tables are in `design/m1-contracts.md` §2.2 and §2.3.
   folder is always included; its files are subject to the file masks only.
 
 ### 6.2 Other filters
+
+**Attribute and Unix-type filters (plan A5, D-169).** `attrib` tests DOS attributes on regular files: `+rh-s` keeps a file
+that has R and H and not S; on a back-end without DOS attributes it has no effect, with one `capability_missing` warning
+per side. `unix_type` tests everything but folders by the letters `b c l p r s`: `+p` shows only FIFOs, `-lp` hides links
+and FIFOs; a followed link is its target's type, and an item whose type is unknown matches no letter. A folder is never
+hidden by either, or its subtree would vanish.
 
 - **FC-053** (P1): Rules ▸ Other Filters: list of items — *date modified* (older/newer
   than; absolute date-time or N days ago relative to midnight), *size* (smaller/larger
@@ -364,17 +390,22 @@ Orphans = every atom except the two orphan atoms; …).
   sides); Shift+Left/Right restricts a selection to one side; Space marks an item for
   a two-item "Open" or "Compare To". Edit ▸ Select All, Select All Files, Select Newer
   (Left/Right/Both), Select Orphans (Left/Right/Both), Invert Selection; Expand All /
-  Collapse All; Open/Close Folder; Open/Close Subfolders.
+  Collapse All; Open/Close Folder; Open/Close Subfolders. *M2 W6b (D-175):* `hikasa_folder::select` owns the words of the
+  script `select`: `<side>.<state>.<kind>`, OR-ed, `diff` = differences other than the time, a folder matching only if what
+  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row.
 - **FC-061** (P0): Search ▸ Next/Previous Difference (Ctrl+N/P) move to the next item
   that is not "same"; Alt+Up/Down move skipping gaps; **Find Filename** (Ctrl+F; case,
-  whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3).
+  whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3). *M2 W6b:* `select::Finder` is the pure
+  part; the panel is W9.
 - **FC-062** (P0): Double-click / Enter / **Open** opens the item pair in the file
   view chosen by file formats (two selected items anywhere → compare them; one item →
   with its counterpart). **Open With** submenu: a specific view type (Text, Table,
   Hex, Picture, Media, Version, Registry, Text Edit, Text Patch), the associated
   application, or a user-defined external application (`15-options-reference.md` Open
   With). **Quick Compare** shows a dialog with the content-comparison result instead of
-  opening a view. **Compare To** (F7) compares two arbitrary items in a new view.
+  opening a view. **Compare To** (F7) compares two arbitrary items in a new view. *M2 W6b (D-186):* `folder op open-with`
+  expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
+  `select::open_pair` says what a command compares.
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
   copies the selected paths.
@@ -386,10 +417,18 @@ Orphans = every atom except the two orphan atoms; …).
 
 All operations: honour the session's filters by default (folders contribute only
 their *visible* contents; if a folder and some of its children are selected, only the
-children count), can include hidden items ("Include hidden items by default" option,
+children count; with all that it shows selected, it is the folder), can include hidden items ("Include hidden items by default" option,
 overridable in each dialog), run as cancellable jobs with progress and a log, continue
 after per-item errors, and optionally back up overwritten files (`15-options-reference.md`
 Backups). Confirmation dialogs can be disabled per operation.
+
+*M2 W6b (D-176…D-180):* every operation is one plan built by one builder (`hikasa_folder::ops`), from the model, with
+directory I/O only where the model has no contents; a dry run prints that value and execution takes it. Targets are the
+counterpart's own spec, so aligned pairs stay aligned. Items carry what the plan saw, so a file changed since the comparison
+is never overwritten or deleted on the strength of an old row. One `rename`, `trash` or `remove_dir` stands for a subtree only
+when nothing below it is left out (`whole`). Questions are data (`Confirmation`): an operation question, then per item
+read-only, system, newer, replace during move, no recycle bin; *yes to all* as a reply is per class. `delete` in the command
+line asks whatever `confirm_delete` says. `folder op` is the headless form; see `12-cli-and-scripting.md` §4.
 
 - **FC-070** (P0): **Copy to Right / Left** (Ctrl+R / Ctrl+L), **Copy to Side…**
   (prompt), dynamic **Copy to Other Side**; overwrite semantics; preserves timestamps,
@@ -401,7 +440,10 @@ Backups). Confirmation dialogs can be disabled per operation.
   structure), *Keep base folder structure*, *Don't keep folder structure*.
 - **FC-073** (P0): **Delete** (Del): sides selector (Left/Right/Both; option
   "Require explicit side selection"), *Use recycle bin if possible* (local drives
-  only); **Delete Permanently** (Shift+Del).
+  only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is
+  not on, or read-only, is greyed; a row on one writable side has it preset, a pair none, also with one side
+  read-only (neither Both nor one side of a pair is a default), and the option presets nothing; *If the recycle bin fails, delete permanently* is off; Delete Permanently has the bin off and
+  greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9.
 - **FC-074** (P0): **Rename** (F2): single item inline; multi-item with *DOS
   compatible* mask (`abc?.bak` from computed base mask) or *Regular expressions*
   (old mask / new mask with `$1` groups).
@@ -452,21 +494,56 @@ Backups). Confirmation dialogs can be disabled per operation.
   (Update Left, Update Right, Update Both, Mirror to Left, Mirror to Right, Custom),
   Rules and Filters buttons, Accept/Cancel for path edits; bottom = preview tree with the
   planned action per item (copy left→right, copy right→left, delete left, delete right,
-  leave alone) and folder summaries ("contains files that will be copied…").
+  leave alone) and folder summaries ("contains files that will be copied…"). *M2 W6c (D-181, D-182):* the engine is
+  `hikasa_folder::sync`: `plan_sync` gives a row per item (its situation, action and why it is left) and one batch plan made
+  by the builder of the folder operations, so a sync has every check a copy and a delete have. `SyncPlan::folder` gives the
+  folder summaries in O(1). The view is W9; `hikasa folder sync` is the headless form (`12-cli-and-scripting.md` §4).
 - **FS-002** (P0): Custom operation matrix (Rules ▸ Sync tab): action for each
   situation — file newer on left / newer on right / added on left / added on right /
   deleted on left / deleted on right / files different / files same — each from the
   set {copy left→right, copy right→left, delete left, delete right, leave alone}.
+  *M2 W6c (D-181):* the presets, normative:
+
+  | Situation | Update Right | Update Left | Update Both | Mirror to Right | Mirror to Left |
+  |---|---|---|---|---|---|
+  | newer left | → | — | → | → | ← |
+  | newer right | — | ← | ← | → | ← |
+  | added left (left only) | → | — | → | → | delete left |
+  | added right (right only) | — | ← | ← | delete right | ← |
+  | deleted left (right only) | — | — | — | delete right | ← |
+  | deleted right (left only) | — | — | — | → | delete left |
+  | different (no time difference) | — | — | — | → | ← |
+  | same | — | — | — | — | — |
+
+  *Update* never deletes and never overwrites a newer file; *different* under Update is a **conflict**, left. Without Sync
+  Memory an item on one side only cannot tell "added" from "deleted": `orphans = "added"` (default) or `"deleted"` says which
+  reading applies, so every cell is reachable. A cell must name a side its item is on (`added left` takes copy right, delete
+  left or leave), else it is refused. A Custom matrix is written `<situation>=<action>,…`, a preset first as its base.
 - **FS-003** (P1): **Sync Memory**: remembers the state after each sync (per session)
   to distinguish "added on one side" from "deleted on the other" and to flag
   conflicting changes; "Use Sync Memory", "Clear Memory".
 - **FS-004** (P0): Per-item overrides via Actions ▸ Leave Alone / Copy Right to Left /
   Copy Left to Right / Delete Left / Delete Right; **Exclude** removes items from the
-  plan. Search ▸ Next/Previous Conflict.
+  plan. Search ▸ Next/Previous Conflict. *M2 W6c:* overrides are kept per path below the
+  bases (`[rules.sync.overrides]`, `--override <PATH>=<ACTION>`); a folder covers its subtree and the longest path wins, as
+  for Ignored marks. An override a row cannot take is dropped with a `switch_ignored` warning, and so is one that names no
+  row; the base itself (an empty path, `.`, `..`) is refused.
 - **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with
   options *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if
   possible*, *Expand subfolders when loading*. Suppress Filters shows items the sync
-  will not touch. **Folder Sync Info** shows statistics.
+  will not touch. **Folder Sync Info** shows statistics. *M2 W6c (D-182):* a sync compares with every folder
+  scanned, orphans too, and archives as folders only with *Sync within archives* (else an archive is a file to copy); a flat
+  comparison is refused. The plan runs deletes first (post-order), then copies to the right, then to the left, as one batch:
+  one rebuild and one backup per archive. A folder on one side all of whose rows go goes too (one recycle-bin item with the
+  bin); a folder that keeps a row stays; an empty folder is made or deleted only with *Sync empty folders*. What protects the
+  data: a sync that would delete while the other side has nothing at all is refused (`--allow-empty-source` lets it run; a
+  confirmation does not); a comparison that did not finish deletes nothing; a row that failed, and what lies below a folder
+  that failed or was not read, is left and makes the sync end with an error; a side a filter hides is left, and so is what
+  lies below a folder a filter hides on either side, and an item every side of which a filter hides is no row of the sync;
+  a read-only side (FC-003) leaves its rows, row by row, with a warning; nothing is written below a followed link, and a
+  followed link on one side that a mirror deletes goes as the link; a row replaces only its own counterpart, never an item of
+  another row, so *Update* cannot replace a file by a folder of its name; names a delete of the plan frees are free for its
+  copies.
 - **FS-006** (P1): Scheduled/unattended sync is done through the script engine
   (`12-cli-and-scripting.md` `sync`), not through the GUI.
 
@@ -486,7 +563,8 @@ Backups). Confirmation dialogs can be disabled per operation.
 
 - **FC-100** (P0): View ▸ Log toggles a panel listing operation summaries, details,
   warnings/errors, remote protocol traces and debug messages according to the Log
-  options; capped at N messages; optional auto-save to a file.
+  options; capped at N messages; optional auto-save to a file. *M2 W6b (D-188):* `log::op_log_entries` gives one summary,
+  every failure, and up to `LOG_DETAILS_MAX` = 10,000 details per operation.
   *M2 W4a (D-116):* one log book per GUI process (`hikasa_session::log::LogBook`), shared by
   every window: entries have a time (the injected clock), a kind (summary, detail, warning,
   error, debug), a source (a tab caption, `settings`, `files`) and a text; warnings keep

@@ -27,6 +27,7 @@
 mod compare;
 pub mod dto;
 mod error;
+pub mod folder_ops;
 pub mod gui;
 pub mod human;
 mod info;
@@ -56,6 +57,11 @@ use hikasa_vfs::{
 use parking_lot::{Mutex, RwLock};
 
 pub use error::ApiError;
+pub use folder_ops::{
+    ContentsDto, ContentsKind, ContentsRequest, EmptiedDto, ExpandWords, FolderOpDto,
+    FolderOpOutcome, FolderOpRequest, FolderSyncDto, FolderSyncOutcome, FolderSyncRequest,
+    OpOverrides, OpRequest, OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
+};
 pub use gui::{
     GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
     ResolvedOpen, ViewOutcome, ViewRequest, ViewWords, find_gui_exe, gui_exe_candidates,
@@ -84,8 +90,10 @@ pub use vfs_ops::{
     parse_overwrite, parse_time,
 };
 pub use vocab::{
-    parse_algorithm, parse_archive_handling, parse_content_method, parse_folder_mode,
-    parse_line_range, resolve_folder_display, resolve_text_display,
+    parse_algorithm, parse_archive_handling, parse_confirm_mode, parse_content_method,
+    parse_exclude_what, parse_folder_mode, parse_line_range, parse_mkdir_name, parse_select_path,
+    parse_side, parse_sides, parse_structure, resolve_folder_display, resolve_text_display,
+    sync_options, sync_words_of,
 };
 
 use crate::clipboard::{
@@ -97,6 +105,7 @@ use crate::ipc::Endpoint;
 use crate::jobs::{
     JobControl, JobHandle, LossySink, PROGRESS_CAPACITY, PROGRESS_INTERVAL, run_guarded,
 };
+use crate::launcher::{AppLauncher, NoLauncher};
 use crate::options::{ProgramOptions, load_options_with};
 use crate::paths::{ConfigLocation, resolve_config_dir};
 use crate::settings::{ArchiveTypes, FileId, LoadMode, SettingsFile};
@@ -170,6 +179,9 @@ pub struct ServiceInit {
     /// per service) and by [`Service::read_clipboard`]. Adapters pass `host::clipboard_provider`; tests a
     /// `FixedClipboard`. [`ServiceInit::new`] sets [`NoClipboard`].
     pub clipboard: Arc<dyn ClipboardProvider>,
+    /// What starts programs (M2 W6, §1.6.18). Adapters pass `host::SystemLauncher`; tests a `RecordingLauncher`.
+    /// [`ServiceInit::new`] sets [`NoLauncher`].
+    pub launcher: Arc<dyn AppLauncher>,
 }
 
 impl ServiceInit {
@@ -188,6 +200,7 @@ impl ServiceInit {
             runner,
             options_mode: LoadMode::Strict,
             clipboard: Arc::new(NoClipboard),
+            launcher: Arc::new(NoLauncher),
         }
     }
 }
@@ -213,6 +226,10 @@ pub enum ApiOp {
     TextCompare,
     /// `folder compare`.
     FolderCompare,
+    /// `folder op` (M2 W6): the base folders are loaded by its comparison.
+    FolderOp,
+    /// `folder sync` (M2 W6).
+    FolderSync,
     /// `format …`.
     Format,
     /// `vfs …`.
@@ -259,8 +276,12 @@ struct Inner {
     clipboard: Arc<dyn ClipboardProvider>,
     /// The clipboard snapshot: `None` until the first `clipboard://` spec (or `read_clipboard`).
     clipboard_state: Mutex<Option<Result<Blob, BlobFailure>>>,
+    /// What starts programs (M2 W6).
+    launcher: Arc<dyn AppLauncher>,
     /// The archive back-end (M2 W5): the router of every generation shares it.
     archives: Arc<ArchiveVfs>,
+    /// Warnings of the Service's own reads since the last [`Service::take_warnings`]: a session's unknown keys.
+    pending: Mutex<Vec<Warning>>,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -364,6 +385,7 @@ impl Service {
             runner,
             options_mode,
             clipboard,
+            launcher,
         } = init;
         let exists = |p: &std::path::Path| p.is_file();
         let config = resolve_config_dir(&env, config_dir.as_deref(), &exists)?;
@@ -445,9 +467,16 @@ impl Service {
                 stdin: OnceLock::new(),
                 clipboard,
                 clipboard_state: Mutex::new(None),
+                launcher,
                 archives,
+                pending: Mutex::new(Vec::new()),
             }),
         })
+    }
+
+    /// What starts programs.
+    pub(crate) fn launcher(&self) -> &Arc<dyn AppLauncher> {
+        &self.inner.launcher
     }
 
     /// Configuration folder.
@@ -532,7 +561,14 @@ impl Service {
     /// The warnings of the back-ends since the last call (D-145): adapters drain them at the end of a command, so
     /// `warnings` in JSON is complete and a listing stays pure.
     pub fn take_warnings(&self) -> Vec<Warning> {
-        self.router().take_warnings()
+        let mut warnings = std::mem::take(&mut *self.inner.pending.lock());
+        warnings.extend(self.router().take_warnings());
+        warnings
+    }
+
+    /// Queues a warning for the next [`Service::take_warnings`].
+    pub(crate) fn note(&self, warning: Warning) {
+        self.inner.pending.lock().push(warning);
     }
 
     /// Warnings collected during construction (unknown config sections, skipped user formats).

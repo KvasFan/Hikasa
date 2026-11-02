@@ -14,10 +14,12 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::api::ApiError;
 use crate::clipboard::{
     ClipboardContent, ClipboardError, ClipboardProvider, MAX_IMAGE_BYTES, MAX_TEXT_BYTES,
 };
 
+use crate::launcher::{AppLauncher, OpenCommand};
 use hikasa_core::PathStyle;
 use serde::{Deserialize, Serialize};
 
@@ -361,6 +363,35 @@ pub fn clipboard_provider(env: &EnvFacts) -> Arc<dyn ClipboardProvider> {
     match &env.clipboard_file_override {
         Some(path) => Arc::new(FileClipboard(path.clone())),
         None => Arc::new(SystemClipboard),
+    }
+}
+
+/// What really starts programs (FC-062): `std::process::Command`, no shell, stdio null; the associated application by
+/// `open`. Adapter-only, as [`SystemClipboard`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemLauncher;
+
+impl AppLauncher for SystemLauncher {
+    fn run(&self, command: &OpenCommand) -> Result<i32, ApiError> {
+        let status = std::process::Command::new(&command.program)
+            .args(&command.args)
+            .current_dir(&command.cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| {
+                ApiError::InvalidArgument(format!(
+                    "cannot start {}: {e}",
+                    command.program.to_string_lossy()
+                ))
+            })?;
+        Ok(status.code().unwrap_or(-1))
+    }
+
+    fn open_associated(&self, path: &std::path::Path) -> Result<(), ApiError> {
+        open::that_detached(path)
+            .map_err(|e| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display())))
     }
 }
 

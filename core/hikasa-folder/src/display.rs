@@ -329,8 +329,8 @@ pub(crate) fn visible_rows_into(
 }
 
 /// The reference definition of §2.7 used by the invariant check INV-FOLDER-9: visibility from the explicit
-/// "has a visible descendant" definition instead of the counters, evaluated bottom-up (children have larger ids
-/// than their folder, so one pass in decreasing id order is linear), then listed top-down.
+/// "has a visible descendant" definition instead of the counters, evaluated bottom-up in one linear pass, then listed
+/// top-down.
 pub(crate) fn reference_rows(store: &Store, opts: &DisplayOptions) -> Vec<VisibleRow> {
     let len = store.len() as usize;
     let toggles = opts.filter.toggles();
@@ -338,10 +338,11 @@ pub(crate) fn reference_rows(store: &Store, opts: &DisplayOptions) -> Vec<Visibl
     // visible[id], and whether a visible file lies below a folder.
     let mut visible = vec![false; len];
     let mut file_below = vec![false; len];
-    for id in (0..len).rev() {
-        let Some(node) = store.node(NodeId(id as u32)) else {
+    for id in store.post_order() {
+        let Some(node) = store.node(NodeId(id)) else {
             continue;
         };
+        let id = id as usize;
         let any_child = |flags: &[bool]| {
             node.children()
                 .any(|c| flags.get(c as usize).copied().unwrap_or(false))

@@ -101,6 +101,34 @@ place of its colour spot, on closed and opened rows. With *As folders once opene
 closed archive row adds its path to the view's `open_archives` and runs the comparison again; the new folder row is shown
 expanded. Two archives, or an archive and a folder, open a Folder Compare. Members open in a read-only Text Compare.
 
+*M2 W6d (§1.6.20, D-189):* Open on a closed archive row opens it in place, by a refresh of its folder
+(`folder_open_archive`), not a new comparison; once it opened, the path joins the view's `open_archives`, which its
+session keeps (one that cannot be read gives a warning and is not kept). A folder that was not scanned (*Automatically
+scan subfolders* off) is refreshed when it is opened, then opens (after the view's operation, if one runs);
+`expand_on_load` and `expand_differences_only` open folders when a comparison ends (FC-012).
+
+*M2 W6d (§1.6.20, D-189): file operations of one selected row.* Actions ▸ Copy to Right (Ctrl+R), Copy to Left (Ctrl+L),
+Delete (Del) and Delete Permanently (Shift+Del) are implemented; the rest of the Actions menu stays planned until W9,
+with multi-row selection. A copy needs an item on the other side and a writable target side (`SideWritable`); a delete
+needs an item on a writable side (`RowSelected`). Disable editing (`--ro`, `--ro1`, `--ro2`, IPC `ReadOnly`, a
+session's `[specs] read_only_*`) reaches the view's command context, and the Service refuses the same sides again
+(D-184); `--nobackups` turns the view's backups off (`backup = Some(false)`). Both survive Session Settings, Save, Save
+As, Duplicate Tab and workspaces; the view's session keeps the read-only sides. The flow: the plan is made in a job
+(`folder_op_plan`, `folder_confirmation`); its questions are asked in the confirmation dialog, which names the row and
+its sides, and are not asked when the selection moved off the row meanwhile (nothing runs, a warning says so); the confirmed plan runs
+in a `folder_op` job (the job indicator lists it, Stop cancels it); the outcome goes to the log (`op_log_entries`: the
+summary, one error per failed item, details with *Operation details*) and to one notice: information when every item
+ran, a warning with *Show log* (which opens the view's log panel) when an item failed or did not run or the operation
+was stopped; then the folders of the rows it wrote are refreshed (`folder_refresh`), and the open folders and the
+selected row follow the new ids (`renumbered`), or their path where a row got a new record, unless the user selected
+another row or closed the folder while the refresh ran. A refresh that leaves
+more dead records than live ones in the model runs the comparison again. One operation at a time per view, and none
+while its comparison runs; a plan whose model changed before it runs is refused with a warning notice. A view that ends
+while its operation runs (tab closed, workspace load, Session Settings OK, Quit) cancels it; the job ends its current
+item and its outcome still reaches the log, with a notice naming the tab; Quit waits for it. A Text Compare
+opened from a row gives its rules-based result back to the row when its comparison ends, while both files still have
+the size and time they had at Open (FC-029(c)).
+
 *M2 W4b (§1.4.9–§1.4.12):* the Session menu gains New Session ▸ (one item per type the GUI opens), Open Session, Load
 Workspace ▸ (saved workspaces, then Manage Workspaces…), Save Workspace As… and, in session views, Go to Home, Save
 Session, Save Session As…, Session Settings… and Locked; the toolbar gains the Sessions drop-down; Home's View menu
@@ -231,6 +259,11 @@ time: with `automatically_reload` the view reloads (info notice), else a warning
 offers Reload; a removed input gives a warning. Notices: at most three, newest on top,
 information ones hide after 8 s.
 
+*M2 W6d (D-116, D-117, D-188):* a file operation of a folder view writes its summary, one error per failed item and,
+with *Operation details*, one line per item to the log (the source is the tab's caption), and raises one notice: its
+summary as information when every item ran, as a warning with *Show log* when one failed or did not run or the
+operation was stopped; a plan refused (a read-only side, a model that changed) is a warning notice too.
+
 ## 4. Dialog inventory (P0 unless noted)
 
 Session Settings (per type), File Formats manager + per-kind editors, Grammar Item,
@@ -251,6 +284,16 @@ Cancel, as is the window's close button, Enter the default button, F1 the dialog
 (its panel stands over the dialog). The title bar moves a dialog. A prompt (message, buttons,
 default, optional "Do not ask again" bound to an option key) serves the close warnings and
 later waves' questions. About is a dialog.
+
+*M2 W6d (§1.6.20, D-189):* the confirmation dialog of a file operation (`PlanConfirmDialog`, help `dialog-confirm`)
+asks the plan's questions one at a time, with the plan's counts per action: Yes, No, Yes to All, No to All (the rest of
+that kind), Cancel (Esc, the close button); Enter is Yes for the operation and No for an item. "Do not ask again", with
+Yes or Yes to All, sets the question's `[file_operations] confirm_*` key to `false` once the questions are answered; the
+recycle bin's question and a sync's have none. The Delete dialog (`DeleteDialog`, help `dialog-delete`): Left, Right,
+Both, with what the row holds on each side; a side without the row or read-only is greyed; a row on one side has it
+chosen, a pair none (OK stays off until one is chosen), and `require_side_selection_in_delete` never chooses; *Use
+recycle bin if possible* (on), *If the recycle bin fails, delete permanently* (off); Delete Permanently has the bin off
+and greyed and no fallback. Both are toolkit-free models (architecture check 7); the view runs the jobs.
 
 ## 5. Optional helpers
 

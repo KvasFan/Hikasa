@@ -11,6 +11,7 @@ rust-version.workspace = true
 [dependencies]
 hikasa-core.workspace = true
 hikasa-vfs.workspace = true
+hikasa-formats.workspace = true
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -42,4 +43,8 @@ harness = false
 
 [[bench]]
 name = "cancel_latency"
+harness = false
+
+[[bench]]
+name = "sync_plan_100k"
 harness = false

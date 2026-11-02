@@ -117,6 +117,10 @@ With `--content crc`, a zip's stored CRC is trusted as it is: nothing is decoded
 CRC, or a member changed together with its CRC, is "same" for the CRC test. Use `--content binary` to compare the
 content itself. The other formats get their CRC when they are indexed.
 
+Everything `folder op` does works on opened archives too: members are specs, one operation is one rebuild, and with backups
+the whole archive is backed up once, before it is rewritten. A member has no recycle bin: `--recycle` asks. Exchanging
+members of two archives is refused: copy, or move, instead. An opened archive that goes whole goes as the file it is.
+
 ## Safety
 
 Archives are treated as hostile input.

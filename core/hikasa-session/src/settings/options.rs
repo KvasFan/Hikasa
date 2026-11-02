@@ -2,6 +2,7 @@
 //! per table. The reserved sections `archive_types`, `commands` and `open_with` are known and hold nothing (their
 //! data lives in `archives.toml`, `commands.toml` and `openwith.toml`); their keys are kept on save.
 
+use hikasa_vfs::ops::BackupStyle;
 use toml::Table;
 
 use super::file::{Problem, SettingsSchema, migrate_from_zero};
@@ -22,6 +23,21 @@ settings_enum! {
 settings_enum! {
     /// `[tabs] open_sessions_in`, `open_child_sessions_in` (OPT-004).
     OpenIn { Tab = "tab", Window = "window" } default Tab
+}
+
+/// The core owns the name, the session the choice (§1.6.5).
+impl From<BackupNaming> for BackupStyle {
+    fn from(naming: BackupNaming) -> BackupStyle {
+        match naming {
+            BackupNaming::NameTilde => BackupStyle::NameTilde,
+            BackupNaming::StemTilde => BackupStyle::StemTilde,
+            BackupNaming::NameBak => BackupStyle::NameBak,
+            BackupNaming::TildeName => BackupStyle::TildeName,
+            BackupNaming::StemBak => BackupStyle::StemBak,
+            BackupNaming::StemBakExt => BackupStyle::StemBakExt,
+            BackupNaming::Folder => BackupStyle::Folder,
+        }
+    }
 }
 
 settings_enum! {
@@ -201,8 +217,10 @@ settings_section! {
         confirm_merge: bool = true,
         /// Synchronize confirmations.
         sync_confirmations: SyncConfirmations = SyncConfirmations::Prompt,
-        /// Include hidden items by default.
-        include_hidden_by_default: bool = true,
+        /// Include hidden items by default (D-176: operations honour the filters).
+        include_hidden_by_default: bool = false,
+        /// Copy the creation date too (FC-070).
+        preserve_created: bool = false,
     }
 }
 

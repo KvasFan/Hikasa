@@ -1,0 +1,17 @@
+---- leave empty (matrix)
+R>L copy_left gone/inner.txt
+R>L copy_left gone
+R>L copy_left different.txt
+delL delete_left left-only.txt
+R>L copy_left newer-left.txt
+R>L copy_left newer-right.txt
+R>L copy_left right-only.txt
+L remove <TMP>/l/left-only.txt
+L mkdir <TMP>/l/gone
+L copy <TMP>/r/gone/inner.txt -> <TMP>/l/gone/inner.txt
+L replace <TMP>/r/different.txt -> <TMP>/l/different.txt
+L replace <TMP>/r/newer-left.txt -> <TMP>/l/newer-left.txt [overwrite_newer]
+L replace <TMP>/r/newer-right.txt -> <TMP>/l/newer-right.txt
+L copy <TMP>/r/right-only.txt -> <TMP>/l/right-only.txt
+would synchronize 7 items
+# 0 copies right, 6 copies left, 1 deletes left, 0 deletes right, 0 conflicts, 0 unresolved

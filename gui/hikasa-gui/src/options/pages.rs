@@ -309,6 +309,7 @@ pub const PAGES: &[Page] = &[
                 "file_operations.include_hidden_by_default",
                 "Include hidden items by default",
             ),
+            f("file_operations.preserve_created", "Keep creation dates"),
         ],
     ),
     Page {

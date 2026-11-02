@@ -1894,6 +1894,12 @@ fn open_on_a_closed_archive_row() {
 
     crate::tests::folder_model(&mut app, view).select(index);
     assert!(app.enabled(CommandId::Open));
+    let before = std::sync::Arc::clone(
+        crate::tests::folder_model(&mut app, view)
+            .prepared()
+            .expect("prepared")
+            .model(),
+    );
     app.execute(CommandId::Open);
     world.settle(&mut app);
     assert_eq!(app.tabs().len(), 1, "no text view opened");
@@ -1903,12 +1909,13 @@ fn open_on_a_closed_archive_row() {
     assert!(!row.opens_archive);
     let (member, differs) = archive_row(&mut app, view, "x.txt");
     assert!(differs.left.is_some() && differs.right.is_some());
-    let rules = crate::tests::folder_model(&mut app, view)
-        .prepared()
-        .expect("prepared")
-        .rules()
-        .clone();
-    assert_eq!(rules.open_archives, ["a.zip"]);
+    // M2 W6d (§1.6.20): a refresh of the model, not a new comparison; the view's request keeps the path for its session.
+    let m = crate::tests::folder_model(&mut app, view);
+    assert!(
+        std::sync::Arc::ptr_eq(&before, m.prepared().expect("prepared").model()),
+        "Open on an archive refreshes the model it has"
+    );
+    assert_eq!(m.open_archives(), Some(&["a.zip".to_owned()][..]));
 
     // Open on a member: a Text Compare that loads through the VFS.
     crate::tests::folder_model(&mut app, view).select(member);

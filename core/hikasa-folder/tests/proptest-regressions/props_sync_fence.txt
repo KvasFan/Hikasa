@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 220220c01d3f3bef45fe083c4e2965fe1c2ef046800e3c553d64cbb04d716b7b # shrinks to Case { left: [(1, Dir([]))], right: [(1, LinkOutDir)], mirror_left: false, follow: true, within: false, filtered: false, over: None, recycle: false, create_empty: false, orphans: false }

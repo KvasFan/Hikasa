@@ -61,6 +61,15 @@ fn sample(kind: SessionType) -> Session {
             rules.handling.flatten = true;
             rules.criteria.size = false;
         }
+        SessionRules::Sync(rules) => {
+            rules.folder.criteria.size = false;
+            rules.sync.preset = hikasa_folder::sync::SyncPreset::MirrorRight;
+            rules.sync.create_empty = true;
+            rules
+                .sync
+                .overrides
+                .insert("a/b.txt".into(), hikasa_folder::sync::SyncAction::Leave);
+        }
         SessionRules::Text(rules) => {
             rules.alignment.skew_tolerance = 7;
             s.specs.format = "c-cpp".into();
@@ -112,6 +121,59 @@ fn session_goldens_per_type() {
         let loaded = store.load(&reference, LoadMode::Strict).unwrap();
         assert_eq!(loaded.value, session, "{kind}");
     }
+}
+
+/// A6.30 after review: a folder-sync file written before W6 (its `[rules]` an opaque table then) keeps its old shape as a
+/// fixture. A key with no meaning now (`mode`) fails, naming it; an old shape with one meaning is read as that: a filter text
+/// for `filters.names`, a string where a list is expected. The new shape's golden stays beside it (`folder-sync.toml`).
+#[test]
+fn a6_30_a_folder_sync_file_of_the_old_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = store(tmp.path(), 200);
+    std::fs::create_dir_all(store.dir()).unwrap();
+    let old =
+        std::fs::read_to_string(fixtures("sessions").join("folder-sync-before-w6.toml")).unwrap();
+    assert!(
+        old.contains("mode = \"mirror\"") && old.contains("names = \"*.c\""),
+        "{old}"
+    );
+    std::fs::write(store.dir().join("old.toml"), &old).unwrap();
+    let err = store.load(&r("old"), LoadMode::Strict).unwrap_err();
+    assert!(matches!(err, ApiError::InvalidData(_)), "{err:?}");
+    let text = err.to_string();
+    assert!(
+        text.contains("rules.mode") && text.contains("rules.sync.preset"),
+        "{text}"
+    );
+    // Without `mode`: the rest reads as it means.
+    let read = old.replace("mode = \"mirror\"\n", "").replace(
+        "[rules.filters]\nnames = \"*.c\"\n",
+        "ignored = \"vendor\"\n\n[rules.filters]\nnames = \"*.c;-obj\\\\\"\n",
+    );
+    std::fs::write(store.dir().join("old.toml"), &read).unwrap();
+    let session = store.load(&r("old"), LoadMode::Strict).unwrap().value;
+    assert_eq!(session.kind, SessionType::FolderSync);
+    assert_eq!(session.description, "A folder-sync session");
+    assert_eq!(session.specs.left, "/data/left");
+    let SessionRules::Sync(rules) = &session.rules else {
+        panic!("{:?}", session.rules)
+    };
+    assert_eq!(rules.folder.filters.names.include_files, ["*.c"]);
+    assert_eq!(rules.folder.filters.names.exclude_folders, ["obj\\"]);
+    assert_eq!(rules.folder.ignored, ["vendor"]);
+    assert_eq!(rules.sync, hikasa_folder::sync::SyncOptions::default());
+    // A value whose type is not its key's now fails, naming the key.
+    std::fs::write(
+        store.dir().join("old.toml"),
+        old.replace("mode = \"mirror\"\n", "")
+            .replace("names = \"*.c\"", "names = 3"),
+    )
+    .unwrap();
+    let err = store
+        .load(&r("old"), LoadMode::Strict)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("rules.filters.names"), "{err}");
 }
 
 /// A2.1: P1 type names are refused (a file and `SessionType::parse`).
@@ -218,6 +280,10 @@ fn arb_session(kind: SessionType) -> impl Strategy<Value = Session> {
                 SessionRules::Folder(rules) => {
                     rules.handling.flatten = flag;
                     rules.criteria.timestamps.tolerance_secs = n;
+                }
+                SessionRules::Sync(rules) => {
+                    rules.folder.criteria.timestamps.tolerance_secs = n;
+                    rules.sync.within_archives = flag;
                 }
                 SessionRules::Text(rules) => {
                     rules.importance.compare_line_endings = flag;

@@ -605,6 +605,7 @@ impl Core {
             create_parents: false,
             overwrite: true,
             replace_link: false,
+            ..WriteOptions::default()
         };
         let mut writer = self.base.open_write(outer, &options)?;
         let text = outer.canonical();
@@ -695,6 +696,7 @@ impl Core {
             create_parents: false,
             overwrite: false,
             replace_link: false,
+            ..WriteOptions::default()
         };
         let mut writer = if matches!(spec, Spec::ArchiveMember { .. }) {
             self.open_member_write(spec, &options)?

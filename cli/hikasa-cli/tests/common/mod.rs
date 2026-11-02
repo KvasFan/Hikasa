@@ -596,8 +596,12 @@ impl IpcHandler for FakeGui {
         }
     }
 
-    fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response {
+    /// Every request on the wire, also those the server answers itself (an `OpenView` of a kind it does not serve).
+    fn seen(&self, request: &Request) {
         self.requests.lock().push(request.clone());
+    }
+
+    fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response {
         match request {
             Request::OpenView { kind, specs, .. } => {
                 let view = ViewId(self.next.fetch_add(1, Ordering::SeqCst));

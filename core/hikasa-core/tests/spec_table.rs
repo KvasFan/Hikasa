@@ -257,14 +257,14 @@ fn row_24_remote_with_port() {
         let spec = Spec::parse("sftp://u@h:2222/p", &ctx(style, None, None)).unwrap();
         assert_eq!(
             spec,
-            Spec::Remote(RemoteUrl {
+            Spec::Remote(Box::new(RemoteUrl {
                 scheme: RemoteScheme::Sftp,
                 user: Some("u".into()),
                 password: None,
                 host: "h".into(),
                 port: Some(2222),
                 path: "/p".into(),
-            })
+            }))
         );
         assert_eq!(
             canonical("sftp://u@h:2222/p", &ctx(style, None, None)),
@@ -338,14 +338,14 @@ fn row_28_https() {
         let c = ctx(style, None, None);
         assert_eq!(
             Spec::parse("https://Example.com/a?b", &c).unwrap(),
-            Spec::Http(HttpUrl {
+            Spec::Http(Box::new(HttpUrl {
                 secure: true,
                 user: None,
                 password: None,
                 host: "example.com".into(),
                 port: None,
                 rest: "/a?b".into()
-            })
+            }))
         );
         assert_eq!(
             canonical("https://Example.com/a?b", &c),

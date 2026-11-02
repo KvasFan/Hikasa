@@ -5,10 +5,14 @@
 //! Every call reads the configuration fresh. A session's specs are stored as canonical absolute specs; `-` and
 //! `clipboard://` are never stored (the side stays empty, warning `spec_not_saved`).
 
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use hikasa_core::{Pair, Spec, Warning, WarningCode};
+use hikasa_folder::FolderRules;
+use hikasa_folder::ops::ReadOnlySides;
+use hikasa_folder::sync::{SyncOptions, SyncRules};
 use hikasa_text::ViewOptions;
 use serde::Serialize;
 use toml::{Table, Value};
@@ -110,6 +114,21 @@ pub struct SessionWriteDto {
     /// Warnings of the call (`spec_not_saved`).
     #[serde(skip)]
     pub warnings: Vec<Warning>,
+    /// `folder op exclude`: the masks (written, or only printed by `--dry-run`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub masks: Option<ExcludeMasksDto>,
+    /// `folder op ignored`: the new list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored: Option<Vec<String>>,
+}
+
+/// The masks of `folder op exclude`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExcludeMasksDto {
+    /// For `exclude_files`.
+    pub files: Vec<String>,
+    /// For `exclude_folders`.
+    pub folders: Vec<String>,
 }
 
 /// `hikasa.workspace_write.v1`.
@@ -221,6 +240,25 @@ pub enum SessionRunRequest {
     Text(TextCompareRequest),
     /// A Folder Compare session.
     Folder(FolderCompareRequest),
+    /// A Folder Sync session (§1.6.17): the comparison, and the sync's options from `[rules.sync]`.
+    Sync {
+        /// The comparison (its rules are the session's folder rules; `folder_sync_prepare` makes them a sync's).
+        request: FolderCompareRequest,
+        /// `[rules.sync]`.
+        options: SyncOptions,
+    },
+}
+
+impl SessionRunRequest {
+    /// The comparison of a folder session, Compare or Sync: what `folder op --session` compares.
+    pub fn folder_request(self) -> Option<FolderCompareRequest> {
+        match self {
+            SessionRunRequest::Folder(request) | SessionRunRequest::Sync { request, .. } => {
+                Some(request)
+            }
+            SessionRunRequest::Text(_) => None,
+        }
+    }
 }
 
 /// What the GUI opens for a session (`LoadSession`, `LoadWorkspace`).
@@ -268,11 +306,22 @@ const EDITABLE_DEFAULTS: &[&str] = &["description", "rules", "text_rules", "disp
 
 impl Service {
     /// The program options read now (leniently: these commands never fail on a bad option).
-    fn fresh_options(&self) -> Options {
+    pub(crate) fn fresh_options(&self) -> Options {
         SettingsStore::new(self.config())
             .options(LoadMode::Lenient)
             .map(|l| l.value)
             .unwrap_or_default()
+    }
+
+    /// Disable editing of a session (FC-003).
+    pub fn session_read_only(&self, reference: &SessionRef) -> Result<ReadOnlySides, ApiError> {
+        run_guarded(|| {
+            let session = self.session_effective(reference)?;
+            Ok(ReadOnlySides {
+                left: session.specs.read_only_left,
+                right: session.specs.read_only_right,
+            })
+        })
     }
 
     /// The session store of this configuration.
@@ -722,6 +771,9 @@ impl Service {
                 ViewRequest::Folder { request, .. } => {
                     (SessionType::FolderCompare, &request.left, &request.right)
                 }
+                ViewRequest::Sync { request, .. } => {
+                    (SessionType::FolderSync, &request.left, &request.right)
+                }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
                 let (spec, warning) = self.stored_spec(&raw.to_string_lossy())?;
@@ -729,6 +781,10 @@ impl Service {
                 warnings.extend(warning);
             }
             let defaults = store.defaults(kind)?;
+            let synced = match request {
+                ViewRequest::Sync { options, .. } => Some(options.clone()),
+                _ => None,
+            };
             let (rules, text_rules) = match request {
                 ViewRequest::Text { request, .. } => {
                     let base = match &request.base_rules {
@@ -746,12 +802,18 @@ impl Service {
                     )?;
                     (SessionRules::Text(rules), None)
                 }
-                ViewRequest::Folder { request, .. } => {
+                ViewRequest::Folder { request, .. } | ViewRequest::Sync { request, .. } => {
                     let mut with_defaults = request.clone();
-                    if with_defaults.base_rules.is_none()
-                        && let SessionRules::Folder(rules) = &defaults.rules
-                    {
-                        with_defaults.base_rules = Some(rules.clone());
+                    if with_defaults.base_rules.is_none() {
+                        match &defaults.rules {
+                            SessionRules::Folder(rules) => {
+                                with_defaults.base_rules = Some(rules.clone());
+                            }
+                            SessionRules::Sync(rules) => {
+                                with_defaults.base_rules = Some(rules.folder.clone());
+                            }
+                            _ => {}
+                        }
                     }
                     if with_defaults.base_text_rules.is_none() {
                         with_defaults
@@ -762,7 +824,14 @@ impl Service {
                     let text = effective
                         .text_rules
                         .or(with_defaults.base_text_rules.clone());
-                    (SessionRules::Folder(effective.rules), text)
+                    let rules = match synced.clone() {
+                        Some(sync) => SessionRules::Sync(SyncRules {
+                            folder: effective.rules,
+                            sync,
+                        }),
+                        None => SessionRules::Folder(effective.rules),
+                    };
+                    (rules, text)
                 }
             };
             Ok((
@@ -856,6 +925,71 @@ impl Service {
                 Ok((session, ParentFile::Named(actual)))
             }
         }
+    }
+
+    /// `folder op exclude`: adds `masks` to the session's exclude lists, each entry once (FC-052). A locked session needs
+    /// `force` (D-91). Rules are immutable in a model: the view re-runs.
+    pub fn session_add_excludes(
+        &self,
+        reference: &SessionRef,
+        masks: &ExcludeMasksDto,
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        let mut dto = self.session_edit_rules(reference, force, |rules| {
+            let names = &mut rules.filters.names;
+            for (list, new) in [
+                (&mut names.exclude_files, &masks.files),
+                (&mut names.exclude_folders, &masks.folders),
+            ] {
+                for mask in new {
+                    if !list.contains(mask) {
+                        list.push(mask.clone());
+                    }
+                }
+            }
+        })?;
+        dto.masks = Some(masks.clone());
+        Ok(dto)
+    }
+
+    /// `folder op ignored`: the session's marks become `list` (FC-033). A locked session needs `force` (D-91).
+    pub fn session_set_ignored(
+        &self,
+        reference: &SessionRef,
+        list: &[String],
+        force: bool,
+    ) -> Result<SessionWriteDto, ApiError> {
+        let mut dto = self.session_edit_rules(reference, force, |rules| {
+            rules.ignored = list.to_vec();
+        })?;
+        dto.ignored = Some(list.to_vec());
+        Ok(dto)
+    }
+
+    /// Changes the folder rules of a named session and saves it.
+    fn session_edit_rules(
+        &self,
+        reference: &SessionRef,
+        force: bool,
+        edit: impl FnOnce(&mut FolderRules),
+    ) -> Result<SessionWriteDto, ApiError> {
+        run_guarded(|| {
+            let store = self.session_store();
+            refuse_locked(&store, reference, force)?;
+            let mut session = self.session_load(reference)?.value;
+            let rules = match &mut session.rules {
+                SessionRules::Folder(rules) => rules,
+                SessionRules::Sync(rules) => &mut rules.folder,
+                _ => {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "`{reference}` is no folder session"
+                    )));
+                }
+            };
+            edit(rules);
+            rules.validate().map_err(ApiError::from_folder)?;
+            self.session_save(reference, &session, force)
+        })
     }
 
     /// `session delete`; a locked session needs `force` (SES-004).
@@ -1022,9 +1156,84 @@ impl Service {
         reference: &SessionRef,
     ) -> Result<SessionRunRequest, ApiError> {
         run_guarded(|| {
+            self.check_unknown_keys(reference)?;
             let session = self.session_effective(reference)?;
             run_request(&session)
         })
+    }
+
+    /// The unknown keys of a session's file that is about to run. D-70 keeps them, and each is one `unknown_config_key`
+    /// warning naming the nearest known key, always (not only with `--verbose`). In a folder-sync session an unknown key
+    /// in `[specs]` or `[rules]` refuses the run instead (`invalid_data`): `read_only = true` for `read_only_right`, or a
+    /// newer version's key, may change what a sync deletes. Other types only warn (T13).
+    fn check_unknown_keys(&self, reference: &SessionRef) -> Result<(), ApiError> {
+        let store = self.session_store();
+        let actual = store
+            .resolve(reference)
+            .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
+        let loaded = store.load(&actual, LoadMode::Strict)?;
+        let session = &loaded.value;
+        let known_table = match Value::try_from(session.full_doc()) {
+            Ok(Value::Table(table)) => table,
+            _ => Table::new(),
+        };
+        // The typed rules are read from a table that keeps what it does not know: the file against the full document says
+        // what this version ignores there, as `ignored_keys` says it elsewhere.
+        let raw: Table = std::fs::read_to_string(store.path(&actual))
+            .ok()
+            .and_then(|text| toml::from_str(&text).ok())
+            .unwrap_or_default();
+        let mut unknown: BTreeSet<String> = loaded.ignored_keys.iter().cloned().collect();
+        for path in tree::unknown_paths(&raw, &known_table) {
+            match tree::get_in(&raw, &path) {
+                Some(Value::Table(inner)) => {
+                    for (sub, _) in tree::leaves(inner, false) {
+                        let mut full = path.clone();
+                        full.extend(sub);
+                        unknown.insert(tree::display_path(&full));
+                    }
+                }
+                _ => {
+                    unknown.insert(tree::display_path(&path));
+                }
+            }
+        }
+        unknown.remove("schema_version");
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let known: Vec<String> = tree::leaves(&known_table, false)
+            .into_iter()
+            .map(|(path, _)| tree::display_path(&path))
+            .collect();
+        let nearest = |key: &str| -> String {
+            known
+                .iter()
+                .min_by_key(|candidate| edit_distance(candidate, key))
+                .map(|near| format!("; the nearest known key is `{near}`"))
+                .unwrap_or_default()
+        };
+        for key in &unknown {
+            let guarded = key.starts_with("specs.") || key.starts_with("rules.");
+            if session.kind == SessionType::FolderSync && guarded {
+                return Err(ApiError::InvalidData(format!(
+                    "session `{reference}`: unknown key `{key}`{}: a key this version does not know may change what a \
+                     sync deletes, so the session does not run; fix or remove it",
+                    nearest(key)
+                )));
+            }
+        }
+        for key in &unknown {
+            self.note(Warning {
+                code: WarningCode::UnknownConfigKey,
+                message: format!(
+                    "session `{reference}`: unknown key `{key}` (kept){}",
+                    nearest(key)
+                ),
+                spec: None,
+            });
+        }
+        Ok(())
     }
 
     /// What the GUI opens for a named session (`LoadSession`, D-89): Text and Folder Compare sessions; other
@@ -1299,9 +1508,19 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
                 ..FolderCompareRequest::default()
             }))
         }
+        (SessionType::FolderSync, SessionRules::Sync(rules)) => Ok(SessionRunRequest::Sync {
+            request: FolderCompareRequest {
+                left: need(&session.specs.left, "left")?,
+                right: need(&session.specs.right, "right")?,
+                base_rules: Some(rules.folder.clone()),
+                base_text_rules: session.text_rules.clone(),
+                ..FolderCompareRequest::default()
+            },
+            options: rules.sync.clone(),
+        }),
         (kind, _) => Err(ApiError::Unsupported(format!(
-            "`session run` runs folder-compare and text-compare sessions; {kind} sessions are not supported in \
-             this version"
+            "`session run` runs folder-compare, folder-sync and text-compare sessions; {kind} sessions are not \
+             supported in this version"
         ))),
     }
 }
@@ -1366,6 +1585,8 @@ fn write_dto(
         written: text(written),
         removed: text(removed),
         warnings,
+        masks: None,
+        ignored: None,
     }
 }
 
@@ -1410,6 +1631,18 @@ fn set_keys(
             )));
         }
         let opaque = matches!(first.as_str(), "display" | "view") && path.len() > 1;
+        // A folder-sync session's per-row overrides are a map keyed by path: a new path is a new entry (FS-004).
+        let override_entry = session.kind == SessionType::FolderSync
+            && path.len() == 4
+            && path[..3]
+                .iter()
+                .zip(["rules", "sync", "overrides"])
+                .all(|(segment, word)| matches!(segment, KeySegment::Name(name) if name == word));
+        if override_entry && let Some(KeySegment::Name(row)) = path.last() {
+            hikasa_folder::sync::override_path(row)
+                .map_err(|e| ApiError::InvalidArgument(format!("{key}: {e}")))?;
+        }
+        let opaque = opaque || override_entry;
         let existing = tree::get(&root, &path).cloned();
         let kind = match (&existing, opaque) {
             (Some(Value::Table(_)), _) => {
@@ -1461,6 +1694,12 @@ fn set_keys(
     };
     if let SessionRules::Text(rules) = &edited.rules {
         check(rules)?;
+    }
+    if let SessionRules::Sync(rules) = &edited.rules {
+        rules
+            .sync
+            .validate()
+            .map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
     }
     if let Some(rules) = &edited.text_rules {
         check(rules)?;

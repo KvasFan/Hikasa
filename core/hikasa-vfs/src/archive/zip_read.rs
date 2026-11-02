@@ -404,6 +404,7 @@ pub(crate) fn index_zip(
         let (mtime, ctime) = central.map_or((None, None), |f| f.times(&pass.zone));
         declared_total = declared_total.saturating_add(entry.size());
         let member = RawMember {
+            special: None,
             path,
             kind,
             lossy,

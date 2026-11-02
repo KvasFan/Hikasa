@@ -7,9 +7,14 @@
 //! thread. No clock is read here (T1): every entry carries the time its producer took from the injected clock.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use hikasa_core::Warning;
+use hikasa_vfs::ops::ItemStatus;
 
+use crate::api::folder_ops::{
+    FolderOpOutcome, FolderSyncOutcome, item_line, item_word, summary_text, sync_counts_text,
+};
 use crate::settings::Options;
 
 /// The kind of a log entry (OPT-018 classes).
@@ -220,6 +225,93 @@ pub fn format_line(e: &LogEntry) -> String {
         e.source,
         text
     )
+}
+
+/// The details one operation adds to a log at most (D-188): a run should not push a million lines into a bounded book.
+pub const LOG_DETAILS_MAX: usize = 10_000;
+
+/// The entries of a folder operation (FC-100, D-188): one `Summary`, one `Error` per failed item, which D-116 always keeps, a
+/// `Detail` per done or skipped item with `filter.details`, at most [`LOG_DETAILS_MAX`], and its warnings. In plan order.
+pub fn op_log_entries(
+    outcome: &FolderOpOutcome,
+    time: &jiff::Zoned,
+    source: &str,
+    elapsed: Option<Duration>,
+    filter: &LogFilter,
+) -> Vec<LogEntry> {
+    let entry = |kind, text: String| LogEntry {
+        time: time.clone(),
+        kind,
+        source: source.to_owned(),
+        text,
+    };
+    let mut entries = Vec::new();
+    let report = &outcome.report;
+    if filter.keeps(LogKind::Summary) {
+        let seconds = elapsed.map(|elapsed| elapsed.as_secs_f64());
+        let text = summary_text(outcome.verb, outcome.dry_run, &report.summary, seconds);
+        entries.push(entry(LogKind::Summary, text));
+    }
+    let dto = outcome.dto();
+    let mut details = 0usize;
+    for item in &dto.items {
+        match item.status {
+            ItemStatus::Failed => {
+                let message = item.error.as_ref().map_or("", |e| e.message.as_str());
+                let text = format!("failed {} {}: {message}", item_word(item), item.target);
+                entries.push(entry(LogKind::Error, text));
+            }
+            ItemStatus::Done | ItemStatus::Skipped | ItemStatus::Planned
+                if filter.keeps(LogKind::Detail) =>
+            {
+                details += 1;
+                if details <= LOG_DETAILS_MAX {
+                    entries.push(entry(LogKind::Detail, item_line(item, outcome.dry_run)));
+                }
+            }
+            _ => {}
+        }
+    }
+    if details > LOG_DETAILS_MAX {
+        let more = details - LOG_DETAILS_MAX;
+        entries.push(entry(LogKind::Detail, format!("\u{2026} and {more} more")));
+    }
+    if filter.keeps(LogKind::Warning) {
+        for warning in &outcome.warnings {
+            let text = format!("[{}] {}", warning.code, warning.message);
+            entries.push(entry(LogKind::Warning, text));
+        }
+    }
+    entries
+}
+
+/// The entries of a sync (D-188): those of its operation, the summary followed by one more `Summary` with the counts of its
+/// rows (the text of the human output's `#` line), and a `Warning` per row the comparison could not tell is already one of
+/// its warnings (`sync_incomplete`).
+pub fn sync_log_entries(
+    outcome: &FolderSyncOutcome,
+    time: &jiff::Zoned,
+    source: &str,
+    elapsed: Option<Duration>,
+    filter: &LogFilter,
+) -> Vec<LogEntry> {
+    let mut entries = op_log_entries(&outcome.op, time, source, elapsed, filter);
+    if filter.keeps(LogKind::Summary) {
+        let at = entries
+            .iter()
+            .position(|entry| entry.kind == LogKind::Summary)
+            .map_or(0, |index| index + 1);
+        entries.insert(
+            at,
+            LogEntry {
+                time: time.clone(),
+                kind: LogKind::Summary,
+                source: source.to_owned(),
+                text: sync_counts_text(&outcome.counts),
+            },
+        );
+    }
+    entries
 }
 
 #[cfg(test)]

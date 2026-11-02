@@ -6,17 +6,22 @@ use std::io::{ErrorKind as IoKind, Read, Write};
 
 use hikasa_core::{Ctl, ErrorKind, Spec, Warning};
 
+use super::backup::write_backup;
+use super::guard::Seen;
 use super::plan::{report, report_with};
 use super::{
     Action, CopyOptions, Decision, Exec, LinkPolicy, OpKind, Outcome, OverwritePolicy, Plan,
-    PlanItem, PlanOptions, SkipReason, check_holder, check_item, check_nesting, decide,
+    PlanItem, PlanOptions, Preserve, SkipReason, check_holder, check_item, check_nesting, decide,
     lstat_target, same_instance, scanning, warn_archive_link, warn_missing, warn_no_mtime,
 };
 use crate::caps::Capabilities;
 use crate::entry::{Attrs, DosAttrs, Entry, EntryKind, FileName};
 use crate::error::{VfsError, VfsOp};
 use crate::stream::StreamOptions;
-use crate::vfs::{AttrChange, FollowLinks, ListOptions, SetTimes, Vfs, WriteOptions};
+use crate::vfs::{
+    AtomicWrite, AttrChange, Durability, FollowLinks, HandleMeta, ListOptions, SetTimes, Vfs,
+    WriteOptions,
+};
 
 /// How a tree is planned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +175,7 @@ impl Planner<'_> {
         existing: Option<&Entry>,
         depth: u32,
     ) {
-        let mut item = PlanItem::new(
+        let mut item = PlanItem::planned(
             action,
             entry.kind,
             Some(source.clone()),
@@ -283,7 +288,7 @@ impl Planner<'_> {
                 return Ok(());
             }
         };
-        let mut item = PlanItem::new(
+        let mut item = PlanItem::planned(
             action,
             EntryKind::Dir,
             Some(source.clone()),
@@ -321,7 +326,7 @@ impl Planner<'_> {
             }
         }
         if self.mode == Mode::Move {
-            let mut remove = PlanItem::new(
+            let mut remove = PlanItem::planned(
                 Action::RemoveDir,
                 EntryKind::Dir,
                 None,
@@ -412,13 +417,18 @@ pub(crate) fn source_changed(source: &Spec) -> VfsError {
 }
 
 /// `create_dir` / `keep_dir` (copies, moves and `mkdir`).
-pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
+pub(crate) fn run_dir(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    index: usize,
+    seen: &mut Seen,
+) -> Outcome {
     let mkdir_parents = match exec.options {
         PlanOptions::Mkdir { parents } => Some(parents),
         _ => None,
     };
     if item.action == Action::KeepDir {
-        if matches!(exec.options, PlanOptions::Move(_))
+        if exec.moving()
             && let Some(source) = &item.source
             && exec.defers_removal(source, &item.target)
         {
@@ -440,14 +450,14 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
     }
     let parents = mkdir_parents.unwrap_or_else(|| exec.create_parents(item.depth));
     // An empty source folder of a move into an archive waits for the rebuild too (D-148).
-    if matches!(exec.options, PlanOptions::Move(_))
+    if exec.moving()
         && let Some(source) = &item.source
         && exec.defers_removal(source, &item.target)
     {
         exec.two_phase = true;
     }
     let replaced = if item.replaces {
-        match lstat_target(exec.dst, &item.target) {
+        match known_target(exec.dst, &item.target, seen) {
             Ok(Some(found)) if found.kind == EntryKind::Dir => {
                 return Outcome::Failed(VfsError::InvalidTarget {
                     spec: item.target.canonical(),
@@ -461,9 +471,10 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
     } else {
         None
     };
+    exec.note_new_folder(&item.target, parents);
     let created = match replaced {
         // The file or link being replaced is first moved aside, so a failing `create_dir` puts it back.
-        Some(()) => replace_with(exec.dst, &item.target, |dst| {
+        Some(()) => replace_with(exec, item, |dst| {
             dst.create_dir(&item.target, parents).map(drop)
         }),
         None => exec.dst.create_dir(&item.target, parents).map(drop),
@@ -474,7 +485,11 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
     if let Some(source) = &item.source {
         let preserve = exec.preserve();
         if preserve.times || preserve.attrs {
-            match exec.src.stat(source, FollowLinks::No) {
+            let found = match seen.source.take() {
+                Some(entry) => Ok(entry),
+                None => exec.src.stat(source, exec.source_follow(item)),
+            };
+            match found {
                 Ok(mut entry) => {
                     narrow_archive_mode(exec, source, &item.target, &mut entry);
                     exec.defer_dir(item.depth, index, item.target.clone(), entry);
@@ -486,24 +501,93 @@ pub(crate) fn run_dir(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Out
     Outcome::Done(0)
 }
 
-/// `copy`: one file (D-95).
-pub(crate) fn run_copy(exec: &mut Exec<'_>, item: &PlanItem) -> Result<u64, VfsError> {
+/// The target as the checks of `run_item` saw it, else an `lstat` now.
+pub(crate) fn known_target(
+    dst: &dyn Vfs,
+    target: &Spec,
+    seen: &mut Seen,
+) -> Result<Option<Entry>, VfsError> {
+    match seen.target.take() {
+        Some(found) => Ok(found),
+        None => lstat_target(dst, target),
+    }
+}
+
+/// `copy`: one file (D-95), by the path its case takes (§1.6.3).
+pub(crate) fn run_copy(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    seen: &mut Seen,
+) -> Result<u64, VfsError> {
     let source = item
         .source
         .as_ref()
         .ok_or_else(|| source_changed(&item.target))?;
-    let bytes = copy_content(exec, source, &item.target, item.replaces, item.depth)?;
-    let mut entry = source_file(exec, source, item.depth)?;
+    let mut entry = source_file(exec, item, source, seen)?;
+    let preserve = exec.preserve();
+    if !item.replaces
+        && preserve.attrs
+        && same_instance(exec.src, exec.dst)
+        && !exec.create_parents(item.depth)
+    {
+        let meta = handle_meta(exec, &item.target, &entry, preserve);
+        // D-103's re-check is the commit itself here: the new file takes its name by a rename that cannot replace, so a
+        // target that appeared since the plan stays, and the item fails as the `lstat` of `run_item` would have failed it.
+        let fast = match exec
+            .dst
+            .copy_new_file(source, &item.target, &meta, exec.ctl.cancel)
+        {
+            Err(VfsError::AlreadyExists { .. }) => return Err(target_appeared(&item.target)),
+            other => other?,
+        };
+        if let Some(bytes) = fast {
+            exec.progress(bytes, &item.target);
+            // Set on the handle but for `R`, which a rename could not carry on Windows.
+            if entry
+                .attrs
+                .dos()
+                .is_some_and(|attrs| attrs.contains(DosAttrs::READONLY))
+            {
+                apply_attrs(exec, exec.dst, &item.target, &entry)?;
+            }
+            return Ok(bytes);
+        }
+    }
+    if !item.replaces && known_target(exec.dst, &item.target, seen)?.is_some() {
+        return Err(target_appeared(&item.target));
+    }
+    let durability = if item.replaces {
+        Durability::FileOnly
+    } else {
+        Durability::None
+    };
+    let bytes = copy_content(exec, item, source, durability, seen)?;
     narrow_archive_mode(exec, source, &item.target, &mut entry);
     apply_metadata(exec, &item.target, &entry)?;
     Ok(bytes)
 }
 
-/// The source entry of a file copy: the root link is followed (only roots can be links here, rule 7); anything
-/// but a file means the source changed.
-fn source_file(exec: &Exec<'_>, source: &Spec, depth: u32) -> Result<Entry, VfsError> {
-    let mut entry = exec.src.stat(source, FollowLinks::No)?;
-    if entry.kind == EntryKind::Symlink && depth == 0 {
+/// D-103: an item planned without a target never replaces one that appeared since.
+pub(crate) fn target_appeared(target: &Spec) -> VfsError {
+    VfsError::InvalidTarget {
+        spec: target.canonical(),
+        reason: "changed since the plan was made",
+    }
+}
+
+/// The source entry of a file copy: seen by the stamp check, or read now. A link the comparison followed is read through
+/// it, and so is a root link (only roots can be links otherwise, rule 7); anything but a file means the source changed.
+pub(crate) fn source_file(
+    exec: &Exec<'_>,
+    item: &PlanItem,
+    source: &Spec,
+    seen: &mut Seen,
+) -> Result<Entry, VfsError> {
+    let mut entry = match seen.source.take() {
+        Some(entry) => entry,
+        None => exec.src.stat(source, exec.source_follow(item))?,
+    };
+    if entry.kind == EntryKind::Symlink && item.depth == 0 {
         entry = exec.src.stat(source, FollowLinks::Yes)?;
     }
     if entry.kind != EntryKind::File {
@@ -512,37 +596,89 @@ fn source_file(exec: &Exec<'_>, source: &Spec, depth: u32) -> Result<Entry, VfsE
     Ok(entry)
 }
 
-/// Copies the content of `source` onto `target` atomically: the fast path within one back-end instance, else
-/// the stream (§1.3.4 steps 4–5).
-pub(crate) fn copy_content(
+/// What [`Vfs::copy_new_file`] sets on the handle, with the warnings of the metadata step.
+fn handle_meta(
     exec: &mut Exec<'_>,
-    source: &Spec,
     target: &Spec,
-    replaces: bool,
-    depth: u32,
-) -> Result<u64, VfsError> {
-    source_file(exec, source, depth)?;
-    let opts = WriteOptions {
-        create_parents: exec.create_parents(depth),
-        overwrite: replaces,
-        replace_link: true,
-    };
-    if same_instance(exec.src, exec.dst)
-        && let Some(bytes) = exec
-            .dst
-            .copy_file_fast(source, target, &opts, exec.ctl.cancel)?
-    {
-        exec.progress(bytes, target);
-        return Ok(bytes);
+    source: &Entry,
+    preserve: Preserve,
+) -> HandleMeta {
+    let caps = exec
+        .dst
+        .capabilities(target)
+        .unwrap_or_else(|_| Capabilities::empty());
+    if preserve.times && source.mtime.is_none() {
+        warn_no_mtime(&mut exec.warned, &mut exec.warnings, target);
     }
-    let mut writer = exec.dst.open_write(target, &opts)?;
-    let mut reader = exec.src.open_read_with(source, exec.ctl.cancel)?;
+    let mut meta = HandleMeta {
+        size: (source.kind == EntryKind::File).then_some(source.size),
+        ..HandleMeta::default()
+    };
+    if preserve.times && source.mtime.is_some() {
+        if caps.contains(Capabilities::SET_TIMES) {
+            meta.modified = source.mtime;
+            if preserve.created {
+                if caps.contains(Capabilities::SET_CREATED) {
+                    meta.created = source.ctime;
+                } else {
+                    warn_missing(&mut exec.warned, &mut exec.warnings, "set_created", target);
+                }
+            }
+        } else {
+            warn_missing(&mut exec.warned, &mut exec.warnings, "set_times", target);
+        }
+    }
+    if let Attrs::Unix { meta: unix } = source.attrs
+        && caps.contains(Capabilities::UNIX_MODE)
+    {
+        meta.mode = Some(unix.mode & 0o7777);
+    }
+    meta
+}
+
+/// True when the item at `spec` carries a DOS `R`.
+fn read_only(vfs: &dyn Vfs, spec: &Spec) -> Result<bool, VfsError> {
+    Ok(lstat_target(vfs, spec)?
+        .and_then(|found| found.attrs.dos())
+        .is_some_and(|attrs| attrs.contains(DosAttrs::READONLY)))
+}
+
+/// Clears a DOS `R` at `spec`, if there is one: `true` when it was there, so a failure can give it back.
+pub(crate) fn clear_read_only_of(vfs: &dyn Vfs, spec: &Spec) -> Result<bool, VfsError> {
+    if !read_only(vfs, spec)? {
+        return Ok(false);
+    }
+    let change = AttrChange::Dos {
+        set: DosAttrs::empty(),
+        clear: DosAttrs::READONLY,
+    };
+    vfs.set_attrs(spec, &change).map(|()| true)
+}
+
+/// Gives a DOS `R` back (best effort: the item is failing already).
+pub(crate) fn restore_read_only(vfs: &dyn Vfs, spec: &Spec) {
+    let change = AttrChange::Dos {
+        set: DosAttrs::READONLY,
+        clear: DosAttrs::empty(),
+    };
+    let _ = vfs.set_attrs(spec, &change);
+}
+
+/// Copies an open reader into `writer`, reporting progress at `target` (§1.3.4 step 4). Nothing is committed here.
+fn pump(
+    exec: &Exec<'_>,
+    from: (&dyn Vfs, &Spec),
+    target: &Spec,
+    writer: &mut Box<dyn AtomicWrite>,
+) -> Result<u64, VfsError> {
+    let (vfs, source) = from;
+    let mut reader = vfs.open_read_with(source, exec.ctl.cancel)?;
     let mut buffer = vec![0u8; StreamOptions::default().effective_buffer_size()];
     let mut copied: u64 = 0;
     loop {
         exec.ctl.check()?;
         let n = match reader.read(&mut buffer) {
-            Ok(0) => break,
+            Ok(0) => return Ok(copied),
             Ok(n) => n,
             Err(e) if e.kind() == IoKind::Interrupted => continue,
             Err(e) => return Err(VfsError::from_io(source.canonical(), VfsOp::Read, e)),
@@ -553,30 +689,169 @@ pub(crate) fn copy_content(
         copied += n as u64;
         exec.progress(copied, target);
     }
+}
+
+/// The hidden copy of an `exchange`: a new file, on the fast path where one back-end has both ends (§1.6.3).
+pub(crate) fn copy_file_on(
+    exec: &mut Exec<'_>,
+    from: (&dyn Vfs, &Spec),
+    to: (&dyn Vfs, &Spec),
+) -> Result<u64, VfsError> {
+    let (from_vfs, source) = from;
+    let (to_vfs, target) = to;
+    let opts = WriteOptions {
+        replace_link: true,
+        durability: Durability::FileOnly,
+        ..WriteOptions::default()
+    };
+    if same_instance(from_vfs, to_vfs)
+        && let Some(bytes) = to_vfs.copy_file_fast(source, target, &opts, exec.ctl.cancel)?
+    {
+        exec.progress(bytes, target);
+        return Ok(bytes);
+    }
+    let mut writer = to_vfs.open_write(target, &opts)?;
+    let copied = pump(exec, from, target, &mut writer)?;
     exec.ctl.check()?;
     writer.commit()?;
     Ok(copied)
 }
 
+/// Copies the content of `source` onto the target of `item` atomically: the fast path within one back-end instance, else
+/// the stream (§1.3.4 steps 4–5). An item with a backup always streams, so the replaced file can go aside just before
+/// the commit (§1.6.5).
+pub(crate) fn copy_content(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    source: &Spec,
+    durability: Durability,
+    seen: &mut Seen,
+) -> Result<u64, VfsError> {
+    let target = &item.target;
+    let opts = WriteOptions {
+        create_parents: exec.create_parents(item.depth),
+        overwrite: item.replaces,
+        replace_link: true,
+        durability,
+    };
+    let clear = item.clear_read_only && item.replaces && read_only(exec.dst, target)?;
+    if item.backup.is_none()
+        && !clear
+        && same_instance(exec.src, exec.dst)
+        && let Some(bytes) = exec
+            .dst
+            .copy_file_fast(source, target, &opts, exec.ctl.cancel)?
+    {
+        exec.progress(bytes, target);
+        return Ok(bytes);
+    }
+    let replaced = match &item.backup {
+        Some(_) => known_target(exec.dst, target, seen)?,
+        None => None,
+    };
+    let mut writer = exec.dst.open_write(target, &opts)?;
+    let copied = pump(exec, (exec.src, source), target, &mut writer)?;
+    exec.ctl.check()?;
+    match &item.backup {
+        Some(backup) => {
+            with_backup(exec, target, backup, item.clear_read_only, || {
+                writer.commit()
+            })?;
+            // The writer keeps the mode of a regular file it replaces, and this one has gone aside. What a link or a
+            // special file has for a mode is no mode for a file: the new one has the default, as without a backup.
+            if let Some(Entry {
+                kind: EntryKind::File,
+                attrs: Attrs::Unix { meta },
+                ..
+            }) = replaced
+                && !exec.preserve().attrs
+            {
+                exec.dst
+                    .set_attrs(target, &AttrChange::Mode(meta.mode & 0o7777))?;
+            }
+        }
+        None if clear => {
+            clear_read_only_of(exec.dst, target)?;
+            writer
+                .commit()
+                .inspect_err(|_| restore_read_only(exec.dst, target))?;
+        }
+        None => writer.commit()?,
+    }
+    Ok(copied)
+}
+
+/// What replaces the target, with a backup of the old one (§1.6.5): the old item is renamed to its backup just before
+/// `commit`, and back when it fails. The target is missing for one rename only. On another disk the backup is a copy, made
+/// while the target is intact, and then the target is still there for `commit` to replace, so `clear` takes its `R` first
+/// and a failure gives it back. **A failed backup fails the item and the target stays.**
+pub(crate) fn with_backup(
+    exec: &Exec<'_>,
+    target: &Spec,
+    backup: &Spec,
+    clear: bool,
+    commit: impl FnOnce() -> Result<(), VfsError>,
+) -> Result<(), VfsError> {
+    let dst = exec.dst;
+    if let Some(parent) = backup.parent() {
+        dst.create_dir(&parent, true)?;
+    }
+    match dst.rename(target, backup, true) {
+        Ok(()) => commit().map_err(|e| match dst.rename(backup, target, true) {
+            Ok(()) => e,
+            Err(back) => kept_as(target, backup, &e, &back),
+        }),
+        Err(VfsError::CrossDevice { .. } | VfsError::OperationUnsupported { .. }) => {
+            write_backup(dst, target, backup, exec.ctl)?;
+            let cleared = clear && clear_read_only_of(dst, target)?;
+            commit().inspect_err(|_| {
+                if cleared {
+                    restore_read_only(dst, target);
+                }
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// A replacement failed and the old item could not go back: the message names where it is.
+fn kept_as(target: &Spec, kept: &Spec, error: &VfsError, back: &VfsError) -> VfsError {
+    VfsError::from_io(
+        target.canonical(),
+        VfsOp::Rename,
+        std::io::Error::other(format!(
+            "{error}; the replaced item was kept as {} ({back})",
+            kept.canonical()
+        )),
+    )
+}
+
 /// `link`: a new link with the source link's target text (D-94 rule 6).
-pub(crate) fn run_link(exec: &mut Exec<'_>, item: &PlanItem) -> Result<(), VfsError> {
+pub(crate) fn run_link(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    seen: &mut Seen,
+) -> Result<(), VfsError> {
     let source = item
         .source
         .as_ref()
         .ok_or_else(|| source_changed(&item.target))?;
-    create_link_copy(exec, source, &item.target, item.replaces, item.depth)
+    create_link_copy(exec, source, item, seen)
 }
 
-/// Creates at `target` a link with the target text of the link `source` (replacing a non-folder target when
-/// `replaces`).
+/// Creates at the target of `item` a link with the target text of the link `source` (replacing a non-folder target when
+/// the item `replaces`).
 pub(crate) fn create_link_copy(
     exec: &mut Exec<'_>,
     source: &Spec,
-    target: &Spec,
-    replaces: bool,
-    depth: u32,
+    item: &PlanItem,
+    seen: &mut Seen,
 ) -> Result<(), VfsError> {
-    let entry = exec.src.stat(source, FollowLinks::No)?;
+    let target = &item.target;
+    let entry = match seen.source.take() {
+        Some(entry) => entry,
+        None => exec.src.stat(source, FollowLinks::No)?,
+    };
     if entry.kind != EntryKind::Symlink {
         return Err(source_changed(source));
     }
@@ -585,7 +860,7 @@ pub(crate) fn create_link_copy(
         .src
         .stat(source, FollowLinks::Yes)
         .is_ok_and(|e| e.kind == EntryKind::Dir);
-    if exec.create_parents(depth)
+    if exec.create_parents(item.depth)
         && let Some(parent) = target.parent()
     {
         exec.dst.create_dir(&parent, true)?;
@@ -595,8 +870,8 @@ pub(crate) fn create_link_copy(
     } else {
         text
     };
-    let replaced = if replaces {
-        match lstat_target(exec.dst, target)? {
+    let replaced = if item.replaces {
+        match known_target(exec.dst, target, seen)? {
             Some(found) if found.kind == EntryKind::Dir => {
                 return Err(VfsError::InvalidTarget {
                     spec: target.canonical(),
@@ -611,30 +886,51 @@ pub(crate) fn create_link_copy(
     };
     if replaced {
         // The replaced item is moved aside first, so a failing `create_symlink` puts it back.
-        replace_with(exec.dst, target, |dst| {
+        replace_with(exec, item, |dst| {
             dst.create_symlink(target, &text, target_is_dir)
-        })
+        })?;
     } else {
-        exec.dst.create_symlink(target, &text, target_is_dir)
+        exec.dst.create_symlink(target, &text, target_is_dir)?;
+    }
+    // The link keeps its source's time, set on the link itself (`set_times` never follows): a link copied with the time
+    // of the copy would be newer than its source, and a sync would copy it again on every run, both ways for Update Both.
+    let preserve = Preserve {
+        attrs: false,
+        created: false,
+        ..exec.preserve()
+    };
+    match apply_preserved(exec, exec.dst, target, &entry, preserve) {
+        // Where a back-end cannot time a link, the link is made and says so once (`capability_missing`).
+        Err(VfsError::OperationUnsupported { .. }) => {
+            warn_missing(
+                &mut exec.warned,
+                &mut exec.warnings,
+                "set_times of a link",
+                target,
+            );
+            Ok(())
+        }
+        other => other,
     }
 }
 
-/// The name of a free temporary sibling of `target` (`.<name>.hikasa-old`, then `-1`, `-2`, …), `None` without a
-/// parent or a name.
-fn aside_sibling(dst: &dyn Vfs, target: &Spec) -> Result<Option<Spec>, VfsError> {
-    let (Some(parent), Some(name)) = (target.parent(), target_name(target)) else {
-        return Ok(None);
+/// A free hidden name next to `target`: `name`, then `name-1`, `name-2`, … It does not grow with `target`'s, or a name
+/// near the limit of the file system could not have one.
+pub(crate) fn free_sibling(dst: &dyn Vfs, target: &Spec, name: &str) -> Result<Spec, VfsError> {
+    let Some(parent) = target.parent() else {
+        return Err(VfsError::InvalidTarget {
+            spec: target.canonical(),
+            reason: "needs a file name",
+        });
     };
     for attempt in 0..1000u32 {
-        let mut text = OsString::from(".");
-        text.push(&name);
-        text.push(".hikasa-old");
+        let mut text = OsString::from(name);
         if attempt > 0 {
             text.push(format!("-{attempt}"));
         }
         let sibling = dst.child(&parent, &FileName::from_os(&text))?;
         if lstat_target(dst, &sibling)?.is_none() {
-            return Ok(Some(sibling));
+            return Ok(sibling);
         }
     }
     Err(VfsError::AlreadyExists {
@@ -642,55 +938,75 @@ fn aside_sibling(dst: &dyn Vfs, target: &Spec) -> Result<Option<Spec>, VfsError>
     })
 }
 
-/// The final component of `target` as an OS string.
-fn target_name(target: &Spec) -> Option<OsString> {
-    match target {
-        Spec::Local(path) => path.file_name().map(std::ffi::OsStr::to_os_string),
-        other => other.file_name().map(OsString::from),
-    }
-}
-
-/// Replaces the non-folder item at `target` by what `create` makes there: the item is renamed to a temporary
-/// sibling, `create` runs, and the sibling is removed; when `create` fails the sibling is renamed back, so the
-/// target is as before (D-95: a failing item leaves its target untouched). Without `RENAME` on the back-end the
-/// item is removed first (no way to keep it aside).
+/// Replaces the non-folder item at the target of `item` by what `create` makes there: the item is renamed to a temporary
+/// sibling, `create` runs, and the sibling is removed, or becomes the backup of the item; when `create` fails, or the
+/// backup does, the sibling is renamed back, so the target is as before (D-95: a failing item leaves its target
+/// untouched). Its `R` goes only when the sibling does, so a failure has none to give back, and a backup keeps it.
+/// Without `RENAME` on the back-end the item is removed first (no way to keep it aside).
 fn replace_with(
-    dst: &dyn Vfs,
-    target: &Spec,
+    exec: &Exec<'_>,
+    item: &PlanItem,
     create: impl FnOnce(&dyn Vfs) -> Result<(), VfsError>,
 ) -> Result<(), VfsError> {
+    let (dst, target) = (exec.dst, &item.target);
     let can_rename = dst
         .capabilities(target)
         .is_ok_and(|caps| caps.contains(Capabilities::RENAME));
     let aside = if can_rename {
-        aside_sibling(dst, target)?
+        Some(free_sibling(dst, target, ".hikasa-old")?)
     } else {
         None
     };
     let Some(aside) = aside else {
-        dst.remove(target)?;
+        if let Some(backup) = &item.backup {
+            write_backup(dst, target, backup, exec.ctl)?;
+        }
+        let cleared = item.clear_read_only && clear_read_only_of(dst, target)?;
+        dst.remove(target).inspect_err(|_| {
+            if cleared {
+                restore_read_only(dst, target);
+            }
+        })?;
         return create(dst);
     };
     dst.rename(target, &aside, false)?;
-    match create(dst) {
-        Ok(()) => {
+    let back = |e: VfsError| match dst.rename(&aside, target, false) {
+        Ok(()) => e,
+        Err(back) => kept_as(target, &aside, &e, &back),
+    };
+    if let Err(e) = create(dst) {
+        return Err(back(e));
+    }
+    match &item.backup {
+        Some(backup) => keep_aside(exec, &aside, backup).map_err(|e| {
+            // What `create` made goes, for what was there.
+            let _ = dst.remove(target);
+            back(e)
+        }),
+        None => {
             // The new item is in place; the old one is discarded (best effort: a leftover sibling is no loss).
+            if item.clear_read_only {
+                let _ = clear_read_only_of(dst, &aside);
+            }
             let _ = dst.remove(&aside);
             Ok(())
         }
-        Err(e) => {
-            if let Err(back) = dst.rename(&aside, target, false) {
-                return Err(VfsError::from_io(
-                    target.canonical(),
-                    VfsOp::Rename,
-                    std::io::Error::other(format!(
-                        "{e}; the replaced item was kept as {} ({back})",
-                        aside.canonical()
-                    )),
-                ));
-            }
-            Err(e)
+    }
+}
+
+/// The hidden sibling of [`replace_with`] becomes the backup; on another disk it is copied there and removed.
+fn keep_aside(exec: &Exec<'_>, aside: &Spec, backup: &Spec) -> Result<(), VfsError> {
+    let dst = exec.dst;
+    if let Some(parent) = backup.parent() {
+        dst.create_dir(&parent, true)?;
+    }
+    match dst.rename(aside, backup, true) {
+        Err(VfsError::CrossDevice { .. } | VfsError::OperationUnsupported { .. }) => {
+            write_backup(dst, aside, backup, exec.ctl)?;
+            let _ = dst.remove(aside);
+            Ok(())
         }
+        done => done,
     }
 }
 
@@ -704,13 +1020,17 @@ pub(crate) fn narrow_archive_mode(
     target: &Spec,
     entry: &mut Entry,
 ) {
+    narrow_mode_on(exec.dst, source, target, entry);
+}
+
+/// [`narrow_archive_mode`] of a `target` on any back-end.
+fn narrow_mode_on(dst: &dyn Vfs, source: &Spec, target: &Spec, entry: &mut Entry) {
     if !matches!(source, Spec::ArchiveMember { .. }) || matches!(target, Spec::ArchiveMember { .. })
     {
         return;
     }
     if let Attrs::Unix { meta } = &mut entry.attrs {
-        let created = exec
-            .dst
+        let created = dst
             .stat(target, FollowLinks::No)
             .ok()
             .and_then(|entry| entry.attrs.unix())
@@ -719,16 +1039,40 @@ pub(crate) fn narrow_archive_mode(
     }
 }
 
-/// Applies the preserved metadata of `source` to `target`: times, then attributes (D-95). A missing capability
-/// skips the step with one `capability_missing` warning per operation; a failing call is the item's error.
+/// Applies the metadata of the operation's [`Preserve`] to `target`.
 pub(crate) fn apply_metadata(
     exec: &mut Exec<'_>,
     target: &Spec,
     source: &Entry,
 ) -> Result<(), VfsError> {
     let preserve = exec.preserve();
-    let caps = exec
-        .dst
+    apply_preserved(exec, exec.dst, target, source, preserve)
+}
+
+/// The metadata of one hidden copy of an `exchange`, on its own side.
+pub(crate) fn apply_metadata_on(
+    exec: &mut Exec<'_>,
+    from: (&dyn Vfs, &Spec),
+    vfs: &dyn Vfs,
+    target: &Spec,
+    source: &Entry,
+) -> Result<(), VfsError> {
+    let mut entry = source.clone();
+    narrow_mode_on(vfs, from.1, target, &mut entry);
+    let preserve = exec.preserve();
+    apply_preserved(exec, vfs, target, &entry, preserve)
+}
+
+/// Applies the preserved metadata of `source` to `target`: times, then attributes (D-95). A missing capability
+/// skips the step with one `capability_missing` warning per operation; a failing call is the item's error.
+pub(crate) fn apply_preserved(
+    exec: &mut Exec<'_>,
+    dst: &dyn Vfs,
+    target: &Spec,
+    source: &Entry,
+    preserve: Preserve,
+) -> Result<(), VfsError> {
+    let caps = dst
         .capabilities(target)
         .unwrap_or_else(|_| Capabilities::empty());
     if preserve.times && source.mtime.is_none() {
@@ -748,7 +1092,7 @@ pub(crate) fn apply_metadata(
             } else {
                 None
             };
-            exec.dst.set_times(
+            dst.set_times(
                 target,
                 &SetTimes {
                     modified: Some(mtime),
@@ -760,26 +1104,40 @@ pub(crate) fn apply_metadata(
         }
     }
     if preserve.attrs {
-        // Within one family only; between families nothing is mapped. DOS: the `R` bit only (D-99).
-        let change = match source.attrs {
-            Attrs::Unix { meta } if caps.contains(Capabilities::UNIX_MODE) => {
-                Some(AttrChange::Mode(meta.mode & 0o7777))
-            }
-            Attrs::Dos { attrs } if caps.contains(Capabilities::DOS_ATTRS) => {
-                let set = attrs & DosAttrs::READONLY;
-                Some(AttrChange::Dos {
-                    set,
-                    clear: DosAttrs::READONLY.difference(set),
-                })
-            }
-            Attrs::Unix { .. } | Attrs::Dos { .. } | Attrs::None => None,
-        };
-        if let Some(change) = change {
-            if caps.contains(Capabilities::SET_ATTRS) {
-                exec.dst.set_attrs(target, &change)?;
-            } else {
-                warn_missing(&mut exec.warned, &mut exec.warnings, "set_attrs", target);
-            }
+        apply_attrs(exec, dst, target, source)?;
+    }
+    Ok(())
+}
+
+/// The attribute step of the metadata (within one family only; between families nothing is mapped).
+fn apply_attrs(
+    exec: &mut Exec<'_>,
+    dst: &dyn Vfs,
+    target: &Spec,
+    source: &Entry,
+) -> Result<(), VfsError> {
+    let caps = dst
+        .capabilities(target)
+        .unwrap_or_else(|_| Capabilities::empty());
+    // DOS: the `R` bit only (D-99).
+    let change = match source.attrs {
+        Attrs::Unix { meta } if caps.contains(Capabilities::UNIX_MODE) => {
+            Some(AttrChange::Mode(meta.mode & 0o7777))
+        }
+        Attrs::Dos { attrs } if caps.contains(Capabilities::DOS_ATTRS) => {
+            let set = attrs & DosAttrs::READONLY;
+            Some(AttrChange::Dos {
+                set,
+                clear: DosAttrs::READONLY.difference(set),
+            })
+        }
+        Attrs::Unix { .. } | Attrs::Dos { .. } | Attrs::None => None,
+    };
+    if let Some(change) = change {
+        if caps.contains(Capabilities::SET_ATTRS) {
+            dst.set_attrs(target, &change)?;
+        } else {
+            warn_missing(&mut exec.warned, &mut exec.warnings, "set_attrs", target);
         }
     }
     Ok(())

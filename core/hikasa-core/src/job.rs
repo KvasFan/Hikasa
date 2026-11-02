@@ -38,6 +38,12 @@ pub enum JobKind {
     VfsRead,
     /// `vfs cp|mv|rm|mkdir|touch` and their dry runs (M2 W3; additive).
     VfsWrite,
+    /// A folder operation: its plan or its execution (M2 W6, §1.6.16; additive).
+    FolderOp,
+    /// A folder synchronization (M2 W6; additive).
+    FolderSync,
+    /// A refresh of a folder comparison (M2 W6; additive).
+    FolderRefresh,
 }
 
 impl JobKind {
@@ -52,6 +58,9 @@ impl JobKind {
             JobKind::VfsList => "vfs_list",
             JobKind::VfsRead => "vfs_read",
             JobKind::VfsWrite => "vfs_write",
+            JobKind::FolderOp => "folder_op",
+            JobKind::FolderSync => "folder_sync",
+            JobKind::FolderRefresh => "folder_refresh",
         }
     }
 }

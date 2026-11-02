@@ -1,0 +1,17 @@
+---- leave empty (matrix)
+delR delete_right gone/inner.txt
+delR delete_right gone
+L>R copy_right different.txt
+L>R copy_right left-only.txt
+L>R copy_right newer-left.txt
+L>R copy_right newer-right.txt
+delR delete_right right-only.txt
+R remove <TMP>/r/gone/inner.txt
+R rmdir <TMP>/r/gone
+R remove <TMP>/r/right-only.txt
+R replace <TMP>/l/different.txt -> <TMP>/r/different.txt
+R copy <TMP>/l/left-only.txt -> <TMP>/r/left-only.txt
+R replace <TMP>/l/newer-left.txt -> <TMP>/r/newer-left.txt
+R replace <TMP>/l/newer-right.txt -> <TMP>/r/newer-right.txt
+synchronized 7 of 7 items (0 skipped, 0 failed), 34 bytes
+# 4 copies right, 0 copies left, 0 deletes left, 3 deletes right, 0 conflicts, 0 unresolved

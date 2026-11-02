@@ -270,6 +270,75 @@ fn non_utf8_specs_and_path_values_are_kept() {
     ));
 }
 
+/// A6.31 (CLI-003, D-190): `--sync` makes a Folder Sync view, and with `--fv` the last wins; `--nobackups` is an option of the
+/// view. Neither is forwarded with `switch_ignored` any more.
+#[test]
+fn sync_and_nobackups_table() {
+    let rows: &[(&[&str], Platform, Option<ViewKind>, bool)] = &[
+        (
+            &["--sync", "a", "b"],
+            Platform::Linux,
+            Some(ViewKind::FolderSync),
+            false,
+        ),
+        (
+            &["-sync", "a", "b"],
+            Platform::Linux,
+            Some(ViewKind::FolderSync),
+            false,
+        ),
+        (
+            &["/sync", "a", "b"],
+            Platform::Windows,
+            Some(ViewKind::FolderSync),
+            false,
+        ),
+        (
+            &["--SYNC"],
+            Platform::Linux,
+            Some(ViewKind::FolderSync),
+            false,
+        ),
+        (
+            &["--fv", "Text Compare", "--sync"],
+            Platform::Linux,
+            Some(ViewKind::FolderSync),
+            false,
+        ),
+        (
+            &["--sync", "--fv=text-compare"],
+            Platform::Linux,
+            Some(ViewKind::TextCompare),
+            false,
+        ),
+        (
+            &["--sync", "-fileviewer", "Folder Compare"],
+            Platform::Linux,
+            Some(ViewKind::FolderCompare),
+            false,
+        ),
+        (&["--nobackups", "a", "b"], Platform::Linux, None, true),
+        (
+            &["/NoBackups", "--sync"],
+            Platform::Windows,
+            Some(ViewKind::FolderSync),
+            true,
+        ),
+    ];
+    for (line, platform, kind, no_backups) in rows {
+        let parsed = parse_open_args(&args(line), *platform).unwrap();
+        assert_eq!(parsed.request.kind, *kind, "{line:?}");
+        assert_eq!(parsed.request.options.no_backups, *no_backups, "{line:?}");
+        assert!(
+            parsed.warnings.is_empty(),
+            "{line:?}: {:?}",
+            parsed.warnings
+        );
+        assert!(parsed.request.options.extra.is_empty(), "{line:?}");
+    }
+    assert!(parse_open_args(&args(&["--sync=yes"]), Platform::Linux).is_err());
+}
+
 #[test]
 fn view_kind_parse() {
     for (text, kind) in [

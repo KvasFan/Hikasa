@@ -136,6 +136,7 @@ fn request(ctx: &Ctx<'_>, args: &TextCompareArgs) -> Result<TextCompareRequest, 
         rules_patch,
         ignore_unimportant: args.ignore_unimportant,
         base_rules: None,
+        format_overrides: Default::default(),
     })
 }
 

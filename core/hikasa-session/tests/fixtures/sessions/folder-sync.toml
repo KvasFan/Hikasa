@@ -7,11 +7,15 @@ favorite = true
 left = "/data/left"
 right = "/data/right"
 
-[rules]
-mode = "mirror"
+[rules.criteria]
+size = false
 
-[rules.filters]
-names = "*.c"
+[rules.sync]
+create_empty = true
+preset = "mirror_right"
+
+[rules.sync.overrides]
+"a/b.txt" = "leave"
 
 [text_rules.importance]
 compare_line_endings = true

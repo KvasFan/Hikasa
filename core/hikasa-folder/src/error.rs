@@ -45,6 +45,18 @@ pub enum FolderError {
     /// Cancelled before the base folders were loaded.
     #[error("operation cancelled")]
     Cancelled,
+    /// A refresh or a content test on demand runs, or the model is still scanning (§1.6.7).
+    #[error("this comparison is busy")]
+    RefreshBusy,
+    /// A flat comparison has no folders to refresh: the caller re-runs (§1.6.7).
+    #[error("a flat comparison cannot be refreshed")]
+    RefreshFlat,
+    /// A sync on an empty source (§1.6.14); `--allow-empty-source` lets it pass.
+    #[error("the {side} side is empty: a sync would remove everything on the other side")]
+    EmptySource {
+        /// The empty side.
+        side: Side,
+    },
     /// A rules file written by a newer version of Hikasa (`schema_version` newer than
     /// [`crate::FOLDER_RULES_SCHEMA_VERSION`], SES-052, D-31). Additive variant (see the crate documentation).
     #[error("folder rules: {0}")]
@@ -59,14 +71,18 @@ impl From<Cancelled> for FolderError {
 
 impl Classify for FolderError {
     /// `BaseNotLoadable` → the VFS error's kind; `BaseNotFolder` → `not_a_directory`; `Filter`,
-    /// `InvalidRules` → `invalid_input`; `RulesComparatorMissing`, `AlreadyScanned` → `internal` (wiring bugs);
-    /// `Cancelled` → `cancelled`; `Schema` → `unsupported`.
+    /// `InvalidRules`, `RefreshBusy`, `RefreshFlat`, `EmptySource` → `invalid_input` (§1.6.16);
+    /// `RulesComparatorMissing`, `AlreadyScanned` → `internal` (wiring bugs); `Cancelled` → `cancelled`; `Schema` →
+    /// `unsupported`.
     fn kind(&self) -> ErrorKind {
         match self {
             FolderError::BaseNotLoadable { source, .. } => source.kind(),
             FolderError::BaseNotFolder { .. } => ErrorKind::NotADirectory,
             FolderError::Filter(e) => e.kind(),
-            FolderError::InvalidRules(_) => ErrorKind::InvalidInput,
+            FolderError::InvalidRules(_)
+            | FolderError::RefreshBusy
+            | FolderError::RefreshFlat
+            | FolderError::EmptySource { .. } => ErrorKind::InvalidInput,
             FolderError::RulesComparatorMissing | FolderError::AlreadyScanned => {
                 ErrorKind::Internal
             }

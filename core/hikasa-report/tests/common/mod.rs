@@ -553,6 +553,7 @@ fn insert_entry(vfs: &MemoryVfs, base: &str, e: &EntrySpec) {
         ctime: None,
         attrs,
         crc32: e.crc32,
+        ..MemMeta::default()
     };
     match e.kind.as_deref().unwrap_or("file") {
         "file" => {

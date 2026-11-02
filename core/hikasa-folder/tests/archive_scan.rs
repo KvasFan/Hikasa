@@ -86,8 +86,14 @@ fn zip_raw_with(entries: &[(&str, &Vec<u8>)]) -> Vec<u8> {
 }
 
 fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let typed: Vec<(&str, &[u8], u8)> = entries.iter().map(|(n, d)| (*n, *d, b'0')).collect();
+    tar_typed(&typed)
+}
+
+/// A tar of `(name, data, type flag)`.
+fn tar_typed(entries: &[(&str, &[u8], u8)]) -> Vec<u8> {
     let mut out = Vec::new();
-    for (name, data) in entries {
+    for (name, data, flag) in entries {
         let mut block = [0u8; 512];
         block[..name.len()].copy_from_slice(name.as_bytes());
         block[100..108].copy_from_slice(b"0000644\0");
@@ -95,7 +101,7 @@ fn tar_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         block[116..124].copy_from_slice(b"0000000\0");
         block[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
         block[136..148].copy_from_slice(format!("{:011o}\0", 1_790_000_000).as_bytes());
-        block[156] = b'0';
+        block[156] = *flag;
         block[257..263].copy_from_slice(b"ustar\0");
         block[263..265].copy_from_slice(b"00");
         block[148..156].fill(b' ');
@@ -718,4 +724,119 @@ fn rules_round_trip_with_the_new_keys() {
     assert!(sparse.open_archives.is_empty());
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(ArchiveHandling::default(), ArchiveHandling::OnceOpened);
+}
+
+// ---- A6.11, A6.12: refresh and contents with archives ------------------------------------------------------------
+
+/// `open_archive` makes a closed row a folder in place of a re-run; a rebuilt archive is re-read through the new stamp.
+#[test]
+fn a6_11_archives() {
+    let world = world();
+    world.put("/l/a.zip", &zip_of(&[("x", b"one"), ("y", b"two")]));
+    world.put("/r/a.zip", &zip_of(&[("x", b"one"), ("y", b"other")]));
+    let rules = FolderRules::default();
+    let cmp = world.compare(mspec("/l"), mspec("/r"), &rules);
+    let contents = engines(1 << 20);
+    let refresh = |nodes: &[NodeId]| {
+        common::with_env(&world.vfs, &contents, &CancelToken::new(), |env| {
+            hikasa_folder::refresh_into(cmp.model(), nodes, env).unwrap()
+        })
+    };
+    let at = |path: &str| {
+        cmp.read()
+            .node_at(&hikasa_core::RelPath::parse(path).unwrap())
+    };
+    let row = at("a.zip").unwrap();
+    assert_eq!(cmp.read().node(row).unwrap().kind, NodeKind::File);
+    cmp.model().open_archive("a.zip");
+    assert!(refresh(&[row]).complete);
+    cmp.check_invariants().unwrap();
+    let opened = at("a.zip").unwrap();
+    assert_eq!(cmp.read().node(opened).unwrap().kind, NodeKind::Folder);
+    assert_eq!(cmp.read().children(opened).len(), 2);
+    assert!(at("a.zip/y").is_some());
+    // The archive changes behind the row: the refresh of its parent sees the new stamp, and goes in.
+    let meta = MemMeta {
+        mtime: FileTime::from_unix(1_800_000_000, 0),
+        ..MemMeta::default()
+    };
+    let third = zip_of(&[("x", b"one"), ("z", b"new")]);
+    world
+        .mem
+        .insert_file(&common::host("/l/a.zip"), third, meta)
+        .unwrap();
+    assert!(refresh(&[NodeId::ROOT]).complete);
+    cmp.check_invariants().unwrap();
+    assert!(at("a.zip/z").is_some());
+    // A refresh inside: one level, through the archive.
+    let meta = MemMeta {
+        mtime: FileTime::from_unix(1_800_000_100, 0),
+        ..MemMeta::default()
+    };
+    let fourth = zip_of(&[("x", b"changed"), ("y", b"two")]);
+    world
+        .mem
+        .insert_file(&common::host("/l/a.zip"), fourth, meta)
+        .unwrap();
+    let report = refresh(&[at("a.zip").unwrap()]);
+    assert!(report.complete);
+    assert!(at("a.zip/z").is_none());
+    cmp.check_invariants().unwrap();
+}
+
+/// `compute_crcs` takes a zip's CRC with nothing decoded.
+#[test]
+fn a6_12_a_zip_crc_is_not_read() {
+    let world = world();
+    world.put("/l/a.zip", &zip_of(&[("x", b"one")]));
+    world.put("/r/a.zip", &zip_of(&[("x", b"two")]));
+    let rules = FolderRules::default();
+    let cmp = world.compare(
+        Spec::archive_member(mspec("/l/a.zip"), ""),
+        Spec::archive_member(mspec("/r/a.zip"), ""),
+        &rules,
+    );
+    let row = cmp
+        .read()
+        .node_at(&hikasa_core::RelPath::parse("x").unwrap())
+        .unwrap();
+    let before = world.vfs.counters();
+    let contents = engines(1 << 20);
+    let results = common::with_env(&world.vfs, &contents, &CancelToken::new(), |env| {
+        hikasa_folder::compute_crcs(cmp.model(), &[(row, hikasa_core::Side::Left)], env).unwrap()
+    });
+    assert_eq!(results[0].2.as_ref().copied().unwrap(), crc32(b"one"));
+    assert_eq!(world.vfs.counters(), before, "nothing decoded");
+}
+
+/// A6.7: tar devices are known by their type flags, through `ArchiveVfs`.
+#[test]
+fn a6_7_tar_devices() {
+    let world = world();
+    let entries: [(&str, &[u8], u8); 4] = [
+        ("char", b"", b'3'),
+        ("block", b"", b'4'),
+        ("fifo", b"", b'6'),
+        ("file", b"x", b'0'),
+    ];
+    world.put("/l/a.tar", &tar_typed(&entries));
+    world.put("/r/a.tar", &tar_typed(&entries));
+    let root = |path: &str| Spec::archive_member(mspec(path), "");
+    let hidden = |text: &str| {
+        let mut rules = FolderRules::default();
+        rules.filters.other.unix_type = Some(hikasa_folder::UnixTypeFilter::parse(text).unwrap());
+        let cmp = world.compare(root("/l/a.tar"), root("/r/a.tar"), &rules);
+        let read = cmp.read();
+        let mut names: Vec<String> = read
+            .children(NodeId::ROOT)
+            .filter(|&id| read.node(id).unwrap().state == CompareState::Filtered)
+            .map(|id| read.path(id).as_str().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(hidden("-c"), ["char"]);
+    assert_eq!(hidden("-b"), ["block"]);
+    assert_eq!(hidden("-p"), ["fifo"]);
+    assert_eq!(hidden("+r"), ["block", "char", "fifo"]);
 }

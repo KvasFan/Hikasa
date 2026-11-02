@@ -4,27 +4,37 @@
 //! into drawing data. States, colours, visibility, statistics and verdicts are `TreeRead` calls.
 
 use std::cell::Cell as Memo;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hikasa_core::{CompareVerdict, JobKind, Side};
+use hikasa_core::{
+    CompareVerdict, ContentMethod, ContentOutcome, ContentResult, JobKind, Pair, RelPath, Side,
+};
+use hikasa_folder::ops::{Confirmation, FolderOp, OpPlan, ReadOnlySides};
+use hikasa_folder::select::{Selection, SideSet};
 use hikasa_folder::{
     ArchiveHandling, Category, ChannelObserver, ColourClass, DisplayOptions, EntryView,
-    FolderDisplayFilter, FolderMode, FolderToggles, NodeFlags, NodeId, NodeView, TreeRead,
-    VisibleRow,
+    FolderDisplayFilter, FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeView,
+    ScanStatus, TreeRead, VisibleRow, expanded_on_load,
 };
 use hikasa_session::api::{
-    FolderCompareRequest, FolderCompareResponse, PreparedFolderCompare, TextCompareRequest,
+    ExpandWords, FolderCompareRequest, FolderCompareResponse, FolderOpOutcome, FolderOpRequest,
+    OpOverrides, OpRequest, PreparedFolderCompare, RefreshDto, SelectRequest, TextCompareRequest,
     ViewOutcome,
 };
+use hikasa_session::ipc::{OpenOptions, ViewId};
 use hikasa_session::{ApiError, Service};
 use hikasa_text::{TextDisplayFilter, ViewOptions};
+use hikasa_vfs::ops::{ItemStamp, OverwritePolicy};
 
 use crate::commands::{CommandId, Ctx};
+use crate::dialog::DialogModel;
 use crate::job::Job;
+use crate::notify::NoticeKind;
+use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
 use crate::status::{JobStatus, LogNote, StatusItems};
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::State;
@@ -147,6 +157,240 @@ pub struct RebuildStats {
     pub during_scan: usize,
 }
 
+/// What a view may write (FC-003, CLI-003): the sides Disable editing protects, and `--nobackups`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WritePolicy {
+    /// The read-only sides (`--ro`, `--ro1`, `--ro2`, IPC `ReadOnly`, a session's `[specs] read_only_*`).
+    pub read_only: ReadOnlySides,
+    /// `--nobackups`: the view's operations keep no backups, whatever `[backups]` says.
+    pub no_backups: bool,
+}
+
+impl WritePolicy {
+    /// The policy of an `OpenView` (IPC, the command line): `--ro` is both sides.
+    pub fn of_open(options: &OpenOptions) -> WritePolicy {
+        WritePolicy {
+            read_only: ReadOnlySides {
+                left: options.read_only.all || options.read_only.left,
+                right: options.read_only.all || options.read_only.right,
+            },
+            no_backups: options.no_backups,
+        }
+    }
+
+    /// The overrides of the view's operations: `--nobackups` is `backup = Some(false)` (§1.6.20).
+    pub fn overrides(&self) -> OpOverrides {
+        OpOverrides {
+            backup: self.no_backups.then_some(false),
+            ..OpOverrides::default()
+        }
+    }
+
+    /// True when the view may write `side`.
+    pub fn writable(&self, side: Side) -> bool {
+        !self.read_only.get(side)
+    }
+}
+
+/// What a view hands to its window between two polls (M2 W6d): a dialog to show, a notice, an operation's outcome
+/// for the log (D-116, D-117).
+pub enum FolderEvent {
+    /// A dialog of the view's operation.
+    Dialog(Box<dyn DialogModel>),
+    /// A notice (and its log entry).
+    Notice {
+        /// Its kind.
+        kind: NoticeKind,
+        /// Its text.
+        text: String,
+    },
+    /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
+    Outcome {
+        /// The command's caption.
+        caption: String,
+        /// What ran.
+        outcome: Box<FolderOpOutcome>,
+        /// How long it ran.
+        elapsed: Duration,
+    },
+}
+
+/// The row a child view was opened for (FC-029(c)): its path and the stamps of both sides at `Open`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildTicket {
+    /// The row's path: its result goes to the file row there when it comes (a refresh may have given the row a new
+    /// record; the stamps decide whether it is the same pair).
+    pub path: RelPath,
+    /// Size and time of each side when the child opened.
+    pub stamps: Pair<ItemStamp>,
+}
+
+/// The Text Compare view `Open` asks for (FC-062), with its row (FC-029(c)).
+pub struct OpenPair {
+    /// The request.
+    pub request: TextCompareRequest,
+    /// The view options.
+    pub view: ViewOptions,
+    /// The row it compares.
+    pub ticket: Option<ChildTicket>,
+}
+
+/// The model and its generation when a plan was made: a plan runs only on the model it was made from, unchanged.
+#[derive(Clone)]
+struct Mark {
+    model: Arc<FolderModel>,
+    generation: u64,
+}
+
+impl Mark {
+    fn of(prepared: &PreparedFolderCompare) -> Mark {
+        Mark {
+            model: Arc::clone(prepared.model()),
+            generation: prepared.model().generation(),
+        }
+    }
+
+    /// True while the view still shows this model and nothing changed it.
+    fn holds(&self, prepared: Option<&PreparedFolderCompare>) -> bool {
+        prepared.is_some_and(|p| {
+            Arc::ptr_eq(p.model(), &self.model) && p.model().generation() == self.generation
+        })
+    }
+}
+
+/// What a refresh of the view is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AfterRefresh {
+    /// The rows an operation wrote.
+    Operation,
+    /// A folder Expand opened that was not scanned (FC-012): it opens.
+    Expand(NodeId),
+    /// A closed archive `Open` opened (§1.6.20): once it opened, the view's session keeps its path and its row opens.
+    Archive(String),
+}
+
+/// The operation or refresh of a view (M2 W6d): one at a time, and none while the comparison runs.
+enum Task {
+    /// The Delete dialog is open.
+    Choosing {
+        command: CommandId,
+        caption: String,
+        node: NodeId,
+        mark: Mark,
+    },
+    /// `folder_op_plan` and `folder_confirmation` (both read the disk: a job, D-105).
+    Planning {
+        caption: String,
+        view: ViewId,
+        mark: Mark,
+        /// The row the command was given on: the question is asked only while it is still the selected one.
+        node: NodeId,
+        /// The row and its sides as the question names them.
+        subject: String,
+        job: Job<(OpPlan, Confirmation)>,
+    },
+    /// The confirmation dialog is open.
+    Asking {
+        caption: String,
+        plan: Box<OpPlan>,
+        mark: Mark,
+    },
+    /// `folder_op_execute` (`JobKind::FolderOp`; Stop cancels it, D-115).
+    Executing {
+        caption: String,
+        mark: Mark,
+        refresh: Vec<NodeId>,
+        began: Instant,
+        job: Job<FolderOpOutcome>,
+    },
+    /// `folder_refresh` or `folder_open_archive`.
+    Refreshing {
+        after: AfterRefresh,
+        model: Arc<FolderModel>,
+        /// The open folders and the selected row by path when it started: found again only where the user changed
+        /// nothing while it ran.
+        points: Option<Restore>,
+        job: Job<RefreshDto>,
+    },
+}
+
+impl Task {
+    /// The job of the task, while one runs.
+    fn job_status(&self) -> Option<(String, Option<hikasa_core::Phase>, Option<f32>)> {
+        let (title, (phase, fraction)) = match self {
+            Task::Planning { job, .. } => (job.title(), job.progress()),
+            Task::Executing { job, .. } => (job.title(), job.progress()),
+            Task::Refreshing { job, .. } => (job.title(), job.progress()),
+            Task::Choosing { .. } | Task::Asking { .. } => return None,
+        };
+        Some((title.to_owned(), phase, fraction))
+    }
+
+    fn settling(&self) -> bool {
+        match self {
+            Task::Planning { job, .. } => job.settling(),
+            Task::Executing { job, .. } => job.settling(),
+            Task::Refreshing { job, .. } => job.settling(),
+            Task::Choosing { .. } | Task::Asking { .. } => false,
+        }
+    }
+
+    fn cancel(&self) {
+        match self {
+            Task::Planning { job, .. } => job.cancel(),
+            Task::Executing { job, .. } => job.cancel(),
+            Task::Refreshing { job, .. } => job.cancel(),
+            Task::Choosing { .. } | Task::Asking { .. } => {}
+        }
+    }
+}
+
+/// The open folders and the selected row by path, kept across a refresh or a full re-run (ids move, records are
+/// replaced).
+#[derive(Debug, Clone, Default)]
+struct Restore {
+    /// `expanded` (or `collapsed` with expand-all), by path, with the id each had when this was taken.
+    folders: Vec<(String, NodeId)>,
+    /// The selected row, and whether it is a folder (a file and a folder of one name are two rows, D-20).
+    selected: Option<(String, bool)>,
+    /// [`FolderViewModel::selection_moves`] when this was taken: a selection the user made since wins.
+    moves: u64,
+}
+
+/// An operation's job that outlives its view (the tab closed, the view was replaced, the window quits): cancelled, it
+/// ends after its current item, and the window reports what it did (§1.6.25 W6d after review).
+pub struct RunningOp {
+    /// The command's caption.
+    pub caption: String,
+    /// When it started.
+    pub began: Instant,
+    /// The job.
+    pub job: Job<FolderOpOutcome>,
+}
+
+/// What a view hands over when it ends: the events not taken yet (an outcome among them) and its running operation.
+pub struct Retired {
+    /// Dialogs, notices and outcomes the window did not take yet.
+    pub events: Vec<FolderEvent>,
+    /// The operation still writing, cancelled.
+    pub running: Option<RunningOp>,
+}
+
+/// A gate the tests hold a view's operation jobs at (deterministic Stop and busy states, §6.6 "no timers").
+#[cfg(test)]
+pub type Gate = Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
+
+#[cfg(test)]
+fn wait_at(gate: Option<&Gate>) {
+    if let Some(gate) = gate {
+        let (open, turn) = &**gate;
+        let mut open = open.lock().expect("gate");
+        while !*open {
+            open = turn.wait(open).expect("gate");
+        }
+    }
+}
+
 /// The Folder Compare view model.
 pub struct FolderViewModel {
     request: FolderCompareRequest,
@@ -185,6 +429,33 @@ pub struct FolderViewModel {
     notes: Vec<LogNote>,
     /// An archive `Open` just added: its folder row is shown expanded when it appears (D-153).
     expand_archive: Option<String>,
+    /// What the view may write (FC-003, CLI-003).
+    write: WritePolicy,
+    /// The operation or refresh of the view (M2 W6d).
+    task: Option<Task>,
+    /// What the window takes at its next poll.
+    outbox: Vec<FolderEvent>,
+    /// The open folders and selection to find again after a full re-run.
+    restore: Option<Restore>,
+    /// FC-012: the folders `expanded_on_load` names were opened for the current model.
+    loaded: bool,
+    /// FC-029(c): the child views and their rows.
+    children: HashMap<ViewId, ChildTicket>,
+    /// Child results that wait for the view's task to end.
+    child_results: Vec<(ViewId, ContentOutcome)>,
+    /// A folder the tree opened that was not scanned: refreshed at the next poll (FC-012).
+    unscanned_open: Option<NodeId>,
+    /// Folders an Expand asked for while a task ran, by path: refreshed and opened once it ends (FC-012).
+    queued_expand: Vec<String>,
+    /// Bumped by every selection the user makes: a refresh does not put back a selection older than one made while it
+    /// ran.
+    selection_moves: u64,
+    /// Tests hold the operation and refresh jobs here.
+    #[cfg(test)]
+    pub gate: Option<Gate>,
+    /// Tests hold a comparison here once it scanned, before it reports (a view that is still comparing).
+    #[cfg(test)]
+    pub scan_gate: Option<Gate>,
 }
 
 /// The cached availability of next/previous difference.
@@ -239,7 +510,31 @@ impl FolderViewModel {
             log_height: LOG_HEIGHT,
             notes: Vec::new(),
             expand_archive: None,
+            write: WritePolicy::default(),
+            task: None,
+            outbox: Vec::new(),
+            restore: None,
+            loaded: false,
+            children: HashMap::new(),
+            child_results: Vec::new(),
+            unscanned_open: None,
+            queued_expand: Vec::new(),
+            selection_moves: 0,
+            #[cfg(test)]
+            gate: None,
+            #[cfg(test)]
+            scan_gate: None,
         }
+    }
+
+    /// Sets what the view may write (FC-003, CLI-003).
+    pub fn set_write_policy(&mut self, write: WritePolicy) {
+        self.write = write;
+    }
+
+    /// What the view may write.
+    pub fn write_policy(&self) -> WritePolicy {
+        self.write
     }
 
     fn prepare(
@@ -285,6 +580,8 @@ impl FolderViewModel {
             });
         let job_prepared = prepared.clone();
         let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
+        #[cfg(test)]
+        let gate = self.scan_gate.clone();
         let job = Job::spawn(
             service,
             JobKind::FolderCompare,
@@ -293,6 +590,8 @@ impl FolderViewModel {
             move |svc, job| {
                 let result = svc.folder_run(&job_prepared, job, &observer);
                 drop(observer);
+                #[cfg(test)]
+                wait_at(gate.as_ref());
                 result
             },
         );
@@ -333,24 +632,35 @@ impl FolderViewModel {
     /// True while a job of the view has ended but its result is not published yet (the window looks again at
     /// once).
     pub fn settling(&self) -> bool {
-        match &self.state {
-            FolderState::Preparing(job) => job.settling(),
-            FolderState::Running { job, .. } => job.settling(),
-            _ => false,
-        }
+        self.task.as_ref().is_some_and(Task::settling)
+            || match &self.state {
+                FolderState::Preparing(job) => job.settling(),
+                FolderState::Running { job, .. } => job.settling(),
+                _ => false,
+            }
     }
 
-    /// True while a job of the view runs.
-    pub fn busy(&self) -> bool {
+    /// True while the comparison runs (preparing or scanning).
+    pub fn scanning(&self) -> bool {
         matches!(
             self.state,
             FolderState::Preparing(_) | FolderState::Running { .. }
         )
     }
 
+    /// True while a job of the view runs: the comparison, or an operation's or a refresh's job (not a dialog that
+    /// waits for its answer).
+    pub fn busy(&self) -> bool {
+        self.scanning() || self.task.as_ref().is_some_and(|t| t.job_status().is_some())
+    }
+
     /// Stops the comparison (the model stays consistent, unscanned folders stay unknown, §5.3). Stopped while
-    /// preparing, the view is stopped at once and no scan starts (§1.10, §3.7 Stop).
+    /// preparing, the view is stopped at once and no scan starts (§1.10, §3.7 Stop). An operation's job is cancelled
+    /// (D-115): what ran stays, what did not is reported, and the rows are refreshed.
     pub fn cancel(&mut self) {
+        if let Some(task) = &self.task {
+            task.cancel();
+        }
         match &self.state {
             FolderState::Preparing(job) => {
                 job.cancel();
@@ -359,6 +669,37 @@ impl FolderViewModel {
             }
             FolderState::Running { job, .. } => job.cancel(),
             _ => {}
+        }
+    }
+
+    /// The view ends (its tab closes, its model is replaced, the window quits): everything stops, and what the window
+    /// must still report comes back: the events it did not take, and an operation's job, cancelled, which ends after
+    /// its current item (the cancel is cooperative). A plan or a question that had not run writes nothing.
+    pub fn retire(&mut self) -> Retired {
+        let running = match self.task.take() {
+            Some(Task::Executing {
+                caption,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job,
+                })
+            }
+            Some(task) => {
+                task.cancel();
+                None
+            }
+            None => None,
+        };
+        self.cancel();
+        Retired {
+            events: std::mem::take(&mut self.outbox),
+            running,
         }
     }
 
@@ -468,9 +809,24 @@ impl FolderViewModel {
             }
             _ => {}
         }
+        if changed && !self.scanning() && !self.loaded {
+            self.after_run();
+        }
+        if let Some(node) = self.unscanned_open.take() {
+            self.expand(service, node);
+            changed = true;
+        }
+        changed |= self.poll_task(service);
+        if self.task.is_none() && !self.scanning() && !self.queued_expand.is_empty() {
+            changed |= self.run_queued_expands(service);
+        }
+        if self.task.is_none() && !self.child_results.is_empty() {
+            self.apply_child_results();
+            changed = true;
+        }
         if let Some(prepared) = self.prepared() {
             let generation = prepared.model().generation();
-            let due = !self.busy()
+            let due = !self.scanning()
                 || self
                     .rebuilt_at
                     .is_none_or(|at| at.elapsed() >= REBUILD_INTERVAL);
@@ -524,7 +880,7 @@ impl FolderViewModel {
             self.stats.samples.push(ms);
         }
         self.stats.rows = self.rows.len();
-        if self.busy() {
+        if self.scanning() {
             self.stats.during_scan += 1;
         }
     }
@@ -551,6 +907,7 @@ impl FolderViewModel {
         if let Some(row) = self.rows.get(index) {
             self.selected = Some(row.node);
             self.selected_index = Some(index);
+            self.selection_moves += 1;
         }
     }
 
@@ -574,14 +931,71 @@ impl FolderViewModel {
         self.selected
     }
 
-    /// Toggles a folder row (disclosure triangle, double-click).
+    /// Toggles a folder row (disclosure triangle, double-click). A folder that was not scanned is refreshed at the
+    /// next poll and opens then (FC-012).
     pub fn toggle(&mut self, index: usize) {
         let Some(row) = self.rows.get(index).copied() else {
             return;
         };
         let open = self.is_open(row.node);
+        if !open && self.not_scanned(row.node) {
+            self.unscanned_open = Some(row.node);
+            return;
+        }
         self.set_open(row.node, !open);
         self.rebuild();
+    }
+
+    /// True for a folder row that was not listed (auto-scan off, or a stop).
+    fn not_scanned(&self, id: NodeId) -> bool {
+        self.prepared().is_some_and(|p| {
+            p.model()
+                .read()
+                .node(id)
+                .is_some_and(|n| n.is_folder() && n.scan == ScanStatus::NotScanned)
+        })
+    }
+
+    /// Opens a folder; one that was not scanned is refreshed first, and opens when its rows are in (FC-012). While a
+    /// task of the view runs, the Expand waits for it, by path (the task may move the ids).
+    fn expand(&mut self, service: &Service, node: NodeId) {
+        if self.not_scanned(node) && !self.scanning() {
+            if self.task.is_none() {
+                self.refresh_rows(service, vec![node], AfterRefresh::Expand(node));
+            } else if let Some(path) = self.path_of(node)
+                && !self.queued_expand.contains(&path)
+            {
+                self.queued_expand.push(path);
+            }
+            return;
+        }
+        self.set_open(node, true);
+        self.rebuild();
+    }
+
+    /// The path of a row of the current model.
+    fn path_of(&self, id: NodeId) -> Option<String> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        read.node(id)?;
+        Some(read.path(id).as_str().to_owned())
+    }
+
+    /// The Expands that waited for a task, now that none runs: each folder still there is expanded (the first that
+    /// needs a refresh starts it; the rest wait for that one).
+    fn run_queued_expands(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        for path in std::mem::take(&mut self.queued_expand) {
+            let found = self.prepared().and_then(|p| {
+                let read = p.model().read();
+                live_at(&read, &path, true)
+            });
+            if let Some(node) = found {
+                self.expand(service, node);
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn set_open(&mut self, id: NodeId, open: bool) {
@@ -607,35 +1021,814 @@ impl FolderViewModel {
         node.is_folder().then(|| (id, self.is_open(id)))
     }
 
-    /// The path of the selected row when `Open` opens it as a folder: a closed archive with `OnceOpened`.
-    fn selected_closed_archive(&self) -> Option<String> {
+    /// The selected row and its path when `Open` opens it as a folder: a closed archive with `OnceOpened`.
+    fn selected_closed_archive(&self) -> Option<(NodeId, String)> {
         let id = self.selected?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
-        opens_archive(&read, &node).then(|| read.path(id).as_str().to_owned())
+        opens_archive(&read, &node).then(|| (id, read.path(id).as_str().to_owned()))
     }
 
-    /// Adds `path` to the view's `rules.open_archives` and runs the comparison again (W9 and W6 refine it).
-    fn open_archive(&mut self, service: &Service, path: String) {
+    /// Opens the archive in place with `folder_open_archive`: a refresh of its folder, not a new comparison (§1.6.20).
+    /// Once it opened, `path` joins the view's `rules.open_archives`, so the session keeps it; an open that failed or
+    /// was stopped leaves both as they were.
+    fn open_archive(&mut self, service: &Service, node: NodeId, path: String) {
+        if self.task.is_some() {
+            return;
+        }
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let job_model = Arc::clone(&model);
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderRefresh,
+            "open the archive".into(),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_open_archive(&job_model, node, job, &hikasa_folder::NullObserver)
+            },
+        );
+        let points = self.restore_points();
+        self.task = Some(Task::Refreshing {
+            after: AfterRefresh::Archive(path),
+            model,
+            points,
+            job,
+        });
+    }
+
+    /// An archive opened: the view's session keeps its path, and its row opens once it is a folder.
+    fn archive_opened(&mut self, path: String) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
         let mut open = self
-            .prepared()
-            .map_or_else(Vec::new, |prepared| prepared.rules().open_archives.clone());
-        open.push(path.clone());
+            .request
+            .patch
+            .open_archives
+            .clone()
+            .unwrap_or_else(|| prepared.rules().open_archives.clone());
+        if !open.contains(&path) {
+            open.push(path.clone());
+        }
         self.request.patch.open_archives = Some(open);
         self.expand_archive = Some(path);
-        self.refresh(service);
     }
 
-    /// Prepares and runs the comparison again.
+    /// The paths of `rules.open_archives` the view adds to its comparison (what its session keeps).
+    #[cfg(test)]
+    pub fn open_archives(&self) -> Option<&[String]> {
+        self.request.patch.open_archives.as_deref()
+    }
+
+    /// Prepares and runs the comparison again; the open folders and the selected row are found again by path once
+    /// it has run (its ids are new).
     fn refresh(&mut self, service: &Service) {
+        if let Some(task) = self.task.take() {
+            task.cancel();
+        }
+        let restore = self.restore_points();
         self.cancel();
+        if let Some(restore) = restore {
+            self.restore = Some(restore);
+        }
+        // An id of the old model names nothing in the new one (an Expand that waits for a task does so by path).
+        self.unscanned_open = None;
+        self.expanded.clear();
+        self.collapsed.clear();
+        self.selected = None;
+        self.selected_index = None;
+        self.children.clear();
+        self.child_results.clear();
+        self.loaded = false;
         self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
         self.rows.clear();
         self.seen_generation = u64::MAX;
         self.started = Instant::now();
         self.finished_after = None;
         self.events.store(0, Ordering::Relaxed);
+    }
+
+    /// The open folders and the selected row by path (`None` without a model).
+    fn restore_points(&self) -> Option<Restore> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let set = if self.expand_all {
+            &self.collapsed
+        } else {
+            &self.expanded
+        };
+        let mut folders: Vec<(String, NodeId)> = set
+            .iter()
+            .filter(|&&id| read.node(id).is_some_and(|n| n.is_folder()))
+            .map(|&id| (read.path(id).as_str().to_owned(), id))
+            .collect();
+        folders.sort();
+        Some(Restore {
+            folders,
+            selected: self.selected.map(|id| {
+                let folder = read.node(id).is_some_and(|n| n.is_folder());
+                (read.path(id).as_str().to_owned(), folder)
+            }),
+            moves: self.selection_moves,
+        })
+    }
+
+    /// What of `points` the user left as it was while a refresh ran: the folders still open (one closed meanwhile
+    /// stays closed; with expand-all, still closed) and the selection, unless another row was selected meanwhile (a click during a refresh wins).
+    /// Read before the refresh's `renumbered` moves the ids.
+    fn untouched(&self, points: Restore) -> Restore {
+        // The set the points were taken from: the open folders, or the closed ones with expand-all.
+        let set = if self.expand_all {
+            &self.collapsed
+        } else {
+            &self.expanded
+        };
+        let still_open = |id: NodeId| set.contains(&id);
+        Restore {
+            folders: points
+                .folders
+                .into_iter()
+                .filter(|(_, id)| still_open(*id))
+                .collect(),
+            selected: points
+                .selected
+                .filter(|_| self.selection_moves == points.moves),
+            moves: points.moves,
+        }
+    }
+
+    /// A run ended: the open folders of a re-run are found again by path; a first run opens what FC-012 asks
+    /// (`expanded_on_load`: every folder, or those with a difference below).
+    fn after_run(&mut self) {
+        self.loaded = true;
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let read = model.read();
+        match self.restore.take() {
+            Some(restore) => {
+                // A file and a folder of one name are two rows (D-20): the folder.
+                let found: Vec<NodeId> = restore
+                    .folders
+                    .iter()
+                    .filter_map(|(p, _)| live_at(&read, p, true))
+                    .collect();
+                if self.expand_all {
+                    self.collapsed.extend(found);
+                } else {
+                    self.expanded.extend(found);
+                }
+                // A row the user selected while the comparison ran again stays selected.
+                if self.selection_moves == restore.moves {
+                    self.selected = restore
+                        .selected
+                        .and_then(|(path, folder)| live_at(&read, &path, folder));
+                }
+            }
+            None => {
+                if !self.expand_all {
+                    let open = expanded_on_load(&read, &read.rules().handling);
+                    self.expanded.extend(open);
+                }
+            }
+        }
+        drop(read);
+        self.rebuild();
+    }
+
+    // ---- operations (M2 W6d, §1.6.20) ------------------------------------------------------------------------------
+
+    /// What the window takes since the last call: dialogs, notices, outcomes.
+    pub fn take_events(&mut self) -> Vec<FolderEvent> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// The selected row with what it holds per side, while the view may start an operation: a finished comparison,
+    /// no job of the view and no operation under way.
+    fn operable_row(&self) -> Option<(NodeId, [bool; 2])> {
+        if self.busy() || self.task.is_some() {
+            return None;
+        }
+        let id = self.selected?;
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let node = read.node(id)?;
+        (id != NodeId::ROOT).then_some((id, [node.left.is_some(), node.right.is_some()]))
+    }
+
+    /// Starts `command` (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) on the selected row: a copy plans at
+    /// once, a delete first asks its sides in the dialog returned. `caption` is the command's; `view` the view's id;
+    /// `require_side` is `require_side_selection_in_delete`. Nothing starts while an operation is under way, for a
+    /// side the view may not write, or without a selected row: the window's predicates say the same.
+    pub fn start_operation(
+        &mut self,
+        service: &Service,
+        view: ViewId,
+        command: CommandId,
+        caption: &str,
+        require_side: bool,
+    ) -> Option<Box<dyn DialogModel>> {
+        let (node, on) = self.operable_row()?;
+        let mark = Mark::of(self.prepared()?);
+        match command {
+            CommandId::CopyRight | CommandId::CopyLeft => {
+                let to = if command == CommandId::CopyRight {
+                    Side::Right
+                } else {
+                    Side::Left
+                };
+                let from = to.opposite();
+                if !self.write.writable(to) || !on[usize::from(from == Side::Right)] {
+                    return None;
+                }
+                let op = FolderOp::Copy {
+                    to,
+                    overwrite: OverwritePolicy::Always,
+                };
+                let subject = self.subject(node, SideSet::of(from), Some(to));
+                self.plan(
+                    service,
+                    view,
+                    caption,
+                    op,
+                    node,
+                    SideSet::of(from),
+                    mark,
+                    subject,
+                );
+                None
+            }
+            CommandId::Delete | CommandId::PermanentDelete => {
+                let writable = [
+                    self.write.writable(Side::Left),
+                    self.write.writable(Side::Right),
+                ];
+                if !(0..2).any(|k| on[k] && writable[k]) {
+                    return None;
+                }
+                let (path, holds) = {
+                    let read = mark.model.read();
+                    let totals = read.totals(node);
+                    let view_of = read.node(node)?;
+                    let folder = view_of.is_folder();
+                    let hold = |entry: Option<&EntryView<'_>>, t: &hikasa_folder::SideTotals| {
+                        entry.map(|e| {
+                            if folder {
+                                format!(
+                                    "a folder: {} files, {} folders, {} bytes below it",
+                                    t.files, t.folders, t.bytes
+                                )
+                            } else {
+                                format!("a {}: {} bytes", kind_word(e.kind), e.size)
+                            }
+                        })
+                    };
+                    (
+                        read.path(node).as_str().to_owned(),
+                        [
+                            hold(view_of.left.as_ref(), &totals.left),
+                            hold(view_of.right.as_ref(), &totals.right),
+                        ],
+                    )
+                };
+                let permanent = command == CommandId::PermanentDelete;
+                let dialog =
+                    DeleteDialog::new(view, path, holds, writable, permanent, require_side);
+                self.task = Some(Task::Choosing {
+                    command,
+                    caption: caption.to_owned(),
+                    node,
+                    mark,
+                });
+                Some(Box::new(dialog))
+            }
+            _ => None,
+        }
+    }
+
+    /// The Delete dialog closed: with a choice the plan is made, without one nothing happens.
+    pub fn delete_chosen(&mut self, service: &Service, view: ViewId, choice: Option<DeleteChoice>) {
+        let Some(Task::Choosing {
+            command,
+            caption,
+            node,
+            mark,
+        }) = self.task.take()
+        else {
+            return;
+        };
+        let Some(choice) = choice else {
+            return;
+        };
+        if !mark.holds(self.prepared()) {
+            self.refuse_changed(&caption);
+            return;
+        }
+        if self.selected != Some(node) {
+            self.refuse_moved(&caption);
+            return;
+        }
+        let permanent = command == CommandId::PermanentDelete;
+        let recycle = if permanent {
+            hikasa_folder::ops::Recycle::default()
+        } else {
+            choice.recycle
+        };
+        let op = FolderOp::Delete {
+            sides: choice.sides,
+            recycle,
+        };
+        let subject = self.subject(node, choice.sides, None);
+        self.plan(
+            service,
+            view,
+            &caption,
+            op,
+            node,
+            choice.sides,
+            mark,
+            subject,
+        );
+    }
+
+    /// The row an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
+    /// `a/b.txt: on the left`, `a/b.txt: on both sides`.
+    fn subject(&self, node: NodeId, sides: SideSet, to: Option<Side>) -> String {
+        let path = self.path_of(node).unwrap_or_default();
+        let where_ = match to {
+            Some(Side::Left) => "from the right to the left",
+            Some(_) => "from the left to the right",
+            None if sides.contains(SideSet::LEFT) && sides.contains(SideSet::RIGHT) => {
+                "on both sides"
+            }
+            None if sides.contains(SideSet::LEFT) => "on the left",
+            None => "on the right",
+        };
+        format!("{path}: {where_}")
+    }
+
+    /// Plans `op` on the row `node` (its `sides`) in a job: `folder_op_plan`, then `folder_confirmation`, which reads
+    /// the options. Disable editing and `--nobackups` go with the request, so the Service refuses what the window
+    /// would not offer (D-184).
+    #[allow(clippy::too_many_arguments)] // one call per command
+    fn plan(
+        &mut self,
+        service: &Service,
+        view: ViewId,
+        caption: &str,
+        op: FolderOp,
+        node: NodeId,
+        sides: SideSet,
+        mark: Mark,
+        subject: String,
+    ) {
+        let mut selection = Selection::default();
+        selection.insert(node, sides);
+        let request = FolderOpRequest {
+            op: OpRequest::Op(op),
+            select: SelectRequest {
+                selection: Some(selection),
+                display: Some(self.display),
+                expand: ExpandWords::All,
+                iu: self.display.ignore_unimportant,
+                ..SelectRequest::default()
+            },
+            read_only: self.write.read_only,
+            overrides: self.write.overrides(),
+        };
+        let model = Arc::clone(&mark.model);
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderOp,
+            format!("plan: {caption}"),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                let plan = svc.folder_op_plan(&model, &request, job)?;
+                if job.cancel.is_cancelled() {
+                    return Err(ApiError::Cancelled);
+                }
+                let confirmation = svc.folder_confirmation(&plan, None);
+                Ok((plan, confirmation))
+            },
+        );
+        self.task = Some(Task::Planning {
+            caption: caption.to_owned(),
+            view,
+            mark,
+            node,
+            subject,
+            job,
+        });
+    }
+
+    /// The confirmation dialog closed: its answers, or `None` when it closed with a question open (a Cancel).
+    pub fn confirmed(&mut self, service: &Service, answers: Option<Confirmation>) {
+        let Some(Task::Asking {
+            caption,
+            plan,
+            mark,
+        }) = self.task.take()
+        else {
+            return;
+        };
+        let finished = answers.map(|c| c.finish(*plan));
+        match finished {
+            Some(Ok(plan)) => {
+                if mark.holds(self.prepared()) {
+                    self.execute_plan(service, &caption, plan, mark);
+                } else {
+                    self.refuse_changed(&caption);
+                }
+            }
+            Some(Err(_)) | None => self.notes.push(LogNote {
+                kind: LogKind::Summary,
+                text: format!("{caption}: cancelled, nothing was written."),
+            }),
+        }
+    }
+
+    /// The plan changed under a dialog: nothing runs, and the window says so.
+    fn refuse_changed(&mut self, caption: &str) {
+        self.outbox.push(FolderEvent::Notice {
+            kind: NoticeKind::Warning,
+            text: format!(
+                "{caption}: the comparison changed while the operation waited; nothing was written. Select the row again."
+            ),
+        });
+    }
+
+    /// The selection moved off the row while its operation was prepared: the question is not asked, nothing runs, and
+    /// the window says so (the question would name a row the user no longer has selected).
+    fn refuse_moved(&mut self, caption: &str) {
+        self.outbox.push(FolderEvent::Notice {
+            kind: NoticeKind::Warning,
+            text: format!(
+                "{caption}: the selection changed while the operation was prepared; nothing was written."
+            ),
+        });
+    }
+
+    /// Runs a confirmed plan in a job (`JobKind::FolderOp`).
+    fn execute_plan(&mut self, service: &Service, caption: &str, plan: OpPlan, mark: Mark) {
+        let refresh = plan.refresh.clone();
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderOp,
+            caption.to_owned(),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_op_execute(plan, job)
+            },
+        );
+        self.task = Some(Task::Executing {
+            caption: caption.to_owned(),
+            mark,
+            refresh,
+            began: Instant::now(),
+            job,
+        });
+    }
+
+    /// Refreshes `nodes` of the current model in a job (`folder_refresh`).
+    fn refresh_rows(&mut self, service: &Service, nodes: Vec<NodeId>, after: AfterRefresh) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let job_model = Arc::clone(&model);
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderRefresh,
+            "refresh".into(),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_refresh(&job_model, &nodes, job, &hikasa_folder::NullObserver)
+            },
+        );
+        let points = self.restore_points();
+        self.task = Some(Task::Refreshing {
+            after,
+            model,
+            points,
+            job,
+        });
+    }
+
+    /// Refreshes `nodes` as after an operation (tests: a pair that changes under a child view).
+    #[cfg(test)]
+    pub fn refresh_for_test(&mut self, service: &Service, nodes: Vec<NodeId>) {
+        self.refresh_rows(service, nodes, AfterRefresh::Operation);
+    }
+
+    /// Polls the task; true when the view changed.
+    fn poll_task(&mut self, service: &Service) -> bool {
+        let ready = match &self.task {
+            Some(Task::Planning { job, .. }) => job.try_result().map(Ready::Plan),
+            Some(Task::Executing { job, .. }) => job.try_result().map(Ready::Outcome),
+            Some(Task::Refreshing { job, .. }) => job.try_result().map(Ready::Refresh),
+            _ => None,
+        };
+        let Some(ready) = ready else {
+            return false;
+        };
+        let Some(task) = self.task.take() else {
+            return false;
+        };
+        match (task, ready) {
+            (
+                Task::Planning {
+                    caption,
+                    view,
+                    mark,
+                    node,
+                    subject,
+                    ..
+                },
+                Ready::Plan(result),
+            ) => match result {
+                Ok((plan, confirmation)) => {
+                    if !mark.holds(self.prepared()) {
+                        self.refuse_changed(&caption);
+                    } else if self.selected != Some(node) {
+                        self.refuse_moved(&caption);
+                    } else if confirmation.next().is_none() {
+                        // Nothing to ask (the options drop every question): the plan runs as confirmed.
+                        match confirmation.finish(plan) {
+                            Ok(plan) => self.execute_plan(service, &caption, plan, mark),
+                            Err(_) => self.notes.push(LogNote {
+                                kind: LogKind::Summary,
+                                text: format!("{caption}: cancelled, nothing was written."),
+                            }),
+                        }
+                    } else {
+                        let dialog =
+                            PlanConfirmDialog::new(view, &caption, subject, &plan, confirmation);
+                        self.task = Some(Task::Asking {
+                            caption,
+                            plan: Box::new(plan),
+                            mark,
+                        });
+                        self.outbox.push(FolderEvent::Dialog(Box::new(dialog)));
+                    }
+                }
+                Err(ApiError::Cancelled) => self.notes.push(LogNote {
+                    kind: LogKind::Summary,
+                    text: format!("{caption}: stopped while planning, nothing was written."),
+                }),
+                Err(e) => self.outbox.push(FolderEvent::Notice {
+                    kind: NoticeKind::Warning,
+                    text: format!("{caption}: {e}"),
+                }),
+            },
+            (
+                Task::Executing {
+                    caption,
+                    mark,
+                    refresh,
+                    began,
+                    ..
+                },
+                Ready::Outcome(result),
+            ) => {
+                let nodes = match result {
+                    Ok(outcome) => {
+                        let nodes = outcome.refresh_nodes.clone();
+                        self.outbox.push(FolderEvent::Outcome {
+                            caption,
+                            outcome: Box::new(outcome),
+                            elapsed: began.elapsed(),
+                        });
+                        nodes
+                    }
+                    Err(e) => {
+                        self.outbox.push(FolderEvent::Notice {
+                            kind: NoticeKind::Error,
+                            text: format!("{caption}: {e}"),
+                        });
+                        refresh
+                    }
+                };
+                // What was written is shown: the rows' folders, in the model the plan was made from.
+                if Arc::ptr_eq(
+                    &mark.model,
+                    self.prepared().map_or(&mark.model, |p| p.model()),
+                ) {
+                    self.refresh_rows(service, nodes, AfterRefresh::Operation);
+                }
+            }
+            (
+                Task::Refreshing {
+                    after,
+                    model,
+                    points,
+                    ..
+                },
+                Ready::Refresh(result),
+            ) => {
+                let current = self
+                    .prepared()
+                    .is_some_and(|p| Arc::ptr_eq(p.model(), &model));
+                if !current {
+                    return true;
+                }
+                if let (Ok(dto), AfterRefresh::Archive(path)) = (&result, &after) {
+                    // Opened: its row is a folder that could be listed (a flat comparison runs again with it). An
+                    // archive that cannot be read is a folder that failed, with its error: not remembered.
+                    let failed = dto.report.is_some().then(|| {
+                        let read = model.read();
+                        match live_at(&read, path, true) {
+                            Some(id)
+                                if read.node(id).is_some_and(|n| n.scan != ScanStatus::Failed) =>
+                            {
+                                None
+                            }
+                            Some(id) => Some(
+                                read.errors(id)
+                                    .first()
+                                    .map_or_else(String::new, |e| e.error.message.clone()),
+                            ),
+                            None => Some(String::new()),
+                        }
+                    });
+                    match failed.flatten() {
+                        None => self.archive_opened(path.clone()),
+                        Some(why) => self.outbox.push(FolderEvent::Notice {
+                            kind: NoticeKind::Warning,
+                            text: if why.is_empty() {
+                                format!("Open {path}: the archive could not be opened.")
+                            } else {
+                                format!("Open {path}: {why}")
+                            },
+                        }),
+                    }
+                }
+                match result {
+                    Ok(dto) => match dto.report {
+                        Some(report) => {
+                            let points = points.map(|p| self.untouched(p));
+                            self.renumber(&report.renumbered);
+                            self.find_again(points.as_ref());
+                            if let AfterRefresh::Expand(node) = after {
+                                let node = renumbered(&report.renumbered, node);
+                                self.set_open(node, true);
+                            }
+                            let read = model.read();
+                            let crowded = read.garbage() > read.len() / 2;
+                            drop(read);
+                            if crowded {
+                                // The arena holds more records a refresh left than live ones: a re-run compacts it.
+                                self.refresh(service);
+                                return true;
+                            }
+                        }
+                        // A flat comparison is not refreshed: it runs again.
+                        None => {
+                            self.refresh(service);
+                            return true;
+                        }
+                    },
+                    Err(ApiError::Cancelled) => {}
+                    Err(e) => {
+                        if let AfterRefresh::Archive(path) = &after {
+                            self.outbox.push(FolderEvent::Notice {
+                                kind: NoticeKind::Warning,
+                                text: format!("Open {path}: {e}"),
+                            });
+                        } else {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Warning,
+                                text: format!("refresh: {e}"),
+                            });
+                        }
+                        if after == AfterRefresh::Operation {
+                            self.refresh(service);
+                            return true;
+                        }
+                    }
+                }
+                self.rebuild();
+            }
+            (task, _) => self.task = Some(task),
+        }
+        true
+    }
+
+    /// Moves the view's ids by a refresh's `renumbered`: the open folders, the selection, the child views' rows.
+    fn renumber(&mut self, pairs: &[(NodeId, NodeId)]) {
+        if pairs.is_empty() {
+            return;
+        }
+        let map: HashMap<NodeId, NodeId> = pairs.iter().copied().collect();
+        let follow = |id: NodeId| {
+            let mut id = id;
+            for _ in 0..pairs.len() {
+                match map.get(&id) {
+                    Some(&next) if next != id => id = next,
+                    _ => break,
+                }
+            }
+            id
+        };
+        self.expanded = self.expanded.iter().map(|&id| follow(id)).collect();
+        self.collapsed = self.collapsed.iter().map(|&id| follow(id)).collect();
+        self.selected = self.selected.map(follow);
+    }
+
+    /// After a refresh: a row whose record was replaced (new facts are a new record, not a renumbered one) is found
+    /// again by path: an open folder stays open, the selected row stays selected, a child view's row follows.
+    fn find_again(&mut self, points: Option<&Restore>) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let read = model.read();
+        let at = |path: &str, folder: bool| live_at(&read, path, folder);
+        if let Some(points) = points {
+            let found: Vec<NodeId> = points
+                .folders
+                .iter()
+                .filter_map(|(p, _)| at(p, true))
+                .collect();
+            if self.expand_all {
+                self.collapsed.extend(found);
+            } else {
+                self.expanded.extend(found);
+            }
+            if let Some((path, folder)) = &points.selected
+                && let Some(live) = at(path, *folder)
+            {
+                self.selected = Some(live);
+            }
+        }
+    }
+
+    // ---- FC-029(c): the result of a child view -------------------------------------------------------------------
+
+    /// A child view was opened for `ticket`'s row.
+    pub fn adopt_child(&mut self, child: ViewId, ticket: ChildTicket) {
+        self.children.insert(child, ticket);
+    }
+
+    /// True when `child` is a child view of this one whose result is not in yet.
+    #[cfg(test)]
+    pub fn has_child(&self, child: ViewId) -> bool {
+        self.children.contains_key(&child)
+    }
+
+    /// The comparison of a child view ended: its result goes to its row, now or when the view's task has ended,
+    /// while the pair still has the stamps it had at `Open`; a pair changed meanwhile keeps its old result.
+    pub fn child_result(&mut self, child: ViewId, outcome: ContentOutcome) {
+        if !self.children.contains_key(&child) {
+            return;
+        }
+        self.child_results.push((child, outcome));
+        if self.task.is_none() {
+            self.apply_child_results();
+        }
+    }
+
+    fn apply_child_results(&mut self) {
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            self.child_results.clear();
+            return;
+        };
+        let mut applied = false;
+        for (child, outcome) in std::mem::take(&mut self.child_results) {
+            if let Some(ticket) = self.children.remove(&child) {
+                // The live file row at the ticket's path (a refresh may have replaced its record); none, nothing.
+                let row = {
+                    let read = model.read();
+                    file_row_at(&read, &ticket.path)
+                };
+                if let Some(row) = row {
+                    applied |= model.apply_child_result(row, ticket.stamps, outcome);
+                }
+            }
+        }
+        if applied {
+            self.rebuild();
+        }
     }
 
     /// Opens the row of the archive `Open` added, and the folders around it, once it is in the tree.
@@ -679,6 +1872,11 @@ impl FolderViewModel {
         request.rules_file.clone_from(&self.request.text_rules_file);
         request.rules_patch = self.request.text_patch.clone();
         request.ignore_unimportant = self.display.ignore_unimportant;
+        if let Some(prepared) = self.prepared() {
+            request
+                .format_overrides
+                .clone_from(prepared.format_overrides());
+        }
         Some((
             request,
             ViewOptions {
@@ -687,6 +1885,25 @@ impl FolderViewModel {
                 expanded: Vec::new(),
             },
         ))
+    }
+
+    /// `Open` on a file pair (FC-062), with the row and its stamps for the child's result (FC-029(c)).
+    fn open_pair(&self) -> Option<OpenPair> {
+        let (request, view) = self.open_request()?;
+        let ticket = self.selected.and_then(|id| {
+            let prepared = self.prepared()?;
+            let read = prepared.model().read();
+            let node = read.node(id)?;
+            Some(ChildTicket {
+                path: read.path(id),
+                stamps: Pair::new(stamp_of(node.left.as_ref()), stamp_of(node.right.as_ref())),
+            })
+        });
+        Some(OpenPair {
+            request,
+            view,
+            ticket,
+        })
     }
 
     /// The next/previous visible row whose item is not same (FC-061).
@@ -739,6 +1956,14 @@ impl FolderViewModel {
     pub fn ctx_into(&self, ctx: &mut Ctx) {
         ctx.busy = self.busy();
         ctx.ready = self.prepared().is_some();
+        ctx.writable = [
+            self.write.writable(Side::Left),
+            self.write.writable(Side::Right),
+        ];
+        if let Some((_, on)) = self.operable_row() {
+            ctx.row_selected = true;
+            ctx.row_on = on;
+        }
         if let Some((_, open)) = self.selected_folder() {
             ctx.open_folder_selected = open;
             ctx.closed_folder_selected = !open;
@@ -771,17 +1996,23 @@ impl FolderViewModel {
 
     /// Executes a command of this view. Returns `Some(open)` when the command was handled; `open` carries the
     /// Text Compare request of `Open` (FC-062).
-    pub fn execute(
-        &mut self,
-        service: &Service,
-        id: CommandId,
-    ) -> Option<Option<(TextCompareRequest, ViewOptions)>> {
+    pub fn execute(&mut self, service: &Service, id: CommandId) -> Option<Option<OpenPair>> {
         match id {
             CommandId::Stop => self.cancel(),
-            CommandId::FullRefresh => self.refresh(service),
-            CommandId::Expand | CommandId::Collapse => {
+            // An operation under way ends first: its outcome is reported and its rows refreshed.
+            CommandId::FullRefresh => {
+                if self.task.is_none() {
+                    self.refresh(service);
+                }
+            }
+            CommandId::Expand => {
                 if let Some((node, _)) = self.selected_folder() {
-                    self.set_open(node, id == CommandId::Expand);
+                    self.expand(service, node);
+                }
+            }
+            CommandId::Collapse => {
+                if let Some((node, _)) = self.selected_folder() {
+                    self.set_open(node, false);
                     self.rebuild();
                 }
             }
@@ -806,11 +2037,11 @@ impl FolderViewModel {
                 self.rebuild();
             }
             CommandId::Open => {
-                if let Some(path) = self.selected_closed_archive() {
-                    self.open_archive(service, path);
+                if let Some((node, path)) = self.selected_closed_archive() {
+                    self.open_archive(service, node, path);
                     return Some(None);
                 }
-                return Some(self.open_request());
+                return Some(self.open_pair());
             }
             CommandId::DiffNext | CommandId::DiffPrev => {
                 if let Some(index) = self.difference_from(id == CommandId::DiffNext) {
@@ -875,7 +2106,7 @@ impl FolderViewModel {
             _ => ViewOutcome::for_folder(
                 self.prepared(),
                 self.display.ignore_unimportant,
-                self.busy(),
+                self.scanning(),
             ),
         }
     }
@@ -883,6 +2114,11 @@ impl FolderViewModel {
     /// The log panel is shown.
     pub fn show_log(&self) -> bool {
         self.show_log
+    }
+
+    /// Shows the log panel (a notice's *Show log*).
+    pub fn show_log_panel(&mut self) {
+        self.show_log = true;
     }
 
     /// The log panel's height (points).
@@ -964,6 +2200,14 @@ impl FolderViewModel {
 
     /// The running jobs (the job indicator, D-115).
     pub fn jobs(&self, view: hikasa_session::ipc::ViewId) -> Vec<JobStatus> {
+        if let Some((title, phase, fraction)) = self.task.as_ref().and_then(Task::job_status) {
+            return vec![JobStatus {
+                view,
+                title,
+                phase,
+                fraction,
+            }];
+        }
         let job = match &self.state {
             FolderState::Preparing(job) => {
                 let (phase, fraction) = job.progress();
@@ -1060,7 +2304,7 @@ impl FolderViewModel {
             _ => {}
         }
         let Some(prepared) = self.prepared() else {
-            status.state = if self.busy() {
+            status.state = if self.scanning() {
                 "Preparing…".into()
             } else {
                 "Stopped before the scan started.".into()
@@ -1091,7 +2335,7 @@ impl FolderViewModel {
             },
         );
         drop(read);
-        status.state = if self.busy() {
+        status.state = if self.scanning() {
             format!("Scanning… {counts}")
         } else {
             let verdict = prepared.view_verdict(iu, false);
@@ -1110,6 +2354,83 @@ impl FolderViewModel {
             )),
         );
         status
+    }
+}
+
+/// The result of a child Text Compare view for its row (FC-029(c)): the child's own, rules-based, with unimportant
+/// differences kept as they are (the folder view's display decides how they count).
+pub fn child_outcome(result: ContentResult) -> ContentOutcome {
+    ContentOutcome {
+        method: ContentMethod::Rules,
+        result,
+        warnings: Vec::new(),
+    }
+}
+
+/// A job's result, by task.
+enum Ready {
+    Plan(Result<(OpPlan, Confirmation), ApiError>),
+    Outcome(Result<FolderOpOutcome, ApiError>),
+    Refresh(Result<RefreshDto, ApiError>),
+}
+
+/// `id` after `renumbered`.
+fn renumbered(pairs: &[(NodeId, NodeId)], id: NodeId) -> NodeId {
+    let mut id = id;
+    for _ in 0..pairs.len() {
+        match pairs.iter().find(|(old, _)| *old == id) {
+            Some(&(_, new)) if new != id => id = new,
+            _ => break,
+        }
+    }
+    id
+}
+
+/// The live row at `path`, a folder or not (a file and a folder of one name are two rows, D-20); `node_at` walks the
+/// tree, so a record a refresh left behind is never found.
+fn live_at(read: &TreeRead<'_>, path: &str, folder: bool) -> Option<NodeId> {
+    let rel = RelPath::parse(path).ok()?;
+    let first = read.node_at(&rel)?;
+    let parent = read.node(first)?.parent.unwrap_or(NodeId::ROOT);
+    std::iter::once(first)
+        .chain(read.children(parent))
+        .find(|&c| {
+            read.path(c).as_str() == path && read.node(c).is_some_and(|n| n.is_folder() == folder)
+        })
+}
+
+/// The file row at `path` (a file and a folder of one name are two rows, D-20).
+fn file_row_at(read: &TreeRead<'_>, path: &RelPath) -> Option<NodeId> {
+    let first = read.node_at(path)?;
+    let parent = read.node(first)?.parent.unwrap_or(NodeId::ROOT);
+    std::iter::once(first)
+        .chain(read.children(parent))
+        .find(|&id| read.path(id) == *path && read.node(id).is_some_and(|n| !n.is_folder()))
+}
+
+/// The word of an entry kind in the Delete dialog.
+fn kind_word(kind: hikasa_vfs::EntryKind) -> &'static str {
+    match kind {
+        hikasa_vfs::EntryKind::File => "file",
+        hikasa_vfs::EntryKind::Dir => "folder",
+        hikasa_vfs::EntryKind::Symlink => "link",
+        hikasa_vfs::EntryKind::Other => "special file",
+    }
+}
+
+/// The stamp of one side of a row: what `apply_child_result` compares.
+fn stamp_of(entry: Option<&EntryView<'_>>) -> ItemStamp {
+    match entry {
+        Some(e) => ItemStamp {
+            kind: e.kind,
+            size: Some(e.size),
+            mtime: e.mtime,
+        },
+        None => ItemStamp {
+            kind: hikasa_vfs::EntryKind::File,
+            size: None,
+            mtime: None,
+        },
     }
 }
 

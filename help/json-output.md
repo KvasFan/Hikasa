@@ -22,5 +22,9 @@ go to stderr.
 - A command line that does not parse gives `hikasa.usage_error.v1` (exit 100).
 - `hikasa version --json` lists every schema of the build.
 - `--help` stays text.
+- A folder operation prints `hikasa.folder_op.v1` (with `--dry-run` too: `status` says `planned`), a sync
+  `hikasa.folder_sync.v1`, a content test or CRC `hikasa.folder_contents.v1`. A failed item is no failed command: the
+  document is `ok: true` with exit code 100, and the item carries its `error`; see [hikasa folder op](topic:folder-op)
+  and [hikasa folder sync](topic:folder-sync).
 
 See [Using the command line](topic:cli) and [hikasa version](topic:version).

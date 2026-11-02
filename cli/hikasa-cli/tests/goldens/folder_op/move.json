@@ -1,0 +1,42 @@
+{
+  "schema": "hikasa.folder_op.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "op": "move",
+    "dry_run": false,
+    "cancelled": false,
+    "left": "<TMP>/l",
+    "right": "<TMP>/r",
+    "items": [
+      {
+        "action": "move",
+        "kind": "file",
+        "side": "right",
+        "path": "only.txt",
+        "source": "<TMP>/l/only.txt",
+        "target": "<TMP>/r/only.txt",
+        "size": 5,
+        "replaces": false,
+        "backup": null,
+        "conflicts": [],
+        "answer": null,
+        "status": "done",
+        "reason": null,
+        "error": null
+      }
+    ],
+    "backups": [],
+    "summary": {
+      "planned": 1,
+      "done": 1,
+      "skipped": 0,
+      "failed": 0,
+      "bytes": 5
+    },
+    "commands": null
+  },
+  "warnings": [],
+  "error": null
+}

@@ -28,7 +28,7 @@ use crate::counts::{Aggregates, SideTotals};
 use crate::display::{ColourClass, DisplayOptions, VisibleRow, colour_of, visible_rows_into};
 use crate::error::FolderError;
 use crate::resolve::side_index;
-use crate::rules::FolderRules;
+use crate::rules::{FolderRules, Handling};
 use crate::state::Category;
 use crate::stats::FolderStats;
 use store::{NONE, Store};
@@ -53,6 +53,8 @@ pub struct FolderModel {
     generation: AtomicU64,
     finished: AtomicBool,
     claimed: AtomicBool,
+    /// A refresh or a content test on demand runs.
+    busy: AtomicBool,
 }
 
 impl fmt::Debug for FolderModel {
@@ -108,6 +110,7 @@ impl FolderModel {
             generation: AtomicU64::new(0),
             finished: AtomicBool::new(false),
             claimed: AtomicBool::new(false),
+            busy: AtomicBool::new(false),
         }))
     }
 
@@ -141,6 +144,26 @@ impl FolderModel {
         &self.rules
     }
 
+    /// Adds to what a refresh opens as a folder: `path` is relative to the bases, as in `open_archives` (§1.6.7).
+    pub fn open_archive(&self, path: &str) {
+        self.mutate(|s| s.opened.push(path.to_owned()));
+    }
+
+    /// Claims the finished model for one refresh or one run of content tests; the claim ends when the result is dropped.
+    pub(crate) fn claim_refresh(&self) -> Result<RefreshClaim<'_>, FolderError> {
+        if !self.is_finished() || self.busy.swap(true, Ordering::AcqRel) {
+            return Err(FolderError::RefreshBusy);
+        }
+        Ok(RefreshClaim { model: self })
+    }
+
+    /// Sets or clears the Ignored mark on `nodes` and everything below them, updates the counters of every ancestor in
+    /// one mutation, and returns the new minimal list for the session: a path under an equal ancestor is dropped, `!`
+    /// only where needed (FC-033, D-171).
+    pub fn set_ignored(&self, nodes: &[NodeId], on: bool) -> Vec<String> {
+        self.mutate(|s| s.set_ignored(nodes, on))
+    }
+
     /// Claims the model for one scan (`false` when it was claimed before).
     pub(crate) fn claim(&self) -> bool {
         !self.claimed.swap(true, Ordering::AcqRel)
@@ -164,6 +187,17 @@ impl FolderModel {
     #[doc(hidden)]
     pub fn reserved_bytes(&self) -> (usize, usize) {
         self.store.read().reserved_bytes()
+    }
+}
+
+/// See [`FolderModel::claim_refresh`].
+pub(crate) struct RefreshClaim<'m> {
+    model: &'m FolderModel,
+}
+
+impl Drop for RefreshClaim<'_> {
+    fn drop(&mut self) {
+        self.model.busy.store(false, Ordering::Release);
     }
 }
 
@@ -197,6 +231,11 @@ impl TreeRead<'_> {
         self.store.len()
     }
 
+    /// Records of the arena a refresh left behind (§1.6.7): a view may re-run when they pass half of [`TreeRead::len`].
+    pub fn garbage(&self) -> u32 {
+        self.store.garbage
+    }
+
     /// Always false: the root exists from the start. (Clippy's `len_without_is_empty` companion.)
     pub fn is_empty(&self) -> bool {
         self.store.len() == 0
@@ -216,35 +255,35 @@ impl TreeRead<'_> {
     /// Relative path of a node (representative names, '/'-joined; the root is ""). In flatten mode a file's
     /// path is the representative side's folder plus its name.
     pub fn path(&self, id: NodeId) -> RelPath {
-        let mut names: Vec<&str> = Vec::new();
-        let mut current = id.0;
-        let mut flat_dir: Option<&str> = None;
-        while current != 0 && current != NONE {
-            let Some(node) = self.store.node(NodeId(current)) else {
-                break;
-            };
-            names.push(self.store.representative_name(node));
-            if flat_dir.is_none() && current == id.0 {
-                let side = if node.sides[0].present() { 0 } else { 1 };
-                flat_dir = node.sides[side]
-                    .dir()
-                    .and_then(|d| self.store.dir_info(side, d))
-                    .map(|d| d.text.as_str())
-                    .filter(|d| !d.is_empty());
-            }
-            current = node.parent;
-        }
-        let mut text = String::new();
-        if let Some(dir) = flat_dir {
-            text.push_str(dir);
-        }
-        for name in names.iter().rev() {
-            if !text.is_empty() {
-                text.push('/');
-            }
-            text.push_str(name);
-        }
+        let text = self.store.path_text(id);
         RelPath::parse(&text).unwrap_or_default()
+    }
+
+    /// The node at `path`: each component is the name of a row on either side, exact first, then by the comparison's case
+    /// when it is not case-sensitive. The root for the empty path.
+    pub fn node_at(&self, path: &RelPath) -> Option<NodeId> {
+        let insensitive = self.store.case == Some(CaseSensitivity::Insensitive);
+        let named = |id: NodeId, same: &dyn Fn(&str) -> bool| {
+            self.node(id).is_some_and(|view| {
+                [view.left, view.right]
+                    .iter()
+                    .flatten()
+                    .any(|entry| same(entry.name))
+            })
+        };
+        let mut at = NodeId::ROOT;
+        for component in path.components() {
+            let folded = hikasa_core::case::fold(component);
+            let exact = self
+                .children(at)
+                .find(|&child| named(child, &|name| name == component));
+            let by_case = || {
+                self.children(at)
+                    .find(|&child| named(child, &|name| hikasa_core::case::fold(name) == folded))
+            };
+            at = exact.or_else(|| if insensitive { by_case() } else { None })?;
+        }
+        Some(at)
     }
 
     /// Spec of a node's side, built from the base spec and the raw names; an opened archive on the way turns the
@@ -292,6 +331,17 @@ impl TreeRead<'_> {
             spec = join_name(spec, name, *opened)?;
         }
         Some(spec)
+    }
+
+    /// The name of a node's side as the OS has it, which [`EntryView::name`] may only approximate. `None` when the side is
+    /// absent. Additive API (§1.6.10 rule 2: a name that is not UTF-8 survives an operation).
+    pub fn raw_name(&self, id: NodeId, side: Side) -> Option<std::ffi::OsString> {
+        if !matches!(side, Side::Left | Side::Right) {
+            return None;
+        }
+        let s = side_index(side);
+        let rec = self.store.node(id)?.sides.get(s)?;
+        rec.present().then(|| self.store.raw_name(s, id.0, rec))
     }
 
     /// Display category (§2.6.3), O(1).
@@ -375,6 +425,7 @@ impl TreeRead<'_> {
             left: totals.left,
             right: totals.right,
             content: self.store.content_counts,
+            ignored: self.store.ignored_rows(ignore_unimportant),
         }
     }
 
@@ -509,6 +560,25 @@ impl FolderComparison {
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
         check::check(&self.read())
     }
+}
+
+/// The folders a view opens when a comparison is loaded (FC-012, D-170): with `expand_on_load` every folder that has
+/// children, with `expand_differences_only` only those with a difference below them; none in a flat comparison. In the
+/// order of the tree. These keys change no result.
+pub fn expanded_on_load(read: &TreeRead<'_>, handling: &Handling) -> Vec<NodeId> {
+    if !(handling.expand_on_load || handling.expand_differences_only) || handling.flatten {
+        return Vec::new();
+    }
+    let differs = |id: NodeId| {
+        let aggregates = read.aggregates(id);
+        let a = aggregates.get(false);
+        a.files.differences() + a.folders.differences() > 0
+    };
+    read.preorder()
+        .filter(|&(id, _)| read.children(id).len() > 0)
+        .filter(|&(id, _)| !handling.expand_differences_only || differs(id))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// Checks INV-FOLDER-1..10 on a live model (also on a partial tree, between events). Additive API used by the

@@ -20,12 +20,18 @@
 //! | `workspace list` | `<name>\t<windows> windows\t<tabs> tabs\t<shortcut>` ([`workspace_list_lines`]) |
 //! | `settings export` | `<category>\t<path>` per item, then `wrote <package>` ([`settings_export_lines`]) |
 //! | `settings import` | `add`/`replace <path>`, `delete <path>`, one summary line per category, failures ([`settings_import_lines`]) |
+//! | `folder op` | one line per item, then the summary ([`folder_op_lines`]); `compare`, `crc`: [`folder_contents_lines`] |
+//! | `folder sync` | `<marker> <action> <path>` per row that is not `same`, the items and the summary, `# <counts>` ([`folder_sync_lines`]) |
 
+use hikasa_folder::ops::OpVerb;
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
 use hikasa_vfs::ops::ItemStatus;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
+use super::folder_ops::{
+    ContentsDto, FolderOpDto, FolderSyncDto, item_line, summary_text, sync_counts_text, sync_marker,
+};
 use super::package::SettingsImportDto;
 use super::sessions::{SessionListDto, SessionWriteDto, WorkspaceListDto, WorkspaceWriteDto};
 use super::settings::{
@@ -413,6 +419,85 @@ pub fn vfs_op_lines(dto: &VfsOpDto) -> Vec<String> {
         if dto.cancelled {
             lines.push("cancelled".to_owned());
         }
+    }
+    lines
+}
+
+/// `hikasa folder op` of a plan (§1.6.17): one line per item in plan order, the summary, and `cancelled` after a stop.
+pub fn folder_op_lines(dto: &FolderOpDto, verb: OpVerb) -> Vec<String> {
+    let mut lines: Vec<String> = dto
+        .items
+        .iter()
+        .map(|item| item_line(item, dto.dry_run))
+        .collect();
+    lines.push(summary_text(verb, dto.dry_run, &dto.summary, None));
+    if dto.cancelled {
+        lines.push("cancelled".to_owned());
+    }
+    lines
+}
+
+/// `hikasa folder sync` (§1.6.17): one line per row that is not `same`, `<marker> <action> <path>` (a row left says why), then
+/// the items and the summary as `folder op`, then `# <counts>`.
+pub fn folder_sync_lines(dto: &FolderSyncDto) -> Vec<String> {
+    let mut lines = Vec::with_capacity(dto.rows.len() + dto.items.len() + 2);
+    for row in &dto.rows {
+        if row.reason == Some(hikasa_folder::sync::LeaveReason::Same) {
+            continue;
+        }
+        let mut line = format!(
+            "{} {} {}",
+            sync_marker(row),
+            row.action.as_str(),
+            escape_controls(&row.path)
+        );
+        if let Some(reason) = row.reason {
+            line.push_str(&format!(" ({})", reason.as_str()));
+        }
+        lines.push(line);
+    }
+    // Before the items: a nested mount that failed must be seen before anything else (W6c review).
+    lines.extend(
+        dto.emptied
+            .iter()
+            .map(|folder| format!("# {}", super::folder_ops::emptied_text(folder))),
+    );
+    lines.extend(dto.items.iter().map(|item| item_line(item, dto.dry_run)));
+    lines.push(summary_text(OpVerb::Sync, dto.dry_run, &dto.summary, None));
+    if dto.cancelled {
+        lines.push("cancelled".to_owned());
+    }
+    lines.push(format!("# {}", sync_counts_text(&dto.counts)));
+    lines
+}
+
+/// `hikasa folder op compare|crc`: one line per row, then the counts.
+pub fn folder_contents_lines(dto: &ContentsDto) -> Vec<String> {
+    let mut lines = Vec::with_capacity(dto.items.len() + 1);
+    for item in &dto.items {
+        let path = escape_controls(&item.path);
+        let line = match (&item.error, item.crc32.as_deref(), item.result) {
+            (Some(error), _, _) => format!("failed {path}: {}", escape_controls(&error.message)),
+            (None, Some(crc), _) => format!("{crc} {} {path}", item.side.unwrap_or("-")),
+            (None, None, Some(kind)) => format!("{} {path}", kind.as_str()),
+            (None, None, None) => path.into_owned(),
+        };
+        lines.push(line);
+    }
+    let c = &dto.counts;
+    if dto.op == "compare" {
+        lines.push(format!(
+            "{} binary same, {} rules same, {} unimportant only, {} important differences, {} binary different, {} errors",
+            c.binary_same,
+            c.rules_same,
+            c.unimportant_only,
+            c.important_differences,
+            c.binary_different,
+            c.error
+        ));
+    }
+    if dto.cancelled {
+        lines.push("cancelled".to_owned());
     }
     lines
 }

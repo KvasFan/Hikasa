@@ -1,0 +1,4 @@
+- mkdir <TMP>/out
+- mkdir <TMP>/out/sub
+- copy <TMP>/l/sub/inner.txt -> <TMP>/out/sub/inner.txt
+copied 3 of 3 items (0 skipped, 0 failed), 6 bytes
