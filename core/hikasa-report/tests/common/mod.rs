@@ -6,6 +6,8 @@
 #![allow(dead_code)]
 
 pub mod apply;
+pub mod inputs;
+pub mod xmlcheck;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

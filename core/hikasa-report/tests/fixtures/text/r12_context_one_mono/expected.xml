@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="text">
+  <header>
+    <title>Text Compare</title>
+    <side id="left" spec="/l/left.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <side id="right" spec="/r/right.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <mode display="context" context="1" ignore-unimportant="false"/>
+    <rules>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important</rules>
+  </header>
+  <rows>
+    <hidden rows="1"/>
+    <row state="same" left="2" right="2"><l>line 02 of the report sample</l><r>line 02 of the report sample</r></row>
+    <row state="changed" importance="important" left="3" right="3"><l>line 03 of the report sample</l><r>line 03 of the report sample<d>, changed</d></r></row>
+    <row state="same" left="4" right="4"><l>line 04 of the report sample</l><r>line 04 of the report sample</r></row>
+    <hidden rows="3"/>
+    <row state="same" left="8" right="8"><l>line 08 of the report sample</l><r>line 08 of the report sample</r></row>
+    <row state="left-only" importance="important" left="9"><l>line 09 of the report sample</l></row>
+    <row state="changed" importance="important" left="10" right="9"><l>line <d>10</d> of the report sample</l><r>line <d>ten</d> of the report sample</r></row>
+    <row state="same" left="11" right="10"><l>line 11 of the report sample</l><r>line 11 of the report sample</r></row>
+    <hidden rows="8"/>
+    <row state="same" left="20" right="19"><l>line 20 of the report sample</l><r>line 20 of the report sample</r></row>
+    <row state="right-only" importance="important" right="20"><r>inserted line A</r></row>
+    <row state="right-only" importance="important" right="21"><r>inserted line B</r></row>
+    <row state="same" left="21" right="22"><l>line 21 of the report sample</l><r>line 21 of the report sample</r></row>
+    <hidden rows="7"/>
+    <row state="same" left="29" right="30"><l>line 29 of the report sample</l><r>line 29 of the report sample</r></row>
+    <row state="changed" importance="important" left="30" right="31"><l>line 30 of the report sample</l><r>line 30 of the report sample<d>, changed</d></r></row>
+  </rows>
+  <summary verdict="important_differences">
+    <count group="rows" name="total" value="32"/>
+    <count group="rows" name="same" value="26"/>
+    <count group="rows" name="changed" value="3"/>
+    <count group="rows" name="left-only" value="1"/>
+    <count group="rows" name="right-only" value="2"/>
+    <count group="rows" name="important" value="6"/>
+    <count group="rows" name="unimportant" value="0"/>
+    <count group="sections" name="total" value="4"/>
+    <count group="sections" name="important" value="4"/>
+    <count group="sections" name="unimportant" value="0"/>
+    <count group="important-lines" name="added" value="2"/>
+    <count group="important-lines" name="deleted" value="0"/>
+    <count group="important-lines" name="changed" value="3"/>
+    <count group="important-lines" name="original" value="4"/>
+    <count group="unimportant-lines" name="added" value="0"/>
+    <count group="unimportant-lines" name="deleted" value="0"/>
+    <count group="unimportant-lines" name="changed" value="0"/>
+    <count group="unimportant-lines" name="original" value="0"/>
+    <count group="lines" name="left" value="30"/>
+    <count group="lines" name="right" value="31"/>
+  </summary>
+</hikasa-report>

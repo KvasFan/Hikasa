@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="text">
+  <header>
+    <title>title with CR&#13;, LF
+, NUL<c x="0"/> &amp; &lt;tags&gt; "quoted"</title>
+    <side id="left" spec="/l/h&amp;'.txt" encoding="UTF-8" bom="false" eol="lf" binary="true"/>
+    <side id="right" spec="/r/h.txt" encoding="UTF-8" bom="false" eol="lf" binary="true"/>
+    <mode display="all" ignore-unimportant="false"/>
+    <rules>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important</rules>
+    <warning code="binary_content">/l/h&amp;'.txt: binary content (NUL byte at offset 4); the verdict is a binary comparison</warning>
+    <warning code="lossy_decode">/l/h&amp;'.txt: 2 malformed byte sequence(s) replaced with U+FFFD while decoding as UTF-8</warning>
+    <warning code="binary_content">/r/h.txt: binary content (NUL byte at offset 4); the verdict is a binary comparison</warning>
+    <warning code="lossy_decode">/r/h.txt: 2 malformed byte sequence(s) replaced with U+FFFD while decoding as UTF-8</warning>
+  </header>
+  <rows>
+    <row state="changed" importance="important" left="1" right="1"><l>nul <c x="0"/> esc <c x="1b"/>[<d>1</d>m end</l><r>nul <c x="0"/> esc <c x="1b"/>[<d>2</d>m end</r></row>
+    <row state="changed" importance="important" left="2" right="2"><l>fffe <c x="fffe"/> ffff <c x="ffff"/></l><r>fffe <c x="fffe"/> ffff <c x="ffff"/><d>!</d></r></row>
+    <row state="changed" importance="important" left="3" right="3"><l>bidi ‮ <d>txt.</d>exe ⁦<d>x</d>⁩</l><r>bidi ‮ exe<d>.txt</d> ⁦<d>y</d>⁩</r></row>
+    <row state="changed" importance="important" left="4" right="4"><l>cdata ]]&gt; &amp; &lt;<d> </d>&gt; " '</l><r>cdata ]]&gt; &amp;<d>amp;</d> &lt;<d>b</d>&gt; " '</r></row>
+    <row state="same" left="5" right="5"><l>lossy �� bytes</l><r>lossy �� bytes</r></row>
+    <row state="changed" importance="important" left="6" right="6"><l>emoji <d>👨‍👩‍👧</d> 🇩🇪</l><r>emoji <d>👩‍👨</d> 🇩🇪</r></row>
+    <row state="changed" importance="important" left="7" right="7"><l>tab	here</l><r>tab	<d>t</d>here</r></row>
+    <row state="same" left="8" right="8"><l>same</l><r>same</r></row>
+    <row state="right-only" importance="important" right="9"><r>right only <c x="1"/><c x="2"/><c x="b"/><c x="c"/></r></row>
+  </rows>
+  <summary verdict="binary_different">
+    <count group="rows" name="total" value="9"/>
+    <count group="rows" name="same" value="2"/>
+    <count group="rows" name="changed" value="6"/>
+    <count group="rows" name="left-only" value="0"/>
+    <count group="rows" name="right-only" value="1"/>
+    <count group="rows" name="important" value="7"/>
+    <count group="rows" name="unimportant" value="0"/>
+    <count group="sections" name="total" value="3"/>
+    <count group="sections" name="important" value="3"/>
+    <count group="sections" name="unimportant" value="0"/>
+    <count group="important-lines" name="added" value="1"/>
+    <count group="important-lines" name="deleted" value="0"/>
+    <count group="important-lines" name="changed" value="6"/>
+    <count group="important-lines" name="original" value="6"/>
+    <count group="unimportant-lines" name="added" value="0"/>
+    <count group="unimportant-lines" name="deleted" value="0"/>
+    <count group="unimportant-lines" name="changed" value="0"/>
+    <count group="unimportant-lines" name="original" value="0"/>
+    <count group="lines" name="left" value="8"/>
+    <count group="lines" name="right" value="9"/>
+  </summary>
+</hikasa-report>

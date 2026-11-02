@@ -122,6 +122,8 @@ assert_cmd = "2"
 predicates = "3"
 criterion = "0.8"
 pretty_assertions = "1"
+# XML well-formedness and structure checks of the report dumps (hikasa-report tests only, m2-contracts §1.7.16).
+roxmltree = "0.21.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

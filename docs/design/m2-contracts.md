@@ -5896,7 +5896,7 @@ wrap, width and columns do not (a dump has every column).
 | `row` | rows | **`state`** = `same`\|`changed`\|`left-only`\|`right-only`; `importance` = `important`\|`unimportant` (not on `same`); `left`, `right` (line numbers, absent on a missing side); `piece` (2, 3, … on a piece after an artificial break) | `l`?, `r`? (a same row has both) |
 | `l`, `r` | row | — | mixed: text, `d`, `u`, `c` |
 | `d`, `u` | l, r | — | mixed: text, `c`; an important (`d`) or unimportant (`u`) inline difference |
-| `c` | l, r, d, u | **`x`** | empty |
+| `c` | l, r, d, u; title, rules, error, status, warning (W7a note 6) | **`x`** | empty |
 | `hidden` | rows | **`rows`** | empty |
 | `tree` | root (folder) | `flat` = `true` in flatten mode | (`folder` \| `entry`)* |
 | `folder`, `entry` | tree, folder | **`name`**, **`path`** (D-29's), **`state`** = `same`\|`left-newer`\|`right-newer`\|`different`\|`unimportant`\|`left-only`\|`right-only`\|`unknown`\|`error`\|`filtered`, **`marker`** (the list's character); `entry`: **`kind`** = `file`\|`link`\|`other`; `ignored` = `true` | `left`?, `right`?, `file-report`? (entry); then, in a `folder`, its children |

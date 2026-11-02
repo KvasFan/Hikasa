@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="text">
+  <header>
+    <title>Text Compare</title>
+    <side id="left" spec="/l/left.bin" encoding="windows-1252" bom="false" eol="mixed" binary="true"/>
+    <side id="right" spec="/r/right.bin" encoding="windows-1252" bom="false" eol="mixed" binary="true"/>
+    <mode display="all" ignore-unimportant="false"/>
+    <rules>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important</rules>
+    <warning code="binary_content">/l/left.bin: binary content (Png signature); the verdict is a binary comparison</warning>
+    <warning code="binary_content">/r/right.bin: binary content (Png signature); the verdict is a binary comparison</warning>
+  </header>
+  <rows>
+    <row state="same" left="1" right="1"><l>‰PNG</l><r>‰PNG</r></row>
+    <row state="same" left="2" right="2"><l><c x="1a"/></l><r><c x="1a"/></r></row>
+    <row state="changed" importance="important" left="3" right="3"><l>abc<c x="0"/>de<d>f</d></l><r>abc<c x="0"/>de<d>g</d></r></row>
+  </rows>
+  <summary verdict="binary_different">
+    <count group="rows" name="total" value="3"/>
+    <count group="rows" name="same" value="2"/>
+    <count group="rows" name="changed" value="1"/>
+    <count group="rows" name="left-only" value="0"/>
+    <count group="rows" name="right-only" value="0"/>
+    <count group="rows" name="important" value="1"/>
+    <count group="rows" name="unimportant" value="0"/>
+    <count group="sections" name="total" value="1"/>
+    <count group="sections" name="important" value="1"/>
+    <count group="sections" name="unimportant" value="0"/>
+    <count group="important-lines" name="added" value="0"/>
+    <count group="important-lines" name="deleted" value="0"/>
+    <count group="important-lines" name="changed" value="1"/>
+    <count group="important-lines" name="original" value="1"/>
+    <count group="unimportant-lines" name="added" value="0"/>
+    <count group="unimportant-lines" name="deleted" value="0"/>
+    <count group="unimportant-lines" name="changed" value="0"/>
+    <count group="unimportant-lines" name="original" value="0"/>
+    <count group="lines" name="left" value="3"/>
+    <count group="lines" name="right" value="3"/>
+  </summary>
+</hikasa-report>

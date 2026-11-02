@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="folder">
+  <header>
+    <title>Folder Compare</title>
+    <side id="left" spec="/l"/>
+    <side id="right" spec="/r"/>
+    <mode display="all" ignore-unimportant="false" folders="structure" suppress-filters="false"/>
+    <rules>size, timestamps (2 s), name case, attributes (R), permissions, content: rules; filters: none; case-insensitive names</rules>
+  </header>
+  <tree>
+    <entry name="attrs.txt" path="attrs.txt" state="different" marker="!" kind="file">
+      <left name="attrs.txt" size="4" modified="2026-05-01T00:00:00Z" attributes="R"/>
+      <right name="attrs.txt" size="4" modified="2026-01-01T00:00:00Z" attributes="A"/>
+    </entry>
+    <entry name="Case.txt" path="Case.txt" state="different" marker="!" kind="file">
+      <left name="Case.txt" size="3" modified="2026-01-01T00:00:00Z"/>
+      <right name="case.txt" size="2" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="perm.txt" path="perm.txt" state="different" marker="!" kind="file">
+      <left name="perm.txt" size="3" modified="2026-01-01T00:00:00Z" attributes="-rw-r--r--" owner="1000" group="1000"/>
+      <right name="perm.txt" size="2" modified="2026-01-01T00:00:00Z" attributes="-rw-------" owner="1000" group="1000"/>
+    </entry>
+    <entry name="time_size.txt" path="time_size.txt" state="same" marker="=" kind="file">
+      <left name="time_size.txt" size="3" modified="2026-05-01T00:00:00Z"/>
+      <right name="time_size.txt" size="2" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+  </tree>
+  <summary verdict="differences" complete="true">
+    <count group="files" name="same" value="1"/>
+    <count group="files" name="left-newer" value="0"/>
+    <count group="files" name="right-newer" value="0"/>
+    <count group="files" name="different" value="3"/>
+    <count group="files" name="left-only" value="0"/>
+    <count group="files" name="right-only" value="0"/>
+    <count group="files" name="unknown" value="0"/>
+    <count group="files" name="error" value="0"/>
+    <count group="files" name="filtered" value="0"/>
+    <count group="folders" name="same" value="0"/>
+    <count group="folders" name="left-newer" value="0"/>
+    <count group="folders" name="right-newer" value="0"/>
+    <count group="folders" name="different" value="0"/>
+    <count group="folders" name="left-only" value="0"/>
+    <count group="folders" name="right-only" value="0"/>
+    <count group="folders" name="unknown" value="0"/>
+    <count group="folders" name="error" value="0"/>
+    <count group="folders" name="filtered" value="0"/>
+    <count group="left" name="files" value="4"/>
+    <count group="left" name="folders" value="0"/>
+    <count group="left" name="bytes" value="13"/>
+    <count group="right" name="files" value="4"/>
+    <count group="right" name="folders" value="0"/>
+    <count group="right" name="bytes" value="10"/>
+    <count group="content" name="binary-same" value="1"/>
+    <count group="content" name="rules-same" value="3"/>
+    <count group="content" name="unimportant-only" value="0"/>
+    <count group="content" name="important-differences" value="0"/>
+    <count group="content" name="binary-different" value="0"/>
+    <count group="content" name="error" value="0"/>
+    <count group="content" name="not-compared" value="0"/>
+  </summary>
+</hikasa-report>

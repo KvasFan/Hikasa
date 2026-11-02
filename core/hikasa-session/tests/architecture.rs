@@ -1446,6 +1446,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "diffy",
             "proptest",
             "hikasa-vfs",
+            "roxmltree",
         ],
     ),
     (

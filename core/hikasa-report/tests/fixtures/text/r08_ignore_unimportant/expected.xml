@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="text">
+  <header>
+    <title>Text Compare</title>
+    <side id="left" spec="/l/left.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <side id="right" spec="/r/right.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <mode display="mismatches" ignore-unimportant="true"/>
+    <rules>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: whitespace, case; line endings: ignored; orphan lines: always important</rules>
+  </header>
+  <rows>
+    <hidden rows="4"/>
+    <row state="changed" importance="important" left="5" right="5"><l>value = <d>1</d></l><r>value = <d>2</d></r></row>
+    <hidden rows="2"/>
+    <row state="right-only" importance="important" right="8"><r>new line</r></row>
+  </rows>
+  <summary verdict="important_differences">
+    <count group="rows" name="total" value="8"/>
+    <count group="rows" name="same" value="3"/>
+    <count group="rows" name="changed" value="4"/>
+    <count group="rows" name="left-only" value="0"/>
+    <count group="rows" name="right-only" value="1"/>
+    <count group="rows" name="important" value="2"/>
+    <count group="rows" name="unimportant" value="3"/>
+    <count group="sections" name="total" value="3"/>
+    <count group="sections" name="important" value="2"/>
+    <count group="sections" name="unimportant" value="1"/>
+    <count group="important-lines" name="added" value="0"/>
+    <count group="important-lines" name="deleted" value="0"/>
+    <count group="important-lines" name="changed" value="4"/>
+    <count group="important-lines" name="original" value="3"/>
+    <count group="unimportant-lines" name="added" value="0"/>
+    <count group="unimportant-lines" name="deleted" value="0"/>
+    <count group="unimportant-lines" name="changed" value="1"/>
+    <count group="unimportant-lines" name="original" value="1"/>
+    <count group="lines" name="left" value="7"/>
+    <count group="lines" name="right" value="8"/>
+  </summary>
+</hikasa-report>

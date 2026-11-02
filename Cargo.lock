@@ -2164,6 +2164,7 @@ dependencies = [
  "jiff",
  "pretty_assertions",
  "proptest",
+ "roxmltree",
  "serde",
  "serde_json",
  "tempfile",

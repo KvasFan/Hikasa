@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="text">
+  <header>
+    <title>Text Compare</title>
+    <side id="left" spec="/l/left.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <side id="right" spec="/r/right.txt" encoding="UTF-8" bom="false" eol="lf" binary="false"/>
+    <mode display="all" ignore-unimportant="false"/>
+    <rules>format: Everything Else; algorithm: unaligned (unaligned); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important</rules>
+  </header>
+  <rows>
+    <row state="same" left="1" right="1"><l>line 00 of the sample</l><r>line 00 of the sample</r></row>
+    <row state="same" left="2" right="2"><l>line 01 of the sample</l><r>line 01 of the sample</r></row>
+    <row state="same" left="3" right="3"><l>line 02 of the sample</l><r>line 02 of the sample</r></row>
+    <row state="same" left="4" right="4"><l>line 03 of the sample</l><r>line 03 of the sample</r></row>
+    <row state="same" left="5" right="5"><l>line 04 of the sample</l><r>line 04 of the sample</r></row>
+    <row state="changed" importance="important" left="6" right="6"><l>line 05 of the sample</l><r>line 05 of the sample<d>, edited</d></r></row>
+    <row state="same" left="7" right="7"><l>line 06 of the sample</l><r>line 06 of the sample</r></row>
+    <row state="same" left="8" right="8"><l>line 07 of the sample</l><r>line 07 of the sample</r></row>
+    <row state="same" left="9" right="9"><l>line 08 of the sample</l><r>line 08 of the sample</r></row>
+    <row state="same" left="10" right="10"><l>line 09 of the sample</l><r>line 09 of the sample</r></row>
+    <row state="same" left="11" right="11"><l>line 10 of the sample</l><r>line 10 of the sample</r></row>
+    <row state="same" left="12" right="12"><l>line 11 of the sample</l><r>line 11 of the sample</r></row>
+    <row state="changed" importance="important" left="13" right="13"><l><d>line</d> <d>12</d> <d>of</d> <d>the samp</d>le</l><r><d>a</d> <d>brand</d> <d>new</d> l<d>in</d>e</r></row>
+    <row state="same" left="14" right="14"><l>line 13 of the sample</l><r>line 13 of the sample</r></row>
+    <row state="same" left="15" right="15"><l>line 14 of the sample</l><r>line 14 of the sample</r></row>
+    <row state="changed" importance="important" left="16" right="16"><l>line 1<d>5</d> of the sample</l><r>line 1<d>6</d> of the sample</r></row>
+    <row state="changed" importance="important" left="17" right="17"><l>line 1<d>6</d> of the sample</l><r>line 1<d>7</d> of the sample</r></row>
+    <row state="changed" importance="important" left="18" right="18"><l>line 1<d>7</d> of the sample</l><r>line 1<d>8</d> of the sample</r></row>
+    <row state="changed" importance="important" left="19" right="19"><l>line 1<d>8</d> of the sample</l><r>line 1<d>9</d> of the sample</r></row>
+    <row state="left-only" importance="important" left="20"><l>line 19 of the sample</l></row>
+  </rows>
+  <summary verdict="important_differences">
+    <count group="rows" name="total" value="20"/>
+    <count group="rows" name="same" value="13"/>
+    <count group="rows" name="changed" value="6"/>
+    <count group="rows" name="left-only" value="1"/>
+    <count group="rows" name="right-only" value="0"/>
+    <count group="rows" name="important" value="7"/>
+    <count group="rows" name="unimportant" value="0"/>
+    <count group="sections" name="total" value="3"/>
+    <count group="sections" name="important" value="3"/>
+    <count group="sections" name="unimportant" value="0"/>
+    <count group="important-lines" name="added" value="0"/>
+    <count group="important-lines" name="deleted" value="0"/>
+    <count group="important-lines" name="changed" value="6"/>
+    <count group="important-lines" name="original" value="7"/>
+    <count group="unimportant-lines" name="added" value="0"/>
+    <count group="unimportant-lines" name="deleted" value="0"/>
+    <count group="unimportant-lines" name="changed" value="0"/>
+    <count group="unimportant-lines" name="original" value="0"/>
+    <count group="lines" name="left" value="20"/>
+    <count group="lines" name="right" value="19"/>
+  </summary>
+</hikasa-report>
