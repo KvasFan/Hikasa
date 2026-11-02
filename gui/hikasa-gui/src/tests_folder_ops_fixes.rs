@@ -576,6 +576,42 @@ fn closing_the_tab_while_a_copy_runs_logs_its_outcome() {
     );
 }
 
+/// A copy that ended but whose outcome the window has not taken yet when the tab closes: the outcome is reported all the
+/// same (the view hands over what it had not), as a whole copy.
+#[test]
+fn an_outcome_not_taken_yet_when_the_tab_closes_is_reported() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "left\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let g = copy_held_at_execute(&world, &mut app, view, "a.txt");
+    for _ in world.mailbox.drain() {}
+    set_gate(&g, true);
+    // The job's body ended (its wake-up is in the mailbox) and its result is published; nobody polled the window.
+    for _ in 0..60_000 {
+        if !world.mailbox.is_empty() && !folder_model(&mut app, view).settling() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(!world.mailbox.is_empty(), "the copy ended");
+    assert_eq!(read(&world, "r", "a.txt").as_deref(), Some("left\n"));
+    assert!(copied_entries(&app).is_empty(), "not taken yet");
+    let index = app.tabs().iter().position(|t| t.id == view).expect("tab");
+    app.close_tab(index, CloseReason::User);
+    let entries = copied_entries(&app);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let copy = copy_notices(&app);
+    assert_eq!(copy.len(), 1, "{copy:?}");
+    assert!(
+        copy[0]
+            .1
+            .starts_with("Copy to Right in l ⇄ r (closed): copied 1 of 1"),
+        "{}",
+        copy[0].1
+    );
+}
+
 /// Session ▸ Settings… ▸ OK while a copy runs replaces the view's model: the copy is cancelled and still logged.
 #[test]
 fn settings_ok_while_a_copy_runs_logs_its_outcome() {
