@@ -888,9 +888,29 @@ pub(crate) fn create_link_copy(
         // The replaced item is moved aside first, so a failing `create_symlink` puts it back.
         replace_with(exec, item, |dst| {
             dst.create_symlink(target, &text, target_is_dir)
-        })
+        })?;
     } else {
-        exec.dst.create_symlink(target, &text, target_is_dir)
+        exec.dst.create_symlink(target, &text, target_is_dir)?;
+    }
+    // The link keeps its source's time, set on the link itself (`set_times` never follows): a link copied with the time
+    // of the copy would be newer than its source, and a sync would copy it again on every run, both ways for Update Both.
+    let preserve = Preserve {
+        attrs: false,
+        created: false,
+        ..exec.preserve()
+    };
+    match apply_preserved(exec, exec.dst, target, &entry, preserve) {
+        // Where a back-end cannot time a link, the link is made and says so once (`capability_missing`).
+        Err(VfsError::OperationUnsupported { .. }) => {
+            warn_missing(
+                &mut exec.warned,
+                &mut exec.warnings,
+                "set_times of a link",
+                target,
+            );
+            Ok(())
+        }
+        other => other,
     }
 }
 

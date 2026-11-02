@@ -200,6 +200,40 @@ fn a3_6_rule1_set_times_on_a_link_leaves_the_target() {
     }
 }
 
+/// A copied link keeps its source's time, set on the link itself, new or replacing; what it points to keeps its own. A link
+/// with the time of the copy would be newer than its source, and a sync would copy it again on every run (W6c review).
+#[test]
+fn a3_6_rule6_a_copied_link_keeps_its_time() {
+    for fx in fixtures() {
+        let old = SetTimes {
+            modified: Some(ft(1_000_000)),
+            created: None,
+        };
+        fx.vfs().set_times(&fx.spec("lpointed"), &old).unwrap();
+        let pointed = fx.lstat("pointed").unwrap().mtime;
+        fx.link("lexisting", "outside", true);
+        for target in ["lnew", "lexisting"] {
+            let report = copy(
+                &fx,
+                &[("lpointed", target)],
+                &copy_opts(OverwritePolicy::Always),
+            );
+            assert_eq!(
+                statuses(&report),
+                [(Action::Link, ItemStatus::Done)],
+                "{} {target}",
+                fx.label()
+            );
+            let copied = fx.lstat(target).unwrap();
+            assert_eq!(copied.kind, EntryKind::Symlink, "{} {target}", fx.label());
+            assert_eq!(copied.mtime, old.modified, "{} {target}", fx.label());
+            assert_eq!(copied.link_target.as_deref(), Some("pointed"));
+        }
+        assert_eq!(fx.lstat("pointed").unwrap().mtime, pointed, "{}", fx.label());
+        assert_targets_intact(&fx, fx.label());
+    }
+}
+
 // ---- rule 2: set_attrs on a link ---------------------------------------------------------------------------
 
 #[test]

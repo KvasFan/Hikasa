@@ -5398,6 +5398,12 @@ text was silent.
    whatever `confirm_delete` says).
 3. **Note 10's default preset is rejected.** `folder sync --session <folder-compare session>` without a preset flag is a
    usage error (`invalid_input`, exit 100), with `--gui` too, before any contact: only a folder-sync session holds a preset.
+4. **A copied link keeps its time** (D-94 rule 6, with `Preserve::times`): after `create_symlink`, `set_times` on the link
+   itself (no-follow: `utimensat` with `AT_SYMLINK_NOFOLLOW` on Unix, the link opened as a reparse point on Windows, the
+   member's time in an archive), so a second sync plans nothing and Update Both does not copy a link back and forth.
+   Every back-end of this build can time a link; one that answers `OperationUnsupported` leaves the link made with one
+   `capability_missing` warning. A comparison of links by target and kind instead of time is therefore not built: no
+   back-end needs it.
 
 ### 1.7–1.14 W7–W14
 

@@ -945,3 +945,45 @@ fn a6_31_a_path_not_on_its_side_is_not_found() {
     assert!(!s.join("r/right-only.txt").exists());
     assert!(s.join("r/gone/inner.txt").exists());
 }
+
+/// A link to `target` at `at`; false where this system does not let the test make one (Windows without the privilege).
+fn make_link(target: &str, at: &Path) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, at).is_ok();
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, at).is_ok();
+}
+
+/// A copied link keeps its time, so a sync settles: a second mirror plans nothing, and Update Both does not copy a link
+/// back and forth.
+#[test]
+fn a6_31_a_copied_link_keeps_its_time_and_a_sync_settles() {
+    let s = Sandbox::new();
+    s.dir("l");
+    s.dir("r");
+    if !make_link("some/where", &s.join("l/lnk")) {
+        eprintln!("skipped: this system does not let the test make a link");
+        return;
+    }
+    let old = filetime::FileTime::from_unix_time(1_000_000, 0);
+    filetime::set_symlink_file_times(s.join("l/lnk"), old, old).unwrap();
+    let out = sync(&s, &["--mirror-right", "--yes"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let copied = std::fs::symlink_metadata(s.join("r/lnk")).unwrap();
+    assert!(copied.file_type().is_symlink());
+    assert_eq!(
+        filetime::FileTime::from_last_modification_time(&copied),
+        old
+    );
+    let counts = |out: &std::process::Output| json(out)["result"]["counts"].clone();
+    let again = sync(&s, &["--mirror-right", "--dry-run", "--json"]);
+    assert_eq!(code(&again), 0, "{}", stderr(&again));
+    assert_eq!(json(&again)["result"]["items"], serde_json::json!([]));
+    for _ in 0..2 {
+        let both = sync(&s, &["--update-both", "--yes", "--json"]);
+        assert_eq!(code(&both), 0, "{}", stderr(&both));
+        assert_eq!(json(&both)["result"]["items"], serde_json::json!([]));
+        assert_eq!(counts(&both)["copy_left"], 0);
+        assert_eq!(counts(&both)["copy_right"], 0);
+    }
+}
