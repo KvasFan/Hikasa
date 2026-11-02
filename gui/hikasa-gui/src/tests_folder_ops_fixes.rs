@@ -381,6 +381,27 @@ fn a_selection_moved_while_planning_cancels_the_operation() {
     assert_eq!(read(&world, "r", "b.txt").as_deref(), Some("bbbb\n"));
 }
 
+/// The selection moves while the Delete dialog is open: OK plans nothing, no question, a warning.
+#[test]
+fn a_selection_moved_under_the_delete_dialog_cancels_it() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "aaaa\n", 1_000);
+    put(&world, "l", "b.txt", "bbbb\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select(&mut app, view, "a.txt");
+    app.execute(CommandId::PermanentDelete);
+    assert_eq!(delete_dialog(&mut app).path(), "a.txt");
+    select(&mut app, view, "b.txt");
+    press(&world, &mut app, ButtonRole::Ok);
+    world.settle(&mut app);
+    assert_eq!(dialogs(&app), 0);
+    let (kind, text, _) = notices(&app).pop().expect("a notice");
+    assert_eq!(kind, NoticeKind::Warning);
+    assert!(text.contains("the selection changed"), "{text}");
+    assert!(read(&world, "l", "a.txt").is_some() && read(&world, "l", "b.txt").is_some());
+}
+
 /// The question names the row and its sides: a copy each way, a delete of one side and of both.
 #[test]
 fn the_question_names_the_row_and_its_sides() {
