@@ -484,21 +484,56 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   (Update Left, Update Right, Update Both, Mirror to Left, Mirror to Right, Custom),
   Rules and Filters buttons, Accept/Cancel for path edits; bottom = preview tree with the
   planned action per item (copy left→right, copy right→left, delete left, delete right,
-  leave alone) and folder summaries ("contains files that will be copied…").
+  leave alone) and folder summaries ("contains files that will be copied…"). *M2 W6c (D-181, D-182):* the engine is
+  `hikasa_folder::sync`: `plan_sync` gives a row per item (its situation, action and why it is left) and one batch plan made
+  by the builder of the folder operations, so a sync has every check a copy and a delete have. `SyncPlan::folder` gives the
+  folder summaries in O(1). The view is W9; `hikasa folder sync` is the headless form (`12-cli-and-scripting.md` §4).
 - **FS-002** (P0): Custom operation matrix (Rules ▸ Sync tab): action for each
   situation — file newer on left / newer on right / added on left / added on right /
   deleted on left / deleted on right / files different / files same — each from the
   set {copy left→right, copy right→left, delete left, delete right, leave alone}.
+  *M2 W6c (D-181):* the presets, normative:
+
+  | Situation | Update Right | Update Left | Update Both | Mirror to Right | Mirror to Left |
+  |---|---|---|---|---|---|
+  | newer left | → | — | → | → | ← |
+  | newer right | — | ← | ← | → | ← |
+  | added left (left only) | → | — | → | → | delete left |
+  | added right (right only) | — | ← | ← | delete right | ← |
+  | deleted left (right only) | — | — | — | delete right | ← |
+  | deleted right (left only) | — | — | — | → | delete left |
+  | different (no time difference) | — | — | — | → | ← |
+  | same | — | — | — | — | — |
+
+  *Update* never deletes and never overwrites a newer file; *different* under Update is a **conflict**, left. Without Sync
+  Memory an item on one side only cannot tell "added" from "deleted": `orphans = "added"` (default) or `"deleted"` says which
+  reading applies, so every cell is reachable. A cell must name a side its item is on (`added left` takes copy right, delete
+  left or leave), else it is refused. A Custom matrix is written `<situation>=<action>,…`, a preset first as its base.
 - **FS-003** (P1): **Sync Memory**: remembers the state after each sync (per session)
   to distinguish "added on one side" from "deleted on the other" and to flag
   conflicting changes; "Use Sync Memory", "Clear Memory".
 - **FS-004** (P0): Per-item overrides via Actions ▸ Leave Alone / Copy Right to Left /
   Copy Left to Right / Delete Left / Delete Right; **Exclude** removes items from the
-  plan. Search ▸ Next/Previous Conflict.
+  plan. Search ▸ Next/Previous Conflict. *M2 W6c:* overrides are kept per path below the
+  bases (`[rules.sync.overrides]`, `--override <PATH>=<ACTION>`); a folder covers its subtree and the longest path wins, as
+  for Ignored marks. An override a row cannot take is dropped with a `switch_ignored` warning, and so is one that names no
+  row; the base itself (an empty path, `.`, `..`) is refused.
 - **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with
   options *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if
   possible*, *Expand subfolders when loading*. Suppress Filters shows items the sync
-  will not touch. **Folder Sync Info** shows statistics.
+  will not touch. **Folder Sync Info** shows statistics. *M2 W6c (D-182):* a sync compares with every folder
+  scanned, orphans too, and archives as folders only with *Sync within archives* (else an archive is a file to copy); a flat
+  comparison is refused. The plan runs deletes first (post-order), then copies to the right, then to the left, as one batch:
+  one rebuild and one backup per archive. A folder on one side all of whose rows go goes too (one recycle-bin item with the
+  bin); a folder that keeps a row stays; an empty folder is made or deleted only with *Sync empty folders*. What protects the
+  data: a sync that would delete while the other side has nothing at all is refused (`--allow-empty-source` lets it run; a
+  confirmation does not); a comparison that did not finish deletes nothing; a row that failed, and what lies below a folder
+  that failed or was not read, is left and makes the sync end with an error; a side a filter hides is left, and so is what
+  lies below a folder a filter hides on either side, and an item every side of which a filter hides is no row of the sync;
+  a read-only side (FC-003) leaves its rows, row by row, with a warning; nothing is written below a followed link, and a
+  followed link on one side that a mirror deletes goes as the link; a row replaces only its own counterpart, never an item of
+  another row, so *Update* cannot replace a file by a folder of its name; names a delete of the plan frees are free for its
+  copies.
 - **FS-006** (P1): Scheduled/unattended sync is done through the script engine
   (`12-cli-and-scripting.md` `sync`), not through the GUI.
 

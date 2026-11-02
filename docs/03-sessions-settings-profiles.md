@@ -364,12 +364,33 @@ saved_at = ""                  # RFC 3339; auto-saved files only
 [parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
 [specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding,
                                # read_only_left, read_only_right (FC-003, per side)
-[rules]                        # folder-compare: the TOML of --rules-file; text types: TextRules; others: kept as is
+[rules]                        # folder-compare: the TOML of --rules-file; folder-sync: the same, and [rules.sync];
+                               # text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests
 [display]                      # display filter state (SES-010)
 [view]                         # view layout and state
 [[override]]                   # folder types: scope = "pair" | "type", left, right, type, [override.rules]
 ```
+
+A folder-sync session (*M2 W6c, D-183*) keeps its sync below `[rules]`, beside the folder rules, schema version unchanged:
+
+```toml
+[rules.sync]
+preset = "update_right"        # update_left | update_right | update_both | mirror_left | mirror_right | custom
+orphans = "added"              # added | deleted: how an item on one side only is read
+create_empty = false
+within_archives = false
+recycle = false
+recycle_fallback = false
+[rules.sync.matrix]            # read with `custom`; eight keys, sparse against all `leave`
+newer_left = "copy_right"
+[rules.sync.overrides]         # a path below the bases → its action; a folder covers its subtree
+"a/b.txt" = "leave"
+```
+
+A matrix cell that names a side its item is not on (`added_left = "copy_left"`) is refused by `session edit` and by an
+import. A folder-sync file written before W6 had an empty `[rules]`, which reads as the defaults. `hikasa session run` of a
+folder-sync session runs the sync (`12-cli-and-scripting.md`).
 
 `[rules]`, `[text_rules]` and `[override.rules]` hold only what differs from the defaults of the type **at save
 time**, so a later change of the defaults reaches every session that did not change that rule. `hikasa session

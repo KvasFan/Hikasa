@@ -44,3 +44,7 @@ harness = false
 [[bench]]
 name = "cancel_latency"
 harness = false
+
+[[bench]]
+name = "sync_plan_100k"
+harness = false

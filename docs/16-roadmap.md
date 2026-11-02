@@ -45,7 +45,7 @@ Moved to M2 (done in M2 wave 0):
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Wave 6 runs in four parts; parts W6a (foundations) and W6b (operations: every file operation headless, `folder op`) are done. Version 0.1.91 is a pre-release of 0.2.0 with waves 0–5 and the packages;
+contract `docs/design/m2-contracts.md`. Wave 6 runs in four parts; parts W6a (foundations), W6b (operations: every file operation headless, `folder op`) and W6c (sync: the matrix, presets and overrides, `folder sync`, folder-sync sessions, `--sync` up to the GUI, gate G7) are done. Version 0.1.91 is a pre-release of 0.2.0 with waves 0–5 and the packages;
 0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
 `xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
 typed, versioned and written sparsely with unknown keys kept, change detection by
