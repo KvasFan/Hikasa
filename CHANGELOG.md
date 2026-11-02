@@ -15,6 +15,14 @@
   nothing. `--dry-run` prints the plan. Schemas `hikasa.folder_op.v1`, `hikasa.folder_contents.v1`.
 - **Rename masks.** DOS masks and regular expressions over the whole name; a chain is ordered and a cycle goes through a
   hidden name.
+- **`hikasa folder sync`.** Update Left, Right or Both, Mirror to Left or Right, or a custom matrix of eight situations ×
+  five actions (`--custom mirror-right,different=leave`); `--orphans deleted` reads an item on one side as deleted on the
+  other; per-path `--override`s; `--create-empty`, `--within-archives`, `--recycle`, `--just-selection`, `--visible`,
+  `--all-rows`. `--dry-run` prints each row's decision and every item. Schema `hikasa.folder_sync.v1`.
+- **Folder-sync sessions.** `session new --type folder-sync` keeps the sync in `[rules.sync]`; `session run` runs it, with
+  `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`. A folder-sync file of an earlier version reads as before.
+- **`--sync` and `--nobackups`** of `gui open` and `hikasa-gui` are understood, and `folder sync --gui` sends the sync to the
+  GUI, which says it cannot show a Folder Sync view yet (exit 100).
 
 ### Data safety
 - **A plan keeps what it saw.** A file changed since the comparison is not overwritten or deleted, and the rest go on. Nothing
@@ -37,8 +45,18 @@
   not make each ask, and `--confirm no-to-all` keeps them. What lies in a folder answered no stays with it.
 - **A plan runs what it shows.** An item that does not run, with no cancel, is no success (exit 100), and a summary says how
   many did not run; a folder that cannot go no longer stops its neighbours.
+- **A sync never deletes on the strength of what it could not see.** A sync that would delete while the other side has
+  nothing at all (a mount that failed) is refused unless `--allow-empty-source`, which `--yes` does not imply; a comparison
+  that did not finish deletes nothing; a row that failed, and everything below a folder that could not be read, is left and
+  the sync exits 100; a side a filter hides is left, and so is what lies below a folder a filter hides on either side; a
+  read-only side keeps its rows; a followed link that a mirror removes goes as the link, never what it leads to.
+- **Update never removes.** A sync replaces only a row's own counterpart: a folder copied by *Update* does not replace a file
+  of its name, nor `b.txt` a `B.txt` that a case-sensitive comparison keeps apart on a file system that folds.
 
 ### Changed
+- **A new copy makes two system calls fewer per file.** It no longer stats its source a second time, and a target that
+  appeared since the plan is caught by the rename that cannot replace it; the item fails as before. A copy of 10,000 small
+  files through `folder op` now takes about 1.4 times a plain copy.
 - **`include_hidden_by_default` is now false.** Operations honour the filters unless a dialog or `--include-hidden` says
   otherwise. An explicit value in `options.toml` keeps working.
 - **A new copy no longer syncs to disk.** `vfs cp`, and every copy that creates its target, writes a file with its final

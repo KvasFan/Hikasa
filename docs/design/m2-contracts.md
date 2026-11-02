@@ -5291,6 +5291,92 @@ numbered per part.
     rename that took a filtered file along (a row a filter hides now leaves its folder not `whole`, §1.6.9 rule 3), a folder of
     rule 8 that replaced a file a filter hides, and a flat `copyto` that passed over an unlisted folder.
 
+**W6c.** Where the implementation interpreted or extended §1.6.14–§1.6.17 (sync), §1.6.22, and why. Safety won where the
+text was silent.
+
+1. **One planner.** The types and `plan_sync` are `hikasa_folder::sync`; the planner is `ops/sync.rs`, which drives
+   `ops::build::Builder` (`delete_row` per side, `transfer` per direction, `close_open`, `finish` with `writes = true`), whose
+   helpers are private to `ops`. A sync therefore has the builder's conflicts, stamps, filters, fence, backups (`reserve`),
+   `same_file` and capability checks; `depths` and `covered` are reset between the four phases, as `delete` does per side.
+2. **Rows.** `SyncPlan::rows` has one row per node but the base, in post-order. A pair of folders has situation `None` and no
+   reason (`compare_error` when it failed), and is not counted in `leave`. A folder on one side with contents takes the action
+   of its rows: all deleted on its side → its own delete (`remove_dir` after them, or one `trash` with the bin, `whole`);
+   any copied → `copy_*` (made by rule 3; `whole` when all are, so an opened archive goes as its file); else `leave` with the
+   reason of its rows that says most. An empty folder on one side reads the matrix, and its action becomes `leave`, reason
+   `matrix`, without `create_empty`. `counts` count every row with an action, folders too; `SyncPlan::folder(node)` is the
+   sum of the rows strictly below `node`, and `folder(ROOT) == counts`.
+3. **Additive API.** `SyncPlan::{preset, matrix, orphans}` and the same on `FolderSyncOutcome`, whose `dto(read, all_rows)`
+   takes the comparison for paths and kinds (a `SyncRow` is its id and 8 bytes of decision: 12 bytes);
+   `Service::folder_sync_dry_run`; `SyncAction::{reads, writes, deletes}`, `Situation::{only_on, allows}`,
+   `SyncMatrix::set`, `SyncCounts::{add, of_row}`, `SyncOptions::{effective_matrix, validate}`; `FolderSyncRequest` derives
+   `Default`; `api::{FolderSyncDto, SyncRowDto, sync_options}`, `folder_ops::{sync_counts_text, sync_marker}`,
+   `human::folder_sync_lines`.
+4. **Rule 3 is stricter than written.** A folder a filter hides on **either** side hides what lies below it on both: a
+   right-only file in a folder the left's filters hide (a protected folder, `exclude_protected`) is no orphan a mirror
+   deletes. A row every present side of which a filter hides is no row of the sync ("both sides hidden are not rows"), with
+   `--include-hidden` too, which brings the hidden side of a pair only; a name filter hides both sides at once, so it matters
+   for the size, date and attribute filters.
+5. **Rule 2.** A folder that is not `Scanned` (one a model not made by `sync_folder_rules` left unscanned, or one that failed)
+   is `compare_error`, as is everything below a failed folder; a sync never lists at planning (§1.6.10 rule 6 is not used).
+6. **Overrides** are keyed as the comparison aligns names (`path_key`, as Ignored marks). An override of the base (empty,
+   `.`, `/`, a `..` anywhere) is `invalid_input`, before a scan: `--path`'s lesson. One that names no row gets one
+   `switch_ignored`, as one a row cannot take does; `--override` on Windows takes `\` too. An override on a folder decides its
+   rows; the folder follows them (note 2).
+7. **A followed folder on one side is its link.** When the matrix deletes it, the link goes (fence rule 2) and its rows are
+   left `followed_link`; otherwise its rows are copied through it: reading through a link is allowed, writing below one is not.
+8. **Freed names, own counterparts** (`Builder::freed`, `Builder::own_only`, off for `folder op`). A copy's target held by the
+   entry of a row this plan deletes is free: no target stamp, no `replaces`, which the order of D-182 makes true; a delete
+   declined at the question leaves the copy to fail `already_exists`. A copy replaces only its row's own counterpart, never
+   an entry of another row: Update Right of a left folder `y` onto a right file `y` (two rows, D-20), or of `b.txt` onto a
+   `B.txt` that a case-sensitive comparison keeps apart on a file system that folds, fails `already_exists`, and the file
+   stays: Update never removes. Found by P-SYNC's model.
+9. **Refusals.** "The other base has no item at all" counts every entry, filtered or not, and refuses only a plan that
+   deletes on the other side. An unfinished comparison refuses a plan that deletes; one that only copies plans, its rows not
+   reached being `compare_error`. The stored `[rules.sync.matrix]` is validated whatever the preset, so `session edit` and an
+   import refuse a bad cell before `custom` could put it in effect.
+10. **Words.** `--custom`'s base is the stored matrix, else all `leave`; `custom` is no base word. `--recycle-fallback` needs
+    `--recycle`. `--select`, `--path` without `--just-selection` are refused (exit 100) rather than passed by; `--just-selection`
+    that selects nothing is refused as in `folder op`. `--visible` shows what `--display` (default `all`) shows. A preset is
+    needed unless `--session`, whose `[rules.sync]` is the base (a folder-compare session gives the defaults). The human lines
+    leave out `same` rows, `--all-rows` too (JSON has them), and a row left says ` (<reason>)`.
+11. **`session run`.** `SessionRunRequest::Sync { request, options }` (additive); its read-only sides come from the session.
+    `--yes`, `--confirm`, `--dry-run`, `--allow-empty-source`, `--all-rows` on another type are refused: a comparison would pass
+    them by in silence. `folder op --session` takes a folder-sync session's folder rules (`SessionRunRequest::folder_request`).
+12. **Sessions.** `RulesShape::SYNC` is `FOLDER` with the map `sync.overrides`, so an override removed in memory leaves the
+    file. A folder-sync file written before W6 had an empty `[rules]` (nothing could add a key to the opaque table), which
+    reads as the defaults; a hand-made one whose typed key has another type is now `invalid_data`, as for folder-compare.
+    Unknown keys stay (D-70).
+13. **Confirmation.** `folder_confirmation(plan, None)` of a sync takes `sync_confirmations`; the CLI passes its mode to
+    `folder_confirmation_strict`, so a script never depends on that key (D-77).
+14. **IPC (D-190).** `OpenOptions::{no_backups, sync: Option<SyncWords>}` are left out of the wire while off, so the wire
+    goldens and older peers see the same messages. `open_view_request` makes `ViewRequest::Sync` of a `folder_sync` view, the
+    words parsed by `api::vocab::sync_options`, the CLI's parser; `check_open` checks a sync before any contact. The server and
+    the GUI answer `unsupported_view`, "this window cannot show a Folder Sync view yet" (`ipc::unserved_view`); the error kind is
+    `unsupported`, exit 100. The GUI's arms of `ViewRequest::Sync` are never reached; were one, it would show the comparison of
+    the bases, which writes nothing. W9 replaces them. `--sync` and `--nobackups` are no longer forwarded with `switch_ignored`.
+15. **Log.** `sync_log_entries` adds, after the operation's summary, a second `Summary`: the counts, `sync_counts_text`, the
+    text of the human `#` line (T11).
+16. **Archives.** Within archives, a member of a single stream that differs is `leave`/`capability`; a single-stream archive on
+    one side stays for the same reason, though its file could go whole (its members cannot be removed one by one). Without
+    *within archives* an archive is a file.
+17. **G7 copy** failed first: 1.52, 1.58, 1.52 × (load 5) and 1.54, 1.55, 1.53 × (load 1.8) on W6b's path. Two calls per new
+    file were repeats: `copy_new_file` stat'ed its source by path a moment after the stamp's `lstat` (now `HandleMeta::size`,
+    additive), and `run_item` `lstat`ed an absent target that the rename that cannot replace checks again at the commit
+    (W6a note 8); a copy now makes D-103's check in `run_copy`, by that rename on the new-file path (its `AlreadyExists` becomes
+    "changed since the plan was made") and by the `lstat` before streaming otherwise. After: 1.39–1.48 × in six rounds (loads
+    1.2 and 6). The other extra calls are guarantees and stay: the folder above each item (D-94 rule 3), the stamp, a
+    temporary name and its rename. Figures in `docs/02`.
+18. **Memory.** The first count of an `OpPlan` of 101,000 items was 91.9 MiB: the vectors kept the capacity they grew to, and a
+    `Spec` was 112 bytes for URL variants no plan holds. `finish` now shrinks them, and `Spec::Remote`, `Spec::Http` hold a
+    `Box` (a `Spec` is 56 bytes, a `PlanItem` 472): 56.2 MiB, and 57.5 MiB for the `SyncPlan` of that tree.
+19. **P-SYNC** (`props_sync.rs`) compares the disk with a model of §1.6.14 written from the tree before and the options alone,
+    with its own table of the presets; 384 cases by default (about half run an item), 4,000 once. It also checks the rows'
+    decisions, dry-run statuses against the run's, the re-comparison of each copied or deleted row, a refresh against a fresh
+    comparison, and that a second run of a preset plans nothing that runs (items below a folder the plan cannot make excepted:
+    execution cuts them). It fails when the plan's items are dropped, when Mirror to Right and to Left swap their rows, and when
+    the copies' direction is flipped. A6.28 (`props_sync_fence.rs`) fails when the planner's and the builder's followed-link
+    refusals and the fence are taken out.
+
 ### 1.7–1.14 W7–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
