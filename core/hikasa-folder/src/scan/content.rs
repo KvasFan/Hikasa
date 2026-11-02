@@ -36,7 +36,7 @@ pub struct ContentReport {
     pub counts: ContentCounts,
     /// One per pair tested.
     pub items: Vec<ContentItem>,
-    /// False when cancelled: the pairs not reached keep what they had.
+    /// False when cancelled: the pairs not reached keep what they had, and are not in this report.
     pub complete: bool,
 }
 
@@ -106,7 +106,7 @@ pub fn compare_contents(
     scan.content_method = method;
     let pairs = pairs_of(model, nodes);
     let ids: Vec<NodeId> = pairs.iter().map(|(id, _, _)| *id).collect();
-    model.mutate(|s| s.set_pending(&ids, true));
+    model.mutate(|s| s.set_pending(&ids));
     let mut tasks: Vec<Task> = Vec::with_capacity(pairs.len());
     for (id, left, right) in pairs {
         match stat_pair(env, scan.follow, &left, &right) {
@@ -124,14 +124,17 @@ pub fn compare_contents(
     scan.execute(tasks);
     scan.flush();
     let complete = !scan.aborted.load(Ordering::Acquire);
-    // What a stop left without an outcome is as it was.
-    model.mutate(|s| s.set_pending(&ids, false));
+    // What a stop left without an outcome is as it was, and no result of this run.
+    let untested = model.mutate(|s| s.take_pending(&ids));
     let read = model.read();
     let mut report = ContentReport {
         complete,
         ..ContentReport::default()
     };
     for id in ids {
+        if untested.contains(&id) {
+            continue;
+        }
         let Some(summary) = read.node(id).and_then(|view| view.content) else {
             continue;
         };

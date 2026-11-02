@@ -10,15 +10,16 @@ use common::{
     compared, config, engines, gen_rules, gen_tree, host, materialize_gen, mspec, with_env,
 };
 use hikasa_core::{
-    CancelToken, CaseSensitivity, ContentMethod, ErrorKind, FileTime, RelPath, Side, Spec,
+    CancelToken, CaseSensitivity, CompareVerdict, ContentMethod, ErrorKind, FileTime, RelPath,
+    Side, Spec,
 };
 use hikasa_folder::{
     CompareState, FolderComparison, FolderEnv, FolderError, FolderModel, FolderRules, NodeId,
     RefreshReport, ScanStatus, check_tree_invariants, compare_into, refresh_into,
 };
 use hikasa_vfs::{
-    AtomicWrite, Capabilities, Entry, Fault, FileName, FollowLinks, ListOptions, Listing, MemMeta,
-    MemoryVfs, ReadSeek, Vfs, VfsError, VfsOp, WriteOptions,
+    AtomicWrite, Attrs, Capabilities, DosAttrs, Entry, Fault, FileName, FollowLinks, ListOptions,
+    Listing, MemMeta, MemoryVfs, ReadSeek, Vfs, VfsError, VfsOp, WriteOptions,
 };
 use proptest::prelude::*;
 
@@ -114,6 +115,35 @@ fn crc_rules() -> FolderRules {
     rules.criteria.content.method = ContentMethod::Crc;
     rules.criteria.content.skip_if_quick_same = false;
     rules
+}
+
+/// What `to_canonical` leaves out, row by row: a file's time and CRC, and each side's attributes. A kept folder keeps its
+/// old time (§1.6.25 note 21), and a folder's time says nothing (§3), so that one stays out here too.
+fn facts(cmp: &FolderComparison) -> Vec<String> {
+    let read = cmp.read();
+    let mut out = Vec::new();
+    let mut stack = vec![NodeId::ROOT];
+    while let Some(at) = stack.pop() {
+        stack.extend(read.children(at));
+        let Some(view) = read.node(at) else { continue };
+        let folder = view.is_folder();
+        for (side, entry) in [("l", view.left), ("r", view.right)] {
+            let Some(entry) = entry else { continue };
+            let time = if folder { None } else { entry.mtime };
+            out.push(format!(
+                "{} {side} {time:?} {:?} {:?}",
+                read.path(at).as_str(),
+                entry.attrs,
+                entry.crc32
+            ));
+        }
+    }
+    out.sort();
+    out
+}
+
+fn assert_same_facts(cmp: &FolderComparison, fresh: &FolderComparison) {
+    assert_eq!(facts(cmp), facts(fresh));
 }
 
 /// Equal to a fresh comparison, and every counter equal to a recount.
@@ -423,6 +453,214 @@ fn a6_11_cancel_at_the_nth_folder() {
     );
 }
 
+fn refresh_cancelled(cmp: &FolderComparison, vfs: &dyn Vfs, nodes: &[NodeId]) -> RefreshReport {
+    let engines = engines(1 << 30);
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    with_env(vfs, &engines, &cancel, |env| {
+        refresh_into(cmp.model(), nodes, env).unwrap()
+    })
+}
+
+/// §1.6.7 step 8 says what a stop leaves; a later refresh that covers it restores the verdict, which a stop does not take
+/// for good.
+#[test]
+fn a6_11_cancel_then_a_refresh_recovers() {
+    let vfs = tree();
+    let rules = FolderRules::default();
+    let cmp = compared(&vfs, &rules);
+    assert_eq!(cmp.verdict(false), CompareVerdict::NoDifferences);
+    assert!(!refresh_cancelled(&cmp, &vfs, &[NodeId::ROOT]).complete);
+    assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
+    assert!(refresh(&cmp, &vfs, &[NodeId::ROOT]).complete);
+    assert!(cmp.read().is_complete(), "complete after a whole refresh");
+    assert_eq!(cmp.verdict(false), CompareVerdict::NoDifferences);
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
+/// A refresh of another subtree claims nothing: what was asked and not reached stays owed, by its own refresh or one that
+/// covers it.
+#[test]
+fn a6_11_cancel_and_a_refresh_of_another_subtree() {
+    let vfs = tree();
+    let rules = FolderRules::default();
+    let cmp = compared(&vfs, &rules);
+    let (a, b) = (id(&cmp, "a"), id(&cmp, "b"));
+    refresh_cancelled(&cmp, &vfs, &[a]);
+    assert!(refresh(&cmp, &vfs, &[b]).complete, "this refresh did its part");
+    assert!(!cmp.read().is_complete());
+    assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
+    refresh(&cmp, &vfs, &[a]);
+    assert!(cmp.read().is_complete());
+    assert_eq!(cmp.verdict(false), CompareVerdict::NoDifferences);
+
+    // The same, covered from above: `a` is below the root, and a refresh of the root goes to it.
+    refresh_cancelled(&cmp, &vfs, &[a]);
+    refresh(&cmp, &vfs, &[NodeId::ROOT]);
+    assert!(cmp.read().is_complete());
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
+/// A scan stopped deep in the tree leaves folders it never listed, below rows a refresh keeps: it goes to them.
+#[test]
+fn a6_11_a_cancelled_scan_is_repaired() {
+    let vfs = tree();
+    file(&vfs, "/l/a/sub/more/deepest", b"x", 10);
+    file(&vfs, "/r/a/sub/more/deepest", b"x", 10);
+    let rules = FolderRules::default();
+    for lists in 1..8 {
+        let cancel = CancelToken::new();
+        let wrapper = CancelAtList {
+            inner: &vfs,
+            token: &cancel,
+            left: Mutex::new(lists),
+        };
+        let engines = engines(1 << 30);
+        let scanned = with_env(&wrapper, &engines, &cancel, |env| {
+            let model = FolderModel::new(mspec("/l"), mspec("/r"), rules.clone()).unwrap();
+            compare_into(&model, env)
+        });
+        // A stop before the bases are read has no comparison to go on with.
+        let Ok(cmp) = scanned else {
+            assert!(lists <= 2, "{lists}");
+            continue;
+        };
+        assert!(!cmp.read().is_complete(), "{lists}");
+        assert!(refresh(&cmp, &vfs, &[NodeId::ROOT]).complete, "{lists}");
+        assert!(cmp.read().is_complete(), "{lists}");
+        assert_fresh(&cmp, &vfs, &rules);
+    }
+}
+
+/// A refresh stopped inside a new subtree: the second one goes down to what the first left.
+#[test]
+fn a6_11_a_cancelled_refresh_of_a_new_subtree() {
+    let vfs = tree();
+    let rules = FolderRules::default();
+    let cmp = compared(&vfs, &rules);
+    file(&vfs, "/l/n/x/y/z", b"z", 10);
+    file(&vfs, "/r/n/x/y/z", b"z", 10);
+    let cancel = CancelToken::new();
+    let wrapper = CancelAtList {
+        inner: &vfs,
+        token: &cancel,
+        left: Mutex::new(4),
+    };
+    let engines = engines(1 << 30);
+    let report = with_env(&wrapper, &engines, &cancel, |env| {
+        refresh_into(cmp.model(), &[NodeId::ROOT], env).unwrap()
+    });
+    assert!(!report.complete);
+    assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
+    assert!(refresh(&cmp, &vfs, &[NodeId::ROOT]).complete);
+    assert!(cmp.read().is_complete());
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
+/// A back-end that cancels at the n-th `open_read`: a content test stopped halfway.
+struct CancelAtOpen<'a> {
+    spy: Spy<'a>,
+    token: &'a CancelToken,
+    left: Mutex<u32>,
+}
+
+impl Vfs for CancelAtOpen<'_> {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.spy.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.spy.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        self.spy.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        let mut left = self.left.lock().unwrap();
+        *left = left.saturating_sub(1);
+        if *left == 0 {
+            self.token.cancel();
+        }
+        self.spy.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.spy.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.spy.child(dir, name)
+    }
+}
+
+/// A stop in a content test: the row owes its result, in a folder a refresh would keep.
+#[test]
+fn a6_11_a_cancelled_content_test_is_repaired() {
+    let vfs = tree();
+    let rules = crc_rules();
+    let cmp = compared(&vfs, &rules);
+    file(&vfs, "/l/a/sub/deep", b"e", 11);
+    file(&vfs, "/l/b/other", b"e", 11);
+    let cancel = CancelToken::new();
+    let wrapper = CancelAtOpen {
+        spy: Spy::new(&vfs),
+        token: &cancel,
+        left: Mutex::new(1),
+    };
+    let engines = engines(1 << 30);
+    let nodes = [id(&cmp, "a/sub"), id(&cmp, "b")];
+    let report = with_env(&wrapper, &engines, &cancel, |env| {
+        refresh_into(cmp.model(), &nodes, env).unwrap()
+    });
+    assert!(!report.complete);
+    assert_eq!(cmp.verdict(false), CompareVerdict::Incomplete);
+    assert!(refresh(&cmp, &vfs, &[NodeId::ROOT]).complete);
+    assert!(cmp.read().is_complete());
+    assert_fresh(&cmp, &vfs, &rules);
+}
+
+/// A refresh on a pool, with content tests: a row at a time, or several at once, the same result.
+#[test]
+fn a6_11_on_a_pool() {
+    let vfs = tree();
+    let rules = crc_rules();
+    let cmp = compared(&vfs, &rules);
+    file(&vfs, "/l/a/change", b"cc", 11);
+    file(&vfs, "/r/a/sub/deep", b"dd", 12);
+    file(&vfs, "/l/n/x/y", b"new", 13);
+    file(&vfs, "/r/n/x/y", b"new", 13);
+    file(&vfs, "/r/b/other2", b"o2", 14);
+    let contents = engines(1 << 30);
+    let cancel = CancelToken::new();
+    let progress = hikasa_core::NullProgress;
+    let now = common::default_now();
+    let pool = common::pool(4);
+    let env = FolderEnv {
+        vfs: &vfs,
+        content: &contents,
+        pool: pool.as_ref(),
+        ctl: hikasa_core::Ctl {
+            cancel: &cancel,
+            progress: &progress,
+        },
+        observer: &hikasa_folder::NullObserver,
+        now: &now,
+        content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
+    };
+    let nodes = [NodeId::ROOT, id(&cmp, "a"), id(&cmp, "a/sub"), id(&cmp, "b")];
+    let report = refresh_into(cmp.model(), &nodes, &env).unwrap();
+    assert!(report.complete);
+    assert_fresh(&cmp, &vfs, &rules);
+    assert_same_facts(&cmp, &compared(&vfs, &rules));
+}
+
 /// `RefreshFlat`, and `RefreshBusy` for a model still scanning.
 #[test]
 fn a6_11_flat_and_busy() {
@@ -584,7 +822,7 @@ struct Change {
 }
 
 fn change() -> impl Strategy<Value = Change> {
-    (any::<proptest::sample::Index>(), 0u8..6, any::<bool>()).prop_map(|(at, what, right)| Change {
+    (any::<proptest::sample::Index>(), 0u8..8, any::<bool>()).prop_map(|(at, what, right)| Change {
         at: at.index(1 << 20),
         what,
         right,
@@ -662,6 +900,41 @@ fn apply(vfs: &MemoryVfs, change: &Change, tick: i64) -> String {
             file(vfs, &format!("{path}/made{tick}/in/it"), b"deep", tick);
             return rel;
         }
+        // Another attribute, the rest as it was.
+        (6, EntryIs::File) if vfs.read_back(&host(&path)).is_some() => {
+            let found = vfs.dump().into_iter().find(|item| item.path == host(&path));
+            let found = found.unwrap();
+            let attrs = match found.attrs {
+                Attrs::Dos { attrs } => Attrs::Dos {
+                    attrs: attrs ^ DosAttrs::READONLY,
+                },
+                Attrs::Unix { meta } => Attrs::Unix {
+                    meta: hikasa_vfs::UnixMeta {
+                        mode: meta.mode ^ 0o111,
+                        ..meta
+                    },
+                },
+                Attrs::None => Attrs::Dos {
+                    attrs: DosAttrs::READONLY,
+                },
+            };
+            let meta = MemMeta {
+                mtime: found.mtime,
+                attrs: Some(attrs),
+                ..MemMeta::default()
+            };
+            let content = vfs.read_back(&host(&path)).unwrap();
+            vfs.insert_file(&host(&path), content, meta).unwrap();
+        }
+        // Another kind, under the same name.
+        (7, EntryIs::File) => {
+            vfs.remove(&mspec(&path)).unwrap();
+            file(vfs, &format!("{path}/inner"), b"inner", tick);
+        }
+        (7, EntryIs::Folder) => {
+            remove_tree(vfs, &path);
+            file(vfs, &path, b"a file now", tick);
+        }
         _ => {
             file(vfs, &format!("{side}/top{tick}"), b"top", tick);
             return String::new();
@@ -695,7 +968,8 @@ fn nearest(cmp: &FolderComparison, rel: &str) -> NodeId {
 proptest! {
     #![proptest_config(config("tests/proptest-regressions/refresh.txt"))]
 
-    /// P-REFRESH: after any script of changes, the refreshed model equals a fresh comparison, also with content tests.
+    /// P-REFRESH: after any script of changes, kinds and attributes among them, the refreshed model equals a fresh
+    /// comparison, also with content tests, and also in what `to_canonical` leaves out.
     #[test]
     fn p_refresh_equals_a_fresh_comparison(
         nodes in gen_tree(),
@@ -722,5 +996,6 @@ proptest! {
         let fresh = compared(&vfs, &rules);
         prop_assert_eq!(cmp.to_canonical(), fresh.to_canonical());
         prop_assert_eq!(cmp.stats(false), fresh.stats(false));
+        prop_assert_eq!(facts(&cmp), facts(&fresh));
     }
 }

@@ -34,7 +34,8 @@ pub struct RefreshReport {
     pub content_tests: u32,
     /// Ids that changed, `(old, new)`, in the order they did: only ids of the refreshed folders' own blocks.
     pub renumbered: Vec<(NodeId, NodeId)>,
-    /// False when cancelled: what was not reached stays not scanned, and the verdict `incomplete`.
+    /// False when cancelled: what was not reached stays not scanned, and the verdict `incomplete` until a refresh covers
+    /// it.
     pub complete: bool,
 }
 
@@ -43,7 +44,9 @@ type RowKey = (NodeKind, Option<OsString>, Option<OsString>);
 
 /// Refreshes the folders `nodes` (each a `Folder` node; file nodes count as their parent), on `env`'s pool. A second call
 /// while one runs, or a model still scanning, → [`FolderError::RefreshBusy`]. In a flat comparison →
-/// [`FolderError::RefreshFlat`]: the caller re-runs. Each folder is refreshed once, one level, parents before children.
+/// [`FolderError::RefreshFlat`]: the caller re-runs. Each folder is refreshed once, one level, parents before children;
+/// with what an earlier stop left unfinished below it. The verdict is `incomplete` while anything is left in the tree, so a
+/// refresh of another subtree claims nothing, and one that covers the rest restores it.
 pub fn refresh_into(
     model: &Arc<FolderModel>,
     nodes: &[NodeId],
@@ -64,10 +67,11 @@ pub fn refresh_into(
         ..RefreshReport::default()
     };
     let mut moved: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+    let mut stopped_at = None;
     while let Some(node) = order.pop() {
         let node = moved.get(&node).copied().unwrap_or(node);
         if scan.cancelled() {
-            report.complete = false;
+            stopped_at = Some(node);
             break;
         }
         // A folder an earlier refresh of this call dropped, or one no scan would list.
@@ -76,12 +80,12 @@ pub fn refresh_into(
         };
         let listings = scan.list_pair(&sides);
         let Some(listed) = scan.collect(&sides, listings) else {
-            report.complete = false;
+            stopped_at = Some(node);
             break;
         };
         report.folders += 1;
         let Some(tasks) = scan.replace(node, depth, &sides, listed, &mut report) else {
-            report.complete = false;
+            stopped_at = Some(node);
             break;
         };
         for &(old, new) in &report.renumbered {
@@ -91,33 +95,47 @@ pub fn refresh_into(
     }
     scan.flush();
     scan.final_progress();
-    let complete = report.complete && !scan.aborted.load(std::sync::atomic::Ordering::Acquire);
+    let aborted = scan.aborted.load(std::sync::atomic::Ordering::Acquire);
+    let complete = stopped_at.is_none() && !aborted;
     report.complete = complete;
     let back_end = env.vfs.take_warnings();
+    let mut owed: Vec<NodeId> = order
+        .iter()
+        .map(|node| moved.get(node).copied().unwrap_or(*node))
+        .collect();
+    owed.extend(stopped_at);
     model.mutate(|s| {
         for w in back_end {
             s.warn(w);
         }
-        let whole = s.complete && complete;
+        s.set_unlisted(&owed);
+        let whole = (s.complete && complete) || !s.unfinished();
         s.finish(whole);
     });
     Ok(report)
 }
 
-/// The folders of `nodes`, without duplicates, the deepest first in the list: it is popped from the end.
+/// The folders of `nodes`, without duplicates, with what an earlier stop left unfinished below them, the deepest first in
+/// the list: it is popped from the end.
 fn folders_of(model: &FolderModel, nodes: &[NodeId]) -> Vec<NodeId> {
     let read = model.read();
-    let mut folders: Vec<(usize, NodeId)> = nodes
+    let mut asked: Vec<NodeId> = nodes
         .iter()
         .filter_map(|&id| {
             let view = read.node(id)?;
-            let folder = if view.is_folder() {
+            Some(if view.is_folder() {
                 id
             } else {
                 view.parent.unwrap_or(NodeId::ROOT)
-            };
-            Some((read.ancestors(folder).len(), folder))
+            })
         })
+        .collect();
+    if !read.is_complete() {
+        asked.extend(read.store().unfinished_below(&asked));
+    }
+    let mut folders: Vec<(usize, NodeId)> = asked
+        .into_iter()
+        .map(|folder| (read.ancestors(folder).len(), folder))
         .collect();
     folders.sort_by(|a, b| b.cmp(a));
     folders.dedup();

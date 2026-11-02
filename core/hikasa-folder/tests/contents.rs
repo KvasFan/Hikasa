@@ -3,16 +3,21 @@
 mod common;
 
 use common::{compared, engines, host, with_env};
+use std::sync::Mutex;
+
 use hikasa_core::{
     CancelToken, CaseSensitivity, ContentKind, ContentMethod, ContentOutcome, ContentResult,
-    ErrorKind, FileTime, Pair, RelPath, Side,
+    ErrorKind, FileTime, Pair, RelPath, Side, Spec,
 };
 use hikasa_folder::{
     CompareState, ContentReport, FolderComparison, FolderError, FolderRules, NodeId,
-    check_tree_invariants, compare_contents, compute_crcs,
+    check_tree_invariants, compare_contents, compute_crcs, refresh_into,
 };
 use hikasa_vfs::ops::ItemStamp;
-use hikasa_vfs::{EntryKind, Fault, MemMeta, MemoryVfs, VfsOp};
+use hikasa_vfs::{
+    AtomicWrite, Capabilities, Entry, EntryKind, Fault, FileName, FollowLinks, ListOptions,
+    Listing, MemMeta, MemoryVfs, ReadSeek, Vfs, VfsError, VfsOp, WriteOptions,
+};
 
 fn file(vfs: &MemoryVfs, path: &str, content: &[u8], secs: i64) {
     let meta = MemMeta {
@@ -139,6 +144,108 @@ fn a6_12_cancellation_restores_the_old_state() {
     assert!(report.items.is_empty());
     assert_eq!(cmp.to_canonical(), before);
     check_tree_invariants(&cmp.read()).unwrap();
+}
+
+/// A back-end that cancels at the n-th `open_read`: a run stopped between pairs.
+struct CancelAtOpen<'a> {
+    inner: &'a MemoryVfs,
+    token: &'a CancelToken,
+    left: Mutex<u32>,
+}
+
+impl Vfs for CancelAtOpen<'_> {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        let mut left = self.left.lock().unwrap();
+        *left = left.saturating_sub(1);
+        if *left == 0 {
+            self.token.cancel();
+        }
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+}
+
+/// Stops the test of a folder at the `opens`-th read.
+fn stopped_at(cmp: &FolderComparison, vfs: &MemoryVfs, opens: u32) -> ContentReport {
+    let cancel = CancelToken::new();
+    let wrapper = CancelAtOpen {
+        inner: vfs,
+        token: &cancel,
+        left: Mutex::new(opens),
+    };
+    let engines = engines(1 << 30);
+    with_env(&wrapper, &engines, &cancel, |env| {
+        compare_contents(cmp.model(), &[id(cmp, "d")], ContentMethod::Binary, env).unwrap()
+    })
+}
+
+/// No row is left pending: a refresh finds each as it was, where a pending one would count as changed.
+fn assert_nothing_pending(cmp: &FolderComparison, vfs: &MemoryVfs) {
+    let engines = engines(1 << 30);
+    let report = with_env(vfs, &engines, &CancelToken::new(), |env| {
+        refresh_into(cmp.model(), &[id(cmp, "d")], env).unwrap()
+    });
+    assert_eq!(report.rows_changed, 0);
+}
+
+/// A stop in the middle of a first test: what was reached has its result, the rest the state it had, and nothing pending.
+#[test]
+fn a6_12_a_stop_in_the_middle_of_a_run() {
+    let vfs = tree();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let d = id(&cmp, "d");
+    let report = stopped_at(&cmp, &vfs, 3);
+    assert!(!report.complete);
+    assert_eq!(report.items.len(), 1, "{:?}", report.items);
+    let tested = &report.items[0].path;
+    assert_eq!(cmp.read().children(d).count(), 2);
+    let other = if tested == "d/differ" { "d/same" } else { "d/differ" };
+    let read = cmp.read();
+    assert!(read.node(id(&cmp, tested)).unwrap().content.is_some());
+    assert!(read.node(id(&cmp, other)).unwrap().content.is_none());
+    assert_eq!(read.node(id(&cmp, other)).unwrap().state, CompareState::Same);
+    drop(read);
+    assert_nothing_pending(&cmp, &vfs);
+    check_tree_invariants(&cmp.read()).unwrap();
+}
+
+/// A stop in a repeated test: only what this run tested is its result; the rest keep theirs, and are not listed as if they
+/// had been read again.
+#[test]
+fn a6_12_a_stop_in_a_repeated_run() {
+    let vfs = tree();
+    let cmp = compared(&vfs, &FolderRules::default());
+    run(&cmp, &vfs, &[id(&cmp, "d")], ContentMethod::Binary);
+    let (before, stats) = (cmp.to_canonical(), cmp.stats(false));
+    let report = stopped_at(&cmp, &vfs, 3);
+    assert!(!report.complete);
+    assert_eq!(report.items.len(), 1, "{:?}", report.items);
+    assert_eq!(cmp.to_canonical(), before);
+    assert_eq!(cmp.stats(false), stats);
+    assert_nothing_pending(&cmp, &vfs);
 }
 
 /// The budget is the one of `env`: a pair larger than it still runs, alone, with the comparators of a scan.

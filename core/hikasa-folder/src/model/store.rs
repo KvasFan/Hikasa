@@ -7,7 +7,7 @@
 //! delta that is applied to each ancestor from the parent up to the root, adding the change of each ancestor's
 //! own category on the way (§2.6.4).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 
 use hikasa_core::{
@@ -351,6 +351,8 @@ pub(crate) mod internal {
     pub(crate) const CONTENT_PENDING: u8 = 2;
     /// A node a refresh dropped or moved away: no read from the root meets it, its arena space is not reused.
     pub(crate) const GONE: u8 = 4;
+    /// A folder a scan or a refresh still owes a listing: it stood in their work when they stopped, or has yet to.
+    pub(crate) const UNLISTED: u8 = 8;
 }
 
 /// One node (both sides inline): 160 bytes.
@@ -1471,6 +1473,7 @@ impl Store {
             p.first_child = if count == 0 { NONE } else { first };
             p.child_count = count;
             p.scan = scan_code(scan);
+            p.internal &= !internal::UNLISTED;
             p.flags |= folder_flags.bits();
         }
         if !folder_errors.is_empty() {
@@ -1645,7 +1648,7 @@ impl Store {
             self.len()
         };
         if !in_place {
-            let taken: std::collections::BTreeSet<u32> =
+            let taken: BTreeSet<u32> =
                 rows.iter().filter_map(|row| row.old).collect();
             for id in old_rows.clone() {
                 if !taken.contains(&id) {
@@ -1738,6 +1741,7 @@ impl Store {
             p.first_child = if count == 0 { NONE } else { first };
             p.child_count = count;
             p.scan = scan_code(scan);
+            p.internal &= !internal::UNLISTED;
             let stale = NodeFlags::LEFT_ERROR | NodeFlags::RIGHT_ERROR | NodeFlags::SYMLINK_LOOP;
             p.flags =
                 (NodeFlags::from_bits_retain(p.flags).difference(stale) | folder_flags).bits();
@@ -1808,17 +1812,78 @@ impl Store {
         self.propagate(updated.parent, delta, Pair::default());
     }
 
-    /// Sets `CONTENT_PENDING` on `ids`, or clears it (a run that ended without an outcome keeps the row as it was).
-    pub(crate) fn set_pending(&mut self, ids: &[NodeId], on: bool) {
+    /// Sets `CONTENT_PENDING` on `ids`.
+    pub(crate) fn set_pending(&mut self, ids: &[NodeId]) {
         for id in ids {
             if let Some(node) = self.nodes.get_mut(id.0 as usize) {
-                if on {
-                    node.internal |= internal::CONTENT_PENDING;
-                } else {
-                    node.internal &= !internal::CONTENT_PENDING;
+                node.internal |= internal::CONTENT_PENDING;
+            }
+        }
+    }
+
+    /// Clears `CONTENT_PENDING` on `ids`, and says which still had it: a run that ended without their outcome leaves those
+    /// rows as they were.
+    pub(crate) fn take_pending(&mut self, ids: &[NodeId]) -> BTreeSet<NodeId> {
+        let mut untested = BTreeSet::new();
+        for &id in ids {
+            if let Some(node) = self.nodes.get_mut(id.0 as usize)
+                && node.internal & internal::CONTENT_PENDING != 0
+            {
+                node.internal &= !internal::CONTENT_PENDING;
+                untested.insert(id);
+            }
+        }
+        untested
+    }
+
+    /// Notes that the folders `ids` still owe a listing.
+    pub(crate) fn set_unlisted(&mut self, ids: &[NodeId]) {
+        for id in ids {
+            if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+                node.internal |= internal::UNLISTED;
+            }
+        }
+    }
+
+    /// True when a live node still owes something: a listing or a content test, or the root, which nothing listed yet.
+    pub(crate) fn unfinished(&self) -> bool {
+        let owes = internal::UNLISTED | internal::CONTENT_PENDING;
+        (0..self.nodes.len()).any(|index| {
+            self.nodes.get(index).is_some_and(|node| {
+                let root = index == 0 && node.scan() == ScanStatus::NotScanned;
+                node.internal & internal::GONE == 0 && (root || node.internal & owes != 0)
+            })
+        })
+    }
+
+    /// What is unfinished below `folders`, to be refreshed with them: a folder that owes a listing, and the folder of a
+    /// row that owes a content test. A folder's own refresh goes no deeper than a row that changed, and these did not.
+    pub(crate) fn unfinished_below(&self, folders: &[NodeId]) -> Vec<NodeId> {
+        let mut found = Vec::new();
+        let mut stack: Vec<u32> = folders.iter().map(|id| id.0).collect();
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.nodes.get(current as usize) else {
+                continue;
+            };
+            for child in node.children() {
+                let Some(row) = self.nodes.get(child as usize) else {
+                    continue;
+                };
+                if row.internal & internal::GONE != 0 {
+                    continue;
+                }
+                if row.internal & internal::CONTENT_PENDING != 0 {
+                    found.push(NodeId(current));
+                }
+                if row.is_folder() {
+                    if row.internal & internal::UNLISTED != 0 {
+                        found.push(NodeId(child));
+                    }
+                    stack.push(child);
                 }
             }
         }
+        found
     }
 
     /// Records a computed CRC-32 in the side table (`EntryView::crc32`).

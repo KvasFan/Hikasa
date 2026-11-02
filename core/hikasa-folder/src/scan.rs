@@ -1734,6 +1734,9 @@ impl<'a> Scan<'a> {
                     &mut plan, &sides, depth, parents, spec_of, present, warnings,
                 );
             }
+            if plan.descend.is_some() {
+                plan.internal |= internal::UNLISTED;
+            }
             return plan;
         }
         // Two stat'ed entries (of the same kind: aligned entries never mix kinds).
