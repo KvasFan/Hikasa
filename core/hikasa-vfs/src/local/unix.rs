@@ -47,6 +47,9 @@ pub(super) fn special(meta: &Metadata) -> Option<SpecialKind> {
     }
 }
 
+/// Unix modes have no DOS bits: `set_attrs` takes a mode here, so the DOS set is not consulted.
+pub(super) const SETTABLE_DOS_ATTRS: crate::entry::DosAttrs = crate::entry::DosAttrs::all();
+
 /// Read, write, list, seek, mtime, ctime (birth time where the file system records one), Unix mode and owner,
 /// symlinks, local paths; set times, mkdir, remove, rename, set attributes (mode), trash, create symlinks; on
 /// macOS also set the creation time.

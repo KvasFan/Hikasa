@@ -2077,6 +2077,47 @@ fn a8_16_attrib_plans_one_item_per_selected_row_and_side_and_never_recurses() {
 }
 
 #[test]
+fn a8_16_attrib_where_only_r_can_change_applies_r_and_skips_a_s_h_with_a_warning() {
+    // A back-end with DOS attributes that changes `R` only (LocalVfs on Windows, D-99): `+r+h` applies `r` alone,
+    // `+h` skips the item; one `attrib_unsupported` warning per command; nothing fails.
+    use hikasa_vfs::DosAttrs;
+    let vfs = memory();
+    vfs.insert_file(&host("/l/x"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    vfs.insert_file(&host("/l/y"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let mut only_r = common::CountingVfs::new(&vfs);
+    only_r.dos_settable = Some(DosAttrs::READONLY);
+    let out = plan(&only_r, &cmp, &[("x", L), ("y", L)], &attrib(&["+r+h"]));
+    assert_eq!(lines(&out), ["set_attrs /l/x @0", "set_attrs /l/y @0"]);
+    let json = serde_json::to_value(&out.plan.items[0]).unwrap();
+    assert_eq!(json["attrs"]["dos"]["set"], "R");
+    let codes: Vec<WarningCode> = out.warnings.iter().map(|w| w.code).collect();
+    assert_eq!(codes, [WarningCode::AttribUnsupported]);
+    assert!(
+        out.warnings[0]
+            .message
+            .contains("attributes h cannot be changed here")
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{report:?}");
+    assert_eq!(attrs_at(&vfs, "/l/x").dos(), Some(DosAttrs::READONLY));
+    let out = plan(&only_r, &cmp, &[("x", L)], &attrib(&["+h", "-s"]));
+    assert_eq!(lines(&out), ["skip /l/x @0 !unsupported"]);
+    assert_eq!(out.warnings.len(), 1);
+    assert!(
+        out.warnings[0].message.contains("attributes sh cannot"),
+        "{:?}",
+        out.warnings
+    );
+    // Where every bit can change (MemoryVfs), `+h` is planned as it is.
+    let out = plan(&vfs, &cmp, &[("x", L)], &attrib(&["+h"]));
+    assert_eq!(lines(&out), ["set_attrs /l/x @0"]);
+    assert!(out.warnings.is_empty());
+}
+
+#[test]
 fn a8_16_attrib_on_unix_modes_maps_r_to_the_write_bits_and_skips_a_s_h() {
     let vfs = memory();
     vfs.insert_file(&host("/l/w"), b"1".to_vec(), mode_at(5, 0o664))

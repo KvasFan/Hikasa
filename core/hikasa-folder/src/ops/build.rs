@@ -2292,10 +2292,35 @@ impl<'a, 'r> Builder<'a, 'r> {
             return self.skip_row(id, kind, None, spec, 0, SkipReason::Capability, Some(side));
         }
         let attrs = match entry.attrs {
-            Attrs::Dos { .. } => Some(AttrChange::Dos {
-                set: change.set,
-                clear: change.clear,
-            }),
+            Attrs::Dos { .. } => {
+                // A back-end that changes only some bits (LocalVfs on Windows: `r`) applies those and skips the
+                // others with one warning per command; an item left with nothing to change is skipped.
+                let settable = self.vfs.settable_dos_attrs(&spec);
+                let others = (change.set | change.clear) - settable;
+                if !others.is_empty() && self.warned.insert("attrib_unsupported".to_owned()) {
+                    self.warnings.push(Warning {
+                        code: WarningCode::AttribUnsupported,
+                        message: format!(
+                            "{side} side: attributes {} cannot be changed here: those changes are skipped",
+                            attrib_letters(others)
+                        ),
+                        spec: Some(spec.canonical()),
+                    });
+                }
+                let (set, clear) = (change.set & settable, change.clear & settable);
+                if (set | clear).is_empty() && !others.is_empty() {
+                    return self.skip_row(
+                        id,
+                        kind,
+                        None,
+                        spec,
+                        0,
+                        SkipReason::Unsupported,
+                        Some(side),
+                    );
+                }
+                Some(AttrChange::Dos { set, clear })
+            }
             Attrs::Unix { meta } => {
                 let others = (change.set | change.clear) - DosAttrs::READONLY;
                 if !others.is_empty() {
@@ -2681,4 +2706,19 @@ pub(super) fn rel_below(base: &Spec, spec: &Spec) -> Option<RelPath> {
         rel = rel.join(name).ok()?;
     }
     Some(rel)
+}
+
+/// The letters of DOS bits a change names (`a`, `s`, `h`, `r`), in that order.
+fn attrib_letters(bits: hikasa_vfs::DosAttrs) -> String {
+    use hikasa_vfs::DosAttrs;
+    [
+        (DosAttrs::ARCHIVE, 'a'),
+        (DosAttrs::SYSTEM, 's'),
+        (DosAttrs::HIDDEN, 'h'),
+        (DosAttrs::READONLY, 'r'),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| bits.contains(*bit))
+    .map(|(_, letter)| letter)
+    .collect()
 }

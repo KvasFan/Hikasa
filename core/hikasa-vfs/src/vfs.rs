@@ -272,6 +272,13 @@ pub enum Finish {
 pub trait Vfs: Send + Sync {
     /// Capabilities at `at` (may depend on the mount for local paths; M1 uses platform defaults).
     fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError>;
+    /// The DOS attribute bits `set_attrs` can change at `at`, on a back-end with DOS attributes (every bit by default).
+    /// [`crate::LocalVfs`] on Windows changes `R` only: the other bits need Win32 calls, and the workspace has no
+    /// `unsafe` (D-99), so a planner skips them with a warning instead of planning a change that fails.
+    fn settable_dos_attrs(&self, at: &Spec) -> crate::entry::DosAttrs {
+        let _ = at;
+        crate::entry::DosAttrs::all()
+    }
     /// Metadata of `spec`.
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError>;
     /// Lists a folder. Checks `cancel` at least every 1024 entries. Honours `opts.prefilter` (D-45).

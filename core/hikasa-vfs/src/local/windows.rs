@@ -63,6 +63,10 @@ pub(super) fn capabilities() -> Capabilities {
         | Capabilities::LOCAL_PATH
 }
 
+/// The DOS bits `set_attrs` changes: `R` only (`Permissions::set_readonly`); `A`, `S`, `H` need `SetFileAttributesW`,
+/// an `unsafe` call the workspace does not make (D-99).
+pub(super) const SETTABLE_DOS_ATTRS: DosAttrs = DosAttrs::READONLY;
+
 /// Folders cannot be synced on Windows; `MoveFileEx` is already durable enough for M1.
 pub(super) fn sync_dir(_dir: &Path) {}
 

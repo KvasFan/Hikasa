@@ -70,7 +70,7 @@ error and the log. A command that needs a loaded comparison before any `load` is
 | `delete [recyclebin=yes\|no] left\|right\|all` | delete on those sides |
 | `rename <mask>`, `rename regexpr <old> <new>` | rename by a DOS mask or a regular expression |
 | `touch left->right`, `touch left\|right\|all:now\|<time>` | set times from the other side, now, or an RFC 3339 time |
-| `attrib (+\|-)<a s h r>…` | set or clear attributes (`+r`, `-hs`); on Unix `r` is the write bits, `a`, `s`, `h` are skipped |
+| `attrib (+\|-)<a s h r>…` | set or clear attributes (`+r`, `-hs`); on Unix `r` is the write bits, `a`, `s`, `h` are skipped; on a Windows disk only `r` changes, `a`, `s`, `h` are skipped with a warning (`+r+h` sets `r`) |
 | `sync [visible] [create-empty] (update\|mirror):(left->right\|right->left\|all)` | as `folder sync` (no direction: the loaded session's); ignores the selection |
 | `text-report`, `file-report` `layout:… options:… output-options:… title:… output-to:… <session> \| <left> <right>` | as `report text`; `output-to:-` writes standard output |
 | `folder-report [just-selection] layout:… … output-to:…` | as `report folder` on the loaded comparison |

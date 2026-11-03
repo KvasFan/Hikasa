@@ -319,6 +319,10 @@ impl Vfs for LocalVfs {
         Ok(caps)
     }
 
+    fn settable_dos_attrs(&self, _at: &Spec) -> crate::entry::DosAttrs {
+        platform::SETTABLE_DOS_ATTRS
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         let path = local(spec)?;
         let lmeta = fs::symlink_metadata(path.as_path())

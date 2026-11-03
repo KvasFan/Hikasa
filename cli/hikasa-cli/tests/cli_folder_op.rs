@@ -1995,7 +1995,8 @@ fn a8_16_attrib_on_disk() {
     );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(!readonly());
-    #[cfg(unix)]
+    // Unix modes have no a, s, h; LocalVfs on Windows changes R only (D-99, no `unsafe`): either way `+h` skips each
+    // item `unsupported` with one warning, and nothing fails.
     {
         let out = op(
             &s,
@@ -2027,5 +2028,32 @@ fn a8_16_attrib_on_disk() {
             1,
             "{codes:?}"
         );
+    }
+    // Windows: `+r+h` applies R and skips H (one warning); Unix skips the whole item.
+    #[cfg(windows)]
+    {
+        let out = op(
+            &s,
+            &[
+                "attrib", "--path", "only.txt", "--change", "+r+h", "--yes", "--json",
+            ],
+        );
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        let doc = json(&out);
+        let item = &doc["result"]["items"][0];
+        assert_eq!(item["status"], "done", "{item}");
+        assert_eq!(item["change"], "+r", "{item}");
+        assert!(readonly());
+        let warnings = doc["warnings"].as_array().unwrap();
+        assert!(
+            warnings.iter().any(|w| w["code"] == "attrib_unsupported"),
+            "{warnings:?}"
+        );
+        let out = op(
+            &s,
+            &["attrib", "--path", "only.txt", "--change=-r", "--yes"],
+        );
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        assert!(!readonly());
     }
 }

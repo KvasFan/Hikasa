@@ -290,6 +290,14 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn settable_dos_attrs(&self, at: &Spec) -> crate::entry::DosAttrs {
+        match self.route(at) {
+            Route::Local => self.local.settable_dos_attrs(at),
+            Route::Archive(archive) => archive.settable_dos_attrs(at),
+            _ => crate::entry::DosAttrs::all(),
+        }
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         match self.route(spec) {
             Route::Local => self.local.stat(spec, follow),
