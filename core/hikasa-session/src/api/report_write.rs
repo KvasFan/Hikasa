@@ -527,6 +527,48 @@ impl ReportHooks {
     }
 }
 
+/// The pairs [`Service::run_pairs`] hands to the pool at once: one seat per pool thread, taken on the calling thread
+/// (waiting in slices, so a cancel is seen) and given back when the pair ends, however it ends.
+struct Seats {
+    free: parking_lot::Mutex<usize>,
+    freed: parking_lot::Condvar,
+}
+
+impl Seats {
+    fn new(count: usize) -> Seats {
+        Seats {
+            free: parking_lot::Mutex::new(count.max(1)),
+            freed: parking_lot::Condvar::new(),
+        }
+    }
+
+    /// A seat, or `None` once `cancel` is set.
+    fn take(&self, cancel: &hikasa_core::CancelToken) -> Option<Seat<'_>> {
+        let mut free = self.free.lock();
+        loop {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            if *free > 0 {
+                *free -= 1;
+                return Some(Seat(self));
+            }
+            self.freed
+                .wait_for(&mut free, std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+/// One seat of [`Seats`], given back when dropped.
+struct Seat<'a>(&'a Seats);
+
+impl Drop for Seat<'_> {
+    fn drop(&mut self) {
+        *self.0.free.lock() += 1;
+        self.0.freed.notify_one();
+    }
+}
+
 /// [`ReportHooks::leave`] when a pair's comparison ends, however it ends.
 struct InFlight<'a>(&'a ReportHooks);
 
@@ -1879,10 +1921,21 @@ impl Service {
             }
         } else {
             let run_one = &run_one;
+            // At most one pair per pool thread is handed over at a time (W8a review: pairs that need no budget, empty
+            // files, were all spawned at once as boxed jobs): a pair takes a seat before its budget, on this thread.
+            let seats = Seats::new(pool.current_num_threads());
+            let seats = &seats;
             pool.in_place_scope(|scope| {
                 for (i, pair) in pairs.iter().enumerate() {
+                    let Some(seat) = seats.take(&job.cancel) else {
+                        *slots[i].lock() = Some(Err(ApiError::Cancelled));
+                        continue;
+                    };
                     match take(pair) {
-                        Some(held) => scope.spawn(move |_| run_one(i, pair, held)),
+                        Some(held) => scope.spawn(move |_| {
+                            let _seat = seat;
+                            run_one(i, pair, held);
+                        }),
                         None => *slots[i].lock() = Some(Err(ApiError::Cancelled)),
                     }
                 }
