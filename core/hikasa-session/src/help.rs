@@ -35,6 +35,7 @@ topics!(
     "folder-compare",
     "folder-op",
     "folder-sync",
+    "report",
     "format",
     "settings",
     "session",

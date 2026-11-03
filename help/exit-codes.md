@@ -26,6 +26,10 @@ Every subcommand ends with one of these codes:
 - Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once
   ([Using the command line](topic:cli)).
 - `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
+- `report text`, `report folder` and the report flags: the comparison's code, as the compare subcommand; 100 for a
+  refused word, combination or target (before anything is compared), a write that fails (the target keeps what it
+  had), a stylesheet that cannot be read, a report too large for the clipboard, no application for the printer or the
+  browser, a Ctrl-C. A file report of a pair that fails is a warning. See [hikasa report](topic:report).
 
 - `folder op`: 0 when every item is done or skipped; 100 for a failed item, a stop, a row that failed in the comparison, or a
   command that plans nothing (a bad word, nothing selected, unanswered questions, a read-only side); 107 for a base that

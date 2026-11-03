@@ -28,6 +28,10 @@ A flag that takes a value may be repeated only with the same value.
   `unsupported` error, an empty clipboard `not_found`; both exit 100. `HIKASA_CLIPBOARD_FILE=<file>` makes the
   file's text stand in for the clipboard (scripts, headless machines).
 - `--output <file>` writes a report through a temporary file and a rename: on any error the file is untouched.
+  `--output-to` also takes `clipboard`, `printer` and `browser` ([hikasa report](topic:report)).
+- `SOURCE_DATE_EPOCH=<seconds>` (a decimal count of seconds since 1970) is the time a report states, in UTC, so a
+  report is the same bytes on every run; a value that is not such a count is ignored with the warning
+  `source_date_epoch_invalid`. Only reports read it.
 - Human output has one record per line where possible; control characters in names are escaped.
 - Every failed command prints one `hikasa: error: …` line on stderr.
 

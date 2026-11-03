@@ -22,6 +22,11 @@ what the plan says.
 | `ignored` | `--session <REF>`, `--off`, `--force` | marks the selection Ignored in the session |
 | `open-with` | `--path <REL>`, `--app <NAME\|INDEX>` or `--associated`, `--side` | opens with an application of `openwith.toml`; `%n` is the name, given as `./-x` when it starts with `-` |
 
+With `--structure base` or `relative`, the two folders of an aligned pair whose names differ (in case, under a
+case-insensitive comparison, or in NFC/NFD form) become one folder at the target: one that is already there with the
+left's name, else with the right's, else the one the plan makes, named as the first side copied spells it. Both sides'
+items go into it, so a second run lands where the first did.
+
 `--session <REF>` takes the place of the two sides: it gives the specs, the rules, the read-only sides and the Ignored marks,
 and flags go on top. All the rule flags of [folder compare](topic:folder-compare) work here.
 

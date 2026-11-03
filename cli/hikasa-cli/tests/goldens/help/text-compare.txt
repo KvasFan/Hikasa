@@ -13,9 +13,10 @@ Rules
 Reports
 
 - `--display all|mismatches|context|matches` and `--context <n>` choose the lines shown.
-- `--report unified|side-by-side|summary|patch|statistics`; `--patch-style normal|context|unified`.
+- `--report unified|side-by-side|summary|interleaved|patch|statistics|xml`; `--patch-style normal|context|unified`.
 - `--html`, `--html-mono`, `--line-numbers`, `--width <n>`, `--wrap none|character|word`, `--title <text>`.
-- `--output <file>` writes the report atomically.
+- `--options` and `--output-options` take the words of the report vocabulary; `--lines` reports a range of lines.
+- `--output-to <target>` (`--output <file>`) writes the report to a file atomically, the clipboard, the printer or the browser; `--dry-run` says what it would write. These are the flags of hikasa report, whose `report text` gives the same bytes.
 
 In the window
 
