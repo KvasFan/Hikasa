@@ -295,6 +295,8 @@ struct Inner {
     archives: Arc<ArchiveVfs>,
     /// Warnings of the Service's own reads since the last [`Service::take_warnings`]: a session's unknown keys.
     pending: Mutex<Vec<Warning>>,
+    /// The report writer's test hooks (W7b review).
+    report_hooks: report_write::ReportHooks,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -483,8 +485,16 @@ impl Service {
                 launcher,
                 archives,
                 pending: Mutex::new(Vec::new()),
+                report_hooks: report_write::ReportHooks::default(),
             }),
         })
+    }
+
+    /// The report writer's test hooks (W7b review): a lower clipboard cap, the content budget's peak, a step between
+    /// the load and the save of remembered choices. Not an API.
+    #[doc(hidden)]
+    pub fn report_hooks(&self) -> &report_write::ReportHooks {
+        &self.inner.report_hooks
     }
 
     /// What starts programs.

@@ -696,6 +696,9 @@ impl Service {
             state
                 .dialogs
                 .insert(table.to_owned(), toml::Value::Table(value.clone()));
+            if let Some(step) = self.report_hooks().take_before_save() {
+                step();
+            }
         })
         .map(|_| ())
     }
@@ -713,6 +716,22 @@ impl Service {
         run_guarded(|| {
             let spec = self.write_spec(target)?;
             let bytes = self.stream_into(&*self.router(), &spec, job, None, render)?;
+            Ok((spec, bytes))
+        })
+    }
+
+    /// [`Service::write_output_with`] on the back-end `vfs` (additive, W7b review; as `report_plan_on`): a test's
+    /// `MemoryVfs` with its faults and durabilities.
+    pub fn write_output_with_on(
+        &self,
+        vfs: &dyn Vfs,
+        target: &OsStr,
+        job: &JobControl,
+        render: &mut dyn FnMut(&mut dyn Write) -> Result<(), ApiError>,
+    ) -> Result<(Spec, u64), ApiError> {
+        run_guarded(|| {
+            let spec = self.target_spec(vfs, target)?;
+            let bytes = self.stream_into(vfs, &spec, job, None, render)?;
             Ok((spec, bytes))
         })
     }

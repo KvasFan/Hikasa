@@ -448,6 +448,95 @@ impl ReportOutcome {
     }
 }
 
+/// The report writer's test hooks (W7b review; [`Service::report_hooks`]): not an API. A clipboard cap below
+/// [`CLIPBOARD_REPORT_MAX`] (so a test reaches `too_large` without 128 MiB), the content budget's counters of the
+/// pair comparisons (the bytes held at most, the comparisons that ran at once at most), and a step run once between
+/// the load and the save of `remember_report_choices` (a file changed in between).
+#[doc(hidden)]
+#[derive(Default)]
+pub struct ReportHooks {
+    clipboard_cap: std::sync::atomic::AtomicU64,
+    budget_capacity: std::sync::atomic::AtomicU64,
+    budget_peak: std::sync::atomic::AtomicU64,
+    in_flight: std::sync::atomic::AtomicU64,
+    in_flight_peak: std::sync::atomic::AtomicU64,
+    #[allow(clippy::type_complexity)]
+    before_save: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl ReportHooks {
+    /// The clipboard's cap: `bytes`, or [`CLIPBOARD_REPORT_MAX`] for 0 (the default).
+    pub fn set_clipboard_cap(&self, bytes: u64) {
+        self.clipboard_cap
+            .store(bytes, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The clipboard's cap in force.
+    pub fn clipboard_cap(&self) -> u64 {
+        match self.clipboard_cap.load(std::sync::atomic::Ordering::SeqCst) {
+            0 => CLIPBOARD_REPORT_MAX,
+            cap => cap.min(CLIPBOARD_REPORT_MAX),
+        }
+    }
+
+    /// The content budget of the last linked report, and the most of it its pair comparisons held at once.
+    pub fn budget(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (
+            self.budget_capacity.load(SeqCst),
+            self.budget_peak.load(SeqCst),
+        )
+    }
+
+    /// The most pair comparisons that ran at once (from the budget's acquisition to the file's write).
+    pub fn pairs_at_once(&self) -> u64 {
+        self.in_flight_peak
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Runs `step` once, between the load and the save of the next `remember_report_choices`.
+    pub fn before_choices_save(&self, step: Box<dyn FnOnce() + Send>) {
+        *self.before_save.lock() = Some(step);
+    }
+
+    /// The step of [`ReportHooks::before_choices_save`], once.
+    pub(crate) fn take_before_save(&self) -> Option<Box<dyn FnOnce() + Send>> {
+        self.before_save.lock().take()
+    }
+
+    /// A linked report starts with a budget of `capacity` bytes.
+    fn start(&self, capacity: u64) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.budget_capacity.store(capacity, SeqCst);
+        self.budget_peak.store(0, SeqCst);
+        self.in_flight.store(0, SeqCst);
+        self.in_flight_peak.store(0, SeqCst);
+    }
+
+    /// A pair holds its budget: `held` bytes of the budget are taken now.
+    fn enter(&self, held: u64) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.budget_peak.fetch_max(held, SeqCst);
+        let now = self.in_flight.fetch_add(1, SeqCst) + 1;
+        self.in_flight_peak.fetch_max(now, SeqCst);
+    }
+
+    /// A pair released its budget.
+    fn leave(&self) {
+        self.in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// [`ReportHooks::leave`] when a pair's comparison ends, however it ends.
+struct InFlight<'a>(&'a ReportHooks);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.leave();
+    }
+}
+
 /// The marker of a files folder (§1.7.9, T13).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Marker {
@@ -894,7 +983,7 @@ impl Service {
     }
 
     /// The spec of a file target on `vfs` (as `--output`: an archive member is a member, its folder must exist).
-    fn target_spec(&self, vfs: &dyn Vfs, raw: &OsStr) -> Result<Spec, ApiError> {
+    pub(crate) fn target_spec(&self, vfs: &dyn Vfs, raw: &OsStr) -> Result<Spec, ApiError> {
         let spec = Spec::parse_os(raw, &self.spec_context())?;
         hikasa_vfs::resolve_spec(vfs, spec, self.use_of(raw), &CancelToken::never())
             .map_err(|_| ApiError::Cancelled)
@@ -1333,26 +1422,26 @@ impl Service {
         style: &HtmlStyle,
         job: &JobControl,
     ) -> Result<(ClipboardPayload, Vec<Warning>), ApiError> {
-        let render =
-            |req: &ReportRequest, limit: u64| -> Result<(String, Vec<Warning>), ApiError> {
-                let mut cap = CapWriter {
-                    buf: Vec::new(),
-                    limit,
-                    over: false,
-                };
-                let rendered = {
-                    let mut cancel = hikasa_report::CancelWriter::new(&mut cap, &job.cancel);
-                    render_report(input, req, meta, style, None, &mut cancel)
-                };
-                match rendered {
-                    Ok(w) => Ok((String::from_utf8_lossy(&cap.buf).into_owned(), w)),
-                    Err(_) if cap.over => Err(ApiError::Report(ReportError::TooLarge {
-                        limit: CLIPBOARD_REPORT_MAX,
-                    })),
-                    Err(e) => Err(render_error(None, e)),
-                }
+        let max = self.report_hooks().clipboard_cap();
+        let render = |req: &ReportRequest,
+                      limit: u64|
+         -> Result<(String, Vec<Warning>), ApiError> {
+            let mut cap = CapWriter {
+                buf: Vec::new(),
+                limit,
+                over: false,
             };
-        let (main, warnings) = render(req, CLIPBOARD_REPORT_MAX)?;
+            let rendered = {
+                let mut cancel = hikasa_report::CancelWriter::new(&mut cap, &job.cancel);
+                render_report(input, req, meta, style, None, &mut cancel)
+            };
+            match rendered {
+                Ok(w) => Ok((String::from_utf8_lossy(&cap.buf).into_owned(), w)),
+                Err(_) if cap.over => Err(ApiError::Report(ReportError::TooLarge { limit: max })),
+                Err(e) => Err(render_error(None, e)),
+            }
+        };
+        let (main, warnings) = render(req, max)?;
         if !matches!(req.format(), OutputFormat::Html { .. }) {
             return Ok((
                 ClipboardPayload {
@@ -1371,7 +1460,7 @@ impl Service {
                 options.format = OutputFormat::Text { ansi: false };
             }
         }
-        let (text, _) = render(&plain, CLIPBOARD_REPORT_MAX - main.len() as u64)?;
+        let (text, _) = render(&plain, max - main.len() as u64)?;
         Ok((
             ClipboardPayload {
                 text,
@@ -1535,6 +1624,7 @@ impl Service {
         let back = back_link(&main_name);
         let folder_name = final_name(&links.folder).unwrap_or_default();
         let budget = ByteBudget::new(self.options().content_budget_bytes());
+        self.report_hooks().start(budget.capacity());
         let pair_req = ReportRequest {
             kind: ReportKind::Text,
             body: ReportBody::Text(file_links.text),
@@ -1777,6 +1867,10 @@ impl Service {
         let _held = budget
             .acquire(sizes.min(budget.capacity()), &job.cancel)
             .map_err(|_| ApiError::Cancelled)?;
+        self.report_hooks()
+            .enter(budget.capacity() - budget.available());
+        // Declared after the budget's guard, so it is dropped first: the count goes down before the budget is free.
+        let _in_flight = InFlight(self.report_hooks());
         let sub = JobControl {
             progress: std::sync::Arc::new(hikasa_core::NullProgress),
             ..job.clone()
@@ -2014,6 +2108,51 @@ mod tests {
         );
         assert!(cap.buf.len() as u64 <= cap.limit);
         assert_eq!(CLIPBOARD_REPORT_MAX, 128 << 20);
+    }
+
+    /// A7.15 (review, M6): a report of exactly the cap fits; one byte more does not.
+    #[test]
+    fn a7_15_the_cap_itself_fits() {
+        let mut cap = CapWriter {
+            buf: Vec::new(),
+            limit: 10,
+            over: false,
+        };
+        cap.write_all(b"0123456789").unwrap();
+        assert!(!cap.over);
+        assert_eq!(cap.buf.len(), 10);
+        assert!(cap.write_all(b"x").is_err());
+        assert!(cap.over);
+        assert_eq!(cap.buf.len(), 10);
+    }
+
+    /// A7.13 (review): on every Unix, macOS included where APFS refuses such names on disk, a main file named with
+    /// bytes that are not UTF-8 gets a back link of its exact bytes and a marker with `report_raw`, which names it
+    /// again (the parts of the disk test that need no such file).
+    #[cfg(unix)]
+    #[test]
+    fn a7_13_a_main_name_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let name = OsStr::from_bytes(b"r\xe9port.html");
+        let link = back_link(name);
+        assert_eq!(link.href.as_deref(), Some("../r%E9port.html"));
+        assert_eq!(link.name, "r\u{fffd}port.html");
+        let marker = Marker {
+            schema_version: 1,
+            report: name.to_str().map(str::to_owned),
+            report_raw: name.to_str().is_none().then(|| hex(&os_bytes(name))),
+            generator: "hikasa test".into(),
+            file: Vec::new(),
+        };
+        let text = toml::to_string(&marker).unwrap();
+        assert!(
+            text.contains("report_raw = \"72e9706f72742e68746d6c\""),
+            "{text}"
+        );
+        assert!(!text.contains("report ="), "{text}");
+        let back: Marker = toml::from_str(&text).unwrap();
+        assert_eq!(back, marker);
+        assert_eq!(files_folder_name(name, 1), "r_port_files");
     }
 
     #[test]
