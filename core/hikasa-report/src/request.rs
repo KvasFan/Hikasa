@@ -588,6 +588,12 @@ fn folder_display_word(filter: FolderDisplayFilter) -> Option<&'static str> {
     })
 }
 
+/// True when a folder display reads back as `display-context` (the differences in the folder structure): the word
+/// [`ReportRequest::words`] gives it, and the folder XML's `mode/@display` `context`.
+pub(crate) fn folder_display_is_context(d: &DisplayOptions) -> bool {
+    d.filter == FolderDisplayFilter::Differences && d.folders == FolderMode::CompareStructure
+}
+
 /// Adds `value` (given as `word`) to its slot: strike-outs and columns accumulate, anything else conflicts with a
 /// different value.
 fn merge(
@@ -909,9 +915,8 @@ impl ReportRequest {
             (ReportBody::Text(opts), Slot::Display) => Some(Value::TextDisplay(opts.display)),
             (ReportBody::Folder { options, .. }, Slot::Display) => {
                 let d = options.display;
-                let context = d.filter == FolderDisplayFilter::Differences
-                    && d.folders == FolderMode::CompareStructure;
-                folder_display_word(d.filter).map(|_| Value::FolderDisplay(d.filter, context))
+                folder_display_word(d.filter)
+                    .map(|_| Value::FolderDisplay(d.filter, folder_display_is_context(&d)))
             }
             (_, Slot::Ignore) => self.ignore_unimportant().then_some(Value::Ignore),
             (ReportBody::Text(opts), Slot::Numbers) => Some(Value::Numbers(opts.line_numbers)),

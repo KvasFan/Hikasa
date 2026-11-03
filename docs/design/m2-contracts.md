@@ -6390,6 +6390,11 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
     `ReportRequest::parse` now refuses a `html-custom:` spec whose rest holds `,` and a word of the vocabulary (either
     kind): `ReportError::Request` (`invalid_input`) saying to put `html-custom:` last. A comma followed by anything else
     (`html-custom:x,1.css`) stays part of the path (`a7_2_html_custom_swallows_no_report_word`).
+19. **A folder `mode/@display` is the request's word (W7a review).** `display-context` sets the differences filter and
+    the folder structure, and `ReportRequest::words` reads that pair back as `display-context`; the folder XML wrote
+    the filter's word `mismatches`. Both now ask `folder_display_is_context`, so `mode/@display` is `context` exactly
+    when `words()` says `display-context` (`a7_6_folder_mode_display_is_the_requests_word`, every folder mode); the
+    golden `38_cancel_with_orphans_context` changed accordingly.
 
 **W7a mutations** (A7.23; each applied by hand, the named test run, then reverted with `git checkout`):
 

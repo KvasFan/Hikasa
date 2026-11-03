@@ -324,3 +324,65 @@ fn a7_5_characters_per_line_pieces_per_side() {
         );
     }
 }
+
+/// A7.6: `mode/@display` is the word [`ReportRequest::words`] gives the request, without `display-`: a
+/// `display-context` request says `context`, a filter its own word, whatever folder mode the defaults carry.
+#[test]
+fn a7_6_folder_mode_display_is_the_requests_word() {
+    let dirs = cases(&fixtures("folder"));
+    let case: FolderCase =
+        serde_json::from_str(&std::fs::read_to_string(dirs[0].join("case.json")).unwrap()).unwrap();
+    let source = case.source.strip_prefix("hikasa-folder/").unwrap();
+    let (_, cmp) = folder_case(&sibling_fixtures("hikasa-folder", "trees").join(source));
+    for folders in [
+        FolderMode::AlwaysShowFolders,
+        FolderMode::CompareStructure,
+        FolderMode::OnlyFiles,
+    ] {
+        for word in [
+            "display-context",
+            "display-mismatches",
+            "display-all",
+            "display-orphans",
+            "display-mismatches-no-orphans",
+        ] {
+            let mut defaults = ReportDefaults::new("xml");
+            defaults.folder_display.folders = folders;
+            let words = ReportWords {
+                layout: Some("xml".to_owned()),
+                options: vec![word.to_owned()],
+                ..ReportWords::default()
+            };
+            let req = ReportRequest::parse(ReportKind::Folder, &words, &defaults).unwrap();
+            let hikasa_report::ReportBody::Folder { options, .. } = &req.body else {
+                unreachable!()
+            };
+            let meta = ReportMeta::for_folder(&cmp, options, None, "hikasa test");
+            let mut out = Vec::new();
+            render_report(
+                ReportInput::Folder(&cmp),
+                &req,
+                &meta,
+                &HtmlStyle::default(),
+                None,
+                &mut out,
+            )
+            .unwrap();
+            let text = String::from_utf8(out).unwrap();
+            let doc = roxmltree::Document::parse(&text).unwrap();
+            let display = doc
+                .descendants()
+                .find(|n| n.has_tag_name((xmlcheck::NAMESPACE, "mode")))
+                .and_then(|n| n.attribute("display"))
+                .unwrap()
+                .to_owned();
+            let canonical = req.words();
+            let want = canonical
+                .options
+                .iter()
+                .find_map(|w| w.strip_prefix("display-"))
+                .unwrap_or_else(|| panic!("{word}: {canonical:?}"));
+            assert_eq!(display, want, "{word} with {folders:?}");
+        }
+    }
+}

@@ -4,7 +4,7 @@
     <title>Folder Compare</title>
     <side id="left" spec="/l"/>
     <side id="right" spec="/r"/>
-    <mode display="mismatches" ignore-unimportant="false" folders="structure" suppress-filters="false"/>
+    <mode display="context" ignore-unimportant="false" folders="structure" suppress-filters="false"/>
     <rules>size, timestamps (2 s); filters: none</rules>
     <status complete="false">the comparison was cancelled</status>
   </header>

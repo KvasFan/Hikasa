@@ -20,6 +20,7 @@ use crate::folder::{
 use crate::links::{PairLink, PairLinks};
 use crate::meta::ReportMeta;
 use crate::options::folder_mode_word;
+use crate::request::folder_display_is_context;
 use crate::summary_counts::of_folder;
 use crate::xml::{self, XmlHeader, XmlSide};
 
@@ -39,7 +40,8 @@ pub(crate) const fn state_word(marker: char) -> &'static str {
     }
 }
 
-/// The `display` word of a folder filter (the canonical word without `display-`).
+/// The `display` word of a folder filter (the canonical word without `display-`); `context` instead when
+/// [`folder_display_is_context`].
 pub(crate) const fn display_word(filter: FolderDisplayFilter) -> &'static str {
     use FolderDisplayFilter as F;
     match filter {
@@ -174,7 +176,15 @@ pub(super) fn write(
     let d = &opts.display;
     let iu = d.ignore_unimportant;
     let mut mode = vec![
-        ("display", display_word(d.filter).to_owned()),
+        (
+            "display",
+            if folder_display_is_context(d) {
+                "context"
+            } else {
+                display_word(d.filter)
+            }
+            .to_owned(),
+        ),
         ("ignore-unimportant", xml::boolean(iu).to_owned()),
         ("folders", folder_mode_word(d.folders).to_owned()),
         (
