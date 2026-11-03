@@ -141,7 +141,7 @@ pub(crate) fn pieces(text: &str) -> Vec<Piece<'_>> {
 
 /// True when `text` holds a form that expansion replaces (`%%` included).
 pub fn has_forms(text: &str) -> bool {
-    text.contains('%')
+    text.as_bytes().contains(&b'%')
         && pieces(text)
             .iter()
             .any(|piece| !matches!(piece, Piece::Literal(_)))

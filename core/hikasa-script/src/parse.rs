@@ -32,14 +32,25 @@ pub const KEYWORDS: [&str; 18] = [
 
 /// The value of `word` after the keyword `kw` (ASCII case-insensitive), as a word at the same place.
 pub(crate) fn keyword(word: &Word, kw: &str) -> Option<Word> {
-    let head = word.text.get(..kw.len())?;
-    head.eq_ignore_ascii_case(kw)
-        .then(|| Word::new(&word.text[kw.len()..], word.quoted, word.pos))
+    starts_with_keyword(word, kw).then(|| Word::new(&word.text[kw.len()..], word.quoted, word.pos))
+}
+
+/// True when `word` starts with the keyword `kw` (ASCII case-insensitive), without making its value.
+fn starts_with_keyword(word: &Word, kw: &str) -> bool {
+    word.text
+        .as_bytes()
+        .get(..kw.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(kw.as_bytes()))
 }
 
 /// The keyword `word` starts with, if any.
 fn any_keyword(word: &Word) -> Option<&'static str> {
-    KEYWORDS.into_iter().find(|kw| keyword(word, kw).is_some())
+    if !word.text.contains([':', '=']) {
+        return None;
+    }
+    KEYWORDS
+        .into_iter()
+        .find(|kw| starts_with_keyword(word, kw))
 }
 
 /// True when `word` is `kw` (ASCII case-insensitive).

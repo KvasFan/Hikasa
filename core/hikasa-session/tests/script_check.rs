@@ -95,6 +95,7 @@ fn a8_15_a_16_mib_script_checks_within_the_scaled_bound() {
         check.errors.lines("s.txt").first()
     );
     // G14: 0.5 s for 8 MB in release; 16 MiB is twice that, and a debug build gets 4 times the time.
+    eprintln!("16 MiB check: {took:?}");
     assert!(took.as_secs_f64() <= 0.5 * 2.0 * 4.0, "{took:?}");
 }
 

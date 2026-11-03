@@ -687,27 +687,17 @@ impl Service {
             env,
             env_case_insensitive: self.env().platform == crate::host::Platform::Windows,
         };
-        let references = hikasa_script::lex(&text.bytes)
-            .map(|lines| {
-                let mut references = References::default();
-                for line in &lines {
-                    for word in &line.words {
-                        references_add(&mut references, word);
-                    }
-                }
-                references
-            })
-            .unwrap_or_default();
         match hikasa_script::parse_checked(&text.bytes, &vocabulary, Some(&refs)) {
             Ok(script) => ScriptCheck {
                 references: script.references.clone(),
                 script: Some(script),
                 errors: ScriptErrors::default(),
             },
+            // Only a script that does not check is lexed a second time, for what it references.
             Err(errors) => ScriptCheck {
                 script: None,
                 errors,
-                references,
+                references: self.script_references(text),
             },
         }
     }
