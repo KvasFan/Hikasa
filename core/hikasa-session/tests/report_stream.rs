@@ -234,6 +234,11 @@ fn a7_14_folder_reports_stream_into_a_file() {
             peak <= BOUND + 32 * 3_030,
             "{layout}: {peak} B for {bytes} B written"
         );
+        // The report (about 1 MB) is never held: the peak stays under half of it.
+        assert!(
+            (peak as u64) < bytes / 2,
+            "{layout}: {peak} B live for {bytes} B written: the report is held"
+        );
         eprintln!("folder {layout}: peak {peak} B, {bytes} B written");
     }
 }
