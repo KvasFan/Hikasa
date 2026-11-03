@@ -1173,7 +1173,7 @@ fn a9_header_sort_side_clicks_and_a_swipe_across_the_centre() {
     let headers: Vec<Rect> = s
         .drawn()
         .into_iter()
-        .filter(|d| d.text == "Size")
+        .filter(|d| d.text == crate::folder::columns::title(crate::folder::columns::ColumnId::Size))
         .map(|d| d.rect)
         .collect();
     assert_eq!(headers.len(), 2, "one Size header a side");
@@ -1197,7 +1197,11 @@ fn a9_header_sort_side_clicks_and_a_swipe_across_the_centre() {
     let arrows: Vec<String> = s
         .drawn()
         .into_iter()
-        .filter(|d| d.text.starts_with("Size"))
+        .filter(|d| {
+            d.text.starts_with(crate::folder::columns::title(
+                crate::folder::columns::ColumnId::Size,
+            ))
+        })
         .map(|d| d.text)
         .collect();
     assert_eq!(
