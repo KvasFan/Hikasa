@@ -6361,7 +6361,8 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 11. **How the streaming row measures.** The peak is of live heap above the live heap before the render, so the
     comparison itself (built before) is not counted; the counting `#[global_allocator]` lives in `stream_memory.rs`
     only, and a mutex runs one measurement at a time. The CI profile runs it in debug. Measured (debug, Linux): every
-    text layout peaks at 67–69 KB at 50,000 and at 200,000 rows (3–36 MB written); folder side-by-side HTML and XML at
+    text layout peaks at 67–69 KB at 50,000 and at 200,000 rows (3–36 MB written), interleaved ANSI too (with and
+    without strike-out, added after the W7a review: 67 KB, 4–16 MB); folder side-by-side HTML and XML at
     0.46 MB for 25,250 visible rows and 1.65 MB for 101,000 (about 16 B a row: the list of visible rows), under the
     5.0 and 7.4 MB bounds.
 12. **`wrap-none` frees the table.** `white-space: pre` in a `table-layout: fixed` table at 100 % would overflow its

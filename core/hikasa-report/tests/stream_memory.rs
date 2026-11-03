@@ -1,6 +1,6 @@
 //! M2 W7 acceptance A7.10 (D-202, D-212): reports stream. A counting allocator measures the peak of live heap while a
-//! report renders into a sink: 50,000 and 200,000 synthetic text rows in each new text layout (interleaved text and
-//! HTML, with strike-out, and XML) stay within 4 MiB, the two sizes within 1 MiB of each other; 25,000 and 100,000
+//! report renders into a sink: 50,000 and 200,000 synthetic text rows in each new text layout (interleaved text, ANSI
+//! and HTML, with strike-out, and XML) stay within 4 MiB, the two sizes within 1 MiB of each other; 25,000 and 100,000
 //! folder rows in folder side-by-side HTML and XML stay within 4 MiB + 32 bytes per visible row. A cancel at the n-th
 //! MiB of a report written through [`CancelWriter`] stops with at most one MiB more written. The counting
 //! `#[global_allocator]` lives in this test binary only (§6.1); one measurement runs at a time.
@@ -19,7 +19,7 @@ use hikasa_core::{CancelToken, CaseSensitivity, FileTime};
 use hikasa_folder::{FolderComparison, FolderRules};
 use hikasa_report::{
     CANCEL_CHECK_BYTES, CancelWriter, HtmlStyle, ReportDefaults, ReportInput, ReportKind,
-    ReportMeta, ReportRequest, ReportWords, render_report,
+    ReportMeta, ReportRequest, ReportWords, TargetKind, render_report,
 };
 use hikasa_text::{TextComparison, TextRules};
 use hikasa_vfs::{MemMeta, MemoryVfs};
@@ -107,9 +107,7 @@ fn text_pair(rows: usize) -> TextComparison {
 
 fn render_text(
     cmp: &TextComparison,
-    layout: &'static str,
-    options: &[&str],
-    output: &[&str],
+    (layout, options, output, ansi): TextLayout,
     out: &mut dyn Write,
 ) {
     let words = ReportWords {
@@ -118,7 +116,11 @@ fn render_text(
         output_options: output.iter().map(|s| (*s).to_owned()).collect(),
         title: None,
     };
-    let req = ReportRequest::parse(ReportKind::Text, &words, &ReportDefaults::new(layout)).unwrap();
+    let mut req =
+        ReportRequest::parse(ReportKind::Text, &words, &ReportDefaults::new(layout)).unwrap();
+    if ansi {
+        req.apply_target(TargetKind::Stdout { ansi: true });
+    }
     let hikasa_report::ReportBody::Text(opts) = &req.body else {
         unreachable!()
     };
@@ -134,16 +136,37 @@ fn render_text(
     .unwrap();
 }
 
-/// The new text layouts: interleaved text (with strike-out), interleaved HTML, XML.
-const TEXT_LAYOUTS: [(&str, &[&str], &[&str]); 4] = [
-    ("interleaved", &[], &[]),
+/// A text layout: its word, options, output options, and ANSI (a terminal's stdout).
+type TextLayout = (
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+    bool,
+);
+
+/// The new text layouts: interleaved text and ANSI (each also with strike-out), interleaved HTML, XML.
+const TEXT_LAYOUTS: [TextLayout; 6] = [
+    ("interleaved", &[], &[], false),
     (
         "interleaved",
         &["strikeout-left-diffs", "strikeout-right-diffs"],
         &[],
+        false,
     ),
-    ("interleaved", &["strikeout-left-diffs"], &["html-color"]),
-    ("xml", &[], &[]),
+    ("interleaved", &[], &[], true),
+    (
+        "interleaved",
+        &["strikeout-left-diffs", "strikeout-right-diffs"],
+        &[],
+        true,
+    ),
+    (
+        "interleaved",
+        &["strikeout-left-diffs"],
+        &["html-color"],
+        false,
+    ),
+    ("xml", &[], &[], false),
 ];
 
 #[test]
@@ -151,13 +174,20 @@ fn a7_10_text_layouts_stream() {
     let _guard = MEASURE.lock().unwrap();
     let small = text_pair(50_000);
     let large = text_pair(200_000);
-    for (layout, options, output) in TEXT_LAYOUTS {
-        let (peak_small, bytes_small) =
-            peak_of(|sink| render_text(&small, layout, options, output, sink));
-        let (peak_large, bytes_large) =
-            peak_of(|sink| render_text(&large, layout, options, output, sink));
+    for case in TEXT_LAYOUTS {
+        let (layout, options, output, ansi) = case;
+        // The ANSI rows are coloured (an ANSI report is not the plain one measured twice).
+        let mut few = Vec::new();
+        render_text(&text_pair(20), case, &mut few);
+        assert_eq!(
+            few.contains(&0x1b),
+            ansi,
+            "{layout} {options:?} ansi {ansi}"
+        );
+        let (peak_small, bytes_small) = peak_of(|sink| render_text(&small, case, sink));
+        let (peak_large, bytes_large) = peak_of(|sink| render_text(&large, case, sink));
         eprintln!(
-            "{layout} {options:?} {output:?}: 50k rows {peak_small} B peak ({bytes_small} B out), 200k rows {peak_large} B peak ({bytes_large} B out)"
+            "{layout} {options:?} {output:?} ansi {ansi}: 50k rows {peak_small} B peak ({bytes_small} B out), 200k rows {peak_large} B peak ({bytes_large} B out)"
         );
         assert!(
             bytes_large > 3 * 4 * MIB as u64,
