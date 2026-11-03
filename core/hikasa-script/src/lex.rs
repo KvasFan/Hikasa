@@ -251,7 +251,12 @@ pub fn too_large(len: u64) -> ScriptError {
 /// a byte that is not UTF-8 is one `invalid_utf8` error at the first such byte.
 pub fn lex(source: &[u8]) -> Result<Vec<Line>, Errors> {
     let mut lines = Vec::new();
-    let errors = lex_each(source, &mut |line| lines.push(line));
+    let mut errors = Errors::default();
+    lex_each(source, &mut |lexed| match lexed {
+        Lexed::Line(line) if errors.is_empty() => lines.push(line),
+        Lexed::Line(_) => {}
+        Lexed::Error { error, .. } => errors.push(error),
+    });
     if errors.is_empty() {
         Ok(lines)
     } else {
@@ -259,21 +264,36 @@ pub fn lex(source: &[u8]) -> Result<Vec<Line>, Errors> {
     }
 }
 
+/// What [`lex_each`] gives, in the order of the source.
+pub(crate) enum Lexed {
+    /// A logical line that lexed.
+    Line(Line),
+    /// A lexical error; the logical line it broke is dropped and lexing goes on at the next one.
+    Error {
+        /// The error.
+        error: ScriptError,
+        /// The first word of the broken logical line, when it has one (the flow check reads a broken `load` as a load).
+        first: Option<String>,
+    },
+}
+
 /// [`lex`], giving each logical line to `each` as it ends instead of keeping them: a large script is never held as lines
-/// (G14). Once an error is found no further line is given (a script with an error has no lines); the errors are
-/// returned, empty when it lexed.
-pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Line)) -> Errors {
-    let mut errors = Errors::default();
+/// (G14). A lexical error drops its logical line and lexing goes on at the next one, so the checks of the lines around it
+/// still report (§1.8.7: every error); a file over the cap or not UTF-8 gives its one error and nothing else.
+pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Lexed)) {
     if source.len() as u64 > SCRIPT_MAX_BYTES {
-        errors.push(too_large(source.len() as u64));
-        return errors;
+        each(Lexed::Error {
+            error: too_large(source.len() as u64),
+            first: None,
+        });
+        return;
     }
     let body = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
     let text = match decode(body) {
         Ok(text) => text,
         Err(error) => {
-            errors.push(error);
-            return errors;
+            each(Lexed::Error { error, first: None });
+            return;
         }
     };
     // A command continued by `&`: its words so far and where the `&` was.
@@ -281,12 +301,18 @@ pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Line)) -> Errors {
     for (number, physical) in physical_lines(text) {
         let lexed = lex_physical(physical, number, true);
         if let Some(at) = lexed.unterminated {
-            errors.push(ScriptError::new(
-                at,
-                ScriptErrorCode::UnterminatedQuote,
-                "this quote does not close on its line",
-            ));
-            pending = None;
+            let first = match pending.take() {
+                Some((words, _)) => words.into_iter().next(),
+                None => lexed.words.into_iter().next(),
+            };
+            each(Lexed::Error {
+                error: ScriptError::new(
+                    at,
+                    ScriptErrorCode::UnterminatedQuote,
+                    "this quote does not close on its line",
+                ),
+                first: first.map(|w| w.text),
+            });
             continue;
         }
         let mut words = match pending.take() {
@@ -296,7 +322,10 @@ pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Line)) -> Errors {
                         // A comment-only line between continued lines is skipped.
                         pending = Some((words, amp));
                     } else {
-                        errors.push(continuation_at_end(amp));
+                        each(Lexed::Error {
+                            error: continuation_at_end(amp),
+                            first: words.into_iter().next().map(|w| w.text),
+                        });
                     }
                     continue;
                 }
@@ -308,22 +337,22 @@ pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Line)) -> Errors {
         match lexed.amp {
             Some(amp) => pending = Some((words, amp)),
             None => {
-                if errors.is_empty()
-                    && let Some(first) = words.first()
-                {
-                    each(Line {
+                if let Some(first) = words.first() {
+                    each(Lexed::Line(Line {
                         pos: first.pos,
                         end_line: number,
                         words,
-                    });
+                    }));
                 }
             }
         }
     }
-    if let Some((_, amp)) = pending {
-        errors.push(continuation_at_end(amp));
+    if let Some((words, amp)) = pending {
+        each(Lexed::Error {
+            error: continuation_at_end(amp),
+            first: words.into_iter().next().map(|w| w.text),
+        });
     }
-    errors
 }
 
 fn continuation_at_end(amp: Pos) -> ScriptError {

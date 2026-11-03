@@ -182,3 +182,40 @@ fn missing_arguments_only_with_arguments_and_unset_always() {
     };
     assert!(parse_checked(b"load %EMPTY%a b\n", &AnyWord, Some(&refs)).is_ok());
 }
+
+#[test]
+fn a_lexical_error_hides_no_other_error() {
+    // An unknown command before the broken line, a `no_comparison` after it: every error, in line order.
+    let lines = errors_of(b"foo\nlog \"x\nselect all\n", &AnyWord);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].starts_with("s.txt:1:1: error: "), "{lines:?}");
+    assert!(lines[0].contains("unknown command"), "{lines:?}");
+    assert!(lines[1].starts_with("s.txt:2:5: error: "), "{lines:?}");
+    assert!(lines[1].contains("quote"), "{lines:?}");
+    assert!(lines[2].starts_with("s.txt:3:1: error: "), "{lines:?}");
+    assert!(lines[2].contains("needs a loaded comparison"), "{lines:?}");
+    // A broken `load` still counts as a load: the `select` after it gives no second error.
+    let lines = errors_of(b"load \"l r\nselect all\n", &AnyWord);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    // A continuation at the end, then more errors.
+    let lines = errors_of(b"beep &\n\nfoo\n", &AnyWord);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("s.txt:1:6: error: "), "{lines:?}");
+    assert!(lines[1].starts_with("s.txt:3:1: error: "), "{lines:?}");
+}
+
+#[test]
+fn lexical_errors_count_toward_the_cap_in_order() {
+    let mut source = String::new();
+    for _ in 0..80 {
+        source.push_str("foo\nlog \"x\n");
+    }
+    let errors = parse(source.as_bytes(), &AnyWord).unwrap_err();
+    assert_eq!(errors.list.len(), 100);
+    assert_eq!(errors.more, 60);
+    let positions: Vec<u32> = errors.list.iter().map(|e| e.pos.line).collect();
+    let mut sorted = positions.clone();
+    sorted.sort_unstable();
+    assert_eq!(positions, sorted);
+    assert_eq!(errors.list[1].code, ScriptErrorCode::UnterminatedQuote);
+}
