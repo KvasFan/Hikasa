@@ -1870,6 +1870,31 @@ mod tests {
         }
     }
 
+    /// §1.7.17's clipboard row: a payload over the cap fails at once, holding at most the cap (the 64 KiB buffer of a
+    /// file target is not involved: the clipboard renders straight into the capped writer).
+    #[test]
+    fn a7_15_the_clipboard_cap_holds_at_most_the_cap() {
+        let mut cap = CapWriter {
+            buf: Vec::new(),
+            limit: 1000,
+            over: false,
+        };
+        let chunk = [b'x'; 300];
+        let mut written = 0;
+        while cap.write_all(&chunk).is_ok() {
+            written += chunk.len();
+            assert!(written <= 1000);
+        }
+        assert!(cap.over);
+        assert_eq!(
+            cap.buf.len(),
+            900,
+            "nothing of the chunk that crossed the cap"
+        );
+        assert!(cap.buf.len() as u64 <= cap.limit);
+        assert_eq!(CLIPBOARD_REPORT_MAX, 128 << 20);
+    }
+
     #[test]
     fn a7_9_names_of_the_files() {
         assert_eq!(main_stem(OsStr::new("report.html")), "report");
