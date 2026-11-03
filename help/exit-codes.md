@@ -13,7 +13,9 @@ Every subcommand ends with one of these codes:
 | 100 | error (also a command line that does not parse, and a crash) |
 | 102 | the command line cannot wait for the window |
 | 103 | the window executable cannot be found or started |
-| 107 | a base folder cannot be loaded |
+| 105 | a script cannot be found or read |
+| 106 | a script does not check: nothing ran |
+| 107 | a base folder cannot be loaded (also a script's `load`, which ends the script) |
 
 ## Rules
 
@@ -21,6 +23,8 @@ Every subcommand ends with one of these codes:
 - `folder compare`: 13 when any important difference exists; else 100 when the result is incomplete or an item
   could not be compared; else 12 when only unimportant differences remain; else 2. A base folder that cannot
   be loaded is 107.
+- `script run`: 0 when every command succeeded, 100 when one failed or was refused (or the run was stopped), 105,
+  106, or 107 for a `load` that ended it; never a comparison verdict ([hikasa script](topic:script)).
 - Display filters never change the exit code; `--ignore-unimportant` does (12 becomes 2).
 - A broken pipe on stdout stops the output and keeps the computed code.
 - Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once

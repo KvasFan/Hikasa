@@ -97,3 +97,47 @@ fn a8_15_a_16_mib_script_checks_within_the_scaled_bound() {
     // G14: 0.5 s for 8 MB in release; 16 MiB is twice that, and a debug build gets 4 times the time.
     assert!(took.as_secs_f64() <= 0.5 * 2.0 * 4.0, "{took:?}");
 }
+
+/// A8.21: docs/12's command table of §3.1 and the parser's agree (no command missing, none extra), every keyword of the
+/// parser is in that table, and every check code and new warning code is in the help.
+#[test]
+fn a8_21_docs_and_help_name_the_language() {
+    use hikasa_session::api::script::{CommandName, SCRIPT_KEYWORDS, ScriptErrorCode};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let docs = std::fs::read_to_string(root.join("docs/12-cli-and-scripting.md")).unwrap();
+    let start = docs.find("### 3.1 Commands").unwrap();
+    let block = &docs[start..];
+    let block = &block[block.find("```").unwrap() + 3..];
+    let block = &block[..block.find("```").unwrap()];
+    let mut documented = std::collections::BTreeSet::new();
+    for line in block.lines() {
+        if line.starts_with(' ') || line.trim().is_empty() {
+            continue;
+        }
+        let first = line.split_whitespace().next().unwrap();
+        documented.insert(first.to_owned());
+    }
+    let parsed: std::collections::BTreeSet<String> = CommandName::ALL
+        .iter()
+        .map(|n| n.as_str().to_owned())
+        .collect();
+    assert_eq!(documented, parsed, "docs/12 §3.1 against the parser");
+    assert!(block.contains("alias data-report"));
+    for keyword in SCRIPT_KEYWORDS {
+        // The grammar writes `(update|mirror):`, `recyclebin=`: the stem of each keyword is there.
+        let stem = keyword.trim_end_matches([':', '=']);
+        assert!(block.contains(stem), "{keyword} is not in docs/12 §3.1");
+    }
+    let script = std::fs::read_to_string(root.join("help/script.md")).unwrap();
+    let json = std::fs::read_to_string(root.join("help/json-output.md")).unwrap();
+    for code in ScriptErrorCode::ALL {
+        assert!(
+            script.contains(&format!("`{}`", code.as_str())),
+            "{}",
+            code.as_str()
+        );
+    }
+    for code in ["nothing_selected", "attrib_unsupported", "log_not_written"] {
+        assert!(json.contains(code) || script.contains(code), "{code}");
+    }
+}

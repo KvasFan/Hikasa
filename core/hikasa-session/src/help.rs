@@ -36,6 +36,7 @@ topics!(
     "folder-op",
     "folder-sync",
     "report",
+    "script",
     "format",
     "settings",
     "session",

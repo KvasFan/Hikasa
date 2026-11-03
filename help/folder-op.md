@@ -14,6 +14,7 @@ what the plan says.
 | `delete` | `--side left\|right\|both`, `--recycle`, `--recycle-fallback` | deletes on the side named |
 | `rename` | `--side`; `--name <NEW>`, `--mask <MASK>` or `--regex <OLD> <NEW>` | renames; a rename never replaces |
 | `touch` | `--side`; `--time <RFC 3339>`, `--now` or `--from-other` | sets the modification time |
+| `attrib` | `--change <CHANGE>…` (`+r`, `-hs`, `+a-r`), `--side` (default both) | sets or clears the attributes a, s, h, r of the selected rows themselves (not a folder's contents); on Unix `r` is the write bits and `a`, `s`, `h` are skipped `unsupported`; no operation question |
 | `mkdir` | `--side`, `--in <REL>`, `--name <NAME>` | makes a folder, or an [archive](topic:archives) by its name; a trailing `/` wants a folder |
 | `copyto`, `moveto` | `--side`, `--target <SPEC>`, `--structure relative\|base\|none`, `--overwrite` | copies or moves out of the comparison; a trailing `/` on the target wants a folder |
 | `compare` | `--method crc\|binary\|rules` | runs a content test on the selection |

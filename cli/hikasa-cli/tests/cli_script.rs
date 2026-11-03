@@ -588,3 +588,14 @@ fn a8_4_dynamic_names_on_the_command_line() {
     assert_eq!(&words[2][2..3], ":");
     assert_eq!(words[3], words[2].replace(':', "-"));
 }
+
+/// A8.21: `hikasa help script` and `hikasa help script run` resolve to the topic.
+#[test]
+fn a8_21_help_script_resolves() {
+    let s = Sandbox::new();
+    for words in [vec!["help", "script"], vec!["help", "script", "run"]] {
+        let out = s.cmd().args(&words).output().unwrap();
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        assert!(stdout(&out).contains("hikasa script"), "{words:?}");
+    }
+}

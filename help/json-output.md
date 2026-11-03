@@ -25,7 +25,15 @@ go to stderr.
 - `hikasa report` prints `hikasa.report.v1` with `--json`: the report's type, layout, format, target and file, the
   bytes written, the comparison's verdict, the canonical words and the unused ones, and for links the files folder
   (`new` or `replace_ours`, `renamed`) and each pair's status (`planned`, `written`, `skipped`, `failed`); the report
-  itself goes to its target. The build lists 39 schemas. See [hikasa report](topic:report).
+  itself goes to its target. See [hikasa report](topic:report).
+- `hikasa script run|check` prints `hikasa.script.v1`: the mode, the script, its arguments, where it stopped, the check's
+  errors (`line`, `column`, `code`, `message`), and per command its line, words, expanded text, status (`checked`, `ok`,
+  `failed`, `refused`, `not_run`) and the `result` of the matching command's document (`hikasa.folder_op.v1`, …), item
+  lists capped at 100,000 (`items_omitted`). A check that fails is `ok: false` with every error in `result`; a run is
+  `ok: true` with its exit code. The build lists 40 schemas. See [hikasa script](topic:script).
+- The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
+  (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
+  written: a dry run, or a write that failed).
 - The warnings of reports: `report_option_unused` (a word the layout does not use), `report_folder_renamed` (the files
   folder was not this report's), `report_old_folder_kept` (the earlier files folder could not be removed),
   `file_report_failed` (a pair report failed; the folder report stands), `source_date_epoch_invalid`

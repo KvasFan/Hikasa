@@ -42,7 +42,14 @@ A flag that takes a value may be repeated only with the same value.
 The first Ctrl-C cancels a comparison or a `vfs` operation: an archive being rewritten stays as it was and its temporary
 and lock files go, the file of `--output` keeps what it had, and the command exits 100. A second Ctrl-C exits 100 at once,
 as a kill would; the next rewrite of that archive removes what is left. Any other command ends at the first Ctrl-C. A
-command started with Ctrl-C ignored stays that way.
+command started with Ctrl-C ignored stays that way. In `script run` the first Ctrl-C stops the current command as that command stops, the
+rest of the script is not run, and the script exits 100 (`Script stopped at line <n>`).
+
+## Scripts
+
+`hikasa script run <file> [<arg>…]` runs a batch of commands over one folder comparison, headless; `hikasa script check`
+checks one without running it ([hikasa script](topic:script)). Its log goes to stderr; a report with `output-to:-` to
+stdout.
 
 ## See also
 

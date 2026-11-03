@@ -18,6 +18,7 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa folder sync](topic:folder-sync): update or mirror one folder from another, by a preset or a matrix.
 - [hikasa report](topic:report): reports to a file, the clipboard, the printer or the browser; XML; links to file
   reports.
+- [hikasa script](topic:script): run and check scripts: a batch of commands over one folder comparison.
 - [hikasa vfs](topic:vfs): list, inspect and read any spec.
 - [Archives](topic:archives): zip, tar and compressed streams as specs and folder sides.
 - [hikasa gui](topic:gui): open views in the window and control it.
