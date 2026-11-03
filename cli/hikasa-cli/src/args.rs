@@ -287,7 +287,7 @@ pub struct ReportArgs {
     /// patch-*, column-*, include-file-links.
     #[arg(long, value_name = "WORD,…")]
     pub options: Vec<String>,
-    /// Output option words, comma-separated (repeatable): html-color, html-mono, html-custom:<css>, text, print-*,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*,
     /// wrap-*.
     #[arg(long, value_name = "WORD,…")]
     pub output_options: Vec<String>,
