@@ -71,12 +71,12 @@ error and the log. A command that needs a loaded comparison before any `load` is
 | `rename <mask>`, `rename regexpr <old> <new>` | rename by a DOS mask or a regular expression |
 | `touch left->right`, `touch left\|right\|all:now\|<time>` | set times from the other side, now, or an RFC 3339 time |
 | `attrib (+\|-)<a s h r>…` | set or clear attributes (`+r`, `-hs`); on Unix `r` is the write bits, `a`, `s`, `h` are skipped; on a Windows disk only `r` changes, `a`, `s`, `h` are skipped with a warning (`+r+h` sets `r`) |
-| `sync [visible] [create-empty] (update\|mirror):(left->right\|right->left\|all)` | as `folder sync` (no direction: the loaded session's); ignores the selection |
+| `sync [visible] [create-empty] [update:(left->right\|right->left\|all) \| mirror:(left->right\|right->left)]` | as `folder sync` (`update:all` is `--update-both`; `mirror:all` is refused by the check); without a direction, the preset of the Folder Sync session the last `load` loaded, else it fails "no sync direction and the session holds none"; ignores the selection |
 | `text-report`, `file-report` `layout:… options:… output-options:… title:… output-to:… <session> \| <left> <right>` | as `report text`; `output-to:-` writes standard output |
 | `folder-report [just-selection] layout:… … output-to:…` | as `report folder` on the loaded comparison |
 | `option stop-on-error`, `option confirm:prompt\|yes-to-all\|no-to-all` | the script's state |
 | `log [none\|normal\|verbose] [[append:]<file>]` | the level of the log, and a log file |
-| `beep` | BEL on a terminal |
+| `beep` | BEL on a terminal (`[tweaks.scripts] beep_when_finished` also beeps once at the end of a run that is not silent) |
 
 `snapshot`, `table-report` (`data-report`), `hex-report`, `picture-report`, `media-report`, `version-report`,
 `registry-report` and `file-report` without specs pass the check and are refused when they run ("… is not available in
@@ -89,10 +89,10 @@ this version").
 | 0 | every command succeeded |
 | 100 | a command failed or was refused, a question was declined, the run was cancelled or stopped |
 | 105 | the script cannot be found (not in the current folder nor in the shared scripts folder), is a folder, cannot be read, or is over 16 MiB |
-| 106 | the check failed: nothing ran |
-| 107 | a `load` could not load a base (missing, not a folder, a remote scheme, a snapshot file, an unknown session): the script ends there |
+| 106 | the check failed: nothing ran (also a word the run would refuse that holds no `%`: a base or a `copyto` target written `-`, `""` or `clipboard://`, `compare none`, a bad regular expression, `attrib +r -r`) |
+| 107 | a `load` failed, whatever the cause (a base missing, not a folder or unreadable, a remote scheme, a snapshot file, an unknown session, an argument that makes a bad base, `create:` that cannot create): the script ends there, and no later line runs on an earlier comparison |
 
-A check error is printed as `<script>:<line>:<column>: error: <message>` (at most 100, then `… and <n> more`). Its codes
+A check error is printed as `<script>:<line>:<column>: error: <message>`, every error in line order, a lexical one too (at most 100, then `… and <n> more`). Its codes
 (`errors[].code` in JSON): `too_large` (105), `invalid_utf8`, `unterminated_quote`, `continuation_at_end`,
 `unknown_command`, `missing_argument`, `unexpected_argument`, `duplicate_keyword`, `unknown_keyword`, `invalid_word`,
 `no_comparison`, `missing_script_argument`, `unset_variable`. A script's exit code is never a comparison verdict.

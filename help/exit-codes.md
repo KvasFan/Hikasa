@@ -15,7 +15,7 @@ Every subcommand ends with one of these codes:
 | 103 | the window executable cannot be found or started |
 | 105 | a script cannot be found or read |
 | 106 | a script does not check: nothing ran |
-| 107 | a base folder cannot be loaded (also a script's `load`, which ends the script) |
+| 107 | a base folder cannot be loaded (also any failure of a script's `load`, which ends the script) |
 
 ## Rules
 
