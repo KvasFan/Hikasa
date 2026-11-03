@@ -6342,12 +6342,22 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 6. **`c` outside lines.** §1.7.6's table allowed `c` only in `l`, `r`, `d`, `u`; a title, a rules name, an error, a
    status or a warning can hold the same characters (the hostile fixture has a CR and an ESC in its title), so they take
    `c` as well; the table and the XSD say so.
-7. **Names that are not Unicode.** `MemoryVfs` names are `String`s, so a name that is not valid UTF-8 comes from disk
-   only: Linux bytes (`cfg(target_os = "linux")`), on Windows a lone surrogate on disk (where §6.7's table says
-   `MemoryVfs`, which cannot hold one), on macOS the refusal (`EILSEQ`) asserted. `raw-name` is the hex of the OS
-   name's encoded bytes (`OsStr::as_encoded_bytes`: the bytes on Unix, WTF-8 on Windows). Wine cannot create a name
-   with a lone surrogate (its names are UTF-8 on the Unix side): under `WINEPREFIX` the test says so on stderr and
-   stops, so its Windows disk part is verified by Windows CI only, as §6.7's table has `MemoryVfs` for wine.
+7. **Names that are not Unicode.** `MemoryVfs` names are `String`s, so it cannot hold a name that is not valid
+   Unicode, and §6.7's platform table, which asks for one on `MemoryVfs` on Windows, macOS and wine, is not met there;
+   `MemoryVfs` was left as it is (W7a review). What `a7_6_names_that_are_not_unicode` covers, per platform:
+   - **Linux (disk, verified):** a name with the byte `0xff` on both sides: `name` is lossy (U+FFFD), `raw-name` is
+     the hex of the OS bytes on `left` and `right`, the side-by-side HTML shows the lossy name; a name with U+0001 is
+     escaped (`\u{1}`) and carries its `raw-name`.
+   - **macOS (disk):** APFS refuses the name (`EILSEQ`, 92); the test asserts the refusal and stops, so no name that
+     is not Unicode is rendered on macOS at all.
+   - **Windows (disk, unverified):** a name with a lone surrogate (U+D800), `raw-name` the WTF-8 bytes
+     (`OsStr::as_encoded_bytes`). Wine cannot create such a name (its names are UTF-8 on the Unix side): under
+     `WINEPREFIX` the test says so on stderr and stops. This part has never run; it stays unverified until a real
+     Windows CI run passes it.
+   - **wine:** as macOS, nothing rendered (the skip above).
+   What every platform does cover through `MemoryVfs` (P-FXML, the folder goldens): names with controls, markup,
+   bidirectional controls and backslashes, escaped in attributes and read back (note 17); not `raw-name` of a lossy
+   name.
 8. **A flat tree nests nothing.** In the folder XML of a flatten comparison (`tree/@flat`), the only folder rows are
    folders that failed to list; each is closed at once with its sides, so nothing nests, and `path` carries the
    structure. Otherwise nesting follows the comparison's tree, as P-FXML checks.
@@ -6433,6 +6443,7 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 | IA | `hikasa-report/src/text/interleaved.rs`: the important mark `!` written `~` (review: survived P-IL) | P-IL `p_il_interleaved_lines_are_both_documents` (both mark characters and the number columns) | — |
 | LA | `hikasa-report/src/links.rs`: `~` percent-encoded (review: survived P-LINKS) | P-LINKS `p_links_hrefs_decode_back` (the exact href) | — |
 | LB | `links.rs`: lower-case `%xx` (review: survived P-LINKS) | P-LINKS (the exact href) | — |
+| STREAM-3 | `hikasa-report/src/text/mod.rs`: interleaved ANSI rendered into a `Vec`, then written | `a7_10_text_layouts_stream` (the bound, `7390749 B at 50,000 rows`) | — |
 | LE | `hikasa-session/src/api/report_write.rs`: the trailing-dot fix after the device prefix dropped (review: survived every test) | `a7_9_safe_component_table` (`CON.x` at 5 → `_CON_`), P-LINKS `p_links_safe_names` (cuts at a dot) | — |
 | RD | `hikasa-report/src/request.rs`: `words()` puts the wrap word in `options`, not `output_options` (review: survived P-RPTREQ) | P-RPTREQ `p_rptreq_words_round_trip` (the split of §1.7.4) | `cc a0ddb91b…` |
 
@@ -7149,7 +7160,7 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
 |---|---|---|---|---|
 | goldens, properties, `MemoryVfs` tests (A7.1…A7.6, A7.8…A7.10, A7.12, A7.14…A7.19) | yes | yes | yes | yes |
 | `xmllint` against the XSD (A7.7) | required | skipped, one stderr line | required | skipped |
-| non-UTF-8 names on disk (A7.6, A7.13) | disk | `MemoryVfs` | refusal asserted, then `MemoryVfs` | `MemoryVfs` |
+| non-UTF-8 names on disk (A7.6, A7.13) | disk | `MemoryVfs` (W7a note 7: disk, unverified) | refusal asserted, then `MemoryVfs` (note 7: refusal only) | `MemoryVfs` (note 7: skipped) |
 | Windows target spellings on disk (A7.13) | pure table | disk | pure table | disk |
 | case-insensitive file system on disk (A7.1, A7.12) | `MemoryVfs` folding; disk is case-sensitive | disk | disk | `MemoryVfs` folding |
 | aligned folder pair onto a case-sensitive disk (A7.1) | disk | `MemoryVfs` | `MemoryVfs` | `MemoryVfs` |
@@ -7193,8 +7204,8 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
 - A7.6 **Folder XML (D-198) [W7a].** `expected.xml` for every folder fixture (25 today), flatten included. P-FXML over
   random trees on `MemoryVfs`: the set of `(path, state)` of `entry` and `folder` equals the JSON report's items for the
   same display (D-29), nesting equals the tree (each element's `path` extends its parent's), `summary` equals
-  `summary_counts`. A non-UTF-8 name (Linux disk, `MemoryVfs` elsewhere) has `name` with U+FFFD and `raw-name` whose
-  bytes are the OS name; a name with controls is escaped in attributes. Mutation: put an entry under its grandparent.
+  `summary_counts`. A non-UTF-8 name (Linux disk, `MemoryVfs` elsewhere; `MemoryVfs` cannot hold one, so see W7a
+  note 7 for what runs where) has `name` with U+FFFD and `raw-name` whose bytes are the OS name; a name with controls is escaped in attributes. Mutation: put an entry under its grandparent.
 - A7.7 **Schema (D-199) [W7a].** `xml_schema.rs`: roxmltree structure checks on every XML golden and 64 generated
   documents per run, everywhere; `xmllint --noout --schema docs/schemas/hikasa-report-1.xsd` on the same documents,
   required where `HIKASA_REQUIRE_XMLLINT=1` (Linux and macOS CI, set in `ci.yml`), else skipped with one stderr line.
