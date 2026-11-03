@@ -83,6 +83,7 @@ impl Default for ColumnLayout {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // ColList and the header drags call the rest (W9a, next commits)
 impl ColumnLayout {
     /// The layout of `[layout.<view>]` (with the session's `[view]` overlaid: D-108's precedence is the caller's).
     /// Unknown column ids are dropped; a width is clamped; a bad sort word leaves the tree order. The text of one

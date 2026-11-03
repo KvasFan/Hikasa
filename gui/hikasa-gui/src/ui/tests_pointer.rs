@@ -1147,3 +1147,120 @@ fn a6_34_a_row_is_deleted_by_its_dialog() {
         "its row is gone"
     );
 }
+
+/// A9.2, A9.4 (M2 W9a): a header click sorts by that column on that side, the arrow on that side only; a click on a
+/// right cell selects the row on the right alone; a swipe from a left cell across the centre selects both sides.
+#[test]
+fn a9_header_sort_side_clicks_and_a_swipe_across_the_centre() {
+    use hikasa_folder::select::SideSet;
+    let world = World::new();
+    for (name, l, r) in [
+        ("a.txt", "1", "1"),
+        ("b.txt", "22", "2"),
+        ("c.txt", "333", "3"),
+    ] {
+        world.write(&format!("l/{name}"), l);
+        world.write(&format!("r/{name}"), r);
+    }
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    s.settle();
+    // The Size headers: two (one a side); a click on the right one sorts the right side.
+    let headers: Vec<Rect> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "Size")
+        .map(|d| d.rect)
+        .collect();
+    assert_eq!(headers.len(), 2, "one Size header a side");
+    let right_header = headers
+        .iter()
+        .copied()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    s.click_at(right_header.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let sort = model.columns().sort.expect("sorted");
+    assert_eq!(
+        (sort.column, sort.side, sort.descending),
+        (
+            crate::folder::columns::ColumnId::Size,
+            hikasa_core::Side::Right,
+            false
+        )
+    );
+    let arrows: Vec<String> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text.starts_with("Size"))
+        .map(|d| d.text)
+        .collect();
+    assert_eq!(
+        arrows.iter().filter(|t| t.ends_with('▲')).count(),
+        1,
+        "{arrows:?}"
+    );
+    // A click on the right cell of b.txt: the right side alone.
+    let names: Vec<Rect> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "b.txt")
+        .map(|d| d.rect)
+        .collect();
+    assert_eq!(names.len(), 2);
+    let right_b = names
+        .iter()
+        .copied()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let left_b = names
+        .iter()
+        .copied()
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    s.click_at(right_b.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let picked: Vec<SideSet> = model
+        .selection()
+        .items
+        .iter()
+        .map(|(_, sides)| sides)
+        .collect();
+    assert_eq!(picked, [SideSet::RIGHT]);
+    // A swipe from a.txt's left cell down to c.txt across the centre: three rows, both sides.
+    let a_left = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "a.txt")
+        .map(|d| d.rect)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let c_right = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "c.txt")
+        .map(|d| d.rect)
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let _ = left_b;
+    s.drag(a_left.center(), c_right.center() - a_left.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let picked: Vec<SideSet> = model
+        .selection()
+        .items
+        .iter()
+        .map(|(_, sides)| sides)
+        .collect();
+    assert_eq!(
+        picked,
+        [SideSet::all(); 3],
+        "a swipe across the centre selects both sides"
+    );
+}

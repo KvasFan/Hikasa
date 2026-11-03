@@ -182,6 +182,7 @@ pub fn centre_of(node: &NodeView<'_>, category: Category, marked: bool) -> Centr
 }
 
 /// One row of the glyph table: a glyph and what it means (the Legend lists these, D-242).
+#[cfg_attr(not(test), allow(dead_code))] // the Legend panel (D-242) reads it
 pub const GLYPH_TABLE: &[(GlyphView, &str)] = &[
     (
         GlyphView {

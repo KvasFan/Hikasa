@@ -36,7 +36,7 @@ pub use crate::folder::cells::{Cell, size_text};
 use crate::folder::cells::{CellInput, cell_of};
 use crate::folder::columns::{ColumnId, ColumnLayout};
 use crate::folder::glyphs::{Centre, GlyphInput, centre_of, glyph_of};
-use crate::folder::selection::{Hit, Mods, ViewSelection};
+use crate::folder::selection::{Hit, Mods, Press, Swipe, ViewSelection};
 use crate::job::Job;
 use crate::notify::NoticeKind;
 use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
@@ -416,7 +416,7 @@ pub struct FolderViewModel {
     zone: TimeZone,
     /// The status counts per side `(rows, bytes)` for (selection moves, rows revision), computed when the selection
     /// changes, never per frame (FC-064).
-    counts: Memo<Option<((u64, u64), [(u64, u64); 2])>>,
+    counts: Memo<Option<CountsMemo>>,
     /// How often they were computed (tests).
     counts_computed: Memo<u64>,
     first: u32,
@@ -467,6 +467,9 @@ pub struct FolderViewModel {
     #[cfg(test)]
     pub scan_gate: Option<Gate>,
 }
+
+/// The status counts per side `(rows, bytes)` and the (selection moves, rows revision) they were computed for.
+type CountsMemo = ((u64, u64), [(u64, u64); 2]);
 
 /// The cached availability of next/previous difference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -949,8 +952,24 @@ impl FolderViewModel {
     }
 
     /// The selection (D-238).
+    #[cfg_attr(not(test), allow(dead_code))] // the tests; W9b's dialogs plan it
     pub fn selection(&self) -> &ViewSelection {
         &self.selection
+    }
+
+    /// What a press on row `index` at `hit` starts: a swipe, or a drag of the selection (D-238).
+    pub fn selection_press(&self, index: usize, hit: Hit) -> Press {
+        self.selection.press(&self.rows, index, hit)
+    }
+
+    /// A swipe reached row `index` (D-238).
+    pub fn swipe(&mut self, swipe: &Swipe, index: usize) {
+        self.with_selection(|sel, rows, present| sel.swipe(rows, present, swipe, index));
+    }
+
+    /// A click below the last row: nothing selected.
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
     }
 
     /// Changes the selection through `change` with the rows and the sides each row has (pointer and keyboard calls of
@@ -969,8 +988,8 @@ impl FolderViewModel {
         self.selected_index = self.selection.current_index(&self.rows);
     }
 
-    /// Moves the selection by `delta` rows (arrow keys).
-    pub fn move_selection(&mut self, delta: i64) {
+    /// Moves the current row by `delta` rows with `mods` (D-238's keyboard table).
+    pub fn move_by(&mut self, delta: i64, mods: Mods) {
         if self.rows.is_empty() {
             return;
         }
@@ -979,7 +998,32 @@ impl FolderViewModel {
             .selected_index
             .map_or(if delta > 0 { -1 } else { last + 1 }, |i| i as i64);
         let index = (at + delta).clamp(0, last) as usize;
-        self.key_move(index, Mods::default());
+        self.key_move(index, mods);
+    }
+
+    /// Ctrl+Space: toggles the current row on the focus sides.
+    pub fn toggle_current(&mut self) {
+        self.with_selection(|sel, _, present| sel.toggle_current(present));
+    }
+
+    /// Space: marks the current row on its first focused side (again: unmarks).
+    pub fn space(&mut self) {
+        self.with_selection(|sel, _, present| sel.space(present));
+    }
+
+    /// Shift+Left, Shift+Right: the selection on `side` alone.
+    pub fn restrict(&mut self, side: Side) {
+        self.selection.restrict(side);
+    }
+
+    /// Esc: no mark.
+    pub fn unmark(&mut self) {
+        self.selection.unmark();
+    }
+
+    /// True while an item is marked with Space.
+    pub fn marked(&self) -> bool {
+        self.selection.mark.is_some()
     }
 
     /// Moves the current row to `index` (keys with `mods`: Shift extends, Ctrl moves the current row only, D-238).

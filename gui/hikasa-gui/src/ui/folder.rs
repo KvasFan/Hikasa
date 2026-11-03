@@ -10,6 +10,9 @@ use egui::{
 use hikasa_session::ipc::ViewId;
 
 use crate::commands::CommandId;
+use crate::folder::columns::{self, ColumnId};
+use crate::folder::glyphs::{Glyph, GlyphColour, GlyphView};
+use crate::folder::selection::{Hit, Mods, Press, SWIPE_THRESHOLD, Swipe};
 use crate::folder_view::{Cell, FolderStatus, FolderViewModel, ROW_HEIGHT, RowView};
 use crate::ui::hint::Hint as _;
 use crate::ui::icons::{self, IconId};
@@ -31,8 +34,8 @@ const TIME_W: f32 = 136.0;
 const SIZE_SAMPLE: &str = "888\u{202f}888\u{202f}888\u{202f}888";
 /// What the time column has to hold.
 const TIME_SAMPLE: &str = "8888-88-88 88:88:88";
-/// The time column's title.
-const TIME_TITLE: &str = "Modified (UTC)";
+/// The time column's title (D-237: the clock's zone).
+const TIME_TITLE: &str = "Modified";
 /// Space left of a column's text.
 const COLUMN_GAP: f32 = 8.0;
 /// Width of the scroll bar.
@@ -51,6 +54,10 @@ pub struct FolderUi {
     pub total: u32,
     /// Whole rows that fit on screen.
     pub page_rows: f64,
+    /// A press on a row that may become a swipe (D-238): where it started and its swipe.
+    press: Option<(egui::Pos2, Swipe)>,
+    /// The press became a swipe (moved ≥ 4 points vertically).
+    swiping: bool,
 }
 
 impl FolderUi {
@@ -78,6 +85,14 @@ fn column_widths(painter: &egui::Painter, font: &FontId) -> Vec2 {
         SIZE_W.max(width(SIZE_SAMPLE) + COLUMN_GAP),
         TIME_W.max(width(TIME_SAMPLE).max(width(TIME_TITLE)) + COLUMN_GAP),
     )
+}
+
+/// A key of D-238's table other than a move.
+enum KeyAct {
+    Toggle,
+    Mark,
+    Restrict(hikasa_core::Side),
+    Unmark,
 }
 
 /// The id of a view's tree (it takes the keyboard focus).
@@ -139,34 +154,58 @@ pub fn show(
     for line_y in [bases.bottom(), header.bottom()] {
         painter.hline(full.x_range(), line_y - 0.5, Stroke::new(1.0, pal.border));
     }
-    for x in side_x {
+    // The header: the shown columns of each side (D-234), the sort arrow on the sorted side only (D-235).
+    let shown = m.shown_columns();
+    let sort = m.columns().sort;
+    let mut header_hits: Vec<(Rect, ColumnId, hikasa_core::Side)> = Vec::new();
+    for (k, x) in side_x.into_iter().enumerate() {
+        let side = if k == 0 {
+            hikasa_core::Side::Left
+        } else {
+            hikasa_core::Side::Right
+        };
         let right = x + side_w;
         let p = painter.with_clip_rect(Rect::from_min_max(
             pos2(x, header.top()),
             pos2(right, header.bottom()),
         ));
         let y = header.center().y;
-        p.text(
-            pos2(x + 8.0, y),
-            Align2::LEFT_CENTER,
-            "Name",
-            small.clone(),
-            pal.muted,
-        );
-        p.text(
-            pos2(right - columns.y - 8.0, y),
-            Align2::RIGHT_CENTER,
-            "Size",
-            small.clone(),
-            pal.muted,
-        );
-        p.text(
-            pos2(right - 6.0, y),
-            Align2::RIGHT_CENTER,
-            TIME_TITLE,
-            small.clone(),
-            pal.muted,
-        );
+        for (column, cx) in column_spans(m, &shown, x, right, columns) {
+            let arrow = match sort {
+                Some(key) if key.column == column && key.side == side => {
+                    if key.descending {
+                        " ▼"
+                    } else {
+                        " ▲"
+                    }
+                }
+                _ => "",
+            };
+            let title = if column == ColumnId::Modified {
+                TIME_TITLE
+            } else {
+                columns::title(column)
+            };
+            p.text(
+                pos2(cx.min + 8.0, y),
+                Align2::LEFT_CENTER,
+                format!("{title}{arrow}"),
+                small.clone(),
+                pal.muted,
+            );
+            header_hits.push((
+                Rect::from_min_max(pos2(cx.min, header.top()), pos2(cx.max, header.bottom())),
+                column,
+                side,
+            ));
+        }
+    }
+    let header_response = ui.interact(header, tree_id(view).with("header"), Sense::click());
+    if header_response.clicked()
+        && let Some(at) = header_response.interact_pointer_pos()
+        && let Some((_, column, side)) = header_hits.iter().find(|(r, _, _)| r.contains(at))
+    {
+        m.header_click(*column, *side);
     }
     let mut body_top = header.bottom();
     if let Some(error) = &status.error {
@@ -189,7 +228,7 @@ pub fn show(
     let page = f64::from((tree.height() / rh).floor().max(1.0));
     st.page_rows = page;
     let id = tree_id(view);
-    let response = ui.interact(tree, id, Sense::click());
+    let response = ui.interact(tree, id, Sense::click_and_drag());
     if !st.focused_once {
         // The tree takes the focus when the view opens, so its keys work at once.
         st.focused_once = true;
@@ -220,6 +259,8 @@ pub fn show(
         });
         let step = (page - 1.0).max(1.0) as i64;
         let mut moves = Vec::new();
+        let mut acts = Vec::new();
+        let marked = m.marked();
         ui.ctx().input_mut(|i| {
             i.events.retain(|event| {
                 let egui::Event::Key {
@@ -236,7 +277,11 @@ pub fn show(
                     run.push(cmd);
                     return false;
                 }
-                if *modifiers == Modifiers::NONE {
+                // D-238's keyboard table: arrows, pages, Home/End move (Shift extends, Ctrl moves the current row
+                // only); Ctrl+Space toggles; Space marks; Shift+Left/Right restrict to a side; Esc unmarks.
+                let plain_or =
+                    |m: Modifiers| m.is_none() || m == Modifiers::SHIFT || m.command_only();
+                if plain_or(*modifiers) {
                     let delta = match key {
                         Key::ArrowDown => 1,
                         Key::ArrowUp => -1,
@@ -247,15 +292,45 @@ pub fn show(
                         _ => 0,
                     };
                     if delta != 0 {
-                        moves.push(delta);
+                        moves.push((
+                            delta,
+                            Mods {
+                                ctrl: modifiers.command,
+                                shift: modifiers.shift,
+                            },
+                        ));
                         return false;
                     }
+                }
+                let keyed = match (key, *modifiers) {
+                    (Key::Space, m) if m.command_only() => Some(KeyAct::Toggle),
+                    (Key::Space, m) if m.is_none() => Some(KeyAct::Mark),
+                    (Key::ArrowLeft, Modifiers::SHIFT) => {
+                        Some(KeyAct::Restrict(hikasa_core::Side::Left))
+                    }
+                    (Key::ArrowRight, Modifiers::SHIFT) => {
+                        Some(KeyAct::Restrict(hikasa_core::Side::Right))
+                    }
+                    (Key::Escape, m) if m.is_none() && marked => Some(KeyAct::Unmark),
+                    _ => None,
+                };
+                if let Some(act) = keyed {
+                    acts.push(act);
+                    return false;
                 }
                 true
             });
         });
-        for delta in moves {
-            m.move_selection(delta);
+        for (delta, mods) in moves {
+            m.move_by(delta, mods);
+        }
+        for act in acts {
+            match act {
+                KeyAct::Toggle => m.toggle_current(),
+                KeyAct::Mark => m.space(),
+                KeyAct::Restrict(side) => m.restrict(side),
+                KeyAct::Unmark => m.unmark(),
+            }
         }
         if let Some(row) = m.take_scroll() {
             st.scroll_to(row);
@@ -291,40 +366,96 @@ pub fn show(
     let window = m.window();
 
     // Clicks: select, open/close a folder (triangle or double-click), open a pair (double-click).
+    let top_now = st.top;
     let pointer_row = |p: egui::Pos2| -> Option<(usize, f32)> {
-        let index = (st.top + f64::from((p.y - tree.top()) / rh)).floor();
+        let index = (top_now + f64::from((p.y - tree.top()) / rh)).floor();
         (index >= 0.0 && index < f64::from(window.total)).then_some((index as usize, p.x))
     };
     let hovered_row = response.hover_pos().and_then(pointer_row);
+    let hit_at = |x: f32| -> Hit {
+        if x < side_x[0] + side_w {
+            Hit::Side(hikasa_core::Side::Left)
+        } else if x < side_x[1] {
+            Hit::Centre
+        } else {
+            Hit::Side(hikasa_core::Side::Right)
+        }
+    };
+    let mods = ui.input(|i| Mods {
+        ctrl: i.modifiers.command,
+        shift: i.modifiers.shift,
+    });
+    // A press on an unselected row and a vertical drag of ≥ 4 points is a swipe (D-238); on a selected row a drag
+    // of the selection (W9c).
+    if response.drag_started()
+        && let Some(at) = ui.input(|i| i.pointer.press_origin())
+        && let Some((index, x)) = pointer_row(at)
+    {
+        let hit = hit_at(x);
+        if m.selection_press(index, hit) == Press::Swipe {
+            st.press = Some((at, Swipe::new(index, hit)));
+            st.swiping = false;
+        }
+    }
+    if response.dragged()
+        && let (Some((start, mut swipe)), Some(at)) = (st.press, response.interact_pointer_pos())
+    {
+        if (at.y - start.y).abs() >= SWIPE_THRESHOLD {
+            st.swiping = true;
+        }
+        if st.swiping {
+            swipe.moved_over(hit_at(at.x));
+            st.press = Some((start, swipe));
+            let index = (st.top + f64::from((at.y - tree.top()) / rh))
+                .floor()
+                .max(0.0) as usize;
+            m.swipe(&swipe, index);
+            // The list scrolls at its edges.
+            if at.y < tree.top() + rh {
+                st.top -= 1.0;
+            } else if at.y > tree.bottom() - rh {
+                st.top += 1.0;
+            }
+        }
+    }
+    if response.drag_stopped() {
+        st.press = None;
+        st.swiping = false;
+    }
     if (response.clicked() || response.double_clicked())
-        && let Some((index, x)) = response.interact_pointer_pos().and_then(pointer_row)
+        && let Some(at) = response.interact_pointer_pos()
     {
         response.request_focus();
-        let row = window.rows.iter().find(|r| r.index as usize == index);
-        let on_triangle = row.is_some_and(|r| {
-            r.folder
-                && side_x.iter().any(|&sx| {
-                    let tx = sx + 4.0 + r.depth as f32 * INDENT;
-                    x >= tx - 2.0 && x <= tx + 16.0
-                })
-        });
-        if response.double_clicked() {
-            match row {
-                Some(r) if r.folder => {
-                    if !on_triangle {
-                        m.toggle(index);
+        if let Some((index, x)) = pointer_row(at) {
+            let row = window.rows.iter().find(|r| r.index as usize == index);
+            let on_triangle = row.is_some_and(|r| {
+                r.folder
+                    && side_x.iter().any(|&sx| {
+                        let tx = sx + 4.0 + r.depth as f32 * INDENT;
+                        x >= tx - 2.0 && x <= tx + 16.0
+                    })
+            });
+            if response.double_clicked() {
+                match row {
+                    Some(r) if r.folder => {
+                        if !on_triangle {
+                            m.toggle(index);
+                        }
                     }
+                    Some(_) => {
+                        m.click(index, hit_at(x), Mods::default());
+                        run.push(CommandId::Open);
+                    }
+                    None => {}
                 }
-                Some(_) => {
-                    m.select(index);
-                    run.push(CommandId::Open);
-                }
-                None => {}
+            } else if on_triangle {
+                m.toggle(index);
+            } else {
+                m.click(index, hit_at(x), mods);
             }
-        } else if on_triangle {
-            m.toggle(index);
         } else {
-            m.select(index);
+            // Below the last row: nothing selected.
+            m.clear_selection();
         }
     }
     let window = if response.clicked() || response.double_clicked() {
@@ -341,9 +472,7 @@ pub fn show(
             continue;
         }
         let rect = Rect::from_min_max(pos2(tree.left(), y), pos2(tree.right(), y + rh));
-        if row.selected {
-            clip.rect_filled(rect, CornerRadius::ZERO, pal.select);
-        } else if hovered_row.is_some_and(|(i, _)| i == row.index as usize) {
+        if !row.selected && hovered_row.is_some_and(|(i, _)| i == row.index as usize) {
             clip.rect_filled(rect, CornerRadius::ZERO, pal.hover);
         }
         for (k, cell) in [row.left.as_ref(), row.right.as_ref()]
@@ -351,7 +480,40 @@ pub fn show(
             .enumerate()
         {
             let side = Rect::from_min_max(pos2(side_x[k], y), pos2(side_x[k] + side_w, y + rh));
-            draw_side(&clip, side, row, cell, &body_font, &small, columns, pal);
+            let on = if k == 0 {
+                hikasa_folder::select::SideSet::LEFT
+            } else {
+                hikasa_folder::select::SideSet::RIGHT
+            };
+            if row.sides.contains(on) {
+                clip.rect_filled(side, CornerRadius::ZERO, pal.select);
+            }
+            let spans = column_spans(m, &shown, side.left(), side.right(), columns);
+            draw_side(&clip, side, row, cell, &spans, &body_font, &small, pal);
+        }
+        if row.current {
+            clip.rect_stroke(
+                rect.shrink(0.5),
+                CornerRadius::ZERO,
+                Stroke::new(1.0, pal.accent.gamma_multiply(0.6)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if row.centre.marked {
+            clip.circle_stroke(
+                pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0),
+                rh / 2.0 - 2.0,
+                Stroke::new(1.5, pal.accent),
+            );
+        }
+        if row.centre.ignored {
+            clip.text(
+                pos2(side_x[1] - 4.0, y + 4.0),
+                Align2::RIGHT_TOP,
+                "i",
+                small.clone(),
+                pal.muted,
+            );
         }
         clip.text(
             pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0),
@@ -397,17 +559,101 @@ pub fn show(
     run
 }
 
+/// The horizontal span of each shown column of a side from `left` to `right` (D-234): the fixed-width columns from
+/// the right edge, Name the rest. Both sides get the same spans.
+fn column_spans(
+    m: &FolderViewModel,
+    shown: &[ColumnId],
+    left: f32,
+    right: f32,
+    fixed: Vec2,
+) -> Vec<(ColumnId, egui::Rangef)> {
+    let layout = m.columns();
+    let width = |c: ColumnId| match c {
+        ColumnId::Size => layout.width(c).max(fixed.x),
+        ColumnId::Modified => layout.width(c).max(fixed.y),
+        other => layout.width(other),
+    };
+    let mut spans = Vec::new();
+    let mut x = right;
+    for &c in shown.iter().rev().filter(|c| **c != ColumnId::Name) {
+        let w = width(c);
+        spans.push((c, egui::Rangef::new((x - w).max(left), x)));
+        x -= w;
+    }
+    spans.push((ColumnId::Name, egui::Rangef::new(left, x.max(left))));
+    spans.reverse();
+    spans
+}
+
+/// The glyph of a name cell (D-236): the colour spot, a folder (filled, hollow, unopened), the zipper; the red X and
+/// the link arrow on top.
+fn draw_glyph(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    glyph: GlyphView,
+    colour: Color32,
+    pal: &Palette,
+) {
+    let tint = match glyph.colour {
+        GlyphColour::Class => colour,
+        GlyphColour::Unknown => pal.c_unknown,
+        GlyphColour::Unopened => pal.c_unopened,
+        GlyphColour::Error => pal.error,
+    };
+    let rect = icons::square(pos2(at.x - 7.0, at.y - 7.0), 14.0);
+    match glyph.base {
+        Glyph::Spot => {
+            painter.circle_filled(at, 4.5, tint);
+        }
+        Glyph::Folder | Glyph::FolderFilled => icons::paint(painter, rect, IconId::Folder, tint),
+        Glyph::FolderHollow => {
+            painter.rect_stroke(
+                rect.shrink(2.0),
+                CornerRadius::same(2),
+                Stroke::new(1.2, tint),
+                egui::StrokeKind::Inside,
+            );
+        }
+        Glyph::Archive => icons::paint(painter, rect, IconId::Zipper, tint),
+    }
+    if glyph.error {
+        let stroke = Stroke::new(1.6, pal.error);
+        painter.line_segment(
+            [
+                rect.left_top() + vec2(3.0, 3.0),
+                rect.right_bottom() - vec2(3.0, 3.0),
+            ],
+            stroke,
+        );
+        painter.line_segment(
+            [
+                rect.right_top() + vec2(-3.0, 3.0),
+                rect.left_bottom() + vec2(3.0, -3.0),
+            ],
+            stroke,
+        );
+    }
+    if glyph.link {
+        let stroke = Stroke::new(1.2, pal.f_text);
+        let base = rect.left_bottom() + vec2(1.0, -1.0);
+        painter.line_segment([base, base + vec2(5.0, -5.0)], stroke);
+        painter.line_segment([base + vec2(5.0, -5.0), base + vec2(1.5, -5.0)], stroke);
+        painter.line_segment([base + vec2(5.0, -5.0), base + vec2(5.0, -1.5)], stroke);
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // the row, its place and its look
-/// One side of a row: indentation, disclosure triangle, colour spot, name, size and time; hatched when the
+/// One side of a row: indentation, disclosure triangle, glyph, name and the other shown columns; hatched when the
 /// item does not exist on this side.
 fn draw_side(
     painter: &egui::Painter,
     rect: Rect,
     row: &RowView,
     cell: Option<&Cell>,
+    spans: &[(ColumnId, egui::Rangef)],
     font: &FontId,
     small: &FontId,
-    columns: Vec2,
     pal: &Palette,
 ) {
     let Some(cell) = cell else {
@@ -425,45 +671,48 @@ fn draw_side(
     } else {
         colour
     };
-    if row.archive {
-        icons::paint(
-            painter,
-            icons::square(pos2(indent + 13.0, y - 7.0), 14.0),
-            IconId::Zipper,
-            spot_colour,
-        );
-    } else {
-        painter.circle_filled(pos2(indent + 20.0, y), 4.5, spot_colour);
-    }
-    let time_x = rect.right() - 6.0;
-    let size_x = rect.right() - columns.y - 8.0;
-    let name_rect = Rect::from_min_max(
-        pos2(indent + 28.0, rect.top()),
-        pos2(size_x - columns.x + 8.0, rect.bottom()),
+    draw_glyph(
+        painter,
+        pos2(indent + 20.0, y),
+        cell.glyph,
+        spot_colour,
+        pal,
     );
-    if name_rect.width() > 4.0 {
-        painter
-            .with_clip_rect(name_rect.intersect(painter.clip_rect()))
-            .text(
-                pos2(name_rect.left(), y),
-                Align2::LEFT_CENTER,
-                &cell.name,
-                font.clone(),
-                colour,
+    let ext_shown = spans.iter().any(|(c, _)| *c == ColumnId::Ext);
+    for (column, span) in spans {
+        let text = cell.text(*column, ext_shown);
+        if *column == ColumnId::Name {
+            let name_rect = Rect::from_min_max(
+                pos2(indent + 28.0, rect.top()),
+                pos2(span.max - 4.0, rect.bottom()),
             );
+            if name_rect.width() > 4.0 {
+                painter
+                    .with_clip_rect(name_rect.intersect(painter.clip_rect()))
+                    .text(
+                        pos2(name_rect.left(), y),
+                        Align2::LEFT_CENTER,
+                        text,
+                        font.clone(),
+                        colour,
+                    );
+            }
+            continue;
+        }
+        let cell_rect = Rect::from_min_max(
+            pos2(span.min, rect.top()),
+            pos2(span.max - 6.0, rect.bottom()),
+        );
+        let (anchor, x) = if matches!(
+            column,
+            ColumnId::Size | ColumnId::Owner | ColumnId::Group | ColumnId::Modified
+        ) {
+            (Align2::RIGHT_CENTER, cell_rect.right())
+        } else {
+            (Align2::LEFT_CENTER, cell_rect.left() + 6.0)
+        };
+        painter
+            .with_clip_rect(cell_rect.intersect(painter.clip_rect()))
+            .text(pos2(x, y), anchor, text, small.clone(), pal.muted);
     }
-    painter.text(
-        pos2(size_x, y),
-        Align2::RIGHT_CENTER,
-        &cell.size,
-        small.clone(),
-        pal.muted,
-    );
-    painter.text(
-        pos2(time_x, y),
-        Align2::RIGHT_CENTER,
-        &cell.modified,
-        small.clone(),
-        pal.muted,
-    );
 }
