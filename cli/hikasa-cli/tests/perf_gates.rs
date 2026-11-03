@@ -420,12 +420,19 @@ fn against_summary(
             load()
         );
         if median > base + extra {
-            failures.push(format!("{name}: {median:?} > the summary's {base:?} + {extra:?}"));
+            failures.push(format!(
+                "{name}: {median:?} > the summary's {base:?} + {extra:?}"
+            ));
         }
         if let (Some(p), Some(b)) = (peak, base_peak)
             && p > b + rss
         {
-            failures.push(format!("{name}: peak RSS {} MiB > the summary's {} MiB + {} MiB", mib(p), mib(b), mib(rss)));
+            failures.push(format!(
+                "{name}: peak RSS {} MiB > the summary's {} MiB + {} MiB",
+                mib(p),
+                mib(b),
+                mib(rss)
+            ));
         }
     }
     failures
@@ -445,7 +452,16 @@ fn g13_text_reports_of_the_g1_pair() {
     std::fs::write(dir.join("l.c"), &left).unwrap();
     std::fs::write(dir.join("r.c"), &right).unwrap();
     let report = |layout: &str, extra: &[&str]| {
-        let mut args = vec!["report", "text", "l.c", "r.c", "--layout", layout, "--output-to", "out.report"];
+        let mut args = vec![
+            "report",
+            "text",
+            "l.c",
+            "r.c",
+            "--layout",
+            layout,
+            "--output-to",
+            "out.report",
+        ];
         args.extend(extra);
         os(&args)
     };
@@ -479,13 +495,25 @@ fn g13_folder_reports_of_the_g2_tree() {
     let dir = tmp.path();
     tree_100k(dir);
     let report = |layout: &str, extra: &[&str]| {
-        let mut args = vec!["report", "folder", "l", "r", "--content", "none", "--layout", layout];
+        let mut args = vec![
+            "report",
+            "folder",
+            "l",
+            "r",
+            "--content",
+            "none",
+            "--layout",
+            layout,
+        ];
         args.extend(["--output-to", "out.report"]);
         args.extend(extra);
         os(&args)
     };
     let cases = [
-        ("side-by-side HTML", report("side-by-side", &["--html", "--options", "display-all"])),
+        (
+            "side-by-side HTML",
+            report("side-by-side", &["--html", "--options", "display-all"]),
+        ),
         ("XML", report("xml", &["--options", "display-all"])),
     ];
     let failures = against_summary(
@@ -511,7 +539,16 @@ fn g13_linked_reports_of_1000_pairs() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let changed = tree_100k_with(dir, Some(4096));
-    let summary = os(&["report", "folder", "l", "r", "--layout", "summary", "--output-to", "out.report"]);
+    let summary = os(&[
+        "report",
+        "folder",
+        "l",
+        "r",
+        "--layout",
+        "summary",
+        "--output-to",
+        "out.report",
+    ]);
     let (base, _, _, base_peak) = measure(dir, &summary, 13);
     println!(
         "G13 links: {changed} differing pairs of 4 KiB; summary (baseline) median {:.3} s, peak RSS {}; load {}",
@@ -525,10 +562,24 @@ fn g13_linked_reports_of_1000_pairs() {
         let out = dir.join(format!("out{n}"));
         std::fs::create_dir_all(&out).unwrap();
         let main = out.join("report.html");
-        let mut args = os(&["report", "folder", "l", "r", "--html", "--options", "include-file-links", "--output-to"]);
+        let mut args = os(&[
+            "report",
+            "folder",
+            "l",
+            "r",
+            "--html",
+            "--options",
+            "include-file-links",
+            "--output-to",
+        ]);
         args.push(main.into_os_string());
         let run = run(dir, &args);
-        assert_eq!(run.code, Some(13), "{}", std::fs::read_to_string(dir.join("stderr.txt")).unwrap_or_default());
+        assert_eq!(
+            run.code,
+            Some(13),
+            "{}",
+            std::fs::read_to_string(dir.join("stderr.txt")).unwrap_or_default()
+        );
         let written = std::fs::read_dir(out.join("report_files")).unwrap().count();
         assert_eq!(written, changed + 1, "a report per pair, and the marker");
         if n > 0 {
@@ -557,7 +608,11 @@ fn g13_linked_reports_of_1000_pairs() {
     if let (Some(p), Some(b)) = (peak, base_peak)
         && p > b + (64 << 20)
     {
-        failures.push(format!("peak RSS {} MiB > the summary's {} MiB + 64 MiB", mib(p), mib(b)));
+        failures.push(format!(
+            "peak RSS {} MiB > the summary's {} MiB + 64 MiB",
+            mib(p),
+            mib(b)
+        ));
     }
     assert!(failures.is_empty(), "G13 links: {failures:?}");
 }
