@@ -12,7 +12,8 @@
 //!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
 //!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
 //!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test; 0.1.91 confines `ctrlc` to
-//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`; M2 W6 confines `open::` to
+//!    `cli/hikasa-cli/src/interrupt.rs` (M2 W8b: to `core/hikasa-session/src/interrupt.rs`, whose `CtrlC` is
+//!    adapter-only) and `fontique` to `gui/hikasa-gui/src/fonts.rs`; M2 W6 confines `open::` to
 //!    `core/hikasa-session/src/host.rs`, adds `SystemLauncher` to the adapter-only names, refuses it in every test, and
 //!    keeps `execute_with` to `api/folder_ops.rs`, `plan_op` to `folder_op_plan`. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
@@ -1020,7 +1021,9 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for file in rust_files(&root.join("core")) {
         let rel = relative(root, &file);
-        if rel == "core/hikasa-session/src/host.rs" || rel.starts_with("core/hikasa-session/tests/")
+        if rel == "core/hikasa-session/src/host.rs"
+            || rel == "core/hikasa-session/src/interrupt.rs"
+            || rel.starts_with("core/hikasa-session/tests/")
         {
             continue;
         }
@@ -1036,6 +1039,7 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
             "SystemClipboard",
             "clipboard_provider",
             "SystemLauncher",
+            "CtrlC",
         ] {
             for at in find_token(&code, token) {
                 let line = line_of(&code, at);
@@ -1301,9 +1305,13 @@ fn check_slot_parsers(root: &Path) -> Vec<String> {
 /// `SystemClipboard` (tests never touch the real clipboard, A3.9).
 fn check_confined_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
-    // D-159, D-160: the two crates of the adapters, each behind one file.
+    // D-159, D-160: the two crates of the adapters, each behind one file; `ctrlc` behind the session's adapter-only
+    // `CtrlC` since M2 W8b (the CLI and `hikasa-gui @script --silent` share it), named nowhere else.
+    const CTRLC_HOME: &str = "core/hikasa-session/src/interrupt.rs";
     for (top, token, home) in [
-        ("cli", "ctrlc", "cli/hikasa-cli/src/interrupt.rs"),
+        ("core", "ctrlc", CTRLC_HOME),
+        ("cli", "ctrlc", CTRLC_HOME),
+        ("gui", "ctrlc", CTRLC_HOME),
         ("gui", "fontique", "gui/hikasa-gui/src/fonts.rs"),
     ] {
         for file in rust_files(&root.join(top)) {
@@ -1713,6 +1721,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "zip",
             "arboard",
             "open",
+            "ctrlc",
         ],
         &["tempfile", "pretty_assertions", "proptest"],
     ),
@@ -1734,7 +1743,6 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tracing",
             "tracing-subscriber",
             "jiff",
-            "ctrlc",
         ],
         &[
             "assert_cmd",
@@ -3640,16 +3648,32 @@ fn check_2_refuses_renamed_reexports_of_the_adapter_only_functions() {
     let violations = check_adapter_only(root);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("another name"), "{violations:?}");
+    // M2 W8b: the session's Ctrl-C handler is the adapters' (defined in interrupt.rs, used by cli/ and gui/).
+    put(
+        root,
+        "core/hikasa-session/src/interrupt.rs",
+        "pub struct CtrlC;\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/script.rs",
+        "fn f() { let _ = crate::interrupt::CtrlC; }\n",
+    );
+    let violations = check_adapter_only(root).join("\n");
+    assert!(
+        violations.contains("api/script.rs:1: `CtrlC` is adapter-only"),
+        "{violations}"
+    );
 }
 
-/// D-159, D-160: `ctrlc` and `fontique` stay behind one file of their adapter.
+/// D-159, D-160: `ctrlc` and `fontique` stay behind one file (`ctrlc` behind the session's `CtrlC`, M2 W8b).
 #[test]
 fn check_2_confines_the_crates_of_the_adapters() {
     let tmp = fake_root();
     let root = tmp.path();
     put(
         root,
-        "cli/hikasa-cli/src/interrupt.rs",
+        "core/hikasa-session/src/interrupt.rs",
         "fn a() { ctrlc::set_handler(|| {}); }\n",
     );
     put(
@@ -3668,10 +3692,22 @@ fn check_2_confines_the_crates_of_the_adapters() {
         "gui/hikasa-gui/src/ui/fonts.rs",
         "use fontique::Collection;\n",
     );
-    let violations = check_confined_crates(root);
-    assert_eq!(violations.len(), 2, "{violations:?}");
-    assert!(violations[0].contains("`ctrlc`"), "{violations:?}");
-    assert!(violations[1].contains("`fontique`"), "{violations:?}");
+    put(
+        root,
+        "gui/hikasa-gui/src/script_dialog.rs",
+        "fn d() { ctrlc::try_set_handler(|| {}); }\n",
+    );
+    let violations = check_confined_crates(root).join("\n");
+    assert_eq!(violations.lines().count(), 3, "{violations}");
+    assert!(
+        violations.contains("cli/hikasa-cli/src/main.rs:2: the `ctrlc` crate"),
+        "{violations}"
+    );
+    assert!(
+        violations.contains("gui/hikasa-gui/src/script_dialog.rs:1: the `ctrlc` crate"),
+        "{violations}"
+    );
+    assert!(violations.contains("`fontique`"), "{violations}");
 }
 
 /// M2 W6 (§1.6.21): `open::` in one file, one way into execution and planning, and no real program in a test.

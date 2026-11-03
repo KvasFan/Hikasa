@@ -10,6 +10,7 @@
 //! | Module | Content |
 //! |---|---|
 //! | [`host`] | host facts and clocks (adapter-only capture) |
+//! | [`interrupt`] | Ctrl-C for the adapters ([`interrupt::CtrlC`], adapter-only; M2 W8b) |
 //! | [`paths`] | the configuration and cache folders (§2.22) |
 //! | [`options`] | `options.toml` (D-25, D-31) |
 //! | [`formats`] | [`FormatStore`]: built-ins + user formats + `order.toml` (§2.12.4, D-21) |
@@ -41,6 +42,7 @@ mod error;
 pub mod formats;
 pub mod help;
 pub mod host;
+pub mod interrupt;
 pub mod ipc;
 pub mod jobs;
 pub mod launcher;

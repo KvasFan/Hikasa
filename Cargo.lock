@@ -2016,7 +2016,6 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_complete",
- "ctrlc",
  "filetime",
  "hikasa-core",
  "hikasa-diff",
@@ -2190,6 +2189,7 @@ version = "0.1.93"
 dependencies = [
  "arboard",
  "crossbeam-channel",
+ "ctrlc",
  "directories",
  "hikasa-core",
  "hikasa-diff",

@@ -31,6 +31,7 @@ crossbeam-channel.workspace = true
 zip.workspace = true
 arboard.workspace = true
 open.workspace = true
+ctrlc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
