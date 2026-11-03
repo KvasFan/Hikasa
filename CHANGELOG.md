@@ -16,7 +16,9 @@
   folders differ only in case (under `--case-insensitive`) or in NFC/NFD form now lands in one folder at the target, the
   one the target already holds by either name, else a new one named as the left spells it (the right's spelling when only
   the right is written). Before, onto a case-sensitive target, the right side's files went to a folder of their own
-  spelling that was never made, and failed `not_found`.
+  spelling that was never made, and failed `not_found`. A file and a folder whose names differ only in case, under
+  `--case-insensitive`, now both go to a case-sensitive target, whichever side holds the file; before, the second was
+  skipped as `duplicate_target`.
 
 ## 0.1.92 (2026-11-02, pre-release)
 
