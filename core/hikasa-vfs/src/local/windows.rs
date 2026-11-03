@@ -104,6 +104,13 @@ pub(super) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     past_others(|| fs::rename(from, to))
 }
 
+/// [`super::rename_free`]'s call: `tempfile`'s `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` first sets the item's
+/// attributes to normal (it is made for its own temporary files), which a user's file or folder must keep; so the
+/// rename after the look stays (W7b notes). `Unsupported` sends [`super::rename_free`] to it.
+pub(super) fn rename_noreplace(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 /// [`super::rename_new`]'s call, past a scanner or an indexer.
 pub(super) fn persist_new(from: &Path, to: &Path) -> io::Result<()> {
     past_others(|| super::persist_new(from, to))

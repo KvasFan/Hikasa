@@ -121,6 +121,12 @@ pub(super) fn persist_new(from: &Path, to: &Path) -> io::Result<()> {
     super::persist_new(from, to)
 }
 
+/// [`super::rename_free`]'s call: the kernel's no-replace rename (Linux `renameat2` `RENAME_NOREPLACE`, macOS
+/// `renamex_np` `RENAME_EXCL`), else a hard link and an unlink (a file; a folder refuses and is renamed after a look).
+pub(super) fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    super::persist_new(from, to)
+}
+
 /// The handle stays open through a rename: nothing here keeps an open file from being renamed.
 pub(super) fn hold_through_rename(file: File) -> Option<File> {
     Some(file)
