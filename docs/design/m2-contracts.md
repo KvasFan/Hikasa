@@ -6782,7 +6782,7 @@ pub struct Script { pub commands: Vec<Command>, pub references: References }    
 pub fn parse(source: &[u8], checker: &dyn WordChecker) -> Result<Script, Vec<ScriptError>>;   // lex + parse + check
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScriptError { pub pos: Pos, pub code: ScriptErrorCode, pub message: String }
-pub struct References { pub args: u8 /* highest %n */, pub env: BTreeSet<String>, pub uses_script_path: bool }
+pub struct References { pub args: u8 /* highest %n */, pub env: BTreeSet<String> }
 pub struct LocalTime { pub year: i16, pub month: u8, pub day: u8, pub hour: u8, pub minute: u8, pub second: u8 }
 pub struct ExpandContext<'a> { pub script: &'a OsStr, pub args: &'a [OsString],
     pub env: &'a BTreeMap<String, OsString>, pub env_case_insensitive: bool, pub now: LocalTime }
