@@ -8,10 +8,11 @@ use egui::{Align, Align2, Button, CursorIcon, Label, Layout, RichText, Sense, Ui
 use crate::dialog::{AboutDialog, ButtonRole, DialogModel, Prompt};
 use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
+use crate::script_dialog::{ContinueDialog, RunScriptDialog, ScriptDialog};
 use crate::session_dialog::{NameDialog, SaveSessionDialog, SessionSettingsDialog};
 use crate::ui::hint::Hint as _;
 use crate::ui::theme::Palette;
-use crate::ui::{op_dialogs, options, session_dialog, wizards, workspace};
+use crate::ui::{op_dialogs, options, script_dialog, session_dialog, wizards, workspace};
 use crate::wizards::{ExportWizard, ImportWizard, RestoreWizard};
 use crate::workspace::{ManageWorkspacesDialog, SaveWorkspaceDialog};
 
@@ -75,10 +76,12 @@ pub fn show(
                 let handle = ui
                     .interact(bar, id.with("title"), Sense::drag())
                     .on_hover_cursor(CursorIcon::Grab);
+                // A beep flashes the status window's title (§1.8.9).
+                let flash = dialog.as_any().is::<ScriptDialog>() && script_dialog::flashing(&ctx);
                 let title = RichText::new(dialog.title())
                     .strong()
                     .size(15.0)
-                    .color(pal.fg);
+                    .color(if flash { pal.accent } else { pal.fg });
                 ui.add(Label::new(title).selectable(false));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("?").hint("Help (F1)").clicked() {
@@ -123,6 +126,12 @@ pub fn show(
             op_dialogs::confirm(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<DeleteDialog>() {
             op_dialogs::delete(ui, d, pal);
+        } else if let Some(d) = dialog.as_any().downcast_ref::<ScriptDialog>() {
+            fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
+        } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {
+            script_dialog::ask_continue(ui, d, pal);
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RunScriptDialog>() {
+            script_dialog::run_script(ui, d, pal);
         }
         ui.add_space(12.0);
         // A row of its own height: a layout that fills what is left would centre the buttons in it.

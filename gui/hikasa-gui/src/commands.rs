@@ -121,6 +121,8 @@ command_ids! {
     Import,
     /// The Restore wizard (D-131).
     Restore,
+    /// The Run Script dialog (M2 W8b, D-229).
+    RunScript,
     /// Help: the contents topic.
     HelpContents,
     /// Help: the topic of the active view (F1).
@@ -634,6 +636,15 @@ pub const PRESENTATION: &[Row] = &[
         S::Global,
         Some(I::Restore),
         Some("Restore"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::RunScript,
+        S::Global,
+        None,
+        Some("Run Script"),
         G::None,
         P::Always,
         NONE,

@@ -20,6 +20,7 @@ pub mod menus;
 pub mod notify;
 pub mod op_dialogs;
 pub mod options;
+pub mod script_dialog;
 pub mod scroll;
 pub mod session_dialog;
 pub mod status;
@@ -278,6 +279,20 @@ impl HikasaApp {
                     };
                     ctx.send_viewport_cmd_to(target, ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd_to(target, ViewportCommand::Focus);
+                }
+                Effect::Beep(window) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(
+                        target,
+                        ViewportCommand::RequestUserAttention(
+                            egui::UserAttentionType::Informational,
+                        ),
+                    );
+                    crate::ui::script_dialog::flash(ctx);
                 }
                 Effect::OpenViewport(_) | Effect::ApplyCommands => {}
             }

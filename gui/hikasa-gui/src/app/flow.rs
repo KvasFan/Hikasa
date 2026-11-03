@@ -2899,6 +2899,14 @@ impl AppCore {
                 self.open_import(window, Some(&path));
                 return;
             }
+            super::Startup::Script {
+                file,
+                args,
+                closescript,
+            } => {
+                self.start_command_line_script(&file, args, closescript);
+                return;
+            }
             super::Startup::Options => self.options().startup.load_workspace.clone(),
         };
         if name.is_empty() {

@@ -3,21 +3,25 @@
 //! `clipboard://` spec first, M2 W3 D-101), registered (with its waiter) and posted to the UI
 //! thread; `LoadSession` reads the session and posts it, `LoadWorkspace` reads the workspace, registers its tabs
 //! and posts it (M2 W4b, D-125: the window runs the close actions and restores the tabs lazily, D-126);
-//! `ImportPackage` posts the package (M2 W4c, D-127: the window shows the import wizard); `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
+//! `ImportPackage` posts the package (M2 W4c, D-127: the window shows the import wizard); `RunScript` takes the script
+//! slot (`busy` while another script runs), locates, reads and checks the script with the client's cwd and environment
+//! and posts it (M2 W8b, D-228: the window shows its status window; 105/106 are `invalid_request`); `ListViews` reads
+//! the registry; `CloseView` and `Shutdown` are posted.
 
 use std::sync::Arc;
 
 use hikasa_core::ErrorKind;
 use hikasa_session::api::ViewRequest;
 use hikasa_session::ipc::{
-    IpcErrorCode, IpcHandler, OpenOptions, PROTOCOL_VERSION, Request, Response, ServerInfo, ViewId,
-    ViewInfo, ViewKind, ViewWaiter,
+    IpcErrorCode, IpcHandler, OpenOptions, PROTOCOL_VERSION, Request, Response, ScriptWaiter,
+    ServerInfo, ViewId, ViewInfo, ViewKind, ViewWaiter,
 };
 use hikasa_session::sessions::{SessionName, SessionRef};
 use hikasa_session::{ApiError, HIKASA_VERSION, Service};
 
 use crate::app::{OpenedSession, UiMsg, load_named};
 use crate::mailbox::Mailbox;
+use crate::script_dialog::{BUSY, ScriptClaim, prepare};
 use crate::shared::{Shared, view_title};
 use crate::workspace::register_tabs;
 
@@ -189,6 +193,62 @@ impl IpcHandler for GuiHandler {
                 IpcErrorCode::UnsupportedRequest,
                 format!("`{}` is not supported in this version", other.type_name()),
             ),
+        }
+    }
+
+    fn handle_script(&self, request: Request, waiter: Option<ScriptWaiter>) -> Response {
+        let Request::RunScript {
+            path,
+            args,
+            cwd,
+            env,
+            wait: _,
+            stop_on_error,
+            confirm,
+            close,
+        } = request
+        else {
+            return Response::error(IpcErrorCode::InvalidRequest, "not a run_script");
+        };
+        let Some(claim) = ScriptClaim::take(&self.shared) else {
+            return Response::error(IpcErrorCode::Busy, BUSY);
+        };
+        let invalid = |message: String| Response::error(IpcErrorCode::InvalidRequest, message);
+        let confirm = match confirm
+            .as_deref()
+            .map(hikasa_session::api::parse_confirm_mode)
+            .transpose()
+        {
+            Ok(confirm) => confirm,
+            Err(e) => return invalid(e.to_string()),
+        };
+        // The run's relative paths mean what they mean in the client's shell.
+        let service = match cwd.map(std::path::PathBuf::from) {
+            Some(cwd) if cwd.is_absolute() => self.service.with_cwd(cwd),
+            Some(cwd) => return invalid(format!("{}: an absolute path is needed", cwd.display())),
+            None => self.service.clone(),
+        };
+        let env = env
+            .into_iter()
+            .map(|(name, value)| (name, std::ffi::OsString::from(value)))
+            .collect();
+        let args = args.into_iter().map(std::ffi::OsString::from).collect();
+        match prepare(
+            &service,
+            std::ffi::OsStr::new(&path),
+            args,
+            Some(env),
+            stop_on_error,
+            confirm,
+            close,
+        ) {
+            Ok(mut start) => {
+                start.waiter = waiter;
+                start.claim = Some(claim);
+                self.mailbox.post(UiMsg::RunScript(Box::new(start)));
+                Response::Ok
+            }
+            Err(e) => invalid(e.message()),
         }
     }
 }

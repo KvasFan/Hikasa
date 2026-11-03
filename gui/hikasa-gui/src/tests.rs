@@ -801,6 +801,7 @@ fn every_command_has_an_enabled_state() {
             C::Export,
             C::Import,
             C::Restore,
+            C::RunScript,
             C::About,
             C::SessionNewList,
             C::SessionOpen,

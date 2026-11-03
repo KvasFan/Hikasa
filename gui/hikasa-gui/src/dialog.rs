@@ -96,6 +96,14 @@ pub enum DialogRequest {
     Close,
     /// The Home tree and the menus read the stores again.
     Refresh,
+    /// A dialog stacked on this one (a script's questions, M2 W8b).
+    Push(Box<dyn DialogModel>),
+    /// A log book entry: kind, source, text (a script's summaries and errors, §1.8.9).
+    Log(hikasa_session::log::LogKind, String, String),
+    /// A notice of the window (and its log entry, D-117).
+    Notice(crate::notify::Notice),
+    /// A beep: the window asks for attention (§1.8.9).
+    Beep,
 }
 
 /// What a button or key did.

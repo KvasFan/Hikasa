@@ -412,7 +412,12 @@ fn the_settings_dialogs_draw() {
             .is_some_and(|s| s == &["Ctrl+F9".to_owned()])
     );
     app.core.dialog_button(root, ButtonRole::Cancel);
-    for command in [CommandId::Export, CommandId::Import, CommandId::Restore] {
+    for command in [
+        CommandId::Export,
+        CommandId::Import,
+        CommandId::Restore,
+        CommandId::RunScript,
+    ] {
         app.core.execute(root, command);
         for _ in 0..3 {
             t += 0.1;

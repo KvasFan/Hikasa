@@ -37,6 +37,9 @@ use crate::mailbox::Mailbox;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
 use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
+use crate::script_dialog::{
+    ContinueDialog, RunScriptDialog, ScriptClaim, ScriptDialog, ScriptStart,
+};
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
 use crate::text_view::TextViewModel;
@@ -82,6 +85,8 @@ pub enum UiMsg {
     },
     /// Show the import wizard for a package (IPC `ImportPackage`, D-127).
     ImportPackage(PathBuf),
+    /// Run a checked script with its status window (IPC `RunScript`, M2 W8b, D-228): it holds the script slot.
+    RunScript(Box<ScriptStart>),
     /// Close a view (IPC `CloseView`).
     Close {
         /// The view.
@@ -124,6 +129,8 @@ pub enum Effect {
     ApplyCommands,
     /// A prompt waits in this window: bring it to the front.
     Raise(WindowId),
+    /// A script beeped (§1.8.9): the window asks for attention and its status window's title flashes.
+    Beep(WindowId),
 }
 
 /// Where an opened view goes.
@@ -170,6 +177,15 @@ pub enum Startup {
     Session(hikasa_session::sessions::SessionRef),
     /// The settings package of the command line (D-127).
     Import(PathBuf),
+    /// The `@script` of the command line (M2 W8b, D-228): its status window opens after the first frame.
+    Script {
+        /// The script as written after `@`.
+        file: std::ffi::OsString,
+        /// Its arguments.
+        args: Vec<std::ffi::OsString>,
+        /// `--closescript`.
+        closescript: bool,
+    },
 }
 
 impl CoreJob {
@@ -268,6 +284,8 @@ pub struct AppCore {
     /// Operations whose view ended while they wrote: cancelled, they end after their current item, and their outcome
     /// goes to the log with one notice (§1.6.25 W6d after review).
     orphans: Vec<OrphanOp>,
+    /// The clipboard of a script's `output-to:clipboard` (the adapter's provider; none in tests).
+    script_clipboard: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -381,6 +399,7 @@ impl AppCore {
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
             orphans: Vec::new(),
+            script_clipboard: Arc::new(hikasa_session::clipboard::NoClipboard),
             #[cfg(test)]
             before_wait: None,
         };
@@ -670,6 +689,76 @@ impl AppCore {
     }
 
     /// What runs after the first frame (the GUI's command line, D-125).
+    /// The clipboard a script's report writes to (`host::clipboard_provider` in the program).
+    pub fn set_script_clipboard(
+        &mut self,
+        provider: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
+    ) {
+        self.script_clipboard = provider;
+    }
+
+    /// The status window of the script that runs (or ran last and is still shown).
+    pub(crate) fn script_dialog_mut(&mut self) -> Option<&mut ScriptDialog> {
+        self.windows
+            .iter_mut()
+            .find_map(|w| w.dialogs.find_mut::<ScriptDialog>())
+    }
+
+    /// Opens the status window of a checked script in `window` and starts the run (§1.8.14).
+    pub(crate) fn start_script(&mut self, window: WindowId, start: ScriptStart) -> Vec<Effect> {
+        let window = if self.window(window).is_some() {
+            window
+        } else {
+            self.focused()
+        };
+        let options = self.options();
+        let dialog = ScriptDialog::start(
+            start,
+            usize::try_from(options.tweaks.log_panel.display_up_to).unwrap_or(usize::MAX),
+            options.tweaks.scripts.close_when_finished,
+            &self.wake(),
+            Arc::clone(&self.script_clipboard),
+        );
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
+        vec![Effect::Raise(window)]
+    }
+
+    /// The `@script` of the command line (§1.8.13): checked with this process's environment, then run; a script that
+    /// cannot run is an error notice with its lines in the log.
+    pub(crate) fn start_command_line_script(
+        &mut self,
+        file: &std::ffi::OsStr,
+        args: Vec<std::ffi::OsString>,
+        closescript: bool,
+    ) -> Vec<Effect> {
+        let window = self.focused();
+        let Some(claim) = ScriptClaim::take(&self.shared) else {
+            return Vec::new();
+        };
+        let close = closescript.then_some(true);
+        match crate::script_dialog::prepare(&self.service, file, args, None, false, None, close) {
+            Ok(mut start) => {
+                start.claim = Some(claim);
+                self.start_script(window, start)
+            }
+            Err(e) => {
+                let source = format!("script {}", file.to_string_lossy());
+                for line in &e.lines {
+                    self.log_entry(LogKind::Error, &source, line.clone());
+                }
+                let notice = Notice::new(
+                    format!("script:{}", file.to_string_lossy()),
+                    NoticeKind::Error,
+                    format!("The script cannot run: {}", e.message()),
+                );
+                self.notify(window, notice, &source, LogKind::Error);
+                Vec::new()
+            }
+        }
+    }
+
     pub fn set_startup(&mut self, startup: Startup) {
         self.startup = Some(startup);
     }
@@ -1108,6 +1197,13 @@ impl AppCore {
                     let window = self.focused();
                     let shown = self.open_import(window, Some(&path));
                     effects.push(Effect::Raise(shown));
+                }
+            }
+            UiMsg::RunScript(start) => {
+                // Too late: the start goes, its waiter sends exit 100 and the slot is freed.
+                if !self.quitting {
+                    let window = self.focused();
+                    effects.extend(self.start_script(window, *start));
                 }
             }
             UiMsg::Close { view } => {
@@ -1655,6 +1751,12 @@ impl AppCore {
                 let wizard = RestoreWizard::new(self.wake());
                 if let Some(w) = self.window_mut(window) {
                     w.dialogs.push(Box::new(wizard));
+                }
+            }
+            CommandId::RunScript => {
+                let dialog = RunScriptDialog::new(Arc::clone(&self.shared));
+                if let Some(w) = self.window_mut(window) {
+                    w.dialogs.push(Box::new(dialog));
                 }
             }
             CommandId::HelpContents => self.show_help(window, hikasa_session::help::INDEX_TOPIC),
@@ -2338,6 +2440,13 @@ impl AppCore {
         }
         self.exit_workspace_save();
         self.quitting = true;
+        // A script that runs stops first (its current call ends as Ctrl-C ends it); a waiting client then gets
+        // `ScriptFinished{100}` from the server's shutdown.
+        for w in &mut self.windows {
+            if let Some(status) = w.dialogs.find_mut::<ScriptDialog>() {
+                status.stop();
+            }
+        }
         let geometry = self.window(self.focused()).map(|w| w.geometry.clone());
         for wi in 0..self.windows.len() {
             while let Some(last) = self.windows[wi].tabs.len().checked_sub(1) {
@@ -2596,6 +2705,32 @@ impl AppCore {
     /// A dialog left its stack: the Options dialog's preview ends with the applied theme, its page is remembered; the
     /// dialogs of a folder operation hand their answers to their view (§1.6.20), however they closed.
     fn dialog_closed(&mut self, mut closed: Box<dyn DialogModel>) -> Vec<Effect> {
+        // A script's questions answer its run (§1.8.14), however they closed.
+        if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>()
+            && d.for_a_script()
+        {
+            let answers = d.take_confirmation();
+            if let Some(status) = self.script_dialog_mut() {
+                status.answered(answers);
+            }
+            return Vec::new();
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<ContinueDialog>() {
+            let yes = d.take_answer();
+            if let Some(status) = self.script_dialog_mut() {
+                status.continued(yes);
+            }
+            return Vec::new();
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<RunScriptDialog>() {
+            return match d.take_start() {
+                Some(start) => {
+                    let window = self.focused();
+                    self.start_script(window, start)
+                }
+                None => Vec::new(),
+            };
+        }
         if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
             let (view, answers) = (d.view, d.take_confirmation());
             let service = self.service.clone();
@@ -2658,6 +2793,26 @@ impl AppCore {
                         }
                     }
                     DialogRequest::Refresh => self.refresh_sessions(),
+                    DialogRequest::Push(dialog) => {
+                        if let Some(w) = self.window_mut(window) {
+                            w.dialogs.push(dialog);
+                        }
+                        effects.push(Effect::Raise(window));
+                    }
+                    DialogRequest::Log(kind, source, text) => self.log_entry(kind, &source, text),
+                    DialogRequest::Notice(notice) => {
+                        let kind = match notice.kind {
+                            NoticeKind::Error => LogKind::Error,
+                            NoticeKind::Warning => LogKind::Warning,
+                            NoticeKind::Info => LogKind::Summary,
+                        };
+                        let source = notice
+                            .key
+                            .strip_prefix("script:")
+                            .map_or_else(|| "script".to_owned(), |name| format!("script {name}"));
+                        self.notify(window, notice, &source, kind);
+                    }
+                    DialogRequest::Beep => effects.push(Effect::Beep(window)),
                 }
             }
         }
@@ -3026,6 +3181,17 @@ impl AppCore {
                 return effects;
             }
             NoticeAction::OpenOptions => return self.open_options(window, None),
+            NoticeAction::ShowScript => {
+                if let Some(w) = self
+                    .windows
+                    .iter()
+                    .find(|w| w.dialogs.holds::<ScriptDialog>())
+                    .map(|w| w.id)
+                {
+                    self.focus(w);
+                    return vec![Effect::Raise(w)];
+                }
+            }
             NoticeAction::ShowLog(view) => {
                 if let Some(w) = self.window_of(view) {
                     let index = self.window(w).and_then(|x| x.index_of(view));

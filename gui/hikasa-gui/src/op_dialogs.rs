@@ -101,7 +101,8 @@ pub struct PlanConfirmDialog {
     title: String,
     /// The row and its sides (`a/b.txt: from the left to the right`).
     subject: String,
-    verb: OpVerb,
+    /// `None`: a script's question, whose operation the dialog does not know (no "Do not ask again").
+    verb: Option<OpVerb>,
     /// `None` once taken.
     confirmation: Option<Confirmation>,
     counts: Vec<String>,
@@ -127,13 +128,38 @@ impl PlanConfirmDialog {
             view,
             title: title.into(),
             subject: subject.into(),
-            verb: plan.verb,
+            verb: Some(plan.verb),
             confirmation: Some(confirmation),
             counts: plan_counts(plan),
             ticked: false,
             keys: Vec::new(),
             cancelled: false,
         }
+    }
+
+    /// The questions of a script's command (M2 W8b, §1.8.14): stacked on the status window, its answers go back to the
+    /// run (`for_script`); no counts and no "Do not ask again" (a script line means the same whatever a dialog did).
+    pub fn for_script(
+        title: impl Into<String>,
+        subject: impl Into<String>,
+        confirmation: Confirmation,
+    ) -> PlanConfirmDialog {
+        PlanConfirmDialog {
+            view: ViewId(0),
+            title: title.into(),
+            subject: subject.into(),
+            verb: None,
+            confirmation: Some(confirmation),
+            counts: Vec::new(),
+            ticked: false,
+            keys: Vec::new(),
+            cancelled: false,
+        }
+    }
+
+    /// True for the questions of a script (their answers go to the status window).
+    pub fn for_a_script(&self) -> bool {
+        self.verb.is_none()
     }
 
     fn current(&self) -> Option<&hikasa_folder::ops::Question> {
@@ -167,7 +193,8 @@ impl PlanConfirmDialog {
 
     /// The key "Do not ask again" sets for the question asked now (`None`: the check box is not shown).
     pub fn do_not_ask_key(&self) -> Option<&'static str> {
-        self.kind().and_then(|kind| option_key(kind, self.verb))
+        let verb = self.verb?;
+        self.kind().and_then(|kind| option_key(kind, verb))
     }
 
     /// The answers, once the dialog is done with them: `None` while a question is open (a dialog closed then is a

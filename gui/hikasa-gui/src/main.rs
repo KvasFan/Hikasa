@@ -17,6 +17,10 @@
 //! M2 W4a: the windows (D-106), the watch thread `hikasa-watch` (D-117) and the forwarding of `hikasa::*`
 //! debug events to the log book (D-116) start with the window.
 //!
+//! M2 W8b (D-228): `hikasa-gui @script [<arg>…]` runs the script with its status window after the first frame; with a
+//! GUI running it is checked here and forwarded as `RunScript` (exit 0); with `--silent` it never goes through a GUI:
+//! it runs headless in this process (no window) and the process exits with the script's code.
+//!
 //! Windows: release builds use the windows subsystem, so the program never opens a console. Debug builds keep theirs
 //! for the log. `hikasa <command> --help` is the way to read the help there: `hikasa-gui --help` has no console to
 //! print on unless its output is redirected.
@@ -38,6 +42,7 @@ mod menus;
 mod notify;
 mod op_dialogs;
 mod options;
+mod script_dialog;
 mod session_dialog;
 mod shared;
 mod startup;
@@ -60,6 +65,8 @@ mod tests_folder_ops_fixes;
 mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;
+#[cfg(test)]
+mod tests_script;
 #[cfg(test)]
 mod tests_sessions;
 #[cfg(test)]
@@ -205,6 +212,12 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     for warning in service.startup_warnings() {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
     }
+    // `@script --silent`: headless, no window, no IPC (D-228).
+    if let Some(script) = &open.script
+        && open.silent
+    {
+        return Ok(script_dialog::run_silently(&service, script));
+    }
     // One argument that is not an existing path may name a session or a workspace (D-88, D-127).
     let single = match open.request.specs.as_slice() {
         [arg] => service.classify_single_arg(arg),
@@ -230,6 +243,9 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         match IpcServer::bind(&endpoint) {
             Ok(server) => Some(server),
             Err(IpcError::AlreadyRunning) => {
+                if let Some(script) = &open.script {
+                    return Ok(script_dialog::forward(&service, script, open.closescript));
+                }
                 return Ok(forward(&service, &open, &single, &RetryPolicy::default()));
             }
             Err(e @ IpcError::InsecureEndpoint { .. }) => {
@@ -284,6 +300,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
     let deferred =
         Deferred::materialize_formats(&service, watch.as_ref().map(|(_, link)| link.clone()));
+    // A script's `output-to:clipboard` writes the GUI's own clipboard (D-203).
+    let script_clipboard = clipboard_provider(service.env());
     let mut app = AppCore::new(
         service,
         shared,
@@ -296,13 +314,23 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     if bench.is_some_and(|b| b != BenchKind::Options) && initial.is_none() && !named {
         anyhow::bail!("the benchmark mode needs two specs");
     }
-    // The startup workspace and the command line's session open after the first frame (§1.4.12).
-    match &single {
-        SingleArg::Session(reference) => app.set_startup(Startup::Session(reference.clone())),
-        SingleArg::Workspace(name) => app.set_startup(Startup::Workspace(name.to_string())),
-        SingleArg::Package(path) => app.set_startup(Startup::Import(path.clone())),
-        _ if initial.is_none() => app.set_startup(Startup::Options),
-        _ => {}
+    app.set_script_clipboard(script_clipboard);
+    // The startup workspace and the command line's session open after the first frame (§1.4.12); so does the
+    // command line's script (D-228).
+    if let Some(script) = &open.script {
+        app.set_startup(Startup::Script {
+            file: script.file.clone(),
+            args: script.args.clone(),
+            closescript: open.closescript,
+        });
+    } else {
+        match &single {
+            SingleArg::Session(reference) => app.set_startup(Startup::Session(reference.clone())),
+            SingleArg::Workspace(name) => app.set_startup(Startup::Workspace(name.to_string())),
+            SingleArg::Package(path) => app.set_startup(Startup::Import(path.clone())),
+            _ if initial.is_none() => app.set_startup(Startup::Options),
+            _ => {}
+        }
     }
     if let Some((resolved, mut request)) = initial {
         if bench == Some(BenchKind::Folder)

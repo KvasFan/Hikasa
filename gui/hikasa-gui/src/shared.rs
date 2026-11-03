@@ -1,12 +1,13 @@
 //! State shared by the UI thread and the IPC handler threads: the list of open comparison views (`ListViews`)
-//! and the [`ViewWaiter`]s of `gui open --wait` (contract §1.10, §4.4.3 rules 2 and 5).
+//! and the [`ViewWaiter`]s of `gui open --wait` (contract §1.10, §4.4.3 rules 2 and 5), and the one script that runs
+//! (M2 W8b, D-228: a second `RunScript` is `busy`).
 //!
 //! The IPC handler never blocks on the UI (§5.1): it registers a view here and posts the work to the UI
 //! mailbox. Whoever closes a view takes its slot, computes the D-23 outcome with `ViewOutcome::close` and
 //! notifies the waiter.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use hikasa_core::ExitCode;
 use hikasa_session::ipc::{ViewId, ViewInfo, ViewResult, ViewWaiter};
@@ -55,6 +56,8 @@ struct Slot {
 pub struct Shared {
     next: AtomicU64,
     views: Mutex<BTreeMap<ViewId, Slot>>,
+    /// A script is checked or runs (`script_dialog::ScriptClaim`).
+    script: AtomicBool,
 }
 
 impl Default for Shared {
@@ -69,7 +72,24 @@ impl Shared {
         Shared {
             next: AtomicU64::new(1),
             views: Mutex::new(BTreeMap::new()),
+            script: AtomicBool::new(false),
         }
+    }
+
+    /// Takes the slot of the one script that runs; false when a script holds it.
+    pub fn claim_script(&self) -> bool {
+        !self.script.swap(true, Ordering::AcqRel)
+    }
+
+    /// Frees the slot of the script.
+    pub fn release_script(&self) {
+        self.script.store(false, Ordering::Release);
+    }
+
+    /// True while a script holds the slot.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn script_running(&self) -> bool {
+        self.script.load(Ordering::Acquire)
     }
 
     /// A fresh view id (unique per process).
