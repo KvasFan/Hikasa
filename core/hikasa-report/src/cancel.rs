@@ -89,15 +89,15 @@ mod tests {
     #[test]
     fn writes_until_the_next_boundary_after_a_cancel() {
         let token = CancelToken::new();
-        let mut w = CancelWriter::new(Vec::new(), &token);
+        // A sink that keeps nothing, and a bounded loop: a writer that never stops fails the test, not the machine.
+        let mut w = CancelWriter::new(std::io::sink(), &token);
         w.write_all(&[1u8; 1000]).unwrap();
         token.cancel();
         let chunk = vec![0u8; 4096];
-        let err = loop {
-            if let Err(e) = w.write_all(&chunk) {
-                break e;
-            }
-        };
+        let limit = 4 * CANCEL_CHECK_BYTES / 4096;
+        let err = (0..limit)
+            .find_map(|_| w.write_all(&chunk).err())
+            .unwrap_or_else(|| panic!("no cancel after {} bytes", w.written()));
         assert_eq!(err.to_string(), CANCELLED);
         assert_eq!(
             w.written(),
