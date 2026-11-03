@@ -152,7 +152,7 @@ impl HostUi for CliUi<'_> {
     }
 
     fn beep(&mut self) {
-        if !self.quiet && io::stderr().is_terminal() {
+        if rings(self.quiet, io::stderr().is_terminal()) {
             let mut err = io::stderr();
             let _ = err.write_all(b"\x07");
             let _ = err.flush();
@@ -281,4 +281,23 @@ fn test_items_max() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0)
+}
+
+/// A beep (`beep`, `[tweaks.scripts] beep_when_finished`) writes BEL to stderr only when stderr is a terminal and the
+/// run is not `--quiet` (§1.8.9); the `info L<n> beep` line is logged either way.
+fn rings(quiet: bool, terminal: bool) -> bool {
+    !quiet && terminal
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rings;
+
+    #[test]
+    fn bel_only_on_a_terminal_and_never_quiet() {
+        assert!(rings(false, true));
+        assert!(!rings(false, false));
+        assert!(!rings(true, true));
+        assert!(!rings(true, false));
+    }
 }

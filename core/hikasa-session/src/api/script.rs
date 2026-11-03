@@ -841,6 +841,9 @@ impl Service {
             },
         };
         let outcome = hikasa_script::run(script, &mut host, &opts, &job.cancel);
+        if beeps_when_finished(&self.fresh_options(), req) {
+            hikasa_script::ScriptHost::ui(&mut host).beep();
+        }
         let (mut results, warnings) = host.finish();
         let commands = script
             .commands()
@@ -887,6 +890,12 @@ impl Service {
     pub fn script_args(&self, text: &str) -> Result<Vec<String>, ScriptError> {
         hikasa_script::split_words(text)
     }
+}
+
+/// `[tweaks.scripts] beep_when_finished` (§1.8.9, OPT-021): the adapter's beep once the run ended, whatever its exit
+/// code; never in silent mode (§1.8.14: no window, no notice).
+pub fn beeps_when_finished(options: &crate::settings::Options, req: &ScriptRunRequest) -> bool {
+    options.tweaks.scripts.beep_when_finished && !req.silent
 }
 
 /// The names a set of references needs from the environment.

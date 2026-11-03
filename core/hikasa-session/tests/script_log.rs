@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hikasa_core::ExitCode;
-use hikasa_session::api::script::ScriptRunRequest;
+use hikasa_session::api::script::{ScriptEvent, ScriptRunRequest};
 use hikasa_session::{Clock, Service, ServiceInit};
 use script_common::{Ui, World, yes};
 
@@ -285,4 +285,40 @@ fn a8_15_a_million_log_lines_stream() {
         logged.saturating_sub(quiet) <= 4 << 20,
         "peak {logged} bytes logging {lines} lines, {quiet} bytes at level none"
     );
+}
+
+/// §1.8.9, OPT-021: `[tweaks.scripts] beep_when_finished` beeps once at the end of a run (any exit code), never in
+/// silent mode, not at all when off; a terminal decides only whether the CLI writes BEL (`beep` lines unchanged).
+#[test]
+fn beep_when_finished_beeps_once_at_the_end_unless_silent() {
+    let mut w = world();
+    let script = "load l r\nselect all\n";
+    let (_, ui) = w.run(script);
+    assert_eq!(ui.beeps, 0, "off by default");
+    std::fs::create_dir_all(w.dir.path().join("config")).unwrap();
+    std::fs::write(
+        w.dir.path().join("config/options.toml"),
+        "[tweaks.scripts]\nbeep_when_finished = true\n",
+    )
+    .unwrap();
+    w.service = common::service(w.dir.path());
+    let (outcome, ui) = w.run(script);
+    assert_eq!(ui.beeps, 1, "{:?}", ui.lines);
+    assert!(matches!(
+        ui.events.last(),
+        Some(ScriptEvent::Finished { .. })
+    ));
+    let (_, ui) = w.run("beep\nload l nothere\n");
+    assert_eq!(
+        ui.beeps, 2,
+        "the beep command, then the end (a failed run too)"
+    );
+    let mut ui = Ui::default();
+    let silent = ScriptRunRequest {
+        silent: true,
+        ..yes()
+    };
+    w.run_with(script, silent, &mut ui);
+    assert_eq!(ui.beeps, 0, "never in silent mode");
+    let _ = outcome;
 }
