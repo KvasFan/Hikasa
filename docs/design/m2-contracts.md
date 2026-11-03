@@ -6320,7 +6320,9 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
    `request.rs` (`ReportRequest::parse`), which M1's callers do not reach until W7b moves them.
 3. **`HtmlStyle` carries the wrap and the print block.** `HtmlStyle::{print, wrap}` are `None` by default, which is
    every byte of M1; `render_report` fills each from the request when the caller's style leaves it `None`, so a caller
-   (the pair reports of W7b) can force its own. `Some(Wrap::Character)` adds no rule.
+   (the pair reports of W7b) can force its own. `Some(Wrap::Character)` adds no rule. The wrap is filled for
+   side-by-side and interleaved text only: a wrap word another layout reports unused changes no byte of it (W7a
+   review; `a7_2_an_unused_wrap_word_changes_no_byte`).
 4. **`print_mono` is kept apart from `print`.** `ReportRequest::print` is made only by an orientation word or the
    printer target, as §1.7.4 says; `print-mono` alone records the print palette in `print_mono` and changes no byte of
    a file report (it is not `unused`: the browser target uses it). `apply_target` gives the printer a portrait block

@@ -615,6 +615,45 @@ fn a7_2_unused_words_and_their_warning() {
     assert!(text("statistics", &[], &["text"]).is_ok());
 }
 
+/// A wrap word a layout does not use is reported and changes no byte (D-210: the rule is side-by-side's and
+/// interleaved's): the summary HTML with `wrap-none` or `wrap-word` equals the summary HTML without it.
+#[test]
+fn a7_2_an_unused_wrap_word_changes_no_byte() {
+    let cmp =
+        common::inputs::compare_strings("a\nb\n", "a\nc\n", &hikasa_text::TextRules::default());
+    let render = |output: &[&str]| {
+        let req = text("summary", &[], output).unwrap();
+        let ReportBody::Text(opts) = &req.body else {
+            unreachable!()
+        };
+        let meta = hikasa_report::ReportMeta::for_text(&cmp, opts, None, "hikasa test");
+        let mut out = Vec::new();
+        let warnings = hikasa_report::render_report(
+            hikasa_report::ReportInput::Text(&cmp),
+            &req,
+            &meta,
+            &hikasa_report::HtmlStyle::default(),
+            None,
+            &mut out,
+        )
+        .unwrap();
+        (out, warnings)
+    };
+    let (plain, warnings) = render(&["html-color"]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    for wrap in ["wrap-none", "wrap-word"] {
+        let (bytes, warnings) = render(&["html-color", wrap]);
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            String::from_utf8(plain.clone()).unwrap(),
+            "{wrap}"
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].code, WarningCode::ReportOptionUnused);
+        assert_eq!(warnings[0].message, format!("summary does not use: {wrap}"));
+    }
+}
+
 /// The layout × format matrix of §1.7.4, cell by cell: which palettes each layout takes.
 #[test]
 fn a7_2_layout_format_matrix() {

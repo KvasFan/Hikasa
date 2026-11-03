@@ -1190,7 +1190,14 @@ pub fn render_report(
     let mut warnings: Vec<Warning> = req.unused_warning().into_iter().collect();
     match (input, &req.body) {
         (ReportInput::Text(cmp), ReportBody::Text(opts)) => {
-            if style.wrap.is_none() {
+            // The wrap rule is the side-by-side and interleaved HTML's (D-210); elsewhere the word is unused and
+            // changes no byte.
+            if style.wrap.is_none()
+                && matches!(
+                    opts.layout,
+                    TextLayout::SideBySide | TextLayout::Interleaved
+                )
+            {
                 style.wrap = Some(opts.wrap);
             }
             let scope = match &req.scope {
