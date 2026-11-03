@@ -1091,3 +1091,107 @@ fn a7_20_help_report_resolves() {
     let out = run(&s, &["--json", "help", "report", "folder"]);
     assert_eq!(json(&out)["result"]["topic"]["id"], "report");
 }
+
+/// A7.12, A7.14, A7.18 (review): a folder target is refused alike by the dry run and the run (exit 100, "is a
+/// folder"); links into an archive are refused before anything is compared (exit 100 where a comparison of a missing
+/// folder would be 107); M1's flags stay silent on a layout that does not use them, the words do not.
+#[test]
+fn review_targets_refused_before_and_m1_flags_silent() {
+    let s = Sandbox::new();
+    let (l, r, dl, dr) = inputs(&s);
+    let folder = s.join("out");
+    std::fs::create_dir_all(&folder).unwrap();
+    let to = folder.display().to_string();
+    let mut messages = Vec::new();
+    for dry in [true, false] {
+        let mut args = vec![
+            "report",
+            "text",
+            l.as_str(),
+            r.as_str(),
+            "--output-to",
+            to.as_str(),
+        ];
+        if dry {
+            args.push("--dry-run");
+        }
+        let out = run(&s, &args);
+        assert_eq!(code(&out), 100, "dry {dry}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "dry {dry}: {}", stdout(&out));
+        assert!(stderr(&out).contains("is a folder"), "{}", stderr(&out));
+        messages.push(stderr(&out));
+    }
+    assert_eq!(
+        messages[0], messages[1],
+        "the dry run says what the run does"
+    );
+    // Links into an archive: nothing compared (the right folder does not exist).
+    std::fs::write(
+        s.join("b.zip"),
+        b"PK\x05\x06\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+    )
+    .unwrap();
+    let member = s.join("b.zip").join("r.html").display().to_string();
+    let missing = s.join("missing").display().to_string();
+    let out = run(
+        &s,
+        &[
+            "report",
+            "folder",
+            &dl,
+            &missing,
+            "--html",
+            "--options",
+            "include-file-links",
+            "--output-to",
+            &member,
+        ],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("file reports need a folder on disk"),
+        "{}",
+        stderr(&out)
+    );
+    // M1's flags: no warning.
+    for args in [
+        vec![
+            "text",
+            "compare",
+            &l,
+            &r,
+            "--wrap",
+            "word",
+            "--patch-style",
+            "context",
+            "--no-line-numbers",
+        ],
+        vec![
+            "folder",
+            "compare",
+            &dl,
+            &dr,
+            "--report",
+            "summary",
+            "--columns",
+            "size,crc",
+        ],
+    ] {
+        let out = run(&s, &args);
+        assert!(
+            !stderr(&out).contains("does not use"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+    }
+    // The words: the warning.
+    let out = run(
+        &s,
+        &["text", "compare", &l, &r, "--output-options", "wrap-word"],
+    );
+    assert!(
+        stderr(&out).contains("does not use: wrap-word"),
+        "{}",
+        stderr(&out)
+    );
+}

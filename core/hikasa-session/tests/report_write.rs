@@ -1843,19 +1843,18 @@ fn a7_14_an_archive_member_target_is_one_rebuild() {
     let mut archive =
         zip::ZipArchive::new(std::fs::File::open(root.join("a.zip")).unwrap()).unwrap();
     assert!(archive.by_name("r.html").is_ok() && archive.by_name("keep.txt").is_ok());
-    // Links into an archive: the files folder needs a folder on disk.
-    trees(root, PAIRS);
-    let folder = compare(&service, root);
-    let mut req = linked(&service, &target);
-    let err = run(
-        &service,
-        &*service.vfs(),
-        &folder,
-        &mut req,
-        &target,
-        &job(&service, JobKind::Report),
-    )
-    .unwrap_err();
+    // Links into an archive: the files folder needs a folder on disk (refused by the request, before the comparison).
+    let flags = ReportFlags {
+        words: ReportWords {
+            options: vec!["include-file-links".into()],
+            ..ReportWords::default()
+        },
+        html: Some(false),
+        ..ReportFlags::default()
+    };
+    let err = service
+        .report_request(ReportKind::Folder, "side-by-side", &flags, &target)
+        .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Unsupported, "{err}");
     assert!(
         err.to_string()
@@ -2148,4 +2147,322 @@ fn a7_13_windows_spellings_on_disk() {
             assert!(Path::new(&path).is_file(), "{link} → {path}");
         }
     }
+}
+
+// ---- W7b review --------------------------------------------------------------------------------------------------
+
+/// A7.16 (review): the printer and the browser with `include-file-links`: the plan is `New` in the fresh print folder
+/// without looking below it (it is made at execution), a dry run writes nothing, execution writes the report with its
+/// files folder and every link resolves; the launcher gets the main file.
+#[test]
+fn a7_16_printer_and_browser_with_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    let launcher = Arc::new(RecordingLauncher::default());
+    let service = service_on(
+        root,
+        Arc::clone(&launcher),
+        Arc::new(FixedClipboard::empty()),
+    );
+    let folder = compare(&service, root);
+    for target in [ReportTarget::Printer, ReportTarget::Browser] {
+        let mut req = linked(&service, &target);
+        let control = job(&service, JobKind::Report);
+        let plan = service
+            .report_plan(folder.source(), &mut req, &target, None, &control)
+            .unwrap_or_else(|e| panic!("{target:?}: {e}"));
+        let links = plan.links.clone().unwrap();
+        assert_eq!(links.state, FilesFolder::New, "{target:?}");
+        assert_eq!(links.folder, links.wanted, "{target:?}");
+        let print = plan.print_folder.clone().unwrap();
+        assert_eq!(links.folder.parent().unwrap(), print, "{target:?}");
+        let dry = service.report_dry_run(plan.clone());
+        assert_eq!(dry.pairs.len(), 2, "{target:?}");
+        assert!(dry.pairs.iter().all(|p| p.status == PairStatus::Planned));
+        assert!(
+            !Path::new(&print.canonical()).exists(),
+            "{target:?}: a dry run makes nothing"
+        );
+        let outcome = service
+            .report_execute(folder.source(), &req, plan, None, &control)
+            .unwrap_or_else(|e| panic!("{target:?}: {e}"));
+        let opened = outcome.opened.clone().unwrap();
+        assert!(
+            opened.starts_with(print.canonical()),
+            "{}",
+            opened.display()
+        );
+        let html = std::fs::read_to_string(&opened).unwrap();
+        let base = opened.parent().unwrap().display().to_string();
+        let links = hrefs(&html);
+        assert_eq!(links.len(), 4, "{target:?}: both names of two pairs");
+        for link in links {
+            let path = join_href(&base, &link, std::path::MAIN_SEPARATOR);
+            assert!(Path::new(&path).is_file(), "{target:?}: {link} → {path}");
+        }
+        assert_eq!(
+            launcher.calls().last(),
+            Some(&Recorded::Associated(opened.clone()))
+        );
+    }
+}
+
+/// A7.16 (review): a print folder another report took between the plan and the execution (the same second) is left
+/// alone: the report makes the next `n` (its own, made without parents), and a report that fails removes only that.
+#[test]
+fn a7_16_a_print_folder_taken_since_the_plan_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let resp = text_pair(&service, dir.path());
+    for fail in [false, true] {
+        let vfs = mem(CaseSensitivity::Sensitive);
+        let mut req = text_request(&service, "side-by-side", &[], &ReportTarget::Browser).unwrap();
+        let control = job(&service, JobKind::Report);
+        let plan = service
+            .report_plan_on(
+                &vfs,
+                ReportSource::Text(&resp),
+                &mut req,
+                &ReportTarget::Browser,
+                None,
+                &control,
+            )
+            .unwrap();
+        let planned = plan.print_folder.clone().unwrap().canonical();
+        assert!(planned.ends_with("-1"), "{planned}");
+        // Another report of the same second.
+        let theirs = format!("{planned}{}report.html", std::path::MAIN_SEPARATOR);
+        vfs.insert_file(&theirs, &b"theirs"[..], MemMeta::default())
+            .unwrap();
+        let next = format!("{}-2", planned.trim_end_matches("-1"));
+        let ours = format!("{next}{}report.html", std::path::MAIN_SEPARATOR);
+        if fail {
+            vfs.inject(Fault {
+                path: ours.clone(),
+                op: VfsOp::Commit,
+                kind: ErrorKind::Io,
+            });
+        }
+        let result =
+            service.report_execute_on(&vfs, ReportSource::Text(&resp), &req, plan, None, &control);
+        vfs.clear_faults();
+        assert_eq!(text_of(&vfs, &theirs), "theirs", "fail {fail}");
+        if fail {
+            assert!(result.is_err());
+            assert!(
+                !paths(&vfs.dump()).iter().any(|p| p.starts_with(&next)),
+                "the failed report's own folder goes: {:?}",
+                paths(&vfs.dump())
+            );
+        } else {
+            let outcome = result.unwrap();
+            assert_eq!(outcome.plan.print_folder.unwrap().canonical(), next);
+            assert_eq!(outcome.opened.unwrap().display().to_string(), ours);
+            assert!(text_of(&vfs, &ours).contains("Text Compare"));
+        }
+    }
+}
+
+/// A7.12 (review, `cfg(unix)`): a main file that is a symbolic link to a file in another folder is followed: the files
+/// folder goes beside the file the report is written to, so its hrefs resolve; the plan names that file; the link
+/// stays a link.
+#[cfg(unix)]
+#[test]
+fn a7_12_a_main_file_that_is_a_link_is_followed() {
+    for absolute in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        trees(root, PAIRS);
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        let real = write(root, "else/x.html", b"old");
+        let to = if absolute {
+            real.clone()
+        } else {
+            std::path::PathBuf::from("../else/x.html")
+        };
+        std::os::unix::fs::symlink(&to, root.join("out/r.html")).unwrap();
+        let service = service(root);
+        let folder = compare(&service, root);
+        let target = ReportTarget::File(root.join("out/r.html").into_os_string());
+        let mut req = linked(&service, &target);
+        let control = job(&service, JobKind::Report);
+        let plan = service
+            .report_plan(folder.source(), &mut req, &target, None, &control)
+            .unwrap();
+        let main = plan.main.clone().unwrap();
+        assert_eq!(
+            std::fs::canonicalize(main.canonical()).unwrap(),
+            std::fs::canonicalize(&real).unwrap(),
+            "absolute {absolute}: the plan names the file"
+        );
+        let dry = service.report_dry_run(plan.clone()).dry_run_lines();
+        assert!(
+            dry[0].starts_with("replace ") && dry[0].ends_with("x.html"),
+            "{dry:?}"
+        );
+        service
+            .report_execute(folder.source(), &req, plan, None, &control)
+            .unwrap();
+        assert!(
+            std::fs::symlink_metadata(root.join("out/r.html"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!root.join("out/r_files").exists());
+        let html = std::fs::read_to_string(&real).unwrap();
+        let base = root.join("else").display().to_string();
+        let links = hrefs(&html);
+        assert_eq!(links.len(), 4);
+        for link in links {
+            let path = join_href(&base, &link, '/');
+            assert!(Path::new(&path).is_file(), "{link} → {path}");
+            let pair = std::fs::read_to_string(&path).unwrap();
+            let back = hrefs(&pair);
+            assert_eq!(
+                join_href(
+                    &root.join("else/x_files").display().to_string(),
+                    &back[0],
+                    '/'
+                ),
+                real.display().to_string()
+            );
+        }
+    }
+}
+
+/// A7.12, T12 (review): a folder at the target's name is refused by the plan, so the dry run says what execution
+/// does (`is_a_directory`, exit 100), with links or without, through a link to a folder too.
+#[test]
+fn a7_12_a_folder_target_is_refused_by_the_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    std::fs::create_dir_all(root.join("out/r.html")).unwrap();
+    let service = service(root);
+    let folder = compare(&service, root);
+    let resp = text_pair(&service, root);
+    let mut targets = vec![root.join("out/r.html"), root.join("out")];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("out"), root.join("dirlink")).unwrap();
+        targets.push(root.join("dirlink"));
+    }
+    for path in targets {
+        let target = ReportTarget::File(path.clone().into_os_string());
+        let control = job(&service, JobKind::Report);
+        let mut req = linked(&service, &target);
+        let err = service
+            .report_plan(folder.source(), &mut req, &target, None, &control)
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            ErrorKind::IsADirectory,
+            "{}: {err}",
+            path.display()
+        );
+        let mut req = text_request(&service, "unified", &[], &target).unwrap();
+        let err = service
+            .report_plan(ReportSource::Text(&resp), &mut req, &target, None, &control)
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            ErrorKind::IsADirectory,
+            "{}: {err}",
+            path.display()
+        );
+        assert!(err.to_string().contains("is a folder"), "{err}");
+    }
+}
+
+/// A7.14 (review): links into an archive are refused by `report_request`, before anything is compared, as links to
+/// stdout and to the clipboard; a report without links into the archive is not.
+#[test]
+fn a7_14_links_into_an_archive_are_refused_before_the_comparison() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("keep.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut zip, b"keep").unwrap();
+    std::fs::write(root.join("b.zip"), zip.finish().unwrap().into_inner()).unwrap();
+    let service = service(root);
+    let target = ReportTarget::File(root.join("b.zip").join("r.html").into_os_string());
+    let flags = ReportFlags {
+        words: ReportWords {
+            options: vec!["include-file-links".into()],
+            ..ReportWords::default()
+        },
+        html: Some(false),
+        ..ReportFlags::default()
+    };
+    let err = service
+        .report_request(ReportKind::Folder, "side-by-side", &flags, &target)
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Unsupported, "{err}");
+    assert!(
+        err.to_string()
+            .contains("file reports need a folder on disk"),
+        "{err}"
+    );
+    let plain = ReportFlags {
+        html: Some(false),
+        ..ReportFlags::default()
+    };
+    service
+        .report_request(ReportKind::Folder, "side-by-side", &plain, &target)
+        .unwrap();
+}
+
+/// A7.18 (review): M1's flags stay silent on a layout that does not use them (`--wrap`, `--patch-style`,
+/// `--no-line-numbers` on `unified`, `--columns` on `summary`); the same words given as words still warn.
+#[test]
+fn a7_18_m1_flags_are_not_reported_unused() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let m1 = ReportFlags {
+        wrap: Some("word".into()),
+        patch_style: Some("context".into()),
+        line_numbers: Some(false),
+        ..ReportFlags::default()
+    };
+    let req = service
+        .report_request(ReportKind::Text, "unified", &m1, &ReportTarget::Stdout)
+        .unwrap();
+    assert!(req.unused.is_empty(), "{:?}", req.unused);
+    assert!(req.unused_warning().is_none());
+    let folder = ReportFlags {
+        columns: Some("size,crc".into()),
+        words: ReportWords {
+            layout: Some("summary".into()),
+            ..ReportWords::default()
+        },
+        ..ReportFlags::default()
+    };
+    let req = service
+        .report_request(ReportKind::Folder, "list", &folder, &ReportTarget::Stdout)
+        .unwrap();
+    assert!(req.unused.is_empty(), "{:?}", req.unused);
+    // The words themselves: reported, and only they.
+    let words = ReportFlags {
+        words: ReportWords {
+            options: vec!["patch-context".into()],
+            output_options: vec!["wrap-word".into()],
+            ..ReportWords::default()
+        },
+        line_numbers: Some(false),
+        ..ReportFlags::default()
+    };
+    let req = service
+        .report_request(ReportKind::Text, "unified", &words, &ReportTarget::Stdout)
+        .unwrap();
+    assert_eq!(req.unused, ["patch-context", "wrap-word"]);
+    let warning = req.unused_warning().unwrap();
+    assert_eq!(warning.code, WarningCode::ReportOptionUnused);
+    assert!(
+        !warning.message.contains("line-numbers"),
+        "{}",
+        warning.message
+    );
 }
