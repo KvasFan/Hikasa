@@ -10,13 +10,15 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-212, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-231, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
   Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7 W7 Reports (parts W7a Core, W7b Service and CLI) ·
-  §1.8–§1.14 W8–W14 (outline in plan §6, written before each wave)
-- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7
+  §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9–§1.14 W9–W14 (outline in plan
+  §6, written before each wave)
+- §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
+  §6.8 W8
 
 ---
 
@@ -193,6 +195,24 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-211 | **Dependencies** (§1.7.16). No runtime crate. `roxmltree` 0.21.2 (MIT OR Apache-2.0) as a dev-dependency of `hikasa-report`, at the version already in `Cargo.lock`; `xmllint` as a CI tool. Check 3: `hikasa-report` dev += `roxmltree`; check 2: `write_payload` only in the clipboard module, `host.rs` and the adapters; check 7: the adapters call no report slot parser, and `ReportRequest::parse` only `hikasa_session::api::report`. | Plan §3 adds no crate for W7; D-199. | 02 |
 | D-212 | **G13 reports** (§1.7.17). Text: each new layout of the G1 pair to a file ≤ the summary run + 1.5 s, peak RSS ≤ + 24 MiB; folder: the G2 tree as side-by-side HTML and XML ≤ + 1.0 s, RSS ≤ + 32 MiB; links: 1,000 file reports ≤ 5 s, RSS ≤ + 64 MiB; streaming proven on CI by a counting allocator. A failure is reported, not relaxed. | The plan set no report gate; streaming is the property that matters and is cheap to prove on every run. | 02, 12 |
 | D-213 | **Pieces per side in the text XML** (§1.7.6, W7a review). A `row` carries `left-piece` and `right-piece`, each only when that side's line is piece 2, 3, … of a line broken by the characters-per-line limit; the single `piece` (the larger of both) is gone. The schema is unreleased, so version 1 changes in place. | With a limit, one side's line can be a piece while the other's is whole (a long left line beside two short right lines): one attribute made a reader join the right side's whole line to the line before. | 13 |
+| D-214 | **W8 in two sequential parts** (§1.8.1). W8a *Language and headless* (`hikasa-script`, the host over the Service, every command, `attrib`, errors and exit codes, confirmation and silent mode, the log, lookup, `hikasa script run\|check`, `hikasa.script.v1`, cancellation, G14), W8b *GUI, IPC, documents* (`RunScript`, `ScriptFinished`, `gui script`, `script run --gui`, `@script`, `--silent`, `--closescript`, the status window, Run Script, the catalogue, help, docs). Each ends green with its own acceptance list. | W8b renders W8a's events and sends what W8a's check accepts; W8a touches no `gui/` file, so W9 may start beside it. | 12, 16 |
+| D-215 | **The language in `hikasa-script`, the meaning in the session layer** (§1.8.2). `hikasa-script` (lexer, parser, checked AST, expansion, `lt`/`rt`, flow check, interpreter loop) depends on `hikasa-core`, `serde`, `thiserror` only and stays an engine crate; it checks every vocabulary word through `WordChecker` and runs every command through `ScriptHost`, both implemented by `hikasa_session::api::script` over the public Service calls of W6 and W7. The adapters see `api::script` only. | docs/01's graph has the session layer depend on the script crate and the architecture test forbids the reverse; one parser per vocabulary (T11) means the script cannot own one. | 01, 12 |
+| D-216 | **Lexical rules** (§1.8.3). UTF-8 with an optional BOM, at most 16 MiB (105); LF, CRLF, CR; words split by space and tab; `"` quotes any part of a word, `""` is a quote, a quote closes on its line; backslash always literal; `#` starts a comment only where a word could start; a trailing `&` outside quotes continues the command, comment-only lines between skipped, a blank line or the end after it is 106; keywords ASCII case-insensitive, values as written; every word keeps line and column (scalar values, tab = 1). | docs/12 fixes the outline; Windows paths (`"C:\dir\"`), masks with `#` and reports split over lines need the details, and backslash escapes would break every Windows path. | 12 |
+| D-217 | **Expansion** (§1.8.4). After word splitting, before the command runs, never re-lexed; `%1`…`%9`, `%0` (the script, added), `%%`, `%date%` `YYYY-MM-DD`, `%time%` `HH:MM:SS`, `%fn_time%` `HH-MM-SS` in the user's zone from the injected clock, one instant per command, dynamic names win; `%NAME%` case-sensitive except on Windows; any other `%` literal. A missing argument or an unset variable is 106 before anything runs. Arguments and values keep their bytes in spec words. The adapter captures only the referenced variables. | docs/12's "locale" time has no portable source (A16); a value that splits words is the classic batch-file bug; a missing value found mid-run would leave a half-done batch. | 12 |
+| D-218 | **`lt`/`rt` only where a side is expected** (§1.8.4): side and sides words, both ends of a direction, a select mask's side part, `timezone:` of `criteria`; normalized by the script layer; the CLI vocabularies stay strict. | Rewriting every `lt` would change paths and masks; W3 removed them from the criteria parser on purpose. | 12 |
+| D-219 | **Commands and state** (§1.8.5, §1.8.6). The table of §1.8.6 is normative: each command, its grammar, the Service calls with the requests of §1.6.23, whether it needs a loaded comparison (a static flow check, 106 `no_comparison`). The script holds one invisible Folder Compare session: settings from the `folder-compare` defaults, a loaded session's `[display]` cleared (SES-010), display `all`, expansion as the rules say, selection replaced by each `select`; `criteria` and `filter` after a load re-run the comparison; every mutation refreshes its subtrees, so later commands see the tree as it is; `output-to:` is required in report commands. | docs/12 lists the commands without their calls; re-running after a settings change and refreshing after a mutation make each line mean what it says, as in the window. | 03, 12 |
+| D-220 | **`attrib` is in W8** (§1.8.10). `FolderOp::Attrib { sides, change }` in `hikasa-folder`, `folder op attrib --change`, `set_attrs` per selected row (folders themselves, not their contents); DOS letters where the back-end has them; on Unix modes `r` maps to the write bits (`+r` clears `0o222`, `-r` sets `0o200`), `a`, `s`, `h` skip `unsupported`; archive members `unsupported`. The *Attributes…* dialog (FC-075) stays P1. | docs/12 and the plan list `attrib` as a P0 script command (W6 left the choice to W8); the primitive exists since W3, and the CLI-first rule needs its `folder op` form. | 04, 12 |
+| D-221 | **What M2 refuses, and how** (§1.8.6, §1.8.7). `snapshot`, `table-report`/`data-report`, `hex-report`, `picture-report`, `media-report`, `version-report`, `registry-report` and `file-report` without specs pass `script check` and are refused when they run (a failed command, exit 100); a `.hksnap` base and a remote scheme are load failures (107) with "…snapshots/remote folders are not available in this version". So example 2 ends with 107 at its remote `load`, and example 4 with 107 at its `.hksnap` `load`. **Open default:** refusing them at check time (106) instead. | A script written for a later version should check clean and run what this version can; a base that cannot be loaded is 107 by SCR-002. | 12, 16 |
+| D-222 | **Exit codes of a script** (SCR-003, CLI-004; §1.8.7). 105 locate or load; 106 every check error (up to 100, with `<script>:<line>:<column>`), nothing run; 107 a base that cannot be loaded, the script ends there, also under stop on error; 100 at the end when any command failed, was refused or the run was cancelled or stopped; else 0. A script's code is never a comparison verdict. `option stop-on-error` asks to continue where it can ask, else ends the run. | The stages exclude each other; a batch's caller needs one code that says whether everything ran. | 12 |
+| D-223 | **Confirmation and silent mode** (SCR-003, §1.8.8). The script is the fourth driver of W6's machine: `option confirm:` sets the mode (default `prompt`; `--confirm` sets it before line 1); in `prompt` a question is asked by the terminal or the status window; silent declines the command with "Attempted to open a dialog when running silently: <question>"; headless without a terminal declines it with its own message. Silent means no question, prompt, window or notice; the printer and browser targets and `beep` still act. | W6's table already names the script row; a missing terminal is not the user's choice of silence, so its message says what to pass. | 04, 12 |
+| D-224 | **The log** (§1.8.9). Levels `none` (errors only), `normal`, `verbose` (item details); one line format `<date> <time> <kind> L<line> <text>` for every sink; stderr gets it without the date and time; `log [append:]<file>` writes a local file line by line, flushed, created or truncated unless `append:`; a GUI log panel entry per command; `beep` writes BEL to a terminal's stderr or asks the window for attention. | Errors are never silent (ARCH-100); a log that is flushed per line survives a crash; the VFS has no append primitive and W8 adds none. | 12 |
+| D-225 | **Locating a script** (OPT-021, §1.8.11). `-` is stdin; a spec as given (archive members through the VFS); a relative path absent from the current folder is looked up below `shared_scripts_folder`; only *absent* falls through; else 105 naming both places. Relative paths inside a script are relative to the current folder, not to the script's; `%0` gives the script's place. **Open default:** relative to the script's folder. | docs/12: the shared folder is searched when the script is not in the current folder; batch files and the CLI resolve against the current folder. | 12, 15 |
+| D-226 | **`hikasa script run\|check`** (§1.8.12). `run <FILE\|-> [<ARG>…] [--silent] [--stop-on-error] [--confirm <MODE>] [--dry-run] [--gui …]`, `check <FILE\|-> [<ARG>…]`; `--dry-run` executes no plan and writes no file (T12); the stream on stderr; Ctrl-C as D-159. `hikasa.script.v1` (`SCHEMAS` 40) embeds each command's CLI `result`, item lists capped at 100,000 per command. | `--confirm` and `--dry-run` make unattended and trial runs possible without editing the script; one JSON document with the commands' own results makes T11 checkable by `jq`. | 12 |
+| D-227 | **A script equals its CLI commands** (T11, §1.8.15). P-SCRIPT on `MemoryVfs`: a script's operation, sync, content compare and report give the plans, outcome documents, trees and report bytes of the Service calls the matching `folder op`/`folder sync`/`report` flags make; CLI cases compare the JSON `result` objects and the trees on disk. | The plan asks for the property; plans as data (T12) make it exact. | 12 |
+| D-228 | **IPC, `gui script`, `@script`** (ARCH-091, CLI-002, CLI-003, CLI-G02, CLI-G03; §1.8.13). `RunScript` gains `cwd`, `env` (the referenced variables), `wait`, `stop_on_error`, `confirm`, `close` (additive), the GUI's handler answers it (no longer the server), `ScriptFinished` follows a waited run, `busy` refuses a second script. `gui script` checks locally first (105/106); `@file` in the shared legacy parser is a script with the other positional arguments as `%1`…; `--silent` never goes through a GUI: the process runs the script headless; `--closescript` closes the status window. `hikasa.gui_script.v1` (`SCHEMAS` 41). | The GUI runs the script with the CLI's current folder and environment, so a line means the same from both; a silent run must not depend on a window that may belong to another session. | 01, 12 |
+| D-229 | **The minimal status window and Run Script** (§1.8.14). A `DialogModel` fed by `ScriptEvent`s: the current command and line, the current call's progress, the log at the run's level, Stop/Close, W6's confirmation dialogs on top, OPT-021's close and beep, a notice at the end; catalogue command `RunScript` (Tools, "Run Script...") with path, arguments, stop on error and confirm mode. **Open default:** the `RunScript` command and its dialog (docs/14 lists no script command). | The plan's *minimal status window (log, progress, Stop)*; without a command a script could start in the window only from a command line. | 14, 15 |
+| D-230 | **Dependencies** (§1.8.16). No crate; `hikasa-session` += `hikasa-script`. Check 3 gains `hikasa-script`'s row, check 4 drops it from the stub crates, check 2 bans `std::fs`, `std::process`, `std::net` in `hikasa-script` and keeps `std::fs` to `api/script_log.rs` among the script files of the session, and `api/script*.rs` call no planner or renderer directly; check 7: no `hikasa_script` in the adapters. | Plan §3 adds no crate for W8; the host must reach behaviour only through the Service. | 02 |
+| D-231 | **G14 scripts** (§1.8.17). `script check` of a 200,000-line script ≤ 0.5 s and ≤ 32 MiB + 8 × its size; a script's copy of 10,000 files ≤ the direct `folder op` × 1.05 + 0.2 s; a script's sync dry run of the G2 tree ≤ the direct + 0.2 s; 10,000 commands ≤ 2 s; the log of a million detail lines streams in ≤ 4 MiB (CI). | A batch layer must cost nothing beside what it drives; streaming is the property that matters and runs on CI. | 02, 12 |
 
 ### 0.4 Dependencies
 
@@ -218,6 +238,10 @@ associated application is W6) and gives `hikasa-folder` the edge to `hikasa-form
 **W7** (D-211) adds no runtime crate: `roxmltree` 0.21.2 becomes a dev-dependency of `hikasa-report` at the version `Cargo.lock`
 already holds through `fontique` (no new package), and `xmllint` is a CI tool, never linked. Member manifests: `hikasa-report` dev +=
 `roxmltree`; check 2 and check 7 gain the rules of §1.7.16.
+**W8** (D-230) adds no crate: `hikasa-script` depends on `hikasa-core`, `serde` and `thiserror` (dev: `proptest`,
+`pretty_assertions`) and leaves the stub crates; `hikasa-session` gains the edge to `hikasa-script`. Member manifests:
+`hikasa-script` = `[hikasa-core, serde, thiserror]`, `hikasa-session` += `hikasa-script`; `Cargo.lock` gains no package;
+check 2, check 4 and check 7 change as §1.8.16 says.
 
 ### 0.5 Documentation updates of W0
 
@@ -6675,7 +6699,613 @@ latest at its render's `CancelWriter`, before its file is committed; the check s
 of these rows (each with only the named tests, `timeout 600`, 8 GiB) are in its notes; all were reverted. P-WRITE persists no failures
 (`failure_persistence: None`), so its rows have no seed.
 
-### 1.8–1.14 W8–W14
+### 1.8 W8 — Scripts
+
+**Ids.** SCR-002 (semantics), SCR-003 (errors, 105/106/107), SCR-001 (the script's report commands over W7's
+vocabulary), CLI-002 (`@script`), CLI-003 (`--silent`, `--closescript`), CLI-004 (105, 106, 107 in use), CLI-G02
+(`gui script`), CLI-G03 (`script run --gui`), ARCH-091 (`RunScript`), ARCH-100 (scripts log and respect `option
+stop-on-error`), SES-010 (a script's load clears the session's display filter), OPT-021 (`[tweaks.scripts]`), the script
+form of FC-075 (`attrib`, D-220), gate G14. Decisions D-214…D-231. Out of scope: SCR-004's full status window (P1; W8 has
+the minimal one of §1.8.14), `snapshot` and `.hksnap` bases (Q1, D-59), remote back-ends (P1), FC-079 *File Compare
+Report…* over a selection (P1, D-195), the table, hex and picture reports (W12; media, version, registry: M3), Text and
+Folder Merge, the *Attributes…* dialog of FC-075 (P1), the browse button of the Run Script dialog (W9's browse dialog).
+
+**Files.** `core/hikasa-script/` (`Cargo.toml`, `src/lib.rs`, new `src/lex.rs`, `src/parse.rs`, `src/ast.rs`,
+`src/check.rs`, `src/expand.rs`, `src/interp.rs`, `src/error.rs`; new `tests/` with `lex.rs`, `parse.rs`, `check.rs`,
+`expand.rs`, `interp.rs`, `props_script_lang.rs`, `fixtures/`); `core/hikasa-folder/src/ops/` (`mod.rs`, new `attrib.rs`,
+`build.rs`; D-220); `core/hikasa-session/src/` (new `api/script.rs`, new `api/script_host.rs`, new `api/script_log.rs`,
+`api/mod.rs`, `api/dto.rs`, `api/human.rs`, `api/folder_ops.rs` (attrib), `api/vocab.rs`, `api/gui.rs` (the legacy
+parser), `host.rs` (`capture_script_env`), `ipc/protocol.rs`, `ipc/server.rs`, `help.rs`, `log.rs`);
+`core/hikasa-session/tests/` (new `script_run.rs`, `script_check.rs`, `script_confirm.rs`, `script_log.rs`,
+`props_script.rs`, `architecture.rs`); `core/hikasa-session/catalogue/commands.toml` (`RunScript`); `cli/hikasa-cli/src/`
+(`args.rs`, `cmd/mod.rs`, new `cmd/script.rs`, `cmd/gui.rs`, `cmd/folder_op.rs` (attrib), `confirm.rs`, `interrupt.rs`);
+`cli/hikasa-cli/tests/` (new `cli_script.rs`, new `cli_script_examples.rs`, `cli_gui.rs`, `cli_interrupt.rs`,
+`perf_gates.rs`); `gui/hikasa-gui/src/` (new `script_dialog.rs`, `ipc.rs`, `app.rs`, `startup.rs`, `main.rs`,
+`commands.rs`, `tests_script.rs`); `help/` (§1.8.19); `Cargo.toml` of `hikasa-session` (+ `hikasa-script`); tests of
+§6.8.
+
+#### 1.8.1 Parts (D-214)
+
+W8 is one wave in two sequential parts, one implementer each; a part starts when the previous one is committed on
+`feat/m2` and ends with the tree green. W9 may run beside W8 on `gui/` only after W8b, or beside W8a (disjoint crates:
+W8a touches no `gui/` file).
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W8a Language and headless** | `hikasa-script` (lexer, parser, checker, expansion, interpreter over `ScriptHost`); the host over the Service; every command of §1.8.6; `attrib` in `hikasa-folder` and `folder op attrib`; errors and exit codes; confirmation and silent mode; the log; lookup; `hikasa script run\|check`, `hikasa.script.v1`; cancellation; G14 | §1.8.2–§1.8.12, §1.8.15–§1.8.17 | A8.1…A8.16, A8.20, A8.21 (`help/script.md`), A8.22…A8.25 | every script headless, the four examples of docs/12 §3.2 as documented |
+| **W8b GUI, IPC, documents** | IPC `RunScript` and `ScriptFinished`; `gui script`, `script run --gui`, `@script`, `--silent`, `--closescript`; the status window and the Run Script dialog; the catalogue; help, docs | §1.8.13, §1.8.14, §1.8.18, §1.8.19 | A8.17…A8.21, A8.24, A8.25 | scripts from the window and from the command line of the window |
+
+The order is forced: W8b's window renders W8a's events and its IPC sends what W8a's check accepts. Green is claimed per
+part (§1.5.19 W5a note 21).
+
+#### 1.8.2 Crates and the host (D-215)
+
+`docs/01` draws `hikasa-session ──► hikasa-script`, and the architecture test lists `hikasa-script` among the engine crates
+that never depend on the session layer. So the language lives in `hikasa-script` and the meaning of each command in
+`hikasa-session`:
+
+- **`hikasa-script`** (pure, T1, T8): lexer, parser, checked AST, `%`-expansion, `lt`/`rt`, the flow check and the
+  interpreter loop (state, error policy, events). Depends on `hikasa-core`, `serde`, `thiserror` only. It names no
+  `std::fs`, `std::process`, `std::net`, no clock and no environment; it never parses a core vocabulary itself: every
+  vocabulary word is checked through `WordChecker` and executed through `ScriptHost`, both implemented in the session layer
+  with the parsers the CLI uses (T11).
+- **`hikasa_session::api::script`** (new): `Service::script_locate`, `script_load`, `script_check`, `script_run`; the host
+  (`api/script_host.rs`) holds the invisible Folder Compare session and runs each command through the public calls of
+  §1.6.16 and §1.7.14 (nothing else plans, compares or writes, T11); the log sink (`api/script_log.rs`).
+- **Adapters** (`cli/`, `gui/`) call `hikasa_session::api::script` only; they do not depend on `hikasa-script` (check 3
+  keeps their manifests) and name no `hikasa_script::` item (check 7).
+
+```rust
+// hikasa_script (pure)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct Pos { pub line: u32, pub column: u32 }                 // 1-based; column in Unicode scalar values, tab = 1
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Word { pub text: String, pub quoted: bool, pub expands: bool, pub pos: Pos }   // quotes removed, not expanded
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Line { pub pos: Pos, pub end_line: u32, pub words: Vec<Word> }                 // one logical command line
+pub fn lex(source: &[u8]) -> Result<Vec<Line>, Vec<ScriptError>>;                         // §1.8.3
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Command { pub pos: Pos, pub end_line: u32, pub name: CommandName, pub args: Args, pub text: String }
+pub enum CommandName { Attrib, Beep, Collapse, Compare, Copy, CopyTo, Criteria, Delete, Expand, FileReport, Filter,
+    FolderReport, HexReport, Load, Log, MediaReport, Move, MoveTo, Option, PictureReport, RegistryReport, Rename, Select,
+    Snapshot, Sync, TableReport, TextReport, Touch, VersionReport }                        // §1.8.6; `data-report` = TableReport
+/// Arguments as typed slots: script syntax is decided here; a vocabulary word is a `Slot` with its `Word`.
+pub enum Args { /* one variant per command, fields as the grammar column of §1.8.6 */ }
+pub enum Slot { Side, Sides, Direction, Structure, SelectMask, Criteria, FilterExpr, ConfirmMode, LogLevel, Time,
+    ContentMethod, RenameMask, Regex, AttribChange, ReportLayout, ReportOptions, ReportOutputOptions, Spec, Session, Path, Text }
+pub trait WordChecker { fn check(&self, slot: Slot, word: &str) -> Result<(), String>; }  // a word without `%` only
+pub struct Script { pub commands: Vec<Command>, pub references: References }              // checked; `references`: §1.8.4
+pub fn parse(source: &[u8], checker: &dyn WordChecker) -> Result<Script, Vec<ScriptError>>;   // lex + parse + check
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScriptError { pub pos: Pos, pub code: ScriptErrorCode, pub message: String }
+pub struct References { pub args: u8 /* highest %n */, pub env: BTreeSet<String>, pub uses_script_path: bool }
+pub struct LocalTime { pub year: i16, pub month: u8, pub day: u8, pub hour: u8, pub minute: u8, pub second: u8 }
+pub struct ExpandContext<'a> { pub script: &'a OsStr, pub args: &'a [OsString],
+    pub env: &'a BTreeMap<String, OsString>, pub env_case_insensitive: bool, pub now: LocalTime }
+pub fn expand(word: &Word, ctx: &ExpandContext<'_>) -> Result<OsString, ScriptError>;    // §1.8.4
+/// One resolved command: every word expanded, `lt`/`rt` normalized, vocabulary words checked again when they expanded.
+pub struct Resolved<'a> { pub command: &'a Command, pub words: Vec<(Slot, OsString)> /* in grammar order */ }
+pub trait ScriptHost {
+    fn check_resolved(&self, slot: Slot, word: &OsStr) -> Result<(), String>;
+    fn execute(&mut self, cmd: &Resolved<'_>, state: &RunState, ui: &mut dyn HostUi) -> CommandOutcome;
+    fn now(&self) -> LocalTime;
+}
+pub struct RunState { pub confirm: ConfirmWord, pub stop_on_error: bool, pub log_level: LogLevel, pub silent: bool, pub dry_run: bool }
+pub enum CommandOutcome { Ok { summary: Vec<String>, warnings: Vec<String> }, Failed { message: String, kind: String },
+    Refused { message: String }, LoadFailed { message: String }, Cancelled }
+pub fn run(script: &Script, host: &mut dyn ScriptHost, opts: &RunOptions, ui: &mut dyn HostUi, cancel: &CancelToken) -> RunOutcome;
+```
+
+`HostUi` (events, questions, the stop-on-error prompt, beeps, the clipboard payload) is a trait of `hikasa-script` that
+`hikasa_session::api::script::ScriptUi` re-exports; `ConfirmWord` and `LogLevel` are the script's own words (§1.8.8,
+§1.8.9). Exact field names may change in W8a; the slots, the split and the rule that the host owns every vocabulary are
+binding.
+
+#### 1.8.3 Lexical rules (normative; D-216)
+
+```ebnf
+script       = [ bom ] , { physical-line } ;            (* bom = EF BB BF, skipped *)
+physical-line= { char - eol } , ( eol | end ) ;         (* eol = LF | CR LF | CR *)
+logical-line = words , { "&" , blank , { comment-line } , physical-line-words } ;
+words        = { blank } , [ word , { blank+ , word } ] , { blank } , [ comment ] ;
+word         = ( unquoted | quoted ) , { unquoted | quoted } ;
+unquoted     = char - ( blank | '"' ) , { char - ( blank | '"' ) } ;
+quoted       = '"' , { char - ( '"' | eol ) | '""' } , '"' ;
+comment      = "#" , { char - eol } ;                   (* only where a word could start *)
+blank        = " " | TAB ;
+```
+
+| Rule | Normative text |
+|---|---|
+| Encoding | UTF-8; a leading BOM is skipped. An invalid byte is 106 `invalid_utf8` at its line and column (the column of the scalar before it + 1). |
+| Size | at most `SCRIPT_MAX_BYTES` = 16 MiB; a larger file is 105 `too_large`, nothing parsed. |
+| Lines | LF, CRLF and CR each end a line (mixed allowed). One logical line is one command; a blank or comment-only logical line is nothing. |
+| Words | separated by runs of space and tab (other whitespace, NBSP included, is part of a word). |
+| Quotes | `"` opens and closes a quoted part anywhere in a word: `output-to:"%3"` is one word `output-to:%3`, `a" b"c` is `a bc`. Inside quotes `""` is one `"`; space, tab, `#`, `&` and `%` are as written (`%` still expands, §1.8.4). A quote must close on its physical line: else 106 `unterminated_quote` at the opening quote. `Word::quoted` is true when any part was quoted. |
+| Backslash | always literal, quoted or not: `"C:\dir\"` is `C:\dir\`, `\\?\C:\x` stays as written. |
+| Comments | `#` outside quotes at the start of a word (line start or after a blank) starts a comment to the end of the physical line; inside a word (`a#b`) it is literal. |
+| Continuation | a physical line whose last character outside quotes and before a comment is `&` (alone or attached, `x&`) continues the command on the next physical line; the `&` is dropped and the two parts are separated as by a blank. Comment-only lines between continued lines are skipped. A blank line or the end of the file after `&` is 106 `continuation_at_end` at the `&`. A literal trailing `&` is quoted (`"x&"`). |
+| Case | command names and keywords (side, direction, `path:`, `create:`, `confirm:`, layout words, …) are ASCII case-insensitive; values (paths, masks, session names, titles, variable names other than the dynamic ones) are as written. |
+| Positions | every `Word` keeps the line and column of its first character (an opening quote is its first character); a command's position is its first word's; `end_line` its last physical line. |
+
+The lexer is total: any byte string gives lines or errors, never a panic (P-LEX, A8.2). `Line` round-trips: printing each
+word quoted where needed (`Word::to_source`) and lexing again gives the same words (P-LEX).
+
+#### 1.8.4 Expansion (normative; D-217, D-218)
+
+Expansion runs per word, **after** the line is split into words and **just before** its command runs: a value never splits
+or joins words and is never lexed again (a `%1` holding spaces or quotes is one word as it is). It applies in quoted and
+unquoted parts alike.
+
+| Form | Value |
+|---|---|
+| `%1` … `%9` | the n-th argument after the script name (switches excluded); `%10` is `%1` followed by `0` |
+| `%0` | the script as located (§1.8.11), as given to `Spec::parse` (an addition to docs/12; D-217) |
+| `%%` | one `%` |
+| `%date%` | the local date `YYYY-MM-DD` |
+| `%time%` | the local time `HH:MM:SS`, 24-hour (docs/12's "locale" has no portable source, A16: one fixed form) |
+| `%fn_time%` | the local time `HH-MM-SS` (file-name safe) |
+| `%NAME%` | the environment variable `NAME`, `NAME` = `[A-Za-z_][A-Za-z0-9_]*`; case-sensitive (docs/12), except on Windows, where the environment itself is case-insensitive, so `%Path%` finds `PATH` |
+| any other `%` | itself (`50%`, `%x y`, a `%` before a character that cannot start a name) |
+
+- **Dynamic names** `date`, `time`, `fn_time` are matched ASCII case-insensitively and win over environment variables of
+  those names. One instant per command: every dynamic name of one command line shows the same `LocalTime`, taken from
+  the Service's injected clock in the user's zone (T1; the zone of `EnvFacts`, as auto-save names) when the command is
+  expanded; two commands may show different times. `SOURCE_DATE_EPOCH` does not apply (D-206: only reports read it).
+- **Before anything runs** (106, with the word's position): a `%n` above the number of arguments given
+  (`missing_script_argument`, "the script uses %3, but 2 arguments were given"), and an environment variable that is not
+  set (`unset_variable`; set and empty is fine). `script check` without arguments skips the first check and with
+  arguments makes it; it always makes the second against its own environment.
+- **Bytes.** Arguments and environment values are `OsString`; a word that names a spec, a path or a file keeps their
+  bytes (non-UTF-8 on Unix, unpaired surrogates on Windows) and goes to `Spec::parse` as `OsStr`. A word of any other slot
+  must be UTF-8 after expansion, else that command fails `invalid_input` "…is not valid UTF-8".
+- **Words that expanded** (`Word::expands`) are checked by `WordChecker` only after expansion, at run time: a bad value
+  there is a run-time error of that command (§1.8.7), not 106.
+- **The environment** is captured by the adapter, once, before the run: `host::capture_script_env(&references.env)` reads
+  only the names the script references (never the whole environment), as `capture_env` does for its facts. Over IPC the
+  CLI sends those names and values (§1.8.13).
+
+**`lt` and `rt` (D-218).** `lt` and `rt` mean `left` and `right` in side positions only, ASCII case-insensitively: a side
+or sides word (`delete lt`, `copyto rt …`, `touch lt:now`, `load create:lt …`), either end of a direction (`lt->rt`,
+`update:rt->lt`), the side part of a select mask (`lt.diff.files`), and the side of `criteria timezone:lt+2`. They are
+normalized by the script layer before the word reaches the host; the core vocabularies stay strict (the CLI's
+`--criteria`, `--to` and `--select` refuse `lt`, as since W3). A path, mask, name or quoted-only word is never rewritten.
+
+#### 1.8.5 The script's state
+
+The host keeps one invisible Folder Compare session (SCR-002):
+
+| State | Starts as | Changed by |
+|---|---|---|
+| settings (folder rules, text rules for content `rules`) | the defaults of `folder-compare` (`Service::session_defaults`), as `load <default>` | `load`, `criteria`, `filter` |
+| sync preset | none | `load` of a `folder-sync` session (its `[rules.sync]`) |
+| comparison (`FolderCompareRequest`, `PreparedFolderCompare`, `FolderCompareResponse`, the model) | none | `load` (replaces), `load <default>` (drops); refreshed after mutations |
+| display | `all` with the folder structure; no command changes it; a loaded session's `[display]` is cleared (SES-010) | — |
+| expanded folders | none (only the bases' direct children are visible), unless the loaded rules expand on load (`expand_on_load`, `expand_differences`, W6) | `expand`, `collapse`, `load` |
+| selection (`Selection`) | empty | `select` (replaces), `load` (clears); nodes an operation removes leave it |
+| confirm mode | `prompt`, or the CLI's `--confirm` | `option confirm:` |
+| stop on error | off, or on with `--stop-on-error` | `option stop-on-error` |
+| log | level `normal`, no file | `log` |
+
+- **Settings after a load (D-219).** `criteria` and `filter` change the current settings; when a comparison is loaded they
+  also re-run it at once with the same specs (`folder_prepare_in` + `folder_run`, as `load`), keeping the expanded folders
+  whose paths still exist and the selected rows whose paths still exist. docs/12 says only that a load uses the current
+  settings; re-running makes a later `select` see what the line says.
+- **After a mutation.** Each executed `copy`, `move`, `copyto`, `moveto`, `delete`, `rename`, `touch`, `attrib`, `sync`
+  refreshes what it changed with `folder_refresh(model, outcome.refresh_nodes)` (W6, as the GUI does); `RefreshFlat` or
+  `RefreshBusy` falls back to re-running the comparison. `compare` updates the rows through `folder_contents`. So every
+  later command sees the tree as it is.
+- **Flow check (106 `no_comparison`).** The language has no branches, so whether a comparison is loaded is known before
+  anything runs: a command that needs one (column *Needs* of §1.8.6) before any `load` of folders or a session, or after
+  `load <default>` without a later load, is 106 at its position ("select needs a loaded comparison: no load before line
+  n"). A load that fails ends the script (107), so the check is exact.
+
+#### 1.8.6 Commands (normative; D-219…D-221)
+
+Grammar: `[x]` optional, `a|b` one of, `…` repeatable; keywords case-insensitive; `SIDE` = `left|right|lt|rt`, `SIDES` =
+`SIDE|all`, `DIR` = `left->right|right->left` (and the `lt`/`rt` spellings), `KW:` a keyword word whose value follows the
+colon in the same word. *Needs*: a loaded comparison (§1.8.5). Every vocabulary word goes to the parser named, the one the
+CLI flag uses (T11); a refused word is 106 when the word does not expand, else the command's run-time error.
+
+| Command | Grammar | Service calls (host) | Needs | Notes |
+|---|---|---|---|---|
+| `load` | `load <session>` \| `load <default>` \| `load [create:SIDES] <left> <right>` | session: `session_effective` (folder-compare or folder-sync), `[display]` cleared, then `folder_prepare_in` + `folder_run` (`JobKind::FolderCompare`); folders: `Spec::parse` against the captured cwd, the current settings, the same calls; `create:` first plans and executes `mkdir -p` of each missing base on those sides through `vfs_plan`/`vfs_run` with a `mkdir` `VfsOpRequest` (W3, T12; no question) | — | one word: a named session (exact, then case-insensitive, D-88's order) or `<default>` (ASCII case-insensitive); anything else with one word is 107 "<word>: no session of that name; loading folders needs two specs". A text, table, hex or picture session → 107 "scripts load Folder Compare and Folder Sync sessions". A base that cannot be loaded → 107 (§1.8.7) |
+| `criteria` | `criteria <word>…` | the `--criteria` parser (D-57), applied as `folder compare --criteria` is (rules precedence of D-57) | — | the words of docs/12 §3.1 and `filename-case`; `version` → `unsupported` (FC-028 P1); re-runs a loaded comparison |
+| `filter` | `filter <masks>` \| `filter cutoff:<expr>\|none` \| `filter size:<expr>\|none` \| `filter attrib:<expr>\|none` \| `filter unixtype:<expr>\|none` \| `filter exclude-protected` \| `filter include-protected` | the parsers of `--filters`, `--cutoff`, `--size-filter`, `--attrib-filter` (`AttribFilter::parse`), `--unixtype-filter` (`UnixTypeFilter::parse`), `--include-protected` | — | one form per line; `<masks>` replaces the name filter (`;`-separated, as `--filters`); re-runs a loaded comparison |
+| `expand` | `expand all` \| `expand <path>…` | the host's expanded set over the model (`ExpandWords` semantics of §1.6.16) | yes | `<path>`: `/`-separated, relative to the bases, matched as `--path` (W6); the folder and its ancestors open; an unknown path fails the command (`not_found`), the others still apply |
+| `collapse` | `collapse all` \| `collapse <path>…` | as `expand` | yes | a collapsed folder's selected rows below it stay selected (selection is by row) |
+| `select` | `select <mask>…` | `SelectMask::parse` per word, `select::select` with the host's `SelectScope` (display `all`, `expanded` from the set), OR-ed | yes | replaces the selection; `0 items selected` is an `info` line, not an error |
+| `compare` | `compare [crc\|binary\|rules-based]` | `folder_contents` with `ContentsKind::Compare(method)` on the selection | yes | no word: `rules-based`; `rules` is accepted as in `--method` |
+| `copy`, `move` | `copy DIR`, `move DIR` | `folder_op_plan` with `OpRequest::Op(FolderOp::Copy { to, overwrite: Always })` / `Move`, `OpOverrides::default()`, then confirmation (§1.8.8), `folder_op_execute` | yes | `left->right` = `--to right` |
+| `copyto`, `moveto` | `copyto [SIDES] [path:relative\|base\|none] <target>` | `OpRequest::CopyTo { sides, target, structure, overwrite: Always }` / `MoveTo` | yes | the last word is the target; a side word only before it (so `copyto left` copies both sides into a folder named `left`); defaults `all`, `relative` (as `folder op copyto`); a target whose final name has a writable archive mask is created as an archive (W5b, W6 `create_archive`) |
+| `delete` | `delete [recyclebin=yes\|no] SIDES` | `FolderOp::Delete { sides, recycle: { use_bin, fallback: false } }` | yes | `recyclebin:` is accepted for `=`; absent = `no`, what `folder op delete` does without `--recycle` |
+| `rename` | `rename <new mask>` \| `rename regexpr <old> <new>` | `RenameMask::Mask` (`--mask`) / `RenameMask::Regex` (`--regex`) on the selection's sides | yes | `regexpr` ASCII case-insensitive |
+| `touch` | `touch DIR` \| `touch SIDES:now\|<time>` | `TouchFrom::OtherSide` (DIR writes the side the arrow points to) / `OpRequest::TouchNow` / `TouchFrom::At(parse_time)` | yes | `<time>`: the `--time` parser (`vfs_ops::parse_time`, RFC 3339); split at the first `:` (`touch left:2026-11-03T10:00:00Z`) |
+| `attrib` | `attrib <change>…` | `FolderOp::Attrib` (new, D-220) | yes | `<change>` = `(+\|-)` letters of `a`, `s`, `h`, `r`, as `+r`, `-hs`, `+a-r`; §1.8.10 |
+| `sync` | `sync [visible] [create-empty] [(update\|mirror):(DIR\|all)]` | `folder_sync_plan` with `sync_options(words)` (`api::vocab`, the words of `folder sync`), `visible` = `FolderSyncRequest::visible` (the script's display), then confirmation, `folder_sync_execute` | yes | `update:left->right` = `--update-right`, `update:right->left` = `--update-left`, `update:all` = `--update-both`, `mirror:left->right` = `--mirror-right`, `mirror:right->left` = `--mirror-left`; `mirror:all` is 106; no direction: the loaded session's preset, else the command fails "no sync direction and the session holds none"; ignores the selection (SCR-002) |
+| `text-report`, `file-report` | `text-report <KW:…>… (<session> \| <left> <right>)`, `file-report` the same | `report_request(ReportKind::Text, "side-by-side", flags with these words, target)`, `text_compare` with the defaults of `text-compare` (or the session's), `report_plan`, `report_execute` | — | `KW:` = `layout:`, `options:`, `output-options:` (comma lists, repeatable, joined in order), `title:`, `output-to:` (required: a file, `clipboard`, `printer`, `browser`, or `-` for the headless stdout); the positional words: two specs, or one text-compare session; `file-report` without them is FC-079 (P1, D-195) → refused; a `layout:` the kind does not take is refused by the parser (W7) |
+| `folder-report` | `folder-report [just-selection] <KW:…>…` | `report_request(ReportKind::Folder, "side-by-side", …)`, the loaded comparison as `ReportSource::Folder`, `ReportScope::FolderRows(selection)` with `just-selection` (W7 note 1: the host sets the scope and passes no `select`) | yes | the words of W7, incl. `include-file-links`; `just-selection` is a script keyword, not a report word (scope never comes from words, §1.7.4) |
+| `table-report` (`data-report`), `hex-report`, `picture-report`, `media-report`, `version-report`, `registry-report` | `… <KW:…>… [<session> \| <left> <right>]` | none in W8 | — | refused at run time (D-221): "<command> is not available in this version"; W12 maps the first three to `ReportKind::{Table, Hex, Picture}` |
+| `snapshot` | the grammar of docs/12 §3.1 | none | — | refused at run time (D-221): "snapshot is not available in this version (snapshots arrive with a later release)" |
+| `option` | `option stop-on-error` \| `option confirm:prompt\|yes-to-all\|no-to-all` | none (interpreter state) | — | `parse_confirm_mode` checks the word |
+| `log` | `log [none\|normal\|verbose] [[append:]<file>]` | the log sink (§1.8.9) | — | at least one of level and file |
+| `beep` | `beep` | `HostUi::beep` | — | §1.8.9 |
+
+- **Arity and keywords** are checked statically: an unknown command (`unknown_command`, with up to three suggestions by
+  edit distance), a missing or extra word (`missing_argument`, `unexpected_argument`), a keyword twice (`duplicate_keyword`),
+  a keyword word of the wrong command (`unknown_keyword`), a direction where a side is wanted (`invalid_word`). Every code
+  of §1.8.7 has a fixed English message with its position.
+- **Specs** in `load`, the report commands and `copyto`/`moveto` targets are parsed by `Spec::parse` with the captured cwd
+  (relative paths are relative to the current folder of the process that runs the script, not to the script's folder;
+  `%0` gives the script's location, D-225). `-` and `clipboard://` are refused as bases and as targets other than
+  `output-to:` (`invalid_input`).
+- **Read-only sides** of a loaded session (W6, `read_only_*`) apply: an operation writing such a side fails `ReadOnlySide`.
+
+#### 1.8.7 Errors and exit codes (normative; D-222)
+
+| Stage | Cause | Exit | What runs |
+|---|---|---|---|
+| locate and load | not found in the current folder nor in the shared scripts folder, a folder, unreadable (also standard input), over 16 MiB | **105** `script_load` | nothing |
+| check | a lexical error, an unknown command, arity, keyword, a static vocabulary word, `no_comparison`, `missing_script_argument`, `unset_variable` | **106** `script_syntax` | nothing; every error is reported (up to `SCRIPT_MAX_ERRORS` = 100, then "… and n more") |
+| run | a `load` whose base cannot be loaded: missing, not a folder, unreadable, a remote scheme, a `.hksnap` file (D-221), an unknown session; also a dry run that meets `create:` of a missing base | **107** `load_failed` | the script ends at that line; later lines `not_run` |
+| run | a command that fails (an item failed or `not_run`, a refused question, a refused P1 command, a bad expanded word, `ReadOnlySide`, a report that fails, a refused dialog in silent mode) | **100** at the end | the script continues, unless stop on error (below) |
+| run | Ctrl-C, Stop, `JobControl` cancel | **100** | the current call stops as its CLI command does (W6: the current file finishes, the plan stops); later lines `not_run` |
+| run | every command `ok` | **0** | — |
+
+- **One code.** The stages exclude each other; within a run, 107 wins over an earlier 100 (it is why the script ended).
+  A script's exit code is never a comparison verdict (0/1/2/11/12/13 belong to comparisons; a script that loads a
+  difference and copies it succeeded). 101–103 stay `gui …`'s (§1.8.13).
+- **Codes and text.** `ScriptErrorCode`: `invalid_utf8`, `unterminated_quote`, `continuation_at_end`, `unknown_command`,
+  `missing_argument`, `unexpected_argument`, `duplicate_keyword`, `unknown_keyword`, `invalid_word`, `no_comparison`,
+  `missing_script_argument`, `unset_variable`. Human: one line each on stderr, `<script>:<line>:<column>: error: <message>`
+  (`<script>` as located, escaped), then `hikasa: error: <n> errors in <script>; nothing was run` (exit 106).
+- **Stop on error (SCR-003).** With `option stop-on-error` (or `--stop-on-error`), after a failing command: if the run can
+  ask (a terminal on stdin and not silent; the status window and not silent), it asks "The command at line <n> failed:
+  <message>. Continue the script?" (Yes / No; CLI `[y]es [n]o` on stderr through `confirm.rs`, Ctrl-C = No); No, silent,
+  or nothing to ask with → the script ends there (`stopped_at: {line, reason: "stop_on_error"}`), exit 100. Without it, the
+  error is logged and the script continues (ARCH-100, ARCH-101).
+- **107 always ends the script**, with or without stop on error (SCR-002).
+- **Messages for D-221.** A remote scheme (`sftp://`, `ftp://`, `webdav://`, `s3://`, any scheme the router has no back-end
+  for): "<spec>: remote folders are not available in this version"; a `.hksnap` base (by its final name, any case):
+  "<spec>: snapshots are not available in this version"; both name the line. Example 2 and example 4 of docs/12 §3.2 end
+  with these (A8.11).
+
+#### 1.8.8 Confirmation and silent mode (D-223)
+
+The script is the fourth driver of W6's confirmation machine (§1.6.11): each `copy`, `move`, `copyto`, `moveto`,
+`delete`, `rename`, `touch`, `attrib`, `sync` builds its plan, then `folder_confirmation(&plan, Some(mode))`:
+
+| Mode (`option confirm:`) | A question | In silent mode |
+|---|---|---|
+| `yes-to-all` | none: `YesToAll` | the same |
+| `no-to-all` | none: `NoToAll` (the operation yes, every item question no) | the same |
+| `prompt` (default) | asked through `HostUi::ask`: the CLI on a terminal as `folder op` does (one line per question, `[y]es [n]o [a]ll [s]kip all [c]ancel`), the status window as W6's confirmation dialogs | not asked: the command is declined (nothing written) and fails with "Attempted to open a dialog when running silently: <question>" (SCR-003) |
+| `prompt`, headless without a terminal, not silent | not asked: declined, fails with "<n> questions need an answer and there is no terminal: use option confirm:yes-to-all or confirm:no-to-all, or --confirm" | — |
+
+- D-77's rule stands: `delete` and a sync that deletes or replaces ask their operation question in `prompt` whatever
+  `confirm_delete` says.
+- `--confirm <MODE>` of `script run` sets the mode before line 1; the script's own `option confirm:` lines change it from
+  their line on. `--yes` is not offered (one flag, one meaning).
+- **Silent** (`--silent`, `@script --silent`, `gui script --silent`): no question, no stop-on-error prompt, no status window,
+  no notice. `output-to:printer` and `browser` still open the browser (not a dialog, §1.7.18); `beep` still beeps.
+  Interactive is the default; silent is never implied by a missing terminal (that case has its own message).
+- `Cancel` to a question declines that command (nothing written) and counts as a failure; it does not stop the script
+  (stop on error decides). Ctrl-C while a question waits cancels the run.
+
+#### 1.8.9 The log, the stream and `beep` (D-224)
+
+**Levels.** `none`: errors only (errors are never silent, ARCH-100); `normal` (default): command lines, summaries, warnings,
+errors; `verbose`: also one `detail` line per done or skipped item (`op_log_entries`/`sync_log_entries` with
+`filter.details`, at most `LOG_DETAILS_MAX` per operation, W6) and the report's plan lines.
+
+**Lines (normative).** One function, `script_log::line(kind, line_no, text)`, makes every line, for every sink:
+
+```
+<YYYY-MM-DD> <HH:MM:SS> <kind> <where> <text>
+2026-11-03 14:05:09 run L2 sync update:left->right
+2026-11-03 14:05:11 info L2 copied 12 of 12 items (0 skipped, 0 failed), 3.1 MB
+2026-11-03 14:05:11 error L5 failed copy /b/x.txt: permission denied
+2026-11-03 14:05:11 info - Script completed in 2.4 s (exit 100)
+```
+
+`<kind>` ∈ `run` (the command as written, after expansion, joined on one line), `info`, `detail`, `warning`, `error`;
+`<where>` = `L<line>` or `-` for the script itself (start: `script <spec> <args…>`; end: `Script completed in <time>
+(exit <code>)`, `Script stopped at line <n> (exit <code>)`; SCR-004's wording). `<time>`: `<s.s> s` under a minute, else
+`<m> min <ss> s`, from the Service's clock at start and end (T1). Text through `escape_controls`; the time is local
+(`EnvFacts` zone), seconds.
+
+**Sinks.** (1) The stream: headless, each line on stderr **without** the date and time (`run L2 sync …`), as it happens,
+filtered by the level; `--quiet` keeps `error` lines only; a failed run still ends with one `hikasa: error: …` line. The
+status window shows the same lines (§1.8.14). (2) The file of `log [append:]<file>`: the whole line, UTF-8, `\n`; opened
+when the `log` line runs: `append:` appends (created when absent), otherwise created or truncated; each line is written and
+flushed as it comes (a crash keeps what was logged; no `fsync`); a local file only (`Spec::Local`): another spec is
+`unsupported` "a script log must be a local file", that command fails, the stream goes on. A second `log <file>` closes the
+first. In a dry run no file is opened (warning `log file not written in a dry run`). The file sink lives in
+`api/script_log.rs`, the one place of the script code that opens a file without the VFS (check 2); the VFS has no append
+primitive and W8 adds none. (3) The GUI's log panel (D-116): one `Summary` per command and the `Error` entries, source
+`script <name>`.
+
+**`beep`** (and `[tweaks.scripts] beep_when_finished` at the end): `HostUi::beep`. The CLI writes BEL (`\x07`) to stderr
+when stderr is a terminal and not `--quiet`, else nothing; the window requests user attention
+(`ViewportCommand::RequestUserAttention`, informational) and flashes the status window's title; no sound crate. The line
+`info L<n> beep` is logged either way.
+
+#### 1.8.10 `attrib` (FC-075's script form; D-220)
+
+docs/12 and the plan list `attrib` among the P0 script commands; FC-075 (P1) is the *Attributes…* dialog. The script
+command and its CLI form are W8's; the dialog stays P1.
+
+- `hikasa_folder::ops::FolderOp::Attrib { sides: SideSet, change: AttribChange }`, `AttribChange { set: DosAttrs, clear:
+  DosAttrs }` parsed by `AttribChange::parse(words)` (`+r`, `-hs`, `+a-r`; letters `a`, `s`, `h`, `r`, case-insensitive; a
+  letter set and cleared is `invalid_input`). Plan: one `set_attrs` item per selected row on each of its sides (a folder
+  itself, never its contents, as FC-075 says), in plan order, through `execute_with` (T12; `Action::SetAttrs`, additive in
+  `hikasa.vfs_op.v1` as `set_attrs`, human word `attrib <target> +r-h`).
+- Back-ends with DOS attributes (Windows, `MemoryVfs` with `Attrs::Dos`): `AttrChange::Dos { set, clear }`. Back-ends with
+  Unix modes: `r` maps to the write bits as W6's `READ_ONLY` conflict reads them: `+r` clears `0o222`, `-r` sets `0o200`;
+  `a`, `s`, `h` there make the item `skip (unsupported)` with one warning `attrib_unsupported` per command. Archive
+  members: `unsupported` (W5b writes no attributes).
+- `hikasa folder op attrib --change <CHANGE>… SELECT CONFIRM` (the `folder op` common flags); no operation question
+  (each item is named, as rename and touch); the `READ_ONLY` conflict does not apply to clearing `r`.
+
+#### 1.8.11 Locating and loading a script (D-225)
+
+`Service::script_locate(arg: &OsStr) -> Result<ScriptSource, ApiError>`:
+
+1. `-` → standard input (read once, at most 16 MiB; `%0` is `-`).
+2. Otherwise `Spec::parse(arg)` against the captured cwd. A local path that exists (any kind) → it; a folder is 105 "<path>
+   is a folder". An archive member spec is read through the VFS like any file.
+3. A relative local path that does not exist, when `[tweaks.scripts] shared_scripts_folder` (OPT-021) is not empty → the
+   same relative path below that folder (made absolute against the configuration folder when relative). Only *absent*
+   falls through: an unreadable script in the current folder is 105, never replaced by the shared one.
+4. Neither → 105 "script <arg> not found (looked in <cwd> and <shared folder>)" (without the shared folder when unset).
+
+`script_load` reads through the VFS (`open_read`, the 16 MiB cap counted while reading). `@script`, `gui script` and the Run
+Script dialog use the same lookup; for `gui script` the CLI locates the script and sends the absolute path (§1.8.13).
+
+#### 1.8.12 Service, CLI and JSON (D-226)
+
+```rust
+// hikasa_session::api::script (additive)
+pub enum ScriptSource { Spec(Spec), Stdin }
+pub struct ScriptText { pub source: ScriptSource, pub display: String, pub bytes: Vec<u8> }
+pub struct ScriptCheck { pub script: Option<Script>, pub errors: Vec<ScriptError>, pub references: References }
+pub struct ScriptRunRequest {
+    pub args: Vec<OsString>, pub env: BTreeMap<String, OsString>,   // capture_script_env(references.env)
+    pub silent: bool, pub stop_on_error: bool, pub confirm: Option<ConfirmMode>, pub dry_run: bool,
+    pub stdout_reports: bool,                                       // `output-to:-` allowed (headless CLI only)
+}
+pub struct ScriptOutcome { pub exit_code: ExitCode, pub commands: Vec<CommandRecord>, pub stopped_at: Option<StopAt>,
+    pub cancelled: bool, pub elapsed: Option<Duration>, pub warnings: Vec<Warning> }
+impl ScriptOutcome { pub fn dto(&self, text: &ScriptText, args: &[OsString], dry_run: bool, silent: bool) -> ScriptDto; }  // hikasa.script.v1
+pub trait ScriptUi: HostUi {}                                      // events, ask, ask_continue, beep, clipboard
+impl Service {
+    pub fn script_locate(&self, arg: &OsStr) -> Result<ScriptSource, ApiError>;           // 105
+    pub fn script_load(&self, source: ScriptSource, stdin: Option<&mut dyn Read>) -> Result<ScriptText, ApiError>;  // 105
+    pub fn script_check(&self, text: &ScriptText, args: Option<&[OsString]>, env: &BTreeMap<String, OsString>) -> ScriptCheck;
+    pub fn script_run(&self, script: &Script, text: &ScriptText, req: &ScriptRunRequest, ui: &mut dyn ScriptUi,
+        stdout: Option<&mut dyn Write>, job: &JobControl) -> ScriptOutcome;
+    /// The Run Script dialog's arguments field, split by the lexer's word rules (§1.8.3); no expansion.
+    pub fn script_args(&self, text: &str) -> Result<Vec<String>, ScriptError>;
+}
+```
+
+Each runs through `run_guarded` (a panic in a command is that command's failure, exit 100). `JobKind::Script` (`script`)
+spans the run; every Service call inside keeps its own `JobKind` and phases, which the progress line shows. `ApiOp::Script`.
+`ApiError` gains `ScriptLoad` (kind `not_found`/`io`/`too_large`/`invalid_input`, exit 105) and `ScriptSyntax { errors }`
+(`invalid_input`, exit 106); `ApiError::exit_code` maps `LoadFailed` under `ApiOp::Script` to 107, as under `FolderOp`. `WarningCode` gains `nothing_selected`,
+`attrib_unsupported`, `log_not_written`. The clipboard target hands `ReportOutcome::clipboard` to `ScriptUi::clipboard`
+(the CLI writes it with its provider, the GUI its own clipboard; D-203).
+
+```
+hikasa script run   <FILE|-> [<ARG>…] [--silent] [--stop-on-error] [--confirm prompt|yes-to-all|no-to-all] [--dry-run]
+                    [--gui [--wait] [--no-launch] [--closescript]]
+hikasa script check <FILE|-> [<ARG>…]
+```
+
+- **Arguments.** Everything after `<FILE>` that is not one of these flags is an argument (`%1`…); an argument that starts
+  with `-` follows `--` (`hikasa script run s.txt -- -x`). Arguments are `OsString` (clap `value_parser!(OsString)`).
+- **`--dry-run`** (T12): every command runs as it would, except that no plan is executed, no report or log file is
+  written and `create:` creates nothing: each mutating command prints its plan (the `folder op`/`folder sync`/`report`
+  dry-run lines, prefixed by `L<n> `) and the next commands see the tree unchanged. So the dry run's plan of a command
+  equals the executed plan when every earlier command left the tree as it was (A8.13). A `load create:` of a missing base
+  ends a dry run with 107 ("<base> does not exist yet; a dry run cannot compare it").
+- **`script check`** exits 0, 105 or 106; human: `ok: <n> commands` on stdout, or the error lines. With `<ARG>…` it
+  checks the `%n` references against them. It runs no command and reads no base.
+- **Human output.** stdout: nothing, except a report with `output-to:-` and `script check`'s line; stderr: the stream of
+  §1.8.9 and the progress of the current call (as the other commands, not with `--quiet`).
+- **Ctrl-C** (D-159): the first cancels the current call's job (its CLI behaviour: a rebuild aborts and cleans up, a copy
+  finishes the current file), the rest are `not_run`, exit 100, `Script stopped at line <n>`; a second exits 100 at once.
+  A question or prompt that waits ends with the run.
+- **`--gui`** (CLI-G03): `script run --gui …` is `gui script …` (§1.8.13); `--silent` with `--gui` is a usage error.
+
+**JSON.** Appended to `SCHEMAS`, 39 → 41 (with `hikasa.gui_script.v1`, §1.8.13):
+
+| Schema | `result` |
+|---|---|
+| `hikasa.script.v1` | `{mode: "run"\|"check", script, args: [str], dry_run, silent, cancelled, stopped_at: null\|{line, reason: "load_failed"\|"stop_on_error"\|"cancelled"}, errors: [{line, column, code, message}], commands: [{line, end_line, name, words: [str], text: str\|null, status: "checked"\|"ok"\|"failed"\|"refused"\|"not_run", schema: str\|null, result: object\|null, items_omitted: u64, error: ErrorReport\|null, warnings: [Warning]}], counts: {commands, ok, failed, refused, not_run}, elapsed_s: number\|null}` |
+
+- `words` are the lexed words before expansion (the parser golden form); `text` the expanded line (run only). `schema` and
+  `result` are the `result` object of the matching CLI command's document (`hikasa.folder_op.v1`, `hikasa.folder_sync.v1`,
+  `hikasa.folder_contents.v1`, `hikasa.report.v1`, `hikasa.folder_compare.v1` for `load` without its item list), so a
+  script's command and its CLI command give the same JSON (A8.10). Item lists are capped at `SCRIPT_JSON_ITEMS_MAX` =
+  100,000 per command; the rest is counted in `items_omitted`, so memory stays bounded by the cap, not by the trees.
+- Envelope: 105 → `ok: false`, `result: null`; 106 → `ok: false`, `error` = the first error, `result` with every error;
+  a run (exit 0, 100 or 107) → `ok: true`, `error: null`, `exit_code` as computed (as `hikasa.folder_op.v1`). With
+  `--json`, `output-to:-` is refused at check time (106 `invalid_word`: "the report and the JSON document cannot share
+  stdout").
+
+#### 1.8.13 IPC, `gui script` and `@script` (D-228)
+
+**Protocol (additive to v1, D-46).**
+
+```rust
+Request::RunScript { path: String, args: Vec<String>,
+    #[serde(default)] cwd: Option<String>, #[serde(default)] env: BTreeMap<String, String>,
+    #[serde(default)] wait: bool, #[serde(default)] stop_on_error: bool, #[serde(default)] confirm: Option<String>,
+    #[serde(default)] close: Option<bool> }          // `--closescript` = Some(true); None = the option
+Response::ScriptFinished { exit_code: u8, summary: ScriptSummary }   // only after a `wait: true` request
+pub struct ScriptSummary { pub commands: u32, pub ok: u32, pub failed: u32, pub refused: u32, pub not_run: u32, pub stopped_at: Option<u32> }
+```
+
+- The server no longer answers `RunScript` itself (§5.1 *M1 requests* of docs/01 changes): the GUI's handler loads and
+  checks the script (105/106 → `Error{invalid_request}` with the message, which the CLI has already caught), opens the
+  status window in the window focused last and answers `Ok`; with `wait`, one later `ScriptFinished` with the request's id,
+  after the `Ok`. A GUI that is already running a script answers `Error{busy}` (new code, "a script is running in the
+  window; wait for it or stop it"), exit 100: one script at a time. A server stopping while a waited script runs sends
+  `ScriptFinished{exit_code: 100}` after cancelling it.
+- `path` absolute, `cwd` absolute; `args` and `env` values UTF-8 (a non-UTF-8 argument, cwd or value is refused by the CLI,
+  exit 100, "… cannot be sent to the GUI: not valid UTF-8; use hikasa script run"). `env` holds only the names the script
+  references. The GUI's run uses that cwd and that environment, so `%NAME%` and relative paths mean what they mean in the
+  CLI's shell.
+- An older GUI answers `unsupported_request`: "the running GUI does not support scripts; restart it" (exit 100), as D-89.
+
+**`hikasa gui script <FILE> [<ARG>…] [--wait] [--no-launch] [--stop-on-error] [--confirm <MODE>] [--closescript]
+[--silent]`** (CLI-G02): locates the script (§1.8.11), checks it locally (105/106 before the GUI is contacted, D-50's
+rule), captures the referenced environment, connects or launches as `gui open` (102, 103), sends `RunScript`. Exit 0 once
+started; with `--wait` the script's exit code from `ScriptFinished` (102 when the wait is lost). `--json`:
+`hikasa.gui_script.v1` `{script, args, waited: bool, exit_code: int|null, summary: null|{commands, ok, failed, refused,
+not_run, stopped_at}}`.
+
+**`@script`** (CLI-002, CLI-003): in the shared legacy parser (`normalize_legacy_args`, `parse_open_args`, D-51), a
+positional argument starting with `@` is a script (`@` followed by nothing is a usage error); the other positional
+arguments are its `%1`…; `--closescript` and `--silent` stop being `switch_ignored` and apply to it. A file whose name
+starts with `@` is reached as `./@name`. Then:
+
+| Command line | Behaviour |
+|---|---|
+| `hikasa gui open @s.txt a b [--wait] [--closescript]` | as `gui script s.txt a b …` |
+| `hikasa-gui @s.txt a b`, no GUI running | the window starts and shows the status window |
+| `hikasa-gui @s.txt a b`, a GUI running | forwarded as `RunScript` (cwd, referenced environment) without waiting, exit 0 (as D-127's packages) |
+| any of them with `--silent` | **never through a GUI**: the process itself runs the script headless, as `hikasa script run --silent` (`hikasa-gui` without opening a window), and exits with its code; the log stream goes to stderr |
+
+`@script` with other specs (`@s.txt a b` where `a`, `b` are folders) gives them to the script as arguments, never opens
+a comparison.
+
+#### 1.8.14 The status window and Run Script (W8b; D-229)
+
+The minimal status window (SCR-004 stays P1): a `DialogModel` (`gui/hikasa-gui/src/script_dialog.rs`, toolkit-free, in
+the list of model files of check 7) in the window focused last, fed by the run's events through the mailbox:
+
+```rust
+// hikasa_script (events of the interpreter; the session re-exports them)
+pub enum ScriptEvent { Started { script: String, commands: u32 }, Command { index: u32, line: u32, text: String },
+    Progress { status: JobProgress /* the current call's phase, done, total, bytes */ }, Log { kind: LineKind, line: Option<u32>, text: String },
+    Question { question: Question }, Continue { line: u32, message: String }, Beep, Finished { exit_code: u8, stopped_at: Option<u32>, elapsed: Option<Duration> } }
+```
+
+- **Content.** Title "Script — <name>"; the script's path; "Command <i> of <n>, line <l>: <text>"; the current call's
+  progress (phase and counts, as the status bar's job line); the log lines at the run's level, the last
+  `[tweaks.log_panel] display_up_to` kept, errors in the error colour; at the end "Script completed in <time>" (SCR-004),
+  "Script stopped at line <n>" or "Script failed (exit <code>)".
+- **Buttons.** *Stop* while running (cancels the run's `JobControl`, as Ctrl-C), *Close* after; Esc is Stop while running,
+  then Close. Questions are W6's confirmation dialogs stacked on it (D-112); the stop-on-error question is a Yes/No dialog.
+- **Options** (OPT-021): `close_when_finished` closes it after a run that ended with exit 0 (`--closescript` closes it
+  after any run; a failed run keeps it open unless `--closescript`); `beep_when_finished` beeps at the end. Neither applies
+  in silent mode (no window).
+- **Notices and log.** At the end a notice (D-117) "Script <name> completed" (info) or "Script <name> failed: exit <code>"
+  (error, with *Show*), and the log panel entries of §1.8.9.
+- **Run Script dialog.** New catalogue command `RunScript` (menu Tools, caption "Run Script...", no default shortcut,
+  description "Runs a script file and shows its progress.", status `implemented`, help `dialog-script`): a path field (the
+  lookup of §1.8.11), an arguments field split by the script lexer's word rules (one parser: `Service::script_args`), *Stop
+  on error* and the confirm mode; Run checks the script first and shows the errors with their positions instead of running.
+  The browse button arrives with W9's browse dialog.
+- **The run** happens on a worker thread of the GUI (the job machinery of D-115), with the GUI's `Service`; the host's
+  questions block that thread until the dialog answers. The window stays usable behind the dialog only as D-112 allows
+  (modal to its window).
+
+#### 1.8.15 Equivalence with the CLI (T11; D-227)
+
+A script's command is the CLI command of the same words, by construction (the host calls what the CLI calls, with the
+requests of the table of §1.6.23 and §1.8.6) and by test:
+
+- **P-SCRIPT** (`core/hikasa-session/tests/props_script.rs`, `MemoryVfs`): random trees (W6's generators: case, NFC/NFD,
+  read-only, newer, orphans), random settings words, random `expand`/`select` masks, then one random command among `copy`,
+  `move`, `copyto`, `moveto`, `delete`, `rename`, `touch`, `attrib`, `sync`, `compare`, `folder-report`, `text-report` with
+  `option confirm:yes-to-all`. The same Service calls made directly with the request the CLI builds for the matching flags
+  (`folder op <verb> l r --select … --yes`, `folder sync … --yes`, `report folder|text …`) give: the same `OpPlan`/`SyncPlan`
+  (JSON), the same outcome document, the same `MemoryVfs::dump()` afterwards, the same report bytes (one fixed report
+  time). A second command after the first checks that the refresh leaves the model equal to a fresh comparison of the
+  changed tree (W6's refresh property).
+- **CLI cases** (`cli/hikasa-cli/tests/cli_script.rs`, disk): for one tree, `hikasa script run --json` and `hikasa folder op
+  … --json` / `folder sync … --json` / `report …` give equal `result` objects (paths normalized as the CLI goldens do)
+  and equal trees; the report files are byte-identical with `SOURCE_DATE_EPOCH`.
+
+#### 1.8.16 Dependencies and architecture test (D-230)
+
+- **No new crate.** `hikasa-script` depends on `hikasa-core`, `serde`, `thiserror` (dev: `proptest`, `pretty_assertions`);
+  `hikasa-session` += `hikasa-script`. `Cargo.lock` gains no package; `cargo deny` passes without new exceptions; `docs/02`
+  gains no line.
+- **Architecture test.** Check 3: the table rows `hikasa-script` = `[hikasa-core, serde, thiserror]`, dev `[proptest,
+  pretty_assertions]`; `hikasa-session` += `hikasa-script`; `hikasa-script` stays in `ENGINE_CRATES`; cli and gui manifests
+  unchanged. Check 4: `hikasa-script` leaves `STUB_CRATES` (`hikasa-table`, `-hex`, `-picture`, `-metadata` stay).
+  Check 2: in `core/hikasa-script/src` no `std::fs`, `std::process`, `std::net`, `File::`; in `core/hikasa-session/src/api/`
+  `std::fs` only in `script_log.rs` among the script files, and `api/script*.rs` name no `execute_with`, `plan_op`,
+  `ReportRequest::parse`, `render_report` (they call the Service functions, T11). Check 7: no `hikasa_script` in `cli/` or
+  `gui/`; the adapters do not lex script text (`Service::script_args` splits the dialog's arguments). Each new rule has a
+  planted-violation self-test. No `unsafe`.
+
+#### 1.8.17 Gate G14 and budgets (D-231)
+
+Measured at the end of W8a on an idle machine, release build, inputs generated by the test; recorded in docs/12 beside
+G13. Harness: `cli/hikasa-cli/tests/perf_gates.rs` (`g14_*`, `#[ignore]`), warm-up then the median of three, peak RSS from
+`ru_maxrss`.
+
+| Item | Measure | Where | Threshold |
+|---|---|---|---|
+| G14 parse | `script check` of a generated 200,000-line script (every command kind, quotes, continuations, `%` forms; ≈ 8 MB) | `perf_gates.rs` | ≤ 0.5 s; peak RSS ≤ 32 MiB + 8 × the file size |
+| G14 copy | `script run` of `option confirm:yes-to-all`, `load l r`, `expand all`, `select all`, `copyto all path:relative <t>` on G7's 10,000 small files, against `folder op copyto … --select all --yes` in the same run | `perf_gates.rs` | ≤ the direct run × 1.05 + 0.2 s |
+| G14 sync | `script run --dry-run` of `load l r` + `sync update:left->right` on G2's tree, against `folder sync --update-right --dry-run` | `perf_gates.rs` | ≤ the direct run + 0.2 s |
+| G14 overhead | 10,000 lines of `select left.diff.files` on a 100-file tree | `perf_gates.rs` | ≤ 2 s (≤ 0.2 ms per command) |
+| Stream | a counting allocator: a verbose run whose copy logs 1,000,000 detail lines (`MemoryVfs`, JSON off): peak live heap of the log path | `core/hikasa-session/tests/script_log.rs` (CI) | ≤ 4 MiB over the comparison's own |
+| Cancel | a cancel at the n-th item of a script's copy | `script_run.rs` (`MemoryVfs`) | the copy stops as `folder op` (G4 by construction), later lines `not_run` |
+
+A failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule. G1, G2, G4, G7, G13 unchanged.
+
+#### 1.8.18 Hooks for later waves
+
+- **W9.** The Run Script dialog gains the browse button (W9's VFS browser); the folder view gets no script command. W9
+  makes `FolderSync` views real, which a script never opens.
+- **W10.** No script command edits text; `text-report` keeps the text-compare defaults.
+- **W12.** `table-report` (`data-report`), `hex-report`, `picture-report` map to `ReportKind::{Table, Hex, Picture}` with
+  their Summary layouts (A10), through the same `report_request` path as `text-report`; their refusal of D-221 goes.
+- **W13.** The report dialog's remembered choices are not read by scripts (a script line means the same whatever a dialog
+  did, D-208).
+- **M3.** `snapshot` and `.hksnap` bases, remote back-ends, SCR-004's full window, FC-079 over a selection, the media,
+  version and registry reports, Folder Merge scripts.
+
+#### 1.8.19 Documentation and version
+
+`docs/12` (§1 the `script` row with every flag, `gui script` in CLI-G02's note, CLI-G03's `script run --gui`; §2 `@script`,
+`--silent`, `--closescript` as D-228's table; §3 an *M2 interpretation* paragraph: §1.8.3's rules, §1.8.4's forms, the
+state of §1.8.5, §1.8.6's table, §1.8.7's errors, confirmation and silent mode, the log format, the lookup; §3.2 a note on
+examples 2 and 4 (107 and their messages); §4 the `script run`, `script check`, `gui script`, `folder op attrib` rows, the
+human lines, `hikasa.script.v1` and `hikasa.gui_script.v1`, 41 schemas, G14 figures); `docs/01` (ARCH-091's M2 additions:
+`RunScript`'s fields, `ScriptFinished`, `busy`; §2's line for `hikasa-script`: "drives the session layer through a host");
+`docs/03` SES-010 (unchanged text, the script case tested); `docs/04` FC-075 (the script and CLI form, the dialog P1);
+`docs/14` (`RunScript`, the status window, the Run Script dialog); `docs/15` OPT-021 (what each key does); `docs/16` (M2
+progress); `docs/reference/commands.md` regenerated (`RunScript`).
+
+**Help** (`cargo xtask help-check` clean): new `script` (both subcommands, the language, expansion, every command, errors
+and exit codes, confirmation and silent mode, the log, the lookup, the four examples), `dialog-script` (status window and
+Run Script); updated `folder-op` (`attrib`), `gui` (`gui script`, `@script`, `--silent`, `--closescript`), `exit-codes`
+(105, 106, 107 for scripts), `json-output` (two schemas, 41, the new warning codes), `cli`, `index`. `hikasa help script
+run` resolves through D-67; both topics are in `help.rs`'s list.
+
+**CHANGELOG.** One W8 section in `## Unreleased` (Added; Changed for `--silent`/`--closescript` no longer
+`switch_ignored`), updated in place by each part and review, as §1.6.24. **Version.** The parts bump nothing; W8 ships as
+the pre-release **0.1.94** after W8b's review, by the orchestrator (the steps of 0.1.93, §6.8 A8.25). No product name of
+docs/17 §5 anywhere: grep before each commit.
+
+#### 1.8.20 W8 notes (implementation)
+
+*To be written by each part*, as §1.7.20: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property test was checked by (§6.8 rules).
+
+**W8a.** (to be written)
+
+**W8b.** (to be written)
+
+### 1.9–1.14 W9–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -7532,3 +8162,173 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.93 and publishes the pre-release
   after W7b's review (§1.7.19). The product name of
   docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.8 W8 acceptance
+
+Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, gates) and §6.7 (tests can fail, platform
+blind spots, goldens, help and text), and:
+
+- **Tests can fail.** Each property test of W8 (P-LEX, P-PARSE, P-EXPAND, P-SCRIPT, the stream test) and each integration
+  test that stands in for one (A8.7, A8.11, A8.14) is checked by mutation (docs/17 §3 point 6): at least one named hand
+  mutation of the code it guards (a dropped `""` rule, a column off by one, `lt` rewritten inside a path, an expansion
+  re-lexed, a skipped refresh after a copy, a swapped direction, 107 not ending the run, a silent question answered yes)
+  makes it fail, and is reverted. §1.8.20 lists each mutation, the test that caught it and the seed where there is one.
+- **Scripts in tests** are files named `*.txt` under `tests/fixtures/` (Hikasa owns no script extension), written with
+  `\n` unless the test is about line ends; `.gitattributes` keeps them byte for byte. Absolute paths of docs/12's
+  examples are replaced by temp folders through script arguments or a generated copy, and the test says which.
+- **Time.** Service tests inject the clock and the zone (`FixedClock`, a fixed `TimeZone`); CLI tests check `%date%`,
+  `%time%`, `%fn_time%` by format and against the local date read before and after the run (equal unless the run spans
+  midnight, then the test retries once). No test sleeps.
+- **Terminals.** Questions and the stop-on-error prompt are tested through `confirm.rs`'s scripted line source; "no
+  terminal" is the CI default; no PTY.
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| lexer, parser, checker, expansion, interpreter on `MemoryVfs` (A8.1…A8.10, A8.13…A8.16) | yes | yes | yes | yes |
+| docs/12 examples on disk (A8.11) | yes | yes | yes | yes |
+| non-UTF-8 arguments and paths (A8.4, A8.20) | disk | `MemoryVfs`; unpaired surrogates in arguments on disk | APFS refusal asserted, then `MemoryVfs` | `MemoryVfs` |
+| Windows spellings and environment case (A8.4, A8.20) | pure table | disk and the real environment | pure table | disk |
+| `attrib` with real DOS attributes (A8.16) | `MemoryVfs` | disk | `MemoryVfs` | `MemoryVfs` (wine's attributes are not trusted, §6.6) |
+| `attrib` on Unix modes (A8.16) | disk | — | disk | — |
+| GUI models (A8.19) | yes | yes | yes | yes |
+| window test of the status dialog (A8.19, optional) | `xvfb-run`, `#[ignore]` | — | — | — |
+| G14 (A8.23) | by hand, `#[ignore]` | — | — | — |
+
+**W8a — Language and headless**
+
+- A8.1 **Lexer (D-216) [W8a].** `core/hikasa-script/tests/lex.rs` with goldens `tests/fixtures/lex/<name>.txt` →
+  `<name>.json` (words, `quoted`, `expands`, positions): quoting table (`a" b"c`, `""` inside quotes, an empty `""` word,
+  `"C:\dir\"`, `\\?\C:\x`, `%` inside quotes), comments (`#` at line start, after a blank, inside a word, inside quotes),
+  continuation (attached `x&`, alone, with comment lines between, before a blank line → `continuation_at_end`, at the end
+  of the file), BOM, LF/CRLF/CR/mixed, NBSP inside a word, tabs in columns, an unterminated quote, invalid UTF-8 at the
+  start, the middle and the end, 16 MiB exactly and one byte more (105). P-LEX: random byte strings never panic and every
+  error position lies inside the input; random word lists printed with `Word::to_source` lex back to the same words.
+- A8.2 **Parser goldens (D-219) [W8a].** `tests/parse.rs`: one fixture per grammar form of §1.8.6 (every command, every
+  optional part, keyword order, `recyclebin=`/`recyclebin:`, `data-report`, `<default>` in any case, `copyto left` as a
+  target), each with `expected.json` (`script check --json`'s `commands` form); the four examples of docs/12 §3.2 parse to
+  goldens. P-PARSE: random commands built from the grammar, printed and parsed again, are equal.
+- A8.3 **Check and error positions (D-222) [W8a].** `tests/check.rs` and `core/hikasa-session/tests/script_check.rs`
+  (with the real `WordChecker`): one golden per `ScriptErrorCode` with its `<script>:<line>:<column>: error: <message>`
+  line; a vocabulary word refused by each parser it goes to (select mask, criteria, filter expressions, sync words, confirm
+  mode, report words, time) at its column; the same words with `%` pass the check; `no_comparison` for each command of
+  column *Needs*, also after `load <default>`; `mirror:all`; 150 errors give 100 lines and "… and 50 more"; suggestions for
+  `selct`, `syncc`; nothing runs (`MemoryVfs` journal empty).
+- A8.4 **Expansion (D-217) [W8a].** `tests/expand.rs`: the form table of §1.8.4 row by row (`%10`, `%0`, `%%`, `50%`,
+  `%x y`, dynamic names in any case winning over the environment); dates and times with a fixed clock in UTC, `+05:45`,
+  `America/New_York` across a DST change; one instant for three names on one line, two lines with two instants; a value
+  with spaces and quotes stays one word and is not re-lexed; `missing_script_argument` and `unset_variable` before
+  anything runs; set-but-empty expands to nothing. Unix: a non-UTF-8 argument keeps its bytes into `Spec::parse` and into
+  `copyto`'s target on disk, and is `invalid_input` in a select mask. Windows (pure table everywhere, real environment on
+  Windows CI): `%Path%` finds `PATH`; on Unix `%path%` is unset. P-EXPAND: for random literals and arguments, expanding a
+  word built by escaping a literal (`%` → `%%`) gives the literal; expansion of random words never panics.
+- A8.5 **`lt` and `rt` (D-218) [W8a].** A table of every side position of §1.8.4 with `lt`, `RT`, `Lt`; and the
+  negatives: a path `lt`, a mask `lt.txt`, a quoted `"lt->rt"` in a title, a session named `rt`. `hikasa folder compare
+  --criteria timezone:lt+2` stays refused.
+- A8.6 **Semantics (D-219) [W8a].** `core/hikasa-session/tests/script_run.rs` on `MemoryVfs`, one test per row of §1.8.6:
+  `load` of a folder-compare session (rules applied, `[display]` cleared: SES-010), of a folder-sync session (a `sync`
+  without direction uses its preset), `<default>`, two specs, `create:left` (one `mkdir` plan item, then the comparison);
+  SCR-002: `expand` needed before `select` sees subfolder contents; masks OR-ed; a folder matches a result mask only when
+  all its contents do; `diff` excludes timestamp-only rows; `sync` ignores the selection; `criteria`/`filter` after a load
+  re-run it and keep expansion and selection by path; after `copy` a `select left.diff.files` no longer selects the copied
+  file (the refresh); `RefreshFlat` falls back to a full run; `compare crc` updates rows; `touch left:<time>`; read-only
+  sides of a session refuse a write. Each refused command of D-221 logs its message and the run continues.
+- A8.7 **Exit codes (D-222) [W8a].** `script_run.rs` and `cli/hikasa-cli/tests/cli_script.rs`: a table test, one row per
+  cause of §1.8.7 (each 105 case, a 106 of each stage, each 107 cause incl. a remote scheme and a `.hksnap` file, a failed
+  item, a refused command, a declined question, a cancel, all ok) → the exit code, `stopped_at` and the `not_run` lines;
+  107 after an earlier failure is 107; stop on error: a scripted terminal answers No (ends, 100) and Yes (continues),
+  silent ends, no terminal ends; 107 ends with stop on error off. docs/12's exit-code table and `ExitCode` agree (a test
+  reads both).
+- A8.8 **Confirmation and silent mode (D-223) [W8a].** `script_confirm.rs`: each row of §1.8.8's table with a plan that
+  asks the operation, read-only and newer questions; the silent message text exactly; the no-terminal message; `--confirm`
+  before line 1 and an `option confirm:` that changes it; `Cancel` declines that command only; D-77: a `delete` asks with
+  `confirm_delete = false`; the printer target in silent mode reaches `RecordingLauncher`.
+- A8.9 **Log (D-224) [W8a].** `script_log.rs`: line goldens for every kind at each level; stderr without the time,
+  `--quiet` with errors only; a file created, truncated, appended (`append:`), a second `log` switching files, a non-local
+  spec refused while the stream goes on, a dry run writing none; a write fault after line n leaves n lines; verbose detail
+  lines capped at `LOG_DETAILS_MAX` with `… and <n> more`; `Script completed in 0.0 s (exit 0)` with a fixed clock and the
+  minute form with a clock that advances; `beep`: BEL only on a terminal stderr (a test sink), never with `--quiet`.
+- A8.10 **Equivalence P-SCRIPT (D-227) [W8a].** `props_script.rs` as §1.8.15, and `cli_script.rs`'s disk cases for
+  `copy`, `copyto` into a new zip, `delete`, `rename regexpr`, `touch`, `attrib`, `sync update:left->right`,
+  `sync mirror:right->left`, `compare crc`, `folder-report`, `text-report`: `result` objects equal to the matching
+  command's `--json`, trees equal, report bytes equal with `SOURCE_DATE_EPOCH`. Mutations: swap `left->right` in the host;
+  skip the refresh.
+- A8.11 **The four examples of docs/12 §3.2 [W8a].** `cli/hikasa-cli/tests/cli_script_examples.rs`, each file as docs/12
+  writes it except its absolute paths (generated copies; the test names the substitution); `script check` of all four
+  exits 0. (1) A config folder with a folder-sync session `Sync Laptop`: with `--confirm yes-to-all` exit 0 and the right
+  side updated as `folder sync --session "Sync Laptop" --update-right --yes` leaves it; with a scripted terminal answering
+  `y`, the same; with `--silent`, exit 100, "Attempted to open a dialog when running silently: …", nothing written.
+  (2) Exit **107** at line 4: "sftp://deploy@host/var/www: remote folders are not available in this version", the log
+  file holds lines 1–4, the `sync` is `not_run`, `/srv/www`'s copy untouched. (3) `script run ex3.txt l.c r.c out.html`:
+  exit 0, `out.html` byte-identical to `hikasa report text l.c r.c --layout side-by-side --options
+  ignore-unimportant,display-context --output-options html-color --output-to out.html` (`SOURCE_DATE_EPOCH`). (4) Exit
+  **107** at line 3: "…/project.hksnap: snapshots are not available in this version", nothing written; a variant whose
+  right side is a folder copy of the project: exit 100, the zip `changes-<date>.zip` holds exactly the left-only and
+  differing files under their relative paths, line 7 (`snapshot`) is refused with its message. The help topic `script`
+  shows the four examples with these outcomes.
+- A8.12 **Lookup (D-225) [W8a].** `cli_script.rs`: a script in the current folder; absent there and present in the
+  shared folder (absolute and relative to the configuration folder); present in both (the current folder wins); absent in
+  both (105, both places named; one place when the option is empty); a folder (105); unreadable (`cfg(unix)`, 105, the
+  shared one not tried); `-` from stdin; a member of a zip; `%0` for each.
+- A8.13 **CLI and JSON (D-226) [W8a].** `cli_script.rs`: every flag; arguments after `--`; `--dry-run`: nothing written
+  (`MemoryVfs::dump()` and disk), each mutating command's dry-run lines equal `folder op`'s, the first one's plan equals the
+  executed plan (T12), `create:` of a missing base → 107; `--json` goldens of `hikasa.script.v1` for check (ok and 106),
+  run (0, 100, 107, cancelled) and a dry run; `items_omitted` with a lowered cap (a test-only constant); `output-to:-` with
+  `--json` → 106; `--silent` with `--gui` → usage error; `SCHEMAS` 41 and `hikasa version --json`.
+- A8.14 **Cancellation [W8a].** `script_run.rs`: a cancel at the n-th item of a copy, during a comparison, during a report
+  write and while a question waits: the call stops as its CLI command does (W6, W7 rules), later lines `not_run`, exit
+  100, `Script stopped at line <n>`, no temporary file left. `cli_interrupt.rs`: Ctrl-C during `script run` exits 100 with
+  the stop line; a second Ctrl-C exits at once.
+- A8.15 **Streaming and memory (D-231) [W8a].** The stream row of §1.8.17 (counting allocator, CI); a 16 MiB script
+  parses within the G14 bound in debug on CI scaled by 4 (a smoke bound, the real gate is A8.23). Mutation: keep the log
+  lines in a `Vec` (the bound fails).
+- A8.16 **`attrib` (D-220) [W8a].** `core/hikasa-folder/tests/ops_plan.rs`: plan items per selected row and side, folders
+  not recursed, `+a-a` refused; `MemoryVfs` with `Attrs::Dos` and with modes (`+r` clears `0o222`, `-r` sets `0o200`, `+h`
+  skips `unsupported` with one warning); an archive member `unsupported`. `cli_folder_op.rs`: `folder op attrib --change
+  +r` on disk (`cfg(unix)` modes, `cfg(windows)` attributes), `--dry-run` lines, `hikasa.folder_op.v1` with `set_attrs`.
+
+**W8b — GUI, IPC, documents**
+
+- A8.17 **IPC (D-228) [W8b].** `core/hikasa-session/tests/ipc_*`: `RunScript` with and without the new fields decodes
+  (old frames read, unknown fields ignored); `ScriptFinished` follows `Ok` with the request's id only when waited; `busy`
+  for a second script; a server stopping during a waited script sends `ScriptFinished{100}`; an old server's
+  `unsupported_request` → the message, exit 100.
+- A8.18 **`gui script`, `@script`, `--silent`, `--closescript` [W8b].** `cli_gui.rs` with the fake GUI
+  (`HIKASA_TEST_FAKE_GUI`, `HIKASA_FAKE_GUI_RECORD`): the recorded `RunScript` (absolute path and cwd, only the referenced
+  variables, arguments), 105/106 before any connection, a non-UTF-8 argument refused, `--wait` returns the fake's
+  `exit_code`, `--no-launch` without a GUI → 100, `hikasa.gui_script.v1` goldens. Legacy parser table (`api/gui.rs` unit
+  tests): `@s.txt a b`, `@` alone, `./@x`, `--closescript`, `--silent` no longer `switch_ignored`; `hikasa-gui @s.txt --silent`
+  and `hikasa gui open @s.txt --silent` run headless and exit with the script's code (no window, no IPC: the fake records
+  nothing); `hikasa-gui @s.txt` with a running fake forwards `RunScript` and exits 0. `script run --gui` equals `gui script`.
+- A8.19 **Status window and Run Script (D-229) [W8b].** `gui/hikasa-gui/src/tests_script.rs` through the models: a stream
+  of `ScriptEvent`s renders the command line, progress, log lines (capped at `display_up_to`), the final line; Stop cancels
+  the run's job; a question opens W6's confirmation dialog and its reply reaches the host; the stop-on-error Yes/No; the
+  close and beep options and `--closescript` (exit 0 and a failure); the end notice and the log panel entries; a second
+  `RunScript` while one runs → `busy`; the catalogue command `RunScript` enabled, its dialog splits arguments through
+  `Service::script_args` and shows check errors with positions instead of running; Esc. An optional window test under
+  `env -u WAYLAND_DISPLAY xvfb-run -a` opens the dialog and stops a run.
+- A8.20 **Platforms [W8a, W8b].** Windows: a script with `"C:\Program Files\x\"`, `\\?\C:\…`, forward slashes, `%`
+  inside quotes and a UNC path parses to the right words (pure table everywhere) and runs on disk on Windows CI and wine;
+  CRLF scripts everywhere; non-UTF-8 arguments and folder names on a Linux disk reach `load` and `copyto` and appear
+  escaped in the log; macOS: NFD names from the disk align as `folder compare` aligns them, and the non-UTF-8 case asserts
+  APFS's refusal. The Windows tests run under wine and the heavy proptests once per part before a push; the four
+  wine-only failures of §6.6 stay exempt and no new test joins them.
+- A8.21 **Help and documents [W8a, W8b].** `help/script.md` (W8a), `help/dialog-script.md` (W8b) and the updated topics of
+  §1.8.19; `cargo xtask help-check` and `cargo xtask commands-doc --check` clean; `hikasa help script`, `hikasa help script
+  run` resolve; the help list golden; docs/12's command table of §3 equals the parser's command table (a test reads both:
+  no command or keyword missing, none extra); every `ScriptErrorCode` and new warning code appears in
+  `help/script.md` or `help/json-output.md`.
+- A8.22 **Architecture (D-230) [W8a].** Check 3 with the new rows and `Cargo.lock`'s package count unchanged; check 4
+  without `hikasa-script`; the check 2 and check 7 rules of §1.8.16, each with a planted-violation self-test.
+- A8.23 **G14 (D-231) [W8a].** The rows of §1.8.17, Linux, release, idle; figures in docs/12 beside G13; G1, G2, G4, G7
+  re-measured unchanged. A failed gate stops the part and is reported with its figures.
+- A8.24 **Mutation record [W8a, W8b].** §1.8.20 holds, per part, the list the first rule asks for: each property and
+  integration test of A8.1, A8.2, A8.4, A8.7, A8.10, A8.11, A8.14, A8.15, A8.19 with at least one mutation that failed it.
+  A reviewer re-runs two of them.
+- A8.25 **Part and wave end.** Each part: whole workspace green as A7.24 (`fmt`, `clippy -D warnings` also for the Windows
+  and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, architecture test), the
+  Windows tests under wine and the heavy proptests before a push, its §1.8.19 documents, its CHANGELOG entry and its
+  §1.8.20 notes. W8b: the maintainer's CI on Windows and macOS; packaging scripts unchanged and `smoke-test.sh` passing. No
+  version bump by a part; the orchestrator bumps to 0.1.94 and publishes the pre-release after W8b's review (§1.8.19). The
+  product name of docs/17 §5 appears nowhere: grep before each commit.
