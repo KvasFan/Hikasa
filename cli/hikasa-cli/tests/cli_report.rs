@@ -980,3 +980,24 @@ fn a7_19_remembered_choices_do_not_reach_the_command_line() {
     assert_eq!(after_folder.stdout, before_folder.stdout);
     assert_eq!(code(&after_text), code(&before_text));
 }
+
+/// A7.20: `hikasa help report` and `hikasa help report folder` resolve to the report topic.
+#[test]
+fn a7_20_help_report_resolves() {
+    let s = Sandbox::new();
+    for words in [
+        &["help", "report"][..],
+        &["help", "report", "folder"],
+        &["help", "report", "text"],
+    ] {
+        let out = run(&s, words);
+        assert_eq!(code(&out), 0, "{words:?}");
+        assert!(
+            stdout(&out).starts_with("hikasa report\n"),
+            "{words:?}: {}",
+            stdout(&out)
+        );
+    }
+    let out = run(&s, &["--json", "help", "report", "folder"]);
+    assert_eq!(json(&out)["result"]["topic"]["id"], "report");
+}

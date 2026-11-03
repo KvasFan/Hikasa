@@ -1157,3 +1157,73 @@ proptest! {
         prop_assert_eq!(&ReportRequest::parse(kind, &joined, &d).unwrap(), &req);
     }
 }
+
+/// The words of the vocabulary table under `heading` in a Markdown document: slot → the backticked words of the
+/// Words column.
+fn vocabulary_table(
+    doc: &str,
+    heading: &str,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let start = doc
+        .find(heading)
+        .unwrap_or_else(|| panic!("no {heading:?}"));
+    let rest = &doc[start..];
+    let table = rest
+        .find("| Slot | Words |")
+        .unwrap_or_else(|| panic!("no vocabulary table after {heading:?}"));
+    let mut out = std::collections::BTreeMap::new();
+    for line in rest[table..].lines().skip(2) {
+        if !line.starts_with('|') {
+            break;
+        }
+        let cells: Vec<&str> = line.split(" | ").collect();
+        let slot = cells[0].trim_start_matches('|').trim().to_owned();
+        let words: std::collections::BTreeSet<String> = cells[1]
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect();
+        out.insert(slot, words);
+    }
+    out
+}
+
+/// A7.20: docs/13's vocabulary table equals the contract's (§1.7.4): no word missing, none extra; and every word of it
+/// that is a whole option word parses for one kind (or is refused as `unsupported`, the version-control columns).
+#[test]
+fn a7_20_the_vocabulary_of_docs_13_is_the_contracts() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let contract = std::fs::read_to_string(root.join("docs/design/m2-contracts.md")).unwrap();
+    let docs = std::fs::read_to_string(root.join("docs/13-reports.md")).unwrap();
+    let want = vocabulary_table(&contract, "#### 1.7.4 `ReportRequest` and the vocabulary");
+    let got = vocabulary_table(&docs, "## M2 reports");
+    assert_eq!(want.len(), 12, "{:?}", want.keys());
+    assert_eq!(got, want, "docs/13 against the contract's §1.7.4");
+    for (slot, words) in &got {
+        for word in words {
+            let whole = word.contains('-')
+                && !word.starts_with('-')
+                && !word.ends_with('-')
+                && !word.contains(['<', ':', ' '])
+                && slot != "layout";
+            if !whole {
+                continue;
+            }
+            let ok = [ReportKind::Text, ReportKind::Folder]
+                .into_iter()
+                .any(|kind| {
+                    let words = ReportWords {
+                        layout: Some("side-by-side".into()),
+                        options: vec![word.clone()],
+                        ..ReportWords::default()
+                    };
+                    match ReportRequest::parse(kind, &words, &ReportDefaults::new("side-by-side")) {
+                        Ok(_) => true,
+                        Err(e) => matches!(e, ReportError::Refused { .. }),
+                    }
+                });
+            assert!(ok, "{slot}: {word}");
+        }
+    }
+}

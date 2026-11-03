@@ -46,8 +46,9 @@ The M1 subset is implemented by `hikasa-report` (`render_text_report`, `render_f
 `text_compare_json`, `folder_compare_json`); the CLI and the GUI call the same functions (RPT-011). Text
 reports: the annotated unified diff (the CLI default), patches in normal, context and unified style, side-by-side
 plain text and HTML, the summary (text or HTML) and the statistics CSV. Folder reports: the status list (the CLI
-default), side-by-side plain text and HTML, the summary (text or HTML) and the JSON document. XML dumps,
-interleaved layouts, printing and links to file reports come later.
+default), side-by-side plain text and HTML, the summary (text or HTML) and the JSON document. M2 (W7) adds the
+interleaved layout, XML dumps, links to file reports, the clipboard, printing through the browser and remembered
+choices, all through one request (`ReportRequest`): see "M2 reports" below. Every M1 byte stays as it was.
 
 **Header (RPT-004).** Every side-by-side and summary report, and every patch, starts with a header:
 
@@ -168,3 +169,160 @@ and has a legend.
 rules. The rules are written in full: absent optional values are `null`, never left out (unlike the TOML rules
 file). Arrays are never `null`; likewise `display.toggles` of `text compare --json` always lists the shown
 categories (`[]` for none).
+
+## M2 reports (W7; contract §1.7, decisions D-193…D-213)
+
+M2 reads RPT-001…RPT-004 and SCR-001 as one model: a report is a **request** of words, rendered by `hikasa-report`
+(`render_report`) and written by the session service to a **target**. The CLI (`hikasa report`, and every compare
+subcommand through the same flags), the script commands (`text-report`, `folder-report`, M2 W8) and the report dialog
+(W13) build the same request, so one request gives the same bytes everywhere (RPT-011). The roadmap's M3 line now
+reads "reports of the P1 views (table, hex and picture side-by-side and interleaved; media, version, registry)";
+*File Compare Report…* over a folder view's selection is FC-079 (P1), and the script's `file-report … <left> <right>`
+is a text report.
+
+**The vocabulary (normative, contract §1.7.4).** Words are ASCII case-insensitive and `_` equals `-`; a word fills one
+slot. The M1 parsers are the slot parsers, so every M1 spelling stays valid. `no-line-numbers` and `display-none` are
+the two words W7 adds (D-196; `display-none` shows only the header and one hidden-rows line, or no item).
+
+| Slot | Words | Kind | Used by layouts | Absent |
+|---|---|---|---|---|
+| layout | text: `side-by-side` (`sbs`), `summary`, `interleaved`, `patch`, `statistics` (`stats`), `xml`, `unified` (the annotated diff); folder: `side-by-side`, `summary`, `xml`, `list`, `json` | both | — | the command's default |
+| display | text: `display-all`, `display-mismatches` (`-differences`), `display-context`, `display-matches` (`-same`), `display-none`; folder: every `FolderDisplayFilter::parse` word with `display-` (the SCR-001 folder filters: `display-no-orphans`, `display-mismatches-no-orphans`, `display-orphans`, `display-left-newer`, `display-right-newer`, `display-left-newer-orphans`, `display-right-newer-orphans`, `display-left-orphans`, `display-right-orphans`, and `all`, `mismatches`, `matches`, `none`), plus `display-context` = differences with `CompareStructure` | both | text: side-by-side, interleaved, XML; folder: list, side-by-side, XML, JSON | the command's |
+| ignore | `ignore-unimportant` | both | all | off |
+| numbers | `line-numbers`, `no-line-numbers` | text | side-by-side (text), interleaved | on |
+| strike | `strikeout-left-diffs`, `strikeout-right-diffs` (both may be given) | text | interleaved | none |
+| patch | `patch-normal`, `patch-context`, `patch-unified` | text | patch | unified |
+| columns | `column-size`, `column-timestamp` (`-modified`, `-mtime`), `column-attributes`, `column-crc`, `column-owner`, `column-group`, `column-status`, `column-none` (alone); `column-vcs`, `column-revision`, `column-version` → `unsupported` | folder | side-by-side | size, timestamp |
+| links | `include-file-links` | folder | side-by-side HTML | off |
+| palette | `html-color` (`html-colour`), `html-mono`, `html-custom:<css>` (colour plus the stylesheet), `text` (plain; ANSI comes from the terminal and `--no-color`, as M1) | both | every layout with an HTML form | plain text |
+| print palette | `print-color`, `print-mono` | both | HTML layouts (print block); the printer target | colour |
+| orientation | `print-portrait`, `print-landscape` | both | HTML layouts (print block); the printer target | none; portrait for the printer |
+| wrap | `wrap-none`, `wrap-character`, `wrap-word` | text | side-by-side, interleaved (text and HTML) | character |
+
+Two different words of one slot are refused (`invalid_input`, exit 100), whatever their order, also when one comes
+from a flag (`--html-mono` with `html-color`); the same word twice is one; columns accumulate. A word of the other
+kind, or no word at all, is refused naming it. A word of this kind whose slot the layout does not use is kept and
+reported once, `report_option_unused` "<layout> does not use: <words>": the dialog's remembered words span layouts,
+and a script line copied to another layout still runs. An HTML palette word with a layout that has no HTML form is
+`unsupported`. `html-custom:` takes the rest of a list (a path may hold commas), so it goes last; a report word after
+it is refused. The request is checked before anything is compared, so a refused combination exits 100 with nothing
+compared or written (M1 refused it after the comparison; the exit code is the same). `ignore-unimportant` also sets
+the comparison's flag, so the report, the verdict and the exit code agree.
+
+**Layouts, formats and targets.** HTML is `html-color`, `html-mono` or `html-custom`; ANSI colours only on a
+terminal's stdout.
+
+| Kind | Layout | Text | ANSI | HTML | Other |
+|---|---|---|---|---|---|
+| text | `unified` (annotated) | yes | yes | — | |
+| text | `side-by-side`, `summary`, `interleaved` | yes | yes | yes | |
+| text | `patch` | yes | yes | — | |
+| text | `statistics` | CSV | — | — | |
+| text | `xml` | — | — | — | XML only |
+| folder | `list` | yes | yes | — | |
+| folder | `side-by-side` | yes | yes | yes (+ links) | |
+| folder | `summary` | yes | yes | yes | |
+| folder | `json`, `xml` | — | — | — | JSON only, XML only |
+
+Standard output and a file take every layout. The clipboard takes every layout except one with links. `printer` and
+`browser` take the layouts with an HTML form; their palette is the print palette, so `html-color` and `html-mono` are
+unused there. Links need folder side-by-side HTML and a target that is a local file, `printer` or `browser` ("file
+reports need a folder on disk" otherwise).
+
+**Scope (RPT-003 *Just selection*, D-209).** A report can cover part of a comparison: a range of lines of one side
+(`--lines [left:|right:]<a>-<b>`: the rows from the first whose line on that side is ≥ a to the last whose line is ≤ b,
+the rows between included) or the selected rows of a folder comparison (`--select`, `--path`: the selected rows,
+everything below a selected folder and their folders; the display filter applies on top). Only the row layouts take a
+scope (text side-by-side, interleaved, XML; folder list, side-by-side, XML): counts or a patch of part of a comparison
+would mislead. The header's `Mode:` line ends `; scope: lines <a>–<b> of the left` or `; scope: <n> selected rows`.
+
+**Interleaved (D-197).** One column of lines in row order: a same row is one line with both numbers, a changed row its
+left line then its right line, an orphan its one line, a run of hidden rows one `… N lines hidden …` row. Text form:
+`<left number> <right number> <mark> <text>`, the mark's first character the side (` ` both, `-` the left line of a
+difference, `+` the right line), its second the importance (` ` same, `!` important, `~` unimportant; ` ` under
+Ignore Unimportant). Without line numbers the two number columns are left out. The text wraps by `wrap-*` with the
+side-by-side rules (tabs, display widths, escapes). HTML: one self-contained document, a table `il` with left number,
+right number and text, rows classed by importance and side. `strikeout-left-diffs` strikes the left side's
+differences (the inline differences of its changed lines and its orphan lines), `strikeout-right-diffs` the right's:
+`<del>` in HTML (also in mono), SGR 9 in ANSI, `[-…-]` in plain text.
+
+**XML dumps (D-198, D-199).** One document type, `hikasa-report` in the namespace `urn:hikasa:report:1`, for text and
+folder comparisons, described by the XSD [`docs/schemas/hikasa-report-1.xsd`](schemas/hikasa-report-1.xsd) (normative,
+written by hand). UTF-8 without BOM, `\n` line ends, two spaces per depth, one element per line (a text `row` with its
+children on one line). `&`, `<`, `>` are always escaped and `"` in attributes; a CR is `&#13;`, a TAB in an attribute
+`&#9;`; a character XML 1.0 cannot carry is the empty element `<c x="1b"/>` in text content, and `\u{…}` in an
+attribute, where a backslash is `\\` (a lossy or escaped name then has `raw-name`, the hex of its OS bytes).
+Display modes, Ignore Unimportant and the scope apply; colours, wrap, width and columns do not (a dump has every
+column).
+
+| Element | Parent | Attributes (required in **bold**) | Content |
+|---|---|---|---|
+| `hikasa-report` | — | **`version`** = `1`, **`type`** = `text`\|`folder` | `header`, then `rows` (text) or `tree` (folder), then `summary` |
+| `header` | root | — | `title`, `generated`?, `side` × 2, `mode`, `rules`, `error`*, `status`?, `warning`* |
+| `generated` | header | **`time`**, **`by`** | empty; absent without a report time |
+| `side` | header | **`id`**, **`spec`**; text: **`encoding`**, **`bom`**, **`eol`**, **`binary`** | empty |
+| `mode` | header | **`display`**, `context`, **`ignore-unimportant`**; folder: **`folders`**, **`suppress-filters`**; `scope` | empty |
+| `row` | rows | **`state`**; `importance`; `left`, `right`; `left-piece`, `right-piece` | `l`?, `r`? |
+| `d`, `u` | l, r | — | an important (`d`) or unimportant (`u`) inline difference |
+| `hidden` | rows | **`rows`** | empty |
+| `folder`, `entry` | tree, folder | **`name`**, **`path`**, **`state`**, **`marker`**; `entry`: **`kind`**; `ignored` | `left`?, `right`?, `file-report`?; then the children of a folder |
+| `left`, `right` | folder, entry | **`name`**; `raw-name`, `size`, `modified`, `attributes`, `crc`, `owner`, `group`, `link-target`, `error` | empty |
+| `file-report` | entry | **`status`** = `written`\|`skipped`\|`failed`; `href`; `reason` | empty |
+| `summary` | root | **`verdict`**; folder: **`complete`** | `count`* (`group`, `name`, `value`) |
+
+The XSD and contract §1.7.6 give every element (`title`, `rules`, `error`, `status`, `warning`, `l`, `r`, `c`,
+`tree`). `summary/count` lists the counts of the summary layout in its order; one function feeds the text and HTML
+summaries and the XML, so they cannot disagree. Folder elements nest as the tree does; the JSON report stays flat.
+**Versioning:** `version="1"` and the namespace name the major version. Within version 1, attributes and elements are
+only added, optional, with the XSD updated in the same change, and a consumer ignores what it does not know; a removal
+or a change of meaning is version 2, namespace `urn:hikasa:report:2`.
+
+**HTML wrap and printing (D-210).** In the HTML of text side-by-side and interleaved, `wrap-character` is M1's rule,
+`wrap-word` breaks at words, `wrap-none` does not wrap (the page scrolls). A print block (`@page` with the orientation
+and 12 mm margins, `@media print` rules: exact colours, repeated table headers, rows not split, and the print palette
+when it differs from the screen's) is added for an orientation word or the printer target. Without these words every
+HTML byte is M1's.
+
+**Links to file reports (D-200).** With `include-file-links`, every row the folder side-by-side HTML report shows that
+is a file pair whose category is left newer, right newer or different gets a text report (side-by-side HTML, display
+all, line numbers, the folder report's palette and print block), with a `Folder report:` line linking back. The pair
+reports go to a files folder beside the main file:
+
+| What | Name |
+|---|---|
+| the main file | as given |
+| the files folder | `<safe stem>_files`; `-2` … `-99` when that one is not this report's |
+| a pair's report | `<n>-<safe left name>.html`, `n` zero-padded to the digits of the number of linked rows |
+| the marker | `.hikasa-report.toml` in the files folder |
+
+A safe name keeps letters, digits, `.`, `-` and `_`, turns everything else into `_`, never starts with `.` or `-`,
+avoids the names Windows refuses, and is at most 64 bytes; the numbers keep the names distinct on every file system.
+Links are relative, each byte outside `A–Z a–z 0–9 - . _ ~` written `%XX`, never absolute, never `file:`. A files
+folder is this report's when it holds a marker naming the main file and exactly the files the marker lists, each with
+its size and time: then a new report replaces it; anything else is never written into, replaced or removed. The pair
+reports are written into a hidden staging folder, the main report into its atomic writer; the staging folder is then
+swapped in for the files folder and the main file committed last, so a failure or a cancel leaves the old report and
+folder as they were. A pair too large for a rules-based comparison is skipped (`too_large`) without being read, one
+found binary is skipped (`binary`), one whose comparison or rendering fails is `failed` with the warning
+`file_report_failed`; the folder report is written either way.
+
+**Targets (D-201…D-204).** A file is streamed through the atomic writer (a 64 KiB buffer; nothing holds the report),
+so a failure or Ctrl-C leaves it untouched; an archive member is one rebuild. The **clipboard** gets the report's bytes
+as text, or an HTML report with the same request rendered as plain text beside it, at most 128 MiB both together
+(`too_large`). On Linux a helper process (`hikasa` itself, through a hidden entry) owns the selection until something
+else is copied, so the content outlives `hikasa`; Windows and macOS keep it without a helper. **`printer` and
+`browser`** write the report to a new folder `<cache>/print/<yyyymmdd>-<hhmmss>-<n>/` (with its files folder when
+linked) and open it with the associated application: the printer's page has the print block and the browser's does
+not. The bytes are those of a file target given the words the target implies. Print folders older than seven days are
+removed before a new one is written. Native printing is not part of M2 (D-62).
+
+**Report time and identical output (D-206, D-207).** `SOURCE_DATE_EPOCH` (a decimal count of seconds since the epoch)
+is the report time, shown in UTC; otherwise the clock in the user's zone. A value that does not parse is ignored with
+the warning `source_date_epoch_invalid`. One report takes the time once: a folder report and its pair reports carry
+the same `Generated:` line. With it fixed, `hikasa report`, the compare subcommand's shortcut, the service into memory,
+a file, stdout, the clipboard and the printer's file are byte-identical for one comparison and one request.
+
+**Remembered choices (D-208).** The report dialog's last choices per kind live in `state.toml`,
+`[dialogs."report-text"]` and `[dialogs."report-folder"]` (`layout`, `options`, `output_options`, `output_to`,
+`file`; not the title). They are read leniently (a word the request refuses is dropped with `invalid_config_value`).
+The command line never reads them: a command means the same whatever a dialog did last.

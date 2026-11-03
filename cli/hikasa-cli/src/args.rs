@@ -1650,6 +1650,39 @@ mod report_args_tests {
     use super::*;
     use clap::{Args, CommandFactory};
 
+    /// A7.20: docs/12's REPORT row names every flag of `ReportArgs` (long names and visible aliases), and no other.
+    #[test]
+    fn a7_20_docs_12_names_every_report_flag() {
+        let doc = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/12-cli-and-scripting.md"),
+        )
+        .unwrap();
+        let row = doc
+            .lines()
+            .find(|l| l.starts_with("| REPORT ("))
+            .expect("docs/12 §4 has the REPORT row");
+        let named: std::collections::BTreeSet<String> = row
+            .split("`--")
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '-')
+                    .collect::<String>()
+            })
+            .filter(|flag| !flag.is_empty())
+            .collect();
+        let group = ReportArgs::augment_args(clap::Command::new("group"));
+        let mut flags = std::collections::BTreeSet::new();
+        for arg in group.get_arguments() {
+            flags.insert(arg.get_long().unwrap().to_owned());
+            for alias in arg.get_visible_aliases().unwrap_or_default() {
+                flags.insert(alias.to_owned());
+            }
+        }
+        assert_eq!(named, flags);
+    }
+
     /// A7.18: the five commands flatten one `ReportArgs`: every REPORT argument, with the same long name and value
     /// name, in each.
     #[test]
