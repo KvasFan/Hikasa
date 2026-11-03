@@ -100,13 +100,20 @@ pub enum MruList {
     Workspaces,
 }
 
-/// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes; M2 W9a adds the folder
+/// views' column lists, sort words and width tables, D-234).
+#[derive(Debug, Clone, PartialEq)]
 pub enum LayoutValue {
     /// A flag (`toolbar`, `log_panel`, `thumbnail`).
     Bool(bool),
     /// A size in points (`log_height`, `font_size`).
     Float(f64),
+    /// A word (`sort`, `sort_side`).
+    Text(String),
+    /// A list of words (`columns`).
+    Texts(Vec<String>),
+    /// Points by name (`widths`).
+    Numbers(BTreeMap<String, f64>),
 }
 
 impl LayoutValue {
@@ -114,7 +121,7 @@ impl LayoutValue {
     pub fn as_bool(self) -> Option<bool> {
         match self {
             LayoutValue::Bool(b) => Some(b),
-            LayoutValue::Float(_) => None,
+            _ => None,
         }
     }
 
@@ -122,8 +129,76 @@ impl LayoutValue {
     pub fn as_float(self) -> Option<f64> {
         match self {
             LayoutValue::Float(f) => Some(f),
-            LayoutValue::Bool(_) => None,
+            _ => None,
         }
+    }
+
+    /// The word, if this is one.
+    pub fn as_text(self) -> Option<String> {
+        match self {
+            LayoutValue::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The list of words, if this is one.
+    pub fn as_texts(self) -> Option<Vec<String>> {
+        match self {
+            LayoutValue::Texts(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The table of points, if this is one.
+    pub fn as_numbers(self) -> Option<BTreeMap<String, f64>> {
+        match self {
+            LayoutValue::Numbers(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// The TOML form.
+    pub fn to_toml(&self) -> toml::Value {
+        match self {
+            LayoutValue::Bool(b) => toml::Value::Boolean(*b),
+            LayoutValue::Float(f) => toml::Value::Float(*f),
+            LayoutValue::Text(t) => toml::Value::String(t.clone()),
+            LayoutValue::Texts(t) => {
+                toml::Value::Array(t.iter().cloned().map(toml::Value::String).collect())
+            }
+            LayoutValue::Numbers(n) => toml::Value::Table(
+                n.iter()
+                    .map(|(k, v)| (k.clone(), toml::Value::Float(*v)))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The layout value of a TOML value: a boolean, a finite number, a string, an array of strings, a table of
+    /// numbers; anything else is none.
+    pub fn of_toml(value: &toml::Value) -> Option<LayoutValue> {
+        let number = |v: &toml::Value| match v {
+            toml::Value::Float(f) if f.is_finite() => Some(*f),
+            toml::Value::Integer(i) => Some(*i as f64),
+            _ => None,
+        };
+        Some(match value {
+            toml::Value::Boolean(b) => LayoutValue::Bool(*b),
+            toml::Value::String(t) => LayoutValue::Text(t.clone()),
+            toml::Value::Array(items) => LayoutValue::Texts(
+                items
+                    .iter()
+                    .map(|v| v.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            toml::Value::Table(table) => LayoutValue::Numbers(
+                table
+                    .iter()
+                    .map(|(k, v)| number(v).map(|n| (k.clone(), n)))
+                    .collect::<Option<BTreeMap<_, _>>>()?,
+            ),
+            other => LayoutValue::Float(number(other)?),
+        })
     }
 }
 
@@ -150,12 +225,7 @@ impl State {
     /// The value of `key` in `[layout.<view>]`: a boolean, or a finite number (an integer counts); anything else
     /// is `None` (the view's default applies).
     pub fn layout_value(&self, view: &str, key: &str) -> Option<LayoutValue> {
-        match self.layout.get(view)?.get(key)? {
-            toml::Value::Boolean(b) => Some(LayoutValue::Bool(*b)),
-            toml::Value::Float(f) if f.is_finite() => Some(LayoutValue::Float(*f)),
-            toml::Value::Integer(i) => Some(LayoutValue::Float(*i as f64)),
-            _ => None,
-        }
+        LayoutValue::of_toml(self.layout.get(view)?.get(key)?)
     }
 
     /// Overlays a session's `[view]` keys on `[layout.<view>]` in this copy (the precedence of D-108: the
@@ -169,10 +239,7 @@ impl State {
 
     /// Sets `key` of `[layout.<view>]` (the table is created on demand; its other keys stay).
     pub fn set_layout_value(&mut self, view: &str, key: &str, value: LayoutValue) {
-        let v = match value {
-            LayoutValue::Bool(b) => toml::Value::Boolean(b),
-            LayoutValue::Float(f) => toml::Value::Float(f),
-        };
+        let v = value.to_toml();
         self.layout
             .entry(view.to_owned())
             .or_default()

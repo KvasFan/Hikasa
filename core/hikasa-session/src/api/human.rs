@@ -29,6 +29,8 @@ use hikasa_folder::ops::OpVerb;
 use hikasa_report::{escape_controls, escape_name};
 use hikasa_vfs::EntryKind;
 use hikasa_vfs::ops::ItemStatus;
+/// The zone type of [`local_time_text`] (the windows name it without a `jiff` edge of their own).
+pub use jiff::tz::TimeZone;
 
 use super::dto::{FormatDetectDto, FormatListItemDto, FormatTokensDto, VfsEntryDto, VfsStatDto};
 use super::folder_ops::{
@@ -47,7 +49,7 @@ use crate::settings::tree::inline;
 
 /// A file time as `YYYY-MM-DD HH:MM:SS` in `zone` (the Modified column of the folder views, D-237: the zone of the
 /// Service's clock, `Service::clock().now().time_zone()`); a time outside jiff's range is its RFC 3339 text.
-pub fn local_time_text(time: hikasa_core::FileTime, zone: &jiff::tz::TimeZone) -> String {
+pub fn local_time_text(time: hikasa_core::FileTime, zone: &TimeZone) -> String {
     match jiff::Timestamp::new(time.unix_seconds(), time.subsec_nanos() as i32) {
         Ok(stamp) => stamp
             .to_zoned(zone.clone())

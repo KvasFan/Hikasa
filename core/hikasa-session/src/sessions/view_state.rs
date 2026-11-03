@@ -13,13 +13,7 @@ pub type OpaqueTable = toml::Table;
 /// The `view` table of a view's layout keys.
 pub fn layout_table(keys: &[(&str, LayoutValue)]) -> OpaqueTable {
     keys.iter()
-        .map(|(key, value)| {
-            let value = match value {
-                LayoutValue::Bool(b) => Value::Boolean(*b),
-                LayoutValue::Float(f) => Value::Float(*f),
-            };
-            ((*key).to_owned(), value)
-        })
+        .map(|(key, value)| ((*key).to_owned(), value.to_toml()))
         .collect()
 }
 
