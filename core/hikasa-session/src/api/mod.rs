@@ -69,7 +69,14 @@ pub use gui::{
     infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
 };
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
-pub use report::ReportSettings;
+pub use report::{
+    ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
+    TargetDto,
+};
+pub use report_write::{
+    FilesFolder, LinksDto, LinksPlan, PairCounts, PairOutcome, PairPlan, PairStatus,
+    ReportClipboardDto, ReportDto, ReportOutcome, ReportPlan, WordsDto,
+};
 pub use requests::{
     FolderCompareRequest, FormatTokensRequest, QuickMethod, QuickRequest, TextCompareRequest,
     spec_os_string,
@@ -242,6 +249,11 @@ pub enum ApiOp {
     },
     /// `gui ping|list|close|quit`.
     GuiControl,
+    /// `report text|folder` (M2 W7, §1.7.14): a folder report's base that cannot be loaded is 107, as `folder compare`.
+    Report {
+        /// The kind of the report.
+        kind: hikasa_report::ReportKind,
+    },
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }

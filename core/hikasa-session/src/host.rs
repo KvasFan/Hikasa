@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use crate::api::ApiError;
 use crate::clipboard::{
-    ClipboardContent, ClipboardError, ClipboardProvider, MAX_IMAGE_BYTES, MAX_TEXT_BYTES,
+    ClipboardContent, ClipboardError, ClipboardPayload, ClipboardProvider, MAX_IMAGE_BYTES,
+    MAX_TEXT_BYTES,
 };
 
 use crate::launcher::{AppLauncher, OpenCommand};
@@ -110,6 +111,10 @@ pub struct EnvFacts {
     /// `$HIKASA_CLIPBOARD_FILE`: a file whose bytes stand in for the clipboard text ([`FileClipboard`]; tests,
     /// headless scripts). Added in M2 W3 (D-100).
     pub clipboard_file_override: Option<PathBuf>,
+    /// `$SOURCE_DATE_EPOCH` as set (reproducible builds): the report time, a decimal count of seconds since the epoch
+    /// shown in UTC ([`crate::Service::report_time`] parses it, so a value that does not parse gives a warning). Only
+    /// reports read it (M2 W7, D-206).
+    pub source_date_epoch: Option<String>,
 }
 
 impl EnvFacts {
@@ -135,6 +140,7 @@ impl EnvFacts {
             gui_exe_override: None,
             no_color: false,
             clipboard_file_override: None,
+            source_date_epoch: None,
         }
     }
 }
@@ -176,6 +182,9 @@ pub fn capture_env() -> EnvFacts {
         gui_exe_override: path("HIKASA_GUI_EXE"),
         no_color: var("NO_COLOR").is_some(),
         clipboard_file_override: path("HIKASA_CLIPBOARD_FILE"),
+        // Set but empty is "set" here (D-206: an empty value is ignored with a warning), so not through `var`.
+        source_date_epoch: std::env::var_os("SOURCE_DATE_EPOCH")
+            .map(|v| v.to_string_lossy().into_owned()),
         temp_dir,
     }
 }
@@ -319,7 +328,219 @@ impl ClipboardProvider for SystemClipboard {
             rgba: image.bytes.into_owned(),
         })
     }
+
+    /// Places a report (§1.7.10). On Linux (X11 and Wayland) the content must outlive `hikasa`: a helper process,
+    /// `hikasa` itself through its hidden entry [`CLIPBOARD_HELPER_ARG`], takes the payload on its stdin and owns the
+    /// selection until something else is copied; this returns once it reports the payload placed. Windows and macOS
+    /// keep the content after the process ends: `arboard` directly.
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        if cfg!(target_os = "linux") {
+            let exe = std::env::current_exe()
+                .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
+            let mut command = std::process::Command::new(exe);
+            command.arg(CLIPBOARD_HELPER_ARG);
+            return spawn_clipboard_helper(&mut command, payload).map(drop);
+        }
+        place_payload(payload)
+    }
 }
+
+/// The hidden internal entry of the Linux clipboard helper (§1.7.10): `hikasa __clipboard-helper`. Not in `--help`, the
+/// reference or the help topics; the adapter's `main` runs [`clipboard_helper_main`] for it before parsing arguments.
+pub const CLIPBOARD_HELPER_ARG: &str = "__clipboard-helper";
+
+/// The status line of a helper that placed its payload.
+const HELPER_PLACED: &str = "placed";
+
+/// Places a payload with `arboard` and returns (Windows, macOS; the helper's first, non-waiting placement).
+fn place_payload(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+    match &payload.html {
+        Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
+        None => clipboard.set_text(payload.text.as_str()),
+    }
+    .map_err(arboard_error)
+}
+
+/// The payload on the helper's stdin: the text's and the HTML's lengths (8 bytes little-endian each; `u64::MAX`: no
+/// HTML), then the text, then the HTML.
+fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
+    let html_len = payload.html.as_ref().map_or(u64::MAX, |h| h.len() as u64);
+    let mut bytes =
+        Vec::with_capacity(16 + payload.text.len() + payload.html.as_ref().map_or(0, String::len));
+    bytes.extend_from_slice(&(payload.text.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&html_len.to_le_bytes());
+    bytes.extend_from_slice(payload.text.as_bytes());
+    if let Some(html) = &payload.html {
+        bytes.extend_from_slice(html.as_bytes());
+    }
+    bytes
+}
+
+/// Reads a payload of [`encode_payload`] (at most [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes).
+fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, String> {
+    let mut head = [0u8; 16];
+    input
+        .read_exact(&mut head)
+        .map_err(|e| format!("no payload: {e}"))?;
+    let len = |b: &[u8]| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]));
+    let (text_len, html_len) = (len(&head[..8]), len(&head[8..]));
+    let max = crate::clipboard::CLIPBOARD_REPORT_MAX;
+    let html_size = if html_len == u64::MAX { 0 } else { html_len };
+    if text_len.saturating_add(html_size) > max {
+        return Err("the payload is larger than the clipboard limit".into());
+    }
+    let mut read = |n: u64| -> Result<String, String> {
+        let mut bytes = vec![0u8; usize::try_from(n).map_err(|e| e.to_string())?];
+        input
+            .read_exact(&mut bytes)
+            .map_err(|e| format!("short payload: {e}"))?;
+        String::from_utf8(bytes).map_err(|e| e.to_string())
+    };
+    let text = read(text_len)?;
+    let html = if html_len == u64::MAX {
+        None
+    } else {
+        Some(read(html_len)?)
+    };
+    Ok(ClipboardPayload { text, html })
+}
+
+/// Starts a clipboard helper `command`, writes the payload to its stdin and waits for its one status line (§1.7.10):
+/// `placed` → `Ok` with the running child (the caller lets it run on); another line, none, or a helper that cannot
+/// start → `Failed` (`io`), nothing placed. Adapter-only, like [`SystemClipboard`].
+pub fn spawn_clipboard_helper(
+    command: &mut std::process::Command,
+    payload: &ClipboardPayload,
+) -> Result<std::process::Child, ClipboardError> {
+    use std::io::{BufRead, Write};
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| ClipboardError::Failed(format!("cannot start the clipboard helper: {e}")))?;
+    let fail = |child: &mut std::process::Child, message: String| {
+        let _ = child.kill();
+        let _ = child.wait();
+        ClipboardError::Failed(message)
+    };
+    let written = child.stdin.take().map(|mut stdin| {
+        stdin
+            .write_all(&encode_payload(payload))
+            .and_then(|()| stdin.flush())
+    });
+    if let Some(Err(e)) = written {
+        return Err(fail(
+            &mut child,
+            format!("the clipboard helper did not take the payload: {e}"),
+        ));
+    }
+    let mut line = String::new();
+    let read = child
+        .stdout
+        .take()
+        .map(|stdout| std::io::BufReader::new(stdout).read_line(&mut line));
+    match read {
+        Some(Ok(_)) if line.trim_end() == HELPER_PLACED => Ok(child),
+        Some(Ok(0)) | None => Err(fail(
+            &mut child,
+            "the clipboard helper ended without placing the report".into(),
+        )),
+        Some(Ok(_)) => {
+            let message = line
+                .trim_end()
+                .strip_prefix("failed: ")
+                .unwrap_or(line.trim_end())
+                .to_owned();
+            Err(fail(
+                &mut child,
+                format!("the clipboard helper failed: {message}"),
+            ))
+        }
+        Some(Err(e)) => Err(fail(&mut child, format!("the clipboard helper: {e}"))),
+    }
+}
+
+/// How the helper places a payload: the real clipboard, or a test's stand-in.
+pub enum HelperPlacer {
+    /// `arboard` with Linux's wait mode: placed, reported, then the selection is owned until something else is copied.
+    System,
+    /// Tests: the payload's HTML (else its text) is written to this file, then the helper reports and ends.
+    File(PathBuf),
+}
+
+/// The Linux clipboard helper (§1.7.10): reads a payload from `input`, places it, writes `placed` (or `failed: <why>`)
+/// as one line to `output`, and with [`HelperPlacer::System`] keeps the selection until another program takes it.
+/// Returns the process exit code. Adapter-only.
+pub fn clipboard_helper_main(
+    input: &mut dyn std::io::Read,
+    output: &mut dyn std::io::Write,
+    placer: &HelperPlacer,
+) -> i32 {
+    let report = |output: &mut dyn std::io::Write, line: &str| {
+        let _ = writeln!(output, "{line}");
+        let _ = output.flush();
+    };
+    let payload = match decode_payload(input) {
+        Ok(payload) => payload,
+        Err(e) => {
+            report(output, &format!("failed: {e}"));
+            return 1;
+        }
+    };
+    match placer {
+        HelperPlacer::File(path) => {
+            let bytes = payload.html.as_ref().unwrap_or(&payload.text);
+            match crate::atomic::write_atomic(path, bytes.as_bytes()) {
+                Ok(()) => {
+                    report(output, HELPER_PLACED);
+                    0
+                }
+                Err(e) => {
+                    report(output, &format!("failed: {e}"));
+                    1
+                }
+            }
+        }
+        HelperPlacer::System => {
+            let mut clipboard = match arboard::Clipboard::new() {
+                Ok(clipboard) => clipboard,
+                Err(e) => {
+                    report(output, &format!("failed: {e}"));
+                    return 1;
+                }
+            };
+            let placed = match &payload.html {
+                Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
+                None => clipboard.set_text(payload.text.as_str()),
+            };
+            if let Err(e) = placed {
+                report(output, &format!("failed: {e}"));
+                return 1;
+            }
+            report(output, HELPER_PLACED);
+            wait_owning(&mut clipboard, &payload);
+            0
+        }
+    }
+}
+
+/// Places the payload once more in Linux's wait mode: returns when another program owns the selection.
+#[cfg(target_os = "linux")]
+fn wait_owning(clipboard: &mut arboard::Clipboard, payload: &ClipboardPayload) {
+    use arboard::SetExtLinux;
+    let set = clipboard.set().wait();
+    let _ = match &payload.html {
+        Some(html) => set.html(html.as_str(), Some(payload.text.as_str())),
+        None => set.text(payload.text.as_str()),
+    };
+}
+
+/// Elsewhere the content outlives the process: nothing to wait for.
+#[cfg(not(target_os = "linux"))]
+fn wait_owning(_clipboard: &mut arboard::Clipboard, _payload: &ClipboardPayload) {}
 
 /// A file standing in for the clipboard (`$HIKASA_CLIPBOARD_FILE`): its bytes as text (invalid UTF-8 replaced);
 /// a missing file → `Unavailable`, an empty one → `Empty`, more than [`MAX_TEXT_BYTES`] → `TooLarge`.
@@ -354,6 +575,14 @@ impl ClipboardProvider for FileClipboard {
             )),
             Err(e) => Err(ClipboardError::Failed(format!("{}: {e}", self.0.display()))),
         }
+    }
+
+    /// Writes the payload's HTML when it has one, else its text, atomically (§1.7.10), so a test reads back exactly
+    /// a file target's bytes.
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        let bytes = payload.html.as_ref().unwrap_or(&payload.text);
+        crate::atomic::write_atomic(&self.0, bytes.as_bytes())
+            .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
     }
 }
 
