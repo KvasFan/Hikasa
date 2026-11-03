@@ -1057,6 +1057,105 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
     violations
 }
 
+/// The report rules of M2 W7 (D-211), part of check 2: under `core/`, the token `write_payload` appears only in
+/// `core/hikasa-session/src/clipboard.rs` and `host.rs` (and tests): the Service returns a clipboard payload and the
+/// adapters place it; `core/hikasa-session/src/api/report_write.rs` names no `std::fs` (every write of a report goes
+/// through the VFS).
+fn report_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    let tests = rel.contains("/tests/") || rel.contains("/benches/");
+    if rel.starts_with("core/")
+        && !tests
+        && rel != "core/hikasa-session/src/clipboard.rs"
+        && rel != "core/hikasa-session/src/host.rs"
+    {
+        for at in find_token(&code, "write_payload") {
+            violations.push(format!(
+                "{rel}:{}: `write_payload` outside the clipboard module and host.rs (the adapters place a payload)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel == "core/hikasa-session/src/api/report_write.rs" {
+        let squeezed = compact(&code);
+        let imported = imports(&code)
+            .into_iter()
+            .any(|(_, (path, _))| path.len() >= 2 && path[0] == "std" && path[1] == "fs");
+        if squeezed.contains("std::fs") || imported {
+            violations.push(format!(
+                "{rel}: names `std::fs` (a report is written through the VFS)"
+            ));
+        }
+    }
+    violations
+}
+
+fn check_report_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("core")) {
+        let rel = relative(root, &file);
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(report_violations(&rel, &raw));
+        }
+    }
+    violations
+}
+
+/// The report slot parsers (§1.7.16, check 7): an adapter calls none of them, and `ReportRequest::parse` is called only
+/// in `hikasa_session::api::report` (T11).
+const SLOT_PARSERS: &[&str] = &[
+    "TextLayout::parse",
+    "FolderLayout::parse",
+    "OutputFormat::parse",
+    "Wrap::parse",
+    "PatchStyle::parse",
+    "DisplayMode::parse",
+    "FolderColumns::parse_list",
+    "parse_folder_mode",
+];
+
+/// Check 7's report rule for one file.
+fn slot_parser_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = compact(&code_only(raw));
+    let mut violations = Vec::new();
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    let source = !rel.contains("/tests/") && !rel.contains("/benches/");
+    if adapter && source {
+        for parser in SLOT_PARSERS {
+            if code.contains(parser) {
+                violations.push(format!(
+                    "{rel}: calls the report slot parser `{parser}` (T11: the Service turns flags into a request)"
+                ));
+            }
+        }
+    }
+    let defines = rel.starts_with("core/hikasa-report/");
+    if source
+        && !defines
+        && rel != "core/hikasa-session/src/api/report.rs"
+        && code.contains("ReportRequest::parse")
+    {
+        violations.push(format!(
+            "{rel}: calls `ReportRequest::parse` outside hikasa_session::api::report (T11)"
+        ));
+    }
+    violations
+}
+
+fn check_slot_parsers(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui", "core"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(slot_parser_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
 /// The two confinement rules of M2 W3 (§1.3.9), part of check 2: under `core/`, the `trash` crate (`trash::`,
 /// not a module path such as `self::trash::`) is named only in `core/hikasa-vfs/src/local/trash.rs`, and the
 /// `arboard` crate only in `core/hikasa-session/src/host.rs`. And no test anywhere constructs or names
@@ -2624,8 +2723,9 @@ fn check_2_no_banned_tokens_in_core() {
     violations.extend(check_adapter_only(&root));
     violations.extend(check_confined_crates(&root));
     violations.extend(check_inclusions(&root));
+    violations.extend(check_report_rules(&root));
     assert_none(
-        "2 (banned tokens, adapter-only functions, file inclusion)",
+        "2 (banned tokens, adapter-only functions, file inclusion, report writes)",
         violations,
     );
 }
@@ -2662,6 +2762,86 @@ fn check_7_adapters_parse_no_vocabulary() {
         "7 (vocabulary parsing in cli/gui)",
         check_adapters(&workspace_root()),
     );
+    assert_none(
+        "7 (report slot parsers, ReportRequest::parse)",
+        check_slot_parsers(&workspace_root()),
+    );
+}
+
+/// A7.21: no package is added for W7 (`roxmltree` was in the lock through `fontique`): the package count of
+/// `Cargo.lock` is 0.1.92's. A new dependency changes this number with its approval (§1.7.16).
+#[test]
+fn check_3_the_lock_gains_no_package() {
+    let lock = fs::read_to_string(workspace_root().join("Cargo.lock")).unwrap();
+    let packages = lock.lines().filter(|l| *l == "[[package]]").count();
+    assert_eq!(packages, 586, "Cargo.lock's packages");
+}
+
+/// A7.21: each new rule finds a planted violation.
+#[test]
+fn report_rules_find_planted_violations() {
+    let planted =
+        "fn f(c: &dyn ClipboardProvider, p: &ClipboardPayload) { let _ = c.write_payload(p); }\n";
+    assert_eq!(
+        report_violations("core/hikasa-session/src/api/report.rs", planted).len(),
+        1
+    );
+    assert_eq!(
+        report_violations("core/hikasa-folder/src/x.rs", planted).len(),
+        1
+    );
+    for allowed in [
+        "core/hikasa-session/src/clipboard.rs",
+        "core/hikasa-session/src/host.rs",
+        "core/hikasa-session/tests/report_write.rs",
+        "cli/hikasa-cli/src/cmd/report.rs",
+    ] {
+        assert!(report_violations(allowed, planted).is_empty(), "{allowed}");
+    }
+    let fs_use = "use std::fs;\nfn g() {}\n";
+    let fs_path = "fn g() { let _ = std :: fs :: read(\"x\"); }\n";
+    let fs_group = "use std::{fs, io};\n";
+    for code in [fs_use, fs_path, fs_group] {
+        assert_eq!(
+            report_violations("core/hikasa-session/src/api/report_write.rs", code).len(),
+            1,
+            "{code}"
+        );
+    }
+    // A comment or a string does not count.
+    let fine = "// std::fs is not used here\nconst S: &str = \"std::fs\";\n";
+    assert!(report_violations("core/hikasa-session/src/api/report_write.rs", fine).is_empty());
+    // Check 7: slot parsers in an adapter; `ReportRequest::parse` outside the report module.
+    for parser in SLOT_PARSERS {
+        let code = format!("fn h(w: &str) {{ let _ = {parser}(w); }}\n");
+        assert_eq!(
+            slot_parser_violations("cli/hikasa-cli/src/cmd/x.rs", &code).len(),
+            1,
+            "{parser}"
+        );
+        assert_eq!(
+            slot_parser_violations("gui/hikasa-gui/src/x.rs", &code).len(),
+            1,
+            "{parser}"
+        );
+        assert!(slot_parser_violations("core/hikasa-session/src/api/vocab.rs", &code).is_empty());
+    }
+    let spaced = "fn h(w: &str) { let _ = hikasa_report::TextLayout :: parse(w, p, 3); }\n";
+    assert_eq!(
+        slot_parser_violations("cli/hikasa-cli/src/main.rs", spaced).len(),
+        1
+    );
+    let request = "fn r() { let _ = ReportRequest::parse(k, &w, &d); }\n";
+    assert_eq!(
+        slot_parser_violations("cli/hikasa-cli/src/cmd/report.rs", request).len(),
+        1
+    );
+    assert_eq!(
+        slot_parser_violations("core/hikasa-session/src/api/report_write.rs", request).len(),
+        1
+    );
+    assert!(slot_parser_violations("core/hikasa-session/src/api/report.rs", request).is_empty());
+    assert!(slot_parser_violations("core/hikasa-report/tests/request.rs", request).is_empty());
 }
 
 #[test]
