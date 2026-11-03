@@ -608,29 +608,24 @@ fn print_folder_time(name: &str) -> Option<jiff::civil::DateTime> {
 
 impl Service {
     /// The child `name` of the folder `dir`.
-    fn child_of(&self, dir: &Spec, name: &OsStr) -> Result<Spec, ApiError> {
-        self.router()
-            .child(dir, &FileName::from_os(name))
+    fn child_of(&self, vfs: &dyn Vfs, dir: &Spec, name: &OsStr) -> Result<Spec, ApiError> {
+        vfs.child(dir, &FileName::from_os(name))
             .map_err(ApiError::from_vfs)
     }
 
     /// True when the back-end at `at` tells names apart by case.
-    fn case_sensitive(&self, at: &Spec) -> bool {
-        self.router()
-            .capabilities(at)
+    fn case_sensitive(&self, vfs: &dyn Vfs, at: &Spec) -> bool {
+        vfs.capabilities(at)
             .is_ok_and(|caps| caps.contains(Capabilities::CASE_SENSITIVE))
     }
 
     /// The listing of a folder: name → stamp; `None` when it cannot be listed.
-    fn folder_stamps(&self, dir: &Spec) -> Option<Vec<(String, ItemStamp)>> {
+    fn folder_stamps(&self, vfs: &dyn Vfs, dir: &Spec) -> Option<Vec<(String, ItemStamp)>> {
         let options = ListOptions {
             follow: FollowLinks::No,
             prefilter: None,
         };
-        let listing = self
-            .router()
-            .list(dir, &options, &CancelToken::new())
-            .ok()?;
+        let listing = vfs.list(dir, &options, &CancelToken::new()).ok()?;
         if !listing.errors.is_empty() || !listing.name_only.is_empty() {
             return None;
         }
@@ -659,11 +654,16 @@ impl Service {
     /// Whether `dir` is a files folder of the main file `main_name` (§1.7.9 step 2): a folder holding a marker that
     /// parses, names this report (as the back-end compares names) and lists exactly the other files, each with its
     /// size and modification time. `Some(stamps)` when it is.
-    fn ours(&self, dir: &Spec, main_name: &OsStr) -> Option<Vec<(String, ItemStamp)>> {
-        let stamps = self.folder_stamps(dir)?;
-        let marker_spec = self.child_of(dir, OsStr::new(MARKER)).ok()?;
+    fn ours(
+        &self,
+        vfs: &dyn Vfs,
+        dir: &Spec,
+        main_name: &OsStr,
+    ) -> Option<Vec<(String, ItemStamp)>> {
+        let stamps = self.folder_stamps(vfs, dir)?;
+        let marker_spec = self.child_of(vfs, dir, OsStr::new(MARKER)).ok()?;
         let mut text = String::new();
-        let mut reader = self.router().open_read(&marker_spec).ok()?;
+        let mut reader = vfs.open_read(&marker_spec).ok()?;
         std::io::Read::read_to_string(&mut std::io::Read::take(&mut reader, 1 << 20), &mut text)
             .ok()?;
         let marker: Marker = toml::from_str(&text).ok()?;
@@ -672,7 +672,7 @@ impl Service {
         }
         let named = match (&marker.report, &marker.report_raw, main_name.to_str()) {
             (Some(report), _, Some(main)) => {
-                if self.case_sensitive(dir) {
+                if self.case_sensitive(vfs, dir) {
                     report == main
                 } else {
                     report.to_lowercase() == main.to_lowercase()
@@ -722,6 +722,21 @@ impl Service {
         select: Option<&SelectRequest>,
         job: &JobControl,
     ) -> Result<ReportPlan, ApiError> {
+        self.report_plan_on(&*self.router(), source, req, target, select, job)
+    }
+
+    /// [`Service::report_plan`] with the back-end the report is written to (additive, W7b): the Service's router for
+    /// the adapters; a test's `MemoryVfs` with its faults and journal. The comparisons, the stylesheet and the specs of
+    /// the pairs are read as always.
+    pub fn report_plan_on(
+        &self,
+        vfs: &dyn Vfs,
+        source: ReportSource<'_>,
+        req: &mut ReportRequest,
+        target: &ReportTarget,
+        select: Option<&SelectRequest>,
+        job: &JobControl,
+    ) -> Result<ReportPlan, ApiError> {
         run_guarded(|| {
             if let (Some(select), ReportSource::Folder { prepared, .. }) = (select, &source) {
                 let read = prepared.model().read();
@@ -737,17 +752,17 @@ impl Service {
             let mut warnings: Vec<Warning> = req.unused_warning().into_iter().collect();
             let (main, print_folder) = match target {
                 ReportTarget::Stdout | ReportTarget::Clipboard => (None, None),
-                ReportTarget::File(raw) => (Some(self.write_spec(raw)?), None),
+                ReportTarget::File(raw) => (Some(self.target_spec(vfs, raw)?), None),
                 ReportTarget::Printer | ReportTarget::Browser => {
-                    let folder = self.print_folder(time.as_ref())?;
+                    let folder = self.print_folder(vfs, time.as_ref())?;
                     let title = req.title.as_deref().unwrap_or("report");
                     let name = format!("{}.html", safe_component(title, 64));
-                    let main = self.child_of(&folder, OsStr::new(&name))?;
+                    let main = self.child_of(vfs, &folder, OsStr::new(&name))?;
                     (Some(main), Some(folder))
                 }
             };
             let replaces = match (&main, &print_folder) {
-                (Some(main), None) => self.router().stat(main, FollowLinks::No).is_ok(),
+                (Some(main), None) => vfs.stat(main, FollowLinks::No).is_ok(),
                 _ => false,
             };
             let links = match (&req.body, &main, &source) {
@@ -772,6 +787,7 @@ impl Service {
                     };
                     let rows = linked_rows(&response.comparison, &options, scope);
                     let plan = self.links_plan(
+                        vfs,
                         main,
                         &response.comparison,
                         &rows,
@@ -811,6 +827,13 @@ impl Service {
         })
     }
 
+    /// The spec of a file target on `vfs` (as `--output`: an archive member is a member, its folder must exist).
+    fn target_spec(&self, vfs: &dyn Vfs, raw: &OsStr) -> Result<Spec, ApiError> {
+        let spec = Spec::parse_os(raw, &self.spec_context())?;
+        hikasa_vfs::resolve_spec(vfs, spec, self.use_of(raw), &CancelToken::never())
+            .map_err(|_| ApiError::Cancelled)
+    }
+
     /// Reads the stylesheet of `html-custom:<css>` (§1.7.14): through the VFS, at most 1 MiB.
     fn read_stylesheet(&self, raw: &str) -> Result<String, ApiError> {
         const MAX: u64 = 1 << 20;
@@ -837,14 +860,14 @@ impl Service {
     }
 
     /// A free folder `<cache>/print/<yyyymmdd>-<hhmmss>-<n>` (§1.7.11), not made yet.
-    fn print_folder(&self, time: Option<&jiff::Zoned>) -> Result<Spec, ApiError> {
+    fn print_folder(&self, vfs: &dyn Vfs, time: Option<&jiff::Zoned>) -> Result<Spec, ApiError> {
         let at = time.cloned().unwrap_or_else(|| self.clock().now());
         let stamp = at.strftime("%Y%m%d-%H%M%S").to_string();
         let root = self.print_root()?;
         for n in 1..=9999u32 {
             let name = format!("{stamp}-{n}");
-            let spec = self.child_of(&root, OsStr::new(&name))?;
-            match self.router().stat(&spec, FollowLinks::No) {
+            let spec = self.child_of(vfs, &root, OsStr::new(&name))?;
+            match vfs.stat(&spec, FollowLinks::No) {
                 Err(e) if e.kind() == hikasa_core::ErrorKind::NotFound => return Ok(spec),
                 Err(e) => return Err(ApiError::from_vfs(e)),
                 Ok(_) => {}
@@ -865,6 +888,7 @@ impl Service {
     /// The files folder of a linked report (§1.7.9 steps 1–3) and its pairs.
     fn links_plan(
         &self,
+        vfs: &dyn Vfs,
         main: &Spec,
         cmp: &hikasa_folder::FolderComparison,
         rows: &[NodeId],
@@ -877,7 +901,7 @@ impl Service {
             .parent()
             .ok_or_else(|| ApiError::InvalidArgument("the report needs a folder".into()))?;
         // The main file's folder must exist (as `--output`'s), before any name below it is tried.
-        match self.router().stat(&dir, FollowLinks::Yes) {
+        match vfs.stat(&dir, FollowLinks::Yes) {
             Ok(entry) if entry.kind == EntryKind::Dir => {}
             Ok(_) => {
                 return Err(ApiError::from_vfs(VfsError::from_io(
@@ -913,21 +937,25 @@ impl Service {
                 skip: too_large.then(|| "too_large".to_owned()),
             });
         }
-        let wanted = self.child_of(&dir, OsStr::new(&files_folder_name(&main_name, 1)))?;
+        let wanted = self.child_of(vfs, &dir, OsStr::new(&files_folder_name(&main_name, 1)))?;
         for attempt in 1..=MAX_FOLDER_ATTEMPT {
             job.cancel.check().map_err(|_| ApiError::Cancelled)?;
             let folder = if attempt == 1 {
                 wanted.clone()
             } else {
-                self.child_of(&dir, OsStr::new(&files_folder_name(&main_name, attempt)))?
+                self.child_of(
+                    vfs,
+                    &dir,
+                    OsStr::new(&files_folder_name(&main_name, attempt)),
+                )?
             };
-            let state = match self.router().stat(&folder, FollowLinks::No) {
+            let state = match vfs.stat(&folder, FollowLinks::No) {
                 Err(e) if e.kind() == hikasa_core::ErrorKind::NotFound => {
                     Some((FilesFolder::New, Vec::new()))
                 }
                 Err(_) => None,
                 Ok(entry) if entry.kind == EntryKind::Dir && !fresh => self
-                    .ours(&folder, &main_name)
+                    .ours(vfs, &folder, &main_name)
                     .map(|stamps| (FilesFolder::ReplaceOurs, stamps)),
                 Ok(_) => None,
             };
@@ -1032,6 +1060,20 @@ impl Service {
         stdout: Option<&mut dyn Write>,
         job: &JobControl,
     ) -> Result<ReportOutcome, ApiError> {
+        self.report_execute_on(&*self.router(), source, req, plan, stdout, job)
+    }
+
+    /// [`Service::report_execute`] with the back-end the report is written to (additive, W7b; see
+    /// [`Service::report_plan_on`]).
+    pub fn report_execute_on(
+        &self,
+        vfs: &dyn Vfs,
+        source: ReportSource<'_>,
+        req: &ReportRequest,
+        plan: ReportPlan,
+        stdout: Option<&mut dyn Write>,
+        job: &JobControl,
+    ) -> Result<ReportOutcome, ApiError> {
         run_guarded(|| {
             let mut plan = plan;
             if plan.time.is_none() {
@@ -1087,10 +1129,8 @@ impl Service {
                         ApiError::Internal("a file report without a main file".into())
                     })?;
                     if let Some(folder) = &plan.print_folder {
-                        self.prune_print_folders();
-                        self.router()
-                            .create_dir(folder, true)
-                            .map_err(ApiError::from_vfs)?;
+                        self.prune_print_folders(vfs);
+                        vfs.create_dir(folder, true).map_err(ApiError::from_vfs)?;
                     }
                     let result = match &plan.links {
                         None => {
@@ -1100,7 +1140,7 @@ impl Service {
                                 Durability::None
                             };
                             let mut warnings = Vec::new();
-                            self.stream_into(&main, job, Some(durability), &mut |out| {
+                            self.stream_into(vfs, &main, job, Some(durability), &mut |out| {
                                 warnings = render_report(input, &req, &meta, &style, None, out)
                                     .map_err(|e| render_error(Some(&main), e))?;
                                 Ok(())
@@ -1111,6 +1151,7 @@ impl Service {
                             })
                         }
                         Some(links) => self.write_linked(
+                            vfs,
                             &source,
                             input,
                             &req,
@@ -1126,7 +1167,7 @@ impl Service {
                     if let Err(e) = result {
                         if let Some(folder) = &plan.print_folder {
                             // Nothing of a failed printer report stays below the cache.
-                            self.remove_tree(folder);
+                            self.remove_tree(vfs, folder);
                         }
                         return Err(e);
                     }
@@ -1209,7 +1250,7 @@ impl Service {
 
     /// Removes the printer and browser folders below `<cache>/print/` older than seven days by the clock (§1.7.11),
     /// best effort: a failure is a debug log line.
-    fn prune_print_folders(&self) {
+    fn prune_print_folders(&self, vfs: &dyn Vfs) {
         let Ok(root) = self.print_root() else {
             return;
         };
@@ -1217,7 +1258,7 @@ impl Service {
             follow: FollowLinks::No,
             prefilter: None,
         };
-        let Ok(listing) = self.router().list(&root, &options, &CancelToken::new()) else {
+        let Ok(listing) = vfs.list(&root, &options, &CancelToken::new()) else {
             return;
         };
         let now = self.clock().now();
@@ -1235,26 +1276,26 @@ impl Service {
             if at >= limit {
                 continue;
             }
-            if let Ok(spec) = self.child_of(&root, &entry.name.to_os_string()) {
-                self.remove_tree(&spec);
+            if let Ok(spec) = self.child_of(vfs, &root, &entry.name.to_os_string()) {
+                self.remove_tree(vfs, &spec);
             }
         }
     }
 
     /// Removes a folder and what it holds, best effort (a failure is a debug log line).
-    fn remove_tree(&self, dir: &Spec) {
+    fn remove_tree(&self, vfs: &dyn Vfs, dir: &Spec) {
         let options = ListOptions {
             follow: FollowLinks::No,
             prefilter: None,
         };
-        let router = self.router();
+        let router = vfs;
         if let Ok(listing) = router.list(dir, &options, &CancelToken::new()) {
             for entry in listing.entries {
-                let Ok(child) = self.child_of(dir, &entry.name.to_os_string()) else {
+                let Ok(child) = self.child_of(vfs, dir, &entry.name.to_os_string()) else {
                     continue;
                 };
                 if entry.kind == EntryKind::Dir {
-                    self.remove_tree(&child);
+                    self.remove_tree(vfs, &child);
                 } else if let Err(e) = router.remove(&child) {
                     tracing::debug!(target: "hikasa::report", "cannot remove {}: {e}", child.canonical());
                 }
@@ -1266,11 +1307,11 @@ impl Service {
     }
 
     /// Removes the files `names` of `dir`, then `dir` (best effort; `false` when something stayed).
-    fn remove_listed(&self, dir: &Spec, names: &[String]) -> bool {
-        let router = self.router();
+    fn remove_listed(&self, vfs: &dyn Vfs, dir: &Spec, names: &[String]) -> bool {
+        let router = vfs;
         let mut ok = true;
         for name in names {
-            match self.child_of(dir, OsStr::new(name)) {
+            match self.child_of(vfs, dir, OsStr::new(name)) {
                 Ok(child) => ok &= router.remove(&child).is_ok(),
                 Err(_) => ok = false,
             }
@@ -1279,7 +1320,7 @@ impl Service {
     }
 
     /// A free hidden sibling `.<folder>.<what>[-n]` of the files folder.
-    fn hidden_sibling(&self, folder: &Spec, what: &str) -> Result<Spec, ApiError> {
+    fn hidden_sibling(&self, vfs: &dyn Vfs, folder: &Spec, what: &str) -> Result<Spec, ApiError> {
         let dir = folder
             .parent()
             .ok_or_else(|| ApiError::InvalidArgument("the files folder needs a parent".into()))?;
@@ -1291,8 +1332,8 @@ impl Service {
             } else {
                 format!(".{name}.{what}-{n}")
             };
-            let spec = self.child_of(&dir, OsStr::new(&hidden))?;
-            match self.router().stat(&spec, FollowLinks::No) {
+            let spec = self.child_of(vfs, &dir, OsStr::new(&hidden))?;
+            match vfs.stat(&spec, FollowLinks::No) {
                 Err(e) if e.kind() == hikasa_core::ErrorKind::NotFound => return Ok(spec),
                 Err(e) => return Err(ApiError::from_vfs(e)),
                 Ok(_) => {}
@@ -1308,6 +1349,7 @@ impl Service {
     #[allow(clippy::too_many_arguments)]
     fn write_linked(
         &self,
+        vfs: &dyn Vfs,
         source: &ReportSource<'_>,
         input: ReportInput<'_>,
         req: &ReportRequest,
@@ -1319,7 +1361,7 @@ impl Service {
         job: &JobControl,
         outcome: &mut ReportOutcome,
     ) -> Result<(), ApiError> {
-        let router = self.router();
+        let router = vfs;
         let cancelled = || job.cancel.check().map_err(|_| ApiError::Cancelled);
         let ReportSource::Folder {
             request, prepared, ..
@@ -1345,14 +1387,14 @@ impl Service {
         });
         // Step 1: the staging folder.
         cancelled()?;
-        let staging = self.hidden_sibling(&links.folder, "hikasa-tmp")?;
+        let staging = self.hidden_sibling(vfs, &links.folder, "hikasa-tmp")?;
         router
             .create_dir(&staging, false)
             .map_err(ApiError::from_vfs)?;
         // The staging folder is this report's own (a free hidden name made here): a failure removes it whole.
         let mut staged: Vec<String> = Vec::new();
         let fail = |_staged: &[String], e: ApiError| -> ApiError {
-            self.remove_tree(&staging);
+            self.remove_tree(vfs, &staging);
             e
         };
         // Step 2: the pair reports, then the marker.
@@ -1376,8 +1418,8 @@ impl Service {
                 .par_iter()
                 .map(|pair| {
                     self.write_pair(
-                        request, prepared, pair, &pair_req, &staging, &back, meta, style, &budget,
-                        job,
+                        vfs, request, prepared, pair, &pair_req, &staging, &back, meta, style,
+                        &budget, job,
                     )
                 })
                 .collect()
@@ -1457,7 +1499,7 @@ impl Service {
         let marker_text = toml::to_string(&marker)
             .map_err(|e| fail(&staged, ApiError::Internal(format!("marker: {e}"))))?;
         let marker_spec = self
-            .child_of(&staging, OsStr::new(MARKER))
+            .child_of(vfs, &staging, OsStr::new(MARKER))
             .map_err(|e| fail(&staged, e))?;
         let new_file = WriteOptions {
             create_parents: false,
@@ -1514,7 +1556,7 @@ impl Service {
         let old = match links.state {
             FilesFolder::New => None,
             FilesFolder::ReplaceOurs => {
-                if self.folder_stamps(&links.folder).as_deref() != Some(&links.stamps[..]) {
+                if self.folder_stamps(vfs, &links.folder).as_deref() != Some(&links.stamps[..]) {
                     return Err(fail(
                         &staged,
                         ApiError::InvalidData(format!(
@@ -1524,7 +1566,7 @@ impl Service {
                     ));
                 }
                 let old = self
-                    .hidden_sibling(&links.folder, "hikasa-old")
+                    .hidden_sibling(vfs, &links.folder, "hikasa-old")
                     .map_err(|e| fail(&staged, e))?;
                 router
                     .rename(&links.folder, &old, false)
@@ -1548,7 +1590,7 @@ impl Service {
         // Step 6: the main file.
         if let Err(e) = writer.commit() {
             if router.rename(&links.folder, &staging, false).is_ok() {
-                self.remove_tree(&staging);
+                self.remove_tree(vfs, &staging);
             }
             put_back(&old);
             return Err(ApiError::from_vfs(e));
@@ -1556,7 +1598,7 @@ impl Service {
         // Step 7: the old folder goes.
         if let Some(old) = old {
             let names: Vec<String> = links.stamps.iter().map(|(n, _)| n.clone()).collect();
-            if !self.remove_listed(&old, &names) {
+            if !self.remove_listed(vfs, &old, &names) {
                 outcome.warnings.push(Warning {
                     code: WarningCode::ReportOldFolderKept,
                     message: format!(
@@ -1574,6 +1616,7 @@ impl Service {
     #[allow(clippy::too_many_arguments)]
     fn write_pair(
         &self,
+        vfs: &dyn Vfs,
         request: &super::requests::FolderCompareRequest,
         prepared: &super::responses::PreparedFolderCompare,
         pair: &PairPlan,
@@ -1633,14 +1676,14 @@ impl Service {
             &self.generator(),
         );
         meta.folder_link = Some(back.clone());
-        let spec = self.child_of(staging, OsStr::new(&pair.file))?;
+        let spec = self.child_of(vfs, staging, OsStr::new(&pair.file))?;
         let options = WriteOptions {
             create_parents: false,
             overwrite: false,
             replace_link: false,
             durability: Durability::None,
         };
-        let router = self.router();
+        let router = vfs;
         let written = router
             .open_write(&spec, &options)
             .map_err(ApiError::from_vfs)

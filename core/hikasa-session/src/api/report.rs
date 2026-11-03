@@ -665,7 +665,7 @@ impl Service {
     ) -> Result<(Spec, u64), ApiError> {
         run_guarded(|| {
             let spec = self.write_spec(target)?;
-            let bytes = self.stream_into(&spec, job, None, render)?;
+            let bytes = self.stream_into(&*self.router(), &spec, job, None, render)?;
             Ok((spec, bytes))
         })
     }
@@ -674,12 +674,12 @@ impl Service {
     /// exists.
     pub(crate) fn stream_into(
         &self,
+        router: &dyn Vfs,
         spec: &Spec,
         job: &JobControl,
         durability: Option<Durability>,
         render: &mut dyn FnMut(&mut dyn Write) -> Result<(), ApiError>,
     ) -> Result<u64, ApiError> {
-        let router = self.router();
         let durability =
             durability.unwrap_or_else(|| match router.stat(spec, hikasa_vfs::FollowLinks::No) {
                 Ok(_) => Durability::FileOnly,
