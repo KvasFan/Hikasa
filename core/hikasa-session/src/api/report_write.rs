@@ -166,6 +166,9 @@ pub struct ReportPlan {
     /// The stylesheet of `html-custom:<css>`, read by the plan.
     #[serde(skip)]
     pub(crate) css: Option<String>,
+    /// The comparison's verdict, for a dry run's document.
+    #[serde(skip)]
+    pub(crate) verdict: ReportVerdict,
 }
 
 /// The files folder of a linked report (§1.7.9).
@@ -537,6 +540,13 @@ impl Write for CapWriter {
     }
 }
 
+/// The warnings of a rendering without `report_option_unused`, which the plan already holds (one warning, §1.7.4).
+fn rendering(warnings: Vec<Warning>) -> impl Iterator<Item = Warning> {
+    warnings
+        .into_iter()
+        .filter(|w| w.code != WarningCode::ReportOptionUnused)
+}
+
 /// The `format` word of a request.
 fn format_word(req: &ReportRequest) -> &'static str {
     match req.layout_word() {
@@ -823,6 +833,7 @@ impl Service {
                 print_folder,
                 time,
                 css,
+                verdict: source.verdict(),
             })
         })
     }
@@ -1000,6 +1011,7 @@ impl Service {
             })
             .unwrap_or_default();
         let warnings = plan.warnings.clone();
+        let verdict = plan.verdict.clone();
         ReportOutcome {
             plan,
             dry_run: true,
@@ -1009,7 +1021,7 @@ impl Service {
             clipboard: None,
             opened: None,
             warnings,
-            verdict: ReportVerdict::None,
+            verdict,
         }
     }
 
@@ -1112,7 +1124,7 @@ impl Service {
                         .map_err(|e| render_error(None, e))?;
                     cancel.flush().map_err(ApiError::output)?;
                     outcome.bytes = cancel.written();
-                    outcome.warnings.extend(w);
+                    outcome.warnings.extend(rendering(w));
                 }
                 TargetDto::Clipboard => {
                     let (payload, w) = self.clipboard_payload(input, &req, &meta, &style, job)?;
@@ -1121,7 +1133,7 @@ impl Service {
                         .as_ref()
                         .map_or(payload.text.len(), String::len)
                         as u64;
-                    outcome.warnings.extend(w);
+                    outcome.warnings.extend(rendering(w));
                     outcome.clipboard = Some(payload);
                 }
                 TargetDto::File | TargetDto::Printer | TargetDto::Browser => {
@@ -1147,7 +1159,7 @@ impl Service {
                             })
                             .map(|bytes| {
                                 outcome.bytes = bytes;
-                                outcome.warnings.extend(warnings);
+                                outcome.warnings.extend(rendering(warnings));
                             })
                         }
                         Some(links) => self.write_linked(
@@ -1550,7 +1562,7 @@ impl Service {
         };
         let (warnings, bytes) = rendered.map_err(|e| fail(&staged, e))?;
         outcome.bytes = bytes;
-        outcome.warnings.extend(warnings);
+        outcome.warnings.extend(rendering(warnings));
         // Step 4: the old folder, unchanged since the plan, out of the way.
         cancelled().map_err(|e| fail(&staged, e))?;
         let old = match links.state {

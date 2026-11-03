@@ -184,7 +184,7 @@ impl ReportSource<'_> {
 
 /// The verdict of a report's comparison, serialised as `hikasa.text_compare.v1` and `hikasa.folder_compare.v1` write
 /// it; `None` (`null`) for a dry run, which keeps no comparison.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ReportVerdict {
     /// A text comparison's `{result, …}`.
@@ -192,6 +192,7 @@ pub enum ReportVerdict {
     /// A folder comparison's word.
     Folder(String),
     /// Not known.
+    #[default]
     None,
 }
 
