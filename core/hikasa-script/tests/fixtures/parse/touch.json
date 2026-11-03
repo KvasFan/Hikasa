@@ -1,0 +1,132 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "touch": {
+          "direction": {
+            "expands": false,
+            "pos": {
+              "column": 7,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "left->right"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "touch",
+      "words": [
+        "touch",
+        "left->right"
+      ]
+    },
+    {
+      "args": {
+        "touch": {
+          "at": {
+            "sides": {
+              "expands": false,
+              "pos": {
+                "column": 7,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "left"
+            },
+            "time": {
+              "expands": false,
+              "pos": {
+                "column": 12,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "now"
+            }
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "touch",
+      "words": [
+        "touch",
+        "left:now"
+      ]
+    },
+    {
+      "args": {
+        "touch": {
+          "at": {
+            "sides": {
+              "expands": false,
+              "pos": {
+                "column": 7,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "all"
+            },
+            "time": {
+              "expands": false,
+              "pos": {
+                "column": 11,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "2026-11-03T10:00:00Z"
+            }
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "touch",
+      "words": [
+        "touch",
+        "all:2026-11-03T10:00:00Z"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

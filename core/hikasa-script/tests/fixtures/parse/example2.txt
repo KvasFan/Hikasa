@@ -1,0 +1,5 @@
+log normal "/var/log/hikasa-sync.txt"
+load <default>
+filter "*.html;*.htm;*.png;*.jpg"
+load "/srv/www" sftp://deploy@host/var/www
+sync create-empty mirror:left->right

@@ -1,0 +1,1 @@
+s.txt:1:1: error: select needs a loaded comparison: no load before line 1

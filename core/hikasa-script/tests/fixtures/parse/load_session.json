@@ -1,0 +1,31 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "session": {
+            "expands": false,
+            "pos": {
+              "column": 6,
+              "line": 1
+            },
+            "quoted": true,
+            "text": "Sync Laptop"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "Sync Laptop"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

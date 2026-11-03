@@ -1,0 +1,33 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": "default"
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "<DEFAULT>"
+      ]
+    },
+    {
+      "args": {
+        "load": "default"
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "load",
+      "words": [
+        "load",
+        "<default>"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

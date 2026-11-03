@@ -1,0 +1,7 @@
+option confirm:yes-to-all
+criteria crc
+load "/data/project" "/backups/project.hksnap"
+expand all
+select left.diff.files left.orphan.files
+copyto left path:relative "/backups/changes-%date%.zip"
+snapshot save-crc left output:"/backups/project.hksnap"

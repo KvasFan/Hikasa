@@ -1,0 +1,2 @@
+text-report layout:side-by-side options:ignore-unimportant,display-context &
+  output-to:"%3" output-options:html-color "%1" "%2"

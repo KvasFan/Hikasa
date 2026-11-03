@@ -1,0 +1,18 @@
+{
+  "commands": [
+    {
+      "args": "beep",
+      "end_line": 1,
+      "line": 1,
+      "name": "beep",
+      "words": [
+        "BEEP"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

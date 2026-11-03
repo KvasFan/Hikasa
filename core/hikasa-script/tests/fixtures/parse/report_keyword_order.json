@@ -1,0 +1,87 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 33,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "summary"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 48,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "ignore-unimportant"
+            }
+          ],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "o.txt"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 29,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "a"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 31,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "b"
+            }
+          ],
+          "title": {
+            "expands": false,
+            "pos": {
+              "column": 75,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "x"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "text-report",
+      "words": [
+        "text-report",
+        "output-to:o.txt",
+        "a",
+        "b",
+        "layout:summary",
+        "options:ignore-unimportant",
+        "title:x"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

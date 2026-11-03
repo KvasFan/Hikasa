@@ -1,0 +1,251 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": null,
+          "structure": null,
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "/t"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "/t"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "left"
+          },
+          "structure": null,
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "/t"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "left",
+        "/t"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 18,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "right"
+          },
+          "structure": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "base"
+          },
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 24,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "/t"
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "path:base",
+        "right",
+        "/t"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 5
+            },
+            "quoted": false,
+            "text": "all"
+          },
+          "structure": {
+            "expands": false,
+            "pos": {
+              "column": 12,
+              "line": 5
+            },
+            "quoted": false,
+            "text": "none"
+          },
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 22,
+              "line": 5
+            },
+            "quoted": false,
+            "text": "/t.zip"
+          }
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "all",
+        "path:none",
+        "/t.zip"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": null,
+          "structure": null,
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 6
+            },
+            "quoted": false,
+            "text": "left"
+          }
+        }
+      },
+      "end_line": 6,
+      "line": 6,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "left"
+      ]
+    },
+    {
+      "args": {
+        "move_to": {
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 7
+            },
+            "quoted": false,
+            "text": "rt"
+          },
+          "structure": {
+            "expands": false,
+            "pos": {
+              "column": 11,
+              "line": 7
+            },
+            "quoted": false,
+            "text": "relative"
+          },
+          "target": {
+            "expands": false,
+            "pos": {
+              "column": 25,
+              "line": 7
+            },
+            "quoted": false,
+            "text": "/t"
+          }
+        }
+      },
+      "end_line": 7,
+      "line": 7,
+      "name": "moveto",
+      "words": [
+        "moveto",
+        "rt",
+        "path:relative",
+        "/t"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

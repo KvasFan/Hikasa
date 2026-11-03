@@ -1,0 +1,1 @@
+s.txt:2:8: error: delete takes sides (left, right, all), not a direction `left->right`

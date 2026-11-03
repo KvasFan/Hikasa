@@ -1,0 +1,135 @@
+{
+  "commands": [
+    {
+      "args": {
+        "filter": {
+          "cutoff": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 1
+            },
+            "quoted": false,
+            "text": ">2026-01-01"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "filter",
+      "words": [
+        "filter",
+        "cutoff:>2026-01-01"
+      ]
+    },
+    {
+      "args": {
+        "filter": {
+          "cutoff": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "filter",
+      "words": [
+        "filter",
+        "cutoff:none"
+      ]
+    },
+    {
+      "args": {
+        "filter": {
+          "size": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "<10KB"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "filter",
+      "words": [
+        "filter",
+        "size:<10KB"
+      ]
+    },
+    {
+      "args": {
+        "filter": {
+          "attrib": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "+h"
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "filter",
+      "words": [
+        "filter",
+        "attrib:+h"
+      ]
+    },
+    {
+      "args": {
+        "filter": {
+          "unix_type": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 5
+            },
+            "quoted": false,
+            "text": "-l"
+          }
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "filter",
+      "words": [
+        "filter",
+        "unixtype:-l"
+      ]
+    },
+    {
+      "args": {
+        "filter": "exclude_protected"
+      },
+      "end_line": 6,
+      "line": 6,
+      "name": "filter",
+      "words": [
+        "filter",
+        "exclude-protected"
+      ]
+    },
+    {
+      "args": {
+        "filter": "include_protected"
+      },
+      "end_line": 7,
+      "line": 7,
+      "name": "filter",
+      "words": [
+        "filter",
+        "include-protected"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

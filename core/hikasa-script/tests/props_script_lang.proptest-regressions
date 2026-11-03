@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2ff2e90937039c155f634aa801204e1e851ccad4a6450650a5157af185572689 # shrinks to words = [Word { text: "\"", quoted: false, expands: false, pos: Pos { line: 1, column: 1 } }]
+cc 1203d4f4f2264df141a618068059a16ea049388b10b16826fe3f0bb4ff495899 # shrinks to literal = "%"
+cc 8701386a11d741739000e81ce6521752adac19cff5c2d325ca68b9d4990d6183 # shrinks to bytes = [97]
+cc 33b06fcd90a41dc09853285326e2c12df7e30d22a1146f1aa35a37ffd08bf98d # shrinks to commands = ["rename regexpr xé x&"]
+cc 98b10672f5339079a8d45415b2509e2612d9e7609244cc259b7b9692ddbe13e6 # shrinks to words = [Word { text: "&", quoted: false, expands: false, pos: Pos { line: 1, column: 1 } }]

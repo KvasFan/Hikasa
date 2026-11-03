@@ -1,0 +1,222 @@
+{
+  "commands": [
+    {
+      "args": {
+        "option": {
+          "confirm": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "yes-to-all"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "option",
+      "words": [
+        "option",
+        "confirm:yes-to-all"
+      ]
+    },
+    {
+      "args": {
+        "criteria": {
+          "words": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "crc"
+            }
+          ]
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "criteria",
+      "words": [
+        "criteria",
+        "crc"
+      ]
+    },
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 3
+              },
+              "quoted": true,
+              "text": "/data/project"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 22,
+                "line": 3
+              },
+              "quoted": true,
+              "text": "/backups/project.hksnap"
+            }
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "load",
+      "words": [
+        "load",
+        "/data/project",
+        "/backups/project.hksnap"
+      ]
+    },
+    {
+      "args": {
+        "expand": "all"
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "expand",
+      "words": [
+        "expand",
+        "all"
+      ]
+    },
+    {
+      "args": {
+        "select": {
+          "masks": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 8,
+                "line": 5
+              },
+              "quoted": false,
+              "text": "left.diff.files"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 24,
+                "line": 5
+              },
+              "quoted": false,
+              "text": "left.orphan.files"
+            }
+          ]
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "select",
+      "words": [
+        "select",
+        "left.diff.files",
+        "left.orphan.files"
+      ]
+    },
+    {
+      "args": {
+        "copy_to": {
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 6
+            },
+            "quoted": false,
+            "text": "left"
+          },
+          "structure": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 6
+            },
+            "quoted": false,
+            "text": "relative"
+          },
+          "target": {
+            "expands": true,
+            "pos": {
+              "column": 27,
+              "line": 6
+            },
+            "quoted": true,
+            "text": "/backups/changes-%date%.zip"
+          }
+        }
+      },
+      "end_line": 6,
+      "line": 6,
+      "name": "copyto",
+      "words": [
+        "copyto",
+        "left",
+        "path:relative",
+        "/backups/changes-%date%.zip"
+      ]
+    },
+    {
+      "args": {
+        "snapshot": {
+          "words": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 7
+              },
+              "quoted": false,
+              "text": "save-crc"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 19,
+                "line": 7
+              },
+              "quoted": false,
+              "text": "left"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 24,
+                "line": 7
+              },
+              "quoted": true,
+              "text": "output:/backups/project.hksnap"
+            }
+          ]
+        }
+      },
+      "end_line": 7,
+      "line": 7,
+      "name": "snapshot",
+      "words": [
+        "snapshot",
+        "save-crc",
+        "left",
+        "output:/backups/project.hksnap"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

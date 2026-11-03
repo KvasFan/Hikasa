@@ -1,0 +1,1 @@
+s.txt:1:10: error: this `&` continues the command, but a blank line or the end of the script follows

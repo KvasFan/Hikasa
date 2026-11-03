@@ -1,0 +1,3 @@
+load /l /r
+attrib +r
+attrib -hs +a-r

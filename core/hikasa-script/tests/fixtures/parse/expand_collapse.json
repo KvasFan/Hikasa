@@ -1,0 +1,126 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "expand": "all"
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "expand",
+      "words": [
+        "expand",
+        "all"
+      ]
+    },
+    {
+      "args": {
+        "expand": {
+          "paths": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 8,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "a"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "a/b"
+            }
+          ]
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "expand",
+      "words": [
+        "expand",
+        "a",
+        "a/b"
+      ]
+    },
+    {
+      "args": {
+        "collapse": "all"
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "collapse",
+      "words": [
+        "collapse",
+        "ALL"
+      ]
+    },
+    {
+      "args": {
+        "collapse": {
+          "paths": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 5
+              },
+              "quoted": false,
+              "text": "a"
+            }
+          ]
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "collapse",
+      "words": [
+        "collapse",
+        "a"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

@@ -1,0 +1,2 @@
+load a b
+copyto path:base path:none /t

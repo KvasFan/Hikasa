@@ -1,0 +1,22 @@
+{
+  "lines": [
+    {
+      "pos": {
+        "line": 1,
+        "column": 1
+      },
+      "end_line": 1,
+      "words": [
+        {
+          "text": "beep",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 1
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "lines": [
+    {
+      "pos": {
+        "line": 1,
+        "column": 1
+      },
+      "end_line": 2,
+      "words": [
+        {
+          "text": "text-report",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 1
+          }
+        },
+        {
+          "text": "layout:summary",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 13
+          }
+        },
+        {
+          "text": "x",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 28
+          }
+        },
+        {
+          "text": "output-to:a.txt",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 3
+          }
+        },
+        {
+          "text": "l",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 19
+          }
+        },
+        {
+          "text": "r",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 21
+          }
+        }
+      ]
+    },
+    {
+      "pos": {
+        "line": 3,
+        "column": 1
+      },
+      "end_line": 5,
+      "words": [
+        {
+          "text": "load",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 3,
+            "column": 1
+          }
+        },
+        {
+          "text": "a",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 5,
+            "column": 3
+          }
+        },
+        {
+          "text": "b",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 5,
+            "column": 5
+          }
+        }
+      ]
+    }
+  ]
+}

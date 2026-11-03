@@ -1,0 +1,102 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "attrib": {
+          "changes": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 8,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "+r"
+            }
+          ]
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "attrib",
+      "words": [
+        "attrib",
+        "+r"
+      ]
+    },
+    {
+      "args": {
+        "attrib": {
+          "changes": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 8,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "-hs"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 12,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "+a-r"
+            }
+          ]
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "attrib",
+      "words": [
+        "attrib",
+        "-hs",
+        "+a-r"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

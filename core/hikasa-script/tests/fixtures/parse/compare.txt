@@ -1,0 +1,5 @@
+load /l /r
+compare
+compare crc
+compare binary
+compare rules-based

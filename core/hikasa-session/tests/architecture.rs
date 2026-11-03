@@ -1309,12 +1309,12 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
 // Check 4: stub crates stay empty; check 5: release profile keeps unwinding
 // ---------------------------------------------------------------------------------------------------------
 
-const STUB_CRATES: [&str; 5] = [
+// M2 W8a: `hikasa-script` is no stub any more (D-230).
+const STUB_CRATES: [&str; 4] = [
     "hikasa-table",
     "hikasa-hex",
     "hikasa-picture",
     "hikasa-metadata",
-    "hikasa-script",
 ];
 
 fn check_stub_crates(root: &Path) -> Vec<String> {
@@ -1640,7 +1640,12 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
     ("hikasa-hex", &[], &[]),
     ("hikasa-picture", &[], &[]),
     ("hikasa-metadata", &[], &[]),
-    ("hikasa-script", &[], &[]),
+    // M2 W8a: the language over a host (D-215, D-230); `serde_json` for the goldens of its tests only.
+    (
+        "hikasa-script",
+        &["hikasa-core", "serde", "thiserror"],
+        &["proptest", "pretty_assertions", "serde_json"],
+    ),
 ];
 
 /// The engine crates, which must never depend on the session layer or an adapter (ARCH-010/011/012).

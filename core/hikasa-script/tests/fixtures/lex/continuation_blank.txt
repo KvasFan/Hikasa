@@ -1,0 +1,3 @@
+load a b &
+
+beep

@@ -1,0 +1,221 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 14,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "summary"
+          },
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 29,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "a"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 31,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "b"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "table-report",
+      "words": [
+        "table-report",
+        "layout:summary",
+        "a",
+        "b"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 13,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "a"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 15,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "b"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "table-report",
+      "words": [
+        "data-report",
+        "a",
+        "b"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "hex-report",
+      "words": [
+        "hex-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "picture-report",
+      "words": [
+        "picture-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "media-report",
+      "words": [
+        "media-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 6,
+      "line": 6,
+      "name": "version-report",
+      "words": [
+        "version-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 7,
+      "line": 7,
+      "name": "registry-report",
+      "words": [
+        "registry-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 8
+            },
+            "quoted": false,
+            "text": "x"
+          },
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 8,
+      "line": 8,
+      "name": "file-report",
+      "words": [
+        "file-report",
+        "output-to:x"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

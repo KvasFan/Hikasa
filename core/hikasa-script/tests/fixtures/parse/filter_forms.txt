@@ -1,0 +1,7 @@
+filter cutoff:>2026-01-01
+filter cutoff:none
+filter size:<10KB
+filter attrib:+h
+filter unixtype:-l
+filter exclude-protected
+filter include-protected

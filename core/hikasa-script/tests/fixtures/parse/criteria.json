@@ -1,0 +1,87 @@
+{
+  "commands": [
+    {
+      "args": {
+        "criteria": {
+          "words": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "crc"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 14,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "timestamp:3sec"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 29,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "size"
+            }
+          ]
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "criteria",
+      "words": [
+        "criteria",
+        "crc",
+        "timestamp:3sec",
+        "size"
+      ]
+    },
+    {
+      "args": {
+        "criteria": {
+          "words": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "timezone:lt+2"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 24,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "filename-case"
+            }
+          ]
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "criteria",
+      "words": [
+        "criteria",
+        "timezone:lt+2",
+        "filename-case"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

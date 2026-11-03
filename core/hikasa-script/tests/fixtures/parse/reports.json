@@ -1,0 +1,220 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "side-by-side"
+          },
+          "options": [],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 33,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "out.html"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 52,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "a.txt"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 58,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "b.txt"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "text-report",
+      "words": [
+        "text-report",
+        "layout:side-by-side",
+        "output-to:out.html",
+        "a.txt",
+        "b.txt"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 23,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "clipboard"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 43,
+                "line": 2
+              },
+              "quoted": true,
+              "text": "S"
+            }
+          ],
+          "title": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 2
+            },
+            "quoted": true,
+            "text": "T"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "file-report",
+      "words": [
+        "file-report",
+        "title:T",
+        "output-to:clipboard",
+        "S"
+      ]
+    },
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": true,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 30,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "summary"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 45,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "display-all,column-size"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 77,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "include-file-links"
+            }
+          ],
+          "output_options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 104,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "html-color"
+            }
+          ],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 130,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "o.html"
+          },
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "folder-report",
+      "words": [
+        "folder-report",
+        "just-selection",
+        "layout:summary",
+        "options:display-all,column-size",
+        "options:include-file-links",
+        "output-options:html-color",
+        "output-to:o.html"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": [],
+    "uses_script_path": false
+  }
+}

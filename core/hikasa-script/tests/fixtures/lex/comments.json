@@ -1,0 +1,67 @@
+{
+  "lines": [
+    {
+      "pos": {
+        "line": 2,
+        "column": 1
+      },
+      "end_line": 2,
+      "words": [
+        {
+          "text": "load",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 1
+          }
+        },
+        {
+          "text": "a#b",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 6
+          }
+        },
+        {
+          "text": "#x",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 10
+          }
+        }
+      ]
+    },
+    {
+      "pos": {
+        "line": 4,
+        "column": 1
+      },
+      "end_line": 4,
+      "words": [
+        {
+          "text": "copy",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 4,
+            "column": 1
+          }
+        },
+        {
+          "text": "left->right",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 4,
+            "column": 6
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2175,6 +2175,14 @@ dependencies = [
 [[package]]
 name = "hikasa-script"
 version = "0.1.93"
+dependencies = [
+ "hikasa-core",
+ "pretty_assertions",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "hikasa-session"

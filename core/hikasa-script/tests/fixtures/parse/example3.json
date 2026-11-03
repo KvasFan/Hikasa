@@ -1,0 +1,89 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "side-by-side"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 33,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "ignore-unimportant,display-context"
+            }
+          ],
+          "output_options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 18,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "html-color"
+            }
+          ],
+          "output_to": {
+            "expands": true,
+            "pos": {
+              "column": 3,
+              "line": 2
+            },
+            "quoted": true,
+            "text": "%3"
+          },
+          "specs": [
+            {
+              "expands": true,
+              "pos": {
+                "column": 44,
+                "line": 2
+              },
+              "quoted": true,
+              "text": "%1"
+            },
+            {
+              "expands": true,
+              "pos": {
+                "column": 49,
+                "line": 2
+              },
+              "quoted": true,
+              "text": "%2"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 2,
+      "line": 1,
+      "name": "text-report",
+      "words": [
+        "text-report",
+        "layout:side-by-side",
+        "options:ignore-unimportant,display-context",
+        "output-to:%3",
+        "output-options:html-color",
+        "%1",
+        "%2"
+      ]
+    }
+  ],
+  "references": {
+    "args": 3,
+    "env": [],
+    "uses_script_path": false
+  }
+}

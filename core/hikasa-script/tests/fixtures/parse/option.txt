@@ -1,0 +1,3 @@
+option stop-on-error
+option confirm:yes-to-all
+OPTION CONFIRM:No-To-All

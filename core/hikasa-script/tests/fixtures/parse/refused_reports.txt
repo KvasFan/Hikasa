@@ -1,0 +1,8 @@
+table-report layout:summary a b
+data-report a b
+hex-report
+picture-report
+media-report
+version-report
+registry-report
+file-report output-to:x
