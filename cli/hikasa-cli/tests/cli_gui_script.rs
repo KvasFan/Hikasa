@@ -86,7 +86,7 @@ fn a8_18_gui_script_sends_the_checked_script_with_its_cwd_and_variables() {
     };
     // The child's spelling of the folder (on macOS `/private/var/…` for the `/var/…` the test created).
     assert!(Path::new(path).is_absolute(), "{path}");
-    assert_eq!(canonical(path), canonical(&s.join("s.txt")), "absolute");
+    assert_eq!(canonical(path), canonical(s.join("s.txt")), "absolute");
     assert_eq!(args, &["l"]);
     assert_eq!(
         cwd.as_deref().map(canonical),
