@@ -984,7 +984,7 @@ impl ReportRequest {
         }
     }
 
-    /// The warning `report_option_unused` "<layout> does not use: <words>", when a word was unused.
+    /// The warning `report_option_unused` "`<layout> does not use: <words>`", when a word was unused.
     pub fn unused_warning(&self) -> Option<Warning> {
         (!self.unused.is_empty()).then(|| Warning {
             code: WarningCode::ReportOptionUnused,
