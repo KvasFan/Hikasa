@@ -10,15 +10,16 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-231, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-258, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
   Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7 W7 Reports (parts W7a Core, W7b Service and CLI) ·
-  §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9–§1.14 W9–W14 (outline in plan
-  §6, written before each wave)
+  §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9 W9 GUI Folder Compare and Folder
+  Sync (parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10–§1.14 W10–W14 (outline in plan §6,
+  written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8
+  §6.8 W8 · §6.9 W9
 
 ---
 
@@ -213,6 +214,33 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-229 | **The minimal status window and Run Script** (§1.8.14). A `DialogModel` fed by `ScriptEvent`s: the current command and line, the current call's progress, the log at the run's level, Stop/Close, W6's confirmation dialogs on top, OPT-021's close and beep, a notice at the end; catalogue command `RunScript` (Tools, "Run Script...") with path, arguments, stop on error and confirm mode. **Open default:** the `RunScript` command and its dialog (docs/14 lists no script command). | The plan's *minimal status window (log, progress, Stop)*; without a command a script could start in the window only from a command line. | 14, 15 |
 | D-230 | **Dependencies** (§1.8.16). No crate; `hikasa-session` += `hikasa-script`. Check 3 gains `hikasa-script`'s row, check 4 drops it from the stub crates, check 2 bans `std::fs`, `std::process`, `std::net` in `hikasa-script` and keeps `std::fs` to `api/script_log.rs` among the script files of the session, and `api/script*.rs` call no planner or renderer directly; check 7: no `hikasa_script` in the adapters. | Plan §3 adds no crate for W8; the host must reach behaviour only through the Service. | 02 |
 | D-231 | **G14 scripts** (§1.8.17). `script check` of a 200,000-line script ≤ 0.5 s and ≤ 32 MiB + 8 × its size; a script's copy of 10,000 files ≤ the direct `folder op` × 1.05 + 0.2 s; a script's sync dry run of the G2 tree ≤ the direct + 0.2 s; 10,000 commands ≤ 2 s; the log of a million detail lines streams in ≤ 4 MiB (CI). | A batch layer must cost nothing beside what it drives; streaming is the property that matters and runs on CI. | 02, 12 |
+| D-232 | **W9 in three sequential parts** (§1.9.1). W9a *View* (model split, columns, sort, glyphs, cells, flatten, selection, status counts, path edits, browse dialog, Find Filename, Legend, Info, base commands, Swap, Clear), W9b *Operations and Sync* (operation dialogs over core previews, Ignored, Exclude, Compare Contents, Quick Compare, Compare To, Open With, Synchronize, the Folder Sync view and its waited outcome), W9c *Drag, menus, rules* (drag and drop, clipboard file lists, pane context menus, file-manager entries, folder rule tabs, Filters edit and presets, gates, docs). Each ends green with its acceptance subset. | W9b plans W9a's selection and its sync view is W9a's tree; W9c's menus, drops and tabs call W9a's and W9b's commands; plan §2 lets a GUI wave split. | 16 |
+| D-233 | **Models and drawing** (§1.9.2). Every new W9 model file and `folder_view.rs`, `dnd.rs` join check 7's toolkit-free list; plans, preview lines, plan counts, sync rows, selection resolution, sort orders, completions, masks, times and statistics come from core and are shown as they come; W6d's `plan_counts` moves to core. File, plan and clipboard calls run in jobs, the newer request cancelling the older; one operation per view. | Plan W9's acceptance: *dialog models render core plans unchanged, no recomputation in the GUI*; T11. | 14, 17 |
+| D-234 | **Columns** (FC-040, FC-041, FC-014; §1.9.3). Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, Path (flat comparisons only); default Name, Size, Modified; both sides the same order and widths; View ▸ Columns and the header menu toggle, a header drag moves, a separator drag resizes, a double-click fits; `[layout.folder-compare]`/`[layout.folder-sync]` keep `columns`, `widths`, `sort`, `sort_side`, `sort_descending` (and the session's `[view]`, D-108). | FC-040's set without Version (D-237); one mirrored layout keeps the two sides aligned row for row and costs one width table. | 03, 04 |
+| D-235 | **Sort in core** (§1.9.4). `hikasa_folder::view`: `SortKey { column, side, descending }`, `TreeRead::visible_rows_sorted`; siblings only, folders first (D-20), a row missing on the side by the other side's value, ties by the D-20 key; a third header click returns to the tree order. Plans never read the sort. | FC-040 *both sides sort together*; comparing values is core's (T11), and one order serves the tree, Find and the bench. | 04 |
+| D-236 | **Glyphs** (FC-012, FC-013, FC-015, FC-032; §1.9.5). Normative table: hollow folder (not scanned while running, cancelled, orphan unscanned), filled `unopened_folder` (auto-scan off), red X (failed), arrow overlay (any link), zipper (archive); centre column: content icons, direction arrows, Ignored badge, the Space mark. New scheme element `[folder] unopened_folder` (additive); one glyph table feeds the tree and the Legend. | FC-012 names the glyphs, not their cases; the yellow of FC-012 had no theme element (UI-021: colours are configurable). | 04, 14 |
+| D-237 | **Cell values** (§1.9.6). Times in the clock's zone (`human::local_time_text`, replacing M1's UTC); numeric owner and group (Q10 = b); the CRC column computes the rendered rows' CRCs in a job once scrolling stops (≤ 256 a job); `(r)(s)(h)` from DOS bits, `(r)` from Unix write bits; the whole name always; no Version column (FC-028 is P1). | A user reads local times; *CRC on demand* must not read 100,000 files because a column was shown. | 04, 15 |
+| D-238 | **Selection** (FC-060, FC-064; §1.9.7). `ViewSelection` = core `Selection` + current, anchor, focus sides, Space mark; the pointer and keyboard tables are normative (a press on a selected row starts a drag, on an unselected row a swipe; crossing the centre selects both sides); only shown rows are selected; Edit commands call `hikasa_folder::select` with typed masks and the view's scope; a plan gets `SelectRequest { selection, display, expand: None, include_hidden, iu }`; status counts per side on change. | FC-060's gestures need one deterministic reading; the CLI and scripts already share the selection engine (D-175). | 04, 14 |
+| D-239 | **Path edits** (FC-002; §1.9.8). Completion = `Service::path_completions` (typed `vfs ls`, ≤ 200, case-insensitive where the back-end is), 150 ms after the last key, cancelled by the next; MRU `state.mru.left/right` pushed only on a successful load; Enter or Accept commits both fields, Esc or Cancel reverts (FS-001); a missing folder asks to create it (`vfs_op_plan` + `vfs_op_execute` of `mkdir`). | Completion over every back-end (archives too) needs the VFS; a typo must not enter the MRU. | 04, 15 |
+| D-240 | **Browse dialog** (Q5 = a, D-62; §1.9.9). An in-house `DialogModel` over `vfs_ls`: modes Folder, File, SaveFile; places (home, current, roots or probed drives, the bases, `mru.folders`); archives open as folders; hidden entries off by default; a substring filter; used by every Browse button (path edits, Copy to Folder, Compare To, Home, Specs tab, Options path keys, Run Script, Export target). Browse Using Profile stays P1. | One dialog for every back-end; docs/14 §4 marks *Browse for Folder / Browse Using Profile* P1 while FC-002 (P0) needs Browse: FC-002 wins for the folder browser, the profile part stays P1. | 04, 14 |
+| D-241 | **Find Filename** (FC-061; §1.9.10). A non-modal panel over the tree; `Finder::next` over every shown row, closed folders included, in the view's order: a hit opens its ancestors; options in `state.dialogs."find-filename"`, text in `mru.find`; `ExistsNext`/`ExistsPrev` step over the focus side's gaps. | Searching only expanded rows would miss what the user is looking for; the display filter still decides what exists. | 04 |
+| D-242 | **Legend and Info** (FC-030, FC-064, FS-005; §1.9.11). The Legend is a toggled right-hand panel (not modal) painted from D-236's table and the FC-031 classes; Info is a dialog over `TreeRead::stats` (+ the sync plan's counts) with Copy. | A legend is read beside the tree; one table means it cannot disagree with it. | 04, 14 |
+| D-243 | **Bases, Swap, Clear** (FC-004, SES-008; §1.9.11). Up One Level per side and `UpOneLevelBoth` (new id), Set as Base (Other Side) re-root the view; Compare Parent Folders, Sync/Compare Base Folders open new views; Swap Sides also mirrors a sync session's options (`SyncOptions::swapped`: presets, matrix, overrides), so the same folders get the same actions; Clear Session empties the view. | FC-004 names *Both*, the catalogue had none; SES-008's *everything side-specific* covers what a sync does to each side. | 03, 04 |
+| D-244 | **Dialogs render core plans** (T12; §1.9.12). `Service::folder_op_preview(&OpPlan) -> OpPreview` (counts, per-item dry-run status, `line(plan, i)` equal to `folder op --dry-run`'s human line); options → plan job → preview list → Start → W6d's questions → execute → log, notice, refresh; the executed plan is the previewed one after `Confirmation::finish`; *Include hidden items* in every dialog; read-only sides disabled. | Plan W9's acceptance and check 7; a preview that is not the CLI's dry run would be a second planner. | 04, 14 |
+| D-245 | **The verbs** (§1.9.13). Normative table of commands, dialogs, requests and remembered choices (`state.dialogs."copy-to-folder"`, `"rename"`, `"touch"`, `"new-folder"`, `"exclude"`, `"compare-contents"`, `"quick-compare"`); Rename inline for one row, masks with `base_mask` for more; Touch text parsed by core; Ignored updates the view's rules without a re-run, Exclude re-runs; Compare To with one item asks for the other through the browse dialog; Open With lists only views that exist. | Each FC-070…FC-077 dialog of docs/14 §4 with one reading; *remembers last choices* (docs/03 §5.2). | 04, 03 |
+| D-246 | **Synchronize from Folder Compare** (FC-078; §1.9.14). The preview plans on the view's model as it stands (no re-scan: unscanned folders are unresolved rows), *Just selection* preset when something is selected, confirmation mode preset `sync_confirmations`, disabled on a flat view; `folder_sync_preview` lines equal `folder sync --dry-run`. | A re-scan would replace what the user is looking at; W6's row rules already keep an unscanned folder untouched. | 04 |
+| D-247 | **Folder Sync view** (FS-001, FS-002, FS-004, FS-005, CLI-G03; §1.9.15). `Scope::Sync`; prepared with `folder_sync_prepare`; re-planned after the comparison, every refresh and every change of preset, matrix, option or override (re-run only for `within_archives` and rule tabs); Action in the centre column, folder summaries from `SyncPlan::folder`; overrides by row path; Run with W6's confirmation; no display-filter commands (the catalogue has none for it). | The engine and its plan are W6's; the view only chooses when to ask for a plan and shows it. | 04, 12 |
+| D-248 | **Waited Folder Sync view** (revises D-190's *unsupported* answer). `--sync`, `folder sync --gui` and IPC `OpenView { kind: FolderSync }` open the view; `ViewOutcome::Sync { last_run, complete }` (additive): exit = the last Run's (0/100), without a Run 0 when the comparison completed, else 100. | The waiting caller asked for a sync, not a verdict; D-23's other kinds unchanged. | 12 |
+| D-249 | **Folder rule tabs** (SES-020, SES-022, FC-050, FF-002, FS-002; §1.9.18). Comparison, Name Filters, Handling, Misc (enabled formats, bold where different; Ignored paths), Sync (preset, 8 × 5 matrix with invalid cells disabled, orphans reading, FS-005 options, overrides); the Specs tab gains *Disable editing* per side; P0 keys only, the rest kept; OK checks with `Service::check_folder_rules` and `SyncMatrix::validate`, then `session_apply_scope`, then a re-run. **Open default:** no Other Filters tab (FC-053 is P1). | D-128's P0 rule; the compile step is the comparison's own. | 03, 04, 10 |
+| D-250 | **Filters edit and presets** (FC-050; §1.9.18). A toolbar field with the canonical text, a drop-down of `filters.toml` presets and `mru.name_filters`; Enter parses with core's `NameFilter::parse`, re-runs and pushes the MRU; Add To Presets prompts a unique name and saves `filters.toml` through `settings_save` (W4c's conflict handling). | The list form and the toolbar text are one filter (D-07); presets have one file (D-72). | 04, 15 |
+| D-251 | **Drag and drop** (FC-080, UI-008; §1.9.16). OS drops on path edits set the base, on a pane's tree copy or move into the folder after a prompt with the plan of the new `vfs_op_plan`, executed as is by `vfs_op_execute` (T12); rows dragged to the other pane copy (Shift: move) through D-244's flow. winit 0.30 delivers no OS drops on Wayland and cannot start a drag toward other programs: both gaps are documented and covered by D-252's clipboard file lists. | Checked in winit 0.30.13's sources (drops on X11, Windows, macOS only; no drag source); no approved crate fills it without `unsafe`. | 04, 14 |
+| D-252 | **Clipboard file lists** (§1.9.17). `ClipboardProvider::write_files`, `read_files` (arboard 3.7 `file_list`, no new feature); `Copy` (Ctrl+C) puts the selected local items as files, `Paste` (Ctrl+V) drops the clipboard's files on the pane's folder, `SelectAll` selects; `CopyFilenames` copies the specs as text. The three global entries are implemented with predicates true only in a folder pane; a focused text field keeps Ctrl+C/X/V/A. | The fallback for both drag gaps, on every platform; the catalogue's global Edit entries are where users look for them. | 01, 14 |
+| D-253 | **Pane context menus** (UI-005; §1.9.18). Normative id lists per `Area::{FolderPane(Side), FolderCentre, FolderHeader, SyncPane(Side)}`; side-specific entries carry the clicked side; a right-click outside the selection selects first; unavailable entries disabled, planned ones absent. | D-110 promised the pane areas to W9; a list per area is testable as text. | 14 |
+| D-254 | **File-manager entries** (FC-063; §1.9.18). `ExplorerList` ▸ *Open Folder in File Manager* (`open_associated` of the folder) and *Show in File Manager* (new `AppLauncher::reveal`: `explorer.exe /select,`, `open -R`, `org.freedesktop.FileManager1.ShowItems` through `dbus-send`, else the folder); members reveal their archive; non-local specs disabled. | A native shell context menu needs `unsafe` platform code; these two entries are what FC-063 asks on Linux and work everywhere; `dbus-send` avoids a D-Bus crate. | 04 |
+| D-255 | **Catalogue** (§1.9.19). Statuses per part; new id `UpOneLevelBoth`; captions added where an entry W9 shows had none (`SetAsBaseFolders`, `ExistsNext`, `ExistsPrev`, `Swap` of folder-shared, `CopySide`, `MoveSide`, `Run` with `toolbar = true`, `Rules`, `NameFilter`, `NameFilterEdit`); `Scope::Sync`; new predicates and `CommandArg` items; session-section rows of text views wait for W11 except Swap and Compare Parent Folders. | D-110 shows only entries with a caption; T14. | 14 |
+| D-256 | **Beep after long operations** (OPT-015). An operation, a sync or a content compare that ran ≥ 10 s beeps at its end when `beep_after_long_operations` (the W8 beep: a request for attention). **Open default:** 10 s. | OPT-015 is P0 and names no threshold; FC-082 (P1) mentions the option too: the P0 key wins. | 15 |
+| D-257 | **G15 folder GUI** (§1.9.21). M1's folder scan gate with every column and a Size sort; Select All/Invert/restrict ≤ 16.7 ms; a 100,000-item preview's first frame < 1 s and ≤ 16 bytes an item; a 100,000-file sync view plan ≤ 0.5 s after the comparison and per override; completion ≤ 200 ms over 10,000 entries; browsing 100,000 entries ≤ 1 s; scrolling frame work < 16.7 ms everywhere; ARCH-GUI-003 unchanged. A failure is reported, not relaxed. | The plan keeps M1's folder gate with all columns and asks for ARCH-GUI-003 unchanged; the new views need bounds of their own. | 02 |
+| D-258 | **Dependencies** (§1.9.22). No crate; `Cargo.lock` unchanged. Check 2: the reveal commands and arboard's `file_list` only in `host.rs`. Check 7: the model list grows; `gui/` names no planner, executor, resolver, `item_line` or `sync_marker`; planted-violation self-tests. | Plan §3 adds nothing for W9; the rules make *no recomputation* checkable. | 02 |
 
 ### 0.4 Dependencies
 
@@ -242,6 +270,8 @@ already holds through `fontique` (no new package), and `xmllint` is a CI tool, n
 `pretty_assertions`) and leaves the stub crates; `hikasa-session` gains the edge to `hikasa-script`. Member manifests:
 `hikasa-script` = `[hikasa-core, serde, thiserror]`, `hikasa-session` += `hikasa-script`; `Cargo.lock` gains no package;
 check 2, check 4 and check 7 change as §1.8.16 says.
+**W9** (D-258) adds no crate: arboard 3.7's file lists need no feature and no package; `Cargo.lock` and the member
+manifests of check 3 are unchanged; check 2 and check 7 gain the rules of §1.9.22.
 
 ### 0.5 Documentation updates of W0
 
@@ -7598,7 +7628,728 @@ Mutations of the review's survivors and of the fixes (each applied alone, revert
 | 49 | the handler accepts a relative `path` | `tests_script.rs` `a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker` |
 | 50 | `run_silently` does not arm `CtrlC` | `gui/tests/cli_script.rs` `ctrl_c::a8_14_ctrl_c_stops_a_silent_hikasa_gui_script_at_that_line`, `ctrl_c::a8_14_ctrl_c_on_a_terminal_stops_a_silent_hikasa_gui_script` |
 
-### 1.9–1.14 W9–W14
+### 1.9 W9 — GUI Folder Compare and Folder Sync
+
+**Ids.** FC-002 (path edits, completion, MRU, Browse, create missing), FC-003 (the dialogs' read-only sides), FC-004
+(Up One Level, Set as Base, Compare Parent Folders, Sync/Compare Base Folders; merge entries D-59), FC-012 (glyphs),
+FC-013 (link glyph), FC-014 (Path column, *Ignore Folder Structure*), FC-029 (b: Compare Contents and its results),
+FC-030 (Legend), FC-032 (content icons, direction arrows), FC-033 (Ignored), FC-040, FC-041, FC-050 (Filters edit,
+presets, Add To Presets, Name Filters tab), FC-052 (Exclude), FC-060…FC-064, FC-070…FC-074, FC-076, FC-077, FC-078,
+FC-080, FC-100 (sync log entries), FS-001, FS-002 (Sync tab), FS-004, FS-005, FF-002 (Misc tab), SES-008, SES-020 and
+SES-022 (folder rule tabs, `Rules`), UI-005 (pane context menus), UI-008 (panes, the Wayland gap), CLI-G03 (`folder
+sync --gui` and `--sync` open the view), the W8 hook (the Run Script dialog's browse button), ARCH-GUI-003
+(re-measured), gate G15. Decisions D-232…D-258. Out of scope: FC-011 alignment overrides and *Align With* (P1),
+FC-017 *Refresh*/*Refresh Selection*/automatic refresh (P1; `FullRefresh` stays), FC-023/FC-024 criteria and the
+FC-053 *Other Filters* tab (P1, D-249), FC-028 and the Version column (P1, D-237), FC-075 *Attributes…* (P1), FC-079
+(P1), FC-081 (D-59), FC-082 re-stat of a view (P1), SES-009 history (`SpecsBack`/`SpecsForward`, P1), Folder Merge and
+every merge entry (P1), `Report` (W13's dialog), the Open With view types other than Text Compare and Folder Compare
+(W11/W13), Browse Using Profile (P1), FS-003 Sync Memory (P1), dragging items out to other programs (not feasible,
+D-251).
+
+This section is written like §1.4: the **GUI's needs** — toolkit-free models tested without a window, the drawing
+split, the `Service` calls (§1.9.20, *exists* or *new*), the catalogue ids, keys, persistence, errors and
+cancellation. Core keeps every comparison, selection, sort, plan and vocabulary rule (T11, D-105, D-233); the few
+core additions are typed forms of what a subcommand already does, or pure helpers the CLI shares.
+
+**Files.**
+
+- *Core (each additive; W9a and W9b land theirs in their first commits, so W10 may run beside W9 on other files of
+  `hikasa-session`).* `core/hikasa-folder/src/` (new `view.rs`: sort; `sync.rs`: `SyncOptions::swapped`);
+  `core/hikasa-session/src/` (new `api/folder_preview.rs`: `OpPreview`, `SyncPreview`; new `api/paths.rs`:
+  completion, places, archive names; `api/human.rs`: `local_time_text`; `api/vfs_ops.rs`: `vfs_op_plan`,
+  `vfs_op_execute`; `api/gui.rs`: `ViewOutcome::Sync`; `api/folder_ops.rs`: `check_folder_rules`; `clipboard.rs`:
+  file lists; `launcher.rs`: `reveal`; `host.rs`: `SystemClipboard` and `SystemLauncher` for both; `sessions/file.rs`:
+  the sync half of `swap_sides`; `settings/theme.rs`: `[folder] unopened_folder`; `help.rs`: topic list);
+  `core/hikasa-session/catalogue/commands.toml` (§1.9.19); tests of §6.9.
+- *GUI.* `gui/hikasa-gui/src/`: `folder_view.rs` (the view model; columns, selection and cells move out), new
+  `folder/mod.rs`, `folder/columns.rs`, `folder/cells.rs`, `folder/glyphs.rs`, `folder/selection.rs`; new
+  `path_edit.rs`, `browse.rs`, `find_panel.rs`, `legend.rs`, `info_dialog.rs`; `op_dialogs.rs` (the verb dialogs and
+  the preview list), new `op_preview.rs`; new `sync_view.rs`; new `folder_tabs.rs` (rule tabs), `session_dialog.rs`
+  (registry, Specs tab); new `filters_edit.rs`; `dnd.rs`; `menus.rs` (pane context menus); `commands.rs`
+  (presentation rows, predicates, `Scope::Sync`, `Area` panes, `CommandArg` items); `app.rs`, `app/flow.rs` (opens of
+  sync views, IPC, the waited outcome); `script_dialog.rs` (browse button); `options/` (browse buttons); `home.rs`
+  (Folder Sync type, browse); `bench.rs` (G15 modes); `ui/`: `folder.rs` (rewritten: header, columns, glyphs, panes),
+  new `ui/path_edit.rs`, `ui/browse.rs`, `ui/find_panel.rs`, `ui/legend.rs`, `ui/sync_view.rs`, `ui/op_dialogs.rs`,
+  `ui/session_dialog.rs` (tabs), `ui/icons.rs` (§1.9.5), `ui/mod.rs` (drops, clipboard keys); tests of §6.9;
+  `gui/hikasa-gui/tests/perf_gate.rs` (G15); `core/hikasa-session/tests/architecture.rs` (check 2, check 7).
+- *Help* (§1.9.24).
+
+#### 1.9.1 Parts (D-232)
+
+W9 is one wave in three sequential parts, one implementer each; a part starts when the previous one is committed on
+`feat/m2` and ends with the tree green and its acceptance subset of §6.9.
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W9a View** | the model split; columns, sort, reorder, resize, layout memory; glyphs and cells; *Ignore Folder Structure* and the Path column; the selection model with pointer, keyboard, Space mark and the Edit commands; status counts; path edits with completion, MRU and create-missing; the browse dialog and every Browse button; Find Filename and gap navigation; Legend; Info; the base commands, Swap Sides, Clear Session | §1.9.2–§1.9.11 | A9.1…A9.11, A9.26, A9.28, A9.29, A9.31 | a Folder Compare view that selects many rows; the W6d commands act on the whole selection |
+| **W9b Operations and Sync** | the operation dialogs over `OpPreview` for every verb; Ignored, Exclude, Compare Contents and its results, Quick Compare, Compare To, Open With; the Synchronize submenu; the Folder Sync view, its waited outcome and IPC | §1.9.12–§1.9.15 | A9.12…A9.18, A9.26, A9.28, A9.29, A9.31 | every file operation and sync from the window |
+| **W9c Drag, menus, rules** | drag and drop; clipboard file lists and Copy/Paste/Select All; pane context menus; file-manager entries; the folder rule tabs, `Rules`, `NameFilter`; the Filters edit, presets, Add To Presets; gates, docs | §1.9.16–§1.9.18, §1.9.22–§1.9.24 | A9.19…A9.31 | the wave |
+
+The order is forced: W9b's dialogs plan W9a's selection and its sync view is W9a's tree with a column more; W9c's
+context menus list W9a's and W9b's commands, its drops run W9b's operations, its tabs and Filters edit re-run views
+through W9a's path. Each part is shippable: a command it does not reach stays `planned` (§1.9.19).
+
+#### 1.9.2 Models and drawing (D-233)
+
+The rules of §1.4.1 hold. In addition:
+
+1. **Toolkit-free models.** `folder_view.rs`, every file of `folder/`, `path_edit.rs`, `browse.rs`,
+   `find_panel.rs`, `legend.rs`, `info_dialog.rs`, `op_dialogs.rs`, `op_preview.rs`, `sync_view.rs`,
+   `folder_tabs.rs`, `filters_edit.rs`, `dnd.rs` join check 7's model files (no `egui`, no `eframe`). `ui/` draws them
+   and turns input into `Invocation`s and model calls; it holds layout constants and pixel geometry only.
+2. **No recomputation (architecture check 7).** A plan, a preview line, a count of a plan, a sync row, a
+   selection's resolution, a sort order, a completion, a mask, a time text and a statistic come from core (a `Service`
+   call or a pure core function) and are shown as they come. The GUI never builds a `Plan`, never reorders a plan's
+   items, never filters rows by a category it computed, never parses a vocabulary word. `op_dialogs.rs`'s
+   `plan_counts` (W6d) moves to core (`OpPreview::counts`, §1.9.12).
+3. **Jobs.** Every `Service` call that lists, stats, plans, executes, reads the clipboard or starts a program runs
+   off the UI thread (`Service::spawn`); a newer request of the same kind cancels the older one's `JobControl` and its
+   answer is dropped by a generation number. A model shows "Listing…", "Planning…", "Working…" while its job runs and
+   stays responsive.
+4. **One operation at a time per view** (W6d's rule): an operation, a sync, a refresh, a content compare, an Exclude
+   re-run; commands that would start a second one are disabled (`Predicate::Idle`), and a drop or a paste during one
+   gets the message "Wait for the current operation to end.".
+5. **Errors.** A refused plan (`ApiError`) is a warning notice with the core message and a log entry; a dialog whose
+   plan fails shows the message in place of the preview and disables Start. Nothing is retried silently.
+
+#### 1.9.3 Columns and layout memory (D-234)
+
+```rust
+// gui/hikasa-gui/src/folder/columns.rs (toolkit-free)
+pub enum ColumnId { Name, Ext, Size, Modified, Attributes, Crc, Owner, Group, Path }   // as_str: snake_case
+pub struct ColumnLayout { pub visible: Vec<ColumnId> /* in order, Name first */, pub widths: BTreeMap<ColumnId, f32>,
+                          pub sort: Option<SortKey> /* hikasa_folder::view, D-235 */ }
+impl ColumnLayout {
+    pub fn from_layout(table: Option<&toml::Table>) -> ColumnLayout;   // D-108 precedence; bad values → defaults + warning
+    pub fn to_layout(&self) -> Vec<(&'static str, LayoutValue)>;       // keys of the table below
+    pub fn toggle(&mut self, id: ColumnId); pub fn move_to(&mut self, id: ColumnId, index: usize);
+    pub fn resize(&mut self, id: ColumnId, width: f32); pub fn header_click(&mut self, id: ColumnId, side: Side);
+}
+```
+
+| Column | Cell (each side) | Default | Width (points; min) |
+|---|---|---|---|
+| Name | glyph, colour spot, name; `(r)` `(s)` `(h)` after it when Ext is hidden (FC-041, D-237) | shown, always first | stretches; min 80 |
+| Ext | the D-07 extension, without the dot | hidden | 56; 24 |
+| Size | bytes with thin grouping (M1); a folder: the total below it once scanned | shown | 92; 40 |
+| Modified | local time `YYYY-MM-DD HH:MM:SS` (D-237) | shown | 136; 60 |
+| Attributes | DOS letters (`DosAttrs::letters`) or the Unix mode string (`UnixMeta::permissions_string`) | hidden | 88; 40 |
+| CRC | eight lower-case hex digits; empty until known (D-237) | hidden | 76; 40 |
+| Owner, Group | the numeric uid, gid (Q10 = b) | hidden | 64; 32 |
+| Path | the side's folder below its base, `/`-separated, escaped: only in a flat comparison (FC-014) | shown when flat | 200; 60 |
+
+The centre column (state, content icon, arrows; the planned action in a Folder Sync view, §1.9.15) is fixed, 34
+points, and not a `ColumnId`. Both sides show the same columns in the same order and widths (mirror order is not
+offered); a side wider than its half of the view scrolls horizontally, both sides together. **View ▸ Columns**
+(`ColList`) is a submenu of check items, one per column but Name (`CommandArg::Column`); the header's context menu
+(`Area::FolderHeader`) is the same list. Dragging a header moves the column (Name stays first); dragging a separator
+resizes it, a double-click on it fits the column to the widest cell of the rendered rows. The Path column is offered
+only while the comparison is flat.
+
+**Persistence (D-108).** `[layout.folder-compare]` and `[layout.folder-sync]` gain `columns` (array of column ids, in
+order, the visible ones), `widths` (table id → points, only those dragged), `sort` (column id, absent = tree order),
+`sort_side` (`left`/`right`), `sort_descending` (bool), plus `legend` (bool, D-242) and `find_panel` (bool, D-241). The
+view owns them: they go to its session's `[view]` too (D-108, W4b), so a session opens with its own columns. An
+unknown column id is dropped with one `invalid_config_value` warning; a width is clamped to its minimum and 2,000.
+
+#### 1.9.4 Sort (D-235)
+
+Sorting is a display order, decided in core so the GUI compares nothing:
+
+```rust
+// hikasa_folder::view (pure)
+pub enum SortColumn { Name, Ext, Size, Modified, Attributes, Crc, Owner, Group, Path }
+pub struct SortKey { pub column: SortColumn, pub side: Side, pub descending: bool }
+impl TreeRead<'_> {
+    /// `visible_rows` in sort order: inside each folder, folders before the other kinds (D-20), then by the key on
+    /// `side`, a row without an item there by the other side's value, ties by D-20's order (case-folded NFC name).
+    pub fn visible_rows_sorted(&self, opts: &DisplayOptions, expanded: &dyn Fn(NodeId) -> bool,
+                               sort: Option<&SortKey>, out: &mut Vec<VisibleRow>);
+}
+```
+
+- A header click on side `s` sorts by that column on `s`, ascending; a second click descending; a third click back
+  to the tree order (`sort = None`). The header shows the arrow on the sorted side only.
+- Values: Name and Ext by the D-20 key; Size by bytes (folders by their totals); Modified by time, none first; CRC
+  unknown first; Attributes by their text; Owner, Group numeric; Path by the D-20 key per component.
+- The tree stays a tree: only siblings are reordered. `Name` ascending is the tree order. A flat comparison sorts its
+  one list. Sorting never changes which rows exist, the selection, or anything an operation reads (plans read the
+  model in tree order).
+- O(rows · log siblings) per rebuild; G15 measures the scan with a sort on Size (§1.9.21).
+
+#### 1.9.5 Glyphs, colours and the centre column (D-236)
+
+The name cell starts with a glyph (16 × 16 design grid, D-114) and the colour spot (FC-032: visible when selected):
+
+| Row | Glyph | Colour |
+|---|---|---|
+| file, link not followed, other | none (spot only); a link gets the arrow overlay | the FC-031 class of its side |
+| folder, `Scanned` | folder | class |
+| folder, `NotScanned` while its comparison runs, after a cancel, or an orphan folder left unscanned (`scan_orphan_folders` off) | **hollow** folder (outline only) | `unknown` |
+| folder, `NotScanned` because `auto_scan_subfolders` is off (FC-012, not yet opened) | folder filled with `unopened_folder` | `unopened_folder` |
+| folder, `Failed` (on that side) | folder with a red **X** overlay | `error` of the palette |
+| a symbolic link or junction, followed or not (FC-013), file or folder | its glyph plus the **arrow** overlay | class |
+| an archive row (FC-015) | the zipper (D-153) instead of the folder glyph, with the overlays above | class |
+
+`[folder] unopened_folder` is a new scheme element (additive known key, schema version unchanged; built-ins light
+`#c08a00`, dark `#e0b33a`), editable in the theme editor (D-130), mapped once in `Palette::from_scheme`.
+
+**Centre column** (FC-032), Folder Compare: the content-result icon when a content test ran (`binary_same` "=",
+`binary_different` "≠", `rules_same` "≈", `unimportant_only` "~", `important_differences` "!", each an icon), else the
+direction arrow of a newer pair (left newer → an arrow pointing right, right newer ← ), else the M1 state mark; an
+Ignored row (FC-033) gets a small "i" badge; the Space mark (D-238) a ring around the cell. Tooltips name what they
+show ("Left is newer", "Rules-based: unimportant differences only", "Ignored"). New icons in the inventory (D-114):
+`FolderHollow`, `FolderFilled`, `OverlayError`, `OverlayLink`, `ContentSame`, `ContentDifferent`, `ContentRulesSame`,
+`ContentUnimportant`, `ContentImportant`, `ArrowLeft`, `ArrowRight`, `Ignored`, `Mark`, `SyncCopyRight`, `SyncCopyLeft`,
+`SyncDeleteLeft`, `SyncDeleteRight`, `SyncLeave`, `SyncConflict`, `Browse`, `Legend`, `Run`.
+
+A pure mapping `folder/glyphs.rs::glyph_of(node, side, rules, running) -> Glyph` holds the table; `legend.rs` reads
+the same table (D-242), so the Legend cannot disagree with the tree.
+
+#### 1.9.6 Cell values (D-237)
+
+- **Times** are shown in the zone of the Service's clock (`Service::clock().now().time_zone()`, T1) through the new
+  pure `hikasa_session::api::human::local_time_text(FileTime, &TimeZone) -> String` (`YYYY-MM-DD HH:MM:SS`, an unknown
+  time empty); the header says "Modified". M1's UTC text goes. Tests fix the zone.
+- **Attributes, owner, group** from `EntryView::attrs`; a back-end without them leaves the cell empty.
+- **CRC on demand** (FC-040): while the CRC column is shown, the view asks for the CRCs of the file rows it renders
+  that have none: once the list has not scrolled for 200 ms, one `folder_contents` job with `ContentsKind::Crc` over
+  those rows (`SelectRequest::selection`), at most 256 rows a job, the next window cancelling the previous job; results
+  enter the model (D-174) and the cells repaint. Rows of a member come from the archive's CRC (D-147) with no read. An
+  error shows "error" with the message as tooltip. Hiding the column cancels the job.
+- **`(r)(s)(h)`** after the name when Ext is hidden (FC-041): DOS `R`, `S`, `H`; on Unix `(r)` when the mode has no
+  write bit (`mode & 0o222 == 0`); hidden dotfiles get nothing (their name says it).
+- **Name** is the whole name (also with Ext shown), escaped as `hikasa_report::escape_name`. A lossy name keeps its
+  replacement characters and a tooltip "name is not valid Unicode".
+- **Version** (FC-040) is not offered: its data is FC-028's (P1); the column joins with it.
+
+#### 1.9.7 Selection (D-238)
+
+```rust
+// gui/hikasa-gui/src/folder/selection.rs (toolkit-free)
+pub struct ViewSelection {
+    pub items: hikasa_folder::select::Selection,     // node → SideSet: the data every plan gets
+    pub current: Option<NodeId>, pub anchor: Option<NodeId>, pub focus: SideSet /* LEFT, RIGHT or both */,
+    pub mark: Option<(NodeId, Side)>,                  // Space (FC-060), for Open and Compare To
+    pub moves: u64,                                    // W6d's selection_moves
+}
+```
+
+**Pointer** (`ui/folder.rs` → model calls; each a test through `ui/tests_pointer.rs` and the model):
+
+| Gesture | Result |
+|---|---|
+| click a side cell | selection = that row on that side (if present there); current, anchor = row; focus = that side |
+| click the centre column | the row on every side it is present on; focus = both |
+| Ctrl+click | toggles that row on that side (centre: both) in the selection; current = row |
+| Shift+click | the range anchor…row on the anchor's focus sides replaces the selection; Ctrl+Shift adds it |
+| swipe: press on a row that is **not** selected and drag ≥ 4 points vertically | the range press-row…pointer-row, on the pressed side; once the pointer crosses the centre column or enters the other side, both sides (FC-060); the list scrolls at its edges |
+| press on a **selected** row and drag | a drag of the selection (D-251), not a swipe |
+| double-click | a file row: `Open`; a folder row: expands or collapses; a closed archive row: `Open` (W6d) |
+| click the expander | toggles the folder, selection unchanged |
+| right-click | a row outside the selection becomes the selection (that side) first; then the context menu (D-253) |
+| click below the last row | clears the selection |
+
+**Keyboard** (focus area: the folder tree, D-111): Up/Down move `current` and select it on `focus`; Shift+Up/Down,
+Shift+PgUp/PgDn, Shift+Home/End extend from `anchor`; Ctrl+Up/Down move `current` only; Ctrl+Space toggles `current`;
+PgUp/PgDn/Home/End move; Right = `Expand` and Left = `Collapse` (catalogue), Left on a file or a closed folder moves to
+its parent; **Shift+Left/Right** restrict the selection to that side (`Selection::restrict`) and set `focus`; **Space**
+marks `current` on its first focused side it is present on, Space on the marked item unmarks, Esc unmarks (when no
+dialog or panel takes Esc); Enter = `Open`.
+
+**Rules.**
+
+- Only shown rows are selected: collapsing a folder removes the rows below it; a rebuild (display filter, scan, Ignore
+  Unimportant) drops rows no longer shown; a refresh maps ids through `renumbered` (W6d) and drops gone rows; a full
+  re-run finds rows again by path (W6d's `restore`).
+- **Edit commands** call the pure `hikasa_folder::select` with typed masks and the view's scope (`SelectScope { display:
+  the view's, expanded: Some(the view's open predicate) }`), adding to an empty selection: `SelectAll` (every shown row,
+  every present side: `SelSide::All`, `SelState::All`, `SelKind::All`), `SelectAllFiles` (`select_all_files`),
+  `SelectNewerLeft/Right/Both` (`<side>.newer.files`), `SelectOrphanLeft/Right/Both` (`<side>.orphan.all`),
+  `SelectInvert` (`Selection::invert`). A collapsed folder is one row (SCR-002): what it matches is what it is.
+- **What a plan gets** (`SelectRequest`): `selection: Some(items)`, `masks` and `paths` empty, `display: Some(the
+  view's DisplayOptions)`, `expand: ExpandWords::None` (the selection is explicit), `include_hidden: Some(the dialog's
+  check box)`, `iu: the view's`. Core resolves it (D-176); the GUI never calls `select::resolve`.
+- **Status bar** (FC-064): `Selected: L <n> (<bytes>) · R <n> (<bytes>)` (a folder counts its shown rows' bytes:
+  `TreeRead::totals`), computed when the selection changes, never per frame; then W4's state items.
+- The W6d commands (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) act on the whole selection from W9a on
+  (their `RowSelected`/`SideWritable` predicates become selection predicates, §1.9.19); their dialogs stay W6d's until
+  W9b replaces them.
+
+#### 1.9.8 Path edits (FC-002; D-239)
+
+```rust
+// gui/hikasa-gui/src/path_edit.rs (toolkit-free)
+pub struct PathEdit { pub side: Side, pub text: String, pub committed: String, pub completions: Vec<Completion>,
+                      pub open: bool /* completion list shown */, pub generation: u64, pub error: Option<String> }
+// hikasa_session::api::paths (new; the typed form of `vfs ls`, D-105)
+pub struct Completion { pub name: String, pub text: String /* the whole spec to put in the field */, pub folder: bool, pub archive: bool }
+pub struct CompletionDto { pub base: String, pub items: Vec<Completion>, pub truncated: bool }
+impl Service {
+    /// The entries of the typed text's folder part whose names start with its last part (case-insensitive where the
+    /// back-end is), folders and archives first, then by the D-20 key; at most `limit`.
+    pub fn path_completions(&self, typed: &OsStr, limit: usize, job: &JobControl) -> Result<CompletionDto, ApiError>;
+    pub fn archive_format_of(&self, name: &str) -> Option<ArchiveFormat>;   // the `archives.toml` masks, in memory
+}
+```
+
+- One edit above each pane (FS-001: above each side of the sync view). Typing starts a completion job 150 ms after the
+  last key (the frame time decides; no timer thread), `limit` 200; each key cancels the running one; an answer for
+  an older generation is dropped. The list shows folders, archives (zipper) and files; Up/Down move in it, Tab or
+  Enter on an item puts its `text` in the field (a folder gets its separator, so typing goes on), Esc closes it.
+- **MRU** (OPT-019): the field's drop-down lists `state.mru.left` / `.right`, newest first; a base that loads
+  successfully is pushed (`state_update`, `push_mru`, capped at `max_mru_items`), so typing errors never enter it.
+- **Accept** (FC-002 *Enter accepts*, FS-001 *Accept/Cancel*): Enter or the Accept button (shown while the text
+  differs from `committed`) commits both fields: the view re-runs with the new specs (`open_view_request` path of
+  W4b, origin kept, dirty). Cancel or Esc (with the list closed) restores `committed`. A Folder Sync view commits its
+  two fields together.
+- **Missing folder:** a committed spec whose folder does not exist (`vfs_stat_in` → `not_found`) asks "Folder
+  `<path>` does not exist. Create it?" (Yes/No); Yes → `vfs_op_plan` + `vfs_op_execute` of `mkdir` (D-251's calls), then
+  the run; No keeps the text in the field with the error under it. A spec that cannot be parsed or a file where a
+  folder is needed shows the core message under the field and does not run.
+- `Browse…` button (and `BrowseLeft`, `BrowseRight` of `BrowseList`): the browse dialog in folder mode, starting at the
+  field's folder (D-240); its answer is committed as if typed and accepted.
+- Drops on the field: D-251. `clipboard://` and `-` keep their M1/W4 rules.
+
+#### 1.9.9 The browse dialog (Q5 = a; D-240)
+
+```rust
+// gui/hikasa-gui/src/browse.rs (a DialogModel; toolkit-free)
+pub enum BrowseMode { Folder, File, SaveFile { default_name: String } }
+pub struct BrowseDialog { pub mode: BrowseMode, pub location: String /* a spec */, pub entries: Vec<BrowseEntry>,
+                          pub filter: String, pub selected: Option<usize>, pub show_hidden: bool, pub name: String /* SaveFile */ }
+// hikasa_session::api::paths (new)
+pub struct PlaceDto { pub label: String, pub spec: String, pub kind: PlaceKind /* Home, Current, Root, Drive, Base, Recent */ }
+impl Service { pub fn browse_places(&self, job: &JobControl) -> Vec<PlaceDto>; }
+```
+
+- **Places** (left list): Home, the current folder, `/` (Unix) or every drive letter that `vfs_stat_in` finds (`A:`…`Z:`,
+  probed in the job, Windows), the view's two bases, then `state.mru.folders` (recent). **Location**: a path edit with
+  completion (D-239) and an Up button (`Spec::parent`; out of an archive's root to its folder).
+- **Listing**: `vfs_ls` in a job (archives through the VFS: a file whose name `archive_format_of` knows is shown with
+  the zipper and opens as a folder on double-click or Enter, so members can be picked, Q5's *also browses archives*);
+  folders first, then by the D-20 key, as `vfs_ls` sorts; entries whose names start with `.` are hidden unless *Show
+  hidden items* (`state.dialogs.browse.show_hidden`); the filter field narrows the shown list by a case-insensitive
+  substring (presentation only: the entries are the job's). A listing error shows the core message in the list.
+- **Modes**: Folder — OK takes the location (or the selected folder); File — OK takes the selected file, double-click
+  too; SaveFile — a name field, OK takes `location/name`, an existing file asks "Replace `<name>`?". Esc/Cancel answer
+  nothing. Every confirmed folder is pushed to `state.mru.folders`; a file to `state.mru.files`.
+- **Users**: the path edits (D-239), Copy/Move to Folder's target, Compare To's second item, Home's management panel
+  and the Session Settings Specs tab (folder or file mode by the session type), the Options dialog's path keys (§1.4.13
+  *Browse in W9*), the Run Script dialog's script path (§1.8.18 W9), the Export wizard's target (SaveFile).
+- Help topic `dialog-browse`. *Browse Using Profile* stays P1 (profiles).
+
+#### 1.9.10 Find Filename and gap navigation (FC-061; D-241)
+
+- **Find panel** (`FindFilename`, Ctrl+F): a one-line panel above the tree, not a dialog (the tree stays usable): text
+  (with `state.mru.find`), *Match case*, *Whole word*, *Regular expression*, *Wrap around*, *Search up*, sides (Left,
+  Right, Both). Enter = Find Next; `FindFilenameNext` (F3), `FindFilenamePrev` (Shift+F3) without the panel use the
+  last query; Esc closes the panel. A bad regex shows the `invalid_input` message in the panel.
+- The query is `hikasa_folder::select::FindQuery`; `Finder::next` runs over **every row the display filter shows,
+  collapsed or not** (`visible_rows_sorted` with every folder open, in the view's sort order), so a hit inside a closed
+  folder opens its ancestors and is selected on the side that matched, scrolled into view. Not found: the message panel
+  "Filename not found." (`[next_difference] show_message_panel`). The query's options are remembered in
+  `state.dialogs."find-filename"`; the panel's visibility in `[layout] find_panel`.
+- **`ExistsNext`, `ExistsPrev`** (Alt+Down/Up): the next/previous shown row present on the focus side (gaps are rows
+  that side lacks); `DiffNext`/`DiffPrev` keep M1's rule.
+
+#### 1.9.11 Legend, Info, the base commands, Swap, Clear (FC-030, FC-064, FC-004, SES-008; D-242, D-243)
+
+**Legend** (`Legend`, Ctrl+Alt+L, a check command): a right-hand panel (like D-67's help panel, not a modal dialog,
+so it stays open while the tree is used), toggled, remembered in `[layout] legend`. `legend.rs` lists one entry per
+row of D-236's tables and per FC-031 colour class (same, newer, older, orphan, different, unknown, error, filtered
+out), each with its glyph or spot painted in the current palette and its text; the Folder Sync view adds the action
+icons. Help topic `panel-legend`.
+
+**Info** (`Info`, Ctrl+I; caption "Folder Compare Info" / "Folder Sync Info"): a dialog over `FolderStats` read when it
+opens (`TreeRead::stats(iu)`, O(1)): file and folder pairs per category, per side files, folders and bytes, content
+results, Ignored; the sync view adds the `SyncCounts` of its plan. *Copy* puts the table as text on the clipboard.
+While a comparison runs the figures are the partial ones and say so. Help topic `dialog-folder-info`.
+
+**Bases** (FC-004). Each re-roots the view through the W4b reopen path (origin kept, dirty) or opens a new view:
+
+| Command | Available | Result |
+|---|---|---|
+| `UpOneLevelLeft`, `UpOneLevelRight`, `UpOneLevelBoth` (new id, "Both Sides") in `UpOneLevelList` | the side's base has a `Spec::parent` | that base becomes its parent; re-run |
+| `SetAsBaseFolders` | the selection is one folder row on both sides, or one folder on each side | those folders become the bases; re-run |
+| `SetAsOtherBaseFolder` | one folder selected on one side | it becomes the other side's base; re-run |
+| `CompareParents` (Folder and Text views) | a folder view: one row selected; a text view: always | a new Folder Compare view of the folders that contain the row's (the files') two items |
+| `SyncBaseView` (Folder Compare) | a comparison is loaded | a new Folder Sync view of the same bases, the session's folder rules, the `folder-sync` defaults' sync options |
+| `CompareBaseView` (Folder Sync) | a comparison is loaded | a new Folder Compare view of the same bases and folder rules |
+
+**Swap Sides** (`Swap`, SES-008; Folder, Sync and Text views): `Session::swap_sides` (specs, encodings, read-only
+sides, parent paths, `_left`/`_right` view keys) and, for a folder-sync session, `SyncOptions::swapped` (new, pure):
+`UpdateLeft` ↔ `UpdateRight`, `MirrorLeft` ↔ `MirrorRight`, the matrix's situations and actions mirrored
+(`newer_left` ↔ `newer_right`, `copy_right` ↔ `copy_left`, …), every override's action mirrored, so the same folders
+get the same actions. The view re-runs (a swapped model is not derived). **Clear Session** (`SessionClear`,
+Shift+Ctrl+C; Folder and Sync views): the view becomes an empty session of its type (`session_defaults`): empty path
+edits, no comparison, the specs' MRU lists offered; Accept runs it. A text view's `Info` and `SessionClear` are W11's
+(their rows there stay unavailable, §1.9.19).
+
+#### 1.9.12 Operation dialogs render core plans (D-244)
+
+```rust
+// hikasa_session::api::folder_preview (new; pure over a plan)
+pub struct OpPreview { /* per item: status, reason of the dry run (≤ 8 bytes), the summary, warnings, backups */ }
+impl OpPreview {
+    pub fn counts(&self) -> Vec<PreviewCount>;     // per action: items, bytes; then skipped, failed — W6d's lines, in core
+    pub fn len(&self) -> usize; pub fn line(&self, plan: &OpPlan, index: usize) -> String;   // = item_line(dry run)
+    pub fn conflicts(&self, plan: &OpPlan, index: usize) -> Conflicts; pub fn warnings(&self) -> &[Warning];
+}
+impl Service { pub fn folder_op_preview(&self, plan: &OpPlan) -> OpPreview; }
+```
+
+**Normative:** for every plan, `preview.line(plan, i)` equals line `i` of `hikasa folder op … --dry-run`'s human output
+for the same request and `counts` its summary (A9.12 checks it as a property); the plan the execute job receives is the
+plan the preview was made of, after `Confirmation::finish` only (serialized equal, A9.12). The preview borrows the plan:
+no second copy of a 100,000-item plan is kept (G15 bound, §1.9.21).
+
+**The flow** (every verb; extends W6d's):
+
+1. The command opens the verb's dialog (D-245) with its options preset; verbs without options open none and go to 2.
+2. A **plan job** (`folder_op_plan` with D-238's `SelectRequest`, the dialog's options, the view's `ReadOnlySides`
+   and `OpOverrides`), then `folder_op_preview` in the same job. Every option change starts a new plan job (the older
+   cancelled). The dialog shows "Planning…", then the counts and the **preview list** (virtualized, one line per item,
+   failed and skipped items in the error and muted colours, conflicts as a suffix), the plan's warnings, the backups.
+3. **Start** (the dialog's default button; for a verb without options the preview dialog itself is the
+   `PlanConfirmDialog` of W6d with the list as its body) → `folder_confirmation(&plan, None)` → W6d's questions, one
+   `PlanConfirmDialog` each, stacked; Cancel or No to the operation ends with nothing run.
+4. **Execute job** (`JobKind::FolderOp`, the job indicator, Stop) → `op_log_entries` → one notice (W6d's) →
+   `folder_refresh(refresh_nodes)` → rebuild; selection and open folders follow `renumbered`.
+
+- *Include hidden items* (FC §8): a check box in every operation dialog and in the preview dialog, preset from
+  `include_hidden_by_default`; toggling re-plans.
+- Read-only sides (FC-003): side choices that would write one are disabled with the tooltip "Disable editing is on
+  for the <side> side"; the Service refuses them again (D-184).
+- A plan whose model changed before Start (a refresh or re-run in between) is refused with W6d's warning; the dialog
+  offers *Plan again*.
+- Without a question left (`confirm_*` off, no conflict) a verb without options executes at once, as in W6d; the
+  preview stays reachable through the notice's *Show log*.
+
+#### 1.9.13 The verbs (FC-029, FC-033, FC-052, FC-062, FC-070…FC-077; D-245)
+
+| Command(s) | Dialog (help topic) | Request | Remembered (`state.dialogs."<id>"`) |
+|---|---|---|---|
+| `CopyRight`, `CopyLeft`; `MoveRight`, `MoveLeft` | none (preview in the confirmation) | `FolderOp::Copy`/`Move { to, overwrite: Always }` | — |
+| `CopyPrompt`, `MovePrompt` ("…to Side…") | Prompt Left / Right / Cancel (only writable sides) | as above | — |
+| `CopySide`, `MoveSide` (context menu, "Copy to Other Side", "Move to Other Side") | none | `to` = the side opposite the clicked pane (`CommandArg::Side`) | — |
+| `MoveBoth` (Exchange) | none | `FolderOp::Exchange` | — |
+| `CopyTo`, `MoveTo` | *Copy to Folder* / *Move to Folder* (`dialog-copy-to-folder`): target (path edit with completion, MRU `folders`, Browse; an archive or a missing path is created, D-150), structure (*Keep relative folder structure*, *Keep base folder structure*, *Don't keep folder structure*), sides, overwrite (Fail, Skip, Newer, Always), include hidden; preview | `OpRequest::CopyTo`/`MoveTo` | `copy-to-folder`: `structure`, `overwrite` |
+| `Delete`, `PermanentDelete` | W6d's `DeleteDialog` over the selection: per side the count of selected items; preview | `FolderOp::Delete` | — (options: W6d) |
+| `Rename` (F2) | one row: inline edit of the name cell (Enter commits, Esc cancels) → `RenameMask::Name`; more rows: *Rename* (`dialog-rename`): *DOS compatible* mask prefilled with `base_mask(names)` (pure core) or *Regular expressions* (old, new), sides; preview "a → b" | `FolderOp::Rename` | `rename`: `mode`, `dos`, `old`, `new` |
+| `Touch` | *Touch* (`dialog-touch`): *Copy timestamps from other side* (to which side) or *Set to* a date and time (default now, or the last one set), sides; text `YYYY-MM-DD HH:MM:SS` in the local zone, parsed by core (`api::vocab::parse_touch_time`, new, the CLI's `--time` rule plus the local form) | `OpRequest::TouchNow`, `Op(FolderOp::Touch)` | `touch`: `mode`, `last` |
+| `NewFolder` (Ins) | *New Folder* (`dialog-new-folder`): name, sides (default the focus side), in: the current row's folder (a folder row itself, a file's parent, else the base) | `OpRequest::MkdirIn` | `new-folder`: `sides` |
+| `Ignored` (check) | none | `folder_set_ignored(model, nodes, on)`; the returned list replaces the view's `rules.ignored` (dirty); no re-run | — |
+| `Exclude` | *Exclude* (`dialog-exclude`): *Selected items* or *All files of these types* with the masks shown (`folder_exclude_masks`) | the masks join the view's name filters (D-249's list form) → the view re-runs (rules are immutable, §1.6.18) | `exclude`: `what` |
+| `Compare` (Compare Contents) | *Compare Contents* (`dialog-compare-contents`): CRC / Binary / Rules-based (default the session's content method), *Show results dialog*; with `confirm_content_compare` a Prompt "Compare the contents of <n> file pairs (<bytes>)?" with *Do not ask again* | `folder_contents(ContentsKind::Compare)`; results enter the model; the results dialog lists `ContentReport::counts` and its items (virtualized) | `compare-contents`: `method`, `show_results` |
+| `QuickCompare` | *Quick Compare* (`dialog-quick-compare`): the content result of each selected file pair (at most 1,000, then "… and n more"), method Binary / Rules-based; *Open* opens the selected pair | `Service::quick` per pair in one job (W13's startup dialog reuses the model) | `quick-compare`: `method` |
+| `CompareTo` (F7) | two selected items, or one and the mark: none; one item: the browse dialog (file or folder mode by its kind) for the second | `select::open_pair`, then `open_view_request` with `infer_view_kind` | — |
+| `OpenWithList` ▸ | submenu: *Text Compare* (and *Folder Compare* for two folders), then each `openwith.toml` application, then `AssocApp` | a view: `open_view_request` with the kind forced; an application: `open_with_commands` + `open_with_run` (`wait_for_previous`; `refresh_when_finished` refreshes the rows' parents when the job ends); `AssocApp`: `open_associated` per selected item | — |
+
+`OpenWithList`'s items are `CommandArg::OpenWith(OpenTarget)`; view types of later waves are not listed until their
+views exist. Launch errors are warning notices with the core message.
+
+#### 1.9.14 Synchronize from Folder Compare (FC-078; D-246)
+
+`SyncList` ▸ `UpdateRight`, `UpdateLeft`, `UpdateBoth`, `MirrorRight` (Shift+Ctrl+R), `MirrorLeft` (Shift+Ctrl+L)
+open the *Synchronize* preview (`dialog-sync-preview`):
+
+- Options: *Just selection* (preset on when the selection is not empty, FC-078 *on the current selection, or all when
+  nothing is selected*), *Delete to recycle bin if possible* and *If the recycle bin fails, delete permanently*, the
+  confirmation mode Prompt / Yes to All / No to All (preset `sync_confirmations`), include hidden (off: a sync reads only
+  its own flag, §1.6.14). Each change re-plans.
+- Plan: `folder_sync_plan(model, FolderSyncRequest { options: the preset's SyncOptions with the `folder-sync`
+  defaults' `orphans`, `create_empty`, `within_archives`, select: Just selection's D-238 request, iu, read_only,
+  allow_empty_source: false, overrides })` on the **view's model as it stands**: no re-scan, so folders the view did not
+  scan are left as unresolved (§1.6.14 row rule 2) and shown; a flat view disables the submenu ("a sync needs the folder
+  structure"). `EmptySource` and an incomplete comparison with deletes are shown as the core message, Run disabled.
+- Preview: `folder_sync_preview(&plan) -> SyncPreview` (new, beside `OpPreview`): one line per row that is not `same`
+  (the CLI's human sync line, `sync_marker` and the path), then the item lines, the counts line of the CLI; conflicts
+  and unresolved rows highlighted. Normative as D-244: lines equal `hikasa folder sync … --dry-run`.
+- Run → `folder_confirmation(&plan.op, Some(mode))` (a sync always asks its operation question in Prompt, with the
+  counts) → `folder_sync_execute` → `sync_log_entries` → notice → refresh, as D-244 step 4.
+
+#### 1.9.15 The Folder Sync view (FS-001, FS-002, FS-004, FS-005, CLI-G03; D-247, D-248)
+
+`Scope::Sync` (catalogue view `folder-sync`: sections `folder-sync`, `folder-shared`, `session`, `global`); session
+type `folder-sync`; Home's type button, `SessionNewList`, IPC `OpenView { kind: FolderSync }`, `--sync`, `folder sync
+--gui` and workspaces open it (D-190's `unsupported` answer goes).
+
+```rust
+// gui/hikasa-gui/src/sync_view.rs (toolkit-free)
+pub struct SyncViewModel {
+    pub tree: FolderViewModel,          // W9a's model: columns, selection, glyphs, find, legend, log
+    pub options: SyncOptions,           // the session's [rules.sync], edited by the header and the Sync tab
+    pub plan: PlanState,                // None | Planning(job, generation) | Ready(SyncPlan, SyncPreview) | Failed(ApiError)
+    pub last_run: Option<FolderSyncOutcome>,
+    pub allow_empty_source: bool,       // from the request (--allow-empty-source); never set by the window
+}
+```
+
+- **Layout** (FS-001): header = the two path edits with Accept/Cancel (D-239), the *Operations* preset drop-down (Update
+  Left, Update Right, Update Both, Mirror to Left, Mirror to Right, Custom), *Rules* (`Rules`), *Filters* (`NameFilter`)
+  and *Run Sync* (`Run`); below, the tree with the **Action** in the centre column: `SyncCopyRight`… icons, `SyncLeave`
+  for a row left with a reason (tooltip: the `LeaveReason`), `SyncConflict` for a conflict, an override in bold with an
+  "overridden" tooltip; folder rows show the summary of `SyncPlan::folder(node)` ("contains files that will be copied to
+  the right (3), deleted on the left (1)") as tooltip and a small aggregate icon. The display options are the request's
+  or the session's (`[display]`); the catalogue gives Folder Sync no display-filter commands, so the view offers none
+  (default `all`; Suppress Filters works, FS-005).
+- **Comparison**: `folder_sync_prepare(request, options)` + `folder_run` (the effective rules of `sync_folder_rules`);
+  a change of `within_archives` or of a rule tab re-runs it; everything else only re-plans.
+- **Plan**: after the comparison ends, after every refresh, after every change of the preset, the matrix, the
+  orphans reading, an option or an override: a plan job (`folder_sync_plan` with `select: None`, `include_hidden`
+  off — Suppress Filters only shows the items the sync leaves, FS-005 — and `allow_empty_source` as above), then `folder_sync_preview`; the
+  older job is cancelled. The tree repaints its actions from `SyncPlan::rows` (by node, O(1) per rendered row).
+- **Overrides** (FS-004): `SyncLeave`, `SyncCopyLeft`, `SyncCopyRight`, `SyncDeleteLeft`, `SyncDeleteRight` set
+  `options.overrides[<row path>] = action` for each selected row (the path from the model, `TreeRead::path`; a folder
+  covers its subtree, §1.6.6's rule) and re-plan; an override the row cannot take comes back as the plan's
+  `switch_ignored` warning (a notice) and is removed from `options`. `Exclude` re-runs (D-245). The session is dirty
+  until saved; `[rules.sync.overrides]` keeps them.
+- **`ConflictNext`, `ConflictPrev`** (Ctrl+N/P in this view) walk the shown rows whose `SyncRow::conflict` holds.
+- **`Run`** ("Run Sync", toolbar): enabled with a ready plan that has an action; `folder_confirmation(&plan.op,
+  Some(sync_confirmations))` → the questions (the operation question with the counts, FS-005) → `folder_sync_execute`
+  → `sync_log_entries` → notice → refresh → re-plan. `beep_after_long_operations` applies (D-256).
+- **Info** adds the plan's `SyncCounts`; **Swap Sides** mirrors the options (D-243).
+- **Waited outcome** (D-248): `ViewOutcome` gains `Sync { last_run: Option<ExitCode>, complete: bool }` (additive):
+  the exit code of a waited Folder Sync view is the last Run's (`FolderSyncOutcome::exit_code`, 0 or 100); without a
+  Run, 0 when the comparison completed, else 100. `gui list` shows the kind `folder_sync`.
+
+#### 1.9.16 Drag and drop (FC-080, UI-008; D-251)
+
+**What eframe 0.37 can do.** winit 0.30 delivers files dropped from other programs (`DroppedFile`, `HoveredFile`,
+egui's `raw.dropped_files`/`hovered_files`) on **X11, Windows and macOS, not on Wayland** (its Wayland backend has no
+drop support), and has **no API to start a drag** toward other programs; no approved crate adds one without `unsafe`
+or a toolkit of its own. Hence: drops from the OS work where winit delivers them; dragging items out is not offered;
+clipboard file lists (D-252) are the fallback in both directions, on every platform including Wayland. Inside the
+window, egui's own drag-and-drop payloads carry rows from pane to pane.
+
+| Source → target | Result |
+|---|---|
+| OS → a path edit, a pane's header | the first path becomes that side's base; two paths on the left edit fill both (W4); then Accept |
+| OS → a pane's tree: a folder row, or the empty area (the side's base) | Prompt "Copy (or move) <n> items into `<folder>`?" with *Copy*, *Move*, *Cancel* and an overwrite choice (Fail, Skip, Newer, Always); the preview of `vfs_op_plan(Copy\|Move { sources, target })`; the answer executes **that plan** (`vfs_op_execute`), then `folder_refresh` of that folder |
+| OS → a Home type button | W4 (D-124) |
+| a pane's selection → the other pane, outside a folder row | `CopySide` of the dragged rows (Shift held at the release: `MoveSide`), through D-244's flow |
+| a pane's selection → a folder row of the other pane | `CopyTo` (`MoveTo` with Shift) of the dragged rows into that folder, structure *relative*, through D-244's flow (the dialog prefilled, so the preview shows first) |
+| a pane's selection → its own pane | nothing |
+| rows → another window, or out of the window | nothing (D-251's limits); the drag ends |
+
+- `vfs_op_plan(&VfsOpRequest, job) -> VfsPlan` and `vfs_op_execute(VfsPlan, job) -> VfsOpDto` (new, `api/vfs_ops.rs`):
+  W3's builder and executor split so a confirmed plan is the executed plan (T12); `vfs_plan`/`vfs_run` keep their
+  behaviour and become wrappers. Members and other back-ends follow W3's rules.
+- `dnd.rs` gains `DropTarget::{PanePath(Side), PaneTree { side, folder: Option<NodeId> }}`, `RowDrag { from: Side, rows:
+  Selection }`; `decide` stays the one rule (A9.19's table). The hovered target is highlighted from
+  `raw.hovered_files` (OS) or the egui payload (rows).
+- During a view's operation a drop gets D-233 rule 4's message.
+
+#### 1.9.17 Clipboard file lists, Copy, Paste, Select All (D-252)
+
+```rust
+// hikasa_session::clipboard (additive; FixedClipboard records them, FileClipboard: one path per line)
+pub trait ClipboardProvider { /* … */
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> { Err(ClipboardError::Unavailable("file lists".into())) }
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> { Err(ClipboardError::Unavailable("file lists".into())) }
+}
+```
+
+`SystemClipboard` implements both with arboard 3.7's `Set::file_list`/`Get::file_list` (X11 and Wayland data-control
+`text/uri-list`, Windows `CF_HDROP`, macOS file URLs; no new feature or package); on Linux the D-203 helper keeps the
+list after the window closes. The GUI writes and reads its own provider (D-203, adapter-only).
+
+- **`Copy`** (Ctrl+C) in a folder pane: the selected items' local paths of the focus sides, tree order, as a file list
+  (file managers paste them as files); members and other back-ends are left out with the message "Only items on local
+  disks go to the clipboard as files; Copy Filename copies every path."; nothing local → nothing written.
+- **`Paste`** (Ctrl+V) in a folder pane: `read_files` (else the clipboard text's lines that parse as specs) → the drop
+  of those paths onto the pane's current folder (D-251's OS → tree row: the prompt, the plan, the refresh).
+- **`SelectAll`** (Ctrl+A): D-238's Select All.
+- **`CopyFilenames`** ("Copy Filename", FC-063): the selected items' specs as text (`Spec::canonical`), one per line
+  (`\r\n` on Windows), tree order, left side first per row.
+- The three global entries become `implemented` with `Global` presentation rows whose predicates hold only in a folder
+  pane (`FolderPaneFocused`); text views take them in W11. While a text field has keyboard focus (path edit, Filters
+  edit, find panel, a dialog's field) Ctrl+C/X/V/A go to the field, never to these commands (D-111 refinement).
+
+#### 1.9.18 Context menus, file manager, rule tabs, Filters edit (UI-005, FC-063, SES-020, SES-022, FC-050, FF-002, FS-002; D-249, D-250, D-253, D-254)
+
+**Pane context menus** (D-110's lists per area; a golden per area, A9.21). `Area::FolderPane(Side)`,
+`Area::FolderCentre`, `Area::FolderHeader`, `Area::SyncPane(Side)`. Side-specific entries carry the clicked side
+(`CommandArg::Side`); an entry that is not available is shown disabled, a planned one not at all:
+
+| Area | Entries (separators between groups) |
+|---|---|
+| `FolderPane(s)` | `Open`, `OpenWithList` ▸, `CompareTo`, `QuickCompare` · `CopySide`, `MoveSide`, `CopyTo`, `MoveTo`, `MoveBoth` · `Delete`, `PermanentDelete`, `Rename`, `Touch`, `NewFolder` · `Compare`, `Ignored`, `Exclude`, `SyncList` ▸ · `SetAsBaseFolders`, `SetAsOtherBaseFolder`, `CompareParents` · `Copy`, `Paste`, `CopyFilenames`, `ExplorerList` ▸ · `Expand`, `Collapse`, `ExpandSubfolders`, `CollapseSubfolders` |
+| `FolderCentre` | as `FolderPane` without `CopySide`, `MoveSide`, `SetAsOtherBaseFolder`, `Paste` |
+| `FolderHeader` | the `ColList` items; *Reset Columns* (back to defaults; part of `ColList`) |
+| `SyncPane(s)` | `SyncLeave`, `SyncCopyRight`, `SyncCopyLeft`, `SyncDeleteLeft`, `SyncDeleteRight` · `Exclude` · `Open`, `OpenWithList` ▸ · `SetAsBaseFolders`, `SetAsOtherBaseFolder` · `Copy`, `CopyFilenames`, `ExplorerList` ▸ · `Expand`, `Collapse` (only the `folder-sync`, `folder-shared`, `session` and `global` entries exist in this view) |
+
+**File manager** (FC-063, D-254). `ExplorerList` ▸ *Open Folder in File Manager* (a folder: itself; a file: its folder;
+`open_associated` of that folder), *Show in File Manager* (the item selected in its folder: new `AppLauncher::reveal(path)`
+in `SystemLauncher`: Windows `explorer.exe /select,<path>`, macOS `open -R <path>`, Linux the D-Bus call
+`org.freedesktop.FileManager1.ShowItems` through `dbus-send --session`, falling back to opening the folder when it
+fails or is missing; `RecordingLauncher` records). A member reveals its outermost archive file; a non-local spec
+disables both. Errors are warning notices. Items are `CommandArg::Explorer(ExplorerItem)`.
+
+**Rule tabs** (SES-020, SES-022, D-249). The Session Settings registry (D-122) gains, for `folder-compare` and
+`folder-sync`, tabs over a typed working copy of `FolderRules` (and `SyncOptions`), each a toolkit-free model in
+`folder_tabs.rs`; widgets show P0 keys only (D-128's rule), every other key stays stored as it is:
+
+| Tab | Content |
+|---|---|
+| Specs (W4, extended) | *Disable editing* per side (`read_only_left`/`_right`, FC-003); Browse buttons (D-240) |
+| Comparison | size, timestamps (tolerance, *Ignore daylight saving difference*, *Ignore timezone differences*, offset), name case, content method (none, CRC, binary, rules-based), *Skip if quick tests indicate files are the same*, *Override quick test results* (FC-020…FC-022, FC-025…FC-027) |
+| Name Filters | the four lists (`NameFilterLists`), *Clear*, *Add To Presets*, the presets drop-down (FC-050); the toolbar text below, from `NameFilter::to_filter_string` |
+| Handling | case sensitivity, *Align filenames with different extensions*, *… Unicode normalization forms* (FC-010); the four FC-012 keys; *Follow symbolic links* (FC-013); *Ignore folder structure* (FC-014); archive handling (FC-015) |
+| Misc | enabled file formats (FF-002): every format of `format_list`, checked as effective, **bold** where the session differs from the global state; *Reset* drops the override; the Ignored paths (FC-033) with *Remove* |
+| Sync (`folder-sync`) | preset; the 8 × 5 matrix (FS-002) with the invalid cells disabled (`SyncMatrix::validate`'s rule); *Read items on one side only as* added / deleted; *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if possible*, *If the recycle bin fails, delete permanently* (FS-005); the overrides list with *Remove* |
+
+OK checks the working copy with the new `Service::check_folder_rules(&FolderRules) -> Result<Vec<Warning>, ApiError>`
+(the compile step `folder_prepare` runs, typed) and `SyncMatrix::validate`; an error stays on its tab, OK disabled.
+Then W4b's scope path (`session_apply_scope`) and the view re-runs. `Rules` (session section) opens the dialog on
+Comparison, `NameFilter` on Name Filters; both become `implemented` for the folder scopes (text views' tabs: W11). The
+Other Filters tab (FC-053) is P1 and absent; size, date, attribute and Unix-type filters set on the command line or in
+a file are kept and applied.
+
+**Filters edit** (FC-050, D-250). A field in the folder views' toolbar (`NameFilterEdit` focuses it): the view's
+filter as canonical toolbar text; a drop-down of the `filters.toml` presets (name and mask) and `state.mru.name_filters`;
+Enter applies: `NameFilter::parse` with the view's mask options (an error shows under the field and nothing runs), the
+rules change, the view re-runs, the text is pushed to the MRU. *Add To Presets* (in the drop-down and on the Name
+Filters tab): a Prompt for a unique name, then `settings_save` of `filters.toml` (W4c's path; a `Conflict` offers
+W4c's Overwrite / Reload / Cancel); the Options page of OPT-020 edits the same list.
+
+#### 1.9.19 Catalogue, presentation, predicates (D-255)
+
+Statuses become `implemented` per part; `docs/reference/commands.md` is regenerated in each (T14).
+
+| Part | Becomes `implemented` | Catalogue edits |
+|---|---|---|
+| W9a | `ColList`, `DirFlatten`, `SelectAllFiles`, `SelectNewer*`, `SelectOrphan*`, `SelectInvert`, `FindFilename`, `FindFilenameNext`, `FindFilenamePrev`, `ExistsNext`, `ExistsPrev`, `Legend`, `Info`, `BrowseList`, `BrowseLeft`, `BrowseRight`, `UpOneLevelList`, `UpOneLevelLeft`, `UpOneLevelRight`, `UpOneLevelBoth`, `SetAsBaseFolders`, `SetAsOtherBaseFolder`, `CompareParents`, `SyncBaseView`, `Swap` (both sections), `SessionClear` | new `UpOneLevelBoth` ("Both Sides", "Changes both base folders to their parent folders."); captions: `SetAsBaseFolders` "Set as Base Folders", `ExistsNext` "Next Item on This Side", `ExistsPrev` "Previous Item on This Side", `Swap` (folder-shared) "Swap Sides"; `Info` caption stays `<Type> Info` (the window writes the type) |
+| W9b | `CopyPrompt`, `CopySide`, `MoveRight`, `MoveLeft`, `MovePrompt`, `MoveSide`, `MoveBoth`, `CopyTo`, `MoveTo`, `Rename`, `Touch`, `NewFolder`, `Ignored`, `Exclude`, `Compare`, `QuickCompare`, `CompareTo`, `OpenWithList`, `AssocApp`, `SyncList`, `UpdateRight`, `UpdateLeft`, `UpdateBoth`, `MirrorRight`, `MirrorLeft`, and in `folder-sync`: `Run`, `CompareBaseView`, `SyncLeave`, `SyncCopyLeft`, `SyncCopyRight`, `SyncDeleteLeft`, `SyncDeleteRight`, `ConflictNext`, `ConflictPrev` | captions: `CopySide` "Copy to Other Side", `MoveSide` "Move to Other Side", `Run` "Run Sync" with `toolbar = true` |
+| W9c | `Copy`, `Paste`, `SelectAll` (global, D-252), `CopyFilenames`, `ExplorerList`, `Rules`, `NameFilter`, `NameFilterEdit` | captions: `Rules` "Rules...", `NameFilter` "Name Filters...", `NameFilterEdit` "Filters" |
+
+They stay `planned`: `SpecsBack`, `SpecsForward`, `AlignWith`, `Attributes`, `FileReport`, `Refresh`,
+`RefreshSelection`, `Report`, every merge and center/output entry, `ShowCenter`, `SameModIgnored`. **Presentation**:
+`Scope::Sync` (`folder-sync`, help `view-folder-sync`); rows for every id above with icons where the toolbar shows them
+(`Run`, `Legend`, `FindFilename`); `Area::{FolderPane(Side), FolderCentre, FolderHeader, SyncPane(Side)}`; `CommandArg`
+gains `Side(Side)`, `Column(ColumnId)`, `OpenWith(OpenTarget)`, `Explorer(ExplorerItem)`. **Predicates** (new):
+`Idle` (no operation, refresh, run or plan of the view), `Selection` (≥ 1 item), `SelectionOn(Side)`, `SelectionWritable(Side)`
+(replaces W6d's `SideWritable`: items selected whose counterpart side is writable), `OneRow`, `TwoItems` (two items or
+one and the mark), `FolderRow`, `NotFlat`, `BaseHasParent(Side)`, `Loaded`, `PlanReady` (sync), `HasConflict`,
+`FolderPaneFocused`, `LocalSelection`. Session-section entries shown in text views (`Info`, `SessionClear`, `Rules`)
+have rows there whose predicate is false until W11; `Swap` and `CompareParents` work in text views now.
+
+#### 1.9.20 Service calls of W9
+
+*Exists* = on `feat/m2` when W9 starts; *new* = added by the named part (D-105: typed forms of existing operations, or
+pure helpers).
+
+| GUI need | Call | Status |
+|---|---|---|
+| comparison, re-run, refresh | `folder_prepare`/`folder_run`, `folder_sync_prepare`, `folder_refresh`, `folder_open_archive`, `open_view_request` | exists |
+| columns, sort, times | `TreeRead::visible_rows_sorted` (pure), `human::local_time_text` (pure) | new (W9a) |
+| CRC column, Compare Contents | `folder_contents` | exists |
+| path edits, browse | `path_completions`, `archive_format_of`, `browse_places`; `vfs_ls`, `vfs_stat_in` | first three new (W9a) |
+| create a missing folder, OS drops | `vfs_op_plan`, `vfs_op_execute` | new (W9a; drops use them in W9c) |
+| operations | `folder_op_plan`, `folder_confirmation`, `folder_op_execute`; `folder_op_preview` | preview new (W9b) |
+| sync | `folder_sync_plan`, `folder_sync_execute`; `folder_sync_preview`; `SyncOptions::swapped` (pure) | preview, swapped new (W9b; swapped W9a) |
+| Ignored, Exclude | `folder_set_ignored`, `folder_exclude_masks` | exists |
+| open, Quick Compare, Open With | `pair_text_request`, `quick`, `open_with_commands`, `open_with_run`, `open_associated` | exists |
+| file manager | `AppLauncher::reveal` via `Service::reveal_in_file_manager(&Spec, job)` | new (W9c) |
+| clipboard | `ClipboardProvider::write_files`, `read_files` (the GUI's own provider) | new (W9c) |
+| rule tabs | `check_folder_rules`; `session_apply_scope`, `format_list`, `settings_save` (`filters.toml`) | first new (W9c) |
+| touch time | `api::vocab::parse_touch_time` (pure) | new (W9b) |
+| state | `state_update` (MRU, layout, dialogs) | exists |
+| waited sync | `ViewOutcome::Sync` | new (W9b) |
+
+No `hikasa` subcommand is added: completion is `vfs ls`, the browse dialog `vfs ls`/`vfs stat`, the preview `folder op
+--dry-run`/`folder sync --dry-run`, a drop `vfs cp`/`vfs mv`, Reveal and the clipboard lists are the window's own (as
+D-187's navigation). The headless form of each is named in its help topic.
+
+#### 1.9.21 Gate G15 and budgets (D-257)
+
+Measured at the end of each part for its rows (W9a: tree, select, completion, browse; W9b: preview, sync) and all of
+them again at the end of W9c with ARCH-GUI-003, release build, under `env -u
+WAYLAND_DISPLAY xvfb-run -a` with llvmpipe only (D-132), new bench modes `HIKASA_GUI_BENCH=folder_columns|select|
+preview|sync_view|completion|browse` driven by new `#[ignore]` tests in `gui/hikasa-gui/tests/perf_gate.rs`; frame work
+= the UI thread's time per frame (D-132); figures recorded in `docs/02`.
+
+| Item | Scenario | Threshold |
+|---|---|---|
+| G15 tree (M1 (b) kept) | `folder_scan` (100,020 files a side in 11,110 folders, CRC, Show All, every folder opened as it arrives, two rows scrolled per frame) with **every column shown** and the sort Size descending on the left | UI frame work while scanning: no frame above 16.7 ms, p95 < 8 ms; PSS < 381.5 MiB and ≤ M1's figure + 48 MiB |
+| G15 select | on that tree after the scan: Select All, Invert Selection, Shift+Left, then 300 frames of Shift+Down | each command's frame ≤ 16.7 ms (status counts included); Shift+Down frames p95 < 4 ms |
+| G15 preview | on that tree, Select All on the left, then `CopyRight` (≈ 100,000 file items, every one replacing) | command → the preview's first frame < 1.0 s (the plan job included); 600 frames of scrolling the preview: frame work max < 16.7 ms; PSS while open ≤ the view's + 96 MiB; the preview's own memory ≤ 16 bytes an item (counting allocator, CI, `core/hikasa-session/tests/folder_preview.rs`) |
+| G15 sync | Folder Sync view of the G2 tree, half different, Mirror to Right | plan shown ≤ 0.5 s after the comparison ends; an override of one row re-planned and repainted ≤ 0.5 s; 600 frames of scrolling: frame work max < 16.7 ms |
+| G15 completion | typing 10 characters in a path edit whose folder holds 10,000 entries | the list ≤ 200 ms after the last key; no frame above 16.7 ms while typing |
+| G15 browse | the browse dialog on a folder of 100,000 entries | listed ≤ 1 s; 600 frames of scrolling: frame work max < 16.7 ms |
+| ARCH-GUI-003 | `text_scroll`, `two_windows`, `workspace_restore` (W4) | unchanged (§1.4.17) |
+
+A failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule; a failure caused only by the
+software renderer is reported with that evidence and never re-measured on the real display by an agent. The real-GPU
+run is the maintainer's (§6.9).
+
+#### 1.9.22 Dependencies and architecture test (D-258)
+
+- **No new crate.** arboard 3.7's file lists need no feature and no package (`percent-encoding` is already its
+  dependency on Linux); `Cargo.lock` gains no package; check 3's manifests are unchanged; `cargo deny` passes without
+  new exceptions; `docs/02` gains no line.
+- **Check 2.** `dbus-send`, `explorer.exe`, `open -R` (the reveal commands) only in `core/hikasa-session/src/host.rs`;
+  `file_list` (arboard) only there; `SystemLauncher`, `SystemClipboard` stay adapter-only.
+- **Check 7.** The model list gains the files of D-233 rule 1 (`folder_view.rs` and `dnd.rs` included); new rules, each
+  with a planted-violation self-test: nothing in `gui/` names `plan_op`, `plan_sync`, `execute_with`, `ops::execute`,
+  `ops::dry_run`, `select::resolve`, `sync_folder_rules`, `item_line` or `sync_marker` (the preview owns the lines);
+  `op_dialogs.rs` has no `plan_counts`. The W4–W8 rules hold.
+- No `unsafe`. `std::process` stays in `host.rs`.
+
+#### 1.9.23 Hooks for later waves
+
+- **W10, W11.** The text views take `Copy`, `Paste`, `SelectAll` (their predicates), `Info` and `SessionClear` (their
+  rows exist, D-255), and `Rules` with their tabs in the same registry (D-122, D-249); Open With ▸ gains *Text Edit* when
+  that view exists; a child view opened from a read-only side refuses edits (D-184); the path edits and the browse
+  dialog (D-239, D-240) serve the text views' File Info header; the CRC-on-demand rule is the model for lazy cells.
+- **W12, W13.** Open With ▸ *Table*, *Hex*, *Picture* (FC-062); the report dialog's `Report` in the folder views with
+  `ReportScope::FolderRows` of the view's selection (D-209, §1.7.18 W9); W13's startup Quick Compare dialog reuses
+  the Quick Compare model (D-245); the report dialog's target uses the browse dialog in SaveFile mode.
+- **P1 (M3).** FC-017 *Refresh*/*Refresh Selection* on `folder_refresh`; FC-082 re-stat; SES-009 history; FC-011 *Align
+  With*; the FC-053 Other Filters tab; FC-075 *Attributes…*; FS-003's Sync Memory column; Folder Merge's Result and
+  Remaining Actions columns (FM-004) as new `ColumnId`s; Browse Using Profile; dragging items out, should winit gain a
+  drag source (D-251).
+
+#### 1.9.24 Documentation and version
+
+`docs/04` FC-002, FC-004, FC-012 (glyphs), FC-013, FC-014, FC-029 (b), FC-030, FC-032, FC-033, FC-040, FC-041, FC-050,
+FC-052, FC-060…FC-064, FC-070…FC-074, FC-076…FC-078, FC-080 (the platform table of D-251), §10 FS-001, FS-002, FS-004,
+FS-005 (the view); `docs/03` SES-008 (Swap of a sync session, D-243), SES-020/SES-022 (folder tabs), §5.2 (the
+`[layout.folder-*]` keys, `[dialogs]` ids, `mru.folders`/`files`/`find`/`name_filters` in use); `docs/14` §1 (UI-005
+areas and their lists, UI-008's Wayland gap and the clipboard fallback, the Legend panel, D-252's text-field rule),
+§2.1 (`unopened_folder`), §4 (the dialogs of W9: browse, copy/move to folder, rename, touch, new folder, exclude,
+compare contents and results, quick compare, sync preview, folder info; Browse Using Profile stays P1); `docs/15`
+OPT-009 (where each `confirm_*` and `include_hidden_by_default` is asked), OPT-015 (`beep_after_long_operations`, D-256),
+OPT-019 (the MRU lists), OPT-020 (Add To Presets); `docs/10` FF-002 (the Misc tab); `docs/12` §2 (`--sync`, `folder sync
+--gui` open the view; the waited exit code, D-248); `docs/01` §3 (`ClipboardProvider` file lists, `AppLauncher::reveal`);
+`docs/02` (G15 figures, no new crate); `docs/16` (M2 progress); `docs/reference/commands.md` regenerated per part.
+
+**Help** (`cargo xtask help-check` clean; each topic in `help.rs`'s list and linked): new `view-folder-sync`,
+`dialog-browse`, `dialog-copy-to-folder`, `dialog-rename`, `dialog-touch`, `dialog-new-folder`, `dialog-exclude`,
+`dialog-compare-contents`, `dialog-quick-compare`, `dialog-sync-preview`, `dialog-folder-info`, `panel-legend`,
+`panel-find-filename`; updated `view-folder-compare` (columns, selection, path edits, glyphs, Filters edit, context
+menus, drops, the clipboard), `dialog-session-settings` (the folder tabs), `dialog-confirm` (the preview list),
+`dialog-delete` (a selection), `dialog-options` and `dialog-script` (Browse), `main-window`, `gui` (`--sync`),
+`folder-sync` (the view as the GUI form), `index`. F1 in each dialog and panel shows its topic.
+
+**CHANGELOG.** One W9 section in `## Unreleased` (Added; Changed for the local times of the Modified column and the
+multi-row W6d commands), updated in place by each part and review, as §1.6.24. **Version.** The parts bump nothing; W9
+ships as the pre-release **0.1.95** after W9c's review, by the orchestrator (the steps of 0.1.94, §6.9 A9.31). No
+product name of docs/17 §5 anywhere: grep before each commit.
+
+#### 1.9.25 W9 notes (implementation)
+
+*To be written by each part*, as §1.8.20: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property and integration test was checked by (§6.9 rules).
+
+**W9a.** *(empty until W9a)*
+
+**W9b.** *(empty until W9b)*
+
+**W9c.** *(empty until W9c)*
+
+### 1.10–1.14 W10–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -8625,3 +9376,202 @@ blind spots, goldens, help and text), and:
   §1.8.20 notes. W8b: the maintainer's CI on Windows and macOS; packaging scripts unchanged and `smoke-test.sh` passing. No
   version bump by a part; the orchestrator bumps to 0.1.94 and publishes the pre-release after W8b's review (§1.8.19). The
   product name of docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.9 W9 acceptance
+
+Rules for every item: those of §6.4 (window tests and measurements only under `env -u WAYLAND_DISPLAY xvfb-run -a`;
+everything else headless through the models), §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests
+can fail, goldens, help and text), and:
+
+- **Through the models.** GUI tests build `AppCore` over a temporary configuration (fixed clock and zone,
+  `FixedClipboard`, `RecordingLauncher`, a private IPC endpoint) and comparisons of trees generated by the test (disk
+  for the GUI tests, `MemoryVfs` where the core side is tested); they drive `execute(window, Invocation)`, the models'
+  pointer and key calls, dialog models and `poll()`; jobs are awaited by polling (bounded), held by W6d's gates where a
+  test needs a job in flight. No sleep, no timer; debounces take explicit frame times.
+- **Drawing** is tested as shapes (§1.4.16 rule 5): headless `egui::Context::run_ui` frames give the glyphs, the
+  header, the columns and the preview rows, checked by bounds and colours, never by screenshot.
+- **Tests can fail.** Each property test of W9 and each integration test that stands in for one (A9.2, A9.4, A9.12,
+  A9.15, A9.16, A9.19, A9.20) is checked by mutation (docs/17 §3 point 6): at least one named hand mutation of the code
+  it guards (a preview line without its backup suffix, a swipe that keeps one side across the centre, a sort tie
+  reversed, a selection that keeps a collapsed folder's children, an override written under the wrong path, a drop on
+  the right pane copying to the left, a completion that ignores the back-end's case rule, the hollow and unopened
+  glyphs swapped) makes it fail, and is reverted. §1.9.25 lists each mutation, the test that caught it and the seed
+  where there is one.
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| core additions (A9.2, A9.5, A9.12, A9.15, A9.20 core, A9.22 core) | yes | yes | yes | yes |
+| GUI models (A9.1…A9.10, A9.13…A9.24) | yes | yes | yes | yes |
+| case-insensitive completion and drives (A9.5, A9.6) | pure table and `MemoryVfs` | disk | disk (APFS default) | `MemoryVfs` |
+| reveal command lines (A9.22) | `RecordingLauncher` | `RecordingLauncher` | `RecordingLauncher` | `RecordingLauncher` |
+| window tests (A9.25, optional) | `xvfb-run`, `#[ignore]` | — | — | — |
+| G15, ARCH-GUI-003 (A9.27) | by hand, `#[ignore]`, llvmpipe | — | — | — |
+| OS drag and drop, real clipboard, real file managers (A9.30) | maintainer's desktop | maintainer | maintainer | — |
+
+**W9a — View**
+
+- A9.1 **Columns (D-234) [W9a].** `gui/hikasa-gui/src/tests_folder_view.rs`: the column table row by row (cell texts of a
+  fixture tree with DOS attributes, Unix modes, uids, a CRC from a zip, a folder total, a lossy name); toggle, move
+  (Name stays first), resize (clamped at the minimum and 2,000), fit; Path offered only when flat; `DirFlatten` toggles
+  the rule and re-runs; `[layout.folder-compare]` and `[layout.folder-sync]` written on close (golden `state.toml`) and
+  read back, session `[view]` before layout (D-108), an unknown column id dropped with one warning; the header and
+  `ColList` menus as text goldens.
+- A9.2 **Sort (D-235) [W9a].** `core/hikasa-folder/tests/view_sort.rs`: every `SortColumn` both ways on both sides,
+  folders first, a row missing on the side, ties by the D-20 key, a flat comparison, `Name` ascending equal to
+  `visible_rows`; property: for random trees and keys the sorted rows are a permutation of `visible_rows` that keeps
+  every row under its parent and is ordered by the key. GUI: the three-click cycle, the arrow on one side, a sort kept
+  across a refresh, and an operation's plan unchanged by any sort (JSON equal).
+- A9.3 **Glyphs and cells (D-236, D-237) [W9a].** `tests_folder_view.rs`: each glyph row of §1.9.5 reached (a running
+  scan held by the scan gate, a cancelled one, `scan_orphan_folders` off, `auto_scan_subfolders` off, a failed listing,
+  followed and unfollowed links, an archive), the centre column per content result, newer side and Ignored; `glyph_of`
+  is the Legend's table; `local_time_text` in UTC, `+05:45` and across a DST change; the CRC column asks only for the
+  rendered rows once scrolling stopped, cancels on scroll, never with the column hidden (`MemoryVfs` read journal for
+  the core side); `(r)(s)(h)` cases; icons of §1.9.5 inside their 16 × 16 grid at four scales (A4.6's test extended);
+  `[folder] unopened_folder` in both built-ins, in the theme editor, sparse on save.
+- A9.4 **Selection (D-238) [W9a].** `gui/hikasa-gui/src/tests_selection.rs` and `src/ui/tests_pointer.rs`: every row of
+  the pointer and keyboard tables; a swipe crossing the centre selects both sides; a press on a selected row starts a
+  drag, not a swipe; Shift+Left/Right; Space mark set, moved, cleared, and `open_pair` with it; collapse drops the rows
+  below; a display change drops hidden rows; a refresh's `renumbered` keeps the selection; each Edit command against
+  `hikasa folder op … --select <the same words>`'s selection on the same tree (equal `Selection`); the `SelectRequest`
+  a plan gets; status counts per side with sizes, computed once per change (a counter). Property: random gesture
+  sequences keep every selected node shown and present on each side it is selected on.
+- A9.5 **Path edits and completion (D-239) [W9a].** `core/hikasa-session/tests/path_completion.rs`: the typed text's
+  folder part on local disks, `~`, a zip and a member folder, Windows drive and UNC forms (pure table), prefix match by
+  the back-end's case rule, folders and archives first, `limit` and `truncated`, a missing folder (`not_found`), a cancel
+  (G4 by construction). `gui/hikasa-gui/src/tests_paths.rs`: debounce by frame time, cancellation of the previous job,
+  an old generation dropped, Tab/Enter on an item, Esc; Enter and Accept commit both fields and re-run, Cancel restores;
+  MRU pushed only after a successful load, capped at `max_mru_items`; a missing folder → Prompt → Yes creates it
+  (`vfs_op_plan`/`vfs_op_execute`, the plan executed is the plan asked about) and runs, No keeps the error.
+- A9.6 **Browse dialog (D-240) [W9a].** `gui/hikasa-gui/src/tests_browse.rs`: the three modes (OK, Esc, an existing
+  file in SaveFile → Prompt), places (home, current, bases, recent; drives through an injected probe table), Up out of
+  an archive's root, archives opening as folders, hidden entries and the option, the filter, a listing error; every
+  Browse user of §1.9.9 opens it with the right mode and start folder and takes its answer (path edit, Copy to Folder,
+  Compare To, Home panel, Specs tab, an Options path key, Run Script, Export target); `mru.folders`/`files` pushed.
+- A9.7 **Find Filename (D-241) [W9a].** `gui/hikasa-gui/src/tests_find.rs`: each query option (case, whole word, regex,
+  wrap, up, sides), a hit in a collapsed folder opens its ancestors and selects the matching side, not found → the
+  message panel, a bad regex shown, F3/Shift+F3 with the panel closed, `mru.find` and the remembered options;
+  `ExistsNext`/`ExistsPrev` on both focus sides.
+- A9.8 **Legend and Info (D-242) [W9a].** `tests_find.rs` (or a sibling): the Legend lists every row of §1.9.5's table and
+  every colour class once, painted with the palette's colours (shapes), toggles and remembers `[layout] legend`; Info's
+  figures equal `hikasa folder compare --json`'s statistics for the same tree, partial while scanning, Copy writes the
+  text (`FixedClipboard`).
+- A9.9 **Bases, Swap, Clear (D-243) [W9a].** `gui/hikasa-gui/src/tests_bases.rs`: each row of the bases table
+  (availability and the new specs, a root without parent, an archive base's parent); `SyncBaseView`/`CompareBaseView`
+  open the other view type with the same bases and rules; Swap of a folder-compare, a folder-sync (`SyncOptions::swapped`
+  table: every preset, a custom matrix, overrides; property: swapping twice is the identity, and the swapped plan of the
+  swapped tree performs the same writes on the same folders) and a text session; Clear Session gives an empty view that
+  runs after Accept.
+- A9.10 **Catalogue parity, W9a [W9a].** `gui/hikasa-gui/src/tests_folder_commands.rs`: a table `FOLDER_COMMANDS`
+  with one row per `implemented` entry of the `folder-compare`, `folder-shared`, `folder-sync` and `session` sections
+  naming the effect of its `Invocation` on a fixture view (a model change, a dialog, a job, an `Effect`); the test fails
+  for an implemented entry without a row and for a row whose effect does not happen; the menu goldens of Folder Compare
+  (A4.3's) regenerated with the W9a entries; §1.4.16 rule 1 holds for `Scope::Sync`.
+- A9.11 **G15 tree, select, completion, browse (D-257) [W9a].** The rows of §1.9.21 measured at the end of W9a on an
+  idle machine; figures in `docs/02`. A failure stops the part and is reported.
+
+**W9b — Operations and Sync**
+
+- A9.12 **Previews are the dry run (D-244) [W9b].** `core/hikasa-session/tests/folder_preview.rs` (`MemoryVfs`, W6's
+  tree generators): for random trees, selections and every verb, `OpPreview::line(plan, i)` and `counts()` equal the
+  human output of the Service's dry run that `folder op <verb> … --dry-run` prints (and, for sync, `SyncPreview` against
+  `folder sync … --dry-run`), line for line; the preview's own memory ≤ 16 bytes an item (counting allocator).
+  `gui/hikasa-gui/src/tests_op_dialogs.rs`: the plan handed to `folder_op_execute` serializes equal to the plan the
+  preview was made of, after `Confirmation::finish` only; check 7's new rules with planted violations (a `plan_op` call
+  in `gui/`, a `plan_counts` in `op_dialogs.rs`).
+- A9.13 **Verb dialogs (D-245) [W9b].** `tests_op_dialogs.rs`: one test per row of §1.9.13 on a disk tree: options →
+  plan → preview → Start → questions → execute → the tree on disk equal to the matching `hikasa folder op` with the same
+  flags (`--select`/`--path` naming the same rows, `--yes`), the log entries and the notice; option changes re-plan and
+  cancel the previous job; include hidden toggles; read-only sides disabled and refused again by the Service; a plan
+  whose model changed refused with *Plan again*; remembered choices written and read; inline Rename (Enter, Esc, a
+  collision); Rename with `base_mask`'s prefill; Touch's date text in the local zone; Ignored updates the rules without
+  a re-run and the session is dirty; Exclude re-runs with the masks of `folder op exclude --dry-run`; Compare Contents
+  with `confirm_content_compare` and the results dialog; Quick Compare's results equal `hikasa quick`'s; Compare To with
+  two items, with the mark, with one item and the browse dialog; Open With: views of existing kinds only, an
+  application through `RecordingLauncher` (`refresh_when_finished` refreshes), `AssocApp`.
+- A9.14 **One operation per view; errors; beep [W9b].** A second command during an operation is disabled; a drop gets
+  the message; a refused plan is a warning notice and a log entry; Stop cancels the execute job and its outcome reaches
+  the log; `beep_after_long_operations` beeps after ≥ 10 s (an injected duration) and not before (D-256).
+- A9.15 **Synchronize from Folder Compare (D-246) [W9b].** `gui/hikasa-gui/src/tests_sync_view.rs`: each of the five
+  commands with and without a selection (*Just selection*), the recycle and confirmation options, a flat view disabled,
+  an unscanned folder left as unresolved, `EmptySource` and an incomplete comparison shown with Run disabled; the
+  executed tree equals `hikasa folder sync --<preset> --yes` (with `--just-selection` where used).
+- A9.16 **Folder Sync view (D-247) [W9b].** `tests_sync_view.rs`: opens from Home, `SessionNewList`, IPC `OpenView {
+  kind: FolderSync }`, `hikasa gui open a b --sync` and `folder sync --gui` (fake GUI frames), a workspace; the preset
+  drop-down, the matrix and an option re-plan without a re-run, `within_archives` and a rule tab re-run; actions and
+  folder summaries per row equal `SyncPlan::rows`/`folder`; each override command on a selection writes
+  `options.overrides` by path and re-plans, an impossible one comes back as a notice and is removed; `ConflictNext/Prev`;
+  Run → the operation question with the counts → execute → the tree equals `folder sync --session <saved> --yes`;
+  saving keeps `[rules.sync]` (golden); Info adds the counts. Property: for random trees, presets and overrides, the
+  view's plan equals `folder_sync_plan` of the same request made directly.
+- A9.17 **Waited outcome and IPC (D-248) [W9b].** `cli/hikasa-cli/tests/cli_gui.rs` with the fake GUI and
+  `gui/hikasa-gui/src/tests_sync_view.rs`: `ViewOutcome::Sync` rows (no Run complete → 0, incomplete → 100, a Run ok →
+  0, a failed or cancelled Run → 100); `gui list` shows `folder_sync`; the D-190 `unsupported` answer is gone and its
+  test is replaced.
+- A9.18 **G15 preview and sync (D-257) [W9b].** The two rows of §1.9.21, figures in `docs/02`.
+
+**W9c — Drag, menus, rules**
+
+- A9.19 **Drag and drop (D-251) [W9c].** `gui/hikasa-gui/src/tests_dnd.rs`: `dnd::decide` for every row of §1.9.16's
+  table (one, two, three paths; a folder row, empty space, a header, a path edit, the other pane with and without
+  Shift, the own pane, outside); an OS drop into a folder → Prompt with the `vfs_op_plan` preview → Copy and Move each
+  execute that plan (disk tree equal to `hikasa vfs cp|mv` of the same sources), then refresh that folder; overwrite
+  choices; rows dragged to the other pane equal `CopySide`/`MoveSide` and `CopyTo` with *relative*; nothing during an
+  operation. `core/hikasa-session/tests/vfs_ops*.rs`: `vfs_plan`/`vfs_run` unchanged (W3 goldens), and
+  `vfs_op_execute(vfs_op_plan(r))` equals `vfs_run(r)`.
+- A9.20 **Clipboard file lists (D-252) [W9c].** `core/hikasa-session/tests/clipboard_files.rs`: `FixedClipboard` and
+  `FileClipboard` round trips, `Unavailable` defaults. GUI: `Copy` writes the focus sides' local items in tree order and
+  leaves members out with the message; `Paste` of a file list and of text lines behaves as A9.19's drop; `SelectAll`;
+  `CopyFilenames` text per platform line end; with a path edit or the Filters edit focused, Ctrl+C/V/X/A never reach the
+  commands (dispatch table of A4.3 extended).
+- A9.21 **Context menus (D-253) [W9c].** `gui/hikasa-gui/src/tests_context_menus.rs`: a text golden per area of §1.9.18
+  (`gui/hikasa-gui/tests/golden/menus/folder-pane.txt` …) with availability for a fixture selection (one file pair, an
+  orphan, a folder, two items, a read-only side, a flat view), before and after a fixture `commands.toml`; a
+  right-click outside the selection selects first; side-specific entries act on the clicked side.
+- A9.22 **File-manager entries (D-254) [W9c].** `core/hikasa-session/tests/launcher.rs`: `SystemLauncher::reveal`'s
+  command line per platform (a pure builder: `explorer.exe /select,<path>`, `open -R <path>`, the `dbus-send` call with a
+  `file://` URI percent-encoded, the fallback to the folder) and `RecordingLauncher` records; GUI: both entries for a
+  file, a folder, a member (its archive) and a non-local spec (disabled); errors become notices.
+- A9.23 **Rule tabs (D-249) [W9c].** `gui/hikasa-gui/src/tests_rule_tabs.rs`: each tab's widgets show the P0 keys of
+  their `FolderRules` part and nothing else; edits of each key written with each scope equal `hikasa session edit --set`
+  of the same key (files compared, A2.4's table); an invalid value (a mask, a bad matrix cell, a tolerance out of range)
+  keeps OK disabled with the core message on its tab; the Misc tab's bold rows equal the session's
+  `format_overrides`; the Specs tab's *Disable editing* round trip; `Rules` and `NameFilter` open their tabs; OK re-runs
+  the view; P1 keys present in a session file survive an OK unchanged.
+- A9.24 **Filters edit and presets (D-250) [W9c].** `tests_rule_tabs.rs`: canonical text shown (D-07's order), a preset
+  and an MRU entry applied, Enter with an invalid mask runs nothing, a valid one re-runs and pushes `mru.name_filters`;
+  Add To Presets writes `filters.toml` (golden, sparse, unknown keys kept) and a duplicate name is refused; a concurrent
+  CLI edit → W4c's Conflict choices; the Options page of OPT-020 sees the new preset.
+
+**All parts**
+
+- A9.25 **Window test (optional) [W9c].** Under `env -u WAYLAND_DISPLAY xvfb-run -a`, `#[ignore]`: a folder view on a
+  generated tree; a swipe, a header click, the Find panel, a context menu and a copy through its dialog, by synthetic
+  input; no assertion on pixels.
+- A9.26 **Architecture (D-258) [W9a, W9b, W9c].** Check 7's model list with the files of D-233, each rule of §1.9.22
+  with a planted-violation self-test; check 2's two rules; `Cargo.lock`'s package count unchanged; no `unsafe`.
+- A9.27 **Gates (D-257) [W9c].** The whole G15 table and ARCH-GUI-003 (`text_scroll`, `two_windows`,
+  `workspace_restore`) measured once more at the end of W9c; G1, G2, G4, G7 unchanged; figures in `docs/02`.
+- A9.28 **Help and documents [W9a, W9b, W9c].** The topics of §1.9.24 per part, `cargo xtask help-check` and `cargo
+  xtask commands-doc --check` clean, the help list golden; F1 in each new dialog and panel opens its topic (a model
+  test); the docs of §1.9.24 updated by the part that changes the behaviour.
+- A9.29 **Mutation record [W9a, W9b, W9c].** §1.9.25 holds, per part, the list the third rule asks for: each property
+  and integration test of A9.2, A9.4, A9.12, A9.15, A9.16, A9.19, A9.20 with at least one mutation that failed it. A
+  reviewer re-runs two of them.
+- A9.30 **Platforms and desktop checks [W9c].** Automated: `MemoryVfs` and disk trees with case-only names, NFC/NFD
+  pairs and non-UTF-8 names (Linux) through selection, Find, completion and every verb; Windows drive letters, UNC and
+  `\\?\` forms in completion and the browse dialog (pure tables everywhere, disk on Windows CI and wine); macOS
+  `/private/var` canonicalized in path assertions. The Windows tests run under wine and the heavy proptests once per
+  part before a push; the known wine-only exemptions of §6.6 stay and no new test joins them. **For the maintainer on a
+  real desktop** (listed in §1.9.25 with what was seen): OS drops on X11, Windows and macOS onto a path edit, a pane's
+  folder row and a Home button; on Wayland that no drop arrives and Paste works instead; Copy of items pasted as files
+  in a file manager (GNOME Files, Dolphin, Explorer, Finder) and a file manager's copy pasted into a pane; *Show in File
+  Manager* in each; the look of the glyphs and icons at 100/125/150/200 %; the feel of swipe, column drags and the
+  preview's scrolling; G15 and ARCH-GUI-003 on the GPU.
+- A9.31 **Part and wave end.** Each part: whole workspace green as A8.25 (`fmt`, `clippy -D warnings` also for the
+  Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, the architecture
+  test), the Windows tests under wine and the heavy proptests before a push, its §1.9.24 documents, its CHANGELOG entry
+  and its §1.9.25 notes. W9c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
+  `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.95 and publishes the pre-release
+  after W9c's review (§1.9.24). The product name of docs/17 §5 appears nowhere: grep before each commit.
