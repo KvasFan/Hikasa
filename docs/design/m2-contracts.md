@@ -7146,7 +7146,8 @@ hikasa script check <FILE|-> [<ARG>…]
 Request::RunScript { path: String, args: Vec<String>,
     #[serde(default)] cwd: Option<String>, #[serde(default)] env: BTreeMap<String, String>,
     #[serde(default)] wait: bool, #[serde(default)] stop_on_error: bool, #[serde(default)] confirm: Option<String>,
-    #[serde(default)] close: Option<bool> }          // `--closescript` = Some(true); None = the option
+    #[serde(default)] close: Option<bool>,           // `--closescript` = Some(true); None = the option
+    #[serde(default)] dry_run: bool }                // W8b review: sent only to a server whose Hello lists it (§1.8.20 W8b 17)
 Response::ScriptFinished { exit_code: u8, summary: ScriptSummary }   // only after a `wait: true` request
 pub struct ScriptSummary { pub commands: u32, pub ok: u32, pub failed: u32, pub refused: u32, pub not_run: u32, pub stopped_at: Option<u32> }
 ```
@@ -7468,9 +7469,9 @@ notes 23–29 were each checked against the code before them (the new test fails
 7. **The shared parser:** the first positional argument starting with `@` is the script; every other positional
    argument, before or after it and after `--`, is one of its arguments in order (a second `@word` too); `@x` after a
    `--` with no script before is a spec. `OpenArgs` gains `script: Option<ScriptArgs>`, `silent`, `closescript`
-   (additive); `--silent` without a script warns nothing (it is a settings package's, D-127), `--closescript` without
-   one warns `switch_ignored` ("applies to a script (`@<file>`) only"). The package check reads `OpenArgs::silent`
-   instead of `OpenOptions::extra`.
+   (additive); `--closescript` without a script warns `switch_ignored` ("applies to a script (`@<file>`) only"). The
+   package check reads `OpenArgs::silent` instead of `OpenOptions::extra`. *Reversed by the review (note 21):* `--silent`
+   without a script is `switch_ignored` as in M1, unless the one argument is a settings package.
 8. **One script at a time:** `Shared` holds the slot (`ScriptClaim`, released when dropped), taken before the check and
    held by the status window until the run ended, so a `RunScript` and the Run Script dialog meet the same `busy`. A
    `RunScript` that does not check frees it at once.
@@ -7518,6 +7519,84 @@ Mutations (each reverted):
 | 32 | status window: the answered machine not sent back | `tests_script.rs` `a8_19_a_question_is_a_confirmation_dialog_whose_answer_reaches_the_run` |
 | 33 | status window: `close_when_finished` regardless of the exit code | `tests_script.rs` `a8_19_close_and_beep_options_and_closescript` |
 | 34 | status window: *Stop* does not cancel the job | `tests_script.rs` `a8_19_stop_cancels_the_run_and_the_rest_is_not_run` |
+
+**W8b review.** The fixes of the review's findings (each test was seen failing before its fix, by stash or mutation):
+
+17. **Questions are routed by their owner.** Every status window has an id (`ScriptDialog::id`); its
+    `PlanConfirmDialog::for_script(id, …)`, its `ContinueDialog::new(id, …)` and the end notice's
+    `NoticeAction::ShowScript(id)` carry it, and `dialog_closed` and *Show* look for the status window with that id
+    (`DialogStack::find_mut_where`, `holds_where`, `all_mut`) instead of the first one found: an old failed run's status
+    window in another window no longer takes the answer of the run that asked (F1).
+18. **`--dry-run` in the window (F2).** `RunScript` gains `dry_run` (additive, left off the wire at `false`: every
+    earlier frame is byte-identical; `script_frames.jsonl` only gains lines), `GuiScriptOptions::dry_run`; `script run
+    --gui --dry-run` and `gui script --dry-run` send it and the GUI's run is the headless dry run (no plan executed,
+    no file written; the plans are the status window's lines). *An older GUI:* protocol v1 has no feature negotiation
+    and every GUI that accepts `RunScript` reports the same version until 0.1.94, so a version check could not tell an
+    unaware GUI apart; the `Hello` reply gains `features` (additive, off the wire when empty; `IpcHandler::features`,
+    default none; `IpcClient::features`). The GUI lists `FEATURE_SCRIPT_DRY_RUN` (`run_script.dry_run`), and
+    `Service::gui_run_script` refuses a dry run before sending it to a server that does not list it (`Unsupported`,
+    exit 100: "the running GUI cannot run a script as a dry run; restart it, or use hikasa script run --dry-run"). An
+    older client never sends the field, so nothing changes for it.
+19. **The run's job holds the slot and the waiter (F4, F6).** `ScriptDialog::start` moves the `ScriptClaim` and the
+    `ScriptWaiter` into the job's body: the job answers the waiter with the run's own exit code and counts and frees the
+    slot when the run really ended; a status window that goes (its window closes, the program quits) stops the run but
+    keeps neither. `AppCore` keeps each run's liveness (`ScriptDialog::alive`, a `Weak`), and `AppCore::shutdown` waits
+    for the runs it stopped together with the orphaned operations (`wait_operations`, at most `OPERATION_FLUSH`, 30 s):
+    a copy ends its current item (no temporary file is left, W6d's promise) and a waiting client gets the run's own
+    `ScriptFinished{100}` with its counts. A run still going after the bound is logged ("Script <name> was still running
+    at exit: its current command may have stopped mid-item."), and the server's shutdown then sends the abandoned
+    `ScriptFinished{100}` with an empty summary.
+20. **Ctrl-C of `hikasa-gui @script --silent` (F8).** The CLI's handler becomes the session's adapter-only
+    `hikasa_session::interrupt::CtrlC` (D-159 unchanged: the first press cancels the one token of every job and calls the
+    adapter's hint, a later one the adapter's exit, 100; set only over the default action; the same log lines, target
+    `hikasa::interrupt`); `cli/hikasa-cli/src/interrupt.rs` wraps it and `script_dialog::run_silently` arms it for the
+    run's job. *Manifests (deviation from §1.8.16's "cli and gui manifests unchanged"):* `ctrlc` moves from hikasa-cli
+    to hikasa-session (the GUI manifest is unchanged; `Cargo.lock` gains no package, only the edge moves). Check 3's
+    rows follow; check 2 names `ctrlc` only in `core/hikasa-session/src/interrupt.rs` (core, cli and gui are scanned)
+    and lists `CtrlC` among the adapter-only names. Windows: a console control event reaches every process of the
+    console, so the signal tests are Unix only (`gui/hikasa-gui/tests/cli_script.rs`, by process id and on a Linux
+    pty); `CtrlC::press` is unit-tested on every OS.
+21. **Switches (F3).** A view switch given with an `@script` (`--fv`, a title, `--ro`/`--ro1`/`--ro2`, `--filters`,
+    `--expandall`, `--format`, `--ignoreunimportant`, `--stdinname`, `--sync`, `--nobackups`) is `switch_ignored` once
+    ("switch `--<name>` applies to a view; a script (`@<file>`) opens none"); `--silent` with neither a script nor one
+    `*.hikasa-pkg` argument is `switch_ignored` as in M1 ("applies to a script (`@<file>`) or a settings package
+    only"). `gui script --silent` and `gui open @s --silent` print `hikasa.script.v1` (help `json-output`).
+22. **`RunScript` off the connection's thread (F7).** `IpcHandler::handle_script_later(request, waiter, ScriptReply)`
+    (additive; default: `handle_script`'s answer at once) lets the answer come later from another thread; the server's
+    connection reads on meanwhile, the `Ok` keeps the request's id and the gate still orders `ScriptFinished` after it. A
+    `ScriptReply` dropped without an answer (a panic, a worker that could not start) answers `Error{internal}`. The GUI
+    takes the slot and checks the words on the connection's thread (`busy`; a relative `path` or `cwd`, a bad confirm
+    mode: `invalid_request`, "…: an absolute path is needed"), and a worker (`hikasa-ipc-script`) locates, reads (up
+    to 16 MiB, archive members included) and checks the script, posts the run and answers. `GuiHandler::handle_script`
+    is that, waited for (direct callers).
+23. **Tests across platforms (F5, review item 10).** The A8.18 tests compare the script's path and the cwd a child
+    reports canonicalized on both sides (`/private/var` on macOS), and run on every OS: `cli/hikasa-cli/tests/
+    cli_gui_script.rs` (moved out of the Unix-only `cli_gui.rs`; a path with the platform's separator, an argument with
+    a space, a lone surrogate as the non-UTF-8 argument on Windows) and `gui/hikasa-gui/tests/cli_script.rs` (moved out
+    of the Unix-only `tests/cli_gui.rs`; a named pipe on Windows). Check 7's no-splitting rule reads every adapter source
+    file, not only those named for scripts (tests and `gui/hikasa-gui/src/bench.rs`, which reads `/proc`, are exempt),
+    with planted violations in `app.rs` and `cmd/gui.rs`.
+
+Mutations of the review's survivors and of the fixes (each applied alone, reverted):
+
+| # | Mutation | Failed |
+|---|---|---|
+| 35 | handler: the client's `cwd` ignored (M1) | `tests_script.rs` `a8_19_a_waited_run_script_runs_as_the_client_asked_and_gets_its_counts` |
+| 36 | handler: the client's `env` ignored (M2) | `tests_script.rs` `a8_19_a_waited_run_script_runs_as_the_client_asked_and_gets_its_counts` |
+| 37 | the run answers the waiter with exit 0 and an empty summary (M4) | `tests_script.rs` `a8_19_a_waited_run_script_runs_as_the_client_asked_and_gets_its_counts` and the two below |
+| 38 | `ScriptDialog`'s `Drop` without `stop()` (M5) | `tests_script.rs` `a8_19_a_status_window_closed_with_its_window_ends_its_run_before_the_client_hears` |
+| 39 | `AppCore::shutdown` without the stop loop (M6) | `tests_script.rs` `a8_19_the_shutdown_stops_a_waiting_run_and_waits_for_it` (30 s: the bound), `a8_19_a_stopped_big_copy_ends_before_the_slot_is_free_or_the_shutdown_returns` |
+| 40 | `ContinueDialog` closed without an answer is Yes (M9) | `tests_script.rs` `a8_19_the_stop_on_error_question_closed_without_an_answer_is_no` |
+| 41 | the Run Script dialog's confirm mode not passed (M11) | `tests_script.rs` `a8_19_the_run_script_dialogs_stop_on_error_and_confirm_mode_reach_the_run` |
+| 42 | handler: `stop_on_error`, `confirm`, `close` ignored (M13) | `tests_script.rs` `a8_19_a_waited_run_script_runs_as_the_client_asked_and_gets_its_counts` |
+| 43 | the status window's progress line never set (M17) | `tests_script.rs` `a8_19_the_status_window_shows_the_current_calls_progress`, `a8_19_a_stopped_big_copy_ends_before_the_slot_is_free_or_the_shutdown_returns` |
+| 44 | `ScriptOutcome::summary` counts `refused` as 0 (S6) | `script_run.rs` `a8_7_exit_codes_stop_lines_and_not_run` |
+| 45 | `ProgressTee` drops the run's own sink (S8, the job indicator) | `script_run.rs` `a8_19_the_progress_of_the_current_call_is_an_event` |
+| 46 | the GUI ignores `dry_run` | `tests_script.rs` `a8_19_a_dry_run_in_the_window_writes_nothing` |
+| 47 | `gui_run_script` sends a dry run whatever the `Hello` lists | `ipc_script.rs` `a8_17_a_dry_run_goes_only_to_a_gui_that_lists_the_feature`; `cli_gui_script.rs` `a8_18_a_dry_run_in_the_gui_is_asked_for_and_never_sent_to_a_gui_that_cannot` |
+| 48 | the handler checks the script before it returns (no worker) | `tests_script.rs` `a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker` |
+| 49 | the handler accepts a relative `path` | `tests_script.rs` `a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker` |
+| 50 | `run_silently` does not arm `CtrlC` | `gui/tests/cli_script.rs` `ctrl_c::a8_14_ctrl_c_stops_a_silent_hikasa_gui_script_at_that_line`, `ctrl_c::a8_14_ctrl_c_on_a_terminal_stops_a_silent_hikasa_gui_script` |
 
 ### 1.9–1.14 W9–W14
 
