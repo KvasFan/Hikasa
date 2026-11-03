@@ -389,16 +389,18 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   `Service::session_view` / `Service::workspace_views`: the session's specs and its
   effective rules as the `base_rules` of the view's request.
 - **M2 W8b additions (D-228, additive to protocol v1).** `RunScript` gains `cwd`, `env` (only the variables the script
-  references), `wait`, `stop_on_error`, `confirm` and `close` (`Some(true)` for `--closescript`), each left out of the
-  wire at its default. It reaches the GUI's handler (`IpcHandler::handle_script`; its default answers
-  `unsupported_request`, as a GUI before W8b), which takes the one script slot (else `Error{busy}`, "a script is running
-  in the window; wait for it or stop it"), locates, reads and checks the script with that cwd and environment (105/106
-  → `Error{invalid_request}` with the message) and answers `Ok`; the run then shows its status window in the window
+  references), `wait`, `stop_on_error`, `confirm`, `close` (`Some(true)` for `--closescript`) and `dry_run`, each left
+  out of the wire at its default. It reaches the GUI's handler (`IpcHandler::handle_script_later`, whose `ScriptReply`
+  may answer later from another thread; the default answers `handle_script`'s `unsupported_request`, as a GUI before
+  W8b), which takes the one script slot (else `Error{busy}`, "a script is running in the window; wait for it or stop
+  it"), refuses a relative path, and on a worker locates, reads and checks the script with that cwd and environment
+  (105/106 → `Error{invalid_request}` with the message) and answers `Ok`; the run then shows its status window in the window
   focused last. With `wait`, `ScriptFinished{exit_code, summary}` follows the `Ok`, once, with the request's id (the
   gate of `ViewClosed` also orders it); a waiter dropped, or a server that stops during the run, sends
   `ScriptFinished{exit_code: 100}`. The CLI (`hikasa gui script`, `script run --gui`, `gui open @script`) checks the
   script first and reports an older GUI's `unsupported_request` as "the running GUI does not support scripts; restart
-  it" (exit 100).
+  it" (exit 100). The `Hello` reply lists the server's features (additive, absent when none): a dry run is sent only to
+  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent).
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

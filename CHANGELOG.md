@@ -27,18 +27,32 @@
 - **`hikasa gui script <file> [<arg>…]`** and **`hikasa script run … --gui`**: the script is found and checked in the
   terminal (105, 106 before the window is asked), then runs in the window with the terminal's current folder and the
   environment variables it names; `--wait` exits with the script's code, `--closescript` closes the status window after
-  any run, `--json` prints `hikasa.gui_script.v1` (41 schemas). A window that runs a script refuses a second one;
+  any run, `--dry-run` runs it in the window as a dry run (a window too old for that refuses it before anything is
+  sent), `--json` prints `hikasa.gui_script.v1` (41 schemas). A window that runs a script refuses a second one;
   an older window says to restart it.
 - **`@script` on the command line of `hikasa gui open` and `hikasa-gui`**: `hikasa-gui @s.txt a b` runs the script in
   the window (or sends it to the window that runs), `hikasa gui open @s.txt …` is `gui script s.txt …`. With `--silent`
-  a script never goes through a window: it runs headless where it was started.
-- IPC: `RunScript` carries the current folder, the referenced variables, `wait`, stop on error, the confirm mode and the
-  close choice; `ScriptFinished` answers a waited run; the error `busy`.
+  a script never goes through a window: it runs headless where it was started (Ctrl-C as for `hikasa script run`).
+- IPC: `RunScript` carries the current folder, the referenced variables, `wait`, stop on error, the confirm mode, the
+  close choice and the dry run; `ScriptFinished` answers a waited run; the error `busy`; the `Hello` reply lists the
+  server's features (`run_script.dry_run`).
 
 ### Changed (W8b)
-- `--silent` and `--closescript` of `hikasa gui open` and `hikasa-gui` are no longer `switch_ignored`: they apply to an
-  `@script` (`--silent` also to a settings package, as before). `--closescript` without a script warns that it applies
-  to a script only.
+- `--silent` and `--closescript` of `hikasa gui open` and `hikasa-gui` apply to an `@script` (`--silent` also to a
+  settings package, as before). Without a script `--closescript` warns that it applies to a script only, and `--silent`
+  (not for a package) is `switch_ignored` as before; a view switch given with a script (`--ro`, `--sync`,
+  `--nobackups`, …) is `switch_ignored`.
+
+### Fixed (W8b review)
+- A script's question answered in a second window reached the first window with a status window and the run waited
+  for ever; each question and notice now names the status window it belongs to.
+- `script run --gui --dry-run` ran the script for real in the window; it is a dry run there now.
+- Quitting the window while a script copied returned at once and could cut the copy mid-file; it now stops the script
+  and waits for the command that runs to end (at most 30 s), and a waiting `gui script --wait` hears the script's own
+  end. A status window that goes with its window keeps the slot of the one script until its copy ended.
+- `hikasa-gui @s.txt --silent` ignored Ctrl-C's cancel; it stops as `hikasa script run --silent` does.
+- The window read and checked a script sent by `gui script` on the connection's thread; a worker does it now, and a
+  relative script path is refused as the protocol says.
 
 ### Fixed (W8a review)
 - Any failure of a script's `load` (standard input, the clipboard or an empty word as a base, an argument that

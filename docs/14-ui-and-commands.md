@@ -306,7 +306,11 @@ button too: the run is cancelled as Ctrl-C cancels it), *Close* after. W6's conf
 again") and the stop-on-error Yes/No question stack on it, and their answers unblock the run's job thread. At the end a
 notice ("Script <name> completed", or "Script <name> failed: exit <code>" with *Show*), a summary per command and the
 errors in the log panel, `close_when_finished` (exit 0) or `--closescript` (any exit), and with `beep_when_finished` a
-request for attention and a flashing title. One script runs at a time. The models are toolkit-free (check 7).
+request for attention and a flashing title. One script runs at a time. Each question and the end notice name the
+status window they belong to, so an answer given in another window reaches the run that asked. The run's job holds the
+one-script slot and a waiting client's answer until it really ended: a status window that goes with its window, or the
+quit, stops the run and the program waits for its current command (a copy ends its file) before it exits. The models
+are toolkit-free (check 7).
 
 ## 5. Optional helpers
 

@@ -88,7 +88,7 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   `hikasa.gui_open.v1` (a workspace adds `views`, every view it opened). A window of 0.1 answers
   `unsupported_request`, reported as "the running GUI does not support sessions; restart it" (exit 100).
 - *M2 W8b notes (D-228, contract §1.8.13):* `gui script <FILE> [<ARG>…] [--wait] [--no-launch] [--stop-on-error]
-  [--confirm <MODE>] [--closescript] [--silent]` locates the script as `script run` does (§1.8.11 of the contract: the
+  [--confirm <MODE>] [--closescript] [--dry-run] [--silent]` locates the script as `script run` does (§1.8.11 of the contract: the
   current folder, then `[tweaks.scripts] shared_scripts_folder`), reads and checks it here (105, 106, and `output-to:-`
   refused: the window has no standard output) before the GUI is contacted, captures the environment variables the
   script references, and sends `RunScript` with the script's absolute path, the arguments, this cwd and those
@@ -96,8 +96,10 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   run"); connecting or launching as `gui open` (102, 103). The window runs it with its status window; exit 0 once it
   started, with `--wait` the script's exit code from `ScriptFinished` (102 when the wait is lost). A window that runs a
   script answers `busy` (exit 100); an older window `unsupported_request`, "the running GUI does not support scripts;
-  restart it" (exit 100). `--silent` never goes through a GUI: the script runs headless, as `script run --silent`.
-  `--json`: `hikasa.gui_script.v1`. *CLI-G03:* `script run … --gui` is `gui script …`.
+  restart it" (exit 100). `--dry-run` runs it in the window as `script run --dry-run` (a window whose `Hello` does not
+  list `run_script.dry_run` would run it for real, so it is refused first, exit 100). `--silent` never goes through a
+  GUI: the script runs headless, as `script run --silent` (Ctrl-C included; `--json` prints `hikasa.script.v1`).
+  `--json`: `hikasa.gui_script.v1`. *CLI-G03:* `script run … --gui` is `gui script …` (with `--dry-run` too).
 
 ## 2. Legacy positional forms and switches (accepted by `hikasa gui open` and `hikasa-gui`)
 
@@ -129,7 +131,9 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
     [--closescript]` is `gui script s.txt a b …`; `hikasa-gui @s.txt a b` starts the window with its status window, or,
     with a GUI running, forwards `RunScript` (its cwd and the referenced variables) without waiting and exits 0; with
     `--silent` neither goes through a GUI: the process runs the script headless (`hikasa-gui` opens no window), its log
-    stream on stderr, and exits with the script's code;
+    stream on stderr, Ctrl-C as for `script run`, and exits with the script's code; a view switch given with a script
+    (`--ro`, `--sync`, `--nobackups`, …) is `switch_ignored`, and so is `--silent` with neither a script nor a settings
+    package;
   - a **settings package** → imports it;
   - a **patch file** (`.diff`/`.patch`) → Text Patch view;
   - a **snapshot** alone → compares it with its original folder;
