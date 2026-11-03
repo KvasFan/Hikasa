@@ -67,11 +67,13 @@ nothing else. A folder of that name that is not this report's is left alone, and
 to `-99`), with the warning `report_folder_renamed`. A pair too large for a rules-based comparison or found binary is
 skipped; a pair that fails gives the warning `file_report_failed`, and the folder report is still written. The pair
 reports are written beside, then swapped in, so a failure or a Ctrl-C leaves the old report and folder as they were.
+A main file that is a symbolic link is written to the file it names, and the folder goes beside that file, so the
+links work; links need a folder on disk, not one inside an archive (refused before anything is compared).
 
 ## Targets
 
 - A file is written through a temporary file and a rename: on any error, or a Ctrl-C, it keeps what it had. A file
-  named like a keyword is written `./printer`.
+  named like a keyword is written `./printer`. A folder at the file's name is refused (exit 100), by `--dry-run` too.
 - `clipboard` places the report on the clipboard: an HTML report with a plain-text alternative, anything else as text,
   at most 128 MiB (`too_large`). On Linux a small helper process keeps the content until something else is copied,
   after `hikasa` has ended. `HIKASA_CLIPBOARD_FILE=<file>` writes the report to that file instead;

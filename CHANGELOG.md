@@ -38,6 +38,16 @@
   the sync's for a Folder Sync session, as before.
 
 ### Fixed
+- **Review of the report writer** (before release): `printer` and `browser` with `include-file-links` always failed
+  "not found" and now write the report with its folder of file reports; two reports in the same second no longer share
+  a print folder; a report file that is a symbolic link to another folder gets its file reports beside the file it
+  names, so the links work; a folder named as the report file is refused by `--dry-run` as by the run; links into an
+  archive are refused before anything is compared; a clipboard that cannot be written says "cannot write the
+  clipboard" (`io`), and no display is `unsupported`; on Linux the clipboard's helper runs detached from the folder and
+  the terminal it was started in, and `hikasa-gui` serves it too; M1's flags (`--wrap`, `--patch-style`,
+  `--no-line-numbers`, `--columns`) no longer warn "does not use" on a layout that ignores them; `session run` of a
+  folder-sync session names the report flags it ignores in one warning. On Linux and macOS a rename onto a free name
+  (folder operations, the report's folders) can no longer replace what another program put there in between.
 - **A test of folder sync no longer fails now and then**: it ran too few cases for the share of rare situations it
   checks.
 - **`folder op copyto` and `moveto` of an aligned folder pair.** With `--structure base` or `relative`, a pair whose

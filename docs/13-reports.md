@@ -290,7 +290,7 @@ reports go to a files folder beside the main file:
 
 | What | Name |
 |---|---|
-| the main file | as given |
+| the main file | as given; a symbolic link is followed to the file it names (the files folder goes beside that file) |
 | the files folder | `<safe stem>_files`; `-2` … `-99` when that one is not this report's |
 | a pair's report | `<n>-<safe left name>.html`, `n` zero-padded to the digits of the number of linked rows |
 | the marker | `.hikasa-report.toml` in the files folder |
