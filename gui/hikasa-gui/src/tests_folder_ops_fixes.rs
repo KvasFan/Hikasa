@@ -1270,3 +1270,39 @@ fn the_replace_during_move_and_system_questions() {
     assert_eq!(read(&world, "r", "a.txt").as_deref(), Some("right!\n"));
     assert!(read(&world, "l", "a.txt").is_some());
 }
+
+// ---- W7b review: Open goes through the Service's pair request --------------------------------------------------
+
+/// A7.11 (W7b review): `Open` on a link shown as a link opens nothing (the Service's `pair_text_request` gives no
+/// request for it) and says so in a warning; a file pair opens its Text Compare view as before.
+#[cfg(unix)]
+#[test]
+fn open_on_a_link_shown_as_a_link_says_why_nothing_opens() {
+    let world = World::new();
+    world.write("work/l/a.txt", "one\n");
+    world.write("work/r/a.txt", "two\n");
+    std::os::unix::fs::symlink("a.txt", world.path("work/l/link")).expect("link");
+    std::os::unix::fs::symlink("a.txt", world.path("work/r/link")).expect("link");
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select(&mut app, view, "link");
+    let tabs = app.tabs().len();
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs, "nothing opens");
+    let (kind, text, _) = notices(&app).pop().expect("a notice");
+    assert_eq!(kind, NoticeKind::Warning);
+    assert!(
+        text.starts_with("Open: link is a link shown as a link"),
+        "{text}"
+    );
+    select(&mut app, view, "a.txt");
+    assert!(
+        folder_model(&mut app, view)
+            .open_request(&world.service)
+            .is_some()
+    );
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs + 1, "a file pair opens");
+}
