@@ -2344,6 +2344,7 @@ fn a7_12_a_folder_target_is_refused_by_the_plan() {
     let service = service(root);
     let folder = compare(&service, root);
     let resp = text_pair(&service, root);
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut targets = vec![root.join("out/r.html"), root.join("out")];
     #[cfg(unix)]
     {

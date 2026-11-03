@@ -80,7 +80,7 @@ impl ClipboardError {
 
     /// The VFS error of a report that could not be placed on the clipboard (§1.7.10): `Unavailable` →
     /// `VfsError::Unavailable` (kind `unsupported`), `TooLarge` → `TooLarge`, anything else → `Io` (op `write`)
-    /// "cannot write the clipboard: <why>".
+    /// "cannot write the clipboard: …".
     pub fn to_vfs_write(&self) -> VfsError {
         let spec = CLIPBOARD_SPEC.to_owned();
         match self {
