@@ -91,6 +91,7 @@ pub mod state;
 mod stats;
 pub mod sync;
 mod time_cmp;
+pub mod view;
 
 pub use align::{AlignInput, AlignOptions, align_flat, align_names};
 pub use budget::{BudgetGuard, ByteBudget};
