@@ -33,6 +33,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Export` | Tools | Export Settings... |  | Saves user settings as a file. | implemented |
 | `Import` | Tools | Import Settings... |  | Loads user settings from a file. | implemented |
 | `Restore` | Tools | Restore Factory Defaults... |  | Loads factory default settings. | implemented |
+| `RunScript` | Tools | Run Script... |  | Runs a script file and shows its progress. | implemented |
 | `SaveSnapshot` | Tools | Save Snapshot... |  | Saves details of specified folder for future comparison. | planned |
 | `EditTextFile` | Tools | Edit Text File |  | Opens new Text Edit view. | planned |
 | `ViewPatch` | Tools | View Patch... |  | Opens picked patch file in new Text Patch view. | planned |

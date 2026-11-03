@@ -29,7 +29,8 @@
 //!    the core vocabularies (`--display`, `--folders`, `--criteria`, `--unimportant`, the legacy `gui open`
 //!    switches): those parsers live in core (T11); and (M2 W4a, §1.4.16 rule 4) the GUI's model files —
 //!    `app.rs`, `window.rs`, `commands.rs`, `menus.rs`, `dialog.rs`, `status.rs`, `notify.rs`,
-//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d) and
+//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d),
+//!    `script_dialog.rs` (M2 W8b) and
 //!    `options/*.rs` in `gui/hikasa-gui/src` — name no `egui` or `eframe` in code; (M2 W7b, A7.11) nothing in `gui/`
 //!    names `for_specs`: a pair's Text Compare request comes from `Service::pair_text_request`.
 //!
@@ -1182,6 +1183,33 @@ fn script_adapter_violations(rel: &str, raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// Check 7's lexing rule (D-230, W8b): the script code of the adapters splits no text into words itself (the Run
+/// Script dialog's arguments go through `Service::script_args`, the script lexer's rules), and the GUI's script dialog
+/// names `script_args`.
+fn script_lex_violations(rel: &str, raw: &str) -> Vec<String> {
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    if !adapter || !name.contains("script") || name.starts_with("tests") {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in ["split_whitespace", "split_ascii_whitespace"] {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in an adapter's script code (words are split by Service::script_args)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel == "gui/hikasa-gui/src/script_dialog.rs" && find_token(&code, "script_args").is_empty() {
+        violations.push(format!(
+            "{rel}: the Run Script dialog does not split its arguments with Service::script_args"
+        ));
+    }
+    violations
+}
+
 fn check_script_adapters(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for dir in ["cli", "gui"] {
@@ -1189,6 +1217,7 @@ fn check_script_adapters(root: &Path) -> Vec<String> {
             let rel = relative(root, &file);
             if let Ok(raw) = fs::read_to_string(&file) {
                 violations.extend(script_adapter_violations(&rel, &raw));
+                violations.extend(script_lex_violations(&rel, &raw));
             }
         }
     }
@@ -2763,6 +2792,7 @@ const GUI_MODEL_FILES: &[&str] = &[
     "session_dialog.rs",
     "wizards.rs",
     "op_dialogs.rs",
+    "script_dialog.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -2935,6 +2965,34 @@ fn check_2_and_7_script_rules_find_planted_violations() {
         1
     );
     assert!(script_adapter_violations("core/hikasa-session/src/api/script.rs", adapter).is_empty());
+    // W8b: the adapters' script code splits no words itself; the GUI's dialog uses `script_args`.
+    let split =
+        "fn f(t: &str) -> Vec<&str> { svc.script_args(t); t.split_whitespace().collect() }\n";
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/script_dialog.rs", split).len(),
+        1
+    );
+    assert_eq!(
+        script_lex_violations("cli/hikasa-cli/src/cmd/script.rs", split).len(),
+        1
+    );
+    assert!(script_lex_violations("gui/hikasa-gui/src/app.rs", split).is_empty());
+    let without = "fn f(t: &str) -> String { t.to_owned() }\n";
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/script_dialog.rs", without).len(),
+        1,
+        "the dialog must call script_args"
+    );
+    // The status window's model is toolkit-free (check 7's model files).
+    assert!(GUI_MODEL_FILES.contains(&"script_dialog.rs"));
+    assert_eq!(
+        toolkit_violations(
+            "gui/hikasa-gui/src/script_dialog.rs",
+            "fn f(ui: &mut egui::Ui) {}\n"
+        )
+        .len(),
+        1
+    );
 }
 
 /// A7.21: no package is added for W7 (`roxmltree` was in the lock through `fontique`): the package count of

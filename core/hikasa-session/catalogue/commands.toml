@@ -197,6 +197,13 @@ description = "Loads factory default settings."
 status = "implemented"
 
 [[section.command]]
+id = "RunScript"
+menu = "Tools"
+caption = "Run Script..."
+description = "Runs a script file and shows its progress."
+status = "implemented"
+
+[[section.command]]
 id = "SaveSnapshot"
 menu = "Tools"
 caption = "Save Snapshot..."

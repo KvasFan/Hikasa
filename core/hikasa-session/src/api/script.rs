@@ -19,7 +19,7 @@ pub use hikasa_script::parse::KEYWORDS as SCRIPT_KEYWORDS;
 pub use hikasa_script::{
     CommandName, CommandStatus, ConfirmWord, Errors as ScriptErrors, HostUi, LineKind, LogLevel,
     Pos, References, SCRIPT_MAX_BYTES, SCRIPT_MAX_ERRORS, Script, ScriptError, ScriptErrorCode,
-    ScriptEvent, StopAt, StopReason,
+    ScriptEvent, StopAt, StopReason, elapsed_text,
 };
 use hikasa_script::{RefCheck, ReportFor, Slot, WordChecker};
 
