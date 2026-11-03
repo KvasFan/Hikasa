@@ -444,6 +444,7 @@ fn a8_19_a_second_run_script_while_one_runs_is_busy() {
         stop_on_error: false,
         confirm: Some("yes-to-all".into()),
         close: None,
+        dry_run: false,
     };
     let claim = ScriptClaim::take(&world.shared).expect("free");
     assert_eq!(
@@ -692,6 +693,7 @@ fn run_script(world: &World, script: &str) -> Request {
         stop_on_error: false,
         confirm: None,
         close: None,
+        dry_run: false,
     }
 }
 
@@ -939,4 +941,111 @@ fn a8_19_a_stopped_big_copy_ends_before_the_slot_is_free_or_the_shutdown_returns
         "nothing half-written: {:?}",
         names()
     );
+}
+
+/// Review F2: a `RunScript` with `dry_run` runs as `script run --dry-run`: the plans are shown, nothing is executed or
+/// written; the GUI's `Hello` says it can.
+#[test]
+fn a8_19_a_dry_run_in_the_window_writes_nothing() {
+    let world = World::new();
+    folders(&world, 2);
+    world.write(
+        "work/s.txt",
+        "option confirm:yes-to-all\nload l r\nselect all\ncopy left->right\nfolder-report layout:summary output-to:rep.txt\n",
+    );
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    assert_eq!(
+        handler.features(),
+        [hikasa_session::ipc::FEATURE_SCRIPT_DRY_RUN]
+    );
+    let mut request = run_script(&world, "s.txt");
+    if let Request::RunScript { dry_run, wait, .. } = &mut request {
+        *dry_run = true;
+        *wait = false;
+    }
+    assert_eq!(handler.handle_script(request, None), Response::Ok);
+    let mut app = world.app(None);
+    run_until(&world, &mut app, ended);
+    assert_eq!(status(&mut app).end().map(|e| e.exit_code), Some(0));
+    assert!(
+        !world.path("work/r/f00.txt").exists(),
+        "no plan was executed"
+    );
+    assert!(!world.path("work/rep.txt").exists(), "no file was written");
+    let shown = lines(&mut app);
+    assert!(
+        shown
+            .iter()
+            .any(|l| l.contains("L4") && l.contains("f00.txt")),
+        "the plan is shown: {shown:?}"
+    );
+}
+
+/// Review F7: `RunScript` needs an absolute `path` (§1.8.13); the lookup, read and check run on a worker, so the
+/// handler returns while the script cannot be read yet (a FIFO nobody writes) and the answer comes once it can.
+#[test]
+fn a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker() {
+    let world = World::new();
+    world.write("work/s.txt", "beep\n");
+    let handler = Arc::new(GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    ));
+    let mut relative = run_script(&world, "s.txt");
+    if let Request::RunScript { path, wait, .. } = &mut relative {
+        *path = "s.txt".into();
+        *wait = false;
+    }
+    let answer = handler.handle_script(relative, None);
+    assert!(
+        matches!(&answer, Response::Error { code, message } if code == "invalid_request" && message == "s.txt: an absolute path is needed"),
+        "{answer:?}"
+    );
+    assert!(!world.shared.script_running(), "the slot is free again");
+    #[cfg(unix)]
+    {
+        let fifo = world.path("work/fifo.txt");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo");
+        assert!(made.success());
+        let mut request = run_script(&world, "fifo.txt");
+        if let Request::RunScript { wait, .. } = &mut request {
+            *wait = false;
+        }
+        let (answer_tx, answers) = crossbeam_channel::bounded(1);
+        let (returned_tx, returned) = crossbeam_channel::bounded(1);
+        let caller = Arc::clone(&handler);
+        std::thread::spawn(move || {
+            caller.handle_script_later(
+                request,
+                None,
+                hikasa_session::ipc::ScriptReply::new(move |r| {
+                    let _ = answer_tx.send(r);
+                }),
+            );
+            let _ = returned_tx.send(());
+        });
+        let held = returned.recv_timeout(Duration::from_secs(10)).is_err();
+        assert!(
+            answers.try_recv().is_err(),
+            "no answer before the script is read"
+        );
+        // The reader of the FIFO (the worker, or a held caller) gets the script now.
+        std::fs::write(&fifo, "beep\n").expect("write the fifo");
+        assert!(
+            !held,
+            "the handler held its caller while it read the script"
+        );
+        assert_eq!(
+            answers.recv_timeout(Duration::from_secs(30)),
+            Ok(Response::Ok)
+        );
+    }
 }
