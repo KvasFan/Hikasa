@@ -9,9 +9,9 @@ use std::io::{Cursor, Read};
 use hikasa_core::{CompareVerdict, ContentKind};
 use hikasa_folder::FolderRulesPatch;
 use hikasa_session::ipc::{
-    CloseReason, Envelope, IpcError, IpcErrorCode, MAX_FRAME_LEN, OpenOptions, ReadOnly, Request,
-    Response, ScriptSummary, ServerInfo, ViewId, ViewInfo, ViewKind, ViewResult, read_frame,
-    recv_request, recv_response, send, write_frame,
+    CloseReason, Envelope, FEATURE_SCRIPT_DRY_RUN, IpcError, IpcErrorCode, MAX_FRAME_LEN,
+    OpenOptions, ReadOnly, Request, Response, ScriptSummary, ServerInfo, ViewId, ViewInfo,
+    ViewKind, ViewResult, read_frame, recv_request, recv_response, send, write_frame,
 };
 use hikasa_text::{AlgorithmChoice, TextRulesPatch, UnimportantItem};
 use proptest::prelude::*;
@@ -189,8 +189,10 @@ fn every_request() -> Vec<Request> {
             stop_on_error: false,
             confirm: None,
             close: None,
+            dry_run: false,
         },
         full_run_script(),
+        dry_run_script(),
         Request::ListViews,
         Request::CloseView { view: ViewId(3) },
         Request::Ping,
@@ -203,6 +205,12 @@ fn every_response() -> Vec<Response> {
         Response::Hello {
             server: "hikasa-gui 0.1.0".into(),
             version: 1,
+            features: vec![],
+        },
+        Response::Hello {
+            server: "hikasa-gui 0.1.94".into(),
+            version: 1,
+            features: vec![FEATURE_SCRIPT_DRY_RUN.into()],
         },
         Response::ViewOpened { view: ViewId(7) },
         Response::ViewClosed {
@@ -255,6 +263,22 @@ fn full_run_script() -> Request {
         stop_on_error: true,
         confirm: Some("yes-to-all".into()),
         close: Some(true),
+        dry_run: false,
+    }
+}
+
+/// A dry run (`script run --gui --dry-run`, review F2): `dry_run` is on the wire only when true.
+fn dry_run_script() -> Request {
+    Request::RunScript {
+        path: "/home/me/s.txt".into(),
+        args: vec![],
+        cwd: Some("/home/me/work".into()),
+        env: BTreeMap::new(),
+        wait: true,
+        stop_on_error: false,
+        confirm: None,
+        close: None,
+        dry_run: true,
     }
 }
 
@@ -288,6 +312,7 @@ fn script_frames_are_golden() {
                 stop_on_error: false,
                 confirm: None,
                 close: None,
+                dry_run: false,
             },
         ),
         to_line(
@@ -303,6 +328,24 @@ fn script_frames_are_golden() {
                 IpcErrorCode::UnsupportedRequest,
                 "`run_script` is not supported in this version",
             ),
+        ),
+        // A dry run, sent only to a server whose `Hello` lists the feature (the hello lines: an older server, this one).
+        to_line(14, &dry_run_script()),
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.0".into(),
+                version: 1,
+                features: vec![],
+            },
+        ),
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.94".into(),
+                version: 1,
+                features: vec![FEATURE_SCRIPT_DRY_RUN.into()],
+            },
         ),
     ];
     let actual = messages.join("\n") + "\n";
@@ -326,6 +369,7 @@ fn script_frames_are_golden() {
             stop_on_error: false,
             confirm: None,
             close: None,
+            dry_run: false,
         }
     );
     // The defaults stay off the wire: the old frame is what this build sends.
@@ -398,6 +442,7 @@ fn wire_examples_of_4_4_3_are_golden() {
             &Response::Hello {
                 server: "hikasa-gui 0.1.0".into(),
                 version: 1,
+                features: vec![],
             },
         ),
         to_line(

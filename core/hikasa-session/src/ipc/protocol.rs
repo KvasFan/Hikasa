@@ -106,6 +106,11 @@ pub enum Request {
         /// `--closescript` is `Some(true)`; `None`: `[tweaks.scripts] close_when_finished` decides.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         close: Option<bool>,
+        /// `--dry-run` (T12): no plan is executed and no file written. Sent only to a GUI whose `Hello` lists
+        /// [`FEATURE_SCRIPT_DRY_RUN`](crate::ipc::FEATURE_SCRIPT_DRY_RUN): an older one would ignore it and run for
+        /// real.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dry_run: bool,
     },
     /// Lists the open views.
     ListViews,
@@ -153,6 +158,11 @@ pub enum Response {
         server: String,
         /// Negotiated protocol version.
         version: u32,
+        /// What this server does beyond its protocol version (M2 W8b, additive: absent and left off the wire when
+        /// empty, so an older peer reads the same frame): the additive request fields an older server would
+        /// silently ignore where that would be wrong, such as [`FEATURE_SCRIPT_DRY_RUN`](crate::ipc::FEATURE_SCRIPT_DRY_RUN).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     /// A view was opened.
     ViewOpened {

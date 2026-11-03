@@ -29,12 +29,16 @@ pub use protocol::{
     ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
 };
 pub use server::{
-    ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ScriptWaiter, ServerHandle, ViewWaiter,
-    WRITE_QUEUE, WRITE_TIMEOUT, peer_uid_matches, unserved_view,
+    ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ScriptReply, ScriptWaiter, ServerHandle,
+    ViewWaiter, WRITE_QUEUE, WRITE_TIMEOUT, peer_uid_matches, unserved_view,
 };
 
 /// Protocol version spoken by this build.
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// The `Hello` feature of a server that honours `RunScript { dry_run: true }` (M2 W8b). A client sends a dry run only
+/// to a server that lists it: a GUI without it would run the script for real.
+pub const FEATURE_SCRIPT_DRY_RUN: &str = "run_script.dry_run";
 
 /// Maximum frame payload (bytes). Larger frames are a protocol error.
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;

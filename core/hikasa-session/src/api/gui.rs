@@ -1953,6 +1953,8 @@ pub struct GuiScriptOptions {
     pub confirm: Option<String>,
     /// `--closescript`.
     pub closescript: bool,
+    /// `--dry-run` (T12): sent only to a GUI that lists `FEATURE_SCRIPT_DRY_RUN` (M2 W8b).
+    pub dry_run: bool,
 }
 
 /// What `gui script` sent and, with `--wait`, how the script ended (`hikasa.gui_script.v1`).
@@ -2057,6 +2059,7 @@ impl Service {
             stop_on_error: options.stop_on_error,
             confirm: options.confirm.clone(),
             close: options.closescript.then_some(true),
+            dry_run: options.dry_run,
         })
     }
 
@@ -2072,7 +2075,11 @@ impl Service {
     ) -> Result<GuiScriptReport, ApiError> {
         run_guarded(|| {
             let Request::RunScript {
-                path, args, wait, ..
+                path,
+                args,
+                wait,
+                dry_run,
+                ..
             } = &request
             else {
                 return Err(ApiError::Internal(
@@ -2081,6 +2088,18 @@ impl Service {
             };
             let (script, args, wait) = (path.clone(), args.clone(), *wait);
             let mut client = self.connect_for_sessions(launcher, policy)?;
+            // A GUI that does not list the feature would ignore `dry_run` and run the script for real.
+            if *dry_run
+                && !client
+                    .features()
+                    .iter()
+                    .any(|f| f == crate::ipc::FEATURE_SCRIPT_DRY_RUN)
+            {
+                return Err(ApiError::Unsupported(
+                    "the running GUI cannot run a script as a dry run; restart it, or use hikasa script run --dry-run"
+                        .into(),
+                ));
+            }
             let (id, response) = client.request(request).map_err(scripts_error)?;
             if response != Response::Ok {
                 return Err(ApiError::Ipc(crate::ipc::client::unexpected(&response)));

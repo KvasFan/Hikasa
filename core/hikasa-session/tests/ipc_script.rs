@@ -38,6 +38,8 @@ enum Finish {
 /// A GUI that runs scripts: one at a time (`busy`), records each `RunScript`.
 struct ScriptGui {
     finish: Finish,
+    /// Lists `FEATURE_SCRIPT_DRY_RUN` in its `Hello`.
+    dry_runs: bool,
     running: AtomicBool,
     seen: parking_lot::Mutex<Vec<Request>>,
     held: Sender<Option<ScriptWaiter>>,
@@ -48,11 +50,20 @@ impl ScriptGui {
         let (held, waiters) = crossbeam_channel::unbounded();
         let gui = ScriptGui {
             finish,
+            dry_runs: false,
             running: AtomicBool::new(false),
             seen: parking_lot::Mutex::new(Vec::new()),
             held,
         };
         (Arc::new(gui), waiters)
+    }
+
+    /// A GUI that honours `dry_run` (and says so in its `Hello`).
+    fn with_dry_runs(finish: Finish) -> Arc<ScriptGui> {
+        let (gui, _) = ScriptGui::new(finish);
+        let mut gui = Arc::into_inner(gui).expect("one owner");
+        gui.dry_runs = true;
+        Arc::new(gui)
     }
 }
 
@@ -61,6 +72,14 @@ impl IpcHandler for ScriptGui {
         ServerInfo {
             server: "script-gui 0.0.0".into(),
             version: 1,
+        }
+    }
+
+    fn features(&self) -> Vec<String> {
+        if self.dry_runs {
+            vec![hikasa_session::ipc::FEATURE_SCRIPT_DRY_RUN.to_owned()]
+        } else {
+            Vec::new()
         }
     }
 
@@ -154,6 +173,7 @@ fn run_script(path: &str, wait: bool) -> Request {
         stop_on_error: false,
         confirm: None,
         close: None,
+        dry_run: false,
     }
 }
 
@@ -277,6 +297,125 @@ fn a8_17_a_stopping_server_or_a_dropped_waiter_sends_100() {
     server.shutdown().unwrap();
 }
 
+/// A GUI that answers `RunScript` later, from another thread (`handle_script_later`), once the test lets it; it ends
+/// a waited run at once after its `Ok`.
+struct LaterGui {
+    go: Receiver<()>,
+}
+
+impl IpcHandler for LaterGui {
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo {
+            server: "later-gui 0.0.0".into(),
+            version: 1,
+        }
+    }
+
+    fn handle(&self, request: Request, _waiter: Option<ViewWaiter>) -> Response {
+        match request {
+            Request::Ping => Response::Pong,
+            _ => Response::error(IpcErrorCode::InvalidRequest, "not scripted"),
+        }
+    }
+
+    fn handle_script_later(
+        &self,
+        _request: Request,
+        waiter: Option<ScriptWaiter>,
+        reply: hikasa_session::ipc::ScriptReply,
+    ) {
+        let go = self.go.clone();
+        std::thread::spawn(move || {
+            let _ = go.recv();
+            reply.send(Response::Ok);
+            if let Some(waiter) = waiter {
+                waiter.script_finished(ExitCode::Success, ScriptSummary::default());
+            }
+        });
+    }
+}
+
+/// Review F7: the answer of a `RunScript` may come later from the handler's worker; the connection is not held
+/// meanwhile (a ping is answered first), the `Ok` keeps the request's id and the `ScriptFinished` follows it. A reply
+/// dropped without an answer is `Error{internal}`.
+#[test]
+fn a8_17_a_run_script_answered_later_does_not_hold_the_connection() {
+    let tmp = common::short_tempdir();
+    let service = common::service(tmp.path());
+    let (go, wait) = crossbeam_channel::unbounded();
+    let server = start(&service, Arc::new(LaterGui { go: wait }));
+    let stream = raw(&service);
+    send_json(
+        &stream,
+        r#"{"id":2,"type":"run_script","path":"/s.txt","wait":true}"#,
+    );
+    send_json(&stream, r#"{"id":3,"type":"ping"}"#);
+    let pong = recv(&stream);
+    assert_eq!(
+        (pong.id, pong.body),
+        (3, Response::Pong),
+        "the check does not hold the connection"
+    );
+    go.send(()).unwrap();
+    let ok = recv(&stream);
+    assert_eq!((ok.id, ok.body), (2, Response::Ok));
+    let finished = recv(&stream);
+    assert_eq!(finished.id, 2);
+    assert!(matches!(
+        finished.body,
+        Response::ScriptFinished { exit_code: 0, .. }
+    ));
+    drop(stream);
+    server.shutdown().unwrap();
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    drop(hikasa_session::ipc::ScriptReply::new(move |r| {
+        let _ = tx.send(r);
+    }));
+    assert!(matches!(rx.try_recv(), Ok(Response::Error { code, .. }) if code == "internal"));
+}
+
+/// Review F2: a dry run goes only to a GUI whose `Hello` lists `FEATURE_SCRIPT_DRY_RUN`; one that does not would
+/// ignore the field and run the script for real, so the client refuses (exit 100) and sends nothing.
+#[test]
+fn a8_17_a_dry_run_goes_only_to_a_gui_that_lists_the_feature() {
+    let tmp = common::short_tempdir();
+    let service = common::service(tmp.path());
+    let dry = || {
+        let mut request = run_script("/a.txt", false);
+        if let Request::RunScript { dry_run, .. } = &mut request {
+            *dry_run = true;
+        }
+        request
+    };
+    let (older, _) = ScriptGui::new(Finish::Immediately);
+    let server = start(&service, Arc::clone(&older) as Arc<dyn IpcHandler>);
+    let err = service
+        .gui_run_script(dry(), None, &RetryPolicy::default())
+        .unwrap_err();
+    assert!(matches!(&err, ApiError::Unsupported(_)), "{err:?}");
+    assert!(err.to_string().contains("dry run"), "{err}");
+    assert_eq!(
+        err.exit_code(ApiOp::GuiOpen { wait: false }),
+        ExitCode::UnknownError
+    );
+    assert!(older.seen.lock().is_empty(), "nothing was sent");
+    // A run that is not a dry run goes to it as before.
+    service
+        .gui_run_script(run_script("/a.txt", false), None, &RetryPolicy::default())
+        .unwrap();
+    server.shutdown().unwrap();
+    let newer = ScriptGui::with_dry_runs(Finish::Immediately);
+    let server = start(&service, Arc::clone(&newer) as Arc<dyn IpcHandler>);
+    service
+        .gui_run_script(dry(), None, &RetryPolicy::default())
+        .unwrap();
+    assert!(matches!(
+        newer.seen.lock().as_slice(),
+        [Request::RunScript { dry_run: true, .. }]
+    ));
+    server.shutdown().unwrap();
+}
+
 #[test]
 fn a8_17_an_older_gui_does_not_support_scripts() {
     let tmp = common::short_tempdir();
@@ -325,6 +464,7 @@ fn a8_17_the_request_carries_the_path_cwd_and_the_referenced_variables() {
         stop_on_error: true,
         confirm: Some("no-to-all".into()),
         closescript: true,
+        dry_run: true,
     };
     let args = [OsString::from("a b"), OsString::from("c")];
     let request = service
@@ -341,6 +481,7 @@ fn a8_17_the_request_carries_the_path_cwd_and_the_referenced_variables() {
             stop_on_error: true,
             confirm: Some("no-to-all".into()),
             close: Some(true),
+            dry_run: true,
         }
     );
     // Without --closescript the option decides (`None`).

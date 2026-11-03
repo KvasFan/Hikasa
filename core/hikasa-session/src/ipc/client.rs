@@ -67,6 +67,8 @@ pub struct IpcClient {
     frames: Receiver<Frame>,
     next_id: u64,
     server: ServerInfo,
+    /// The `Hello` reply's features.
+    features: Vec<String>,
     timeout: Duration,
     /// Messages that arrived while another response was awaited (a `ViewClosed` of an earlier wait).
     parked: VecDeque<Envelope<Response>>,
@@ -123,6 +125,7 @@ impl IpcClient {
                 server: String::new(),
                 version: 0,
             },
+            features: Vec::new(),
             timeout,
             parked: VecDeque::new(),
         };
@@ -135,11 +138,13 @@ impl IpcClient {
             Response::Hello {
                 server,
                 version: negotiated,
+                features,
             } if negotiated >= min_version && negotiated <= version => {
                 this.server = ServerInfo {
                     server,
                     version: negotiated,
                 };
+                this.features = features;
                 Ok(this)
             }
             Response::Hello {
@@ -165,6 +170,11 @@ impl IpcClient {
     /// Negotiated server identity.
     pub fn server(&self) -> &ServerInfo {
         &self.server
+    }
+
+    /// The features the server's `Hello` listed (M2 W8b; empty for an older server).
+    pub fn features(&self) -> &[String] {
+        &self.features
     }
 
     /// Sends a request and returns its immediate response and the request id used.

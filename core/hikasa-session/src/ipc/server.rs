@@ -57,6 +57,12 @@ pub const ABANDONED_EXIT_CODE: ExitCode = ExitCode::UnknownError;
 pub trait IpcHandler: Send + Sync + 'static {
     /// Identity for the `Hello` reply.
     fn server_info(&self) -> ServerInfo;
+
+    /// The features of the `Hello` reply (such as [`FEATURE_SCRIPT_DRY_RUN`](crate::ipc::FEATURE_SCRIPT_DRY_RUN)).
+    /// Default (additive): none.
+    fn features(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Handles one request after the handshake (`Request::Unknown` never reaches it: the server answers
     /// `unsupported_request` itself). For `OpenView { wait: true }`, `waiter` is `Some`; the handler stores it and
     /// later calls `ViewWaiter::view_closed`. The return value is the immediate response. Must not block: the
@@ -81,6 +87,19 @@ pub trait IpcHandler: Send + Sync + 'static {
             IpcErrorCode::UnsupportedRequest,
             format!("`{}` is not supported in this version", request.type_name()),
         )
+    }
+
+    /// What the server calls for `RunScript` (M2 W8b, additive): the answer goes through `reply`, at once or later
+    /// from another thread, so a handler that reads and checks a script first does not hold the connection's thread
+    /// (the GUI does that work on a worker). The connection goes on reading meanwhile; the request's `ScriptFinished`
+    /// still follows its `Ok`. Default: [`IpcHandler::handle_script`]'s answer at once.
+    fn handle_script_later(
+        &self,
+        request: Request,
+        waiter: Option<ScriptWaiter>,
+        reply: ScriptReply,
+    ) {
+        reply.send(self.handle_script(request, waiter));
     }
 
     /// Sees every request after the handshake, before the server answers it itself or passes it to
@@ -390,6 +409,51 @@ impl Drop for ViewWaiter {
                 .gate
                 .finish(&inner.conn, Closing::Abandon(CloseReason::Abandoned));
         }
+    }
+}
+
+/// The immediate answer of one `RunScript` (M2 W8b), given once from any thread: [`ScriptReply::send`] queues it
+/// on the request's connection (and, for `Ok` of a waited run, opens its gate for the later `ScriptFinished`). Dropped
+/// without an answer (a handler that panicked, a worker that could not start), it answers `Error{internal}`, so a
+/// client never waits for nothing. Never blocks.
+pub struct ScriptReply {
+    answer: Option<Box<dyn FnOnce(Response) + Send>>,
+}
+
+impl ScriptReply {
+    /// A reply that hands the answer to `answer` (the server's; a test's or a synchronous caller's channel).
+    pub fn new(answer: impl FnOnce(Response) + Send + 'static) -> ScriptReply {
+        ScriptReply {
+            answer: Some(Box::new(answer)),
+        }
+    }
+
+    /// Answers the request (consumes self).
+    pub fn send(mut self, response: Response) {
+        if let Some(answer) = self.answer.take() {
+            answer(response);
+        }
+    }
+}
+
+impl Drop for ScriptReply {
+    fn drop(&mut self) {
+        if let Some(answer) = self.answer.take() {
+            let why = if thread::panicking() {
+                "the request failed: the handler panicked"
+            } else {
+                "the request failed: it ended without an answer"
+            };
+            answer(Response::error(IpcErrorCode::Internal, why));
+        }
+    }
+}
+
+impl std::fmt::Debug for ScriptReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptReply")
+            .field("answered", &self.answer.is_none())
+            .finish()
     }
 }
 
@@ -845,7 +909,9 @@ fn handshake(conn: &Conn, handler: &Arc<dyn IpcHandler>) -> bool {
                     let _ = conn.send(envelope.id, &reply);
                     return false;
                 }
-                let info = match catch_unwind(AssertUnwindSafe(|| handler.server_info())) {
+                let info = match catch_unwind(AssertUnwindSafe(|| {
+                    (handler.server_info(), handler.features())
+                })) {
                     Ok(info) => info,
                     Err(payload) => {
                         let message =
@@ -857,9 +923,11 @@ fn handshake(conn: &Conn, handler: &Arc<dyn IpcHandler>) -> bool {
                         return false;
                     }
                 };
+                let (info, features) = info;
                 let reply = Response::Hello {
                     server: info.server,
                     version: negotiated,
+                    features,
                 };
                 conn.send(envelope.id, &reply).is_ok()
             }
@@ -907,22 +975,34 @@ fn dispatch(
             IpcErrorCode::Protocol,
             "the handshake was already done on this connection",
         ),
-        request @ Request::RunScript { wait: true, .. } => {
-            let shared = Arc::new(Gate {
-                id,
-                state: Mutex::new(GateState::Pending(None)),
+        request @ Request::RunScript { wait, .. } => {
+            let script_gate = wait.then(|| {
+                let shared = Arc::new(Gate {
+                    id,
+                    state: Mutex::new(GateState::Pending(None)),
+                });
+                conn.track(&shared);
+                shared
             });
-            conn.track(&shared);
-            let waiter = ScriptWaiter {
+            let waiter = script_gate.as_ref().map(|shared| ScriptWaiter {
                 inner: Some(WaiterInner {
                     conn: Arc::clone(conn),
-                    gate: Arc::clone(&shared),
+                    gate: Arc::clone(shared),
                 }),
-            };
-            gate = Some(shared);
-            call_script_handler(handler, request, Some(waiter))
+            });
+            // The answer may come later, from the handler's worker: the connection reads on meanwhile.
+            let answer_conn = Arc::clone(conn);
+            let reply = ScriptReply::new(move |response| {
+                let sent = answer_conn.send(id, &response);
+                if let Some(gate) = script_gate {
+                    let opened = matches!((&sent, &response), (Ok(()), Response::Ok))
+                        .then_some(Opened::Script);
+                    gate.release(&answer_conn, opened);
+                }
+            });
+            call_script_handler(handler, request, waiter, reply);
+            return Ok(());
         }
-        request @ Request::RunScript { .. } => call_script_handler(handler, request, None),
         Request::OpenView { kind, .. } if !kind.is_served_in_m1() => {
             Response::error(IpcErrorCode::UnsupportedView, unserved_view(kind))
         }
@@ -979,18 +1059,22 @@ fn call_handler(
     }
 }
 
-/// [`call_handler`] for `RunScript` ([`IpcHandler::handle_script`]).
+/// [`call_handler`] for `RunScript` ([`IpcHandler::handle_script_later`]): a panic drops `reply`, which answers
+/// `Error{internal}`.
 fn call_script_handler(
     handler: &Arc<dyn IpcHandler>,
     request: Request,
     waiter: Option<ScriptWaiter>,
-) -> Response {
-    match catch_unwind(AssertUnwindSafe(|| handler.handle_script(request, waiter))) {
-        Ok(response) => response,
-        Err(payload) => Response::error(
-            IpcErrorCode::Internal,
-            format!("the request failed: {}", panic_message(payload.as_ref())),
-        ),
+    reply: ScriptReply,
+) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+        handler.handle_script_later(request, waiter, reply);
+    })) {
+        tracing::error!(
+            target: "hikasa::ipc",
+            "the RunScript handler panicked: {}",
+            panic_message(payload.as_ref())
+        );
     }
 }
 

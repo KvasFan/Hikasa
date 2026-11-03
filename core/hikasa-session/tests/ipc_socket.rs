@@ -133,6 +133,7 @@ fn handshake_requests_and_views() {
             stop_on_error: false,
             confirm: None,
             close: None,
+            dry_run: false,
         },
     ] {
         let err = client.request(request).unwrap_err();
@@ -348,6 +349,7 @@ fn dropped_connection_while_waiting_is_connection_lost() {
                 body: Response::Hello {
                     server: "scripted".into(),
                     version: 1,
+                    features: vec![],
                 },
             },
         )
