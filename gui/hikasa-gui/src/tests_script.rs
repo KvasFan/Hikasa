@@ -905,6 +905,13 @@ fn a8_19_a_stopped_big_copy_ends_before_the_slot_is_free_or_the_shutdown_returns
         &[],
     );
     run_until(&world, &mut app, copying);
+    // The copy's progress, as the status bar's job line shows it.
+    run_until(&world, &mut app, |app| status(app).progress().is_some());
+    let line = status(&mut app).progress().unwrap_or_default().to_owned();
+    assert!(
+        line.contains(": ") && (line.ends_with(" bytes") || line.ends_with(" items")),
+        "{line}"
+    );
     app.close_window_now(second);
     assert!(
         world.shared.script_running(),
@@ -1048,4 +1055,142 @@ fn a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker() {
             Ok(Response::Ok)
         );
     }
+}
+
+/// The status window shows the current call's progress as the status bar's job line does (the review's mutation M17):
+/// the phase and the counts, cleared by the next command and at the end.
+#[test]
+fn a8_19_the_status_window_shows_the_current_calls_progress() {
+    let world = World::new();
+    world.write("work/s.txt", "beep\n");
+    let ready = prepare(
+        &world.service,
+        OsStr::new("s.txt"),
+        Vec::new(),
+        None,
+        false,
+        None,
+        None,
+    )
+    .expect("checks");
+    let wake: Wake = Arc::new(|| {});
+    let mut d = ScriptDialog::start(
+        ready,
+        100,
+        false,
+        &wake,
+        Arc::new(hikasa_session::clipboard::NoClipboard),
+    );
+    use hikasa_core::{Phase, Progress, Unit};
+    use hikasa_session::api::script::ScriptEvent;
+    d.feed(ScriptEvent::Command {
+        index: 2,
+        line: 4,
+        text: "copy left->right".into(),
+    });
+    assert_eq!(d.progress(), None);
+    d.feed(ScriptEvent::Progress {
+        status: Progress {
+            phase: Phase::Writing,
+            done: 3,
+            total: Some(10),
+            unit: Unit::Bytes,
+            current: Some("a.txt".into()),
+        },
+    });
+    assert_eq!(d.progress(), Some("writing: 3 of 10 bytes"));
+    d.feed(ScriptEvent::Progress {
+        status: Progress {
+            phase: Phase::Scanning,
+            done: 7,
+            total: None,
+            unit: Unit::Items,
+            current: None,
+        },
+    });
+    assert_eq!(d.progress(), Some("scanning: 7 items"));
+    d.feed(ScriptEvent::Command {
+        index: 3,
+        line: 5,
+        text: "beep".into(),
+    });
+    assert_eq!(d.progress(), None, "a new command clears it");
+    assert_eq!(
+        d.command_line().as_deref(),
+        Some("Command 3 of 1, line 5: beep")
+    );
+    d.stop();
+}
+
+/// The stop-on-error question closed with the window's close button is No (the review's mutation M9): the run stops
+/// there.
+#[test]
+fn a8_19_the_stop_on_error_question_closed_without_an_answer_is_no() {
+    let world = World::new();
+    let mut app = world.app(None);
+    world.write("work/s.txt", "beep\nsnapshot x.hksnap\nbeep\n");
+    let claim = ScriptClaim::take(&world.shared).expect("free");
+    let mut ready = prepare(
+        &world.service,
+        OsStr::new("s.txt"),
+        Vec::new(),
+        None,
+        true,
+        None,
+        None,
+    )
+    .expect("checks");
+    ready.claim = Some(claim);
+    app.handle(UiMsg::RunScript(Box::new(ready)));
+    let w = app.win();
+    run_until(&world, &mut app, |app| {
+        app.window(w)
+            .is_some_and(|w| w.dialogs.holds::<ContinueDialog>())
+    });
+    app.close_window(w);
+    assert!(
+        app.window(w)
+            .is_some_and(|w| !w.dialogs.holds::<ContinueDialog>()),
+        "the close button closed the question"
+    );
+    run_until(&world, &mut app, ended);
+    let d = status(&mut app);
+    assert_eq!(d.beeps(), 1, "the line after it did not run");
+    assert_eq!(d.end().and_then(|e| e.stopped_at), Some(2));
+}
+
+/// The Run Script dialog's *Stop on error* and confirm mode reach the run (the review's mutation M11): *Yes to all*
+/// asks nothing, *Stop on error* asks to continue after the failed line.
+#[test]
+fn a8_19_the_run_script_dialogs_stop_on_error_and_confirm_mode_reach_the_run() {
+    let world = World::new();
+    folders(&world, 2);
+    world.write(
+        "work/s.txt",
+        "load l r\nselect all\ncopy left->right\nsnapshot x.hksnap\nbeep\n",
+    );
+    let mut app = world.app(None);
+    let w = app.win();
+    app.execute(CommandId::RunScript);
+    dialog(&mut app).path = "s.txt".into();
+    dialog(&mut app).stop_on_error = true;
+    dialog(&mut app).confirm = hikasa_folder::ops::ConfirmMode::YesToAll;
+    app.dialog_button(w, ButtonRole::Ok);
+    run_until(&world, &mut app, |app| {
+        app.window(w).is_some_and(|w| {
+            w.dialogs.holds::<ContinueDialog>()
+                || w.dialogs.holds::<PlanConfirmDialog>()
+                || w.dialogs.holds_where::<ScriptDialog>(|d| !d.running())
+        })
+    });
+    assert!(
+        app.window(w)
+            .is_some_and(|w| w.dialogs.holds::<ContinueDialog>()),
+        "Yes to all asks nothing; Stop on error asks"
+    );
+    app.dialog_button(w, ButtonRole::No);
+    run_until(&world, &mut app, ended);
+    let d = status(&mut app);
+    assert_eq!(d.end().and_then(|e| e.stopped_at), Some(4));
+    assert!(world.path("work/r/f01.txt").exists(), "the copy ran");
 }

@@ -574,6 +574,12 @@ impl ScriptDialog {
         }
     }
 
+    /// One event of the run, as the job thread sends it (tests).
+    #[cfg(test)]
+    pub(crate) fn feed(&mut self, event: ScriptEvent) {
+        self.event(event);
+    }
+
     /// One message of the job thread.
     fn take(&mut self, msg: RunMsg) {
         match msg {
