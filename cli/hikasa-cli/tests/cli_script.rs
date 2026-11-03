@@ -704,3 +704,47 @@ fn a_folder_load_drops_the_sync_preset_of_a_session() {
         "mirror_right removed the right orphan"
     );
 }
+
+/// A8.4, A8.20 (Linux disk): non-UTF-8 arguments keep their bytes into `load` and into `copyto`'s target, and every
+/// line that names them shows the bytes escaped (`\xFF`), the `info … compared …` line as the `run` lines.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_arguments_reach_load_and_copyto_and_are_escaped() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let s = sandbox();
+    let left = OsStr::from_bytes(b"l\xFF");
+    let target = OsStr::from_bytes(b"t\xFE");
+    std::fs::create_dir(s.path().join(left)).unwrap();
+    std::fs::write(s.path().join(left).join("a.txt"), "a\n").unwrap();
+    s.file(
+        "s.txt",
+        "option confirm:yes-to-all\nload %1 r\nselect all.files\ncopyto all %2\n",
+    );
+    let out = s
+        .cmd()
+        .args([
+            OsStr::new("script"),
+            OsStr::new("run"),
+            OsStr::new("s.txt"),
+            left,
+            target,
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("run L2 load l\\xFF r"), "{err}");
+    let compared = err
+        .lines()
+        .find(|l| l.contains("info L2 compared"))
+        .unwrap_or("");
+    assert!(compared.contains("l\\xFF and "), "{err}");
+    assert!(!compared.contains('\u{FFFD}'), "{err}");
+    assert!(err.contains("run L4 copyto all t\\xFE"), "{err}");
+    assert_eq!(
+        std::fs::read(s.path().join(target).join("a.txt")).unwrap(),
+        b"a\n"
+    );
+}
+

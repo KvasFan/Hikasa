@@ -180,6 +180,16 @@ fn written_by(direction: &str) -> Side {
     }
 }
 
+/// A spec as the log shows it: its canonical form, with the bytes of a local path that are not UTF-8 escaped (`\xFF`)
+/// as the `run` lines show them (A8.20), never replaced.
+fn spec_shown(spec: &Spec) -> String {
+    match spec {
+        Spec::Local(path) => hikasa_script::display_os(path.as_path().as_os_str()),
+        Spec::ArchiveMember { archive, member } => format!("{}/{member}", spec_shown(archive)),
+        other => other.canonical(),
+    }
+}
+
 /// The settings of `folder-compare`'s defaults (`load <default>`, and a run's start).
 fn default_settings(service: &Service) -> FolderCompareRequest {
     let mut request = FolderCompareRequest::default();
@@ -696,8 +706,8 @@ impl<'a> Host<'a> {
             let stats = &loaded.response;
             let text = format!(
                 "compared {} and {}: {}",
-                loaded.prepared.specs().left.canonical(),
-                loaded.prepared.specs().right.canonical(),
+                spec_shown(&loaded.prepared.specs().left),
+                spec_shown(&loaded.prepared.specs().right),
                 stats.verdict.as_str().replace('_', " ")
             );
             // The comparison's document only with `--json`: building it costs a pass over every row.
@@ -778,7 +788,7 @@ impl<'a> Host<'a> {
             return Err(CommandOutcome::LoadFailed {
                 message: format!(
                     "{} does not exist yet; a dry run cannot compare it",
-                    spec.canonical()
+                    spec_shown(spec)
                 ),
             });
         }
@@ -793,7 +803,7 @@ impl<'a> Host<'a> {
                     self.log(
                         LineKind::Info,
                         line,
-                        format!("created {}", spec.canonical()),
+                        format!("created {}", spec_shown(spec)),
                     );
                 }
                 Ok(())
@@ -1587,7 +1597,7 @@ impl<'a> Host<'a> {
                 self.log.file = Some(Box::new(file));
                 CommandOutcome::Ok
             }
-            Err(e) => failed(format!("{}: {e}", spec.canonical())),
+            Err(e) => failed(format!("{}: {e}", spec_shown(&spec))),
         }
     }
 
