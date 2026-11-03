@@ -799,6 +799,9 @@ fn the_menu_column_of_the_commands_list_is_straight() {
     s.execute(CommandId::ProgramOptions);
     s.options().show_page("commands");
     s.options().select_view("folder-compare");
+    // Rows with and without a Toolbar box in the visible part of the list (W9a's entries pushed the toolbar rows
+    // further down): "Next Difference" has an icon, "Next Item on This Side" none.
+    s.options().set_command_search("Next");
     let drawn = s.drawn();
     let column = |text: &str| {
         let mut lefts: Vec<i32> = drawn

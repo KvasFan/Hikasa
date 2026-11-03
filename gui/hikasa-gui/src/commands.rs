@@ -157,6 +157,32 @@ command_ids! {
     Delete,
     /// Folder: deletes the selected row without the recycle bin (M2 W6d, FC-073).
     PermanentDelete,
+    /// Folder (M2 W9a): selects every shown file row on every side it has.
+    SelectAllFiles,
+    /// Folder (M2 W9a): the Select Newer submenu.
+    SelectNewerList,
+    /// Folder (M2 W9a): the Select Orphans submenu.
+    SelectOrphanList,
+    /// Folder (M2 W9a): selects the files newer on the left.
+    SelectNewerLeft,
+    /// Folder (M2 W9a): selects the files newer on the right.
+    SelectNewerRight,
+    /// Folder (M2 W9a): selects the newer files of both sides.
+    SelectNewerBoth,
+    /// Folder (M2 W9a): selects the left orphans.
+    SelectOrphanLeft,
+    /// Folder (M2 W9a): selects the right orphans.
+    SelectOrphanRight,
+    /// Folder (M2 W9a): selects the orphans of both sides.
+    SelectOrphanBoth,
+    /// Folder (M2 W9a): inverts the selection over the shown rows.
+    SelectInvert,
+    /// Folder (M2 W9a): the next shown row present on the focus side.
+    ExistsNext,
+    /// Folder (M2 W9a): the previous shown row present on the focus side.
+    ExistsPrev,
+    /// Folder (M2 W9a): Ignore Folder Structure (FC-014).
+    DirFlatten,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -328,6 +354,41 @@ pub struct Ctx {
     pub tree_folder: bool,
     /// Sessions tree: a *New* type is selected.
     pub tree_new: bool,
+}
+
+/// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
+pub const LIST_CHILDREN: &[(CommandId, &[CommandId])] = &[
+    (
+        CommandId::SelectNewerList,
+        &[
+            CommandId::SelectNewerLeft,
+            CommandId::SelectNewerRight,
+            CommandId::SelectNewerBoth,
+        ],
+    ),
+    (
+        CommandId::SelectOrphanList,
+        &[
+            CommandId::SelectOrphanLeft,
+            CommandId::SelectOrphanRight,
+            CommandId::SelectOrphanBoth,
+        ],
+    ),
+];
+
+/// The children of a `…List` entry (empty for other ids).
+pub fn list_children(id: CommandId) -> &'static [CommandId] {
+    LIST_CHILDREN
+        .iter()
+        .find(|(list, _)| *list == id)
+        .map_or(&[], |(_, children)| children)
+}
+
+/// True when `id` shows in a `…List` entry's submenu.
+pub fn in_a_list(id: CommandId) -> bool {
+    LIST_CHILDREN
+        .iter()
+        .any(|(_, children)| children.contains(&id))
 }
 
 /// Availability predicates (ARCH-070 `enabled_when`).
@@ -937,6 +998,123 @@ pub const PRESENTATION: &[Row] = &[
         None,
         G::None,
         P::FolderSelected,
+        NONE,
+    ),
+    row(
+        C::SelectAllFiles,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectNewerList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectOrphanList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectNewerLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectNewerRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectNewerBoth,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectOrphanLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectOrphanRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectOrphanBoth,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::SelectInvert,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::ExistsNext,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::ExistsPrev,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::DirFlatten,
+        S::Folder,
+        None,
+        None,
+        G::Check,
+        P::Always,
         NONE,
     ),
     row(

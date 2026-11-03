@@ -390,7 +390,17 @@ mod tests {
             state.layout_value("text-compare", "font_size"),
             Some(LayoutValue::Float(12.0))
         );
-        assert_eq!(state.layout_value("text-compare", "other"), None);
+        // A word reads as one (M2 W9a: the folder views' `sort`); a date does not.
+        assert_eq!(
+            state.layout_value("text-compare", "other"),
+            Some(LayoutValue::Text("kept".into()))
+        );
+        let table = state.layout.get_mut("text-compare").unwrap();
+        table.insert(
+            "when".into(),
+            toml::Value::Datetime("1979-05-27T07:32:00Z".parse().unwrap()),
+        );
+        assert_eq!(state.layout_value("text-compare", "when"), None);
         state.set_layout_value("text-compare", "font_size", LayoutValue::Float(9.0));
         assert!(state.layout["text-compare"].contains_key("other"));
     }

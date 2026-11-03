@@ -600,63 +600,63 @@ menu = "Edit"
 caption = "Select All Files"
 shortcut = "Shift+Ctrl+A"
 description = "Selects all visible files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectNewerList"
 menu = "Edit"
 caption = "Select Newer"
 description = "Selects all newer files on picked sides."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectNewerLeft"
 menu = "Edit"
 caption = "Left Side"
 description = "Selects all newer files on the left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectNewerRight"
 menu = "Edit"
 caption = "Right Side"
 description = "Selects all newer files on the right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectNewerBoth"
 menu = "Edit"
 caption = "Both Sides"
 description = "Selects all newer files on both sides."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectOrphanList"
 menu = "Edit"
 caption = "Select Orphans"
 description = "Selects all orphan files on picked sides."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectOrphanLeft"
 menu = "Edit"
 caption = "Left Side"
 description = "Selects all orphan files on the left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectOrphanRight"
 menu = "Edit"
 caption = "Right Side"
 description = "Selects all orphan files on the right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectOrphanBoth"
 menu = "Edit"
 caption = "Both Sides"
 description = "Selects all orphan files on both sides."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffNext"
@@ -945,7 +945,7 @@ id = "DirFlatten"
 menu = "View"
 caption = "Ignore Folder Structure"
 description = "Compares all files as if they were in a single folder."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowCenter"
@@ -1126,7 +1126,7 @@ id = "SelectInvert"
 menu = "Edit"
 caption = "Invert Selection"
 description = "Selects all items not currently selected, and deselects all items currently selected."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Refresh"
@@ -1148,16 +1148,18 @@ toolbar = true
 [[section.command]]
 id = "ExistsNext"
 menu = "Search"
+caption = "Next Item on This Side"
 shortcut = "Alt+Down"
 description = "Positions at next filename, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExistsPrev"
 menu = "Search"
+caption = "Previous Item on This Side"
 shortcut = "Alt+Up"
 description = "Positions at previous filename, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindFilename"

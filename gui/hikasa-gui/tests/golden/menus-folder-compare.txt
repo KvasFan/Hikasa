@@ -19,8 +19,19 @@ Session
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
 Edit
+  Select All Files	Shift+Ctrl+A
+  > Select Newer
+    Left Side
+    Right Side
+    Both Sides
+  > Select Orphans
+    Left Side
+    Right Side
+    Both Sides
+  ---
   Expand All
   Collapse All
+  Invert Selection
   Full Refresh	Ctrl+F5
 Actions
   Copy to Right	Ctrl+R (disabled)
@@ -35,11 +46,15 @@ Actions
 Search
   Next Difference	Ctrl+N
   Previous Difference	Ctrl+P (disabled)
+  ---
+  Next Item on This Side	Alt+Down
+  Previous Item on This Side	Alt+Up
 View
   ( ) Show None
   ( ) Always Show Folders
   (*) Compare Files and Folder Structure
   ( ) Only Compare Files
+  [ ] Ignore Folder Structure
   ---
   [ ] Suppress Filters
   [ ] Log

@@ -34,7 +34,7 @@ use crate::commands::{CommandId, Ctx};
 use crate::dialog::DialogModel;
 pub use crate::folder::cells::{Cell, size_text};
 use crate::folder::cells::{CellInput, cell_of};
-use crate::folder::columns::ColumnLayout;
+use crate::folder::columns::{ColumnId, ColumnLayout};
 use crate::folder::glyphs::{Centre, GlyphInput, centre_of, glyph_of};
 use crate::folder::selection::{Hit, Mods, ViewSelection};
 use crate::job::Job;
@@ -2089,6 +2089,7 @@ impl FolderViewModel {
             CommandId::InsigIgnored => self.display.ignore_unimportant,
             CommandId::SuppressFilters => self.display.suppress_filters,
             CommandId::ShowLog => self.show_log,
+            CommandId::DirFlatten => self.request.patch.flatten.unwrap_or_else(|| self.flat()),
             _ => {
                 if let Some(preset) = preset_of(id) {
                     filter == preset
@@ -2170,6 +2171,32 @@ impl FolderViewModel {
                 self.rebuild();
             }
             CommandId::ShowLog => self.show_log = !self.show_log,
+            CommandId::SelectAllFiles
+            | CommandId::SelectNewerLeft
+            | CommandId::SelectNewerRight
+            | CommandId::SelectNewerBoth
+            | CommandId::SelectOrphanLeft
+            | CommandId::SelectOrphanRight
+            | CommandId::SelectOrphanBoth
+            | CommandId::SelectInvert => self.edit_select(id),
+            CommandId::ExistsNext | CommandId::ExistsPrev => {
+                if let Some(index) = self.exists_from(id == CommandId::ExistsNext) {
+                    let focus = self.selection.focus;
+                    self.with_selection(|sel, rows, present| {
+                        if let Some(row) = rows.get(index) {
+                            sel.select_one(row.node, present(row.node) & focus);
+                        }
+                    });
+                    self.scroll_to = Some(index as u32);
+                }
+            }
+            CommandId::DirFlatten => {
+                let flat = self.flat();
+                self.request.patch.flatten = Some(!flat);
+                if self.task.is_none() {
+                    self.refresh(service);
+                }
+            }
             _ => {
                 if let Some(preset) = preset_of(id) {
                     self.display.filter = preset;
@@ -2181,6 +2208,98 @@ impl FolderViewModel {
             }
         }
         Some(None)
+    }
+
+    /// An Edit command (D-238): the pure `hikasa_folder::select` with typed masks and the view's scope (its display
+    /// and its open folders), starting from an empty selection; Invert from the current one.
+    fn edit_select(&mut self, id: CommandId) {
+        use hikasa_folder::select::{SelKind, SelSide, SelState, SelectMask, SelectScope, select};
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        let is_open = |node: NodeId| self.is_open(node);
+        let scope = SelectScope {
+            display: &self.display,
+            expanded: Some(&is_open),
+        };
+        let iu = self.display.ignore_unimportant;
+        let mask = |side, state, kind| [SelectMask::Result { side, state, kind }];
+        let mut items = Selection::default();
+        match id {
+            CommandId::SelectAllFiles => {
+                hikasa_folder::select::select_all_files(&read, &scope, &mut items)
+            }
+            CommandId::SelectNewerLeft => select(
+                &read,
+                &scope,
+                &mask(SelSide::Left, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectNewerRight => select(
+                &read,
+                &scope,
+                &mask(SelSide::Right, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectNewerBoth => select(
+                &read,
+                &scope,
+                &mask(SelSide::All, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanLeft => select(
+                &read,
+                &scope,
+                &mask(SelSide::Left, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanRight => select(
+                &read,
+                &scope,
+                &mask(SelSide::Right, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanBoth => select(
+                &read,
+                &scope,
+                &mask(SelSide::All, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectInvert => {
+                items = self.selection.items.clone();
+                items.invert(&read, &scope);
+            }
+            _ => return,
+        }
+        drop(read);
+        self.selection.set_items(items);
+    }
+
+    /// The next/previous shown row present on every focus side (`ExistsNext`, `ExistsPrev`: gaps are rows a side
+    /// lacks), from the current row.
+    fn exists_from(&self, forward: bool) -> Option<usize> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let focus = self.selection.focus;
+        let hit = |i: &usize| {
+            self.rows
+                .get(*i)
+                .is_some_and(|r| present_sides(&read, r.node).contains(focus))
+        };
+        if forward {
+            let from = self.selected_index.map_or(0, |i| i + 1);
+            (from..self.rows.len()).find(hit)
+        } else {
+            let to = self.selected_index.unwrap_or(self.rows.len());
+            (0..to).rev().find(hit)
+        }
     }
 
     fn set_mode(&mut self, mode: FolderMode) {
@@ -2259,14 +2378,102 @@ impl FolderViewModel {
         {
             self.set_log_height(h);
         }
+        // The columns, widths and sort (D-234): an unknown column id is dropped with one warning.
+        let (columns, warning) = ColumnLayout::from_values(&|key| layout.layout_value(view, key));
+        if let Some(text) = warning {
+            self.notes.push(LogNote {
+                kind: LogKind::Warning,
+                text,
+            });
+        }
+        self.columns = columns;
+        self.rebuild();
     }
 
-    /// The layout keys this view owns (D-108): `log_panel`, `log_height`.
+    /// The layout keys this view owns (D-108): `log_panel`, `log_height`, and the columns' (D-234).
     pub fn layout_keys(&self) -> Vec<(&'static str, LayoutValue)> {
-        vec![
+        let mut keys = vec![
             ("log_panel", LayoutValue::Bool(self.show_log)),
             ("log_height", LayoutValue::Float(self.log_height)),
-        ]
+        ];
+        keys.extend(self.columns.to_layout());
+        keys
+    }
+
+    /// The columns (D-234).
+    pub fn columns(&self) -> &ColumnLayout {
+        &self.columns
+    }
+
+    /// The columns shown now: Path only while the comparison is flat (FC-014).
+    pub fn shown_columns(&self) -> Vec<ColumnId> {
+        self.columns.shown(self.flat())
+    }
+
+    /// True while the comparison ignores the folder structure (FC-014).
+    pub fn flat(&self) -> bool {
+        self.prepared().is_some_and(|p| p.rules().handling.flatten)
+    }
+
+    /// Changes the columns (a header drag, a separator drag, a fit); a sort change rebuilds the rows.
+    pub fn change_columns(&mut self, change: impl FnOnce(&mut ColumnLayout)) {
+        let sort = self.columns.sort;
+        change(&mut self.columns);
+        if self.columns.sort != sort {
+            self.rebuild();
+        }
+    }
+
+    /// A header click on `column` on `side` (D-235: ascending, descending, the tree order).
+    pub fn header_click(&mut self, column: ColumnId, side: Side) {
+        self.change_columns(|c| c.header_click(column, side));
+    }
+
+    /// The selected rows and bytes per side (FC-064): a folder counts the bytes of its shown rows below
+    /// (`TreeRead::totals`). Computed when the selection or the rows change, never per frame.
+    pub fn selection_counts(&self) -> [(u64, u64); 2] {
+        let key = (self.selection.moves, self.rows_revision);
+        if let Some((at, counts)) = self.counts.get()
+            && at == key
+        {
+            return counts;
+        }
+        self.counts_computed.set(self.counts_computed.get() + 1);
+        let mut counts = [(0u64, 0u64); 2];
+        if let Some(prepared) = self.prepared() {
+            let read = prepared.model().read();
+            for (node, sides) in self.selection.items.iter() {
+                let Some(view) = read.node(node) else {
+                    continue;
+                };
+                let totals = read.totals(node);
+                for (k, side) in [(0, SideSet::LEFT), (1, SideSet::RIGHT)] {
+                    if !sides.contains(side) {
+                        continue;
+                    }
+                    let entry = if k == 0 { view.left } else { view.right };
+                    let bytes = if view.is_folder() {
+                        if k == 0 {
+                            totals.left.bytes
+                        } else {
+                            totals.right.bytes
+                        }
+                    } else {
+                        entry.map_or(0, |e| e.size)
+                    };
+                    counts[k].0 += 1;
+                    counts[k].1 += bytes;
+                }
+            }
+        }
+        self.counts.set(Some((key, counts)));
+        counts
+    }
+
+    /// How often [`FolderViewModel::selection_counts`] computed (tests: once per change).
+    #[cfg(test)]
+    pub fn counts_computed(&self) -> u64 {
+        self.counts_computed.get()
     }
 
     /// The request that opens the same comparison again (`TabDuplicate`, D-107), and the titles.
@@ -2344,13 +2551,23 @@ impl FolderViewModel {
     /// The status bar (D-115): the state on the left, the details on the right.
     pub fn status_items(&self) -> StatusItems {
         let status = self.status();
+        let mut right = Vec::new();
+        if !self.selection.items.is_empty() {
+            let [l, r] = self.selection_counts();
+            right.push(format!(
+                "Selected: L {} ({}) · R {} ({})",
+                l.0,
+                size_text(l.1),
+                r.0,
+                size_text(r.1)
+            ));
+        }
+        if !status.detail.is_empty() {
+            right.push(status.detail);
+        }
         StatusItems {
             left: status.state,
-            right: if status.detail.is_empty() {
-                Vec::new()
-            } else {
-                vec![status.detail]
-            },
+            right,
         }
     }
 

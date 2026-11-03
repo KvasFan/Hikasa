@@ -93,15 +93,15 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `UpdateBoth` | Actions | Update Both... |  | Synchronizes by copying newer and orphan items from left to right and from right to left. | planned |
 | `MirrorRight` | Actions | Mirror to Right... | Shift+Ctrl+R | Synchronizes by replacing all different items on right, deleting any orphan items on right, and copying any left orphan items to right. | planned |
 | `MirrorLeft` | Actions | Mirror to Left... | Shift+Ctrl+L | Synchronizes by replacing all different items on left, deleting any orphan items on left, and copying any right orphan items to left. | planned |
-| `SelectAllFiles` | Edit | Select All Files | Shift+Ctrl+A | Selects all visible files. | planned |
-| `SelectNewerList` | Edit | Select Newer |  | Selects all newer files on picked sides. | planned |
-| `SelectNewerLeft` | Edit | Left Side |  | Selects all newer files on the left. | planned |
-| `SelectNewerRight` | Edit | Right Side |  | Selects all newer files on the right. | planned |
-| `SelectNewerBoth` | Edit | Both Sides |  | Selects all newer files on both sides. | planned |
-| `SelectOrphanList` | Edit | Select Orphans |  | Selects all orphan files on picked sides. | planned |
-| `SelectOrphanLeft` | Edit | Left Side |  | Selects all orphan files on the left. | planned |
-| `SelectOrphanRight` | Edit | Right Side |  | Selects all orphan files on the right. | planned |
-| `SelectOrphanBoth` | Edit | Both Sides |  | Selects all orphan files on both sides. | planned |
+| `SelectAllFiles` | Edit | Select All Files | Shift+Ctrl+A | Selects all visible files. | implemented |
+| `SelectNewerList` | Edit | Select Newer |  | Selects all newer files on picked sides. | implemented |
+| `SelectNewerLeft` | Edit | Left Side |  | Selects all newer files on the left. | implemented |
+| `SelectNewerRight` | Edit | Right Side |  | Selects all newer files on the right. | implemented |
+| `SelectNewerBoth` | Edit | Both Sides |  | Selects all newer files on both sides. | implemented |
+| `SelectOrphanList` | Edit | Select Orphans |  | Selects all orphan files on picked sides. | implemented |
+| `SelectOrphanLeft` | Edit | Left Side |  | Selects all orphan files on the left. | implemented |
+| `SelectOrphanRight` | Edit | Right Side |  | Selects all orphan files on the right. | implemented |
+| `SelectOrphanBoth` | Edit | Both Sides |  | Selects all orphan files on both sides. | implemented |
 | `DiffNext` | Search | Next Difference | Ctrl+N | Positions at next difference. | implemented |
 | `DiffPrev` | Search | Previous Difference | Ctrl+P | Positions at previous difference. | implemented |
 | `FavCompareAll` | Favorites | Show All |  | Shows same, left orphan, right orphan, left newer, right newer and difference items. | implemented |
@@ -144,7 +144,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `DirShowAll` | View | Always Show Folders |  | Shows all folders, ignoring the display filter. | implemented |
 | `DirCompareStructure` | View | Compare Files and Folder Structure |  | Shows folders if they, or items they contain, match the display filter. | implemented |
 | `DirCompareFilesOnly` | View | Only Compare Files |  | Shows folders only if they contain files matching the display filter. | implemented |
-| `DirFlatten` | View | Ignore Folder Structure |  | Compares all files as if they were in a single folder. | planned |
+| `DirFlatten` | View | Ignore Folder Structure |  | Compares all files as if they were in a single folder. | implemented |
 | `ShowCenter` | View | Center Pane |  | Shows or hides center pane. | planned |
 
 ## Folder views — shared
@@ -173,11 +173,11 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `ExplorerList` | Actions | File Manager |  | Shows file manager context menu for selected items. | planned |
 | `ExpandAll` | Edit | Expand All |  | Opens all folders. | implemented |
 | `CollapseAll` | Edit | Collapse All |  | Closes all folders. | implemented |
-| `SelectInvert` | Edit | Invert Selection |  | Selects all items not currently selected, and deselects all items currently selected. | planned |
+| `SelectInvert` | Edit | Invert Selection |  | Selects all items not currently selected, and deselects all items currently selected. | implemented |
 | `Refresh` | Edit | Refresh | F5 | Refreshes open folders. | planned |
 | `FullRefresh` | Edit | Full Refresh | Ctrl+F5 | Refreshes entire comparison. | implemented |
-| `ExistsNext` | Search |  | Alt+Down | Positions at next filename, skipping over gaps. | planned |
-| `ExistsPrev` | Search |  | Alt+Up | Positions at previous filename, skipping over gaps. | planned |
+| `ExistsNext` | Search | Next Item on This Side | Alt+Down | Positions at next filename, skipping over gaps. | implemented |
+| `ExistsPrev` | Search | Previous Item on This Side | Alt+Up | Positions at previous filename, skipping over gaps. | implemented |
 | `FindFilename` | Search | Find Filename... | Ctrl+F | Finds filename matching search string. | planned |
 | `FindFilenameNext` | Search | Find Next Filename | F3 | Finds next filename matching search string. | planned |
 | `FindFilenamePrev` | Search | Find Previous Filename | Shift+F3 | Finds previous filename matching search string. | planned |

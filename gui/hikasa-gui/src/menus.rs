@@ -208,6 +208,14 @@ impl MenuContext<'_> {
                     items,
                 }
             }
+            id if !crate::commands::list_children(id).is_empty() => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: crate::commands::list_children(id)
+                    .iter()
+                    .filter(|c| lookup(self.scope, **c).is_some())
+                    .map(|c| self.item(*c, None))
+                    .collect(),
+            },
             id => self.item(id, None),
         }
     }
@@ -221,6 +229,7 @@ impl MenuContext<'_> {
             .iter()
             .filter(|e| e.menu == menu && !e.caption.is_empty() && (e.in_menu || show_all))
             .filter_map(|e| self.shown(e).map(|id| (e.section, id)))
+            .filter(|(_, id)| !crate::commands::in_a_list(*id))
             .collect()
     }
 }

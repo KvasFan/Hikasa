@@ -59,6 +59,8 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_folder_commands;
+#[cfg(test)]
 mod tests_folder_ops;
 #[cfg(test)]
 mod tests_folder_ops_fixes;

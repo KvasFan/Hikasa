@@ -150,12 +150,12 @@ impl ColumnLayout {
     /// The keys of `[layout.<view>]` this layout owns: `columns`, `widths` (only those dragged), `sort`, `sort_side`,
     /// `sort_descending` (the sort keys only with a sort).
     pub fn to_layout(&self) -> Vec<(&'static str, LayoutValue)> {
-        let mut out = vec![
-            (
-                "columns",
-                LayoutValue::Texts(self.visible.iter().map(|c| c.as_str().to_owned()).collect()),
-            ),
-            (
+        let mut out = vec![(
+            "columns",
+            LayoutValue::Texts(self.visible.iter().map(|c| c.as_str().to_owned()).collect()),
+        )];
+        if !self.widths.is_empty() {
+            out.push((
                 "widths",
                 LayoutValue::Numbers(
                     self.widths
@@ -163,8 +163,8 @@ impl ColumnLayout {
                         .map(|(id, w)| (id.as_str().to_owned(), f64::from(*w)))
                         .collect(),
                 ),
-            ),
-        ];
+            ));
+        }
         if let Some(sort) = &self.sort {
             out.push(("sort", LayoutValue::Text(sort.column.as_str().to_owned())));
             out.push((
