@@ -214,15 +214,13 @@ pub fn expand(word: &Word, ctx: &ExpandContext<'_>) -> Result<OsString, ScriptEr
     Ok(out)
 }
 
-/// What a script references (§1.8.4): the highest `%n`, the environment names, `%0`.
+/// What a script references (§1.8.4): the highest `%n` and the environment names.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct References {
     /// The highest `%n` (0: none).
     pub args: u8,
     /// The names of `%NAME%`, as written.
     pub env: BTreeSet<String>,
-    /// `%0` is used.
-    pub uses_script_path: bool,
 }
 
 impl References {
@@ -233,7 +231,6 @@ impl References {
         }
         for piece in pieces(&word.text) {
             match piece {
-                Piece::Arg(0) => self.uses_script_path = true,
                 Piece::Arg(n) => self.args = self.args.max(n),
                 Piece::Var(name) => {
                     self.env.insert(name.to_owned());

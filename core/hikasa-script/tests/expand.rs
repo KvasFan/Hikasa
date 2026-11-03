@@ -66,6 +66,11 @@ fn the_form_table() {
         ("%HOME_X%/x", "/h/x"),
         ("x%HOME_X", "x%HOME_X"),
         ("%1%2", "ab c"),
+        // Only `[A-Za-z_][A-Za-z0-9_]*` between two `%` is a name: anything else is itself.
+        ("%x y%", "%x y%"),
+        ("%a-b%", "%a-b%"),
+        ("%a.b%", "%a.b%"),
+        ("%é%", "%é%"),
     ];
     for (text, expected) in table {
         assert_eq!(

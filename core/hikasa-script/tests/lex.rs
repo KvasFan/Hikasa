@@ -54,6 +54,22 @@ fn an_empty_quoted_word_is_a_word() {
 }
 
 #[test]
+fn an_empty_quoted_word_before_a_continuation_stays() {
+    // `""&`: the `&` continues the line and the empty quoted word before it is a word.
+    let lines = lex(b"log \"\"&\n  x\n").unwrap();
+    assert_eq!(lines.len(), 1);
+    let texts: Vec<(&str, bool)> = lines[0]
+        .words
+        .iter()
+        .map(|w| (w.text.as_str(), w.quoted))
+        .collect();
+    assert_eq!(texts, vec![("log", false), ("", true), ("x", false)]);
+    // An unquoted `&` alone is dropped with nothing left of its word.
+    let lines = lex(b"log &\n  x\n").unwrap();
+    assert_eq!(lines[0].words.len(), 2);
+}
+
+#[test]
 fn a_quoted_ampersand_does_not_continue() {
     let lines = lex(b"load \"x&\" y\nbeep\n").unwrap();
     assert_eq!(lines.len(), 2);

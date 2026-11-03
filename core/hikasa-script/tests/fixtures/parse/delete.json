@@ -125,7 +125,6 @@
   ],
   "references": {
     "args": 0,
-    "env": [],
-    "uses_script_path": false
+    "env": []
   }
 }
