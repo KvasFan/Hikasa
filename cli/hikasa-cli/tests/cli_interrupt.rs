@@ -369,6 +369,59 @@ fn the_second_ctrl_c_exits_at_once_where_a_cancel_cannot_be_seen() {
     drop(stdin);
 }
 
+/// A8.14: Ctrl-C during a script's copy stops the copy as `folder op` stops (what was done stays whole), the later lines
+/// do not run, exit 100, and the log ends with `Script stopped at line <n>`.
+#[test]
+fn a8_14_ctrl_c_during_a_script_run_stops_it_at_that_line() {
+    let s = Sandbox::new();
+    s.file("l/a", b"first\n");
+    huge(&s, "l/b");
+    s.file("l/c", b"last\n");
+    s.dir("r");
+    s.file(
+        "s.txt",
+        "log normal script.log\noption confirm:yes-to-all\nload l r\nselect all\ncopy left->right\nbeep\n",
+    );
+    let mut child = spawn(&s, &["script", "run", "s.txt"]);
+    wait_until(&mut child, "the copy of the hole", || {
+        names(&s, "r").iter().any(|name| name != "a")
+    });
+    sigint(&child);
+    let status = wait(&mut child, LIMIT);
+    assert_eq!(status.code(), Some(100), "{status:?}");
+    assert_eq!(names(&s, "r"), ["a"]);
+    let log = std::fs::read_to_string(s.join("script.log")).unwrap();
+    assert!(
+        log.contains("info - Script stopped at line 5 (exit 100)"),
+        "{log}"
+    );
+    assert!(!log.contains("L6"), "the line after it did not run: {log}");
+}
+
+/// A8.14: a second Ctrl-C ends a script at once where its first cannot be seen (a text report reading standard input).
+#[test]
+fn a8_14_a_second_ctrl_c_ends_a_script_at_once() {
+    let s = Sandbox::new();
+    s.file("b.txt", "other\n");
+    s.file(
+        "s.txt",
+        "text-report layout:summary output-to:out.txt - b.txt\nbeep\n",
+    );
+    let mut child = spawn(&s, &["script", "run", "s.txt"]);
+    let stdin = child.stdin.take().expect("stdin");
+    wait_for_log(&s, &mut child, ARMED);
+
+    sigint(&child);
+    wait_for_log(&s, &mut child, CANCELLING);
+    sigint(&child);
+    let status = wait(&mut child, LIMIT);
+
+    assert_eq!(status.code(), Some(100), "{status:?}");
+    assert!(logged(&s, EXITING), "the second Ctrl-C ended the run");
+    assert!(!s.join("out.txt").exists());
+    drop(stdin);
+}
+
 /// A command without a job installs nothing: Ctrl-C ends it the way the OS does, also when it waits. Standard input
 /// takes more than a pipe holds, so when the write returns the command is reading, and it reads until the end.
 #[test]
@@ -515,6 +568,25 @@ mod at_a_terminal {
         let status = wait(&mut child, LIMIT);
         assert_eq!(status.code(), Some(100));
         assert_eq!(std::fs::read(s.join("r/f")).unwrap(), b"old");
+    }
+
+    /// A8.14, §1.8.12: Ctrl-C while a script's question waits ends the run: exit 100, nothing written, the later
+    /// lines not run.
+    #[test]
+    fn a8_14_ctrl_c_at_a_script_question_ends_the_run() {
+        let s = Sandbox::new();
+        s.file("l/f", "new");
+        s.file("r/f", "old");
+        s.file("s.txt", "load l r\nselect all\ncopy left->right\nbeep\n");
+        let (mut child, printed) = spawn(&s, &["script", "run", "s.txt"]);
+        wait_for_a_prompt(&mut child, &printed);
+        type_in(&mut child, b"\x03");
+        let status = wait(&mut child, LIMIT);
+        assert_eq!(status.code(), Some(100));
+        assert_eq!(std::fs::read(s.join("r/f")).unwrap(), b"old");
+        let text =
+            String::from_utf8_lossy(&printed.lock().expect("the printed bytes")).into_owned();
+        assert!(!text.contains("info L4 beep"), "{text}");
     }
 
     /// Rule 6 stamps what it listed: a file edited while the question is open stays, with its folder (p16 of the review).
