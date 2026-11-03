@@ -185,7 +185,7 @@ pub trait HostUi {
     fn event(&mut self, event: ScriptEvent);
     /// True when the run can ask (a terminal or a window, and not silent).
     fn can_ask(&self) -> bool;
-    /// "The command at line <n> failed: <message>. Continue the script?": true for Yes.
+    /// "The command at line `<n>` failed: `<message>`. Continue the script?": true for Yes.
     fn ask_continue(&mut self, line: u32, message: &str) -> bool;
     /// `beep`.
     fn beep(&mut self);
