@@ -291,7 +291,7 @@ fn phase_word(phase: Phase) -> String {
     phase.as_str().replace('_', " ")
 }
 
-/// The status window of a run (§1.8.14): the script's path, "Command <i> of <n>, line <l>: <text>", the current
+/// The status window of a run (§1.8.14): the script's path, `Command <i> of <n>, line <l>: <text>`, the current
 /// call's progress, the log lines, the end line; *Stop* while it runs, *Close* after.
 pub struct ScriptDialog {
     name: String,
@@ -405,7 +405,7 @@ impl ScriptDialog {
         &self.path
     }
 
-    /// "Command <i> of <n>, line <l>: <text>" of the command that runs (or ran last).
+    /// `Command <i> of <n>, line <l>: <text>` of the command that runs (or ran last).
     pub fn command_line(&self) -> Option<String> {
         self.current.as_ref().map(|(index, line, text)| {
             format!("Command {index} of {}, line {line}: {text}", self.commands)
@@ -433,8 +433,8 @@ impl ScriptDialog {
         self.summary
     }
 
-    /// The end line (SCR-004's wording): "Script completed in <time>", "Script stopped at line <n>" or "Script failed
-    /// (exit <code>)".
+    /// The end line (SCR-004's wording): `Script completed in <time>`, `Script stopped at line <n>` or `Script failed
+    /// (exit <code>)`.
     pub fn end_line(&self) -> Option<String> {
         let end = self.end?;
         Some(if end.exit_code == 0 {
@@ -714,7 +714,7 @@ impl DialogModel for ScriptDialog {
     }
 }
 
-/// The stop-on-error question (§1.8.7): "The command at line <n> failed: <message>. Continue the script?", Yes or No;
+/// The stop-on-error question (§1.8.7): `The command at line <n> failed: <message>. Continue the script?`, Yes or No;
 /// Esc and the window's close button are No.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinueDialog {
