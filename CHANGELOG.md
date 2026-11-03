@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added (W9 Folder Compare and Sync in the window, part a: the view; in progress)
+- **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
+  the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,
+  `widths`, `sort`, `sort_side`, `sort_descending`) and in a session's `[view]`. A header click sorts by that column on
+  that side, a second click the other way, a third back to the tree order; folders stay first and only siblings move.
+- **Glyphs.** A hollow folder for one not scanned (while comparing, after a stop, an orphan folder left unscanned), a
+  filled one in the new scheme colour `[folder] unopened_folder` for a folder not opened because subfolders are not
+  scanned automatically, a red X where a listing failed, an arrow on links, the zipper on archives; the centre column
+  shows a content result, the newer side's arrow or the state, an Ignored badge and the Space mark.
+- **Selection.** Many rows on either side: click a side or the centre, Ctrl and Shift, a swipe down a side (both sides
+  once it crosses the centre), Shift+arrows, Ctrl+Space, Space marks an item, Shift+Left/Right keep one side; the
+  status bar counts the selected items and bytes per side. Edit ▸ Select All Files, Select Newer and Select Orphans
+  (left, right, both) and Invert Selection select what the same `--select` words select; Search ▸ Next/Previous Item on
+  This Side skip over the gaps of the focused side; View ▸ Ignore Folder Structure.
+- Core: `hikasa_folder::view` (the sort), `SyncOptions::swapped`, `api::paths` (`path_completions`, `browse_places`,
+  `archive_format_of`), `vfs_op_plan`/`vfs_op_execute`, `human::local_time_text`.
+
+### Changed (W9a)
+- The Modified column shows local times (the zone of the clock), no longer UTC.
+- Copy to Right, Copy to Left, Delete and Delete Permanently act on the whole selection.
+
 ### Added (W8 scripts, part a: the language and headless runs)
 - **`hikasa script run` and `hikasa script check`.** A script is a text file of commands over one invisible folder
   comparison: load a session or two folders, set criteria and filters, expand, select, compare, copy, move, copy or move

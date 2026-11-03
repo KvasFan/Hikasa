@@ -8343,7 +8343,50 @@ product name of docs/17 §5 anywhere: grep before each commit.
 *To be written by each part*, as §1.8.20: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property and integration test was checked by (§6.9 rules).
 
-**W9a.** *(empty until W9a)*
+**W9a.** *(in progress; the part's first implementer stopped at a clean commit, a second one continues.)*
+Interpretations and extensions of §1.9.2–§1.9.11 so far:
+
+1. `ColumnId` is `hikasa_folder::view::SortColumn` re-exported (one set of ids for the header, the sort and the layout
+   files); `extension` and `attributes_text` live in `hikasa_folder::view` so the cells and the sort share them.
+2. Name sorts with the tree's kind rank (Folder, File, Symlink, Other) before the folded name, so *Name ascending on the
+   left* is the tree order exactly; the other columns put folders first and compare the value alone. Descending
+   reverses the value only: ties keep the tree order both ways, a missing value sorts first ascending.
+3. `SyncOptions::swapped` keeps the orphans reading and the FS-005 options (not side-specific); `SyncPreset`,
+   `SyncAction`, `Situation` and `SyncMatrix` gain `mirrored`.
+4. `path_completions` splits the typed text with the pure `split_typed` (Windows: `/` and `\`, a bare `C:`) and matches
+   with `completion_matches` (NFC; folded where the back-end lacks `CASE_SENSITIVE`); it declines every entry to the
+   prefilter, so entries the folder record types are not stat'ed; names that are not valid Unicode are left out (they
+   cannot be typed back); a folder's `text` ends with the platform separator, an archive's does not.
+5. `browse_places` reads `mru.folders` from `state.toml` itself; the pure `places(platform, home, cwd, probe, recent)`
+   takes the drive probe, so drives are tested with a table on every host.
+6. `vfs_op_plan` returns `VfsOpPlan { plan, preview }`: the plan unchanged (what `vfs_op_execute` runs) and the dry run
+   of a copy that `note_shadow_drops` annotated.
+7. `LayoutValue` gains `Text`, `Texts`, `Numbers` (no longer `Copy`) with `to_toml`/`of_toml`; a string now reads as a
+   value (W4's test changed: a date still reads as none). `widths` is written only when a width was dragged.
+8. `human` re-exports jiff's `TimeZone`: the GUI crate has no `jiff`, `toml` or `proptest` dependency and D-258 keeps
+   its manifest unchanged, so the GUI's property (A9.4) draws its cases from a seeded xorshift (2,000 sequences).
+9. The catalogue's `SelectNewerList` and `SelectOrphanList` are submenus (`commands::LIST_CHILDREN`): their children
+   show in them, not in the menu; both become `implemented` with their children.
+10. A plan's `SelectRequest` (`folder_view::select_request`) has `expand: None` and `include_hidden: None` (the option)
+    until W9b's dialogs ask; the W6d Delete dialog of several rows names "N selected rows" and "N selected items" per
+    side.
+11. The re-run and refresh restore keep every selected row by path with its sides and the current row.
+12. `SyncBaseView`, `CompareBaseView` and `Scope::Sync` need the Folder Sync view and stay `planned` until W9b;
+    W6d's `plan_counts` moves to core with `OpPreview` in W9b (§1.9.12, §1.9.22).
+
+Mutations so far (each failed the tests named, then was reverted):
+
+| Mutation | Caught by |
+|---|---|
+| sort tie order reversed (`b.position.cmp(&a.position)`) | `view_sort` `every_column_both_ways_on_both_sides`, `p_view_sort` (seed `cc 33ef2b85…`) |
+| folders-first dropped from the sort | `folders_first_and_sorted_among_themselves`, `every_column…`, `p_view_sort` |
+| matrix mirrored without mirroring the situation | `sync_swapped` both tests |
+| overrides not mirrored | `p_swapped_options_do_the_same_writes` |
+| completion ignores the back-end's case rule | `path_completion` `completions_on_disk_home_and_archives` (Linux: ext4 is case-sensitive) |
+| a swipe that keeps one side across the centre (`moved_over` a no-op) | `tests_selection::a_swipe_crossing_the_centre_selects_both_sides` |
+| a selection that keeps rows no longer shown (`retain_shown` keeps all) | `rows_no_longer_shown_leave_the_selection`, `p_random_gestures_keep_the_selection_shown_and_present` |
+| the hollow and unopened glyphs swapped | `tests_folder_view::each_row_of_the_glyph_table` |
+| `SelectNewerLeft` selecting the right | `tests_folder_commands::a9_4_each_edit_command_equals_the_cli_selection` |
 
 **W9b.** *(empty until W9b)*
 
