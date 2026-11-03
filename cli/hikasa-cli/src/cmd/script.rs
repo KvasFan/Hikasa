@@ -98,13 +98,14 @@ fn check_script(ctx: &mut Ctx<'_>, args: &ScriptCheckArgs) -> u8 {
     if !check.errors.is_empty() {
         return check_failed(ctx, &text, &check, &args.args);
     }
-    let dto = check.dto(&text, &args.args);
     if ctx.out.json() {
+        let dto = check.dto(&text, &args.args);
         return ctx.json_success(SCRIPT_SCHEMA, 0, dto, &[], OP);
     }
+    // The count only: the document's command list is not built (G14).
     let written = ctx
         .out
-        .lines([format!("ok: {} commands", dto.counts.commands)]);
+        .lines([format!("ok: {} commands", check.commands())]);
     ctx.human_done(written, 0, SCRIPT_SCHEMA, &[], OP)
 }
 
