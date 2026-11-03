@@ -232,6 +232,28 @@ fn a8_7_exit_codes_stop_lines_and_not_run() {
             "{source}"
         );
         assert_eq!(statuses(&outcome), *words, "{source}: {:?}", ui.lines);
+        // The counts `ScriptFinished` carries (A8.17): each status counted as the document counts it.
+        let summary = outcome.summary();
+        let count = |word: &str| words.iter().filter(|w| **w == word).count() as u32;
+        assert_eq!(
+            (
+                summary.commands,
+                summary.ok,
+                summary.failed,
+                summary.refused,
+                summary.not_run,
+                summary.stopped_at
+            ),
+            (
+                words.len() as u32,
+                count("ok"),
+                count("failed"),
+                count("refused"),
+                count("not_run"),
+                stop.map(|(line, _)| line)
+            ),
+            "{source}"
+        );
     }
     let w = world();
     let (_, ui) = w.run("load l sftp://deploy@host/var/www\n");
@@ -417,8 +439,22 @@ fn a8_19_the_progress_of_the_current_call_is_an_event() {
         progress: Some(Arc::clone(&seen)),
         ..Ui::default()
     };
-    let outcome = w.run_with(source, yes(), &mut ui);
+    // The run's own sink (the GUI's job indicator, the CLI's progress line) still gets every report: the tee keeps it.
+    let reports = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counted = Arc::clone(&reports);
+    let job = hikasa_session::jobs::JobControl {
+        progress: Arc::new(move |_: Progress| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }),
+        ..common::job(&w.service, JobKind::Script)
+    };
+    let outcome = w.run_job(source, yes(), &mut ui, &job, None);
     assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert!(
+        reports.load(std::sync::atomic::Ordering::SeqCst) >= seen.lock().unwrap().len() as u64,
+        "the job's own sink got the reports too"
+    );
+    assert!(reports.load(std::sync::atomic::Ordering::SeqCst) > 0);
     let phases: std::collections::BTreeSet<String> = seen
         .lock()
         .unwrap()
