@@ -68,7 +68,7 @@ fn inputs(dir: &Path, case: &Case) -> std::path::PathBuf {
 }
 
 /// Renders an interleaved request of `options` and `output` words (twice: identical bytes, INV-RPT-1).
-pub fn render(
+fn render(
     cmp: &TextComparison,
     defaults: &ReportDefaults,
     options: &[String],

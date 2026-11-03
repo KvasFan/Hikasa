@@ -102,7 +102,7 @@ pub fn unix_paths(bytes: &[u8]) -> Vec<u8> {
             rest = &rest[at + windows.len()..];
             // The path goes on to the next quote, space, `<` or line end: its separators are `/` on Unix.
             let end = rest
-                .find(|c: char| matches!(c, '"' | ' ' | '<' | '\n' | ')' | ','))
+                .find(['"', ' ', '<', '\n', ')', ','])
                 .unwrap_or(rest.len());
             fixed.push_str(&rest[..end].replace('\\', "/"));
             rest = &rest[end..];

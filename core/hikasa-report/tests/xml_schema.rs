@@ -224,11 +224,7 @@ fn super_line() -> impl Strategy<Value = String> {
 #[test]
 fn a7_7_every_golden_and_64_generated_documents_pass() {
     let goldens = goldens();
-    assert!(
-        goldens.len() >= 35 + 25 + 1,
-        "XML goldens: {}",
-        goldens.len()
-    );
+    assert!(goldens.len() > 35 + 25, "XML goldens: {}", goldens.len());
     for path in &goldens {
         let bytes = std::fs::read(path).unwrap();
         xmlcheck::check(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

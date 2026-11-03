@@ -75,6 +75,17 @@ impl ReportError {
         }
     }
 
+    /// True when the report stopped because its [`crate::CancelWriter`] saw a cancel (the Service maps it to
+    /// `Cancelled`).
+    pub fn is_cancelled(&self) -> bool {
+        match self {
+            ReportError::Io(e) => e
+                .get_ref()
+                .is_some_and(|inner| inner.is::<crate::cancel::CancelledError>()),
+            _ => false,
+        }
+    }
+
     /// An [`ReportError::InvalidOption`].
     pub(crate) fn invalid(
         option: &'static str,
@@ -95,6 +106,7 @@ impl Classify for ReportError {
     fn kind(&self) -> ErrorKind {
         match self {
             ReportError::Unsupported { .. } => ErrorKind::Unsupported,
+            ReportError::Io(_) if self.is_cancelled() => ErrorKind::Cancelled,
             ReportError::Io(e) => io_error_kind(e),
             ReportError::Json(_) => ErrorKind::Internal,
             ReportError::InvalidOption { .. }

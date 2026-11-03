@@ -97,7 +97,7 @@ fn text_inputs(dir: &Path, case: &TextCase) -> std::path::PathBuf {
 }
 
 /// The XML dump of a text comparison (twice: identical bytes), checked.
-pub fn text_xml(
+fn text_xml(
     cmp: &TextComparison,
     options: &[String],
     defaults: &ReportDefaults,
@@ -141,7 +141,7 @@ pub fn text_xml(
 }
 
 /// The XML dump of a folder comparison with `display`, checked.
-pub fn folder_xml(cmp: &FolderComparison, display: DisplayOptions) -> Vec<u8> {
+fn folder_xml(cmp: &FolderComparison, display: DisplayOptions) -> Vec<u8> {
     let mut defaults = ReportDefaults::new("xml");
     defaults.folder_display = display;
     let req = ReportRequest::parse(ReportKind::Folder, &ReportWords::default(), &defaults).unwrap();
@@ -218,7 +218,7 @@ fn a7_6_folder_xml_of_every_folder_fixture() {
 }
 
 /// The hostile inputs of A7.5: every character the escaping must handle, in lines, in the title and in a name.
-pub const HOSTILE_LEFT: &[u8] = b"nul \x00 esc \x1b[1m end\n\
+const HOSTILE_LEFT: &[u8] = b"nul \x00 esc \x1b[1m end\n\
 fffe \xef\xbf\xbe ffff \xef\xbf\xbf\n\
 bidi \xe2\x80\xae txt.exe \xe2\x81\xa6x\xe2\x81\xa9\n\
 cdata ]]> & < > \" '\n\
@@ -226,7 +226,7 @@ lossy \xff\xfe bytes\n\
 emoji \xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7 \xf0\x9f\x87\xa9\xf0\x9f\x87\xaa\n\
 tab\there\n\
 same\n";
-pub const HOSTILE_RIGHT: &[u8] = b"nul \x00 esc \x1b[2m end\n\
+const HOSTILE_RIGHT: &[u8] = b"nul \x00 esc \x1b[2m end\n\
 fffe \xef\xbf\xbe ffff \xef\xbf\xbf!\n\
 bidi \xe2\x80\xae exe.txt \xe2\x81\xa6y\xe2\x81\xa9\n\
 cdata ]]> &amp; <b> \" '\n\

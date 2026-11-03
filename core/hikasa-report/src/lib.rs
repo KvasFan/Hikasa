@@ -78,6 +78,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+mod cancel;
 mod cells;
 mod error;
 mod escape;
@@ -92,6 +93,7 @@ mod summary_counts;
 pub mod text;
 mod xml;
 
+pub use cancel::{CANCEL_CHECK_BYTES, CancelWriter};
 pub use error::ReportError;
 pub use escape::{escape_controls, escape_name, escape_terminal};
 pub use folder::{
