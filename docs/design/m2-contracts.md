@@ -7438,7 +7438,86 @@ Mutations (each reverted; a property's minimal case was not persisted):
 The review's s03 (`touch DIR` with sides `all`) is equivalent: the planner recomputes a direction's sides. The fixes of
 notes 23–29 were each checked against the code before them (the new test fails there).
 
-**W8b.** (to be written)
+**W8b.** Interpretations and extensions of §1.8.13, §1.8.14, §1.8.16 and §1.8.19:
+
+1. **Carry-overs of W8a.** P-SCRIPT gives every folder of both trees one time, set last, deepest first, after the files'
+   times and read-only bits (`script_common::set_folder_times`): the documents it compares show folder rows (the empty
+   folder, `sub`) and NTFS moves a folder's time when a file inside gets its time. `set_mtime` opens a folder on Windows
+   with `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_WRITE_ATTRIBUTES` (`OpenOptionsExt`, no `unsafe`). The property still
+   compares the folders' times (they are fixed, not excluded). §1.8.2's `References` lost `uses_script_path`.
+2. **`RunScript`'s new fields are left off the wire at their defaults** (`skip_serializing_if`), so an older peer reads
+   the frame of an M1 client byte for byte; `ScriptSummary` fields default when absent.
+3. **The handler, not the server, answers `RunScript`:** `IpcHandler::handle_script(request, Option<ScriptWaiter>)` is
+   additive with a default that answers `unsupported_request` (what an older GUI answers), so the test fakes and older
+   handlers need no change. The gate of `ViewClosed` is generalized (`Opened::View | Script`): `ScriptFinished` goes
+   after an `Ok`, once; a `ScriptWaiter` dropped without `script_finished`, and `ServerHandle::shutdown` during a waited
+   run, send `ScriptFinished{100}` with an empty summary.
+4. **The CLI side** is `Service::gui_script_request` (absolute path, or an archive member's canonical spec; standard
+   input cannot be sent; the cwd; only the referenced variables; UTF-8 only) and `Service::gui_run_script` (connect or
+   launch, `ScriptFinished` waited without a timeout as `ViewClosed` is), `GuiScriptOptions`, `GuiScriptReport::dto`
+   (`hikasa.gui_script.v1`), `ScriptOutcome::summary`. `gui script` checks with the GUI's refusal of `output-to:-`
+   (`STDOUT_NONE`), so that 106 is the CLI's. Errors keep the exit codes of `ApiOp::GuiOpen { wait }` (102 for a lost
+   wait); 105/106 are the script's, `busy` and `invalid_request` 100.
+5. **`Service::with_cwd`** (additive): the GUI runs a client's script with the client's current folder. `EnvFacts` moved
+   from the service's shared `Inner` to the `Service` handle (`Arc<EnvFacts>`), so a handle with another cwd shares the
+   settings, the router, the pool and the job ids.
+6. **`ScriptEvent::Progress` is wired** through the additive `ScriptUi::progress_events()` (`Option<ProgressEvents>`, an
+   `Arc<dyn Fn(ScriptEvent) + Send + Sync>`; default `None`): the host tees each call's progress sink into it
+   (`ProgressTee`, throttled by `Service::job` to 20 Hz per phase). Progress is reported on the calls' own threads, so it
+   cannot go through `HostUi::event`; the CLI keeps its job progress line and takes none.
+7. **The shared parser:** the first positional argument starting with `@` is the script; every other positional
+   argument, before or after it and after `--`, is one of its arguments in order (a second `@word` too); `@x` after a
+   `--` with no script before is a spec. `OpenArgs` gains `script: Option<ScriptArgs>`, `silent`, `closescript`
+   (additive); `--silent` without a script warns nothing (it is a settings package's, D-127), `--closescript` without
+   one warns `switch_ignored` ("applies to a script (`@<file>`) only"). The package check reads `OpenArgs::silent`
+   instead of `OpenOptions::extra`.
+8. **One script at a time:** `Shared` holds the slot (`ScriptClaim`, released when dropped), taken before the check and
+   held by the status window until the run ended, so a `RunScript` and the Run Script dialog meet the same `busy`. A
+   `RunScript` that does not check frees it at once.
+9. **The status window** (`ScriptDialog`) runs the script on a GUI job thread (`Job::spawn`, the GUI's `Service` or one
+   with the client's cwd); its interface (`WorkerUi`) posts each event, question and beep through a channel and wakes
+   the window. W6's questions travel as a clone of the `Confirmation` machine and come back answered (a dropped reply is
+   a Cancel); "Do not ask again" is not offered for a script (`PlanConfirmDialog::for_script`: a script line means the
+   same whatever a dialog did, D-208). The stop-on-error question is `ContinueDialog` (No is the default; Esc and the
+   close button are No). New `DialogRequest`s `Push`, `Log`, `Notice`, `Beep`, `Effect::Beep` and
+   `NoticeAction::ShowScript` are additive.
+10. **Stop:** the status window's *Stop* is its Cancel role (Esc while it runs); the window's close button is Stop too
+    (`on_close` keeps the window), and the status window is not `busy()` in the dialog stack's sense, so it never blocks
+    the program's exit: `AppCore::shutdown` stops a run first, then the server sends `ScriptFinished{100}` to a waiting
+    client. A status window dropped while its script runs stops it.
+11. **Log panel entries:** an `info` line with a line number is a `Summary` entry and every `error` line an `Error`
+    entry, source `script <name>`, text `L<n> <text>`; the end notice is also a log entry (D-117).
+12. **The beep in the window** is `ViewportCommand::RequestUserAttention(Informational)` and the status window's title in
+    the accent colour for 1.5 s; the model counts beeps (tests).
+13. **The Run Script dialog** has *Ask*, *Yes to all*, *No to all* for the confirm mode; a lexer error of the arguments
+    field is shown as `arguments:<line>:<column>: error: <message>`. `prepare` (the window's lookup, read and check)
+    is shared by the dialog, `RunScript` and `hikasa-gui @script`.
+14. **`hikasa-gui @script`:** with `--silent`, `script_dialog::run_silently` runs it headless before any endpoint or
+    window (the stream on stderr, `output-to:-` on stdout, BEL on a terminal); with a GUI running,
+    `script_dialog::forward` checks it here and sends `RunScript` without waiting; otherwise `Startup::Script` runs it
+    after the first frame (a script that cannot run is an error notice with its lines in the log). A script's
+    `output-to:clipboard` in the window writes the GUI's own clipboard (`AppCore::set_script_clipboard`, the adapter's
+    provider; check 2 keeps `write_payload` out of the session's API).
+15. **Check 7 (D-230):** `script_dialog.rs` joins the toolkit-free model files; a new rule finds `split_whitespace` /
+    `split_ascii_whitespace` in the adapters' script files and requires `script_args` in the GUI's script dialog, with
+    planted self-tests. No `hikasa_script` name in `cli/` or `gui/` (W8a's rule) still holds.
+16. **Tests:** A8.17 in `ipc_protocol.rs` (`script_frames_are_golden`, `fixtures/ipc/script_frames.jsonl`) and the new
+    `ipc_script.rs`; A8.18 in `cli_gui.rs` (the in-process fake GUI gained `handle_script`), `legacy_args.rs`
+    (`at_script_table`: the legacy parser table lives with the other parser tables there rather than as `api/gui.rs` unit
+    tests) and `gui/hikasa-gui/tests/cli_gui.rs` (`hikasa-gui @s.txt --silent` and the forward, without a display);
+    A8.19 in `tests_script.rs`. The optional window test of the status window was not written (the models cover
+    A8.19's rows); `ui/tests.rs` draws the Run Script dialog in its headless frame loop.
+
+Mutations (each reverted):
+
+| # | Mutation | Failed |
+|---|---|---|
+| 29 | host: no progress tee (`ScriptEvent::Progress` never sent) | `script_run.rs` `a8_19_the_progress_of_the_current_call_is_an_event` |
+| 30 | server: `Ok` not an opened script (the gate drops `ScriptFinished`) | `ipc_script.rs` `a8_17_script_finished_follows_ok_only_when_waited`, `a8_17_a_stopping_server_or_a_dropped_waiter_sends_100` (the `busy` test then waits forever: the client's wait has no timeout, as for `ViewClosed`) |
+| 31 | server: a script's gate not tracked (shutdown sends nothing) | `ipc_script.rs` `a8_17_a_stopping_server_or_a_dropped_waiter_sends_100` |
+| 32 | status window: the answered machine not sent back | `tests_script.rs` `a8_19_a_question_is_a_confirmation_dialog_whose_answer_reaches_the_run` |
+| 33 | status window: `close_when_finished` regardless of the exit code | `tests_script.rs` `a8_19_close_and_beep_options_and_closescript` |
+| 34 | status window: *Stop* does not cancel the job | `tests_script.rs` `a8_19_stop_cancels_the_run_and_the_rest_is_not_run` |
 
 ### 1.9–1.14 W9–W14
 
