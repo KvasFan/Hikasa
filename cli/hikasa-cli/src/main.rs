@@ -76,7 +76,13 @@ fn run() -> u8 {
     let argv: Vec<OsString> = std::env::args_os().collect();
     // The Linux clipboard helper (§1.7.10): a hidden internal entry, before any argument parsing, so it is in no help.
     if hikasa_session::host::is_clipboard_helper(&argv) {
-        return u8::try_from(hikasa_session::host::run_clipboard_helper()).unwrap_or(FAILURE);
+        let placer = hikasa_session::host::clipboard_helper_placer();
+        let code = hikasa_session::host::clipboard_helper_main(
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &placer,
+        );
+        return u8::try_from(code).unwrap_or(FAILURE);
     }
     let env = capture_env();
     // Only the arguments before the first `--` can be flags: after it, `--json` is a file name.

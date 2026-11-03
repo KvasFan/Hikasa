@@ -558,18 +558,15 @@ fn helper_status(error: &ClipboardError) -> String {
     }
 }
 
-/// The hidden entry `__clipboard-helper` of an adapter's `main` (§1.7.10), for the CLI and the GUI alike: reads the
-/// payload on stdin, places it, reports on stdout and owns the selection. `HIKASA_CLIPBOARD_HELPER_FILE=<file>` (as
-/// `HIKASA_CLIPBOARD_FILE`: scripts, headless machines, tests) writes the payload's HTML, else its text, to that file
-/// instead of the clipboard. Returns the exit code.
-pub fn run_clipboard_helper() -> i32 {
-    let placer = match std::env::var_os("HIKASA_CLIPBOARD_HELPER_FILE") {
+/// The placer of the hidden entry `__clipboard-helper` (§1.7.10), for the CLI's and the GUI's `main` alike, which run
+/// [`clipboard_helper_main`] on their stdin and stdout with it: the clipboard, or with
+/// `HIKASA_CLIPBOARD_HELPER_FILE=<file>` (as `HIKASA_CLIPBOARD_FILE`: scripts, headless machines, tests) that file,
+/// which gets the payload's HTML, else its text.
+pub fn clipboard_helper_placer() -> HelperPlacer {
+    match std::env::var_os("HIKASA_CLIPBOARD_HELPER_FILE") {
         Some(path) if !path.is_empty() => HelperPlacer::File(path.into()),
         _ => HelperPlacer::System,
-    };
-    let mut stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-    clipboard_helper_main(&mut stdin, &mut stdout, &placer)
+    }
 }
 
 /// True when the process was started as the clipboard helper: its first argument is [`CLIPBOARD_HELPER_ARG`].

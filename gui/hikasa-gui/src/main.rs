@@ -126,7 +126,12 @@ fn main() -> std::process::ExitCode {
     // hidden entry, which owns the selection after the GUI has ended. Before anything else, so it opens no window.
     let argv: Vec<OsString> = std::env::args_os().collect();
     if hikasa_session::host::is_clipboard_helper(&argv) {
-        let code = hikasa_session::host::run_clipboard_helper();
+        let placer = hikasa_session::host::clipboard_helper_placer();
+        let code = hikasa_session::host::clipboard_helper_main(
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &placer,
+        );
         return std::process::ExitCode::from(u8::try_from(code).unwrap_or(FAILURE));
     }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
