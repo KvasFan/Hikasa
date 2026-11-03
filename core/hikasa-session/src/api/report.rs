@@ -143,6 +143,37 @@ pub struct ReportFlags {
     pub ansi: bool,
 }
 
+impl ReportFlags {
+    /// The flags given, as the CLI spells them, in REPORT's order (additive, W7b review): what a command that writes
+    /// no report names in its `report_option_unused` warning. `ansi` is no flag.
+    pub fn given(&self) -> Vec<&'static str> {
+        let words = &self.words;
+        [
+            (words.layout.is_some(), "--layout"),
+            (!words.options.is_empty(), "--options"),
+            (!words.output_options.is_empty(), "--output-options"),
+            (words.title.is_some(), "--title"),
+            (self.display.is_some(), "--display"),
+            (self.folders.is_some(), "--folders"),
+            (self.suppress_filters, "--suppress-filters"),
+            (self.context.is_some(), "--context"),
+            (self.patch_style.is_some(), "--patch-style"),
+            (self.columns.is_some(), "--columns"),
+            (self.html == Some(false), "--html"),
+            (self.html == Some(true), "--html-mono"),
+            (self.line_numbers == Some(true), "--line-numbers"),
+            (self.line_numbers == Some(false), "--no-line-numbers"),
+            (self.width.is_some(), "--width"),
+            (self.wrap.is_some(), "--wrap"),
+            (self.lines.is_some(), "--lines"),
+            (self.select.is_some(), "--select/--path"),
+        ]
+        .into_iter()
+        .filter_map(|(set, flag)| set.then_some(flag))
+        .collect()
+    }
+}
+
 /// The comparison a report shows (§1.7.14). A folder report keeps the request and the prepared comparison, which
 /// the pair requests of a linked report need.
 #[derive(Clone, Copy)]

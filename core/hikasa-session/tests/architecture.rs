@@ -30,7 +30,8 @@
 //!    switches): those parsers live in core (T11); and (M2 W4a, §1.4.16 rule 4) the GUI's model files —
 //!    `app.rs`, `window.rs`, `commands.rs`, `menus.rs`, `dialog.rs`, `status.rs`, `notify.rs`,
 //!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d) and
-//!    `options/*.rs` in `gui/hikasa-gui/src` — name no `egui` or `eframe` in code.
+//!    `options/*.rs` in `gui/hikasa-gui/src` — name no `egui` or `eframe` in code; (M2 W7b, A7.11) nothing in `gui/`
+//!    names `for_specs`: a pair's Text Compare request comes from `Service::pair_text_request`.
 //!
 //! The checks look at code only: comments, string literals and char literals are blanked first, so prose that
 //! mentions a banned token never fails the build, and the patterns below can be written as plain strings
@@ -1129,6 +1130,12 @@ fn slot_parser_violations(rel: &str, raw: &str) -> Vec<String> {
                 ));
             }
         }
+    }
+    // A7.11: the GUI builds no pair's Text Compare request itself; `Service::pair_text_request` is the one builder.
+    if rel.starts_with("gui/") && code.contains("for_specs") {
+        violations.push(format!(
+            "{rel}: names `for_specs` (A7.11, T11: a pair's request comes from Service::pair_text_request)"
+        ));
     }
     let defines = rel.starts_with("core/hikasa-report/");
     if source
@@ -2842,6 +2849,16 @@ fn report_rules_find_planted_violations() {
     );
     assert!(slot_parser_violations("core/hikasa-session/src/api/report.rs", request).is_empty());
     assert!(slot_parser_violations("core/hikasa-report/tests/request.rs", request).is_empty());
+    // A7.11: no `for_specs` anywhere in gui/, its tests included; the Service and the CLI may.
+    let builds = "fn o(l: &Spec, r: &Spec) { let _ = TextCompareRequest :: for_specs(l, r); }\n";
+    for rel in [
+        "gui/hikasa-gui/src/folder_view.rs",
+        "gui/hikasa-gui/src/tests_sessions.rs",
+        "gui/hikasa-gui/tests/cli_gui.rs",
+    ] {
+        assert_eq!(slot_parser_violations(rel, builds).len(), 1, "{rel}");
+    }
+    assert!(slot_parser_violations("core/hikasa-session/src/api/report.rs", builds).is_empty());
 }
 
 #[test]
