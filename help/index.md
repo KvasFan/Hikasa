@@ -35,3 +35,4 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [The Folder Compare view](topic:view-folder-compare), with its file operations: [Confirm an
   operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
 - [The Text Compare view](topic:view-text-compare).
+- [Scripts in the window](topic:dialog-script): Tools ▸ Run Script…, the status window, Stop.

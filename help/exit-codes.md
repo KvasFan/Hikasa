@@ -30,6 +30,9 @@ Every subcommand ends with one of these codes:
 - Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once
   ([Using the command line](topic:cli)).
 - `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
+- `gui script` (and `script run --gui`, `gui open @script`): 105 or 106 before the window is asked; then 0 once the
+  script started, or with `--wait` the script's own code (0, 100, 107; 102 when the window goes away first); 100 when
+  the window already runs a script. `--silent` runs the script here: its own code.
 - `report text`, `report folder` and the report flags: the comparison's code, as the compare subcommand; 100 for a
   refused word, combination or target (before anything is compared), a write that fails (the target keeps what it
   had), a stylesheet that cannot be read, a report too large for the clipboard, no application for the printer or the

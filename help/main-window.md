@@ -50,7 +50,8 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
 
 Dialogs open inside their window and take its input until they close. Enter presses the default button, Esc
 cancels, F1 opens the dialog's help topic. "Do not ask again" turns the warning off in `options.toml`. File
-operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
+operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete). Tools ▸ Run Script…
+runs a script with its [status window](topic:dialog-script).
 Help ▸ About shows the version.
 
 ## Drag and drop

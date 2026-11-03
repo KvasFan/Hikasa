@@ -30,7 +30,10 @@ go to stderr.
   errors (`line`, `column`, `code`, `message`), and per command its line, words, expanded text, status (`checked`, `ok`,
   `failed`, `refused`, `not_run`) and the `result` of the matching command's document (`hikasa.folder_op.v1`, …), item
   lists capped at 100,000 (`items_omitted`). A check that fails is `ok: false` with every error in `result`; a run is
-  `ok: true` with its exit code. The build lists 40 schemas. See [hikasa script](topic:script).
+  `ok: true` with its exit code. See [hikasa script](topic:script).
+- `hikasa gui script` (and `script run --gui`, `gui open @script`) prints `hikasa.gui_script.v1`: the script as sent,
+  its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
+  `refused`, `not_run`, `stopped_at`); without it both are `null`. The build lists 41 schemas.
 - The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
   (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
   written: a dry run, or a write that failed).

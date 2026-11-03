@@ -58,6 +58,7 @@ topics!(
     "wizard-restore",
     "dialog-confirm",
     "dialog-delete",
+    "dialog-script",
     "view-folder-compare",
     "view-text-compare",
 );

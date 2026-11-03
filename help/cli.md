@@ -1,7 +1,8 @@
 # Using the command line
 
 `hikasa <subcommand> [flags] <arguments>` runs one tool and exits with a documented
-[exit code](topic:exit-codes). It never needs the window; `hikasa gui …` talks to it (see [hikasa gui](topic:gui)).
+[exit code](topic:exit-codes). It never needs the window; `hikasa gui …` talks to it (see [hikasa gui](topic:gui)),
+and `hikasa gui script` runs a [script](topic:script) in it.
 
 ## Global flags
 

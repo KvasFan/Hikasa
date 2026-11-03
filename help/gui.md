@@ -12,6 +12,7 @@ start the window when it is not running.
 | `hikasa gui quit` | closes every view and quits |
 | `hikasa gui session <ref> [--wait]` | opens a named [session](topic:session) |
 | `hikasa gui workspace <name>` | loads a [workspace](topic:workspace) (closes the open views) |
+| `hikasa gui script <file> [<arg>…]` | runs a [script](topic:script) in the window, with its [status window](topic:dialog-script) |
 
 ## Opening and waiting
 
@@ -33,6 +34,24 @@ file ending in `.hikasa-pkg` is a settings package: with `--silent` everything i
 `hikasa settings import --silent`); without it the window shows the [import wizard](topic:wizard-import) with the
 path filled in (exit 0). A window older than this command line answers that it does not support sessions: restart
 it.
+
+## Scripts
+
+`hikasa gui script <file> [<arg>…] [--wait] [--no-launch] [--stop-on-error] [--confirm <mode>] [--closescript]
+[--silent]` finds the script as `hikasa script run` does and checks it here: a script that cannot be read exits 105, one
+that does not check 106 with its errors, before the window is asked anything. Then the window runs it with this
+terminal's current folder and the environment variables the script names; an argument, the folder or a value that is
+not valid UTF-8 cannot be sent (exit 100: use `hikasa script run`). Exit 0 once it started; with `--wait` the script's
+own exit code (102 when the window goes away first). `--closescript` closes the status window at the end, whatever the
+code. `--json` prints `hikasa.gui_script.v1` ([JSON output](topic:json-output)). `hikasa script run <file> … --gui`
+is the same command. A window that already runs a script refuses another (exit 100); an older window answers that it
+does not support scripts: restart it.
+
+`@<file>` names a script on the command line of `hikasa gui open` and `hikasa-gui`: `hikasa gui open @s.txt a b
+--wait` is `hikasa gui script s.txt a b --wait`; `hikasa-gui @s.txt a b` starts the window with the script, or sends
+it to the window that runs (exit 0). The other arguments are the script's `%1`…, never a comparison. A file whose name
+starts with `@` is written `./@name`; `@` alone is an error. With `--silent` the script never goes through a window:
+it runs headless where it was started, as `hikasa script run --silent`, and the command exits with its code.
 
 `hikasa text compare … --gui` and `hikasa folder compare … --gui` send the comparison to the window. See
 [Exit codes](topic:exit-codes) and [The main window](topic:main-window).

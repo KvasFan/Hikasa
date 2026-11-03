@@ -19,6 +19,7 @@ hikasa script check nightly.txt
 | `--silent` | ask nothing: a question declines its command, stop on error ends the run |
 | `--dry-run` | run every command as it would, but execute no plan and write no file |
 | `--json` | the document `hikasa.script.v1` ([JSON output](topic:json-output)) |
+| `--gui` | run it in the window with its [status window](topic:dialog-script), as `hikasa gui script`; with `--wait`, `--no-launch`, `--closescript` ([hikasa gui](topic:gui)); not with `--silent` |
 
 `script check` runs no command and reads no base; with arguments it also checks `%n` against them. It prints
 `ok: <n> commands`, or one line per error.
