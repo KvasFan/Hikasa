@@ -11,9 +11,9 @@ use hikasa_core::{Side, Spec, Warning, WarningCode};
 use hikasa_folder::NodeKind;
 use hikasa_folder::{NodeId, select::Selection};
 use hikasa_report::{
-    CancelWriter, FolderLayout, FolderReportOptions, HtmlStyle, LineScope, ReportDefaults,
-    ReportKind, ReportMeta, ReportRequest, ReportScope, ReportWords, TargetKind, TextReportOptions,
-    render_folder_report_with, render_text_report_with,
+    CancelWriter, FolderLayout, FolderReportOptions, HtmlStyle, LineScope, ReportBody,
+    ReportDefaults, ReportError, ReportKind, ReportMeta, ReportRequest, ReportScope, ReportWords,
+    TargetKind, TextReportOptions, render_folder_report_with, render_text_report_with,
 };
 use hikasa_vfs::{Durability, Vfs, VfsError, VfsOp, WriteOptions};
 use serde::{Deserialize, Serialize};
@@ -456,6 +456,12 @@ impl Service {
                 }
             }
             let mut req = ReportRequest::parse(kind, &words, &defaults)?;
+            // M1's flags (`--wrap`, `--patch-style`, `--line-numbers`, `--columns`, `--html`, …) were silent where the
+            // layout does not use them, and stay so (W7b review): only the words given as words are reported unused.
+            // A part of the words parses whenever all of them do (fewer words, fewer conflicts).
+            if let Ok(own) = ReportRequest::parse(kind, &flags.words, &defaults) {
+                req.unused.retain(|word| own.unused.contains(word));
+            }
             if let Some(lines) = &flags.lines {
                 req.scope = ReportScope::TextLines(line_scope(lines)?);
             }
@@ -463,9 +469,18 @@ impl Service {
                 // The rows are known after the comparison (`report_plan`); the layout is checked now.
                 req.scope = ReportScope::FolderRows(Selection::default());
             }
-            let target = target.kind(flags.ansi);
-            req.check_target(target)?;
-            req.apply_target(target);
+            let kind_of = target.kind(flags.ansi);
+            req.check_target(kind_of)?;
+            // Links into an archive: refused here, before anything is compared, as links to stdout or the clipboard.
+            if let (ReportTarget::File(raw), ReportBody::Folder { links: Some(_), .. }) =
+                (target, &req.body)
+                && !matches!(self.write_spec(raw)?, Spec::Local(_))
+            {
+                return Err(ApiError::Report(ReportError::Refused {
+                    message: "file reports need a folder on disk",
+                }));
+            }
+            req.apply_target(kind_of);
             Ok(req)
         })
     }
