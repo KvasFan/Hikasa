@@ -1985,9 +1985,8 @@ fn a8_16_attrib_on_disk() {
     let item = &doc["result"]["items"][0];
     assert_eq!(item["action"], "set_attrs");
     assert_eq!(item["status"], "done");
-    if cfg!(windows) {
-        assert_eq!(item["change"], "+r");
-    }
+    // §1.8.10: the change as `attrib` writes it, on Unix modes too (never the mode).
+    assert_eq!(item["change"], "+r", "{item}");
     assert!(readonly());
     let out = op(
         &s,
@@ -1995,6 +1994,9 @@ fn a8_16_attrib_on_disk() {
     );
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(!readonly());
+    let text = s.normalise(&stdout(&out));
+    assert!(text.contains("only.txt -r"), "{text}");
+    assert!(!text.contains("mode "), "{text}");
     // Unix modes have no a, s, h; LocalVfs on Windows changes R only (D-99, no `unsafe`): either way `+h` skips each
     // item `unsupported` with one warning, and nothing fails.
     {

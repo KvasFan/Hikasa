@@ -500,15 +500,18 @@ pub struct FolderOpItemDto {
     pub reason: Option<SkipReason>,
     /// The failure.
     pub error: Option<ErrorReport>,
-    /// The change of a `set_attrs` item: `+r-h`, or `mode 444` on Unix modes (M2 W8a, additive).
+    /// The change of a `set_attrs` item as `attrib` writes it, `+r-h` (§1.8.10; on Unix modes `+r` or `-r`, the only
+    /// change planned there) (M2 W8a, additive).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<String>,
 }
 
-/// The change of a `set_attrs` item as `attrib` writes it.
+/// The change of a `set_attrs` item as `attrib` writes it (§1.8.10: `attrib <target> +r-h`). On Unix modes `attrib`
+/// plans `r` alone: `+r` clears every write bit, `-r` sets the owner's, so the new mode tells which it was.
 fn change_text(change: &hikasa_vfs::AttrChange) -> String {
     match change {
-        hikasa_vfs::AttrChange::Mode(mode) => format!("mode {mode:o}"),
+        hikasa_vfs::AttrChange::Mode(mode) if mode & 0o222 == 0 => "+r".to_owned(),
+        hikasa_vfs::AttrChange::Mode(_) => "-r".to_owned(),
         hikasa_vfs::AttrChange::Dos { set, clear } => {
             let mut out = String::new();
             for (flags, sign) in [(set, '+'), (clear, '-')] {
