@@ -6423,9 +6423,22 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 | LINKS-3 | `report_write.rs`: the leading `.`/`-` rule dropped | P-LINKS `p_links_safe_names` | — |
 | PRINT-1 | `hikasa-report/src/style.rs`: the print block never appended | `golden_print.rs`: `a7_8_print_block_goldens`, `a7_8_a_print_palette_other_than_the_screens`, `a7_8_print_mono_alone_adds_no_block_and_the_printer_target_does` | — |
 | PRINT-2 | `style.rs`: a print palette other than the screen's not scoped (the screen palette only) | `a7_8_a_print_palette_other_than_the_screens` | — |
+| XA | `hikasa-report/src/text/xml.rs`: `left-piece`/`right-piece` never written (review: survived every test with the one `piece`) | P-XML `p_xml_text_dump_round_trips` (random characters-per-line limit: the rebuilt document differs); `a7_5_characters_per_line_pieces_per_side` | — |
+| XB | `text/xml.rs`: `d` and `u` swapped (review: survived P-XML) | P-XML (each row's `d`/`u` against its side's inline ranges) | `cc 5e16b7c6…` |
+| XC | `hikasa-report/src/xml.rs`: `>` not escaped in text (review: survived P-XML) | P-XML (`xmlcheck::check` scans the raw bytes; titles and lines draw `>`) | — |
+| XD | `xml.rs`: a backslash in an attribute not doubled (the state before note 17) | P-XML (the spec of a generated name with `\` and U+0001 reads back) | `cc 43b4583f…` |
+| FA | `hikasa-report/src/folder/xml.rs`: no folder nests (each closed at once, as in a flat tree) (review: survived P-FXML) | P-FXML `p_fxml_folder_dump_is_the_json_items` (each element's parent against its tree parent) | — |
+| FB | `folder/xml.rs`: the `~` state written `different` (review: survived P-FXML, which folded `unimportant` itself) | P-FXML (exact states; the rules-based content test makes unimportant pairs) | `cc 6d78048f…` |
+| IA | `hikasa-report/src/text/interleaved.rs`: the important mark `!` written `~` (review: survived P-IL) | P-IL `p_il_interleaved_lines_are_both_documents` (both mark characters and the number columns) | — |
+| LA | `hikasa-report/src/links.rs`: `~` percent-encoded (review: survived P-LINKS) | P-LINKS `p_links_hrefs_decode_back` (the exact href) | — |
+| LB | `links.rs`: lower-case `%xx` (review: survived P-LINKS) | P-LINKS (the exact href) | — |
+| LE | `hikasa-session/src/api/report_write.rs`: the trailing-dot fix after the device prefix dropped (review: survived every test) | `a7_9_safe_component_table` (`CON.x` at 5 → `_CON_`), P-LINKS `p_links_safe_names` (cuts at a dot) | — |
+| RD | `hikasa-report/src/request.rs`: `words()` puts the wrap word in `options`, not `output_options` (review: survived P-RPTREQ) | P-RPTREQ `p_rptreq_words_round_trip` (the split of §1.7.4) | `cc a0ddb91b…` |
 
 P-LINKS's generator persists no failures (`failure_persistence: None`), so its rows have no seed; the minimal input is
-in the failure message. The ci profile retries a failing test twice; every row above failed all three tries.
+in the failure message. The ci profile retries a failing test twice; every row above failed all three tries. Rows XA
+to RD come from the W7a review: each was applied with only the named property selected (`-E 'test(p_…)'`), under
+`timeout 600` and an 8 GiB memory cap, and reverted with `git checkout`.
 
 **W7b.**
 
