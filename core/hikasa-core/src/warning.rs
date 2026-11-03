@@ -88,6 +88,16 @@ pub enum WarningCode {
     SyncIncomplete,
     /// A report request held words its layout does not use (M2 W7, §1.7.4).
     ReportOptionUnused,
+    /// A linked report's files folder was not this report's, so the next free `_files-<n>` was used (M2 W7, §1.7.9).
+    ReportFolderRenamed,
+    /// The previous files folder of a linked report could not be removed after the new one took its place (M2 W7,
+    /// §1.7.9 step 7).
+    ReportOldFolderKept,
+    /// A pair report of a linked folder report failed; the folder report was written (M2 W7, §1.7.8).
+    FileReportFailed,
+    /// `SOURCE_DATE_EPOCH` is not a decimal count of seconds jiff can hold; the clock gave the report time (M2 W7,
+    /// §1.7.12).
+    SourceDateEpochInvalid,
 }
 
 impl WarningCode {
@@ -126,6 +136,10 @@ impl WarningCode {
             WarningCode::ReadOnlySide => "read_only_side",
             WarningCode::SyncIncomplete => "sync_incomplete",
             WarningCode::ReportOptionUnused => "report_option_unused",
+            WarningCode::ReportFolderRenamed => "report_folder_renamed",
+            WarningCode::ReportOldFolderKept => "report_old_folder_kept",
+            WarningCode::FileReportFailed => "file_report_failed",
+            WarningCode::SourceDateEpochInvalid => "source_date_epoch_invalid",
         }
     }
 }
@@ -176,6 +190,10 @@ mod tests {
             WarningCode::ReadOnlySide,
             WarningCode::SyncIncomplete,
             WarningCode::ReportOptionUnused,
+            WarningCode::ReportFolderRenamed,
+            WarningCode::ReportOldFolderKept,
+            WarningCode::FileReportFailed,
+            WarningCode::SourceDateEpochInvalid,
         ];
         for code in all {
             assert_eq!(
