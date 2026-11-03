@@ -1,0 +1,17 @@
+{
+  "schema": "hikasa.gui_script.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "script": "<TMP>/s.txt",
+    "args": [
+      "l"
+    ],
+    "waited": false,
+    "exit_code": null,
+    "summary": null
+  },
+  "warnings": [],
+  "error": null
+}

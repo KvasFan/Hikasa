@@ -46,7 +46,8 @@
       "hikasa.folder_sync.v1",
       "hikasa.folder_contents.v1",
       "hikasa.report.v1",
-      "hikasa.script.v1"
+      "hikasa.script.v1",
+      "hikasa.gui_script.v1"
     ]
   },
   "warnings": [],

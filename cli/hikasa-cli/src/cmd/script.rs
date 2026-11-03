@@ -1,25 +1,32 @@
 //! `hikasa script run|check` (M2 W8a, §1.8.12, D-226): locate and load through `Service::script_locate`/`script_load`,
 //! check through `Service::script_check_for`, run through `Service::script_run` with this process's interface (the log
 //! stream on stderr, W6's questions on a terminal, BEL, the clipboard provider). Every word is the Service's (T11).
+//!
+//! `hikasa gui script`, `script run --gui` and `gui open @script` (M2 W8b, §1.8.13, D-228): [`gui_script`] locates,
+//! reads and checks the script here (105/106 before the GUI is contacted), builds the `RunScript` with
+//! `Service::gui_script_request` and sends it with `Service::gui_run_script`; `--silent` never goes through a GUI: the
+//! script runs headless, as `script run --silent`.
 
 use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
 
-use hikasa_core::{CancelToken, ExitCode, JobKind};
+use hikasa_core::{CancelToken, ExitCode, JobKind, Warning};
 use hikasa_folder::ops::Confirmation;
 use hikasa_session::ApiError;
-use hikasa_session::api::dto::{JsonEnvelope, SCRIPT_SCHEMA};
+use hikasa_session::api::dto::{GUI_SCRIPT_SCHEMA, JsonEnvelope, SCRIPT_SCHEMA};
 use hikasa_session::api::script::{
-    HostUi, LineKind, STDOUT_SHARED, ScriptCheck, ScriptEvent, ScriptRunRequest, ScriptText,
-    ScriptUi,
+    HostUi, LineKind, STDOUT_NONE, STDOUT_SHARED, ScriptCheck, ScriptEvent, ScriptRunRequest,
+    ScriptText, ScriptUi,
 };
 use hikasa_session::api::script_log;
-use hikasa_session::api::{ApiOp, parse_confirm_mode};
+use hikasa_session::api::{ApiOp, GuiLauncher, GuiScriptOptions, find_gui_exe, parse_confirm_mode};
 use hikasa_session::clipboard::{ClipboardPayload, ClipboardProvider};
+use hikasa_session::ipc::RetryPolicy;
 
 use super::Ctx;
 use crate::args::{ScriptCheckArgs, ScriptCmd, ScriptRunArgs};
 use crate::confirm;
+use crate::launcher::ProcessGuiLauncher;
 use crate::output::stderr_line;
 use crate::progress::ProgressLine;
 
@@ -56,15 +63,7 @@ fn check_failed(
     if error.exit_code(OP) == ExitCode::ScriptLoadError {
         return ctx.fail(SCRIPT_SCHEMA, &error, OP, &[]);
     }
-    ctx.progress.clear();
-    {
-        let mut err = io::stderr().lock();
-        for line in check.errors.lines(&text.display) {
-            let _ = writeln!(err, "{}", hikasa_report::escape_controls(&line));
-        }
-        let _ = err.flush();
-    }
-    ctx.out.error(&error);
+    check_errors(ctx, text, check, &error);
     if ctx.out.json() {
         let mut report = error.report();
         if let Some(first) = check.errors.first() {
@@ -82,6 +81,19 @@ fn check_failed(
         let _ = ctx.out.envelope(&envelope);
     }
     ExitCode::ScriptSyntaxError.code()
+}
+
+/// The error lines of a failed check on stderr (`<script>:<line>:<column>: error: <message>`), then the error.
+fn check_errors(ctx: &mut Ctx<'_>, text: &ScriptText, check: &ScriptCheck, error: &ApiError) {
+    ctx.progress.clear();
+    {
+        let mut err = io::stderr().lock();
+        for line in check.errors.lines(&text.display) {
+            let _ = writeln!(err, "{}", hikasa_report::escape_controls(&line));
+        }
+        let _ = err.flush();
+    }
+    ctx.out.error(error);
 }
 
 /// `script check`: exit 0, 105 or 106; `ok: <n> commands` on stdout.
@@ -187,14 +199,130 @@ fn scripted_answers() -> Option<std::collections::VecDeque<String>> {
     Some(raw.split(';').map(|line| format!("{line}\n")).collect())
 }
 
+/// A script for the GUI: `gui script`, `script run --gui`, `gui open @script` (§1.8.13).
+#[derive(Debug, Clone, Default)]
+pub struct GuiScriptCall {
+    /// The script as given.
+    pub file: OsString,
+    /// `%1`….
+    pub args: Vec<OsString>,
+    /// `--wait`.
+    pub wait: bool,
+    /// `--no-launch`.
+    pub no_launch: bool,
+    /// `--stop-on-error`.
+    pub stop_on_error: bool,
+    /// `--confirm`.
+    pub confirm: Option<String>,
+    /// `--closescript`.
+    pub closescript: bool,
+    /// `--silent`: headless, never through a GUI.
+    pub silent: bool,
+}
+
+/// `gui script` (CLI-G02, D-228): `--silent` runs the script headless; otherwise it is located, read and checked here
+/// (105, 106, with the GUI's refusal of `output-to:-`), the referenced variables captured, and `RunScript` sent
+/// (connecting or launching as `gui open`, 102, 103). Exit 0 once started; with `--wait` the script's code
+/// (`hikasa.gui_script.v1`). `own` are the command line's warnings.
+pub fn gui_script(ctx: &mut Ctx<'_>, call: &GuiScriptCall, own: &[Warning]) -> u8 {
+    if call.silent {
+        let headless = ScriptRunArgs {
+            file: call.file.clone(),
+            args: call.args.clone(),
+            silent: true,
+            stop_on_error: call.stop_on_error,
+            confirm: call.confirm.clone(),
+            dry_run: false,
+            gui: false,
+            wait: false,
+            no_launch: false,
+            closescript: false,
+        };
+        return run_script(ctx, &headless);
+    }
+    let op = ApiOp::GuiOpen { wait: call.wait };
+    if let Some(Err(e)) = call.confirm.as_deref().map(parse_confirm_mode) {
+        return ctx.fail(GUI_SCRIPT_SCHEMA, &e, op, own);
+    }
+    let text = match load(ctx, &call.file) {
+        Ok(text) => text,
+        Err(e) => return ctx.fail(GUI_SCRIPT_SCHEMA, &e, op, own),
+    };
+    let references = ctx.service.script_references(&text);
+    let env = hikasa_session::capture_script_env(&references.env);
+    // The GUI has no standard output: `output-to:-` is refused here, as the window's check refuses it.
+    let check = ctx
+        .service
+        .script_check_for(&text, Some(&call.args), &env, Some(STDOUT_NONE));
+    if !check.errors.is_empty() {
+        let error = check
+            .error(&text)
+            .unwrap_or_else(|| ApiError::Internal("a failed check without errors".to_owned()));
+        if error.exit_code(OP) == ExitCode::ScriptSyntaxError {
+            check_errors(ctx, &text, &check, &error);
+            if ctx.out.json() {
+                let envelope = JsonEnvelope::<()> {
+                    schema: GUI_SCRIPT_SCHEMA,
+                    hikasa_version: hikasa_session::HIKASA_VERSION,
+                    ok: false,
+                    exit_code: ExitCode::ScriptSyntaxError.code(),
+                    result: None,
+                    warnings: ctx.warnings(own),
+                    error: Some(error.report()),
+                };
+                let _ = ctx.out.envelope(&envelope);
+            }
+            return ExitCode::ScriptSyntaxError.code();
+        }
+        return ctx.fail(GUI_SCRIPT_SCHEMA, &error, op, own);
+    }
+    let options = GuiScriptOptions {
+        wait: call.wait,
+        stop_on_error: call.stop_on_error,
+        confirm: call.confirm.clone(),
+        closescript: call.closescript,
+    };
+    let request = match ctx
+        .service
+        .gui_script_request(&text, &call.args, &env, &options)
+    {
+        Ok(request) => request,
+        Err(e) => return ctx.fail(GUI_SCRIPT_SCHEMA, &e, op, own),
+    };
+    let launcher = (!call.no_launch).then(|| ProcessGuiLauncher {
+        exe: find_gui_exe(ctx.service.env()),
+    });
+    let launcher = launcher.as_ref().map(|l| l as &dyn GuiLauncher);
+    match ctx
+        .service
+        .gui_run_script(request, launcher, &RetryPolicy::default())
+    {
+        Ok(report) => {
+            let code = report.exit_code();
+            if ctx.out.json() {
+                ctx.json_success(GUI_SCRIPT_SCHEMA, code, report.dto(), own, op)
+            } else {
+                ctx.human_done(Ok(()), code, GUI_SCRIPT_SCHEMA, own, op)
+            }
+        }
+        Err(e) => ctx.fail(GUI_SCRIPT_SCHEMA, &e, op, own),
+    }
+}
+
 /// `script run`.
 fn run_script(ctx: &mut Ctx<'_>, args: &ScriptRunArgs) -> u8 {
     if args.gui {
-        let error = ApiError::Unsupported(
-            "script run --gui is not available in this build yet: run the script headless"
-                .to_owned(),
-        );
-        return ctx.fail(SCRIPT_SCHEMA, &error, OP, &[]);
+        let call = GuiScriptCall {
+            file: args.file.clone(),
+            args: args.args.clone(),
+            wait: args.wait,
+            no_launch: args.no_launch,
+            stop_on_error: args.stop_on_error,
+            confirm: args.confirm.clone(),
+            closescript: args.closescript,
+            silent: false,
+        };
+        return gui_script(ctx, &call, &[]);
     }
     let confirm = match args.confirm.as_deref().map(parse_confirm_mode).transpose() {
         Ok(mode) => mode,

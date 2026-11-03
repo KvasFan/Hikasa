@@ -692,6 +692,30 @@ impl IpcHandler for FakeGui {
             _ => Response::error(IpcErrorCode::InvalidRequest, "not scripted"),
         }
     }
+
+    /// `RunScript` (W8b): `Ok`, and with `wait` a `ScriptFinished` with the fake's exit code at once (one command,
+    /// ok); an M1 GUI (`without_sessions`) answers `unsupported_request`, as a GUI before W8b does.
+    fn handle_script(
+        &self,
+        request: Request,
+        waiter: Option<hikasa_session::ipc::ScriptWaiter>,
+    ) -> Response {
+        if !self.sessions.load(Ordering::SeqCst) {
+            return Response::error(
+                IpcErrorCode::UnsupportedRequest,
+                format!("`{}` is not supported in this version", request.type_name()),
+            );
+        }
+        if let Some(waiter) = waiter {
+            let summary = hikasa_session::ipc::ScriptSummary {
+                commands: 1,
+                ok: 1,
+                ..hikasa_session::ipc::ScriptSummary::default()
+            };
+            waiter.script_finished(self.exit_code, summary);
+        }
+        Response::Ok
+    }
 }
 
 /// The endpoint `hikasa` computes from `HIKASA_IPC_ENDPOINT=<socket>` (§2.23 row 7).

@@ -25,8 +25,8 @@ use hikasa_session::api::dto::{
     COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, FORMAT_DETECT_SCHEMA,
     FORMAT_EXPORT_SCHEMA, FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA,
     FORMAT_TOKENS_SCHEMA, FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
-    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, REPORT_SCHEMA,
-    SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, GUI_SCRIPT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA,
+    REPORT_SCHEMA, SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
     SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
     SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, VERSION_SCHEMA,
     VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA,
@@ -264,6 +264,9 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             | SessionCmd::Mkdir { .. }
             | SessionCmd::Rmdir { .. } => (SESSION_WRITE_SCHEMA, ApiOp::Other),
         },
+        Command::Script {
+            cmd: crate::args::ScriptCmd::Run(args),
+        } if args.gui => (GUI_SCRIPT_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
         Command::Script { .. } => (SCRIPT_SCHEMA, ApiOp::Script),
         Command::Workspace { cmd } => match cmd {
             WorkspaceCmd::List => (WORKSPACE_LIST_SCHEMA, ApiOp::Other),
@@ -282,11 +285,16 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
         },
         Command::Gui { cmd } => match cmd {
             GuiCmd::Open(_) => (
-                GUI_OPEN_SCHEMA,
+                if open.is_some_and(|o| o.script.is_some()) {
+                    GUI_SCRIPT_SCHEMA
+                } else {
+                    GUI_OPEN_SCHEMA
+                },
                 ApiOp::GuiOpen {
                     wait: open.is_some_and(|o| o.request.wait),
                 },
             ),
+            GuiCmd::Script(args) => (GUI_SCRIPT_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             GuiCmd::Ping => (GUI_PING_SCHEMA, ApiOp::GuiControl),
             GuiCmd::List => (GUI_LIST_SCHEMA, ApiOp::GuiControl),
             GuiCmd::Close { .. } => (GUI_CLOSE_SCHEMA, ApiOp::GuiControl),

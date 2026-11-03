@@ -1666,6 +1666,37 @@ pub enum GuiCmd {
         #[arg(long)]
         no_launch: bool,
     },
+    /// Run a script in the GUI with its status window (checked here first).
+    Script(GuiScriptArgs),
+}
+
+/// `hikasa gui script <FILE> [<ARG>…]` (CLI-G02, D-228).
+#[derive(Debug, clap::Args)]
+pub struct GuiScriptArgs {
+    /// The script; a relative name absent here is looked up in the shared scripts folder.
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// The arguments `%1`…`%9` (one that starts with `-` follows `--`).
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
+    /// Wait for the script and exit with its code.
+    #[arg(long)]
+    pub wait: bool,
+    /// Do not start the GUI when it is not running.
+    #[arg(long)]
+    pub no_launch: bool,
+    /// Stop at the first failed command (the window asks to continue).
+    #[arg(long)]
+    pub stop_on_error: bool,
+    /// The confirm mode before line 1: prompt, yes-to-all, no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Close the status window when the script ends, whatever its exit code.
+    #[arg(long)]
+    pub closescript: bool,
+    /// Never through a GUI: run the script headless here, as `script run --silent`.
+    #[arg(long)]
+    pub silent: bool,
 }
 
 /// `gui open`: every argument after `open` (except the global flags clap sees directly after it) is passed raw to
