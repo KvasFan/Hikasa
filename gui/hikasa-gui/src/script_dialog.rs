@@ -1036,7 +1036,8 @@ fn local_check(
 }
 
 /// `hikasa-gui @script --silent` (D-228): never through a GUI; the script runs headless in this process, as `hikasa
-/// script run --silent`, and the process exits with its code.
+/// script run --silent`, and the process exits with its code. Ctrl-C as there (D-159, review F8): the first stops the
+/// current call and the rest is `not_run` (exit 100), a second exits 100 at once.
 pub fn run_silently(service: &Service, script: &hikasa_session::api::ScriptArgs) -> u8 {
     let (text, checked, env) = match local_check(service, script, None) {
         Ok(checked) => checked,
@@ -1049,7 +1050,14 @@ pub fn run_silently(service: &Service, script: &hikasa_session::api::ScriptArgs)
         stdout_reports: true,
         ..ScriptRunRequest::default()
     };
-    let job = service.job(JobKind::Script, Arc::new(hikasa_core::NullProgress));
+    let ctrl_c = hikasa_session::interrupt::CtrlC::new(
+        || eprintln!("Cancelling; press Ctrl-C again to exit at once."),
+        || std::process::exit(i32::from(ExitCode::UnknownError.code())),
+    );
+    let job = hikasa_session::JobControl {
+        cancel: ctrl_c.token(),
+        ..service.job(JobKind::Script, Arc::new(hikasa_core::NullProgress))
+    };
     let mut ui = SilentUi {
         clipboard: hikasa_session::clipboard_provider(service.env()),
     };
