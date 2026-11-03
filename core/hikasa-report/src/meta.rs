@@ -34,6 +34,19 @@ pub struct ReportMeta {
     pub filters: Option<String>,
     /// Per-side load errors (a side that failed to load in a GUI view); M1 CLI reports have none.
     pub errors: Pair<Option<String>>,
+    /// The line `Folder report: <link>` of a pair report, before `Left:` (M2 W7, §1.7.8); `None` omits it, every byte
+    /// as before. Breaks struct literals (`..` from [`ReportMeta::for_text`]).
+    pub folder_link: Option<FolderLink>,
+}
+
+/// The back link of a pair report to its folder report (§1.7.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderLink {
+    /// The folder report's final name as shown (lossy when it is not Unicode).
+    pub name: String,
+    /// The relative href (`../<main final name>`, [`crate::href`]); `None` shows the name without a link (a Windows
+    /// name that is not valid Unicode).
+    pub href: Option<String>,
 }
 
 impl ReportMeta {
@@ -52,6 +65,7 @@ impl ReportMeta {
             mode: Some(text_mode(opts)),
             filters: Some(text_rules_summary(cmp)),
             errors: Pair::new(None, None),
+            folder_link: None,
         }
     }
 
@@ -76,6 +90,7 @@ impl ReportMeta {
             mode: Some(folder_mode(opts)),
             filters: Some(folder_rules_summary(cmp.rules())),
             errors: Pair::new(None, None),
+            folder_link: None,
         }
     }
 }
@@ -370,6 +385,9 @@ pub(crate) fn format_zoned(z: &jiff::Zoned) -> String {
     z.timestamp().display_with_offset(z.offset()).to_string()
 }
 
+/// The label of a pair report's back link.
+const FOLDER_REPORT: &str = "Folder report";
+
 /// A rendered RPT-004 header: a title and labelled lines, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Header {
@@ -377,6 +395,8 @@ pub(crate) struct Header {
     pub title: String,
     /// `(label, value)` lines.
     pub lines: Vec<(&'static str, String)>,
+    /// The href of the `Folder report` line (HTML only).
+    pub folder_href: Option<String>,
 }
 
 impl Header {
@@ -397,6 +417,9 @@ impl Header {
                 value.push_str(&meta.generator);
             }
             lines.push(("Generated", value));
+        }
+        if let Some(link) = &meta.folder_link {
+            lines.push((FOLDER_REPORT, link.name.clone()));
         }
         lines.push(("Left", sides.left));
         lines.push(("Right", sides.right));
@@ -422,6 +445,7 @@ impl Header {
                 .clone()
                 .unwrap_or_else(|| default_title.to_owned()),
             lines,
+            folder_href: meta.folder_link.as_ref().and_then(|l| l.href.clone()),
         }
     }
 
@@ -455,6 +479,18 @@ impl Header {
                 "Warning" => " class=\"warning\"",
                 _ => "",
             };
+            if *label == FOLDER_REPORT
+                && let Some(href) = &self.folder_href
+            {
+                writeln!(
+                    w,
+                    "<tr><th>{}</th><td><a href=\"{}\">{}</a></td></tr>",
+                    escape::html(label),
+                    escape::html(href),
+                    escape::html(value)
+                )?;
+                continue;
+            }
             writeln!(
                 w,
                 "<tr{class}><th>{}</th><td>{}</td></tr>",
@@ -480,6 +516,7 @@ mod tests {
             mode: Some("display: all; ignore unimportant: no".into()),
             filters: Some("format: Everything Else".into()),
             errors: Pair::new(None, Some("right side: not found".into())),
+            folder_link: None,
         }
     }
 
@@ -535,6 +572,7 @@ mod tests {
             mode: None,
             filters: None,
             errors: Pair::new(None, None),
+            folder_link: None,
         };
         let h = Header::new(
             &m,

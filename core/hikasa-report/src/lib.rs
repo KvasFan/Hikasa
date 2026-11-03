@@ -102,7 +102,7 @@ pub use folder::{
 };
 pub use json::{folder_compare_json, text_compare_json};
 pub use links::{PairLink, PairLinks, href, linked_rows};
-pub use meta::ReportMeta;
+pub use meta::{FolderLink, ReportMeta};
 pub use options::{
     DisplayMode, HtmlStyle, OutputFormat, Wrap, folder_mode_word, parse_folder_mode,
 };

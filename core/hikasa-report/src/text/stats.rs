@@ -68,6 +68,7 @@ mod tests {
             mode: None,
             filters: None,
             errors: Pair::new(Some("not found".into()), Some("x, y".into())),
+            folder_link: None,
         };
         assert_eq!(errors(&meta), "left: not found; right: x, y");
     }
