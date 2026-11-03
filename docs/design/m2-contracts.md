@@ -6334,7 +6334,9 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 7. **Names that are not Unicode.** `MemoryVfs` names are `String`s, so a name that is not valid UTF-8 comes from disk
    only: Linux bytes (`cfg(target_os = "linux")`), on Windows a lone surrogate on disk (where §6.7's table says
    `MemoryVfs`, which cannot hold one), on macOS the refusal (`EILSEQ`) asserted. `raw-name` is the hex of the OS
-   name's encoded bytes (`OsStr::as_encoded_bytes`: the bytes on Unix, WTF-8 on Windows).
+   name's encoded bytes (`OsStr::as_encoded_bytes`: the bytes on Unix, WTF-8 on Windows). Wine cannot create a name
+   with a lone surrogate (its names are UTF-8 on the Unix side): under `WINEPREFIX` the test says so on stderr and
+   stops, so its Windows disk part is verified by Windows CI only, as §6.7's table has `MemoryVfs` for wine.
 8. **A flat tree nests nothing.** In the folder XML of a flatten comparison (`tree/@flat`), the only folder rows are
    folders that failed to list; each is closed at once with its sides, so nothing nests, and `path` carries the
    structure. Otherwise nesting follows the comparison's tree, as P-FXML checks.

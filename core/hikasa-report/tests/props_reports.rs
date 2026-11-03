@@ -358,12 +358,21 @@ fn a7_6_names_that_are_not_unicode() {
             );
             return;
         }
+        // Wine keeps names as UTF-8 on the Unix side and cannot hold a lone surrogate (`ERROR_FILE_NOT_FOUND`); the
+        // disk part runs on Windows itself, where `WINEPREFIX` is not set.
+        #[cfg(windows)]
+        Err(e) if std::env::var_os("WINEPREFIX").is_some() => {
+            eprintln!(
+                "a7_6_names_that_are_not_unicode: wine refuses a name with a lone surrogate ({e}); the disk part runs on Windows"
+            );
+            return;
+        }
         Err(e) => panic!("{e}"),
     }
     std::fs::write(root.join("r").join(&name), b"y").unwrap();
-    let ctl = std::ffi::OsString::from("c\u{1}d.txt");
+    // A name with a control character (Unix only: Windows refuses U+0001 in a name).
     #[cfg(unix)]
-    std::fs::write(root.join("l").join(&ctl), b"z").unwrap();
+    std::fs::write(root.join("l").join("c\u{1}d.txt"), b"z").unwrap();
     let vfs = LocalVfs::new(LocalOptions::default());
     let spec =
         |p: std::path::PathBuf| hikasa_core::Spec::Local(hikasa_core::LocalPath::new(p).unwrap());
