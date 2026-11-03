@@ -1071,6 +1071,7 @@ fn tree_opens() {
             ctx: app.0.ctx(w),
             checked: &none,
             workspaces: &[],
+            columns: &[],
         }),
     }]);
     assert!(text.contains("Open") && text.contains("Delete"));
@@ -1276,6 +1277,7 @@ fn the_session_menu_lists_types_and_workspaces() {
         ctx: app.0.ctx(w),
         checked: &checked,
         workspaces: &names,
+        columns: &[],
     };
     let text = render_text(&crate::menus::menu_bar(&mc));
     assert!(

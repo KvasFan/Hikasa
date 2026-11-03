@@ -606,12 +606,14 @@ impl HikasaApp {
         let menus = {
             let checked = |id: CommandId| self.core.checked(window, id);
             let names = self.core.workspace_names();
+            let columns = self.core.column_menu(window);
             let mc = MenuContext {
                 tables: self.core.tables(),
                 scope,
                 ctx: state,
                 checked: &checked,
                 workspaces: &names,
+                columns: &columns,
             };
             menu_bar(&mc)
         };
@@ -803,6 +805,7 @@ impl HikasaApp {
                                 ctx: c,
                                 checked: &none,
                                 workspaces: &[],
+                                columns: &[],
                             })
                         };
                         let out = home::show(ui, view, home, &pal, &menu);
@@ -815,15 +818,32 @@ impl HikasaApp {
                     }
                     Some(ViewModel::Folder(m)) => {
                         let s = m.status();
+                        let columns = m.column_menu();
+                        let none = |_: CommandId| None;
+                        let header_menu = crate::menus::header_menu(&MenuContext {
+                            tables: &tables,
+                            scope: Scope::Folder,
+                            ctx: dispatch_ctx,
+                            checked: &none,
+                            workspaces: &[],
+                            columns: &columns,
+                        });
                         let st = self.folders.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
                             tables.dispatch(Scope::Folder, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
-                        for id in
-                            folder::show(ui, view, m, st, &s, &dispatch, &pal, &tree_font, keys)
-                        {
-                            invocations.push(Invocation::new(id));
-                        }
+                        invocations.extend(folder::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &s,
+                            &dispatch,
+                            &pal,
+                            &tree_font,
+                            keys,
+                            &header_menu,
+                        ));
                     }
                     Some(ViewModel::Text(m)) => {
                         let s = m.status();
@@ -966,6 +986,7 @@ impl HikasaApp {
                         },
                         checked: &checked,
                         workspaces: &[],
+                        columns: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);

@@ -1268,3 +1268,67 @@ fn a9_header_sort_side_clicks_and_a_swipe_across_the_centre() {
         "a swipe across the centre selects both sides"
     );
 }
+
+/// A9.1 (D-234): a header dragged moves its column, a separator dragged resizes the column, a double-click on it
+/// fits the column to the widest rendered cell.
+#[test]
+fn a9_1_header_drags_move_and_resize_a_double_click_fits() {
+    use crate::folder::columns::{ColumnId, title};
+    let world = World::new();
+    for (name, l, r) in [("a.txt", "1", "1"), ("b.txt", "22", "2")] {
+        world.write(&format!("l/{name}"), l);
+        world.write(&format!("r/{name}"), r);
+    }
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    s.settle();
+    let leftmost = |s: &mut Screen, text: &str| {
+        s.drawn()
+            .into_iter()
+            .filter(|d| d.text == text)
+            .map(|d| d.rect)
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("drawn")
+    };
+    // Modified dropped left of Size: Name, Modified, Size.
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let modified = leftmost(&mut s, title(ColumnId::Modified));
+    let to = egui::pos2(size.left() + 2.0, size.center().y);
+    s.drag(modified.center(), to - modified.center());
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    assert_eq!(
+        m.shown_columns(),
+        [ColumnId::Name, ColumnId::Modified, ColumnId::Size]
+    );
+    assert_eq!(m.columns().sort, None, "a drag is not a click");
+    // Size's left separator (8 points left of its title) dragged 30 points left: 30 points wider.
+    let before = m.columns().width(ColumnId::Size);
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let grip = egui::pos2(size.left() - 8.0, size.center().y);
+    s.drag(grip, egui::vec2(-30.0, 0.0));
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    let wider = m.columns().width(ColumnId::Size);
+    assert!((wider - (before + 30.0)).abs() < 1.5, "{before} → {wider}");
+    // A double-click on it: the widest drawn size text and the margin, clamped to the minimum.
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let grip = egui::pos2(size.left() - 8.0, size.center().y);
+    s.input(vec![Event::PointerMoved(grip)]);
+    s.input(vec![
+        pointer_button(grip, PointerButton::Primary, true),
+        pointer_button(grip, PointerButton::Primary, false),
+        pointer_button(grip, PointerButton::Primary, true),
+        pointer_button(grip, PointerButton::Primary, false),
+    ]);
+    s.input(vec![Event::PointerGone]);
+    s.settle();
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    assert_eq!(
+        m.columns().width(ColumnId::Size),
+        crate::folder::columns::min_width(ColumnId::Size),
+        "two-digit sizes fit in the minimum"
+    );
+}

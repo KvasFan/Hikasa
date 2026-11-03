@@ -57,6 +57,14 @@ View
   [ ] Ignore Folder Structure
   ---
   [ ] Suppress Filters
+  > Columns
+    [ ] Ext
+    [x] Size
+    [x] Modified
+    [ ] Attributes
+    [ ] CRC
+    [ ] Owner
+    [ ] Group
   [ ] Log
   ---
   [ ] Ignore Unimportant Differences

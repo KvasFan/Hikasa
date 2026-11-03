@@ -269,3 +269,90 @@ fn a9_1_the_columns_go_to_the_layout_and_come_back() {
     let _ = NodeId::ROOT;
     let _ = SideSet::all();
 }
+
+#[test]
+fn a9_1_col_list_and_the_header_menu_toggle_the_columns() {
+    use crate::menus::{Menu, MenuContext, MenuTitle, header_menu, render_text};
+    use crate::window::{CommandArg, Invocation};
+    let world = World::new();
+    let (mut app, view) = opened(&world);
+    let win = app.win();
+    let menu = |app: &crate::tests::TestApp| {
+        let checked = |_: CommandId| None;
+        let columns = app.0.column_menu(win);
+        let mc = MenuContext {
+            tables: app.tables(),
+            scope: app.scope(),
+            ctx: app.ctx(),
+            checked: &checked,
+            workspaces: &[],
+            columns: &columns,
+        };
+        render_text(&[Menu {
+            title: MenuTitle::View,
+            items: header_menu(&mc),
+        }])
+    };
+    // Every column but Name; Path only while flat.
+    let offered = app.0.column_menu(win);
+    assert!(
+        offered
+            .iter()
+            .all(|(c, _)| *c != ColumnId::Name && *c != ColumnId::Path)
+    );
+    assert_eq!(
+        offered
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(c, _)| *c)
+            .collect::<Vec<_>>(),
+        [ColumnId::Size, ColumnId::Modified]
+    );
+    crate::tests_shell::golden("menus-folder-header.txt", &menu(&app));
+    app.0.execute(
+        win,
+        Invocation::with(CommandId::ColList, CommandArg::Column(ColumnId::Crc)),
+    );
+    assert!(
+        folder_model(&mut app, view)
+            .shown_columns()
+            .contains(&ColumnId::Crc)
+    );
+    assert!(menu(&app).contains("[x] CRC"), "{}", menu(&app));
+    app.0.execute(
+        win,
+        Invocation::with(CommandId::ColList, CommandArg::Column(ColumnId::Crc)),
+    );
+    assert!(
+        !folder_model(&mut app, view)
+            .shown_columns()
+            .contains(&ColumnId::Crc)
+    );
+    // Path is not offered (nor toggled) until the comparison is flat.
+    app.0.execute(
+        win,
+        Invocation::with(CommandId::ColList, CommandArg::Column(ColumnId::Path)),
+    );
+    assert!(
+        folder_model(&mut app, view)
+            .columns()
+            .is_visible(ColumnId::Path)
+    );
+    app.execute(CommandId::DirFlatten);
+    world.settle(&mut app);
+    assert!(
+        app.0
+            .column_menu(win)
+            .iter()
+            .any(|(c, on)| *c == ColumnId::Path && *on)
+    );
+    app.0.execute(
+        win,
+        Invocation::with(CommandId::ColList, CommandArg::Column(ColumnId::Path)),
+    );
+    assert!(
+        !folder_model(&mut app, view)
+            .shown_columns()
+            .contains(&ColumnId::Path)
+    );
+}

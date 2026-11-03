@@ -183,6 +183,8 @@ command_ids! {
     ExistsPrev,
     /// Folder (M2 W9a): Ignore Folder Structure (FC-014).
     DirFlatten,
+    /// Folder (M2 W9a): shows or hides the column of the argument (`CommandArg::Column`, D-234).
+    ColList,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -494,6 +496,8 @@ pub enum Area {
     Toolbar,
     /// The Home sessions tree (W4b).
     SessionTree,
+    /// A folder view's column header (M2 W9a, D-234): the `ColList` items.
+    FolderHeader,
 }
 
 /// A radio or check group of the presentation.
@@ -561,6 +565,7 @@ use Scope as S;
 const NONE: &[Area] = &[];
 const TAB: &[Area] = &[A::Tab];
 const TREE: &[Area] = &[A::SessionTree];
+const HEADER: &[Area] = &[A::FolderHeader];
 
 /// The presentation table, one row per (scope, id). A view type's row wins over a global one.
 pub const PRESENTATION: &[Row] = &[
@@ -1116,6 +1121,15 @@ pub const PRESENTATION: &[Row] = &[
         G::Check,
         P::Always,
         NONE,
+    ),
+    row(
+        C::ColList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        HEADER,
     ),
     row(
         C::CopyRight,

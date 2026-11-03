@@ -718,6 +718,7 @@ fn the_commands_page_writes_commands_toml_and_the_window_follows() {
         ctx: app.0.ctx(w),
         checked: &checked,
         workspaces: &[],
+        columns: &[],
     };
     golden("menus-home-options.txt", &render_text(&menu_bar(&mc)));
 }

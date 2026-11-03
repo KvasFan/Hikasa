@@ -1599,6 +1599,15 @@ impl AppCore {
         ctx
     }
 
+    /// The columns the active folder view offers and whether each shows (`ColList`, the header menu; empty for other
+    /// views).
+    pub fn column_menu(&self, window: WindowId) -> Vec<(crate::folder::columns::ColumnId, bool)> {
+        match self.active_tab(window).and_then(Tab::model) {
+            Some(ViewModel::Folder(m)) => m.column_menu(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The scope of a window's active view.
     pub fn scope(&self, window: WindowId) -> Scope {
         self.active_tab(window).map_or(Scope::Global, Tab::scope)
@@ -1804,6 +1813,14 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::ColList => {
+                if let Some(CommandArg::Column(column)) = inv.arg
+                    && let Some(ViewModel::Folder(m)) =
+                        self.active_tab_mut(window).and_then(|t| t.model_mut())
+                {
+                    m.toggle_column(column);
+                }
+            }
             id => {
                 let (open, parent_view) = {
                     let Some(tab) = self.active_tab_mut(window) else {

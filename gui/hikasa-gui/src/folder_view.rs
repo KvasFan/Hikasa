@@ -2468,6 +2468,25 @@ impl FolderViewModel {
         }
     }
 
+    /// The columns `ColList` and the header menu offer, with whether each shows (D-234): every column but Name,
+    /// Path only while the comparison is flat (FC-014).
+    pub fn column_menu(&self) -> Vec<(ColumnId, bool)> {
+        let flat = self.flat();
+        ColumnId::ALL
+            .into_iter()
+            .filter(|&c| c != ColumnId::Name && (c != ColumnId::Path || flat))
+            .map(|c| (c, self.columns.is_visible(c)))
+            .collect()
+    }
+
+    /// `ColList` (D-234): shows or hides `column`; hiding the CRC column cancels its job (D-237).
+    pub fn toggle_column(&mut self, column: ColumnId) {
+        if column == ColumnId::Path && !self.flat() {
+            return;
+        }
+        self.change_columns(|c| c.toggle(column));
+    }
+
     /// A header click on `column` on `side` (D-235: ascending, descending, the tree order).
     pub fn header_click(&mut self, column: ColumnId, side: Side) {
         self.change_columns(|c| c.header_click(column, side));

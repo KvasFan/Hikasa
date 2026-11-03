@@ -1,0 +1,8 @@
+View
+  [ ] Ext
+  [x] Size
+  [x] Modified
+  [ ] Attributes
+  [ ] CRC
+  [ ] Owner
+  [ ] Group

@@ -182,7 +182,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `FindFilenameNext` | Search | Find Next Filename | F3 | Finds next filename matching search string. | planned |
 | `FindFilenamePrev` | Search | Find Previous Filename | Shift+F3 | Finds previous filename matching search string. | planned |
 | `SuppressFilters` | View | Suppress Filters |  | Temporarily suppresses display and file filters. | implemented |
-| `ColList` | View | Columns |  | Shows or hides picked column. | planned |
+| `ColList` | View | Columns |  | Shows or hides picked column. | implemented |
 | `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | planned |
 | `ShowLog` | View | Log |  | Shows or hides log panel. | implemented |
 

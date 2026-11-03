@@ -31,7 +31,7 @@ fn sc(text: &str) -> Shortcut {
 }
 
 /// Compares `actual` with the golden file `tests/golden/<name>` (`HIKASA_BLESS=1` writes it).
-fn golden(name: &str, actual: &str) {
+pub(crate) fn golden(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(name);
@@ -82,12 +82,14 @@ fn open_texts(
 
 fn menus_text(app: &TestApp, w: WindowId) -> String {
     let checked = |id: CommandId| app.0.checked(w, id);
+    let columns = app.0.column_menu(w);
     let mc = MenuContext {
         tables: app.tables(),
         scope: app.0.scope(w),
         ctx: app.0.ctx(w),
         checked: &checked,
         workspaces: &[],
+        columns: &columns,
     };
     render_text(&menu_bar(&mc))
 }
@@ -626,6 +628,7 @@ fn tab_context_menu_entries() {
         ctx: app.0.ctx(root),
         checked: &checked,
         workspaces: &[],
+        columns: &[],
     };
     let text = render_text(&[crate::menus::Menu {
         title: crate::menus::MenuTitle::Session,

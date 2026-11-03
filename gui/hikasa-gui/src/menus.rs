@@ -14,6 +14,7 @@ use hikasa_session::sessions::{SessionName, SessionType};
 use hikasa_session::settings::commands::DisplayFilterMode;
 
 use crate::commands::{CommandId, CommandTables, Ctx, Group, Scope, lookup};
+use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
@@ -132,6 +133,8 @@ pub struct MenuContext<'a> {
     pub checked: &'a dyn Fn(CommandId) -> Option<bool>,
     /// The saved workspaces (`WorkspaceLoadList`).
     pub workspaces: &'a [String],
+    /// The columns a folder view offers and whether each shows (`ColList`, the header menu; D-234).
+    pub columns: &'a [(ColumnId, bool)],
 }
 
 impl MenuContext<'_> {
@@ -208,6 +211,10 @@ impl MenuContext<'_> {
                     items,
                 }
             }
+            CommandId::ColList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: column_items(self),
+            },
             id if !crate::commands::list_children(id).is_empty() => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: crate::commands::list_children(id)
@@ -232,6 +239,48 @@ impl MenuContext<'_> {
             .filter(|(_, id)| !crate::commands::in_a_list(*id))
             .collect()
     }
+}
+
+/// The column check items of a folder view (`ColList`'s submenu and the header's context menu, `Area::FolderHeader`;
+/// D-234): one per offered column but Name, checked when it shows.
+pub fn column_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::ColList).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    ctx.columns
+        .iter()
+        .filter(|(id, _)| *id != ColumnId::Name)
+        .map(|&(id, on)| MenuItem::Command {
+            invocation: Invocation::with(CommandId::ColList, CommandArg::Column(id)),
+            caption: crate::folder::columns::title(id).to_owned(),
+            shortcut: None,
+            check: Check::Toggle(on),
+            enabled,
+            description: ctx
+                .tables
+                .description(ctx.scope, CommandId::ColList)
+                .to_owned(),
+        })
+        .collect()
+}
+
+/// The header's context menu of a folder view (`Area::FolderHeader`): the commands of that area, `ColList` as its
+/// column items.
+pub fn header_menu(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    for row in crate::commands::PRESENTATION
+        .iter()
+        .filter(|r| r.scope == ctx.scope && r.areas.contains(&crate::commands::Area::FolderHeader))
+    {
+        if !crate::commands::shown(ctx.tables, ctx.scope, row.id) {
+            continue;
+        }
+        if row.id == CommandId::ColList {
+            items.extend(column_items(ctx));
+        } else {
+            items.push(ctx.item(row.id, None));
+        }
+    }
+    items
 }
 
 /// Groups by section with separators between groups.

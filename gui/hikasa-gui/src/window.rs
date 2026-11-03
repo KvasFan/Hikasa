@@ -71,6 +71,8 @@ pub enum CommandArg {
     Page(&'static str),
     /// Paths (drops).
     Paths(Vec<PathBuf>),
+    /// A folder view's column (`ColList`, M2 W9a).
+    Column(crate::folder::columns::ColumnId),
 }
 
 /// A tab's view.

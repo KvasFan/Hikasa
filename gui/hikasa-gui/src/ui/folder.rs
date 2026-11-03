@@ -20,6 +20,7 @@ use crate::ui::keys::shortcuts_of;
 use crate::ui::scroll;
 use crate::ui::text::{hatch, triangle};
 use crate::ui::theme::Palette;
+use crate::window::Invocation;
 use hikasa_session::settings::Shortcut;
 
 /// Height of the base-folder strip and of the column header.
@@ -58,6 +59,46 @@ pub struct FolderUi {
     press: Option<(egui::Pos2, Swipe)>,
     /// The press became a swipe (moved ≥ 4 points vertically).
     swiping: bool,
+    /// A header drag under way (D-234): a column moved or a separator dragged.
+    header_drag: Option<HeaderDrag>,
+    /// The widest text of each column in the rows drawn last frame (a double-click on a separator fits to it).
+    widest: std::collections::BTreeMap<ColumnId, f32>,
+}
+
+/// A drag in the column header (D-234).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HeaderDrag {
+    /// A header dragged: the column moves where it is dropped (Name stays first).
+    Move(ColumnId),
+    /// A column's left separator dragged: the column's width at the press and the press's x.
+    Resize(ColumnId, f32, f32),
+}
+
+/// How near a column's left edge (points) a press grabs its separator.
+const GRIP: f32 = 4.0;
+
+/// What a press in the header at `x` grabs: a column's separator (the column whose left edge it is: the fixed
+/// columns grow leftwards from the right edge) or a column's title. Name has no separator of its own.
+fn header_grab(spans: &[(ColumnId, egui::Rangef)], x: f32) -> Option<(ColumnId, bool)> {
+    if let Some((column, _)) = spans
+        .iter()
+        .find(|(c, span)| *c != ColumnId::Name && (x - span.min).abs() <= GRIP)
+    {
+        return Some((*column, true));
+    }
+    spans
+        .iter()
+        .find(|(_, span)| span.contains(x))
+        .map(|(c, _)| (*c, false))
+}
+
+/// The index among the shown columns where a header dropped at `x` goes (D-234): before the first column whose
+/// centre lies right of `x`.
+fn drop_index(spans: &[(ColumnId, egui::Rangef)], x: f32) -> usize {
+    spans
+        .iter()
+        .position(|(_, span)| x < span.center())
+        .unwrap_or(spans.len())
 }
 
 impl FolderUi {
@@ -102,7 +143,7 @@ pub fn tree_id(view: ViewId) -> Id {
 
 #[allow(clippy::too_many_arguments)] // the view, its state, its texts, its keys and its look
 /// Draws the folder view of `view`; returns the commands its tree ran (Enter, Left, Right with the focus,
-/// double-clicks), for the window to execute through the catalogue.
+/// double-clicks, the header's context menu `header_menu`), for the window to execute through the catalogue.
 pub fn show(
     ui: &mut Ui,
     view: ViewId,
@@ -113,8 +154,9 @@ pub fn show(
     pal: &Palette,
     tree_font: &FontId,
     keys: bool,
-) -> Vec<CommandId> {
-    let mut run = Vec::new();
+    header_menu: &[crate::menus::MenuItem],
+) -> Vec<Invocation> {
+    let mut run: Vec<Invocation> = Vec::new();
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
@@ -200,13 +242,66 @@ pub fn show(
             ));
         }
     }
-    let header_response = ui.interact(header, tree_id(view).with("header"), Sense::click());
-    if header_response.clicked()
+    let header_response = ui.interact(
+        header,
+        tree_id(view).with("header"),
+        Sense::click_and_drag(),
+    );
+    // The spans of the side under the pointer (both sides have the same ones, D-234).
+    let side_spans =
+        [0, 1].map(|k| column_spans(m, &shown, side_x[k], side_x[k] + side_w, columns));
+    let spans_at = |x: f32| side_spans[usize::from(x >= side_x[1])].clone();
+    let mut separator_hover = false;
+    if let Some(at) = header_response.hover_pos()
+        && matches!(header_grab(&spans_at(at.x), at.x), Some((_, true)))
+    {
+        separator_hover = true;
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if header_response.drag_started()
+        && let Some(at) = ui.input(|i| i.pointer.press_origin())
+    {
+        st.header_drag = match header_grab(&spans_at(at.x), at.x) {
+            Some((column, true)) => {
+                Some(HeaderDrag::Resize(column, m.columns().width(column), at.x))
+            }
+            Some((column, false)) if column != ColumnId::Name => Some(HeaderDrag::Move(column)),
+            _ => None,
+        };
+    }
+    if let (Some(HeaderDrag::Resize(column, width, from)), Some(at)) =
+        (st.header_drag, header_response.interact_pointer_pos())
+        && header_response.dragged()
+    {
+        // The fixed columns grow leftwards: dragging their left edge left widens them.
+        m.change_columns(|c| c.resize(column, width + (from - at.x)));
+    }
+    if header_response.drag_stopped() {
+        if let (Some(HeaderDrag::Move(column)), Some(at)) =
+            (st.header_drag, header_response.interact_pointer_pos())
+        {
+            let index = drop_index(&spans_at(at.x), at.x);
+            m.change_columns(|c| c.move_to(column, index));
+        }
+        st.header_drag = None;
+    }
+    if header_response.double_clicked()
+        && let Some(at) = header_response.interact_pointer_pos()
+        && let Some((column, true)) = header_grab(&spans_at(at.x), at.x)
+    {
+        let widest = st.widest.get(&column).copied().unwrap_or(0.0);
+        m.change_columns(|c| c.fit(column, widest));
+    } else if header_response.clicked()
+        && !separator_hover
         && let Some(at) = header_response.interact_pointer_pos()
         && let Some((_, column, side)) = header_hits.iter().find(|(r, _, _)| r.contains(at))
     {
         m.header_click(*column, *side);
     }
+    header_response.context_menu(|ui| {
+        let mut hint = None;
+        crate::ui::menus::items(ui, header_menu, &mut run, &mut hint);
+    });
     let mut body_top = header.bottom();
     if let Some(error) = &status.error {
         let strip = Rect::from_min_size(pos2(full.left(), body_top), vec2(full.width(), 22.0));
@@ -274,7 +369,7 @@ pub fn show(
                 };
                 // A binding of the key in the tree wins (D-111: overrides of focus-bound keys too).
                 if let Some(cmd) = shortcuts_of(*key, *modifiers).iter().find_map(dispatch) {
-                    run.push(cmd);
+                    run.push(Invocation::new(cmd));
                     return false;
                 }
                 // D-238's keyboard table: arrows, pages, Home/End move (Shift extends, Ctrl moves the current row
@@ -444,7 +539,7 @@ pub fn show(
                     }
                     Some(_) => {
                         m.click(index, hit_at(x), Mods::default());
-                        run.push(CommandId::Open);
+                        run.push(Invocation::new(CommandId::Open));
                     }
                     None => {}
                 }
@@ -466,6 +561,7 @@ pub fn show(
 
     // Rows.
     let clip = painter.with_clip_rect(tree);
+    st.widest.clear();
     for row in &window.rows {
         let y = tree.top() + (row.index as f32 - first as f32 - frac) * rh;
         if y + rh < tree.top() || y > tree.bottom() {
@@ -489,7 +585,10 @@ pub fn show(
                 clip.rect_filled(side, CornerRadius::ZERO, pal.select);
             }
             let spans = column_spans(m, &shown, side.left(), side.right(), columns);
-            draw_side(&clip, side, row, cell, &spans, &body_font, &small, pal);
+            for (column, w) in draw_side(&clip, side, row, cell, &spans, &body_font, &small, pal) {
+                let widest = st.widest.entry(column).or_insert(0.0);
+                *widest = widest.max(w);
+            }
         }
         if row.current {
             clip.rect_stroke(
@@ -655,10 +754,11 @@ fn draw_side(
     font: &FontId,
     small: &FontId,
     pal: &Palette,
-) {
+) -> Vec<(ColumnId, f32)> {
+    let mut widths = Vec::new();
     let Some(cell) = cell else {
         hatch(painter, rect, pal.hatch);
-        return;
+        return widths;
     };
     let y = rect.center().y;
     let indent = rect.left() + 4.0 + row.depth as f32 * INDENT;
@@ -711,8 +811,10 @@ fn draw_side(
         } else {
             (Align2::LEFT_CENTER, cell_rect.left() + 6.0)
         };
-        painter
+        let drawn = painter
             .with_clip_rect(cell_rect.intersect(painter.clip_rect()))
             .text(pos2(x, y), anchor, text, small.clone(), pal.muted);
+        widths.push((*column, drawn.width()));
     }
+    widths
 }

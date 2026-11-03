@@ -1197,7 +1197,7 @@ id = "ColList"
 menu = "View"
 caption = "Columns"
 description = "Shows or hides picked column."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Legend"
