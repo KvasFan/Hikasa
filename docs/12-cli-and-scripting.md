@@ -480,6 +480,10 @@ execute bit is skipped; a relative path is taken relative to the current folder;
 M2 W3, `HIKASA_CLIPBOARD_FILE` (a file whose text stands in for the clipboard of `clipboard://`:
 scripts, headless machines and tests; a missing file means "no clipboard", an empty one an
 empty clipboard; M2 W7: `--output-to clipboard` writes a report's HTML, else its text, to that file) and, M2 W7,
+`HIKASA_CLIPBOARD_HELPER_FILE` (on Linux a report placed on the clipboard is handed to a helper process, `hikasa` or
+`hikasa-gui` itself, that keeps it after the program ended; with this variable the helper writes the report's HTML,
+else its text, to that file instead of placing it: scripts, headless machines and tests; a clipboard that cannot be
+written is exit 100, `unsupported` without a display, `io` otherwise) and, M2 W7,
 `SOURCE_DATE_EPOCH` (the report time, a decimal count of seconds since the epoch shown in UTC, so a report is the same
 bytes on every run; a value that does not parse is ignored with the warning `source_date_epoch_invalid`; only reports
 read it).

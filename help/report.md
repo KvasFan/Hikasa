@@ -74,7 +74,10 @@ reports are written beside, then swapped in, so a failure or a Ctrl-C leaves the
   named like a keyword is written `./printer`.
 - `clipboard` places the report on the clipboard: an HTML report with a plain-text alternative, anything else as text,
   at most 128 MiB (`too_large`). On Linux a small helper process keeps the content until something else is copied,
-  after `hikasa` has ended. `HIKASA_CLIPBOARD_FILE=<file>` writes the report to that file instead.
+  after `hikasa` has ended. `HIKASA_CLIPBOARD_FILE=<file>` writes the report to that file instead;
+  `HIKASA_CLIPBOARD_HELPER_FILE=<file>` keeps the Linux helper but makes it write the report to that file instead of
+  placing it (scripts, headless machines, tests). A clipboard that cannot be written is exit 100: no display is
+  `unsupported`, any other failure `io`.
 - `printer` writes the report as HTML with a print block (portrait unless `print-landscape`) to a new folder below the
   cache folder's `print/` and opens it with the associated application, which prints it; `browser` does the same
   without the print block. Folders there older than seven days are removed. No application to open it is exit 100;
