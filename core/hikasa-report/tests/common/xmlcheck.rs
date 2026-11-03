@@ -145,6 +145,7 @@ pub fn check(bytes: &[u8]) -> Result<(), String> {
     if !text.ends_with("</hikasa-report>\n") || text.contains('\r') {
         return Err("line ends".into());
     }
+    raw_markup(text)?;
     let doc = Document::parse(text).map_err(|e| format!("not well-formed: {e}"))?;
     let root = doc.root_element();
     if root.tag_name().name() != "hikasa-report" {
@@ -251,6 +252,42 @@ pub fn check(bytes: &[u8]) -> Result<(), String> {
                 }
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// §1.7.6 escapes `&`, `<` and `>` always: in the raw bytes a `<` only opens markup and a `>` only closes it, and no
+/// attribute value holds either (parsers accept a raw `>` in text, so this is checked on the bytes).
+fn raw_markup(text: &str) -> Result<(), String> {
+    let (mut tag, mut quoted) = (false, false);
+    for (at, c) in text.char_indices() {
+        let bad = match (tag, quoted, c) {
+            (false, _, '<') => {
+                tag = true;
+                false
+            }
+            (false, _, '>') | (true, true, '<' | '>') | (true, false, '<') => true,
+            (true, false, '>') => {
+                tag = false;
+                false
+            }
+            (true, _, '"') => {
+                quoted = !quoted;
+                false
+            }
+            _ => false,
+        };
+        if bad {
+            let from = text[..at]
+                .char_indices()
+                .rev()
+                .nth(30)
+                .map_or(0, |(i, _)| i);
+            return Err(format!(
+                "a raw {c:?} at byte {at}: {:?}",
+                &text[from..at + 1]
+            ));
         }
     }
     Ok(())

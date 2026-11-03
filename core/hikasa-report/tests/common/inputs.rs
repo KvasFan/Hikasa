@@ -199,7 +199,10 @@ fn insert(vfs: &MemoryVfs, dir: &str, nodes: &[GenNode], side: usize) {
             vfs.insert_dir(&host(&path), meta(1_000_000)).unwrap();
             insert(vfs, &path, &node.children, side);
         } else {
-            let bytes = format!("{}", node.content[side] % 3).into_bytes();
+            // `0 ` differs from `0` in whitespace only: unimportant under the rules-based content test.
+            let bytes = ["0", "1", "2", "0 "][usize::from(node.content[side] % 4)]
+                .as_bytes()
+                .to_vec();
             vfs.insert_file(
                 &host(&path),
                 bytes,

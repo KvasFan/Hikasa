@@ -103,6 +103,48 @@ fn struck_spans(html: &str) -> Vec<(char, Vec<String>)> {
     out
 }
 
+/// The number columns and the mark of each line of the interleaved column (display all, no wrap): a same row once
+/// with both numbers and `  `; a difference as its left line (`-`) then its right line (`+`), each with its own number
+/// only, the importance `!` important, `~` unimportant, ` ` for an unimportant one under ignore-unimportant.
+fn expected_gutters(cmp: &TextComparison, iu: bool) -> Vec<(String, String, String)> {
+    let number = |side: Side, line: Option<LineIdx>| {
+        line.map(|l| cmp.document(side).physical_line(l).to_string())
+            .unwrap_or_default()
+    };
+    let mut out = Vec::new();
+    for i in 0..cmp.row_count() {
+        let row = cmp.row(RowIdx(i)).unwrap();
+        if row.state == RowState::Same {
+            out.push((
+                number(Side::Left, row.left),
+                number(Side::Right, row.right),
+                "  ".to_owned(),
+            ));
+            continue;
+        }
+        let importance = match row.importance {
+            Importance::Unimportant if iu => ' ',
+            Importance::Important => '!',
+            _ => '~',
+        };
+        if row.left.is_some() {
+            out.push((
+                number(Side::Left, row.left),
+                String::new(),
+                format!("-{importance}"),
+            ));
+        }
+        if row.right.is_some() {
+            out.push((
+                String::new(),
+                number(Side::Right, row.right),
+                format!("+{importance}"),
+            ));
+        }
+    }
+    out
+}
+
 /// What a strike-out of `strike` must strike, per line of the column (display all).
 fn expected_spans(cmp: &TextComparison, iu: bool, strike: [bool; 2]) -> Vec<(char, Vec<String>)> {
     let mut out = Vec::new();
@@ -164,8 +206,14 @@ proptest! {
         let gutter = 2 * n + 5;
         let body = text.split_once("\n\n").unwrap().1;
         let (mut l, mut r) = (Vec::new(), Vec::new());
+        let mut gutters = Vec::new();
         for line in body.lines() {
             let padded = format!("{line:<gutter$}");
+            // `<left number> <right number> <mark> `: the numbers right-aligned in n columns, the mark two characters.
+            prop_assert!(padded.is_char_boundary(gutter), "{line:?}");
+            let head = &padded[..gutter];
+            prop_assert_eq!([&head[n..=n], &head[2 * n + 1..2 * n + 2], &head[2 * n + 4..]], [" "; 3], "{:?}", line);
+            gutters.push((head[..n].trim_start().to_owned(), head[n + 1..2 * n + 1].trim_start().to_owned(), head[2 * n + 2..2 * n + 4].to_owned()));
             let mark: Vec<char> = padded[2 * n + 2..].chars().take(1).collect();
             let rest = padded.get(gutter..).unwrap_or("").to_owned();
             match mark[0] {
@@ -180,6 +228,7 @@ proptest! {
         }
         prop_assert_eq!(l, doc_lines(&cmp, Side::Left), "{}", text);
         prop_assert_eq!(r, doc_lines(&cmp, Side::Right), "{}", text);
+        prop_assert_eq!(gutters, expected_gutters(&cmp, iu), "{}", text);
         let strike_words: Vec<&str> = [(1, "strikeout-left-diffs"), (2, "strikeout-right-diffs")]
             .iter()
             .filter(|(bit, _)| strike & bit != 0)
@@ -202,7 +251,7 @@ proptest! {
         cpl in proptest::option::weighted(0.6, 1u32..8),
         name in proptest::collection::vec(proptest::sample::select(NAME_CHARS), 0..6),
         iu in any::<bool>(),
-        title in proptest::collection::vec(proptest::sample::select(&['T', ' ', '\r', '\n', '&', '<', '"', '\u{0}', '\u{1b}', '\u{ffff}', '\u{202e}'][..]), 0..10),
+        title in proptest::collection::vec(proptest::sample::select(&['T', ' ', '\r', '\n', '&', '<', '>', '"', '\u{0}', '\u{1b}', '\u{ffff}', '\u{202e}'][..]), 0..10),
     ) {
         let name = format!("n{}.txt", name.into_iter().collect::<String>());
         let cmp = compare_strings_cpl(&name, &left, &right, &TextRules::default(), cpl);
@@ -221,6 +270,37 @@ proptest! {
                 rebuilt.push('\n');
             }
             prop_assert_eq!(&rebuilt, source, "{}", xml);
+        }
+        // Each row's `d` and `u` are its side's inline differences, by importance, in order (display all: one `row` per
+        // comparison row).
+        let rows: Vec<_> = doc.descendants().filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "row"))).collect();
+        prop_assert_eq!(rows.len() as u32, cmp.row_count());
+        for (i, element) in rows.iter().enumerate() {
+            let idx = RowIdx(i as u32);
+            let row = cmp.row(idx).unwrap();
+            let inline = (row.state == RowState::Changed).then(|| cmp.inline(idx)).flatten();
+            for (at, (name, line)) in [("l", row.left), ("r", row.right)].into_iter().enumerate() {
+                let got: Vec<(String, String)> = element
+                    .children()
+                    .filter(|c| c.has_tag_name((xmlcheck::NAMESPACE, name)))
+                    .flat_map(|l| l.children().filter(roxmltree::Node::is_element).filter(|c| !c.has_tag_name((xmlcheck::NAMESPACE, "c"))).collect::<Vec<_>>())
+                    .map(|c| (c.tag_name().name().to_owned(), xmlcheck::line_text(c)))
+                    .collect();
+                let mut want = Vec::new();
+                if let (Some(line), Some(inl)) = (line, &inline) {
+                    let text = cmp.document(if at == 0 { Side::Left } else { Side::Right }).line(line).into_owned();
+                    let mut from = 0usize;
+                    for r in if at == 0 { &inl.left } else { &inl.right } {
+                        let (start, end) = (r.range.start as usize, (r.range.end as usize).min(text.len()));
+                        if start >= end || start < from {
+                            continue;
+                        }
+                        want.push(((if r.important { "d" } else { "u" }).to_owned(), text.get(start..end).unwrap_or_default().to_owned()));
+                        from = end;
+                    }
+                }
+                prop_assert_eq!(got, want, "row {} side {}\n{}", i, name, xml);
+            }
         }
         // Every attribute reads back to one string: the spec with its backslashes and controls.
         let spec = doc.descendants().find(|n| n.has_tag_name((xmlcheck::NAMESPACE, "side"))).unwrap().attribute("spec").unwrap();
@@ -257,33 +337,68 @@ proptest! {
         prop_assert_eq!(json["verdict"]["result"].as_str().unwrap(), verdict);
     }
 
-    /// P-FXML (A7.6): random trees on `MemoryVfs`, with names holding spaces, controls, markup and backslashes: the set
-    /// of `(path, state)` of the `entry` and `folder` elements equals the JSON report's items for the same display
-    /// (D-29), the nesting is the tree's (the structure checks: each element's path is its parent's plus one name), and
-    /// `summary` equals `summary_counts`. A name with controls is escaped in its attributes.
+    /// P-FXML (A7.6): random trees on `MemoryVfs`, with names holding spaces, controls, markup and backslashes, compared
+    /// by size and time or by the rules-based content test (so unimportant differences occur): the set of `(path,
+    /// state)` of the `entry` and `folder` elements equals the JSON report's items for the same display (D-29), with
+    /// `unimportant` exactly where the category is different and would be same under ignore-unimportant; every
+    /// element's parent is its tree parent's element (`tree` for a top-level row, for one whose folder is not shown, and
+    /// for every row of a flat tree); paths and names read back to the tree's; `summary` equals `summary_counts`. A name
+    /// with controls is escaped in its attributes.
     #[test]
-    fn p_fxml_folder_dump_is_the_json_items(tree in folder_tree(), filter in 0usize..5, iu in any::<bool>(), flat in proptest::bool::weighted(0.2)) {
+    fn p_fxml_folder_dump_is_the_json_items(tree in folder_tree(), filter in 0usize..5, iu in any::<bool>(), flat in proptest::bool::weighted(0.2), by_rules in any::<bool>()) {
         let vfs = materialize(&tree);
         let mut rules = FolderRules::default();
         rules.handling.flatten = flat;
+        if by_rules {
+            rules.criteria.content.method = hikasa_core::ContentMethod::Rules;
+        }
         let cmp = compare_memory(&vfs, &rules);
         let filters = [FolderDisplayFilter::All, FolderDisplayFilter::Differences, FolderDisplayFilter::Orphans, FolderDisplayFilter::NoOrphans, FolderDisplayFilter::Same];
         let display = DisplayOptions { filter: filters[filter], folders: FolderMode::CompareStructure, ignore_unimportant: iu, suppress_filters: false };
-        let (xml, items) = folder_dump(&cmp, display);
+        let (xml, mut items) = folder_dump(&cmp, display);
+        // `unimportant`: different, and same under ignore-unimportant (the marker `~`), which a display without
+        // ignore-unimportant shows apart.
+        if !iu {
+            let all = DisplayOptions { filter: FolderDisplayFilter::All, ignore_unimportant: true, ..display };
+            let same_if_ignored: BTreeSet<String> = folder_compare_json(&cmp, &all)
+                .items
+                .iter()
+                .filter(|item| item.category == "same")
+                .map(|item| item.path.clone())
+                .collect();
+            items = items
+                .into_iter()
+                .map(|(path, state)| {
+                    let unimportant = state == "different" && same_if_ignored.contains(&path);
+                    (path, if unimportant { "unimportant".to_owned() } else { state })
+                })
+                .collect();
+        }
         let doc = roxmltree::Document::parse(&xml).unwrap();
-        let got: BTreeSet<(String, String)> = doc
+        let elements: Vec<roxmltree::Node<'_, '_>> = doc
             .descendants()
             .filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "entry")) || n.has_tag_name((xmlcheck::NAMESPACE, "folder")))
-            .map(|n| {
-                let state = n.attribute("state").unwrap();
-                // The path and the name read back to the tree's own (`\\`, `\u{…}`).
-                let path = xmlcheck::unescape(n.attribute("path").unwrap()).unwrap();
-                let name = xmlcheck::unescape(n.attribute("name").unwrap()).unwrap();
-                assert_eq!(path.rsplit('/').next(), Some(name.as_str()), "{xml}");
-                (path, if state == "unimportant" { "different".to_owned() } else { state.to_owned() })
-            })
             .collect();
-        prop_assert_eq!(got.len(), doc.descendants().filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "entry")) || n.has_tag_name((xmlcheck::NAMESPACE, "folder"))).count());
+        let path_of = |n: &roxmltree::Node<'_, '_>| xmlcheck::unescape(n.attribute("path").unwrap()).unwrap();
+        let shown_folders: BTreeSet<String> = elements
+            .iter()
+            .filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "folder")))
+            .map(path_of)
+            .collect();
+        let mut got = BTreeSet::new();
+        for n in &elements {
+            // The path and the name read back to the tree's own (`\\`, `\u{…}`).
+            let path = path_of(n);
+            let name = xmlcheck::unescape(n.attribute("name").unwrap()).unwrap();
+            prop_assert_eq!(path.rsplit('/').next(), Some(name.as_str()), "{}", xml);
+            // The parent element is the tree parent's, or `tree`.
+            let parent = path.rsplit_once('/').map(|(up, _)| up.to_owned()).filter(|up| !flat && shown_folders.contains(up));
+            let element = n.parent_element().unwrap();
+            let got_parent = element.has_tag_name((xmlcheck::NAMESPACE, "folder")).then(|| path_of(&element));
+            prop_assert!(got_parent == parent && (parent.is_some() || element.has_tag_name((xmlcheck::NAMESPACE, "tree"))), "{} below {:?}, not {:?}\n{}", path, got_parent, parent, xml);
+            got.insert((path, n.attribute("state").unwrap().to_owned()));
+        }
+        prop_assert_eq!(got.len(), elements.len());
         prop_assert_eq!(got, items, "{}", xml);
         let counts: Vec<(String, String, u64)> = summary_counts(ReportInput::Folder(&cmp), iu)
             .into_iter()
@@ -293,11 +408,25 @@ proptest! {
         prop_assert!(!xml.contains('\u{1}') && !xml.contains('\t'), "controls are escaped in attributes");
     }
 
-    /// P-LINKS (A7.9, the href half): every href is relative, holds only unreserved bytes, `%XX` and `/`, and decodes
-    /// back to its segments' bytes.
+    /// P-LINKS (A7.9, the href half): every href is relative, is exactly its segments with the RFC 3986 unreserved
+    /// bytes (`A–Z a–z 0–9 - . _ ~`) kept and every other byte `%XX` in upper-case hex, joined by `/`, and decodes back
+    /// to its segments' bytes.
     #[test]
-    fn p_links_hrefs_decode_back(segments in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 1..12), 1..4)) {
+    fn p_links_hrefs_decode_back(segments in proptest::collection::vec(proptest::collection::vec(prop_oneof![any::<u8>(), proptest::sample::select(&b"~-._:/%aZ09"[..])], 1..12), 1..4)) {
         let link = href(&segments);
+        let want: Vec<String> = segments
+            .iter()
+            .map(|segment| {
+                segment
+                    .iter()
+                    .map(|&b| match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => char::from(b).to_string(),
+                        _ => format!("%{b:02X}"),
+                    })
+                    .collect()
+            })
+            .collect();
+        prop_assert_eq!(&link, &want.join("/"));
         prop_assert!(link.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~%/".contains(&b)), "{}", link);
         prop_assert!(!link.starts_with('/') && !link.contains('\\') && !link.contains(':'));
         prop_assert_eq!(href_segments(&link).unwrap(), segments);

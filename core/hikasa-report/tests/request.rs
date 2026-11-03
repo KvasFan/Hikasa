@@ -1127,7 +1127,8 @@ fn word_lists() -> impl Strategy<Value = (ReportKind, ReportWords, Vec<usize>)> 
 proptest! {
     #![proptest_config(config("tests/proptest-regressions/request.txt"))]
 
-    /// P-RPTREQ.
+    /// P-RPTREQ: `parse(words(r)) == r`, `words` a fixed point, `words` splitting options from output options as
+    /// §1.7.4 does, any permutation and any joining of a list parsing to the same request.
     #[test]
     fn p_rptreq_words_round_trip((kind, words, order) in word_lists()) {
         let d = defaults();
@@ -1138,6 +1139,10 @@ proptest! {
             return Ok(());
         };
         let canonical = req.words();
+        // The split of §1.7.4: palette, print palette, orientation and wrap are output options, the rest options.
+        let output = |w: &str| ["html-", "text", "print-", "wrap-"].iter().any(|p| w.starts_with(p));
+        prop_assert!(canonical.options.iter().all(|w| !output(w)), "an output word in options: {:?}", canonical);
+        prop_assert!(canonical.output_options.iter().all(|w| output(w)), "an option in output options: {:?}", canonical);
         let again = ReportRequest::parse(kind, &canonical, &d).unwrap();
         prop_assert_eq!(&again, &req, "parse(words(r)) == r: {:?}", canonical);
         prop_assert_eq!(again.words(), canonical.clone(), "words(parse(w)) is a fixed point");
