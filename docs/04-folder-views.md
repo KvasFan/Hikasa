@@ -451,7 +451,11 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   compatible* mask (`abc?.bak` from computed base mask) or *Regular expressions*
   (old mask / new mask with `$1` groups).
 - **FC-075** (P1): **Attributes…**: DOS flags Read-only/Hidden/Archive (tri-state
-  checkboxes) or Unix owner/group/mode; folders only (not contents).
+  checkboxes) or Unix owner/group/mode; folders only (not contents). *M2 W8a (D-220):* the script form `attrib
+  (+|-)<letters>…` and the CLI form `hikasa folder op attrib --change <(+|-)letters> [--side]` plan one `set_attrs` item
+  per selected row and side (folders are not recursed); on Unix modes `r` is the write bits, other letters are skipped
+  `unsupported` with one `attrib_unsupported` warning; on a Windows disk only R can be set (no approved safe API sets
+  H, S, A). The *Attributes…* dialog stays P1.
 - **FC-076** (P0): **Touch…**: copy timestamps from other side, or set to a chosen
   date/time (default: current time or last touch); folders where the OS allows.
 - **FC-077** (P0): **New Folder…** (Ins) on one or both sides; a name ending in an

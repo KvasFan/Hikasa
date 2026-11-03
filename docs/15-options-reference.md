@@ -232,6 +232,12 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-020 | P0 | name filter presets | `filters.toml` (below) | |
 | OPT-021 | P0 | `[tweaks.scripts] beep_when_finished`, `close_when_finished` | bool | false |
 | OPT-021 | P0 | `[tweaks.scripts] shared_scripts_folder` | path | `""` |
+
+*M2 W8 (OPT-021):* `shared_scripts_folder` is where a script named by a relative path is looked up when it is absent from
+the current folder (a relative folder is relative to the configuration folder; only an absent script falls through,
+never an unreadable one). `beep_when_finished` beeps once a script ended, whatever its exit code (BEL on a terminal's
+stderr, a request for attention in the window), never in silent mode. `close_when_finished` closes the status window
+after a script that ended with exit 0; `--closescript` closes it after any script. Neither applies without a window.
 | OPT-022 | P1 | `[tweaks.shared_sessions_file] path` | path | `""` |
 
 **`archives.toml` (OPT-010).** `schema_version = 1`, then `[types]` with one `mask`

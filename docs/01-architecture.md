@@ -86,7 +86,7 @@ Hikasa/
 │   ├── hikasa-picture/        # image loading, pixel compare, metadata compare
 │   ├── hikasa-metadata/       # media tags, executable version info, registry files (tree-of-values compare)
 │   ├── hikasa-report/         # report generation (text, HTML, XML, patch, statistics, print model)
-│   ├── hikasa-script/         # script language parser + interpreter (drives hikasa-folder headless)
+│   ├── hikasa-script/         # script language parser + interpreter (drives the session layer through a host)
 │   └── hikasa-session/        # session/workspace/profile/options persistence, import/export packages, IPC protocol
 ├── cli/                       # layer 2
 │   └── hikasa-cli/            # `hikasa` binary: every function as a subcommand; `hikasa gui …` talks to the GUI
@@ -368,7 +368,8 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   the per-user pipe name in M1; an owner-only DACL is a P1 item. `ServerHandle::shutdown`
   wakes the blocked accept by connecting to its own endpoint once, notifies the
   outstanding waiters, closes the connections and returns within about 2 s.
-- **M1 requests.** The server itself answers `RunScript` with `unsupported_request` and
+- **M1 requests.** The server itself answered `RunScript` with `unsupported_request` in M1 (since M2 W8b it goes to
+  the GUI's handler, see below) and answers
   `OpenView` of kinds other than `folder_compare` and `text_compare` with
   `unsupported_view`; everything else goes to the GUI's handler. (In M1 the server also
   answered `LoadSession` and `LoadWorkspace` itself; see the M2 additions below.) A second `hikasa-gui` launch that cannot take the lock forwards its
@@ -387,6 +388,17 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   support sessions; restart it" (exit 100). The GUI opens sessions through
   `Service::session_view` / `Service::workspace_views`: the session's specs and its
   effective rules as the `base_rules` of the view's request.
+- **M2 W8b additions (D-228, additive to protocol v1).** `RunScript` gains `cwd`, `env` (only the variables the script
+  references), `wait`, `stop_on_error`, `confirm` and `close` (`Some(true)` for `--closescript`), each left out of the
+  wire at its default. It reaches the GUI's handler (`IpcHandler::handle_script`; its default answers
+  `unsupported_request`, as a GUI before W8b), which takes the one script slot (else `Error{busy}`, "a script is running
+  in the window; wait for it or stop it"), locates, reads and checks the script with that cwd and environment (105/106
+  → `Error{invalid_request}` with the message) and answers `Ok`; the run then shows its status window in the window
+  focused last. With `wait`, `ScriptFinished{exit_code, summary}` follows the `Ok`, once, with the request's id (the
+  gate of `ViewClosed` also orders it); a waiter dropped, or a server that stops during the run, sends
+  `ScriptFinished{exit_code: 100}`. The CLI (`hikasa gui script`, `script run --gui`, `gui open @script`) checks the
+  script first and reports an older GUI's `unsupported_request` as "the running GUI does not support scripts; restart
+  it" (exit 100).
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

@@ -11,7 +11,7 @@
     Open Session (Shift+Ctrl+O), Load Workspace ▸ (…, Manage Workspaces…), Save
     Workspace As…, [view-specific session commands], Close Tab (Ctrl+W), Exit (Ctrl+Q).
   - **Tools**: Options…, File Formats…, Profiles…, Export Settings…, Import Settings…,
-    Restore Factory Defaults…, Save Snapshot…, Edit Text File, View Patch….
+    Restore Factory Defaults…, Run Script… (M2 W8b), Save Snapshot…, Edit Text File, View Patch….
   - **Help**: Contents, Context Sensitive Help (F1), Project Website, Check for Updates,
     Support, About.
   - View-type menus **File**, **Edit**, **Actions**, **Search**, **View** as listed in
@@ -294,6 +294,19 @@ Both, with what the row holds on each side; a side without the row or read-only 
 chosen, a pair none (OK stays off until one is chosen), and `require_side_selection_in_delete` never chooses; *Use
 recycle bin if possible* (on), *If the recycle bin fails, delete permanently* (off); Delete Permanently has the bin off
 and greyed and no fallback. Both are toolkit-free models (architecture check 7); the view runs the jobs.
+
+*M2 W8b (§1.8.14, D-229):* the catalogue command `RunScript` (Tools, "Run Script...", no default shortcut, help
+`dialog-script`) opens the Run Script dialog: the script (the lookup of `hikasa script run`), its arguments (split by the
+script lexer's word rules, `Service::script_args`), *Stop on error*, the confirm mode; Run checks the script and shows
+its errors with their positions instead of running (the browse button comes with W9's browse dialog). A run (from the
+dialog, `RunScript` over IPC, `hikasa-gui @script`) shows its **status window** (`ScriptDialog`) in the window focused
+last: the script's path, "Command <i> of <n>, line <l>: <text>", the current call's progress, the log lines (the last
+`[tweaks.log_panel] display_up_to`, errors in the error colour), the end line; *Stop* while it runs (Esc and the close
+button too: the run is cancelled as Ctrl-C cancels it), *Close* after. W6's confirmation dialogs (without "Do not ask
+again") and the stop-on-error Yes/No question stack on it, and their answers unblock the run's job thread. At the end a
+notice ("Script <name> completed", or "Script <name> failed: exit <code>" with *Show*), a summary per command and the
+errors in the log panel, `close_when_finished` (exit 0) or `--closescript` (any exit), and with `beep_when_finished` a
+request for attention and a flashing title. One script runs at a time. The models are toolkit-free (check 7).
 
 ## 5. Optional helpers
 

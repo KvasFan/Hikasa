@@ -65,7 +65,8 @@
   written `false` to mean "off" where the defaults set them. Removing an entry of a map that the defaults hold
   (such as one grammar element's importance) comes with the session settings dialog (W4).
 - **Display filter (SES-010).** `[display]` is stored with the session; a session loaded by a script (or opened
-  over IPC) has it cleared, so the script's filter state applies.
+  over IPC) has it cleared, so the script's filter state applies. *M2 W8:* a script's `load` of a session drops its
+  `[display]` (tested in `core/hikasa-session/tests/script_run.rs`, A8.6), in a headless run and in the window alike.
 - **Specs that cannot be stored.** `-` (standard input) and `clipboard://` are never stored; the side stays
   empty, with the warning `spec_not_saved`.
 

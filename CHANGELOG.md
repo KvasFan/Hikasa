@@ -10,12 +10,35 @@
   `lt`/`rt` mean left and right where a side is expected; `"` quotes, `#` comments and a trailing `&` continues a line.
   `script check` reports every error with its line and column (exit 106) and runs nothing; a script that cannot be found
   or read is 105, a base that cannot be loaded ends the script with 107, a failed command makes it 100. Flags:
-  `--confirm`, `--stop-on-error`, `--silent`, `--dry-run`, `--json` (`hikasa.script.v1`, 40 schemas). Every command is
+  `--confirm`, `--stop-on-error`, `--silent`, `--dry-run`, `--json` (`hikasa.script.v1`). Every command is
   the matching `folder op`, `folder sync` or `report` command, with the same plans and results.
 - **`hikasa folder op attrib --change <CHANGE>…`** sets or clears the attributes a, s, h, r of the selected rows
   themselves (on Unix modes `r` is the write bits; `a`, `s`, `h` are skipped `unsupported` with one warning).
 - The warnings `nothing_selected`, `attrib_unsupported` and `log_not_written`, and the help topic `script`.
 - `[tweaks.scripts] beep_when_finished` beeps once at the end of a run that is not silent.
+
+### Added (W8 scripts, part b: the window and the command line of the window)
+- **Scripts in the window.** Tools ▸ Run Script… asks for a script, its arguments, *Stop on error* and the confirm
+  mode, checks the script first (its errors with their positions, nothing runs) and runs it with a status window:
+  the command that runs, the progress of what it does, the log lines, the end line, *Stop* while it runs and *Close*
+  after. Questions are the confirmation dialogs of file operations over it, and stop on error asks Yes or No. At the end
+  a notice (with *Show* on a failure) and the log panel's entries; `[tweaks.scripts] close_when_finished` closes it after
+  exit 0, `beep_when_finished` asks for attention. One script runs at a time. Help topic `dialog-script`.
+- **`hikasa gui script <file> [<arg>…]`** and **`hikasa script run … --gui`**: the script is found and checked in the
+  terminal (105, 106 before the window is asked), then runs in the window with the terminal's current folder and the
+  environment variables it names; `--wait` exits with the script's code, `--closescript` closes the status window after
+  any run, `--json` prints `hikasa.gui_script.v1` (41 schemas). A window that runs a script refuses a second one;
+  an older window says to restart it.
+- **`@script` on the command line of `hikasa gui open` and `hikasa-gui`**: `hikasa-gui @s.txt a b` runs the script in
+  the window (or sends it to the window that runs), `hikasa gui open @s.txt …` is `gui script s.txt …`. With `--silent`
+  a script never goes through a window: it runs headless where it was started.
+- IPC: `RunScript` carries the current folder, the referenced variables, `wait`, stop on error, the confirm mode and the
+  close choice; `ScriptFinished` answers a waited run; the error `busy`.
+
+### Changed (W8b)
+- `--silent` and `--closescript` of `hikasa gui open` and `hikasa-gui` are no longer `switch_ignored`: they apply to an
+  `@script` (`--silent` also to a settings package, as before). `--closescript` without a script warns that it applies
+  to a script only.
 
 ### Fixed (W8a review)
 - Any failure of a script's `load` (standard input, the clipboard or an empty word as a base, an argument that

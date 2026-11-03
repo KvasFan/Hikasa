@@ -40,7 +40,7 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 | `hikasa media compare <left> <right>` / `hikasa version compare <left> <right>` / `hikasa registry compare <left> <right>` | `hikasa-metadata` | |
 | `hikasa quick <left> <right> [--size\|--crc\|--binary\|--rules]` | all | Quick compare: no output, exit code only (`--qc`). |
 | `hikasa report <type> …` | `hikasa-report` | Shared report options (`13-reports.md`); every `compare` subcommand accepts `--report` as a shortcut. *M2 W7 (D-205):* `report text` and `report folder` (`[<left> <right>] [--session <REF>]`, the rule flags of the compare subcommand, REPORT); the report flags are one group shared with `text compare`, `folder compare` and `session run`; see §4. |
-| `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. |
+| `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. *M2 W8 (D-226, contract §1.8.12):* `script run <FILE\|-> [<ARG>…] [--silent] [--stop-on-error] [--confirm prompt\|yes-to-all\|no-to-all] [--dry-run] [--gui [--wait] [--no-launch] [--closescript]]`, `script check <FILE\|-> [<ARG>…]`; an argument that starts with `-` follows `--`; `--silent` with `--gui` is a usage error; see §4. |
 | `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. *M2 W2 (§1.2 of the contract, D-80…D-84):* `list [--folder <ref>] [--autosaved] [--defaults]`, `show <ref>` / `show --defaults <type>`, `new <ref> --type <type> [--left] [--right] [--description]`, `edit <ref> (--set <key>=<value>… \| --unset <key>… \| --left \| --right \| --description) [--force]`, `edit --defaults <type> (--set … \| --unset …)`, `delete [--force]`, `rename <ref> <new ref> [--force]`, `lock`, `unlock`, `mkdir <folder>`, `rmdir <folder> [--recursive] [--force]`, `run <ref> [output flags of folder/text compare]`. `run` executes Folder Compare and Text Compare sessions through the same service call as `folder compare` / `text compare` (same output, JSON and exit codes, T11); other types exit 100 `unsupported`. *M2 W6c:* `run` of a Folder Sync session is `folder sync` with the session's specs, rules, `[rules.sync]` and read-only sides, and takes `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows`; without a terminal and without `--yes` it exits 100, as `folder sync`. Those flags on another type are refused (exit 100). `--set` keys are paths inside the session file, parsed like settings keys; `--unset` removes a rule key so the session follows the defaults again (D-90); editing, deleting or renaming a locked session, and `rmdir --recursive` of a folder holding one, needs `--force` (D-91). Session export and import go through settings packages (`settings export --item sessions:<ref>`). |
 | `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | *M2 W2 (D-85).* `show` warns `session_missing` for a tab whose session no longer exists. |
 | `hikasa format (list\|show\|new\|edit\|delete\|import\|export\|enable\|disable\|move\|restore\|detect <file>\|tokens <file>)` | `hikasa-formats` | `tokens` dumps the grammar tokenization (debugging grammars). The write forms are M2 W1 (§4, `10-file-formats.md` §1.1). |
@@ -87,7 +87,17 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   window cannot show yet: `unsupported`) and send `LoadSession` / `LoadWorkspace`; both print
   `hikasa.gui_open.v1` (a workspace adds `views`, every view it opened). A window of 0.1 answers
   `unsupported_request`, reported as "the running GUI does not support sessions; restart it" (exit 100).
-  `gui script` comes with the script wave.
+- *M2 W8b notes (D-228, contract §1.8.13):* `gui script <FILE> [<ARG>…] [--wait] [--no-launch] [--stop-on-error]
+  [--confirm <MODE>] [--closescript] [--silent]` locates the script as `script run` does (§1.8.11 of the contract: the
+  current folder, then `[tweaks.scripts] shared_scripts_folder`), reads and checks it here (105, 106, and `output-to:-`
+  refused: the window has no standard output) before the GUI is contacted, captures the environment variables the
+  script references, and sends `RunScript` with the script's absolute path, the arguments, this cwd and those
+  variables (a value that is not UTF-8: exit 100, "… cannot be sent to the GUI: not valid UTF-8; use hikasa script
+  run"); connecting or launching as `gui open` (102, 103). The window runs it with its status window; exit 0 once it
+  started, with `--wait` the script's exit code from `ScriptFinished` (102 when the wait is lost). A window that runs a
+  script answers `busy` (exit 100); an older window `unsupported_request`, "the running GUI does not support scripts;
+  restart it" (exit 100). `--silent` never goes through a GUI: the script runs headless, as `script run --silent`.
+  `--json`: `hikasa.gui_script.v1`. *CLI-G03:* `script run … --gui` is `gui script …`.
 
 ## 2. Legacy positional forms and switches (accepted by `hikasa gui open` and `hikasa-gui`)
 
@@ -104,7 +114,7 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
   workspace → `LoadWorkspace`, else the M1 error; an existing path always wins over a name. An existing file
   whose name ends in `.hikasa-pkg` (any case) is a settings package: with `--silent` it is imported headless
   (every category and item, no deletes; `hikasa.settings_import.v1`), without it the window shows its import wizard
-  (`ImportPackage`, D-127; exit 0, also from `hikasa-gui <file.hikasa-pkg>`, forwarded to a running GUI). `@file` stays reserved for the script wave. `hikasa gui open` and,
+  (`ImportPackage`, D-127; exit 0, also from `hikasa-gui <file.hikasa-pkg>`, forwarded to a running GUI). `hikasa gui open` and,
   since W4b (D-127), the window's own command line serve these forms: `hikasa-gui <session>` and `hikasa-gui
   <workspace>` open them, or forward `LoadSession`/`LoadWorkspace` to a running GUI; an existing path always wins.
 - **CLI-002** (P0): Positional arguments:
@@ -113,7 +123,13 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
   - **two folders** → Folder Compare; **two files** → the file view chosen by file
     formats; **three files** → Text Merge (left, right, center); **four files** → Text
     Merge with output;
-  - `@script.txt` → runs the script (`§3`);
+  - `@script.txt` → runs the script (`§3`); *M2 W8b (D-228):* in the shared parser the first positional argument
+    starting with `@` names the script and every other positional argument is its `%1`… (never a comparison); `@`
+    alone is a usage error; a file whose name starts with `@` is `./@name`. `hikasa gui open @s.txt a b [--wait]
+    [--closescript]` is `gui script s.txt a b …`; `hikasa-gui @s.txt a b` starts the window with its status window, or,
+    with a GUI running, forwards `RunScript` (its cwd and the referenced variables) without waiting and exits 0; with
+    `--silent` neither goes through a GUI: the process runs the script headless (`hikasa-gui` opens no window), its log
+    stream on stderr, and exits with the script's code;
   - a **settings package** → imports it;
   - a **patch file** (`.diff`/`.patch`) → Text Patch view;
   - a **snapshot** alone → compares it with its original folder;
@@ -131,8 +147,8 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
 | `--reviewconflicts` | With `--automerge`: open a Text Merge view if conflicts exist. |
 | `--favorleft`, `--favorright` | Take non-conflicting changes from the favoured side without highlighting; favoured side wins unimportant conflicts. |
 | `--iu`, `--ignoreunimportant` | Turn on Ignore Unimportant Differences (for `--automerge` and `--qc`). |
-| `--closescript` | Close the script status window when finished (overrides option). |
-| `--silent` | No windows, no task-bar entry; packages import everything; scripts log errors instead of showing dialogs. |
+| `--closescript` | Close the script status window when finished (overrides option). *M2 W8b:* applies to an `@script` (after any run, whatever its exit code); no longer `switch_ignored` (without a script it warns that it applies to a script only). |
+| `--silent` | No windows, no task-bar entry; packages import everything; scripts log errors instead of showing dialogs. *M2 W8b:* an `@script` with `--silent` runs headless, never through a GUI; no longer `switch_ignored`. |
 | `--edit` | Open a Text Edit view. |
 | `--sync` | Open a Folder Sync view for the two folders. *M2 W6c (D-190):* parsed (with `--fv` the last wins); the view is W9's, so the GUI answers `unsupported_view` until then. |
 | `--expandall` | Expand all subfolders in the initial folder comparison. |
@@ -315,7 +331,39 @@ tests and the content method are off. Hikasa adds `filename-case` (FC-022);
   silent, abort; modal dialogs requested while silent are logged as errors ("Attempted
   to open a dialog when running silently").
 - **SCR-004** (P1): Script status window: log view, progress, Stop button; "Script
-  completed in <time>".
+  completed in <time>". *M2 W8b (D-229):* the minimal window of contract §1.8.14: the script's path, "Command <i> of
+  <n>, line <l>: <text>", the current call's progress, the log lines (the last `[tweaks.log_panel] display_up_to`),
+  the end line ("Script completed in <time>", "Script stopped at line <n>", "Script failed (exit <code>)"), *Stop*
+  while it runs (as Ctrl-C), *Close* after; W6's confirmation dialogs and the stop-on-error Yes/No question over it;
+  an end notice and the log panel's entries. Tools ▸ Run Script… (catalogue `RunScript`) checks the script first and
+  shows its errors with their positions.
+
+*M2 interpretation (W8, D-214…D-231; contract §1.8).* The language is `hikasa-script`; every command means its CLI
+command (`folder op`, `folder sync`, `report`) through the same Service calls (T11).
+
+- **Lexing (§1.8.3):** a BOM is skipped; LF, CRLF and CR end lines; words split at spaces and tabs; `"` quotes any part
+  of a word and `""` inside quotes is one `"`; a backslash is literal; `#` where a word could start begins a comment; a
+  trailing `&` outside quotes continues the line (comment lines between are skipped, a continuation before a blank
+  line or the end is an error); invalid UTF-8 is one error at the first bad byte; 16 MiB at most (105).
+- **Expansion (§1.8.4):** after the split, never re-lexed: `%1`…`%9` (`%10` is `%1` then `0`), `%0` the script as
+  located, `%%`, `%date%`/`%time%`/`%fn_time%` (one instant per command), `%NAME%` (case-insensitive on Windows only);
+  any other `%` is itself. A missing argument or an unset variable is 106 before anything runs. `lt`/`rt` are `left`/
+  `right` wherever a side is expected, never inside a path, a mask or a quoted word.
+- **State (§1.8.5):** one invisible folder comparison: its settings (from the folder-compare defaults), the last
+  `load`, the open folders, the selection, the confirm mode, stop on error, the log. A `load` starts from nothing;
+  a session's `[display]` is not applied (SES-010).
+- **Commands (§1.8.6):** the table of contract §1.8.6 maps each command to its CLI request; `snapshot`, the table,
+  hex, picture, media, version and registry reports are refused with their message ("… not available in this
+  version") and the run goes on.
+- **Errors (§1.8.7):** 105 the script cannot be read, 106 it does not check (every error with its position, nothing
+  runs), 107 a base cannot be loaded (the run ends there), 100 a failed or refused command, a declined question or a
+  cancel; stop on error ends at the first failure (on a terminal or in the window it asks first).
+- **Confirmation and silent mode (§1.8.8):** `option confirm:` and `--confirm` pick W6's mode; `prompt` asks on a
+  terminal or in the window; silent declines with "Attempted to open a dialog when running silently: …"; no terminal
+  declines with its own message.
+- **The log (§1.8.9):** `<date> <time> <kind> <where> <text>`, kinds `run`, `info`, `detail`, `warning`, `error`; the
+  stream on stderr (or the status window) without the date; `log [append:]<file>` a local file.
+- **Lookup (§1.8.11):** the script as given, else (relative and absent) below `[tweaks.scripts] shared_scripts_folder`.
 
 ### 3.2 Examples (must work as acceptance tests)
 
@@ -343,6 +391,12 @@ select left.diff.files left.orphan.files
 copyto left path:relative "/backups/changes-%date%.zip"
 snapshot save-crc left output:"/backups/project.hksnap"
 ```
+
+*M2 note (W8, A8.11):* example 2 ends with exit **107** at line 4, "sftp://deploy@host/var/www: remote folders are not
+available in this version" (the log file holds lines 1–4, the `sync` is not run); example 4 ends with exit **107** at
+line 3, "…/project.hksnap: snapshots are not available in this version", nothing written. With a folder copy of the
+project as its right side, example 4 exits 100: the zip holds the left-only and differing files, and `snapshot` is
+refused with its message. Examples 1 and 3 run as written (exit 0).
 
 ## 4. The M1 command line (binding interpretation; contract §1.9, §2.21, §4; decisions D-29, D-32, D-35, D-40, D-50)
 
@@ -390,6 +444,10 @@ values are a usage error (exit 100), wherever they stand.
 | `vfs` writes inside archives | *M2 W5b (D-148…D-150):* `cp`, `mv`, `rm`, `mkdir`, `touch` and `--output` work on members of zip and the tar family, as on files, with one rebuild per operation and archive; a single stream, `--trash` on a member and a change another operation holds are item errors (`unsupported`). `mkdir new.zip` makes an empty archive for a writable mask (`create_archive`, `mkarchive`); `x.gz` stays a plain folder, only the final name counts, and a trailing separator wants a folder. |
 | `gui open <args…>` | the forms and switches of §2 (`--wait`, `--no-launch`, `--fv`, `--title1`…`--title4`, `--ro`, `--ro1`, `--ro2`, `--filters`, `--expandall`, `--format`, `--iu`, `--stdin-name`, `--help`); the arguments after `open` reach that parser unchanged, so `hikasa gui open -- -x a.c` opens the files `-x` and `a.c` exactly like `hikasa-gui -- -x a.c`; the global flags may also follow the specs (the same flag given twice with different values exits 100) |
 | `gui ping` / `gui list` / `gui close <id>` / `gui quit` | — |
+| `script run <FILE\|-> [<ARG>…]` | *M2 W8a (D-226):* `--silent`, `--stop-on-error`, `--confirm prompt\|yes-to-all\|no-to-all`, `--dry-run`; `--gui [--wait] [--no-launch] [--closescript]` (W8b, as `gui script`). stdout: nothing, except a report with `output-to:-`; stderr: the log stream (`run L2 sync update:left->right`, …) and the current call's progress. Exit 0, 100, 105, 106, 107. `--json`: `hikasa.script.v1` |
+| `script check <FILE\|-> [<ARG>…]` | *M2 W8a:* runs no command and reads no base; `ok: <n> commands` on stdout, or the error lines `<script>:<line>:<column>: error: <message>` on stderr; with arguments `%n` is checked against them. Exit 0, 105, 106 |
+| `gui script <FILE> [<ARG>…]` | *M2 W8b (D-228):* `--wait`, `--no-launch`, `--stop-on-error`, `--confirm <MODE>`, `--closescript`, `--silent` (§1.1 note). Nothing on stdout; exit 0 once started, the script's code with `--wait`. `--json`: `hikasa.gui_script.v1` |
+| `folder op attrib` | *M2 W8a (D-220, FC-075's script and CLI form):* `--change <(+\|-)letters>` (`a`, `s`, `h`, `r`), `--side left\|right\|both` (default both), with `SELECT`, `CONFIRM`, `--dry-run`; on Unix modes `+r` clears the write bits and `-r` sets the owner's; letters the back-end cannot set are skipped `unsupported` with one `attrib_unsupported` warning; items `set_attrs` with their `change`. The *Attributes…* dialog stays P1 |
 | `completions bash\|elvish\|fish\|powershell\|zsh` | — |
 | `version` | — |
 | `help [topic…]` | `--list`. *M2 W0 (D-67):* prints a help topic of `help/` (the words joined with `-` name it: `help text compare` → `text-compare`; a subcommand without its own topic shows its parent's); no topic prints the contents; an unknown topic exits 100 with suggestions; `--json` gives `hikasa.help.v1`. Reads no configuration |
@@ -460,7 +518,11 @@ status, reason, error}], summary: {planned, done, skipped, failed, bytes}}`; fai
 `hikasa.folder_sync.v1` (W6c); M2 W7 appends `hikasa.report.v1` (39 schemas): `{type, layout, format, target,
 output, replaced, dry_run, cancelled, bytes, verdict, words: {layout, options, output_options}, unused, links:
 null|{folder, wanted, renamed, state: new|replace_ours, pairs: [{path, file, status: planned|written|skipped|failed,
-reason, error}], counts: {written, skipped, failed}}, clipboard: null|{text_bytes, html_bytes}, opened}`.
+reason, error}], counts: {written, skipped, failed}}, clipboard: null|{text_bytes, html_bytes}, opened}`. M2 W8 appends
+`hikasa.script.v1` (`{mode, script, args, dry_run, silent, cancelled, stopped_at, errors, commands, counts,
+elapsed_s}`, contract §1.8.12) and `hikasa.gui_script.v1` (`{script, args, waited, exit_code, summary: null|{commands,
+ok, failed, refused, not_run, stopped_at}}`): 41 schemas. The warnings `nothing_selected`, `attrib_unsupported` and
+`log_not_written` are W8a's.
 `hikasa.vfs_stat.v1` lists the capabilities of M2 W3 too (`mkdir`, `remove`, `rename`,
 `set_attrs`, `trash`, `create_symlinks`, `set_created`). TOML values appear as JSON values (a table as an object, a datetime as a string;
 `null` for an optional key without a value or a key without a default).
