@@ -212,7 +212,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     };
     // `--silent` with a package imports headless, without a window (D-88, W2).
     if let SingleArg::Package(path) = &single
-        && open.request.options.extra.contains_key("silent")
+        && open.silent
     {
         return Ok(import_silently(&service, path));
     }

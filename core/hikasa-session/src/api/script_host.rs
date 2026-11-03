@@ -33,8 +33,8 @@ use super::dto::{
 use super::folder_ops::{ContentsKind, ContentsRequest, FolderOpOutcome, item_line, summary_text};
 use super::report::{ReportFlags, ReportSource, ReportTarget};
 use super::script::{
-    SCRIPT_JSON_ITEMS_MAX, STDOUT_NONE, STDOUT_SHARED, ScriptRunRequest, ScriptUi, Vocabulary,
-    names_version, script_sides,
+    ProgressEvents, SCRIPT_JSON_ITEMS_MAX, STDOUT_NONE, STDOUT_SHARED, ScriptRunRequest, ScriptUi,
+    Vocabulary, names_version, script_sides,
 };
 use super::script_log::{LineSink, LogFile, stamped};
 use super::sessions::SessionRunRequest;
@@ -152,6 +152,25 @@ pub(crate) struct Host<'a> {
     kept: BTreeMap<usize, Kept>,
     warnings: Vec<Warning>,
     checker: Vocabulary<'a>,
+    /// Where `ScriptEvent::Progress` goes (`ScriptUi::progress_events`, W8b): the calls report on their own threads.
+    progress_events: Option<ProgressEvents>,
+}
+
+/// The progress sink of a call inside a run: the run's own sink, and a `ScriptEvent::Progress` for the interface.
+struct ProgressTee {
+    inner: std::sync::Arc<dyn hikasa_core::ProgressSink>,
+    events: ProgressEvents,
+}
+
+impl hikasa_core::ProgressSink for ProgressTee {
+    fn report(&self, progress: hikasa_core::Progress) {
+        self.inner.report(progress.clone());
+        (self.events)(ScriptEvent::Progress { status: progress });
+    }
+
+    fn due(&self, phase: hikasa_core::Phase) -> bool {
+        self.inner.due(phase)
+    }
 }
 
 /// A command's failure.
@@ -234,11 +253,13 @@ impl<'a> Host<'a> {
         } else {
             Some(STDOUT_NONE)
         };
+        let progress_events = ui.progress_events();
         Host {
             service,
             script,
             req,
             job,
+            progress_events,
             log: LogUi {
                 ui,
                 level: LogLevel::Normal,
@@ -270,11 +291,19 @@ impl<'a> Host<'a> {
         (self.kept, warnings)
     }
 
-    /// A job of `kind` inside the run: the run's cancel and progress.
+    /// A job of `kind` inside the run: the run's cancel and progress, the progress also as `ScriptEvent::Progress`
+    /// when the interface takes them (throttled by `Service::job`, ≤ 20 Hz per phase).
     fn sub_job(&self, kind: JobKind) -> JobControl {
+        let progress: std::sync::Arc<dyn hikasa_core::ProgressSink> = match &self.progress_events {
+            Some(events) => std::sync::Arc::new(ProgressTee {
+                inner: self.job.progress.clone(),
+                events: events.clone(),
+            }),
+            None => self.job.progress.clone(),
+        };
         JobControl {
             cancel: self.job.cancel.clone(),
-            ..self.service.job(kind, self.job.progress.clone())
+            ..self.service.job(kind, progress)
         }
     }
 

@@ -4,10 +4,10 @@
 //! One accept thread plus one thread per connection (no async runtime is approved, §0.7). The server owns the
 //! protocol rules of §4.4.3: the `Hello` handshake and version negotiation, the two-phase decode with
 //! `invalid_request`/`unsupported_request` answers carrying the request's own id (D-46), `Error{protocol}` with
-//! id 0 and a close for frames without a usable id, the M1 request support of rule 5 (`unsupported_request` for
-//! sessions, workspaces and scripts; `unsupported_view` for every view kind but `folder_compare` and
-//! `text_compare`), and the ordering "immediate response first, then at most one `ViewClosed`" (INV-IPC-1/2).
-//! Everything else goes to the [`IpcHandler`] (the GUI).
+//! id 0 and a close for frames without a usable id, the request support of rule 5 (`unsupported_view` for every
+//! view kind but `folder_compare` and `text_compare`), and the ordering "immediate response first, then at most one
+//! `ViewClosed`" (INV-IPC-1/2), or one `ScriptFinished` for a waited `RunScript` (M2 W8b, D-228). Everything else goes
+//! to the [`IpcHandler`] (the GUI).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,8 +26,8 @@ use super::endpoint::{Endpoint, InstanceLock, prepare_own_dir};
 use super::error::IpcError;
 use super::framing::{recv_typed, write_frame};
 use super::protocol::{
-    CloseReason, Envelope, IpcErrorCode, Request, Response, ServerInfo, ViewId, ViewKind,
-    ViewResult,
+    CloseReason, Envelope, IpcErrorCode, Request, Response, ScriptSummary, ServerInfo, ViewId,
+    ViewKind, ViewResult,
 };
 use super::transport::{connect_stream, name_of};
 use crate::jobs::panic_message;
@@ -62,13 +62,26 @@ pub trait IpcHandler: Send + Sync + 'static {
     /// later calls `ViewWaiter::view_closed`. The return value is the immediate response. Must not block: the
     /// GUI posts to its event loop and returns.
     ///
-    /// The server also answers `Hello` after the handshake (protocol error), `RunScript`
-    /// (`unsupported_request`) and `OpenView` of a kind other than
-    /// `folder_compare`/`text_compare` (`unsupported_view`) itself (§4.4.3 rule 5). `LoadSession` and
+    /// The server also answers `Hello` after the handshake (protocol error) and `OpenView` of a kind other than
+    /// `folder_compare`/`text_compare` (`unsupported_view`) itself (§4.4.3 rule 5); `RunScript` goes to
+    /// [`IpcHandler::handle_script`]. `LoadSession` and
     /// `LoadWorkspace` reach the handler (M2 W2, D-89: `ViewOpened` / `Views`, `Error{not_found}` for an unknown
     /// name, `Error{unsupported_request}` from a handler that does not serve them); `LoadSession { wait: true }`
     /// gets a waiter like `OpenView`. A handler panic is answered with `Error{internal}`.
     fn handle(&self, request: Request, waiter: Option<ViewWaiter>) -> Response;
+
+    /// Handles `RunScript` (M2 W8b, D-228): `Ok` once the run started (a waited run later calls
+    /// [`ScriptWaiter::script_finished`]), `Error{busy}` while another script runs, `Error{invalid_request}` for a
+    /// script that cannot be read or does not check. With `wait: true`, `waiter` is `Some`; one dropped without
+    /// `script_finished` sends `ScriptFinished{exit_code: 100}`, as does a server that stops during the run. Must not
+    /// block. Default (additive): `Error{unsupported_request}`, as a GUI before W8b answers.
+    fn handle_script(&self, request: Request, waiter: Option<ScriptWaiter>) -> Response {
+        drop(waiter);
+        Response::error(
+            IpcErrorCode::UnsupportedRequest,
+            format!("`{}` is not supported in this version", request.type_name()),
+        )
+    }
 
     /// Sees every request after the handshake, before the server answers it itself or passes it to
     /// [`IpcHandler::handle`]: a log, or a test's record of the wire. Must not block. Default: nothing (additive).
@@ -92,7 +105,8 @@ struct Conn {
     out: Sender<Out>,
     /// Set once the connection is closing: later frames are dropped.
     closed: AtomicBool,
-    /// The `OpenView { wait: true }` requests of this connection (for `ServerHandle::shutdown`).
+    /// The `OpenView { wait: true }` and `RunScript { wait: true }` requests of this connection (for
+    /// `ServerHandle::shutdown`).
     gates: Mutex<Vec<Weak<Gate>>>,
     /// Disconnected when the writer thread has ended.
     writer_done: Receiver<()>,
@@ -170,8 +184,8 @@ impl Conn {
         gates.push(Arc::downgrade(gate));
     }
 
-    /// `ServerHandle::shutdown`: every view still open gets its `ViewClosed` (reason `shutdown`, exit 100),
-    /// then the connection closes.
+    /// `ServerHandle::shutdown`: every view still open gets its `ViewClosed` (reason `shutdown`, exit 100), every
+    /// waited script its `ScriptFinished` (exit 100), then the connection closes.
     fn shut_down(&self) {
         let gates: Vec<Arc<Gate>> = self.gates.lock().iter().filter_map(Weak::upgrade).collect();
         for gate in gates {
@@ -221,39 +235,50 @@ enum Closing {
     Abandon(CloseReason),
 }
 
-/// Orders a waiter's `ViewClosed` after the immediate response of its `OpenView`, and makes it exactly one.
+/// What a gate waits for the end of.
+#[derive(Debug, Clone, Copy)]
+enum Opened {
+    /// A view (`OpenView`, `LoadSession`): `ViewClosed`.
+    View(ViewId),
+    /// A script (`RunScript`): `ScriptFinished`.
+    Script,
+}
+
+/// Orders a waiter's `ViewClosed` (or `ScriptFinished`) after the immediate response of its request, and makes it
+/// exactly one.
 enum GateState {
     /// The immediate response is not queued yet; a close requested meanwhile waits here.
     Pending(Option<Closing>),
-    /// The view is open: `ViewClosed` goes out at once.
-    Open(ViewId),
-    /// `ViewClosed` was queued, or the `OpenView` failed (there is no view).
+    /// The view is open (the script runs): the end goes out at once.
+    Open(Opened),
+    /// The end was queued, or the request failed (there is no view, no run).
     Done,
 }
 
-/// The `ViewClosed` slot of one `OpenView { wait: true }` request.
+/// The `ViewClosed` (or `ScriptFinished`) slot of one waited request.
 struct Gate {
     id: u64,
     state: Mutex<GateState>,
 }
 
 impl Gate {
-    /// Called after the immediate response was queued: flushes a pending close when the view opened.
-    fn release(&self, conn: &Conn, opened: Option<ViewId>) {
+    /// Called after the immediate response was queued: flushes a pending close when the view opened (the run
+    /// started).
+    fn release(&self, conn: &Conn, opened: Option<Opened>) {
         let mut state = self.state.lock();
         let pending = match std::mem::replace(&mut *state, GateState::Done) {
             GateState::Pending(pending) => pending,
             GateState::Open(_) | GateState::Done => None,
         };
-        let Some(view) = opened else {
+        let Some(opened) = opened else {
             return;
         };
         match pending {
             Some(closing) => {
                 drop(state);
-                conn.enqueue(self.payload(view, closing));
+                conn.enqueue(self.payload(opened, closing));
             }
-            None => *state = GateState::Open(view),
+            None => *state = GateState::Open(opened),
         }
     }
 
@@ -266,25 +291,30 @@ impl Gate {
                     *slot = Some(closing);
                 }
             }
-            GateState::Open(view) => {
-                let view = *view;
+            GateState::Open(opened) => {
+                let opened = *opened;
                 *state = GateState::Done;
                 drop(state);
-                conn.enqueue(self.payload(view, closing));
+                conn.enqueue(self.payload(opened, closing));
             }
             GateState::Done => {}
         }
     }
 
-    /// The `ViewClosed` frame for `closing`.
-    fn payload(&self, view: ViewId, closing: Closing) -> Vec<u8> {
-        match closing {
-            Closing::Message(payload) => payload,
-            Closing::Abandon(reason) => view_closed_payload(
+    /// The `ViewClosed` (or `ScriptFinished`) frame for `closing`.
+    fn payload(&self, opened: Opened, closing: Closing) -> Vec<u8> {
+        match (closing, opened) {
+            (Closing::Message(payload), _) => payload,
+            (Closing::Abandon(reason), Opened::View(view)) => view_closed_payload(
                 self.id,
                 view,
                 ViewResult::new(None, None, false, reason),
                 ABANDONED_EXIT_CODE.code(),
+            ),
+            (Closing::Abandon(_), Opened::Script) => script_finished_payload(
+                self.id,
+                ABANDONED_EXIT_CODE.code(),
+                ScriptSummary::default(),
             ),
         }
     }
@@ -299,6 +329,15 @@ fn view_closed_payload(id: u64, view: ViewId, result: ViewResult, exit_code: u8)
             result,
             exit_code,
         },
+    };
+    serde_json::to_vec(&envelope).unwrap_or_default()
+}
+
+/// The serialised `ScriptFinished` envelope.
+fn script_finished_payload(id: u64, exit_code: u8, summary: ScriptSummary) -> Vec<u8> {
+    let envelope = Envelope {
+        id,
+        body: Response::ScriptFinished { exit_code, summary },
     };
     serde_json::to_vec(&envelope).unwrap_or_default()
 }
@@ -351,6 +390,54 @@ impl Drop for ViewWaiter {
                 .gate
                 .finish(&inner.conn, Closing::Abandon(CloseReason::Abandoned));
         }
+    }
+}
+
+/// Sends the deferred `ScriptFinished` of a `RunScript { wait: true }` on the originating connection (M2 W8b, D-228;
+/// no-op when the client is gone). A waiter dropped without [`ScriptWaiter::script_finished`] sends `ScriptFinished`
+/// with exit code 100 ([`ABANDONED_EXIT_CODE`]) and an empty summary, so a `gui script --wait` never hangs; so does
+/// [`ServerHandle::shutdown`] for a run that has not finished. Never blocks.
+pub struct ScriptWaiter {
+    inner: Option<WaiterInner>,
+}
+
+impl ScriptWaiter {
+    /// Sends `ScriptFinished` (exactly once: consumes self), after the request's `Ok` when called before it was
+    /// queued; dropped when the immediate response was not `Ok`. Never blocks.
+    pub fn script_finished(mut self, exit_code: ExitCode, summary: ScriptSummary) {
+        if let Some(inner) = self.inner.take() {
+            let payload = script_finished_payload(inner.gate.id, exit_code.code(), summary);
+            inner.gate.finish(&inner.conn, Closing::Message(payload));
+        }
+    }
+
+    /// The id of the `RunScript` request.
+    pub fn request_id(&self) -> u64 {
+        self.inner.as_ref().map_or(0, |inner| inner.gate.id)
+    }
+}
+
+impl Drop for ScriptWaiter {
+    /// A waiter dropped without `script_finished`: `ScriptFinished` with exit code 100.
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            tracing::warn!(
+                target: "hikasa::ipc",
+                "the script waiter of request {} was dropped without script_finished; exit 100 is sent",
+                inner.gate.id
+            );
+            inner
+                .gate
+                .finish(&inner.conn, Closing::Abandon(CloseReason::Abandoned));
+        }
+    }
+}
+
+impl std::fmt::Debug for ScriptWaiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptWaiter")
+            .field("request_id", &self.request_id())
+            .finish_non_exhaustive()
     }
 }
 
@@ -820,10 +907,22 @@ fn dispatch(
             IpcErrorCode::Protocol,
             "the handshake was already done on this connection",
         ),
-        request @ Request::RunScript { .. } => Response::error(
-            IpcErrorCode::UnsupportedRequest,
-            format!("`{}` is not supported in this version", request.type_name()),
-        ),
+        request @ Request::RunScript { wait: true, .. } => {
+            let shared = Arc::new(Gate {
+                id,
+                state: Mutex::new(GateState::Pending(None)),
+            });
+            conn.track(&shared);
+            let waiter = ScriptWaiter {
+                inner: Some(WaiterInner {
+                    conn: Arc::clone(conn),
+                    gate: Arc::clone(&shared),
+                }),
+            };
+            gate = Some(shared);
+            call_script_handler(handler, request, Some(waiter))
+        }
+        request @ Request::RunScript { .. } => call_script_handler(handler, request, None),
         Request::OpenView { kind, .. } if !kind.is_served_in_m1() => {
             Response::error(IpcErrorCode::UnsupportedView, unserved_view(kind))
         }
@@ -855,7 +954,8 @@ fn dispatch(
     let sent = conn.send(id, &response);
     if let Some(gate) = gate {
         let opened = match (&sent, &response) {
-            (Ok(()), Response::ViewOpened { view }) => Some(*view),
+            (Ok(()), Response::ViewOpened { view }) => Some(Opened::View(*view)),
+            (Ok(()), Response::Ok) => Some(Opened::Script),
             _ => None,
         };
         gate.release(conn, opened);
@@ -871,6 +971,21 @@ fn call_handler(
     waiter: Option<ViewWaiter>,
 ) -> Response {
     match catch_unwind(AssertUnwindSafe(|| handler.handle(request, waiter))) {
+        Ok(response) => response,
+        Err(payload) => Response::error(
+            IpcErrorCode::Internal,
+            format!("the request failed: {}", panic_message(payload.as_ref())),
+        ),
+    }
+}
+
+/// [`call_handler`] for `RunScript` ([`IpcHandler::handle_script`]).
+fn call_script_handler(
+    handler: &Arc<dyn IpcHandler>,
+    request: Request,
+    waiter: Option<ScriptWaiter>,
+) -> Response {
+    match catch_unwind(AssertUnwindSafe(|| handler.handle_script(request, waiter))) {
         Ok(response) => response,
         Err(payload) => Response::error(
             IpcErrorCode::Internal,

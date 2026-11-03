@@ -1,6 +1,6 @@
 //! The IPC protocol v1 (§4.4, ARCH-091, D-46): [`Envelope`], [`Request`], [`Response`], [`ViewKind`],
 //! [`ViewId`], [`OpenOptions`], [`ReadOnly`], [`ViewResult`], [`CloseReason`], [`ServerInfo`], [`ViewInfo`],
-//! [`IpcErrorCode`].
+//! [`ScriptSummary`], [`IpcErrorCode`].
 //!
 //! Forward compatibility (D-46): `Request`, `Response` and `ViewKind` decode unknown `type`/kind values to their
 //! `Unknown` variant; frames are decoded in two phases (`serde_json::Value`, then `id`, then the body, see
@@ -77,13 +77,35 @@ pub enum Request {
         /// Absolute path of the `.hikasa-pkg`.
         path: String,
     },
-    /// Runs a script (M1: `Error{unsupported_request}`).
+    /// Runs a script in the window focused last, with its status window (M2 W8b, D-228): `Ok` once it started, then
+    /// with `wait` one `ScriptFinished` with this request's id; `Error{busy}` while another script runs,
+    /// `Error{invalid_request}` for a script that cannot be read or does not check. GUIs before M2 W8b answer
+    /// `Error{unsupported_request}`. Every field after `args` is additive (absent: its default) and left out of the
+    /// wire at its default, so an older peer reads the same message.
     RunScript {
-        /// Script path.
+        /// The script: an absolute path (or the canonical spec of an archive member).
         path: String,
-        /// Script arguments.
+        /// Script arguments (`%1`…).
         #[serde(default)]
         args: Vec<String>,
+        /// The client's current folder (absolute): relative paths of the script mean what they mean in its shell.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        /// The environment variables the script references, as the client saw them (absent ones left out).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        env: BTreeMap<String, String>,
+        /// Send a `ScriptFinished` when the run ends.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        wait: bool,
+        /// `--stop-on-error`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop_on_error: bool,
+        /// `--confirm` (`prompt`, `yes-to-all`, `no-to-all`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirm: Option<String>,
+        /// `--closescript` is `Some(true)`; `None`: `[tweaks.scripts] close_when_finished` decides.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        close: Option<bool>,
     },
     /// Lists the open views.
     ListViews,
@@ -155,6 +177,13 @@ pub enum Response {
     Ok,
     /// Reply to `Ping`.
     Pong,
+    /// A waited script ended (sent once, after the immediate `Ok`, with the `RunScript` request's id; M2 W8b).
+    ScriptFinished {
+        /// The script's exit code (0, 100, 107; 100 when the server stopped during the run).
+        exit_code: u8,
+        /// What its commands did.
+        summary: ScriptSummary,
+    },
     /// `code` is an `IpcErrorCode` name; clients accept codes they do not know.
     Error {
         /// Error code (wire string).
@@ -175,6 +204,24 @@ impl Response {
             message: message.into(),
         }
     }
+}
+
+/// The counts of a finished script (`ScriptFinished`, `hikasa.gui_script.v1`). Every field defaults when absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScriptSummary {
+    /// Commands of the script.
+    pub commands: u32,
+    /// Commands that succeeded.
+    pub ok: u32,
+    /// Commands that failed.
+    pub failed: u32,
+    /// Commands refused (not available in this version).
+    pub refused: u32,
+    /// Commands not run (after a stop).
+    pub not_run: u32,
+    /// The line the run stopped at.
+    pub stopped_at: Option<u32>,
 }
 
 /// View/session types (00-overview §2). M1 GUI serves `folder_compare` and `text_compare`.
@@ -492,11 +539,13 @@ pub enum IpcErrorCode {
     NotFound,
     /// A bug in the server.
     Internal,
+    /// The GUI already runs a script (`RunScript`, M2 W8b): one script at a time.
+    Busy,
 }
 
 impl IpcErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [IpcErrorCode; 7] = [
+    pub const ALL: [IpcErrorCode; 8] = [
         IpcErrorCode::Protocol,
         IpcErrorCode::IncompatibleVersion,
         IpcErrorCode::UnsupportedRequest,
@@ -504,6 +553,7 @@ impl IpcErrorCode {
         IpcErrorCode::InvalidRequest,
         IpcErrorCode::NotFound,
         IpcErrorCode::Internal,
+        IpcErrorCode::Busy,
     ];
 
     /// snake_case wire name ("unsupported_request", …).
@@ -516,6 +566,7 @@ impl IpcErrorCode {
             IpcErrorCode::InvalidRequest => "invalid_request",
             IpcErrorCode::NotFound => "not_found",
             IpcErrorCode::Internal => "internal",
+            IpcErrorCode::Busy => "busy",
         }
     }
 

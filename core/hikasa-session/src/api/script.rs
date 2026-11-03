@@ -179,7 +179,15 @@ pub trait ScriptUi: HostUi {
     fn answer(&mut self, machine: &mut Confirmation, cancel: &hikasa_core::CancelToken);
     /// Places a report's clipboard payload on this adapter's clipboard.
     fn clipboard(&mut self, payload: &ClipboardPayload) -> Result<(), ApiError>;
+    /// Where the run sends `ScriptEvent::Progress`: the progress of the current call, reported on the threads of the
+    /// call (so not through [`HostUi::event`]); `None` (the default, additive in W8b): no progress events.
+    fn progress_events(&self) -> Option<ProgressEvents> {
+        None
+    }
 }
+
+/// The receiver of `ScriptEvent::Progress` of [`ScriptUi::progress_events`] (any thread).
+pub type ProgressEvents = std::sync::Arc<dyn Fn(ScriptEvent) + Send + Sync>;
 
 /// `{line, column, code, message}` of `hikasa.script.v1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -348,6 +356,22 @@ impl ScriptCheck {
 }
 
 impl ScriptOutcome {
+    /// The counts of `ScriptFinished` and `hikasa.gui_script.v1` (M2 W8b, §1.8.13).
+    pub fn summary(&self) -> crate::ipc::ScriptSummary {
+        let count = |status: CommandStatus| {
+            u32::try_from(self.commands.iter().filter(|c| c.status == status).count())
+                .unwrap_or(u32::MAX)
+        };
+        crate::ipc::ScriptSummary {
+            commands: u32::try_from(self.commands.len()).unwrap_or(u32::MAX),
+            ok: count(CommandStatus::Ok),
+            failed: count(CommandStatus::Failed),
+            refused: count(CommandStatus::Refused),
+            not_run: count(CommandStatus::NotRun),
+            stopped_at: self.stopped_at.map(|stop| stop.line),
+        }
+    }
+
     /// `hikasa.script.v1` of `script run`.
     pub fn dto(
         &self,

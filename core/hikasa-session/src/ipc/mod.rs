@@ -25,12 +25,12 @@ pub use endpoint::{Endpoint, EndpointAddress, InstanceLock, MAX_SOCKET_PATH, fnv
 pub use error::IpcError;
 pub use framing::{read_frame, recv_request, recv_response, send, write_frame};
 pub use protocol::{
-    CloseReason, Envelope, IpcErrorCode, OpenOptions, ReadOnly, Request, Response, ServerInfo,
-    SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
+    CloseReason, Envelope, IpcErrorCode, OpenOptions, ReadOnly, Request, Response, ScriptSummary,
+    ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
 };
 pub use server::{
-    ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ServerHandle, ViewWaiter, WRITE_QUEUE,
-    WRITE_TIMEOUT, peer_uid_matches, unserved_view,
+    ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ScriptWaiter, ServerHandle, ViewWaiter,
+    WRITE_QUEUE, WRITE_TIMEOUT, peer_uid_matches, unserved_view,
 };
 
 /// Protocol version spoken by this build.

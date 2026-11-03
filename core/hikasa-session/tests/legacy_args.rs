@@ -482,3 +482,91 @@ fn infer_view_kind_rules() {
         ViewKind::TextCompare
     );
 }
+
+/// A8.18 (CLI-002, CLI-003, D-228): `@script` in the shared parser. The first positional argument starting with `@`
+/// is the script, every other positional argument (before or after it, and after `--`) one of its arguments, in order;
+/// `@` alone is a usage error; `./@x` is a spec; a second `@word` is an argument. `--closescript` and `--silent` are
+/// no longer `switch_ignored`: they apply to the script (`--closescript` without a script warns that it applies to a
+/// script only; `--silent` without one stays for a settings package, D-127).
+#[test]
+fn at_script_table() {
+    for platform in [Platform::Linux, Platform::Windows] {
+        let parsed = parse_open_args(&args(&["@s.txt", "a", "b c"]), platform).unwrap();
+        let script = parsed.script.as_ref().unwrap();
+        assert_eq!(script.file, "s.txt");
+        assert_eq!(strings(&script.args), ["a", "b c"]);
+        assert!(parsed.request.specs.is_empty());
+        assert!(parsed.warnings.is_empty());
+        assert!(!parsed.silent && !parsed.closescript);
+    }
+    let parsed = parse_open_args(
+        &args(&[
+            "x",
+            "@s.txt",
+            "--wait",
+            "-closescript",
+            "--silent",
+            "@y",
+            "--",
+            "-z",
+        ]),
+        Platform::Linux,
+    )
+    .unwrap();
+    let script = parsed.script.unwrap();
+    assert_eq!(script.file, "s.txt");
+    assert_eq!(strings(&script.args), ["x", "@y", "-z"]);
+    assert!(parsed.request.wait && parsed.closescript && parsed.silent);
+    assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    assert!(
+        parsed.request.options.extra.is_empty(),
+        "nothing is forwarded"
+    );
+    // `@` alone.
+    let err = parse_open_args(&args(&["@"]), Platform::Linux).unwrap_err();
+    assert!(matches!(err, ApiError::InvalidArgument(_)), "{err:?}");
+    assert!(err.to_string().contains("./@name"), "{err}");
+    // A file whose name starts with `@`, and `@` after `--`, are specs.
+    for list in [&["./@x", "b"][..], &["--", "@x", "b"]] {
+        let parsed = parse_open_args(&args(list), Platform::Linux).unwrap();
+        assert!(parsed.script.is_none(), "{list:?}");
+        assert_eq!(parsed.request.specs.len(), 2);
+    }
+    // Without a script: `--closescript` warns, `--silent` is kept (a package's) and warns nothing.
+    let parsed = parse_open_args(
+        &args(&["a", "b", "--closescript", "--silent"]),
+        Platform::Linux,
+    )
+    .unwrap();
+    assert!(parsed.closescript && parsed.silent && parsed.script.is_none());
+    let codes: Vec<String> = parsed.warnings.iter().map(|w| w.message.clone()).collect();
+    assert_eq!(
+        codes,
+        ["switch `--closescript` applies to a script (`@<file>`) only"]
+    );
+    assert!(
+        parsed
+            .warnings
+            .iter()
+            .all(|w| w.code == WarningCode::SwitchIgnored)
+    );
+    // The usage names the form and the two switches.
+    let usage = hikasa_session::api::open_usage();
+    assert!(usage.contains("@<script>"), "{usage}");
+    assert!(usage.contains("--closescript"), "{usage}");
+    assert!(!usage.contains("forwarded with a warning): --automerge, --center, --mergeoutput, --force, --reviewconflicts, --favorleft, --favorright, --closescript"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let raw = vec![
+            OsString::from_vec(b"@s\xFF.txt".to_vec()),
+            OsString::from("a"),
+        ];
+        let parsed = parse_open_args(&raw, Platform::Linux).unwrap();
+        assert_eq!(
+            parsed.script.unwrap().file,
+            OsString::from_vec(b"s\xFF.txt".to_vec()),
+            "the bytes of the name are kept"
+        );
+    }
+}

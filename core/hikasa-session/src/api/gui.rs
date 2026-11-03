@@ -27,12 +27,14 @@
 //! | `--iu` ← `--ignoreunimportant`, `--ignore-unimportant` | ignore unimportant differences |
 //! | `--stdin-name=v` | name hint of `-` (D-15, D-49) |
 //! | `--sync` | a Folder Sync view (CLI-003; with `--fv` the last wins, D-190) |
+//! | `--closescript` | the status window of an `@script` closes when it ends (CLI-003, M2 W8b) |
+//! | `--silent` | an `@script` runs headless, never through a GUI; a settings package imports without the wizard |
 //! | `--nobackups` | the view's operations keep no backups (`OpenOptions::no_backups`) |
 //! | `--solo` | force a new GUI instance (`hikasa-gui` only) |
 //! | `--json`, `--quiet` ← `-q`, `--no-color` | output flags |
 //! | `--config-dir=v`, `--log=v`, `--verbose` | meaningful for `hikasa-gui` |
 //! | `--help` ← `-h`, `/?` | usage |
-//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--closescript`, `--silent`, `--edit`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
+//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--edit`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -55,7 +57,8 @@ use super::{ApiError, Service};
 use crate::host::{EnvFacts, Platform};
 use crate::ipc::{
     CloseReason, IpcClient, OpenOptions, REQUEST_TIMEOUT, Request, Response, RetryPolicy,
-    ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult, connect_or_launch,
+    ScriptSummary, ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
+    connect_or_launch,
 };
 use crate::jobs::run_guarded;
 
@@ -612,6 +615,24 @@ pub struct OpenArgs {
     pub stdin_name: Option<String>,
     /// `--help` (`-h`, `/?` on Windows) was given ([`open_usage`]). Additive.
     pub help: bool,
+    /// `@script` (CLI-002, M2 W8b, D-228): the first positional argument starting with `@` names a script; every other
+    /// positional argument is one of its arguments (`request.specs` is then empty). Additive.
+    pub script: Option<ScriptArgs>,
+    /// `--silent` (CLI-003): an `@script` runs headless in this process; a settings package imports without the
+    /// wizard (D-127). Additive (W8b: no longer forwarded with `switch_ignored`).
+    pub silent: bool,
+    /// `--closescript` (CLI-003): the status window of an `@script` closes when the script ends, whatever its exit
+    /// code. Additive (W8b).
+    pub closescript: bool,
+}
+
+/// The script of an `@script` command line (D-228).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptArgs {
+    /// The script as written after `@` (located as `script run` does, §1.8.11).
+    pub file: OsString,
+    /// `%1`…: the other positional arguments, in order.
+    pub args: Vec<OsString>,
 }
 
 /// How a switch takes a value.
@@ -652,6 +673,10 @@ enum Action {
     Sync,
     /// `--nobackups`.
     NoBackups,
+    /// `--closescript` (W8b).
+    CloseScript,
+    /// `--silent` (W8b).
+    Silent,
     /// Recognised but not implemented in M1: forwarded with `switch_ignored`.
     Forward,
 }
@@ -851,8 +876,20 @@ const SWITCHES: &[Switch] = &[
     sw("reviewconflicts", &[], Arity::Flag, Action::Forward, ""),
     sw("favorleft", &[], Arity::Flag, Action::Forward, ""),
     sw("favorright", &[], Arity::Flag, Action::Forward, ""),
-    sw("closescript", &[], Arity::Flag, Action::Forward, ""),
-    sw("silent", &[], Arity::Flag, Action::Forward, ""),
+    sw(
+        "closescript",
+        &[],
+        Arity::Flag,
+        Action::CloseScript,
+        "close the status window of an @script when it ends",
+    ),
+    sw(
+        "silent",
+        &[],
+        Arity::Flag,
+        Action::Silent,
+        "run an @script headless (no window); import a settings package without the wizard",
+    ),
     sw("edit", &[], Arity::Flag, Action::Forward, ""),
     sw(
         "sync",
@@ -1045,6 +1082,7 @@ fn looks_like_windows_switch(arg: &OsStr) -> bool {
 pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs, ApiError> {
     let args = normalize_legacy_args(args, platform);
     let mut parsed = OpenArgs::default();
+    let mut script: Option<OsString> = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         if arg == "--" {
@@ -1058,6 +1096,17 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
                     "unknown switch `{}`",
                     arg.to_string_lossy()
                 )));
+            }
+            if script.is_none() && arg.to_string_lossy().starts_with('@') {
+                let file = os_skip(&arg, 1);
+                if file.is_empty() {
+                    return Err(ApiError::InvalidArgument(
+                        "`@` needs a script file after it (a file whose name starts with `@` is `./@name`)"
+                            .to_owned(),
+                    ));
+                }
+                script = Some(file);
+                continue;
             }
             parsed.request.specs.push(arg);
             continue;
@@ -1082,6 +1131,18 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
             })?),
         };
         apply(&mut parsed, switch, value)?;
+    }
+    if let Some(file) = script {
+        parsed.script = Some(ScriptArgs {
+            file,
+            args: std::mem::take(&mut parsed.request.specs),
+        });
+    } else if parsed.closescript {
+        parsed.warnings.push(Warning {
+            code: WarningCode::SwitchIgnored,
+            message: "switch `--closescript` applies to a script (`@<file>`) only".to_owned(),
+            spec: None,
+        });
     }
     Ok(parsed)
 }
@@ -1131,6 +1192,8 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
         Action::Help => parsed.help = true,
         Action::Sync => parsed.request.kind = Some(ViewKind::FolderSync),
         Action::NoBackups => options.no_backups = true,
+        Action::CloseScript => parsed.closescript = true,
+        Action::Silent => parsed.silent = true,
         Action::Forward => {
             let value = text(value)?;
             options.extra.insert(switch.name.to_owned(), value);
@@ -1151,7 +1214,8 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
 /// text, D-51). Additive (wave-4 review).
 pub fn open_usage() -> String {
     let mut out = String::from(
-        "Usage: hikasa gui open [switches] <left> <right>\n       hikasa-gui [switches] [<left> <right>]\n\n\
+        "Usage: hikasa gui open [switches] <left> <right>\n       hikasa-gui [switches] [<left> <right>]\n       \
+         hikasa gui open|hikasa-gui [switches] @<script> [<arg>...]\n\n\
          Two folders open a Folder Compare view, two files a Text Compare view; `-` is standard input.\n\
          Switches may also be written -name, -name=value and, on Windows, /name.\n\n",
     );
@@ -1875,6 +1939,175 @@ impl Service {
             )));
         }
         Ok(Some(spec.canonical()))
+    }
+}
+
+/// The switches of `gui script` that travel with its `RunScript` (§1.8.13).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GuiScriptOptions {
+    /// `--wait`: wait for `ScriptFinished`, exit with the script's code.
+    pub wait: bool,
+    /// `--stop-on-error`.
+    pub stop_on_error: bool,
+    /// `--confirm <MODE>` (checked by the caller with `parse_confirm_mode`).
+    pub confirm: Option<String>,
+    /// `--closescript`.
+    pub closescript: bool,
+}
+
+/// What `gui script` sent and, with `--wait`, how the script ended (`hikasa.gui_script.v1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuiScriptReport {
+    /// The script as sent.
+    pub script: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// The script's exit code and summary (`None` without `--wait`).
+    pub finished: Option<(u8, ScriptSummary)>,
+}
+
+impl GuiScriptReport {
+    /// 0 once started; with `--wait` the script's exit code (D-23's raw code).
+    pub fn exit_code(&self) -> u8 {
+        self.finished.map_or(0, |(code, _)| code)
+    }
+
+    /// `hikasa.gui_script.v1`.
+    pub fn dto(&self) -> super::dto::GuiScriptDto {
+        super::dto::GuiScriptDto {
+            script: self.script.clone(),
+            args: self.args.clone(),
+            waited: self.finished.is_some(),
+            exit_code: self.finished.map(|(code, _)| code),
+            summary: self.finished.map(|(_, summary)| summary),
+        }
+    }
+}
+
+/// The refusal of a value the GUI cannot be sent (§1.8.13).
+fn not_utf8(what: &str) -> ApiError {
+    ApiError::InvalidArgument(format!(
+        "{what} cannot be sent to the GUI: not valid UTF-8; use hikasa script run"
+    ))
+}
+
+impl Service {
+    /// The `RunScript` of `gui script` (§1.8.13, D-228) for a script that was located, read and checked here: its
+    /// absolute path (an archive member as its canonical spec; standard input cannot be sent), the arguments, this
+    /// process's cwd and the referenced variables of `env` (`capture_script_env`). A value that is not valid UTF-8 is
+    /// `InvalidArgument` (exit 100), "… cannot be sent to the GUI: not valid UTF-8; use hikasa script run".
+    pub fn gui_script_request(
+        &self,
+        text: &super::script::ScriptText,
+        args: &[OsString],
+        env: &std::collections::BTreeMap<String, OsString>,
+        options: &GuiScriptOptions,
+    ) -> Result<Request, ApiError> {
+        let path = match &text.source {
+            super::script::ScriptSource::Stdin => {
+                return Err(ApiError::InvalidArgument(
+                    "a script on standard input cannot be sent to the GUI; use hikasa script run"
+                        .to_owned(),
+                ));
+            }
+            super::script::ScriptSource::Spec(Spec::Local(local)) => local
+                .as_path()
+                .to_str()
+                .ok_or_else(|| not_utf8(&format!("the script {}", text.display)))?
+                .to_owned(),
+            super::script::ScriptSource::Spec(spec) => {
+                if spec.is_lossy() {
+                    return Err(not_utf8(&format!("the script {}", text.display)));
+                }
+                spec.canonical()
+            }
+        };
+        let args = args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                arg.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| not_utf8(&format!("argument %{}", i + 1)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let cwd = match &self.env().cwd {
+            Some(cwd) => Some(
+                cwd.to_str()
+                    .ok_or_else(|| not_utf8("the current folder"))?
+                    .to_owned(),
+            ),
+            None => None,
+        };
+        let env = env
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|v| (name.clone(), v.to_owned()))
+                    .ok_or_else(|| not_utf8(&format!("the value of %{name}%")))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Request::RunScript {
+            path,
+            args,
+            cwd,
+            env,
+            wait: options.wait,
+            stop_on_error: options.stop_on_error,
+            confirm: options.confirm.clone(),
+            close: options.closescript.then_some(true),
+        })
+    }
+
+    /// Sends a `RunScript` (connecting, or launching the GUI unless `launcher` is `None`, as `gui open`) and, when
+    /// it waits, blocks until `ScriptFinished` (a lost connection is `Ipc(ConnectionLost)`: 102 under
+    /// `ApiOp::GuiOpen { wait: true }`). An older GUI's `unsupported_request` is `Unsupported`, "the running GUI does
+    /// not support scripts; restart it"; `busy` and `invalid_request` keep the GUI's message (exit 100).
+    pub fn gui_run_script(
+        &self,
+        request: Request,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<GuiScriptReport, ApiError> {
+        run_guarded(|| {
+            let Request::RunScript {
+                path, args, wait, ..
+            } = &request
+            else {
+                return Err(ApiError::Internal(
+                    "gui_run_script needs a RunScript".to_owned(),
+                ));
+            };
+            let (script, args, wait) = (path.clone(), args.clone(), *wait);
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            let (id, response) = client.request(request).map_err(scripts_error)?;
+            if response != Response::Ok {
+                return Err(ApiError::Ipc(crate::ipc::client::unexpected(&response)));
+            }
+            let finished = if wait {
+                Some(client.wait_script_finished(id).map_err(scripts_error)?)
+            } else {
+                None
+            };
+            Ok(GuiScriptReport {
+                script,
+                args,
+                finished,
+            })
+        })
+    }
+}
+
+/// D-228: a GUI that answers `unsupported_request` to `RunScript` is older than this build.
+fn scripts_error(error: crate::ipc::IpcError) -> ApiError {
+    match &error {
+        crate::ipc::IpcError::Remote { code, .. }
+            if code == crate::ipc::IpcErrorCode::UnsupportedRequest.as_str() =>
+        {
+            ApiError::Unsupported("the running GUI does not support scripts; restart it".into())
+        }
+        _ => ApiError::Ipc(error),
     }
 }
 

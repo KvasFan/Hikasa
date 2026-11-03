@@ -113,8 +113,8 @@ fn handshake_requests_and_views() {
         .call(Request::CloseView { view: ViewId(999) })
         .unwrap_err();
     assert!(matches!(unknown, IpcError::Protocol(_)), "{unknown:?}");
-    // `RunScript` is answered by the server itself (rule 5); `LoadSession`/`LoadWorkspace` reach the handler
-    // (D-89), and this fake answers like an M1 GUI.
+    // `LoadSession`/`LoadWorkspace` reach the handler (D-89), and this fake answers like an M1 GUI; `RunScript` goes to
+    // `handle_script`, whose default answers as a GUI before W8b does (D-228).
     for request in [
         Request::LoadSession {
             name: "s".into(),
@@ -127,6 +127,12 @@ fn handshake_requests_and_views() {
         Request::RunScript {
             path: "/x".into(),
             args: vec![],
+            cwd: None,
+            env: Default::default(),
+            wait: true,
+            stop_on_error: false,
+            confirm: None,
+            close: None,
         },
     ] {
         let err = client.request(request).unwrap_err();
@@ -160,7 +166,7 @@ fn handshake_requests_and_views() {
     assert_eq!(client.call(Request::Shutdown).unwrap().1, Response::Ok);
     drop(client);
     server.shutdown().unwrap();
-    // Unknown requests, `RunScript` and a second `Hello` never reached the handler; `LoadSession` did (D-89).
+    // Unknown requests, `RunScript` (`handle_script`) and a second `Hello` never reached `handle`; `LoadSession` did.
     let seen = gui.requests.lock();
     assert!(seen.iter().all(|r| !matches!(
         r,

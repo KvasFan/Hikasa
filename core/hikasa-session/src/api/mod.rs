@@ -67,9 +67,10 @@ pub use folder_ops::{
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
 };
 pub use gui::{
-    GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
-    ResolvedOpen, ViewOutcome, ViewRequest, ViewWords, find_gui_exe, gui_exe_candidates,
-    infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
+    GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, GuiScriptOptions,
+    GuiScriptReport, LaunchError, OpenArgs, ResolvedOpen, ViewOutcome, ViewRequest, ViewWords,
+    find_gui_exe, gui_exe_candidates, infer_view_kind, normalize_legacy_args, open_usage,
+    parse_open_args,
 };
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use report::{
@@ -268,10 +269,11 @@ pub enum ApiOp {
 #[derive(Clone)]
 pub struct Service {
     inner: Arc<Inner>,
+    /// The host facts: the process's, or another current folder's ([`Service::with_cwd`]).
+    env: Arc<EnvFacts>,
 }
 
 struct Inner {
-    env: EnvFacts,
     config: ConfigLocation,
     /// The options of `options.toml`, their ignored keys and the format registry, behind one lock: replaced
     /// together by [`Service::reload_settings`] (D-119), so a reader never sees half a reload.
@@ -467,8 +469,8 @@ impl Service {
             config.mode
         );
         Ok(Service {
+            env: Arc::new(env),
             inner: Arc::new(Inner {
-                env,
                 config,
                 loaded: RwLock::new(Arc::new(LoadedSettings {
                     options: Arc::new(options_load.options),
@@ -612,7 +614,19 @@ impl Service {
 
     /// The captured host facts (additive).
     pub fn env(&self) -> &EnvFacts {
-        &self.inner.env
+        &self.env
+    }
+
+    /// This service with another current folder (M2 W8b, D-228): the settings, the router, the pool and the jobs are
+    /// shared; relative specs resolve against `cwd`. The GUI runs a script of `RunScript` with the client's cwd, so its
+    /// relative paths mean what they mean in the client's shell.
+    pub fn with_cwd(&self, cwd: PathBuf) -> Service {
+        let mut env = (*self.env).clone();
+        env.cwd = Some(cwd);
+        Service {
+            inner: Arc::clone(&self.inner),
+            env: Arc::new(env),
+        }
     }
 
     /// The VFS router (local files, and standard input and the clipboard once captured; additive). GUIs read
@@ -653,9 +667,9 @@ impl Service {
     /// Spec context from the captured facts.
     pub fn spec_context(&self) -> SpecContext {
         SpecContext {
-            style: self.inner.env.platform.path_style(),
-            cwd: self.inner.env.cwd.clone(),
-            home: self.inner.env.home.clone(),
+            style: self.env.platform.path_style(),
+            cwd: self.env.cwd.clone(),
+            home: self.env.home.clone(),
         }
     }
 
@@ -832,7 +846,7 @@ impl Service {
 
     /// The IPC endpoint of this user and configuration (§2.23).
     pub fn endpoint(&self) -> Result<Endpoint, ApiError> {
-        Endpoint::for_config(&self.inner.env, &self.inner.config).map_err(ApiError::from)
+        Endpoint::for_config(&self.env, &self.inner.config).map_err(ApiError::from)
     }
 
     /// Creates a job control for a direct (blocking) call.
@@ -890,8 +904,7 @@ impl Service {
 
     /// The "current locale" encoding (D-42): the captured codeset when it names a known encoding, else UTF-8.
     pub(crate) fn locale_encoding(&self) -> TextEncoding {
-        self.inner
-            .env
+        self.env
             .locale_encoding
             .as_deref()
             .and_then(TextEncoding::for_label)
@@ -900,7 +913,7 @@ impl Service {
 
     /// The external-conversion runner and its temporary folder (`EnvFacts::temp_dir`).
     pub(crate) fn external(&self) -> (&std::path::Path, &dyn ProcessRunner) {
-        (self.inner.env.temp_dir.as_path(), &*self.inner.runner)
+        (self.env.temp_dir.as_path(), &*self.inner.runner)
     }
 
     /// The runner as a shared value (for the `RulesComparator`).

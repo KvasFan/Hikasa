@@ -105,9 +105,11 @@ pub const FOLDER_CONTENTS_SCHEMA: &str = "hikasa.folder_contents.v1";
 pub const REPORT_SCHEMA: &str = "hikasa.report.v1";
 /// `hikasa script run|check` with `--json` (M2 W8a, §1.8.12): `ScriptOutcome::dto`, `ScriptCheck::dto`.
 pub const SCRIPT_SCHEMA: &str = "hikasa.script.v1";
+/// `hikasa gui script` and `script run --gui` with `--json` (M2 W8b, §1.8.13): `GuiScriptReport::dto`.
+pub const GUI_SCRIPT_SCHEMA: &str = "hikasa.gui_script.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 40] = [
+pub const SCHEMAS: [&str; 41] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -148,6 +150,7 @@ pub const SCHEMAS: [&str; 40] = [
     FOLDER_CONTENTS_SCHEMA,
     REPORT_SCHEMA,
     SCRIPT_SCHEMA,
+    GUI_SCRIPT_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -1115,6 +1118,21 @@ pub struct GuiOpenDto {
     /// first, 0 when none); absent for one view. Additive (M2 W2).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<u64>,
+}
+
+/// `hikasa.gui_script.v1` (M2 W8b, §1.8.13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GuiScriptDto {
+    /// The script as sent (its absolute path).
+    pub script: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// `--wait` was given and the script finished.
+    pub waited: bool,
+    /// The script's exit code (`null` without `--wait`).
+    pub exit_code: Option<u8>,
+    /// What its commands did (`null` without `--wait`).
+    pub summary: Option<crate::ipc::ScriptSummary>,
 }
 
 /// `hikasa.gui_ping.v1`.

@@ -43,6 +43,8 @@ pub struct Ui {
     pub cancel_at_question: Option<CancelToken>,
     /// Called with each log line as it comes (a test changes the disk between two commands).
     pub on_line: Option<LineHook>,
+    /// Receives `ScriptEvent::Progress` (`ScriptUi::progress_events`, W8b) when set.
+    pub progress: Option<std::sync::Arc<std::sync::Mutex<Vec<ScriptEvent>>>>,
 }
 
 impl HostUi for Ui {
@@ -84,6 +86,12 @@ impl ScriptUi for Ui {
     fn clipboard(&mut self, payload: &ClipboardPayload) -> Result<(), hikasa_session::ApiError> {
         self.clipboard.push(payload.clone());
         Ok(())
+    }
+    fn progress_events(&self) -> Option<hikasa_session::api::script::ProgressEvents> {
+        let sink = self.progress.clone()?;
+        Some(std::sync::Arc::new(move |event| {
+            sink.lock().unwrap().push(event);
+        }))
     }
 }
 

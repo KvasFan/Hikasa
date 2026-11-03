@@ -10,8 +10,8 @@ use hikasa_core::{CompareVerdict, ContentKind};
 use hikasa_folder::FolderRulesPatch;
 use hikasa_session::ipc::{
     CloseReason, Envelope, IpcError, IpcErrorCode, MAX_FRAME_LEN, OpenOptions, ReadOnly, Request,
-    Response, ServerInfo, ViewId, ViewInfo, ViewKind, ViewResult, read_frame, recv_request,
-    recv_response, send, write_frame,
+    Response, ScriptSummary, ServerInfo, ViewId, ViewInfo, ViewKind, ViewResult, read_frame,
+    recv_request, recv_response, send, write_frame,
 };
 use hikasa_text::{AlgorithmChoice, TextRulesPatch, UnimportantItem};
 use proptest::prelude::*;
@@ -183,7 +183,14 @@ fn every_request() -> Vec<Request> {
         Request::RunScript {
             path: "/s.txt".into(),
             args: vec!["x".into()],
+            cwd: None,
+            env: BTreeMap::new(),
+            wait: false,
+            stop_on_error: false,
+            confirm: None,
+            close: None,
         },
+        full_run_script(),
         Request::ListViews,
         Request::CloseView { view: ViewId(3) },
         Request::Ping,
@@ -219,7 +226,136 @@ fn every_response() -> Vec<Response> {
         Response::Ok,
         Response::Pong,
         Response::error(IpcErrorCode::NotFound, "no view 9"),
+        Response::ScriptFinished {
+            exit_code: 107,
+            summary: ScriptSummary {
+                commands: 5,
+                ok: 3,
+                failed: 1,
+                refused: 0,
+                not_run: 1,
+                stopped_at: Some(4),
+            },
+        },
+        Response::error(
+            IpcErrorCode::Busy,
+            "a script is running in the window; wait for it or stop it",
+        ),
     ]
+}
+
+/// A `RunScript` with every additive field of W8b (D-228).
+fn full_run_script() -> Request {
+    Request::RunScript {
+        path: "/home/me/s.txt".into(),
+        args: vec!["/w/l".into(), "a b".into()],
+        cwd: Some("/home/me/work".into()),
+        env: BTreeMap::from([("HOME".to_owned(), "/home/me".to_owned())]),
+        wait: true,
+        stop_on_error: true,
+        confirm: Some("yes-to-all".into()),
+        close: Some(true),
+    }
+}
+
+/// A8.17 (D-228): the frames of `RunScript` and its answers; a frame without the W8b fields (an older client) reads
+/// with their defaults, and one with fields of a newer peer reads too.
+#[test]
+fn script_frames_are_golden() {
+    let summary = ScriptSummary {
+        commands: 4,
+        ok: 4,
+        ..ScriptSummary::default()
+    };
+    let messages: Vec<String> = vec![
+        to_line(11, &full_run_script()),
+        to_line(11, &Response::Ok),
+        to_line(
+            11,
+            &Response::ScriptFinished {
+                exit_code: 0,
+                summary,
+            },
+        ),
+        to_line(
+            12,
+            &Request::RunScript {
+                path: "/home/me/s.txt".into(),
+                args: vec![],
+                cwd: None,
+                env: BTreeMap::new(),
+                wait: false,
+                stop_on_error: false,
+                confirm: None,
+                close: None,
+            },
+        ),
+        to_line(
+            12,
+            &Response::error(
+                IpcErrorCode::Busy,
+                "a script is running in the window; wait for it or stop it",
+            ),
+        ),
+        to_line(
+            13,
+            &Response::error(
+                IpcErrorCode::UnsupportedRequest,
+                "`run_script` is not supported in this version",
+            ),
+        ),
+    ];
+    let actual = messages.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("script_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    let back = decode_request_line(&messages[0]);
+    assert_eq!(back.body, full_run_script());
+    assert_eq!(back.body.type_name(), "run_script");
+    // The frame of an M1 client: only path and args; the rest takes its default.
+    let old = decode_request_line(r#"{"id":3,"type":"run_script","path":"/s.txt","args":["a"]}"#);
+    assert_eq!(
+        old.body,
+        Request::RunScript {
+            path: "/s.txt".into(),
+            args: vec!["a".into()],
+            cwd: None,
+            env: BTreeMap::new(),
+            wait: false,
+            stop_on_error: false,
+            confirm: None,
+            close: None,
+        }
+    );
+    // The defaults stay off the wire: the old frame is what this build sends.
+    assert_eq!(
+        to_line(3, &old.body),
+        r#"{"id":3,"type":"run_script","path":"/s.txt","args":["a"]}"#
+    );
+    let newer = decode_request_line(
+        r#"{"id":4,"type":"run_script","path":"/s.txt","wait":true,"priority":2,"close":false}"#,
+    );
+    assert!(matches!(
+        newer.body,
+        Request::RunScript { wait: true, close: Some(false), ref args, .. } if args.is_empty()
+    ));
+    let finished = recv_response(&mut Cursor::new(frame_of(
+        r#"{"id":4,"type":"script_finished","exit_code":100,"summary":{"commands":2,"later":1}}"#,
+    )))
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        finished.body,
+        Response::ScriptFinished {
+            exit_code: 100,
+            summary: ScriptSummary {
+                commands: 2,
+                ..ScriptSummary::default()
+            },
+        }
+    );
+    assert_eq!(IpcErrorCode::parse("busy"), Some(IpcErrorCode::Busy));
 }
 
 #[test]

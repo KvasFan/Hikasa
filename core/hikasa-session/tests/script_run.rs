@@ -8,7 +8,7 @@ mod script_common;
 use std::sync::Arc;
 
 use hikasa_core::{CancelToken, ExitCode, JobKind, Progress, ProgressSink};
-use hikasa_session::api::script::{ScriptRunRequest, StopReason};
+use hikasa_session::api::script::{ScriptEvent, ScriptRunRequest, StopReason};
 use script_common::{Ui, World, statuses, yes};
 
 /// `l/a.txt` differs from `r/a.txt` (size), `l/sub/x.txt` differs too, `l/only.txt` is a left orphan, `r/r.txt` a right one.
@@ -400,6 +400,52 @@ fn a8_14_a_cancel_during_a_report_write_leaves_no_file() {
         .collect();
     let before: Vec<String> = before.into_iter().map(|(name, _)| name).collect();
     assert_eq!(after, before, "no temporary file is left");
+}
+
+/// W8b (§1.8.14): the progress of the current call reaches an interface that takes it, as `ScriptEvent::Progress` with
+/// the call's phase; an interface without `progress_events` gets none (the CLI shows the job's own progress line).
+#[test]
+fn a8_19_the_progress_of_the_current_call_is_an_event() {
+    let w = World::new();
+    for i in 0..20 {
+        w.file(&format!("l/f{i:02}.txt"), &"x".repeat(100), 1_000_000);
+    }
+    w.dir("r");
+    let source = "load l r\nselect all\ncopy left->right\n";
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut ui = Ui {
+        progress: Some(Arc::clone(&seen)),
+        ..Ui::default()
+    };
+    let outcome = w.run_with(source, yes(), &mut ui);
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    let phases: std::collections::BTreeSet<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|event| match event {
+            ScriptEvent::Progress { status } => format!("{:?}", status.phase),
+            other => panic!("only progress comes this way: {other:?}"),
+        })
+        .collect();
+    assert!(
+        phases.len() >= 2,
+        "the comparison's and the copy's phases: {phases:?}"
+    );
+    assert!(
+        !ui.events
+            .iter()
+            .any(|e| matches!(e, ScriptEvent::Progress { .. })),
+        "progress never goes through HostUi::event"
+    );
+    // Without `progress_events` nothing is sent (and the run is the same).
+    let other = World::new();
+    for i in 0..20 {
+        other.file(&format!("l/f{i:02}.txt"), &"x".repeat(100), 1_000_000);
+    }
+    other.dir("r");
+    let (outcome, _) = other.run(source);
+    assert_eq!(outcome.exit_code, ExitCode::Success);
 }
 
 #[test]
