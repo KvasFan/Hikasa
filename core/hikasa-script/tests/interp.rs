@@ -45,6 +45,11 @@ struct Host {
     cancel_at: Option<(u32, CancelToken)>,
     ran: Vec<(u32, String, RunState)>,
     refuse_expanded: bool,
+    /// Each read of the clock is one second later (one instant per command must read it once).
+    moving_clock: bool,
+    clock: std::cell::Cell<u8>,
+    /// The masks of each `select` as the host got them.
+    masks: Vec<Vec<OsString>>,
 }
 
 impl ScriptHost for Host {
@@ -57,6 +62,9 @@ impl ScriptHost for Host {
     fn execute(&mut self, cmd: &Resolved<'_>, state: &RunState) -> CommandOutcome {
         let line = cmd.command.pos.line;
         self.ran.push((line, cmd.text.clone(), *state));
+        if let hikasa_script::Args::Select { masks } = &cmd.args {
+            self.masks.push(masks.clone());
+        }
         if let Some((at, token)) = &self.cancel_at
             && *at == line
         {
@@ -76,7 +84,15 @@ impl ScriptHost for Host {
         CommandOutcome::Ok
     }
     fn now(&self) -> LocalTime {
-        LocalTime::default()
+        if !self.moving_clock {
+            return LocalTime::default();
+        }
+        let second = self.clock.get();
+        self.clock.set(second + 1);
+        LocalTime {
+            second,
+            ..LocalTime::default()
+        }
     }
     fn run_time(&self) -> Option<Duration> {
         Some(Duration::from_millis(2_400))
@@ -87,9 +103,19 @@ impl ScriptHost for Host {
 }
 
 fn go(source: &str, host: &mut Host, state: RunState, cancel: &CancelToken) -> RunOutcome {
+    go_with(source, host, state, cancel, &["A1"])
+}
+
+fn go_with(
+    source: &str,
+    host: &mut Host,
+    state: RunState,
+    cancel: &CancelToken,
+    args: &[&str],
+) -> RunOutcome {
     let script = parse(source.as_bytes(), &AnyWord).unwrap();
     let env = BTreeMap::new();
-    let args: Vec<OsString> = vec!["A1".into()];
+    let args: Vec<OsString> = args.iter().map(OsString::from).collect();
     let opts = RunOptions {
         script: OsStr::new("s.txt"),
         display: "s.txt",
@@ -347,4 +373,77 @@ fn the_elapsed_forms() {
         "62 min 05 s"
     );
     assert!(LineKind::Detail != LineKind::Info);
+}
+
+#[test]
+fn a_load_whose_word_is_refused_when_it_runs_ends_107() {
+    // A1: the second load's word is refused after expansion; nothing may run on the first comparison.
+    let mut host = Host {
+        refuse_expanded: true,
+        ..Host::default()
+    };
+    let source = "load l r\nload %1 other\nselect all\ndelete right\n";
+    let outcome = go_with(
+        source,
+        &mut host,
+        RunState::default(),
+        &CancelToken::new(),
+        &["bad"],
+    );
+    assert_eq!(outcome.exit_code, ExitCode::LoadFailed);
+    let stop = outcome.stopped_at.unwrap();
+    assert_eq!((stop.line, stop.reason), (2, StopReason::LoadFailed));
+    use CommandStatus::*;
+    assert_eq!(statuses(&outcome), vec![Ok, Failed, NotRun, NotRun]);
+    assert_eq!(host.ran.len(), 1, "only the first load ran");
+}
+
+#[test]
+fn a_percent_pair_in_an_argument_is_shown_as_it_is() {
+    // A9: `%%` written in the script is one `%`; a `%%` inside an argument's value is the value, shown as it is.
+    let mut host = Host::default();
+    let outcome = go_with(
+        "load a b\nselect %1 50%%\n",
+        &mut host,
+        RunState::default(),
+        &CancelToken::new(),
+        &["50%%"],
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    assert_eq!(outcome.records[1].text.as_deref(), Some("select 50%% 50%"));
+    assert_eq!(
+        host.masks[0],
+        vec![OsString::from("50%%"), OsString::from("50%")]
+    );
+    assert!(log_lines(&host.ui).contains(&"run L2 select 50%% 50%".to_owned()));
+}
+
+#[test]
+fn one_instant_per_command_even_when_the_clock_moves() {
+    // Every dynamic name of one line shows the same instant: the clock is read once per command.
+    let mut host = Host {
+        moving_clock: true,
+        ..Host::default()
+    };
+    let outcome = go(
+        "load a b\nselect %time% x%fn_time% %TIME%\nselect %time%\n",
+        &mut host,
+        RunState::default(),
+        &CancelToken::new(),
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    let first = &host.masks[0];
+    assert_eq!(first.len(), 3);
+    let time = first[0].to_str().unwrap().to_owned();
+    assert_eq!(first[2].to_str().unwrap(), time);
+    assert_eq!(
+        first[1].to_str().unwrap(),
+        format!("x{}", time.replace(':', "-"))
+    );
+    assert_eq!(
+        outcome.records[1].text.as_deref(),
+        Some(format!("select {time} x{} {time}", time.replace(':', "-")).as_str())
+    );
+    // The next command reads the clock again: another instant.
+    assert_ne!(host.masks[1][0].to_str().unwrap(), time);
 }

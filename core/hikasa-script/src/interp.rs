@@ -348,11 +348,10 @@ pub fn display_os(value: &OsStr) -> String {
     out
 }
 
-/// The word as a script line shows it after expansion.
+/// The word as a script line shows it after expansion: the value as it is (a `%%` in an argument stays `%%`), quoted
+/// where the lexer needs it.
 fn shown(value: &OsStr, quoted: bool) -> String {
-    Word::new(display_os(value), quoted, crate::Pos::START)
-        .to_source()
-        .replace("%%", "%")
+    Word::new(display_os(value), quoted, crate::Pos::START).to_source()
 }
 
 /// True for the slots whose words keep their bytes (specs and report targets, §1.8.4).
@@ -482,7 +481,14 @@ pub fn run(
                     text: text.clone(),
                 });
                 log(host, LineKind::Run, Some(line), text.clone());
-                (CommandOutcome::Failed { message }, text)
+                // A `load` that cannot be resolved is a load that failed: the script ends (107), so no later line runs
+                // on an earlier comparison.
+                let outcome = if command.name == CommandName::Load {
+                    CommandOutcome::LoadFailed { message }
+                } else {
+                    CommandOutcome::Failed { message }
+                };
+                (outcome, text)
             }
             Ok(resolved) => {
                 host.ui().event(ScriptEvent::Command {
