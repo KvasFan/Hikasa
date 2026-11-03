@@ -11,7 +11,7 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{Sandbox, assert_golden, code, json, stderr, stdout};
+use common::{MTIME, Sandbox, assert_golden, code, json, stderr, stdout};
 use hikasa_core::JobKind;
 use hikasa_folder::NullObserver;
 use hikasa_report::{ReportKind, ReportWords};
@@ -45,6 +45,12 @@ fn inputs(s: &Sandbox) -> (String, String, String, String) {
     s.file("l/same.txt", "same\n");
     s.file("r/same.txt", "same\n");
     s.file("l/sub/c.txt", "left only\n");
+    // A folder's time too, last: NTFS moves it when a file inside gets its time, so two reports could differ there.
+    filetime::set_file_mtime(
+        s.join("l/sub"),
+        filetime::FileTime::from_unix_time(MTIME, 0),
+    )
+    .expect("folder mtime");
     let (dl, dr) = (s.join("l"), s.join("r"));
     let p = |p: &Path| p.display().to_string();
     (p(&l), p(&r), p(&dl), p(&dr))
