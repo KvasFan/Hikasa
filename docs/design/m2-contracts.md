@@ -6495,8 +6495,11 @@ to RD come from the W7a review: each was applied with only the named property se
    ignored with the warning); `report_time` takes decimal digits only, no sign and no space, as reproducible-builds.org
    defines it, so `-1` is invalid like `abc` and a value past jiff's range. The warning goes through the Service's
    pending warnings (`take_warnings`), so the CLI shows it once.
-9. **Print folders.** `n` starts at 1 (`20231114-221320-1`); the plan picks the first free one, execution makes it
-   (with its parents) and removes it again when the report fails. Pruning compares the civil time of a name of the
+9. **Print folders.** `n` starts at 1 (`20231114-221320-1`); the plan picks the first free one (and plans a linked
+   report `New` there without a look below it: the folder is made at execution, §1.7.9). Execution makes
+   `<cache>/print` with its parents, then the job folder **without** (`create_dir(parents = false)`), so it is this
+   report's own: a name another report took since the plan (the same second) gives the next `n`, the plan's main file
+   and files folder move with it, and a report that fails removes only that folder (review). Pruning compares the civil time of a name of the
    pattern (`<8 digits>-<6 digits>-<n>`) with the clock's now in its zone minus seven days; other names stay. A failure
    to remove is a debug line.
 10. **The Linux clipboard helper.** The hidden entry is `hikasa __clipboard-helper`, recognised in `main` before
@@ -6505,7 +6508,19 @@ to RD come from the W7a review: each was applied with only the named property se
     payload once without waiting, writes `placed` (or `failed: <why>`), then places it again in arboard's wait mode,
     which returns when another program owns the selection. `spawn_clipboard_helper` (host.rs, adapter-only) writes the
     payload, closes stdin, reads the one line and returns the running child. `HIKASA_CLIPBOARD_HELPER_FILE` makes the
-    helper write the payload to a file instead (the tests' fake placer). The **manual check on X11 and Wayland** (a paste
+    helper write the payload to a file instead (the tests' fake placer; documented beside `HIKASA_CLIPBOARD_FILE` in
+    help `cli`, help `report` and docs/12, the same policy). Review: a helper without a clipboard (`arboard` cannot
+    connect: no display) writes `unavailable: <why>`, which the adapter maps to `Unavailable` (`unsupported`); any other
+    failure is `failed: <why>` (`io`). A failure to place a report is a **write** of the clipboard:
+    `ClipboardError::to_vfs_write` (additive) gives `VfsOp::Write` "cannot write the clipboard: <why>", where
+    `to_vfs` (the source's mapping) said "read". On Unix the helper runs with its current folder `/` and in a process
+    group of its own (`CommandExt::process_group(0)`), so it keeps no folder busy and a Ctrl-C of the terminal does not
+    end it; a payload cut short (stdin at its end: the caller went away) ends it with one `failed:` line. The entry is
+    `host::is_clipboard_helper` + `clipboard_helper_main(stdin, stdout, &host::clipboard_helper_placer())`, run first
+    by the CLI's **and the GUI's** `main` (W13's clipboard target places through the same `SystemClipboard`, which
+    starts `current_exe`: `hikasa-gui` must serve the entry, else a second window opened). Of the two choices the review
+    allowed, serving the entry in the GUI is the one that keeps the content after the GUI ends; stdin and stdout stay in
+    the adapters (architecture check 2). The **manual check on X11 and Wayland** (a paste
     after `hikasa` exited) was not done in W7b: the implementer's rules forbid the real desktop; it is the maintainer's.
 11. **Remembered choices, leniently.** `report_choices` checks the layout alone, then each option and output word
     against the words kept before it, under the layout `side-by-side` (it uses the most slots, and remembered words span
@@ -6514,8 +6529,17 @@ to RD come from the W7a review: each was applied with only the named property se
     writes the table sparse (no empty list, no absent value).
 12. **Pairs in parallel.** The pair reports run on the service pool (`par_iter`), each acquiring
     `min(left + right size, capacity)` of a `ByteBudget` of `content_budget_bytes` before it compares, and releasing it
-    after its file is written; the outcomes keep report order. The budget is internal to the run: A7.12's "`ByteBudget`
-    counters" check is not a test (no counter is visible outside `write_linked`).
+    after its file is written; the outcomes keep report order. Review: A7.12's "`ByteBudget` counters" are
+    `Service::report_hooks()` (`#[doc(hidden)]`, not an API): the budget of the last linked report, the most of it its
+    pair comparisons held at once, and the most comparisons at once; `a7_12_pair_comparisons_stay_within_the_content_budget`
+    runs three pairs of 600 KiB under a budget of 1 MiB and finds 600 KiB + 1 B held at most, one comparison at a time.
+    The budget is taken **off the pool** (review, found by that test hanging once for 590 s in a loaded mutation run):
+    with `par_iter`, a pool thread waiting in a comparison's own `join` steals other work, and a stolen pair that then
+    waited for the budget the same thread held would never return. `run_pairs` takes each pair's budget on the calling
+    thread and only then hands the pair to the pool (`ThreadPool::in_place_scope`), so no pool thread ever waits for
+    the budget; called from a pool thread, the pairs run one after the other. The race was not reproduced on the old
+    code in 180 rounds of `a7_12_pairs_under_a_tight_budget_never_hang` (eight pairs, three threads, a watchdog), which
+    now guards the new code.
 13. **`too_large` from the plan.** A pair is skipped `too_large` when either side's size in the folder comparison's model
     is over `DEFAULT_RULES_MAX_BYTES` (128 MiB, the rules-based limit of `rules_size_limit`); the plan marks it, so it is
     never opened. The test (`a7_12_skipped_and_failed_pairs`, a sparse 129 MiB file) checks the plan's mark; "without a
@@ -6535,12 +6559,16 @@ to RD come from the W7a review: each was applied with only the named property se
     reports and the marker.
 18. **`--json` of the compare subcommands.** With the stdout target, the JSON document only, as M1; with another target
     the report is written there and the compare document goes to stdout (its warnings include the report's).
-19. **The GUI is not changed in W7b.** `FolderViewModel::open_request` (gui/hikasa-gui/src/folder_view.rs) still builds
-    its request with `TextCompareRequest::for_specs`; another session owns `gui/`. `Service::pair_text_request` gives the
-    same request for a file pair (its exact specs, the folder request's text rules and patch, the format overrides),
-    with the comparison's effective ignore-unimportant where the GUI takes its view's flag, and `None` for a link shown
-    as a link, which the GUI's own code does not refuse. The architecture grep "no `for_specs` in `gui/`" of A7.11 is
-    left for that change.
+19. **The GUI's `Open` asks the Service (review).** `FolderViewModel::open_request(service)`
+    (gui/hikasa-gui/src/folder_view.rs) returns `Service::pair_text_request` for the selected row, the one builder of
+    T11: the exact specs, the folder request's text rules and patch, the format overrides and the comparison's effective
+    ignore-unimportant (it took the view's flag before); the child view's `ViewOptions` keep this view's
+    ignore-unimportant for the display, so a toggle in the folder view still shows in the child. For a link shown as a
+    link the Service gives `None`: `Open` opens nothing and pushes a warning notice "Open: <path> is a link shown as a
+    link; compare with links followed to open the files it names." (before, the GUI compared the links' targets). The
+    GUI's tests keep their assertions (`tests_sessions.rs`' helper takes the `World` for its service);
+    `open_on_a_link_shown_as_a_link_says_why_nothing_opens` is new. Check 7 has A7.11's grep: nothing in `gui/` (tests
+    included) names `for_specs`, with a planted violation.
 20. **Sources of `report text|folder --session`.** The flags apply on top as in `session run`: for text, a given
     `--format`, encoding or `--rules-file` replaces the session's and the importance and alignment flags form the
     rules patch; for folders, a given `--rules-file`, `--criteria` or `--text-rules-file` replaces the session's, the rule
@@ -6555,6 +6583,50 @@ to RD come from the W7a review: each was applied with only the named property se
     about 6 % of the cases each) lay two standard deviations above their 3 % share. The default is now 1,536 cases and
     a protected side is drawn at 0.3 (0.2): over 30 runs every share stays at least 4.8 standard deviations above its
     bound; the shares themselves are unchanged.
+24. **A linked main file that is a symbolic link is followed (review decision).** `report_plan` follows the main file's
+    links (at most 40; a relative target from the link's folder) before it plans the files folder, so the folder goes
+    beside the file the report is written to and the hrefs resolve from it; the plan, the dry run and `output` name
+    that file (on Unix the path keeps a `..` of the link, which the OS resolves physically). The link stays a link. A
+    report without links keeps M1's rule (written through the link, named as given).
+25. **A folder target is refused by the plan (review, T12).** A folder at the target's name, or a link to one, is
+    `is_a_directory` "<spec>: is a folder" from `report_plan`, so `--dry-run` and the run both exit 100 with the same
+    message (the dry run said "replace" and exit 13 before).
+26. **Links into an archive are refused by `report_request` (review, A7.14).** With `include-file-links` and a file
+    target, `report_request` resolves the target (`write_spec`, `stat` and `archive_format` only) and refuses an
+    archive member with the refusal of links to stdout and the clipboard ("file reports need a folder on disk",
+    `unsupported`), before anything is compared; `report_plan` keeps its check.
+27. **M1's flags stay silent (review).** A word that comes from an M1 flag (`--html`, `--html-mono`, `--wrap`,
+    `--patch-style`, `--columns`, `--line-numbers`, `--no-line-numbers`) is not reported unused (M1 passed them by where
+    the layout ignored them); `report_request` keeps in `ReportRequest::unused` only what `parse` of `flags.words` alone
+    reports unused (a part of the words parses whenever all do). The words given as words warn as before; so does
+    `html-color` on the printer's target (`apply_target`, a target M1 did not have).
+28. **`session run` of a folder-sync session names REPORT (review).** A sync writes no report: the REPORT flags given
+    (`ReportFlags::given`, additive, in core so check 7 sees no vocabulary table in the CLI; then `--output-to`,
+    `--output`) go into one `report_option_unused` warning "a folder-sync session writes no report: <flags> ignored";
+    the exit code is the sync's; `--dry-run` stays the sync's.
+29. **`rename(replace = false)` onto a free name (review, vfs).** After `LocalVfs::rename`'s look found `to` free, the
+    rename is `rename_free`: on Linux and macOS the kernel's no-replace rename through tempfile's spelling
+    (`persist_noclobber`: `renameat2` `RENAME_NOREPLACE`, `renamex_np` `RENAME_EXCL`, rustix, so no new dependency and
+    no `unsafe`); `AlreadyExists` when something came in between. `EINVAL`/`ENOSYS` (a file system without it) go to a
+    hard link (a file) or, for a folder, to a second look and a plain rename. **Windows keeps the look and rename:**
+    tempfile's `MoveFileExW` path first resets the item's attributes to normal (it is written for its own temporary
+    files), which a user's file or folder must keep, and `windows-sys` would need `unsafe` outside the mmap module
+    (check 1). A case-only rename (the same item) stays a plain rename. Test
+    `a_free_rename_replaces_nothing_that_appeared` (an empty folder, which a plain rename replaces on Unix).
+30. **Test hooks and `write_output_with_on` (review).** `Service::report_hooks()` (`#[doc(hidden)]`): `set_clipboard_cap`
+    (0: `CLIPBOARD_REPORT_MAX`; never above it), so `a7_15_the_clipboard_cap_end_to_end` reaches `too_large` with a few
+    KiB, both flavours together and the cap itself fitting; the budget counters of note 12; `before_choices_save`, a
+    step run once between the load and the save of `remember_report_choices`, so A7.19's "a changed file between load
+    and save goes through `state_update`'s retry" is a test (`a7_19_a_change_between_load_and_save_is_kept`).
+    `write_output_with_on(vfs, …)` is `write_output_with` on a given back-end (as note 6), which shows its durabilities.
+31. **A7.13 on macOS (review).** APFS refuses a name that is not UTF-8 (asserted), and `MemoryVfs` holds names as UTF-8
+    strings (a lossy name is U+FFFD there), so the non-UTF-8 disk case cannot run on macOS in either form. What runs on
+    every Unix, macOS included, is the part that needs no such file: `a7_13_a_main_name_that_is_not_utf8` (the back
+    link keeps the bytes, `%E9`; the marker writes `report_raw` and reads it back; the files folder's safe name). The
+    Linux disk test stays the full case.
+32. **Case-insensitive disks (review).** `a7_12_case_insensitive_names_on_disk` (`cfg(any(windows, target_os =
+    "macos"))`) runs on the Windows and macOS CI: an existing `REPORT_FILES` that is not ours makes `report_files-2` and
+    stays; a report of `REPORT.html` is ours for `report.html`. Under wine it is not skipped (see the gate's result).
 
 **W7b mutations** (A7.23; each applied by hand with only the named tests selected, under `timeout 600` and an 8 GiB
 memory cap, and reverted; the session's tests write the report to `MemoryVfs`, note 6):
@@ -6567,9 +6639,39 @@ memory cap, and reverted; the session's tests write the report to `MemoryVfs`, n
 | W-4 | `report_write.rs`: a cancel keeps the staging folder | `a7_12_a_cancel_before_each_step_leaves_everything_as_before` | — |
 | STREAM-W | `hikasa-session/src/api/report.rs`: `stream_into` renders into a `Vec`, then writes it | `report_stream.rs` (both: the 4 MiB bound for text, the half-of-the-bytes bound for folders) | — |
 | A17 | `report.rs`: `report_request` does not apply the target | `cli_report.rs` `a7_17_one_request_gives_the_same_bytes_everywhere` (the printer's file lacks its print block) | — |
+| M1 (review) | `report_write.rs`: step 4 compares only the number of entries of the old folder | `a7_12_a_change_that_keeps_the_count_still_fails_step_4` | — |
+| M2 (review) | `report_write.rs`: "ours" ignores the modification time | `a7_12_a_file_with_another_time_is_not_ours` (disk) | — |
+| M3 (review) | `report_write.rs`: "ours" accepts a marker that lists a missing file | `a7_12_markers_that_do_not_make_a_folder_ours` | — |
+| M4 (review) | `report_write.rs`: the marker's `report` always compared folded | `a7_12_markers_that_do_not_make_a_folder_ours` (another case, case-sensitive) | — |
+| M5 (review) | `report_write.rs`: step 5 renames with `replace = true` | `a7_12_a_folder_that_appears_is_never_replaced` | — |
+| M6 (review) | `report_write.rs`: `CapWriter` refuses at `>=` the cap | `a7_15_the_cap_itself_fits`, `a7_15_the_clipboard_cap_end_to_end` | — |
+| M7 (review) | `report_write.rs`: the plain-text alternative gets the whole cap again | `a7_15_the_clipboard_cap_end_to_end` | — |
+| M8 (review) | `report_write.rs`: a clipboard over the cap is not `too_large` | `a7_15_the_clipboard_cap_end_to_end` | — |
+| M9 (review) | `report_write.rs`: `hidden_sibling` returns a name that exists | `a7_12_hidden_folders_a_crash_left_are_not_touched` | — |
+| M11 (review) | `report_write.rs`: a failed pair's file that landed is kept | `a7_12_a_pair_that_landed_and_failed_is_removed` | — |
+| M12 (review) | `report_write.rs`: pruning removes a folder exactly seven days old | `a7_16_a_print_folder_exactly_seven_days_old_stays` | — |
+| M15b (review) | `report_write.rs`: the print folder's parent is looked at although fresh (the review's M15 line is gone with the fix) | `a7_16_printer_and_browser_with_links` | — |
+| M16 (review) | `report_write.rs`: the marker's `report` is not checked | `a7_12_markers_that_do_not_make_a_folder_ours` (another report, every file as listed) | — |
+| M24 (review) | `report_write.rs`: a marker that is not a file is accepted | `a7_12_markers_that_do_not_make_a_folder_ours` (a linked marker) | — |
+| M25 (review) | `report_write.rs`: a listing with a name that is not UTF-8 is accepted | `a7_12_a_name_that_is_not_utf8_is_never_ours` (Linux disk) | — |
+| N4 (review) | `report.rs`: `stream_into` commits after a cancel that lands after the last byte | `a7_12_a_cancel_after_the_last_byte_is_seen_before_step_4` | — |
+| N6 (review) | `report.rs`: `--lines` not refused by name for folders | `a7_18_lines_are_refused_for_a_folder_report_by_name` | — |
+| N8 (review) | `report_write.rs`: step 4 renames the old folder with `replace = true` | `a7_12_a_folder_that_appears_is_never_replaced` | — |
+| N9 (review) | `report_write.rs`: a pair report takes its own report time | `a7_17_one_instant_when_the_clock_moves` | — |
+| N10 (review) | `report.rs`: `stream_into`'s durabilities swapped | `a7_14_write_output_with_durabilities` | — |
+| P1 (review) | `report_write.rs`: step 4's comparison inverted | P-WRITE `p_write_plans_are_executed_whole_or_not_at_all` alone (it now requires `Ok` without a fault) | — |
+| P5 (review) | `report_write.rs`: no cancel check before step 4 | `a7_12_a_cancel_after_the_last_byte_is_seen_before_step_4` | — |
+| V-1 (review) | `hikasa-vfs/src/local/mod.rs`: `rename_free` is a plain `fs::rename` | `a_free_rename_replaces_nothing_that_appeared` | — |
+| C-1 (review) | `hikasa-cli/src/cmd/report.rs`: a payload's failure mapped by `to_vfs` ("read") | `cli_report.rs` `a7_15_a_failed_helper_is_a_write_of_the_clipboard` | — |
 
 A mutation that survived: removing the cancel check before step 3 changes nothing, because the main writer's
-`CancelWriter` stops at its first byte; the check stays for clarity. P-WRITE persists no failures
+`CancelWriter` stops at its first byte; the check stays for clarity. Review, recorded as equivalent: **M15c** (the
+`fresh` early return of `links_plan` removed): the print folder does not exist at the plan, so the loop's first look
+is `NotFound` → `New` with `folder = wanted`, which is what the early return gives. **M20** (the cancel check at the
+top of `write_pair` removed): `run_pairs` takes each pair's budget with `ByteBudget::acquire`, whose first step checks
+the token, and a pair already handed to the pool stops at its comparison (`parse_spec_in` takes the token) or at the
+latest at its render's `CancelWriter`, before its file is committed; the check stays to stop early. The review's runs
+of these rows (each with only the named tests, `timeout 600`, 8 GiB) are in its notes; all were reverted. P-WRITE persists no failures
 (`failure_persistence: None`), so its rows have no seed.
 
 ### 1.8–1.14 W8–W14
