@@ -32,6 +32,7 @@ mod bench;
 mod commands;
 mod dialog;
 mod dnd;
+mod folder;
 mod folder_view;
 mod fonts;
 mod home;
@@ -62,11 +63,15 @@ mod tests_folder_ops;
 #[cfg(test)]
 mod tests_folder_ops_fixes;
 #[cfg(test)]
+mod tests_folder_view;
+#[cfg(test)]
 mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;
 #[cfg(test)]
 mod tests_script;
+#[cfg(test)]
+mod tests_selection;
 #[cfg(test)]
 mod tests_sessions;
 #[cfg(test)]

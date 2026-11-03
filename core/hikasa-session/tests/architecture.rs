@@ -2809,6 +2809,18 @@ const GUI_MODEL_FILES: &[&str] = &[
     "wizards.rs",
     "op_dialogs.rs",
     "script_dialog.rs",
+    // M2 W9 (D-233 rule 1); `folder/` is listed below. A file a later part adds is checked once it exists.
+    "folder_view.rs",
+    "path_edit.rs",
+    "browse.rs",
+    "find_panel.rs",
+    "legend.rs",
+    "info_dialog.rs",
+    "op_preview.rs",
+    "sync_view.rs",
+    "folder_tabs.rs",
+    "filters_edit.rs",
+    "dnd.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -2835,6 +2847,7 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
         .filter(|p| p.is_file())
         .collect();
     files.extend(rust_files(&src.join("options")));
+    files.extend(rust_files(&src.join("folder")));
     files
 }
 

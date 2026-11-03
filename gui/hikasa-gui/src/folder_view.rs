@@ -16,9 +16,9 @@ use hikasa_core::{
 use hikasa_folder::ops::{Confirmation, FolderOp, OpPlan, ReadOnlySides};
 use hikasa_folder::select::{Selection, SideSet};
 use hikasa_folder::{
-    ArchiveHandling, Category, ChannelObserver, ColourClass, DisplayOptions, EntryView,
-    FolderDisplayFilter, FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind,
-    NodeView, ScanStatus, TreeRead, VisibleRow, expanded_on_load,
+    ArchiveHandling, Category, ChannelObserver, DisplayOptions, EntryView, FolderDisplayFilter,
+    FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind, NodeView, ScanStatus,
+    TreeRead, VisibleRow, expanded_on_load,
 };
 use hikasa_session::api::{
     ExpandWords, FolderCompareRequest, FolderCompareResponse, FolderOpOutcome, FolderOpRequest,
@@ -32,10 +32,16 @@ use hikasa_vfs::ops::{ItemStamp, OverwritePolicy};
 
 use crate::commands::{CommandId, Ctx};
 use crate::dialog::DialogModel;
+pub use crate::folder::cells::{Cell, size_text};
+use crate::folder::cells::{CellInput, cell_of};
+use crate::folder::columns::ColumnLayout;
+use crate::folder::glyphs::{Centre, GlyphInput, centre_of, glyph_of};
+use crate::folder::selection::{Hit, Mods, ViewSelection};
 use crate::job::Job;
 use crate::notify::NoticeKind;
 use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
 use crate::status::{JobStatus, LogNote, StatusItems};
+use hikasa_session::api::human::TimeZone;
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::State;
 use hikasa_session::settings::state::LayoutValue;
@@ -51,19 +57,6 @@ const OVERSCAN: u32 = 12;
 pub const REBUILD_INTERVAL: Duration = Duration::from_millis(66);
 /// Capacity of the scan event channel (the drain thread empties it at once, so the scan never waits).
 const EVENT_CAPACITY: usize = 1024;
-
-/// One side's cell of a tree row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cell {
-    /// Name (control characters escaped).
-    pub name: String,
-    /// Size text (folders: the total below once scanned).
-    pub size: String,
-    /// Modification time (UTC).
-    pub modified: String,
-    /// Colour class of the colour spot and the name (FC-031; the palette maps it to a colour).
-    pub colour: ColourClass,
-}
 
 /// One rendered tree row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,14 +81,20 @@ pub struct RowView {
     pub left: Option<Cell>,
     /// Right cell.
     pub right: Option<Cell>,
-    /// Centre mark (state symbol).
+    /// Centre mark (the symbol the centre icon stands for).
     pub mark: &'static str,
     /// Centre mark tooltip.
-    pub mark_title: &'static str,
+    pub mark_title: String,
+    /// The centre cell (FC-032: content result, newer arrow or state; Ignored badge, Space mark; D-236).
+    pub centre: Centre,
     /// The row's category (the palette tells newer from different and older from unknown, FC-031).
     pub category: Category,
-    /// Selected.
+    /// Selected (on some side).
     pub selected: bool,
+    /// The sides it is selected on (D-238).
+    pub sides: SideSet,
+    /// The current row (keyboard focus).
+    pub current: bool,
     /// Error details (tooltip).
     pub errors: String,
 }
@@ -275,7 +274,7 @@ enum Task {
     Choosing {
         command: CommandId,
         caption: String,
-        node: NodeId,
+        items: Selection,
         mark: Mark,
     },
     /// `folder_op_plan` and `folder_confirmation` (both read the disk: a job, D-105).
@@ -283,8 +282,8 @@ enum Task {
         caption: String,
         view: ViewId,
         mark: Mark,
-        /// The row the command was given on: the question is asked only while it is still the selected one.
-        node: NodeId,
+        /// The selection the command was given on: the question is asked only while it is still the selection.
+        items: Selection,
         /// The row and its sides as the question names them.
         subject: String,
         job: Job<(OpPlan, Confirmation)>,
@@ -351,9 +350,12 @@ impl Task {
 struct Restore {
     /// `expanded` (or `collapsed` with expand-all), by path, with the id each had when this was taken.
     folders: Vec<(String, NodeId)>,
-    /// The selected row, and whether it is a folder (a file and a folder of one name are two rows, D-20).
-    selected: Option<(String, bool)>,
-    /// [`FolderViewModel::selection_moves`] when this was taken: a selection the user made since wins.
+    /// The selected rows with their sides, and whether each is a folder (a file and a folder of one name are two rows,
+    /// D-20); the current row first.
+    selected: Vec<(String, bool, SideSet)>,
+    /// The current row, as `selected`'s entries are.
+    current: Option<(String, bool)>,
+    /// The selection's `moves` when this was taken: a selection the user made since wins.
     moves: u64,
 }
 
@@ -404,8 +406,19 @@ pub struct FolderViewModel {
     rows: Vec<VisibleRow>,
     seen_generation: u64,
     rebuilt_at: Option<Instant>,
-    selected: Option<NodeId>,
+    /// The selection (D-238).
+    selection: ViewSelection,
+    /// The current row's index in `rows` (kept with the rows and the selection).
     selected_index: Option<usize>,
+    /// The columns, their widths and the sort (D-234, D-235).
+    columns: ColumnLayout,
+    /// The zone of the Service's clock: the Modified column's (D-237).
+    zone: TimeZone,
+    /// The status counts per side `(rows, bytes)` for (selection moves, rows revision), computed when the selection
+    /// changes, never per frame (FC-064).
+    counts: Memo<Option<((u64, u64), [(u64, u64); 2])>>,
+    /// How often they were computed (tests).
+    counts_computed: Memo<u64>,
     first: u32,
     viewport: u32,
     scroll_to: Option<u32>,
@@ -447,9 +460,6 @@ pub struct FolderViewModel {
     unscanned_open: Option<NodeId>,
     /// Folders an Expand asked for while a task ran, by path: refreshed and opened once it ends (FC-012).
     queued_expand: Vec<String>,
-    /// Bumped by every selection the user makes: a refresh does not put back a selection older than one made while it
-    /// ran.
-    selection_moves: u64,
     /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
@@ -493,8 +503,12 @@ impl FolderViewModel {
             rows: Vec::new(),
             seen_generation: u64::MAX,
             rebuilt_at: None,
-            selected: None,
+            selection: ViewSelection::new(),
             selected_index: None,
+            columns: ColumnLayout::default(),
+            zone: service.clock().now().time_zone().clone(),
+            counts: Memo::new(None),
+            counts_computed: Memo::new(0),
             first: 0,
             viewport: 40,
             scroll_to: None,
@@ -519,7 +533,6 @@ impl FolderViewModel {
             child_results: Vec::new(),
             unscanned_open: None,
             queued_expand: Vec::new(),
-            selection_moves: 0,
             #[cfg(test)]
             gate: None,
             #[cfg(test)]
@@ -862,19 +875,22 @@ impl FolderViewModel {
                     expanded.contains(&id)
                 }
             };
-            read.visible_rows(&self.display, &is_open, &mut rows);
+            read.visible_rows_sorted(
+                &self.display,
+                &is_open,
+                self.columns.sort.as_ref(),
+                &mut rows,
+            );
+            // Only shown rows are selected (D-238): collapsed, hidden or gone rows leave the selection.
+            let present = |id: NodeId| present_sides(&read, id);
+            self.selection.retain_shown(&rows, &present);
         }
         drop(read);
         self.rows = rows;
         self.rows_revision += 1;
         self.seen_generation = generation;
         self.rebuilt_at = Some(Instant::now());
-        self.selected_index = self
-            .selected
-            .and_then(|sel| self.rows.iter().position(|r| r.node == sel));
-        if self.selected_index.is_none() {
-            self.selected = None;
-        }
+        self.selected_index = self.selection.current_index(&self.rows);
         let ms = began.elapsed().as_secs_f64() * 1000.0;
         if self.stats.samples.len() < 100_000 {
             self.stats.samples.push(ms);
@@ -904,11 +920,53 @@ impl FolderViewModel {
 
     /// Selects a visible row.
     pub fn select(&mut self, index: usize) {
-        if let Some(row) = self.rows.get(index) {
-            self.selected = Some(row.node);
-            self.selected_index = Some(index);
-            self.selection_moves += 1;
-        }
+        let Some(node) = self.rows.get(index).map(|r| r.node) else {
+            return;
+        };
+        let sides = self.present(node);
+        self.selection.select_one(node, sides);
+        self.selected_index = Some(index);
+    }
+
+    /// The sides `node` has an item on in the current model.
+    fn present(&self, node: NodeId) -> SideSet {
+        self.prepared()
+            .map(|p| present_sides(&p.model().read(), node))
+            .unwrap_or_default()
+    }
+
+    /// A click on row `index` at `hit` with `mods` (D-238's pointer table).
+    pub fn click(&mut self, index: usize, hit: Hit, mods: Mods) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let read = model.read();
+        let present = |id: NodeId| present_sides(&read, id);
+        self.selection.click(&self.rows, &present, index, hit, mods);
+        drop(read);
+        self.selected_index = self.selection.current_index(&self.rows);
+    }
+
+    /// The selection (D-238).
+    pub fn selection(&self) -> &ViewSelection {
+        &self.selection
+    }
+
+    /// Changes the selection through `change` with the rows and the sides each row has (pointer and keyboard calls of
+    /// `ui/folder.rs`, the Edit commands).
+    pub fn with_selection(
+        &mut self,
+        change: impl FnOnce(&mut ViewSelection, &[VisibleRow], &dyn Fn(NodeId) -> SideSet),
+    ) {
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        let present = |id: NodeId| present_sides(&read, id);
+        change(&mut self.selection, &self.rows, &present);
+        drop(read);
+        self.selected_index = self.selection.current_index(&self.rows);
     }
 
     /// Moves the selection by `delta` rows (arrow keys).
@@ -921,14 +979,19 @@ impl FolderViewModel {
             .selected_index
             .map_or(if delta > 0 { -1 } else { last + 1 }, |i| i as i64);
         let index = (at + delta).clamp(0, last) as usize;
-        self.select(index);
+        self.key_move(index, Mods::default());
+    }
+
+    /// Moves the current row to `index` (keys with `mods`: Shift extends, Ctrl moves the current row only, D-238).
+    pub fn key_move(&mut self, index: usize, mods: Mods) {
+        self.with_selection(|sel, rows, present| sel.key_move(rows, present, index, mods));
         self.scroll_to = Some(index as u32);
     }
 
     /// The selected node.
     #[cfg(test)]
     pub fn selected(&self) -> Option<NodeId> {
-        self.selected
+        self.selection.current
     }
 
     /// Toggles a folder row (disclosure triangle, double-click). A folder that was not scanned is refreshed at the
@@ -1014,7 +1077,7 @@ impl FolderViewModel {
 
     /// The selected node as a folder: (id, open).
     fn selected_folder(&self) -> Option<(NodeId, bool)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1023,7 +1086,7 @@ impl FolderViewModel {
 
     /// The selected row and its path when `Open` opens it as a folder: a closed archive with `OnceOpened`.
     fn selected_closed_archive(&self) -> Option<(NodeId, String)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1103,7 +1166,11 @@ impl FolderViewModel {
         self.unscanned_open = None;
         self.expanded.clear();
         self.collapsed.clear();
-        self.selected = None;
+        let moves = self.selection.moves;
+        self.selection = ViewSelection {
+            moves,
+            ..ViewSelection::new()
+        };
         self.selected_index = None;
         self.children.clear();
         self.child_results.clear();
@@ -1133,11 +1200,20 @@ impl FolderViewModel {
         folders.sort();
         Some(Restore {
             folders,
-            selected: self.selected.map(|id| {
+            selected: self
+                .selection
+                .items
+                .iter()
+                .map(|(id, sides)| {
+                    let folder = read.node(id).is_some_and(|n| n.is_folder());
+                    (read.path(id).as_str().to_owned(), folder, sides)
+                })
+                .collect(),
+            current: self.selection.current.map(|id| {
                 let folder = read.node(id).is_some_and(|n| n.is_folder());
                 (read.path(id).as_str().to_owned(), folder)
             }),
-            moves: self.selection_moves,
+            moves: self.selection.moves,
         })
     }
 
@@ -1158,9 +1234,14 @@ impl FolderViewModel {
                 .into_iter()
                 .filter(|(_, id)| still_open(*id))
                 .collect(),
-            selected: points
-                .selected
-                .filter(|_| self.selection_moves == points.moves),
+            selected: if self.selection.moves == points.moves {
+                points.selected
+            } else {
+                Vec::new()
+            },
+            current: points
+                .current
+                .filter(|_| self.selection.moves == points.moves),
             moves: points.moves,
         }
     }
@@ -1188,10 +1269,8 @@ impl FolderViewModel {
                     self.expanded.extend(found);
                 }
                 // A row the user selected while the comparison ran again stays selected.
-                if self.selection_moves == restore.moves {
-                    self.selected = restore
-                        .selected
-                        .and_then(|(path, folder)| live_at(&read, &path, folder));
+                if self.selection.moves == restore.moves {
+                    put_back(&mut self.selection, &read, &restore);
                 }
             }
             None => {
@@ -1212,23 +1291,29 @@ impl FolderViewModel {
         std::mem::take(&mut self.outbox)
     }
 
-    /// The selected row with what it holds per side, while the view may start an operation: a finished comparison,
-    /// no job of the view and no operation under way.
-    fn operable_row(&self) -> Option<(NodeId, [bool; 2])> {
+    /// The selection with what it holds per side, while the view may start an operation: a finished comparison, no job
+    /// of the view and no operation under way (M2 W9a: the W6d commands act on the whole selection, D-238).
+    fn operable(&self) -> Option<(Selection, [bool; 2])> {
         if self.busy() || self.task.is_some() {
             return None;
         }
-        let id = self.selected?;
-        let prepared = self.prepared()?;
-        let read = prepared.model().read();
-        let node = read.node(id)?;
-        (id != NodeId::ROOT).then_some((id, [node.left.is_some(), node.right.is_some()]))
+        let mut items = self.selection.items.clone();
+        items.remove(NodeId::ROOT, SideSet::all());
+        if items.is_empty() {
+            return None;
+        }
+        let mut on = [false; 2];
+        for (_, sides) in items.iter() {
+            on[0] |= sides.contains(SideSet::LEFT);
+            on[1] |= sides.contains(SideSet::RIGHT);
+        }
+        Some((items, on))
     }
 
-    /// Starts `command` (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) on the selected row: a copy plans at
-    /// once, a delete first asks its sides in the dialog returned. `caption` is the command's; `view` the view's id;
+    /// Starts `command` (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) on the selection: a copy plans at once,
+    /// a delete first asks its sides in the dialog returned. `caption` is the command's; `view` the view's id;
     /// `require_side` is `require_side_selection_in_delete`. Nothing starts while an operation is under way, for a
-    /// side the view may not write, or without a selected row: the window's predicates say the same.
+    /// side the view may not write, or without a selection: the window's predicates say the same.
     pub fn start_operation(
         &mut self,
         service: &Service,
@@ -1237,7 +1322,7 @@ impl FolderViewModel {
         caption: &str,
         require_side: bool,
     ) -> Option<Box<dyn DialogModel>> {
-        let (node, on) = self.operable_row()?;
+        let (items, on) = self.operable()?;
         let mark = Mark::of(self.prepared()?);
         match command {
             CommandId::CopyRight | CommandId::CopyLeft => {
@@ -1254,17 +1339,10 @@ impl FolderViewModel {
                     to,
                     overwrite: OverwritePolicy::Always,
                 };
-                let subject = self.subject(node, SideSet::of(from), Some(to));
-                self.plan(
-                    service,
-                    view,
-                    caption,
-                    op,
-                    node,
-                    SideSet::of(from),
-                    mark,
-                    subject,
-                );
+                let mut sent = items.clone();
+                sent.restrict(from);
+                let subject = self.subject(&sent, SideSet::of(from), Some(to));
+                self.plan(service, view, caption, op, items, sent, mark, subject);
                 None
             }
             CommandId::Delete | CommandId::PermanentDelete => {
@@ -1277,28 +1355,41 @@ impl FolderViewModel {
                 }
                 let (path, holds) = {
                     let read = mark.model.read();
-                    let totals = read.totals(node);
-                    let view_of = read.node(node)?;
-                    let folder = view_of.is_folder();
-                    let hold = |entry: Option<&EntryView<'_>>, t: &hikasa_folder::SideTotals| {
-                        entry.map(|e| {
-                            if folder {
-                                format!(
-                                    "a folder: {} files, {} folders, {} bytes below it",
-                                    t.files, t.folders, t.bytes
-                                )
-                            } else {
-                                format!("a {}: {} bytes", kind_word(e.kind), e.size)
-                            }
-                        })
-                    };
-                    (
-                        read.path(node).as_str().to_owned(),
-                        [
-                            hold(view_of.left.as_ref(), &totals.left),
-                            hold(view_of.right.as_ref(), &totals.right),
-                        ],
-                    )
+                    if items.len() == 1 {
+                        let (node, _) = items.iter().next()?;
+                        let totals = read.totals(node);
+                        let view_of = read.node(node)?;
+                        let folder = view_of.is_folder();
+                        let hold =
+                            |entry: Option<&EntryView<'_>>, t: &hikasa_folder::SideTotals| {
+                                entry.map(|e| {
+                                    if folder {
+                                        format!(
+                                            "a folder: {} files, {} folders, {} bytes below it",
+                                            t.files, t.folders, t.bytes
+                                        )
+                                    } else {
+                                        format!("a {}: {} bytes", kind_word(e.kind), e.size)
+                                    }
+                                })
+                            };
+                        (
+                            read.path(node).as_str().to_owned(),
+                            [
+                                hold(view_of.left.as_ref(), &totals.left),
+                                hold(view_of.right.as_ref(), &totals.right),
+                            ],
+                        )
+                    } else {
+                        let count = |side: SideSet| {
+                            let n = items.iter().filter(|(_, s)| s.contains(side)).count();
+                            (n > 0).then(|| format!("{n} selected items"))
+                        };
+                        (
+                            format!("{} selected rows", items.len()),
+                            [count(SideSet::LEFT), count(SideSet::RIGHT)],
+                        )
+                    }
                 };
                 let permanent = command == CommandId::PermanentDelete;
                 let dialog =
@@ -1306,7 +1397,7 @@ impl FolderViewModel {
                 self.task = Some(Task::Choosing {
                     command,
                     caption: caption.to_owned(),
-                    node,
+                    items,
                     mark,
                 });
                 Some(Box::new(dialog))
@@ -1320,7 +1411,7 @@ impl FolderViewModel {
         let Some(Task::Choosing {
             command,
             caption,
-            node,
+            items,
             mark,
         }) = self.task.take()
         else {
@@ -1333,7 +1424,7 @@ impl FolderViewModel {
             self.refuse_changed(&caption);
             return;
         }
-        if self.selected != Some(node) {
+        if self.operable_items() != Some(&items) {
             self.refuse_moved(&caption);
             return;
         }
@@ -1347,23 +1438,26 @@ impl FolderViewModel {
             sides: choice.sides,
             recycle,
         };
-        let subject = self.subject(node, choice.sides, None);
-        self.plan(
-            service,
-            view,
-            &caption,
-            op,
-            node,
-            choice.sides,
-            mark,
-            subject,
-        );
+        let mut sent = Selection::default();
+        for (node, sides) in items.iter() {
+            sent.insert(node, sides & choice.sides);
+        }
+        let subject = self.subject(&sent, choice.sides, None);
+        self.plan(service, view, &caption, op, items, sent, mark, subject);
     }
 
-    /// The row an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
-    /// `a/b.txt: on the left`, `a/b.txt: on both sides`.
-    fn subject(&self, node: NodeId, sides: SideSet, to: Option<Side>) -> String {
-        let path = self.path_of(node).unwrap_or_default();
+    /// The selection as an operation takes it (the root never).
+    fn operable_items(&self) -> Option<&Selection> {
+        Some(&self.selection.items)
+    }
+
+    /// What an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
+    /// `a/b.txt: on the left`, `3 items: on both sides`.
+    fn subject(&self, items: &Selection, sides: SideSet, to: Option<Side>) -> String {
+        let what = match items.iter().next() {
+            Some((node, _)) if items.len() == 1 => self.path_of(node).unwrap_or_default(),
+            _ => format!("{} items", items.len()),
+        };
         let where_ = match to {
             Some(Side::Left) => "from the right to the left",
             Some(_) => "from the left to the right",
@@ -1373,12 +1467,12 @@ impl FolderViewModel {
             None if sides.contains(SideSet::LEFT) => "on the left",
             None => "on the right",
         };
-        format!("{path}: {where_}")
+        format!("{what}: {where_}")
     }
 
-    /// Plans `op` on the row `node` (its `sides`) in a job: `folder_op_plan`, then `folder_confirmation`, which reads
-    /// the options. Disable editing and `--nobackups` go with the request, so the Service refuses what the window
-    /// would not offer (D-184).
+    /// Plans `op` on `sent` (the selection `items` given on, with the sides the verb acts on) in a job:
+    /// `folder_op_plan`, then `folder_confirmation`, which reads the options. Disable editing and `--nobackups` go with
+    /// the request, so the Service refuses what the window would not offer (D-184).
     #[allow(clippy::too_many_arguments)] // one call per command
     fn plan(
         &mut self,
@@ -1386,22 +1480,14 @@ impl FolderViewModel {
         view: ViewId,
         caption: &str,
         op: FolderOp,
-        node: NodeId,
-        sides: SideSet,
+        items: Selection,
+        sent: Selection,
         mark: Mark,
         subject: String,
     ) {
-        let mut selection = Selection::default();
-        selection.insert(node, sides);
         let request = FolderOpRequest {
             op: OpRequest::Op(op),
-            select: SelectRequest {
-                selection: Some(selection),
-                display: Some(self.display),
-                expand: ExpandWords::All,
-                iu: self.display.ignore_unimportant,
-                ..SelectRequest::default()
-            },
+            select: select_request(sent, self.display),
             read_only: self.write.read_only,
             overrides: self.write.overrides(),
         };
@@ -1428,7 +1514,7 @@ impl FolderViewModel {
             caption: caption.to_owned(),
             view,
             mark,
-            node,
+            items,
             subject,
             job,
         });
@@ -1561,7 +1647,7 @@ impl FolderViewModel {
                     caption,
                     view,
                     mark,
-                    node,
+                    items,
                     subject,
                     ..
                 },
@@ -1570,7 +1656,7 @@ impl FolderViewModel {
                 Ok((plan, confirmation)) => {
                     if !mark.holds(self.prepared()) {
                         self.refuse_changed(&caption);
-                    } else if self.selected != Some(node) {
+                    } else if self.operable_items() != Some(&items) {
                         self.refuse_moved(&caption);
                     } else if confirmation.next().is_none() {
                         // Nothing to ask (the options drop every question): the plan runs as confirmed.
@@ -1752,7 +1838,7 @@ impl FolderViewModel {
         };
         self.expanded = self.expanded.iter().map(|&id| follow(id)).collect();
         self.collapsed = self.collapsed.iter().map(|&id| follow(id)).collect();
-        self.selected = self.selected.map(follow);
+        self.selection.renumber(&follow);
     }
 
     /// After a refresh: a row whose record was replaced (new facts are a new record, not a renumbered one) is found
@@ -1775,10 +1861,8 @@ impl FolderViewModel {
             } else {
                 self.expanded.extend(found);
             }
-            if let Some((path, folder)) = &points.selected
-                && let Some(live) = at(path, *folder)
-            {
-                self.selected = Some(live);
+            if !points.selected.is_empty() || points.current.is_some() {
+                put_back(&mut self.selection, &read, points);
             }
         }
     }
@@ -1854,7 +1938,7 @@ impl FolderViewModel {
 
     /// The selected file pair's specs (FC-062: both sides present, not folders).
     fn selected_pair(&self) -> Option<(NodeId, hikasa_core::Spec, hikasa_core::Spec)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1884,7 +1968,7 @@ impl FolderViewModel {
     /// `Open` on a selected pair the Service does not compare as text (a link shown as a link): the window says so
     /// instead of opening nothing in silence.
     fn refuse_open(&mut self) {
-        let Some(id) = self.selected else {
+        let Some(id) = self.selection.current else {
             return;
         };
         let text = self.prepared().map(|prepared| {
@@ -1911,7 +1995,7 @@ impl FolderViewModel {
     /// `Open` on a file pair (FC-062), with the row and its stamps for the child's result (FC-029(c)).
     fn open_pair(&self, service: &Service) -> Option<OpenPair> {
         let (request, view) = self.open_request(service)?;
-        let ticket = self.selected.and_then(|id| {
+        let ticket = self.selection.current.and_then(|id| {
             let prepared = self.prepared()?;
             let read = prepared.model().read();
             let node = read.node(id)?;
@@ -1981,7 +2065,7 @@ impl FolderViewModel {
             self.write.writable(Side::Left),
             self.write.writable(Side::Right),
         ];
-        if let Some((_, on)) = self.operable_row() {
+        if let Some((_, on)) = self.operable() {
             ctx.row_selected = true;
             ctx.row_on = on;
         }
@@ -2290,13 +2374,27 @@ impl FolderViewModel {
         let start = self.first.saturating_sub(OVERSCAN).min(total);
         let end = (self.first + self.viewport + OVERSCAN).min(total);
         let iu = self.display.ignore_unimportant;
+        let running = self.scanning();
         for index in start..end {
             let Some(row) = self.rows.get(index as usize) else {
                 break;
             };
-            if let Some(view) = row_view(&read, row, index, iu, self.is_open(row.node)) {
+            let input = RowInput {
+                iu,
+                open: self.is_open(row.node),
+                zone: &self.zone,
+                running,
+                marked: self
+                    .selection
+                    .mark
+                    .filter(|(n, _)| *n == row.node)
+                    .map(|(_, s)| s),
+            };
+            if let Some(view) = row_view(&read, row, index, &input) {
                 out.rows.push(RowView {
-                    selected: Some(row.node) == self.selected,
+                    selected: !self.selection.items.get(row.node).is_empty(),
+                    sides: self.selection.items.get(row.node),
+                    current: self.selection.current == Some(row.node),
                     ..view
                 });
             }
@@ -2397,6 +2495,50 @@ enum Ready {
     Plan(Result<(OpPlan, Confirmation), ApiError>),
     Outcome(Result<FolderOpOutcome, ApiError>),
     Refresh(Result<RefreshDto, ApiError>),
+}
+
+/// The sides `id` has an item on.
+fn present_sides(read: &TreeRead<'_>, id: NodeId) -> SideSet {
+    read.node(id).map_or(SideSet::empty(), |n| {
+        let mut sides = SideSet::empty();
+        if n.left.is_some() {
+            sides |= SideSet::LEFT;
+        }
+        if n.right.is_some() {
+            sides |= SideSet::RIGHT;
+        }
+        sides
+    })
+}
+
+/// Puts back the selection of `points` by path (a re-run or a refresh replaced the records), on the sides each row
+/// still has.
+fn put_back(selection: &mut ViewSelection, read: &TreeRead<'_>, points: &Restore) {
+    let mut items = Selection::default();
+    for (path, folder, sides) in &points.selected {
+        if let Some(live) = live_at(read, path, *folder) {
+            items.insert(live, *sides & present_sides(read, live));
+        }
+    }
+    let moves = selection.moves;
+    selection.items = items;
+    if let Some((path, folder)) = &points.current {
+        selection.current = live_at(read, path, *folder);
+        selection.anchor = selection.current;
+    }
+    selection.moves = moves;
+}
+
+/// What a plan gets of the view's selection (D-238): the selection, explicit (no expand words), the view's display
+/// and ignore-unimportant; *Include hidden items* is the option's until W9b's dialogs ask.
+pub fn select_request(selection: Selection, display: DisplayOptions) -> SelectRequest {
+    SelectRequest {
+        selection: Some(selection),
+        display: Some(display),
+        expand: ExpandWords::None,
+        iu: display.ignore_unimportant,
+        ..SelectRequest::default()
+    }
 }
 
 /// `id` after `renumbered`.
@@ -2501,21 +2643,6 @@ fn verdict_text(verdict: CompareVerdict) -> &'static str {
     }
 }
 
-/// Centre symbol and tooltip of a category.
-fn mark(category: Category) -> (&'static str, &'static str) {
-    match category {
-        Category::Same => ("=", "Same"),
-        Category::Different => ("≠", "Different"),
-        Category::LeftNewer => ("◀", "Left newer"),
-        Category::RightNewer => ("▶", "Right newer"),
-        Category::LeftOrphan => ("◧", "Left orphan"),
-        Category::RightOrphan => ("◨", "Right orphan"),
-        Category::Unknown => ("?", "Unknown (not compared yet)"),
-        Category::Error => ("!", "Error"),
-        Category::Filtered => ("·", "Filtered"),
-    }
-}
-
 /// True when `Open` on this row opens a closed archive: the flag and the rules (D-153).
 fn opens_archive(read: &TreeRead<'_>, node: &NodeView<'_>) -> bool {
     node.flags.contains(NodeFlags::ARCHIVE)
@@ -2523,47 +2650,63 @@ fn opens_archive(read: &TreeRead<'_>, node: &NodeView<'_>) -> bool {
         && read.rules().handling.archives == ArchiveHandling::OnceOpened
 }
 
+/// What [`row_view`] reads besides the row.
+struct RowInput<'a> {
+    iu: bool,
+    open: bool,
+    zone: &'a TimeZone,
+    running: bool,
+    marked: Option<Side>,
+}
+
 fn row_view(
     read: &TreeRead<'_>,
     row: &VisibleRow,
     index: u32,
-    iu: bool,
-    open: bool,
+    input: &RowInput<'_>,
 ) -> Option<RowView> {
+    let iu = input.iu;
     let node = read.node(row.node)?;
     let folder = node.is_folder();
     let archive = node.flags.contains(NodeFlags::ARCHIVE);
     let opens_archive = opens_archive(read, &node);
     let totals = read.totals(row.node);
+    let errors_of = read.errors(row.node);
+    let rules = read.rules();
     let cell = |entry: Option<&EntryView<'_>>, side: Side| {
         entry.map(|e| {
-            let bytes = if folder {
-                if side == Side::Left {
-                    totals.left.bytes
-                } else {
-                    totals.right.bytes
-                }
-            } else {
-                e.size
-            };
-            Cell {
-                name: hikasa_report::escape_name(e.name).into_owned(),
-                size: if folder && node.scan != hikasa_folder::ScanStatus::Scanned {
-                    String::new()
-                } else {
-                    size_text(bytes)
+            let failed_here = errors_of
+                .iter()
+                .any(|err| err.side == Some(side) || err.side.is_none());
+            let glyph = glyph_of(
+                &node,
+                side,
+                &GlyphInput {
+                    rules,
+                    running: input.running,
+                    failed_here,
                 },
-                modified: e
-                    .mtime
-                    .map_or(String::new(), |t| time_text(&t.to_rfc3339())),
-                colour: read.colour(row.node, side, iu),
-            }
+            );
+            cell_of(
+                e,
+                &CellInput {
+                    folder,
+                    scanned: node.scan == ScanStatus::Scanned,
+                    folder_bytes: if side == Side::Left {
+                        totals.left.bytes
+                    } else {
+                        totals.right.bytes
+                    },
+                    zone: input.zone,
+                    colour: read.colour(row.node, side, iu),
+                    glyph,
+                },
+            )
         })
     };
     let category = read.category(row.node, iu);
-    let (mark, mark_title) = mark(category);
-    let errors = read
-        .errors(row.node)
+    let centre = centre_of(&node, category, input.marked.is_some());
+    let errors = errors_of
         .iter()
         .map(|e| e.error.message.clone())
         .collect::<Vec<_>>()
@@ -2573,37 +2716,21 @@ fn row_view(
         node: row.node.0,
         depth: row.depth,
         folder,
-        open,
-        has_children: folder && node.scan == hikasa_folder::ScanStatus::Scanned,
+        open: input.open,
+        has_children: folder && node.scan == ScanStatus::Scanned,
         archive,
         opens_archive,
         left: cell(node.left.as_ref(), Side::Left),
         right: cell(node.right.as_ref(), Side::Right),
-        mark,
-        mark_title,
+        mark: centre.mark,
+        mark_title: centre.tooltip.clone(),
+        centre,
         category,
         selected: false,
+        sides: SideSet::empty(),
+        current: false,
         errors,
     })
-}
-
-/// `1 234 567` (thin grouping, bytes).
-pub fn size_text(bytes: u64) -> String {
-    let digits = bytes.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (k, c) in digits.chars().enumerate() {
-        if k > 0 && (digits.len() - k).is_multiple_of(3) {
-            out.push('\u{202f}');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// `2024-05-01 12:00:07` from RFC 3339 UTC text.
-pub fn time_text(rfc3339: &str) -> String {
-    let civil: String = rfc3339.chars().take(19).collect();
-    civil.replacen('T', " ", 1)
 }
 
 #[cfg(test)]
@@ -2611,12 +2738,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sizes_and_times() {
+    fn sizes() {
         assert_eq!(size_text(0), "0");
         assert_eq!(size_text(999), "999");
         assert_eq!(size_text(1000), "1\u{202f}000");
         assert_eq!(size_text(1_234_567), "1\u{202f}234\u{202f}567");
-        assert_eq!(time_text("2024-05-01T12:00:07.5Z"), "2024-05-01 12:00:07");
     }
 
     #[test]
