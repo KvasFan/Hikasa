@@ -27,8 +27,8 @@
 //! | `--iu` ← `--ignoreunimportant`, `--ignore-unimportant` | ignore unimportant differences |
 //! | `--stdin-name=v` | name hint of `-` (D-15, D-49) |
 //! | `--sync` | a Folder Sync view (CLI-003; with `--fv` the last wins, D-190) |
-//! | `--closescript` | the status window of an `@script` closes when it ends (CLI-003, M2 W8b) |
-//! | `--silent` | an `@script` runs headless, never through a GUI; a settings package imports without the wizard |
+//! | `--closescript` | the status window of an `@script` closes when it ends (CLI-003, M2 W8b); without one `switch_ignored` |
+//! | `--silent` | an `@script` runs headless, never through a GUI; a settings package imports without the wizard; else `switch_ignored`, as in M1 |
 //! | `--nobackups` | the view's operations keep no backups (`OpenOptions::no_backups`) |
 //! | `--solo` | force a new GUI instance (`hikasa-gui` only) |
 //! | `--json`, `--quiet` ← `-q`, `--no-color` | output flags |
@@ -681,6 +681,27 @@ enum Action {
     Forward,
 }
 
+impl Action {
+    /// True for a switch of the view a command line opens (ignored, with a warning, when it runs a script instead).
+    fn is_a_views(&self) -> bool {
+        matches!(
+            self,
+            Action::Fv
+                | Action::Title(_)
+                | Action::ReadOnlyAll
+                | Action::ReadOnlyLeft
+                | Action::ReadOnlyRight
+                | Action::Filters
+                | Action::ExpandAll
+                | Action::Format
+                | Action::IgnoreUnimportant
+                | Action::StdinName
+                | Action::Sync
+                | Action::NoBackups
+        )
+    }
+}
+
 /// One switch: canonical name, aliases, arity, action and its usage line.
 struct Switch {
     name: &'static str,
@@ -1083,6 +1104,8 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
     let args = normalize_legacy_args(args, platform);
     let mut parsed = OpenArgs::default();
     let mut script: Option<OsString> = None;
+    // The switches of a view given (their canonical names): a script opens none, so each is `switch_ignored` then.
+    let mut view_switches: Vec<&'static str> = Vec::new();
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         if arg == "--" {
@@ -1130,6 +1153,9 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
                 ApiError::InvalidArgument(format!("switch `--{}` needs a value", switch.name))
             })?),
         };
+        if switch.action.is_a_views() && !view_switches.contains(&switch.name) {
+            view_switches.push(switch.name);
+        }
         apply(&mut parsed, switch, value)?;
     }
     if let Some(file) = script {
@@ -1137,10 +1163,36 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
             file,
             args: std::mem::take(&mut parsed.request.specs),
         });
-    } else if parsed.closescript {
+        for name in view_switches {
+            parsed.warnings.push(Warning {
+                code: WarningCode::SwitchIgnored,
+                message: format!(
+                    "switch `--{name}` applies to a view; a script (`@<file>`) opens none"
+                ),
+                spec: None,
+            });
+        }
+        return Ok(parsed);
+    }
+    if parsed.closescript {
         parsed.warnings.push(Warning {
             code: WarningCode::SwitchIgnored,
             message: "switch `--closescript` applies to a script (`@<file>`) only".to_owned(),
+            spec: None,
+        });
+    }
+    // As in M1, `--silent` without a script is `switch_ignored`, unless the one argument is a settings package
+    // (`*.hikasa-pkg`, D-127), which it imports without the wizard.
+    let a_package = parsed.request.kind.is_none()
+        && matches!(parsed.request.specs.as_slice(), [one] if Path::new(one)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|e| e.eq_ignore_ascii_case(crate::package::PACKAGE_EXTENSION)));
+    if parsed.silent && !a_package {
+        parsed.warnings.push(Warning {
+            code: WarningCode::SwitchIgnored,
+            message: "switch `--silent` applies to a script (`@<file>`) or a settings package only"
+                .to_owned(),
             spec: None,
         });
     }

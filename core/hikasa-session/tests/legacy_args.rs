@@ -532,7 +532,8 @@ fn at_script_table() {
         assert!(parsed.script.is_none(), "{list:?}");
         assert_eq!(parsed.request.specs.len(), 2);
     }
-    // Without a script: `--closescript` warns, `--silent` is kept (a package's) and warns nothing.
+    // Without a script: `--closescript` warns, and `--silent` warns as in M1 (review F3) unless the one argument is a
+    // settings package (D-127), which it imports without the wizard.
     let parsed = parse_open_args(
         &args(&["a", "b", "--closescript", "--silent"]),
         Platform::Linux,
@@ -542,7 +543,49 @@ fn at_script_table() {
     let codes: Vec<String> = parsed.warnings.iter().map(|w| w.message.clone()).collect();
     assert_eq!(
         codes,
-        ["switch `--closescript` applies to a script (`@<file>`) only"]
+        [
+            "switch `--closescript` applies to a script (`@<file>`) only",
+            "switch `--silent` applies to a script (`@<file>`) or a settings package only"
+        ]
+    );
+    assert!(
+        parsed
+            .warnings
+            .iter()
+            .all(|w| w.code == WarningCode::SwitchIgnored)
+    );
+    for package in ["my.hikasa-pkg", "C.HIKASA-PKG"] {
+        let parsed = parse_open_args(&args(&[package, "--silent"]), Platform::Linux).unwrap();
+        assert!(parsed.silent);
+        assert!(
+            parsed.warnings.is_empty(),
+            "{package}: {:?}",
+            parsed.warnings
+        );
+    }
+    // A script opens no view: each view switch it drops is `switch_ignored`, once (review F3).
+    let parsed = parse_open_args(
+        &args(&[
+            "@s.txt",
+            "l",
+            "--ro",
+            "--sync",
+            "--nobackups",
+            "-ro",
+            "--wait",
+        ]),
+        Platform::Linux,
+    )
+    .unwrap();
+    assert!(parsed.script.is_some() && parsed.request.wait);
+    let codes: Vec<String> = parsed.warnings.iter().map(|w| w.message.clone()).collect();
+    assert_eq!(
+        codes,
+        [
+            "switch `--ro` applies to a view; a script (`@<file>`) opens none",
+            "switch `--sync` applies to a view; a script (`@<file>`) opens none",
+            "switch `--nobackups` applies to a view; a script (`@<file>`) opens none"
+        ]
     );
     assert!(
         parsed

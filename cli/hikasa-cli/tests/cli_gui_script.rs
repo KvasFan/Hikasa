@@ -361,3 +361,54 @@ fn a8_18_an_older_gui_does_not_support_scripts() {
     );
     server.shutdown().unwrap();
 }
+
+/// Review F3: `gui open @s.txt l --ro --sync --nobackups` warns `switch_ignored` for each view switch the script
+/// drops; `gui open l r --silent` warns `switch_ignored` as in M1.
+#[test]
+fn a8_18_switches_a_script_or_a_view_cannot_use_are_switch_ignored() {
+    let s = script_sandbox();
+    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::Success);
+    let server = serve(&s, Arc::clone(&gui));
+    let warned = |out: &std::process::Output| -> Vec<String> {
+        json(out)["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter(|w| w["code"] == "switch_ignored")
+            .map(|w| w["message"].as_str().unwrap_or("").to_owned())
+            .collect()
+    };
+    let out = script_cmd(&s)
+        .args([
+            "gui",
+            "open",
+            "@s.txt",
+            "l",
+            "--ro",
+            "--sync",
+            "--nobackups",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(json(&out)["schema"], "hikasa.gui_script.v1");
+    let messages = warned(&out);
+    assert_eq!(messages.len(), 3, "{messages:?}");
+    for name in ["--ro", "--sync", "--nobackups"] {
+        assert!(
+            messages.iter().any(|m| m.contains(&format!("`{name}`"))),
+            "{name}: {messages:?}"
+        );
+    }
+    let out = script_cmd(&s)
+        .args(["gui", "open", "l", "r", "--silent", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(
+        warned(&out),
+        ["switch `--silent` applies to a script (`@<file>`) or a settings package only"]
+    );
+    server.shutdown().unwrap();
+}
