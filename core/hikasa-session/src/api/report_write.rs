@@ -144,6 +144,16 @@ mod tests {
         // A cut that makes a device name or a trailing dot is fixed after the cut.
         assert_eq!(safe_component("CONxyz", 3), "_CO");
         assert_eq!(safe_component("ab.cd", 3), "ab_");
+        // The device prefix moves a dot to the end of the cut: `_CON.` is refused, so it becomes `_`.
+        for (name, max, want) in [
+            ("CON.x", 5, "_CON_"),
+            ("nul.tar", 5, "_nul_"),
+            ("COM1.c", 6, "_COM1_"),
+        ] {
+            let got = safe_component(name, max);
+            assert_eq!(got, want, "{name:?} at {max}");
+            assert_eq!(windows_name_problem(&got), None, "{name:?} → {got:?}");
+        }
     }
 
     #[test]
@@ -184,9 +194,19 @@ mod tests {
         })]
 
         /// P-LINKS, the names: over random names, the safe name passes `windows_name_problem`, fits `max` bytes, is never
-        /// empty, and holds no byte an href escapes but those of non-ASCII letters and digits.
+        /// empty, and holds no byte an href escapes but those of non-ASCII letters and digits. Half the cases cut the name
+        /// at or just after one of its dots (counting the device prefix), where a cut leaves a trailing dot.
         #[test]
-        fn p_links_safe_names(name in "\\PC{0,40}|[.\\-]{0,3}(CON|con|NUL|com1|LPT2)(\\.[a-z]{0,3})?\\.?", max in 1usize..80) {
+        fn p_links_safe_names(
+            name in "\\PC{0,40}|[.\\-]{0,3}(CON|con|NUL|com1|LPT2)(\\.[a-z]{0,3})?\\.?|[a-z.]{0,6}\\.[a-z.]{0,6}",
+            max in 1usize..80,
+            near_dot in proptest::option::of((proptest::prelude::any::<proptest::sample::Index>(), 0usize..3)),
+        ) {
+            let dots: Vec<usize> = name.match_indices('.').map(|(at, _)| at).collect();
+            let max = match near_dot {
+                Some((which, near)) if !dots.is_empty() => dots[which.index(dots.len())] + near + 1,
+                _ => max,
+            };
             let safe = safe_component(&name, max);
             proptest::prop_assert!(windows_name_problem(&safe).is_none(), "{name:?} → {safe:?}");
             proptest::prop_assert!(!safe.is_empty() && safe.len() <= max.max(4), "{name:?} → {safe:?}");
