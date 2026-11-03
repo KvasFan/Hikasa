@@ -3427,3 +3427,57 @@ fn a7_12_case_insensitive_names_on_disk() {
         outcome.warnings
     );
 }
+
+/// A7.12 (review): pairs that cannot share the budget never hang the run, however the pool's threads interleave with
+/// the comparisons' own parallel work: eight pairs of 600 KiB under 1 MiB on three threads, twelve times, each within a
+/// minute (a watchdog fails the test instead of hanging it). The budget is taken off the pool (`run_pairs`).
+#[test]
+fn a7_12_pairs_under_a_tight_budget_never_hang() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let files: Vec<(String, Vec<u8>, Vec<u8>)> = (0..8)
+        .map(|i| {
+            let left = vec![b'a'; 300 << 10];
+            let mut right = left.clone();
+            right.push(b'b');
+            (format!("f{i}.txt"), left, right)
+        })
+        .collect();
+    let borrowed: Vec<(&str, Option<&[u8]>, Option<&[u8]>)> = files
+        .iter()
+        .map(|(n, l, r)| (n.as_str(), Some(l.as_slice()), Some(r.as_slice())))
+        .collect();
+    trees(&root, &borrowed);
+    write(
+        &root.join("config"),
+        "options.toml",
+        b"schema_version = 1\n[tweaks.file_operations]\ncontent_memory_budget_mib = 1\n",
+    );
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let service = service(&root);
+        let folder = compare(&service, &root);
+        for _ in 0..12 {
+            let vfs = mem(CaseSensitivity::Sensitive);
+            let target = file_target(&host("/o/report.html"));
+            let mut req = linked(&service, &target);
+            let outcome = run(
+                &service,
+                &vfs,
+                &folder,
+                &mut req,
+                &target,
+                &job(&service, JobKind::Report),
+            )
+            .unwrap();
+            assert_eq!(outcome.pairs.len(), 8);
+            assert_eq!(service.report_hooks().pairs_at_once(), 1);
+            done.send(()).unwrap();
+        }
+    });
+    for round in 0..12 {
+        finished
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_else(|e| panic!("round {round} did not end: {e}"));
+    }
+}
