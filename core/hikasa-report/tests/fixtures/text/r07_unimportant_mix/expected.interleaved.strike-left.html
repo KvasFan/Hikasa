@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Text Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.il { width: 100%; table-layout: fixed; font-family: monospace; }
+table.il col.n { width: 5em; }
+table.il th { text-align: left; border-bottom: 1px solid #999999; padding: 0.1em 0.3em; overflow-wrap: anywhere; }
+table.il td { vertical-align: top; padding: 0 0.3em; }
+table.il td.n { text-align: right; color: #808080; }
+table.il td.t { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.il tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+del { text-decoration: line-through; }
+table.il tr.imp td.t { background: #ffe8e8; }
+table.il tr.unimp td.t { background: #e8eeff; }
+table.il tr.lo td.t, table.il tr.ro td.t, td.lo, td.ro { background: #f6e8fa; }
+table.il tr.lo.imp td.t, table.il tr.ro.imp td.t { color: #c00000; }
+table.il tr.lo.unimp td.t, table.il tr.ro.unimp td.t { color: #0030c0; }
+span.imp, del.imp, td.imp { color: #c00000; background: #ffc8c8; }
+span.unimp, del.unimp, td.unimp { color: #0030c0; background: #c8d4ff; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+</style>
+</head>
+<body>
+<h1>Text Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.txt (UTF-8, lf)</td></tr>
+<tr><th>Right</th><td>/r/right.txt (UTF-8, lf)</td></tr>
+<tr><th>Mode</th><td>display: differences; ignore unimportant: no</td></tr>
+<tr><th>Rules</th><td>format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: whitespace, case; line endings: ignored; orphan lines: always important</td></tr>
+</table>
+<table class="legend">
+<tr><td class="imp">Important difference</td><td class="unimp">Unimportant difference</td><td class="lo">Orphan (one side only)</td><td class="gap">Hidden lines</td><td><del class="imp">Struck-out difference</del></td></tr>
+</table>
+<table class="il" style="tab-size:4">
+<colgroup><col class="n"><col class="n"><col class="t"></colgroup>
+<thead><tr><th>Left</th><th>Right</th><th>Text</th></tr></thead>
+<tbody>
+<tr class="gap"><td colspan="3">… 1 line hidden …</td></tr>
+<tr class="unimp l"><td class="n">2</td><td class="n"></td><td class="t">    return 0;</td></tr>
+<tr class="unimp r"><td class="n"></td><td class="n">2</td><td class="t">    <span class="unimp">    </span>return 0;</td></tr>
+<tr class="gap"><td colspan="3">… 1 line hidden …</td></tr>
+<tr class="unimp l"><td class="n">4</td><td class="n"></td><td class="t">// <del class="unimp">C</del>omment <del class="unimp">T</del>ext</td></tr>
+<tr class="unimp r"><td class="n"></td><td class="n">4</td><td class="t">// <span class="unimp">c</span>omment <span class="unimp">t</span>ext</td></tr>
+<tr class="imp l"><td class="n">5</td><td class="n"></td><td class="t">value = <del class="imp">1</del></td></tr>
+<tr class="imp r"><td class="n"></td><td class="n">5</td><td class="t">value = <span class="imp">2</span></td></tr>
+<tr class="gap"><td colspan="3">… 1 line hidden …</td></tr>
+<tr class="unimp l"><td class="n">7</td><td class="n"></td><td class="t">other <del class="unimp"> </del>spaced</td></tr>
+<tr class="unimp r"><td class="n"></td><td class="n">7</td><td class="t">other spaced</td></tr>
+<tr class="ro imp r"><td class="n"></td><td class="n">8</td><td class="t">new line</td></tr>
+</tbody>
+</table>
+</body>
+</html>

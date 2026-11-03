@@ -437,7 +437,10 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
 - **FC-071** (P0): **Move to Right / Left / Side…**, **Exchange** (swap both sides).
 - **FC-072** (P0): **Copy to Folder… / Move to Folder…**: target path or archive
   (created if missing); path options *Keep relative folder structure* (minimum common
-  structure), *Keep base folder structure*, *Don't keep folder structure*.
+  structure), *Keep base folder structure*, *Don't keep folder structure*. *M2 W7 (D-194):* with a kept structure,
+  a folder pair whose names differ (case under case-insensitive alignment, NFC/NFD) is one folder at the target, whichever
+  sides are written: the one the target holds by the left's name, else by the right's, else a new one named as the first
+  side written spells it (left before right); what lies below the pair, on either side, goes into it.
 - **FC-073** (P0): **Delete** (Del): sides selector (Left/Right/Both; option
   "Require explicit side selection"), *Use recycle bin if possible* (local drives
   only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is

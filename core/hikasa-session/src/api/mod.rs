@@ -33,6 +33,7 @@ pub mod human;
 mod info;
 pub mod package;
 mod report;
+pub mod report_write;
 pub mod requests;
 pub mod responses;
 pub mod sessions;
@@ -68,7 +69,14 @@ pub use gui::{
     infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
 };
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
-pub use report::ReportSettings;
+pub use report::{
+    ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
+    TargetDto,
+};
+pub use report_write::{
+    FilesFolder, LinksDto, LinksPlan, PairCounts, PairOutcome, PairPlan, PairStatus,
+    ReportClipboardDto, ReportDto, ReportOutcome, ReportPlan, WordsDto,
+};
 pub use requests::{
     FolderCompareRequest, FormatTokensRequest, QuickMethod, QuickRequest, TextCompareRequest,
     spec_os_string,
@@ -241,6 +249,11 @@ pub enum ApiOp {
     },
     /// `gui ping|list|close|quit`.
     GuiControl,
+    /// `report text|folder` (M2 W7, §1.7.14): a folder report's base that cannot be loaded is 107, as `folder compare`.
+    Report {
+        /// The kind of the report.
+        kind: hikasa_report::ReportKind,
+    },
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }
@@ -282,6 +295,8 @@ struct Inner {
     archives: Arc<ArchiveVfs>,
     /// Warnings of the Service's own reads since the last [`Service::take_warnings`]: a session's unknown keys.
     pending: Mutex<Vec<Warning>>,
+    /// The report writer's test hooks (W7b review).
+    report_hooks: report_write::ReportHooks,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -470,8 +485,16 @@ impl Service {
                 launcher,
                 archives,
                 pending: Mutex::new(Vec::new()),
+                report_hooks: report_write::ReportHooks::default(),
             }),
         })
+    }
+
+    /// The report writer's test hooks (W7b review): a lower clipboard cap, the content budget's peak, a step between
+    /// the load and the save of remembered choices. Not an API.
+    #[doc(hidden)]
+    pub fn report_hooks(&self) -> &report_write::ReportHooks {
+        &self.inner.report_hooks
     }
 
     /// What starts programs.

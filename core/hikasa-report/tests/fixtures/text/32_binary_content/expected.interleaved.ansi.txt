@@ -1,0 +1,12 @@
+[1mText Compare[0m
+Left: /l/left.bin (windows-1252, mixed, binary)
+Right: /r/right.bin (windows-1252, mixed, binary)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+Warning: binary_content: /l/left.bin: binary content (Png signature); the verdict is a binary comparison
+Warning: binary_content: /r/right.bin: binary content (Png signature); the verdict is a binary comparison
+
+1 1    ‰PNG
+2 2    \u{1a}
+3   [31m-![0m abc\u{0}de[31mf[0m
+  3 [31m+![0m abc\u{0}de[31mg[0m

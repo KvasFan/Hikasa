@@ -4,11 +4,12 @@
 
 use std::io::Write;
 
+use hikasa_folder::select::Selection;
 use hikasa_folder::{FolderComparison, NodeKind};
 
 use crate::error::ReportError;
 use crate::escape;
-use crate::folder::{CHUNK_ROWS, FolderReportOptions, marker, marker_sgr, visible};
+use crate::folder::{CHUNK_ROWS, FolderReportOptions, marker, marker_sgr, scoped};
 use crate::style::Sgr;
 
 /// Writes the list.
@@ -16,10 +17,11 @@ pub(super) fn write(
     w: &mut dyn Write,
     cmp: &FolderComparison,
     opts: &FolderReportOptions,
+    scope: Option<&Selection>,
     ansi: bool,
 ) -> Result<(), ReportError> {
     let iu = opts.display.ignore_unimportant;
-    let rows = visible(cmp, &opts.display);
+    let rows = scoped(cmp, &opts.display, scope);
     let mut line = String::new();
     for chunk in rows.chunks(CHUNK_ROWS) {
         let read = cmp.read();

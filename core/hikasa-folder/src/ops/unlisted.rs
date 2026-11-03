@@ -9,8 +9,7 @@ use hikasa_vfs::{Entry, EntryKind, FollowLinks, ListOptions, VfsError};
 
 use super::Recycle;
 use super::build::{
-    Builder, Found, Open, Placed, Transfer, found_of_stat, key_of, report, stamp_of_stat,
-    view_of_entry,
+    Builder, Found, Open, Placed, Transfer, found_of_stat, report, stamp_of_stat, view_of_entry,
 };
 use super::conflict::Conflicts;
 use crate::align::{ChildKey, exact_bytes, kind_rank};
@@ -309,7 +308,7 @@ impl Builder<'_, '_> {
             self.relabel(first, path);
             return Ok(());
         }
-        let key = key_of(&target.canonical(), self.folds(target));
+        let key = self.taken_key(target);
         if self.outside.is_some() && self.taken.contains(&key) {
             let source = Some(folder.spec.clone());
             let reason = SkipReason::DuplicateTarget;
@@ -457,7 +456,6 @@ impl Builder<'_, '_> {
         entry: &EntryView<'_>,
         source: &Spec,
         root: &Spec,
-        fold: bool,
         depth: u32,
     ) -> Result<(), FolderError> {
         let follow = if entry.followed {
@@ -487,7 +485,7 @@ impl Builder<'_, '_> {
         };
         let tree = self.listed(source.clone(), stat, self.place_of(walk.id))?;
         let path = self.read.path(walk.id);
-        self.flat_listed(walk, &tree, root, fold, depth, &path)?;
+        self.flat_listed(walk, &tree, root, depth, &path)?;
         if let Some(meta) = self.meta.get_mut(first) {
             meta.node = Some(walk.id);
         }
@@ -501,7 +499,6 @@ impl Builder<'_, '_> {
         walk: Walk,
         folder: &Listed,
         root: &Spec,
-        fold: bool,
         depth: u32,
         path: &RelPath,
     ) -> Result<(), FolderError> {
@@ -550,7 +547,7 @@ impl Builder<'_, '_> {
                 .join(child.entry.name.as_str())
                 .unwrap_or_else(|_| path.clone());
             if child.entry.kind == EntryKind::Dir {
-                self.flat_listed(walk, child, root, fold, depth + 1, &below)?;
+                self.flat_listed(walk, child, root, depth + 1, &below)?;
                 continue;
             }
             let first = self.items.len();
@@ -560,7 +557,7 @@ impl Builder<'_, '_> {
             });
             match looked {
                 Ok((target, stood)) => {
-                    let key = key_of(&target.canonical(), fold);
+                    let key = self.taken_key(&target);
                     if !self.taken.contains(&key) && !self.holds_folder(&target) {
                         self.transfer_entry(walk, folder, child, target, stood, depth + 1, &below);
                     } else {
@@ -614,7 +611,7 @@ impl Builder<'_, '_> {
                 self.note_made(&at, 0);
                 self.claim_listed(child, &at);
             } else {
-                let key = key_of(&at.canonical(), self.folds(&at));
+                let key = self.taken_key(&at);
                 self.taken.insert(key);
             }
         }
@@ -665,7 +662,7 @@ impl Builder<'_, '_> {
         }
         // `copyto`, `moveto`: a second source of one target path stays (rule 16).
         if self.outside.is_some() {
-            let key = key_of(&target.canonical(), self.folds(&target));
+            let key = self.taken_key(&target);
             if self.holds_folder(&target) || !self.taken.insert(key) {
                 let reason = SkipReason::DuplicateTarget;
                 self.skip_row(id, kind, Some(source), target, depth, reason, side);

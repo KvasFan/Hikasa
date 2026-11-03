@@ -5,12 +5,14 @@
 use std::io::Write;
 
 use hikasa_core::ContentResult;
-use hikasa_text::{ChangeCounts, TextComparison};
+use hikasa_text::TextComparison;
 
 use crate::error::ReportError;
 use crate::escape;
 use crate::meta::ReportMeta;
+use crate::options::HtmlStyle;
 use crate::style::{self, Sgr, Sheet};
+use crate::summary_counts::{SummaryCount, text_counts, value};
 use crate::text::TextReportOptions;
 
 /// Words of a verdict.
@@ -25,45 +27,64 @@ pub(crate) fn verdict_words(result: &ContentResult) -> String {
     }
 }
 
-/// `added A, deleted D, changed C, original O`.
-fn counts(c: &ChangeCounts) -> String {
+/// `added A, deleted D, changed C, original O` of a `*-lines` group.
+fn counts(all: &[SummaryCount], group: &str) -> String {
     format!(
         "added {}, deleted {}, changed {}, original {}",
-        c.added, c.deleted, c.changed, c.original
+        value(all, group, "added"),
+        value(all, group, "deleted"),
+        value(all, group, "changed"),
+        value(all, group, "original")
     )
 }
 
-/// The summary lines: `(label, value, numeric)`.
+/// The label of a numeric count (`None` for the line counts, written as one line per group).
+fn label(c: &SummaryCount) -> Option<&'static str> {
+    Some(match (c.group, c.name) {
+        ("rows", "total") => "Rows",
+        ("rows", "same") => "Same rows",
+        ("rows", "changed") => "Changed rows",
+        ("rows", "left-only") => "Left-only rows",
+        ("rows", "right-only") => "Right-only rows",
+        ("rows", "important") => "Important rows",
+        ("rows", "unimportant") => "Unimportant rows",
+        ("sections", "total") => "Sections",
+        ("sections", "important") => "Important sections",
+        ("sections", "unimportant") => "Unimportant sections",
+        ("lines", "left") => "Left lines",
+        ("lines", "right") => "Right lines",
+        _ => return None,
+    })
+}
+
+/// The summary lines: `(label, value, numeric)`, made from [`text_counts`] (T11: the XML reads the same counts).
 fn lines(cmp: &TextComparison, opts: &TextReportOptions) -> Vec<(&'static str, String, bool)> {
-    let s = cmp.stats();
     let iu = opts.ignore_unimportant;
     let ignore = if iu {
         "yes (unimportant differences count as same)"
     } else {
         "no"
     };
-    vec![
+    let all = text_counts(cmp);
+    let mut out = vec![
         ("Verdict", verdict_words(&cmp.verdict(iu)), false),
         ("Ignore unimportant", ignore.to_owned(), false),
-        ("Rows", s.rows.to_string(), true),
-        ("Same rows", s.same_rows.to_string(), true),
-        ("Changed rows", s.changed_rows.to_string(), true),
-        ("Left-only rows", s.left_only_rows.to_string(), true),
-        ("Right-only rows", s.right_only_rows.to_string(), true),
-        ("Important rows", s.important_rows.to_string(), true),
-        ("Unimportant rows", s.unimportant_rows.to_string(), true),
-        ("Sections", s.sections.to_string(), true),
-        ("Important sections", s.important_sections.to_string(), true),
-        (
-            "Unimportant sections",
-            s.sections.saturating_sub(s.important_sections).to_string(),
-            true,
-        ),
-        ("Important lines", counts(&s.important), false),
-        ("Unimportant lines", counts(&s.unimportant), false),
-        ("Left lines", s.left_lines.to_string(), true),
-        ("Right lines", s.right_lines.to_string(), true),
-    ]
+    ];
+    let mut groups_done: Vec<&str> = Vec::new();
+    for c in &all {
+        if let Some(label) = label(c) {
+            out.push((label, c.value.to_string(), true));
+        } else if !groups_done.contains(&c.group) {
+            groups_done.push(c.group);
+            let label = if c.group == "important-lines" {
+                "Important lines"
+            } else {
+                "Unimportant lines"
+            };
+            out.push((label, counts(&all, c.group), false));
+        }
+    }
+    out
 }
 
 /// The colour of the verdict under ANSI.
@@ -111,17 +132,10 @@ pub(super) fn write_html(
     opts: &TextReportOptions,
     meta: &ReportMeta,
     mono: bool,
-    custom_css: Option<&str>,
+    style: &HtmlStyle,
 ) -> Result<(), ReportError> {
     let header = super::header(cmp, meta, &[]);
-    style::html_start(
-        w,
-        &header.title,
-        &meta.generator,
-        Sheet::Text,
-        mono,
-        custom_css,
-    )?;
+    style::html_start(w, &header.title, &meta.generator, Sheet::Text, mono, style)?;
     header.write_html(w)?;
     writeln!(w, "<table class=\"summary\">")?;
     for (label, value, numeric) in lines(cmp, opts) {

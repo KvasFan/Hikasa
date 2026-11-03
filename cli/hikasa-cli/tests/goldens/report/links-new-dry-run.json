@@ -1,0 +1,55 @@
+{
+  "schema": "hikasa.report.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "type": "folder",
+    "layout": "side-by-side",
+    "format": "html",
+    "target": "file",
+    "output": "<TMP>/out/report.html",
+    "replaced": false,
+    "dry_run": true,
+    "cancelled": false,
+    "bytes": 0,
+    "verdict": "differences",
+    "words": {
+      "layout": "side-by-side",
+      "options": [
+        "display-context",
+        "column-size",
+        "column-timestamp",
+        "include-file-links"
+      ],
+      "output_options": [
+        "html-color"
+      ]
+    },
+    "unused": [],
+    "links": {
+      "folder": "<TMP>/out/report_files",
+      "wanted": "<TMP>/out/report_files",
+      "renamed": false,
+      "state": "new",
+      "pairs": [
+        {
+          "path": "a.txt",
+          "file": "1-a.txt.html",
+          "status": "planned",
+          "reason": null,
+          "error": null
+        }
+      ],
+      "counts": {
+        "written": 1,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    "clipboard": null,
+    "opened": null
+  },
+  "warnings": [],
+  "error": null
+}

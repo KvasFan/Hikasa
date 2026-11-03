@@ -789,7 +789,7 @@ impl Service {
     }
 
     /// What a selection in words holds on `read`, with what it takes in.
-    fn select_of(
+    pub(crate) fn select_of(
         &self,
         read: &TreeRead<'_>,
         req: &SelectRequest,

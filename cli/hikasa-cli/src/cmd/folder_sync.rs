@@ -46,6 +46,28 @@ struct SyncRun {
     mode: ConfirmMode,
     dry_run: bool,
     all_rows: bool,
+    /// Warnings of the flags, before the comparison's.
+    warnings: Vec<Warning>,
+}
+
+/// The warning `report_option_unused` of a folder-sync session run with REPORT's flags (W7b review): a sync writes no
+/// report, so they are named, not passed by in silence. `--dry-run` is the sync's.
+fn report_flags_ignored(report: &crate::args::ReportArgs) -> Option<Warning> {
+    let mut flags = super::report::flags(report, false).given();
+    if report.output_to.is_some() {
+        flags.insert(0, "--output-to");
+    }
+    if report.output.is_some() {
+        flags.insert(0, "--output");
+    }
+    (!flags.is_empty()).then(|| Warning {
+        code: hikasa_core::WarningCode::ReportOptionUnused,
+        message: format!(
+            "a folder-sync session writes no report: {} ignored",
+            flags.join(", ")
+        ),
+        spec: None,
+    })
 }
 
 /// The words of the flags.
@@ -200,6 +222,7 @@ fn prepare(ctx: &Ctx<'_>, args: &FolderSyncArgs) -> Result<SyncRun, Failure> {
         mode,
         dry_run: args.confirm.dry_run,
         all_rows: args.all_rows,
+        warnings: Vec::new(),
     })
 }
 
@@ -267,8 +290,9 @@ pub fn run_session(
                 overrides: OpOverrides::default(),
             },
             mode,
-            dry_run: args.dry_run,
+            dry_run: args.report.dry_run,
             all_rows: args.all_rows,
+            warnings: report_flags_ignored(&args.report).into_iter().collect(),
         })
     };
     match prepared()
@@ -291,7 +315,8 @@ fn execute(ctx: &mut Ctx<'_>, run: SyncRun) -> Result<u8, Failure> {
         .service
         .folder_run(&prepared, &job, &NullObserver)
         .map_err(|e| failure(e, prepared.warnings()))?;
-    let mut warnings = response.warnings.clone();
+    let mut warnings = run.warnings.clone();
+    warnings.extend(response.warnings.iter().cloned());
     ctx.progress.clear();
     if job.cancel.is_cancelled() {
         return Err(failure(ApiError::Cancelled, &warnings));

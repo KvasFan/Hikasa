@@ -1,0 +1,4 @@
+replace <TMP>/out/report.html
+replace <TMP>/out/report_files (an earlier report)
+write <TMP>/out/report_files/1-a.txt.html  a.txt
+would write 3 files

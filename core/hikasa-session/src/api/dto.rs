@@ -101,9 +101,11 @@ pub const FOLDER_OP_SCHEMA: &str = "hikasa.folder_op.v1";
 pub const FOLDER_SYNC_SCHEMA: &str = "hikasa.folder_sync.v1";
 /// `folder op compare`, `folder op crc` (M2 W6, §1.6.17).
 pub const FOLDER_CONTENTS_SCHEMA: &str = "hikasa.folder_contents.v1";
+/// `hikasa report text|folder` with `--json` (M2 W7, §1.7.15): `ReportOutcome::dto`.
+pub const REPORT_SCHEMA: &str = "hikasa.report.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 38] = [
+pub const SCHEMAS: [&str; 39] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -142,6 +144,7 @@ pub const SCHEMAS: [&str; 38] = [
     FOLDER_OP_SCHEMA,
     FOLDER_SYNC_SCHEMA,
     FOLDER_CONTENTS_SCHEMA,
+    REPORT_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

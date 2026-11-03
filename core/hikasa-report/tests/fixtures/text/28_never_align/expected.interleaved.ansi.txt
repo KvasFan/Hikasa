@@ -1,0 +1,28 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: histogram (histogram); skew: 300; closeness: 500‰; never align: yes; unimportant: none; line endings: ignored; orphan lines: always important
+
+ 1  1    line 00 of the sample
+ 2  2    line 01 of the sample
+ 3  3    line 02 of the sample
+ 4  4    line 03 of the sample
+ 5  5    line 04 of the sample
+ 6    [31m-![0m [31mline 05 of the sample[0m
+    6 [31m+![0m [31mline 05 of the sample, edited[0m
+ 7  7    line 06 of the sample
+ 8  8    line 07 of the sample
+ 9  9    line 08 of the sample
+10 10    line 09 of the sample
+11 11    line 10 of the sample
+12 12    line 11 of the sample
+13    [31m-![0m [31mline 12 of the sample[0m
+   13 [31m+![0m [31ma brand new line[0m
+14 14    line 13 of the sample
+15 15    line 14 of the sample
+16    [31m-![0m [31mline 15 of the sample[0m
+17 16    line 16 of the sample
+18 17    line 17 of the sample
+19 18    line 18 of the sample
+20 19    line 19 of the sample

@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.92"
+version = "0.1.93"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KvasFan/Hikasa"
@@ -33,19 +33,19 @@ rust-version = "1.97"
 
 [workspace.dependencies]
 # --- internal crates ---
-hikasa-core = { path = "core/hikasa-core", version = "0.1.92" }
-hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.92" }
-hikasa-diff = { path = "core/hikasa-diff", version = "0.1.92" }
-hikasa-formats = { path = "core/hikasa-formats", version = "0.1.92" }
-hikasa-folder = { path = "core/hikasa-folder", version = "0.1.92" }
-hikasa-text = { path = "core/hikasa-text", version = "0.1.92" }
-hikasa-table = { path = "core/hikasa-table", version = "0.1.92" }
-hikasa-hex = { path = "core/hikasa-hex", version = "0.1.92" }
-hikasa-picture = { path = "core/hikasa-picture", version = "0.1.92" }
-hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.92" }
-hikasa-report = { path = "core/hikasa-report", version = "0.1.92" }
-hikasa-script = { path = "core/hikasa-script", version = "0.1.92" }
-hikasa-session = { path = "core/hikasa-session", version = "0.1.92" }
+hikasa-core = { path = "core/hikasa-core", version = "0.1.93" }
+hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.93" }
+hikasa-diff = { path = "core/hikasa-diff", version = "0.1.93" }
+hikasa-formats = { path = "core/hikasa-formats", version = "0.1.93" }
+hikasa-folder = { path = "core/hikasa-folder", version = "0.1.93" }
+hikasa-text = { path = "core/hikasa-text", version = "0.1.93" }
+hikasa-table = { path = "core/hikasa-table", version = "0.1.93" }
+hikasa-hex = { path = "core/hikasa-hex", version = "0.1.93" }
+hikasa-picture = { path = "core/hikasa-picture", version = "0.1.93" }
+hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.93" }
+hikasa-report = { path = "core/hikasa-report", version = "0.1.93" }
+hikasa-script = { path = "core/hikasa-script", version = "0.1.93" }
+hikasa-session = { path = "core/hikasa-session", version = "0.1.93" }
 
 # --- third-party (approved in docs/02-tech-stack.md) ---
 serde = { version = "1", features = ["derive"] }
@@ -122,6 +122,8 @@ assert_cmd = "2"
 predicates = "3"
 criterion = "0.8"
 pretty_assertions = "1"
+# XML well-formedness and structure checks of the report dumps (hikasa-report tests only, m2-contracts §1.7.16).
+roxmltree = "0.21.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

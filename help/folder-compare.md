@@ -28,8 +28,12 @@ default it shows the differences with the folder structure; the [exit code](topi
 
 - `--display <filter>` (default `differences`), `--folders always|structure|files-only`,
   `--suppress-filters`, `--expand-all`, `--ignore-unimportant` (`--iu`).
-- `--report list|side-by-side|summary|json`, `--columns <list>`, `--html`, `--html-mono`, `--title`,
-  `--output <file>`.
+- `--report list|side-by-side|summary|json|xml`, `--columns <list>`, `--html`, `--html-mono`, `--title`.
+- `--options` and `--output-options` take the words of the report vocabulary (`include-file-links` links the
+  side-by-side HTML to a report per differing file pair); `--select` and `--path` report a part of the tree.
+- `--output-to <target>` (`--output <file>`) writes the report to a file atomically, the clipboard, the printer or the
+  browser; `--dry-run` says what it would write. These are the flags of [hikasa report](topic:report), whose
+  `report folder` gives the same bytes.
 
 ## In the window
 

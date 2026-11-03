@@ -39,6 +39,7 @@
     "hikasa.vfs_op.v1",
     "hikasa.folder_op.v1",
     "hikasa.folder_sync.v1",
-    "hikasa.folder_contents.v1"
+    "hikasa.folder_contents.v1",
+    "hikasa.report.v1"
   ]
 }

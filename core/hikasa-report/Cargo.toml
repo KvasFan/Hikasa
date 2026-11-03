@@ -26,6 +26,7 @@ tempfile.workspace = true
 diffy.workspace = true
 proptest.workspace = true
 hikasa-vfs.workspace = true
+roxmltree.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,9 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: regex "\\$Id:[^$]*\\$"; line endings: ignored; orphan lines: always important
+
+1   [34m-~[0m $Id: 1[9;34m2[0m $
+  1 [34m+~[0m $Id: 1[9;34m3[0m $
+2 2    body

@@ -17,8 +17,8 @@ use hikasa_folder::ops::{Confirmation, FolderOp, OpPlan, ReadOnlySides};
 use hikasa_folder::select::{Selection, SideSet};
 use hikasa_folder::{
     ArchiveHandling, Category, ChannelObserver, ColourClass, DisplayOptions, EntryView,
-    FolderDisplayFilter, FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeView,
-    ScanStatus, TreeRead, VisibleRow, expanded_on_load,
+    FolderDisplayFilter, FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind,
+    NodeView, ScanStatus, TreeRead, VisibleRow, expanded_on_load,
 };
 use hikasa_session::api::{
     ExpandWords, FolderCompareRequest, FolderCompareResponse, FolderOpOutcome, FolderOpRequest,
@@ -1864,19 +1864,13 @@ impl FolderViewModel {
         Some((id, read.spec(id, Side::Left)?, read.spec(id, Side::Right)?))
     }
 
-    /// The Text Compare request for the selected pair (FC-062): exact OS paths of both sides
-    /// (`TextCompareRequest::for_specs`), the folder comparison's text rules and its ignore-unimportant.
-    pub fn open_request(&self) -> Option<(TextCompareRequest, ViewOptions)> {
-        let (_, left, right) = self.selected_pair()?;
-        let mut request = TextCompareRequest::for_specs(&left, &right);
-        request.rules_file.clone_from(&self.request.text_rules_file);
-        request.rules_patch = self.request.text_patch.clone();
-        request.ignore_unimportant = self.display.ignore_unimportant;
-        if let Some(prepared) = self.prepared() {
-            request
-                .format_overrides
-                .clone_from(prepared.format_overrides());
-        }
+    /// The Text Compare request for the selected pair (FC-062, §1.7.8 T11): the Service's one builder,
+    /// [`Service::pair_text_request`] (exact OS paths of both sides, the folder comparison's text rules and patch, the
+    /// format overrides and the comparison's effective ignore-unimportant); the view shows the pair with this view's
+    /// ignore-unimportant. `None` for a row that is no file pair, a link shown as a link included.
+    pub fn open_request(&self, service: &Service) -> Option<(TextCompareRequest, ViewOptions)> {
+        let (id, _, _) = self.selected_pair()?;
+        let request = service.pair_text_request(&self.request, self.prepared()?, id)?;
         Some((
             request,
             ViewOptions {
@@ -1887,9 +1881,36 @@ impl FolderViewModel {
         ))
     }
 
+    /// `Open` on a selected pair the Service does not compare as text (a link shown as a link): the window says so
+    /// instead of opening nothing in silence.
+    fn refuse_open(&mut self) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        let text = self.prepared().map(|prepared| {
+            let read = prepared.model().read();
+            let link = read.node(id).is_some_and(|n| n.kind == NodeKind::Symlink);
+            let path = read.path(id);
+            let path = path.as_str();
+            if link {
+                format!(
+                    "Open: {path} is a link shown as a link; compare with links followed to open the files it names."
+                )
+            } else {
+                format!("Open: {path} is not a pair of files to compare as text.")
+            }
+        });
+        if let Some(text) = text {
+            self.outbox.push(FolderEvent::Notice {
+                kind: NoticeKind::Warning,
+                text,
+            });
+        }
+    }
+
     /// `Open` on a file pair (FC-062), with the row and its stamps for the child's result (FC-029(c)).
-    fn open_pair(&self) -> Option<OpenPair> {
-        let (request, view) = self.open_request()?;
+    fn open_pair(&self, service: &Service) -> Option<OpenPair> {
+        let (request, view) = self.open_request(service)?;
         let ticket = self.selected.and_then(|id| {
             let prepared = self.prepared()?;
             let read = prepared.model().read();
@@ -2041,7 +2062,11 @@ impl FolderViewModel {
                     self.open_archive(service, node, path);
                     return Some(None);
                 }
-                return Some(self.open_pair());
+                let open = self.open_pair(service);
+                if open.is_none() && self.selected_pair().is_some() {
+                    self.refuse_open();
+                }
+                return Some(open);
             }
             CommandId::DiffNext | CommandId::DiffPrev => {
                 if let Some(index) = self.difference_from(id == CommandId::DiffNext) {

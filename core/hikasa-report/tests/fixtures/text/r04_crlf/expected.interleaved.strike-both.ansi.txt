@@ -1,0 +1,11 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, cr_lf)
+Right: /r/right.txt (UTF-8, cr_lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+1 1    alpha
+2   [31m-![0m [9;31mbeta[0m
+  2 [31m+![0m [9;31mBETA[0m
+3 3    gamma
+  4 [31m+![0m [9;31mdelta[0m

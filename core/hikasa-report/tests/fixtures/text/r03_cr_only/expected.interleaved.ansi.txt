@@ -1,0 +1,11 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, cr)
+Right: /r/right.txt (UTF-8, cr)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+1 1    one
+2   [31m-![0m [31mtwo[0m
+  2 [31m+![0m [31mTWO[0m
+3 3    three
+  4 [31m+![0m [31mfour[0m

@@ -45,7 +45,7 @@ Moved to M2 (done in M2 wave 0):
 ## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
 
 Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Wave 6 ran in four parts, all done: W6a (foundations), W6b (operations: every file operation headless, `folder op`), W6c (sync: the matrix, presets and overrides, `folder sync`, folder-sync sessions, `--sync` up to the GUI, gate G7) and W6d (GUI hooks: Copy to Right/Left, Delete and Delete Permanently on one selected row with the confirmation and Delete dialogs, the log and notices, refresh in the view with `renumbered`, Open on an archive in place, FC-012 on load, a child view's result on its row, Disable editing and `--nobackups` in the window; the rest of the Actions menu and the Folder Sync view are W9). Version 0.1.92 is a pre-release of 0.2.0 with waves 0–6 and the packages (0.1.91 had waves 0–5);
+contract `docs/design/m2-contracts.md`. Wave 6 ran in four parts, all done: W6a (foundations), W6b (operations: every file operation headless, `folder op`), W6c (sync: the matrix, presets and overrides, `folder sync`, folder-sync sessions, `--sync` up to the GUI, gate G7) and W6d (GUI hooks: Copy to Right/Left, Delete and Delete Permanently on one selected row with the confirmation and Delete dialogs, the log and notices, refresh in the view with `renumbered`, Open on an archive in place, FC-012 on load, a child view's result on its row, Disable editing and `--nobackups` in the window; the rest of the Actions menu and the Folder Sync view are W9). Wave 7 (reports) ran in two parts: W7a (core: the request and its vocabulary, interleaved, XML dumps and their schema, HTML wrap and the print block, links, streaming; the W6 defect of `copyto` of an aligned pair) and W7b (the Service and the CLI: `hikasa report text|folder`, one REPORT group of flags on five commands, the targets file, clipboard, printer and browser, linked file reports in a files folder that is swapped in whole, `SOURCE_DATE_EPOCH`, remembered dialog choices, `hikasa.report.v1`, gate G13); the report dialog, *View in Browser* and *Print Preview* are W13's. Version 0.1.93 is a pre-release of 0.2.0 with waves 0–7 and the packages (0.1.92 had waves 0–6, 0.1.91 waves 0–5);
 0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
 `xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
 typed, versioned and written sparsely with unknown keys kept, change detection by
@@ -89,8 +89,8 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
 - Folder Merge, Folder Sync with Sync Memory, Text Merge (GUI + automerge), Text
   Patch, alignment overrides, replacements, snapshots, remote back-ends (FTP/FTPS/
   SFTP/WebDAV/S3), profiles + keychain, 7z, spreadsheet/office/PDF conversions,
-  Media/Version/Registry-file views, reports for every view incl. XML and linked file
-  reports, import/export packages, shell integration, admin policies, accessibility,
+  Media/Version/Registry-file views, reports of the P1 views (table, hex and picture side-by-side and interleaved;
+  media, version, registry; XML and linked file reports are M2's, D-195), import/export packages, shell integration, admin policies, accessibility,
   installers, user manual (context help).
 
 ## M4 — post-1.0 (P2)

@@ -122,6 +122,18 @@ fn fix_mmap_threshold() {
 }
 
 fn main() -> std::process::ExitCode {
+    // The Linux clipboard helper (§1.7.10): a report the GUI places on the clipboard is handed to this executable's
+    // hidden entry, which owns the selection after the GUI has ended. Before anything else, so it opens no window.
+    let argv: Vec<OsString> = std::env::args_os().collect();
+    if hikasa_session::host::is_clipboard_helper(&argv) {
+        let placer = hikasa_session::host::clipboard_helper_placer();
+        let code = hikasa_session::host::clipboard_helper_main(
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &placer,
+        );
+        return std::process::ExitCode::from(u8::try_from(code).unwrap_or(FAILURE));
+    }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     fix_mmap_threshold();
     let process_start = Instant::now();

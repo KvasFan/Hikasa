@@ -48,7 +48,9 @@ Standard input (`-`) and the clipboard are never stored in a session: that side 
 
 `hikasa session run <ref>` compares exactly as `hikasa folder compare` or `hikasa text compare` would with the
 session's inputs and rules: the same output, the same JSON and the same [exit codes](topic:exit-codes). It
-takes their output flags (`--report`, `--display`, `--output`, `--html`, `--title`, `--ignore-unimportant`, …).
+takes their report flags (`--report`, `--options`, `--output-options`, `--display`, `--output-to`, `--html`,
+`--title`, …; see [hikasa report](topic:report)) and `--ignore-unimportant`; `--dry-run` is the report's for a
+comparison and the sync's for a Folder Sync session. `hikasa report text|folder --session <ref>` reports a session too.
 A Folder Sync session runs its sync (`[rules.sync]`) as [hikasa folder sync](topic:folder-sync) does, with
 `--dry-run`, `--yes`, `--confirm` and `--allow-empty-source`; without a terminal and without `--yes` it writes nothing
 and exits 100. Other session types cannot run here yet (exit 100, `unsupported`).

@@ -354,9 +354,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -2011,7 +2011,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hikasa-cli"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-core"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-diff"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "criterion",
  "hikasa-core",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-folder"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-formats"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "chardetng",
  "criterion",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-gui"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -2140,19 +2140,19 @@ dependencies = [
 
 [[package]]
 name = "hikasa-hex"
-version = "0.1.92"
+version = "0.1.93"
 
 [[package]]
 name = "hikasa-metadata"
-version = "0.1.92"
+version = "0.1.93"
 
 [[package]]
 name = "hikasa-picture"
-version = "0.1.92"
+version = "0.1.93"
 
 [[package]]
 name = "hikasa-report"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "bitflags 2.13.2",
  "diffy",
@@ -2164,6 +2164,7 @@ dependencies = [
  "jiff",
  "pretty_assertions",
  "proptest",
+ "roxmltree",
  "serde",
  "serde_json",
  "tempfile",
@@ -2173,11 +2174,11 @@ dependencies = [
 
 [[package]]
 name = "hikasa-script"
-version = "0.1.92"
+version = "0.1.93"
 
 [[package]]
 name = "hikasa-session"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "arboard",
  "crossbeam-channel",
@@ -2207,11 +2208,11 @@ dependencies = [
 
 [[package]]
 name = "hikasa-table"
-version = "0.1.92"
+version = "0.1.93"
 
 [[package]]
 name = "hikasa-text"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -2237,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "hikasa-vfs"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "bitflags 2.13.2",
  "bzip2",
@@ -5715,7 +5716,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.92"
+version = "0.1.93"
 dependencies = [
  "hikasa-session",
 ]

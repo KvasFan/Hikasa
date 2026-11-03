@@ -36,9 +36,16 @@ jobs:
       # compiler alone. The window tests are ignored by default and do not run here.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # `xmllint` checks the XML reports against docs/schemas/hikasa-report-1.xsd (m2-contracts §1.7.7). macOS ships it
+      # with its libxml2; Windows skips the check, the goldens prove the same bytes there.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
       - run: cargo clippy --workspace --all-targets
       # nextest runs every test binary (also the `harness = false` launch tests); doc tests need cargo test.
       - run: cargo nextest run --workspace --profile ci
+        env:
+          # A missing `xmllint` fails the schema test on Linux and macOS instead of skipping it.
+          HIKASA_REQUIRE_XMLLINT: ${{ runner.os != 'Windows' && '1' || '0' }}
       - run: cargo test --workspace --doc
 
   docs:

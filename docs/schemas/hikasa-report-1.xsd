@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  hikasa-report version 1 (namespace urn:hikasa:report:1): the XML dumps of text and folder comparisons, the report
+  layout `xml` (docs/13-reports.md, m2-contracts §1.7.6, D-198). Normative.
+
+  Versioning: within version 1, attributes and elements are only added, optional, with this schema updated in the
+  same change; a consumer ignores what it does not know. A removal or a change of meaning is version 2 with the
+  namespace urn:hikasa:report:2.
+
+  What the schema does not say (the documents always hold it): `type="text"` has `rows`, `type="folder"` has
+  `tree`; a text `side` has `encoding`, `bom`, `eol` and `binary`; a folder `mode` has `folders` and
+  `suppress-filters`; a same `row` has `l` and `r` and no `importance`.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:h="urn:hikasa:report:1"
+           targetNamespace="urn:hikasa:report:1"
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
+
+  <!-- Simple types -->
+
+  <xs:simpleType name="Bool">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="true"/>
+      <xs:enumeration value="false"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="True">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="true"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Hex">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-f]+"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Word">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[a-z][a-z0-9_-]*"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ReportType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="text"/>
+      <xs:enumeration value="folder"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="SideId">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="left"/>
+      <xs:enumeration value="right"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Eol">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="lf"/>
+      <xs:enumeration value="cr_lf"/>
+      <xs:enumeration value="cr"/>
+      <xs:enumeration value="mixed"/>
+      <xs:enumeration value="none"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Display">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="all"/>
+      <xs:enumeration value="mismatches"/>
+      <xs:enumeration value="context"/>
+      <xs:enumeration value="matches"/>
+      <xs:enumeration value="none"/>
+      <xs:enumeration value="no-orphans"/>
+      <xs:enumeration value="mismatches-no-orphans"/>
+      <xs:enumeration value="orphans"/>
+      <xs:enumeration value="left-newer"/>
+      <xs:enumeration value="right-newer"/>
+      <xs:enumeration value="left-newer-orphans"/>
+      <xs:enumeration value="right-newer-orphans"/>
+      <xs:enumeration value="left-orphans"/>
+      <xs:enumeration value="right-orphans"/>
+      <xs:enumeration value="toggles"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Folders">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="always"/>
+      <xs:enumeration value="structure"/>
+      <xs:enumeration value="files-only"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="RowState">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="same"/>
+      <xs:enumeration value="changed"/>
+      <xs:enumeration value="left-only"/>
+      <xs:enumeration value="right-only"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Importance">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="important"/>
+      <xs:enumeration value="unimportant"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Piece">
+    <xs:restriction base="xs:positiveInteger">
+      <xs:minInclusive value="2"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ItemState">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="same"/>
+      <xs:enumeration value="left-newer"/>
+      <xs:enumeration value="right-newer"/>
+      <xs:enumeration value="different"/>
+      <xs:enumeration value="unimportant"/>
+      <xs:enumeration value="left-only"/>
+      <xs:enumeration value="right-only"/>
+      <xs:enumeration value="unknown"/>
+      <xs:enumeration value="error"/>
+      <xs:enumeration value="filtered"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Marker">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="="/>
+      <xs:enumeration value="&gt;"/>
+      <xs:enumeration value="&lt;"/>
+      <xs:enumeration value="!"/>
+      <xs:enumeration value="~"/>
+      <xs:enumeration value="-"/>
+      <xs:enumeration value="+"/>
+      <xs:enumeration value="?"/>
+      <xs:enumeration value="E"/>
+      <xs:enumeration value="."/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="EntryKind">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="file"/>
+      <xs:enumeration value="link"/>
+      <xs:enumeration value="other"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ReportStatus">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="written"/>
+      <xs:enumeration value="skipped"/>
+      <xs:enumeration value="failed"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Verdict">
+    <xs:restriction base="xs:string">
+      <!-- hikasa.text_compare.v1 -->
+      <xs:enumeration value="binary_same"/>
+      <xs:enumeration value="rules_same"/>
+      <xs:enumeration value="unimportant_only"/>
+      <xs:enumeration value="important_differences"/>
+      <xs:enumeration value="binary_different"/>
+      <xs:enumeration value="error"/>
+      <!-- hikasa.folder_compare.v1 -->
+      <xs:enumeration value="no_differences"/>
+      <xs:enumeration value="differences"/>
+      <xs:enumeration value="incomplete"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Crc">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-f]{8}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- The root -->
+
+  <xs:element name="hikasa-report">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="header" type="h:Header"/>
+        <xs:choice>
+          <xs:element name="rows" type="h:Rows"/>
+          <xs:element name="tree" type="h:Tree"/>
+        </xs:choice>
+        <xs:element name="summary" type="h:Summary"/>
+      </xs:sequence>
+      <xs:attribute name="version" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="1"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+      <xs:attribute name="type" type="h:ReportType" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- The header -->
+
+  <!-- Text: a character XML 1.0 cannot carry is <c x="…"/>. -->
+  <xs:complexType name="Text" mixed="true">
+    <xs:sequence>
+      <xs:element name="c" type="h:Char" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Header">
+    <xs:sequence>
+      <xs:element name="title" type="h:Text"/>
+      <xs:element name="generated" minOccurs="0">
+        <xs:complexType>
+          <xs:attribute name="time" type="xs:dateTime" use="required"/>
+          <xs:attribute name="by" type="xs:string" use="required"/>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="side" minOccurs="2" maxOccurs="2">
+        <xs:complexType>
+          <xs:attribute name="id" type="h:SideId" use="required"/>
+          <xs:attribute name="spec" type="xs:string" use="required"/>
+          <xs:attribute name="encoding" type="xs:string"/>
+          <xs:attribute name="bom" type="h:Bool"/>
+          <xs:attribute name="eol" type="h:Eol"/>
+          <xs:attribute name="binary" type="h:Bool"/>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="mode">
+        <xs:complexType>
+          <xs:attribute name="display" type="h:Display" use="required"/>
+          <xs:attribute name="context" type="xs:nonNegativeInteger"/>
+          <xs:attribute name="ignore-unimportant" type="h:Bool" use="required"/>
+          <xs:attribute name="folders" type="h:Folders"/>
+          <xs:attribute name="suppress-filters" type="h:Bool"/>
+          <xs:attribute name="scope" type="xs:string"/>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="rules" type="h:Text"/>
+      <xs:element name="error" minOccurs="0" maxOccurs="2">
+        <xs:complexType mixed="true">
+          <xs:complexContent>
+            <xs:extension base="h:Text">
+              <xs:attribute name="side" type="h:SideId" use="required"/>
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="status" minOccurs="0">
+        <xs:complexType mixed="true">
+          <xs:complexContent>
+            <xs:extension base="h:Text">
+              <xs:attribute name="complete" use="required">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="false"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:attribute>
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="warning" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType mixed="true">
+          <xs:complexContent>
+            <xs:extension base="h:Text">
+              <xs:attribute name="code" type="h:Word" use="required"/>
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Text: rows -->
+
+  <xs:complexType name="Char">
+    <xs:attribute name="x" type="h:Hex" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="Difference" mixed="true">
+    <xs:sequence>
+      <xs:element name="c" type="h:Char" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Line" mixed="true">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="d" type="h:Difference"/>
+      <xs:element name="u" type="h:Difference"/>
+      <xs:element name="c" type="h:Char"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <xs:complexType name="Rows">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="row">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="l" type="h:Line" minOccurs="0"/>
+            <xs:element name="r" type="h:Line" minOccurs="0"/>
+          </xs:sequence>
+          <xs:attribute name="state" type="h:RowState" use="required"/>
+          <xs:attribute name="importance" type="h:Importance"/>
+          <xs:attribute name="left" type="xs:positiveInteger"/>
+          <xs:attribute name="right" type="xs:positiveInteger"/>
+          <xs:attribute name="left-piece" type="h:Piece"/>
+          <xs:attribute name="right-piece" type="h:Piece"/>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="hidden">
+        <xs:complexType>
+          <xs:attribute name="rows" type="xs:positiveInteger" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+  </xs:complexType>
+
+  <!-- Folders: tree -->
+
+  <xs:complexType name="Tree">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="folder" type="h:Folder"/>
+      <xs:element name="entry" type="h:Entry"/>
+    </xs:choice>
+    <xs:attribute name="flat" type="h:True"/>
+  </xs:complexType>
+
+  <xs:complexType name="ItemSide">
+    <xs:attribute name="name" type="xs:string" use="required"/>
+    <xs:attribute name="raw-name" type="h:Hex"/>
+    <xs:attribute name="size" type="xs:nonNegativeInteger"/>
+    <xs:attribute name="modified" type="xs:dateTime"/>
+    <xs:attribute name="attributes" type="xs:string"/>
+    <xs:attribute name="crc" type="h:Crc"/>
+    <xs:attribute name="owner" type="xs:nonNegativeInteger"/>
+    <xs:attribute name="group" type="xs:nonNegativeInteger"/>
+    <xs:attribute name="link-target" type="xs:string"/>
+    <xs:attribute name="error" type="xs:string"/>
+  </xs:complexType>
+
+  <xs:attributeGroup name="Item">
+    <xs:attribute name="name" type="xs:string" use="required"/>
+    <xs:attribute name="path" type="xs:string" use="required"/>
+    <xs:attribute name="state" type="h:ItemState" use="required"/>
+    <xs:attribute name="marker" type="h:Marker" use="required"/>
+    <xs:attribute name="ignored" type="h:True"/>
+  </xs:attributeGroup>
+
+  <xs:complexType name="Folder">
+    <xs:sequence>
+      <xs:element name="left" type="h:ItemSide" minOccurs="0"/>
+      <xs:element name="right" type="h:ItemSide" minOccurs="0"/>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="folder" type="h:Folder"/>
+        <xs:element name="entry" type="h:Entry"/>
+      </xs:choice>
+    </xs:sequence>
+    <xs:attributeGroup ref="h:Item"/>
+  </xs:complexType>
+
+  <xs:complexType name="Entry">
+    <xs:sequence>
+      <xs:element name="left" type="h:ItemSide" minOccurs="0"/>
+      <xs:element name="right" type="h:ItemSide" minOccurs="0"/>
+      <xs:element name="file-report" minOccurs="0">
+        <xs:complexType>
+          <xs:attribute name="status" type="h:ReportStatus" use="required"/>
+          <xs:attribute name="href" type="xs:string"/>
+          <xs:attribute name="reason" type="xs:string"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attributeGroup ref="h:Item"/>
+    <xs:attribute name="kind" type="h:EntryKind" use="required"/>
+  </xs:complexType>
+
+  <!-- The summary -->
+
+  <xs:complexType name="Summary">
+    <xs:sequence>
+      <xs:element name="count" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="group" type="h:Word" use="required"/>
+          <xs:attribute name="name" type="h:Word" use="required"/>
+          <xs:attribute name="value" type="xs:nonNegativeInteger" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute name="verdict" type="h:Verdict" use="required"/>
+    <xs:attribute name="complete" type="h:Bool"/>
+  </xs:complexType>
+
+</xs:schema>

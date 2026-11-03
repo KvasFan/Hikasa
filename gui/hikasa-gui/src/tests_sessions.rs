@@ -522,13 +522,13 @@ fn autosaves_are_pruned() {
 }
 
 /// Selects a file pair of a folder view.
-fn select_pair(app: &mut TestApp, view: ViewId) {
+fn select_pair(world: &World, app: &mut TestApp, view: ViewId) {
     let w = app.win();
     app.0.execute(w, CommandId::ExpandAll);
     let rows = crate::tests::folder_model(app, view);
     let pair = (0..rows.rows().len()).find(|i| {
         rows.select(*i);
-        rows.open_request().is_some()
+        rows.open_request(&world.service).is_some()
     });
     assert!(pair.is_some(), "the fixture has a pair");
 }
@@ -546,9 +546,9 @@ fn a6_10_a_child_request_has_the_overrides_of_its_row() {
     save(&world, "tree", &session);
     let mut app = started(&world);
     let view = open_named(&world, &mut app, "tree");
-    select_pair(&mut app, view);
+    select_pair(&world, &mut app, view);
     let rows = crate::tests::folder_model(&mut app, view);
-    let (request, _) = rows.open_request().expect("a pair");
+    let (request, _) = rows.open_request(&world.service).expect("a pair");
     let expected = std::collections::BTreeMap::from([("c-cpp".to_owned(), false)]);
     assert_eq!(request.format_overrides, expected);
 
@@ -556,9 +556,9 @@ fn a6_10_a_child_request_has_the_overrides_of_its_row() {
     let plain = folder_session(&world);
     save(&world, "plain", &plain);
     let view = open_named(&world, &mut app, "plain");
-    select_pair(&mut app, view);
+    select_pair(&world, &mut app, view);
     let rows = crate::tests::folder_model(&mut app, view);
-    let (request, _) = rows.open_request().expect("a pair");
+    let (request, _) = rows.open_request(&world.service).expect("a pair");
     assert!(request.format_overrides.is_empty());
 }
 
@@ -570,7 +570,7 @@ fn opening_a_pair_gives_a_child_of_the_folder_session() {
     let mut app = started(&world);
     let view = open_named(&world, &mut app, "tree");
     let w = app.win();
-    select_pair(&mut app, view);
+    select_pair(&world, &mut app, view);
     app.0.execute(w, CommandId::Open);
     world.settle(&mut app);
     let child = app.active_tab().unwrap().id;
@@ -587,7 +587,7 @@ fn opening_a_pair_gives_a_child_of_the_folder_session() {
     let (a, b) = folder_pair(&world);
     let view = world.open(&mut app, &a, &b);
     world.settle(&mut app);
-    select_pair(&mut app, view);
+    select_pair(&world, &mut app, view);
     app.0.execute(w, CommandId::Open);
     world.settle(&mut app);
     assert!(vs(&app, app.active_tab().unwrap().id).parent.is_none());

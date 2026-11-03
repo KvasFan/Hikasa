@@ -6,21 +6,25 @@
 
 mod context;
 mod html;
+mod interleaved;
 mod normal;
 mod patch;
 mod sbs;
 mod stats;
 mod summary;
 mod unified;
+mod xml;
 
 use std::io::{BufWriter, Write};
+use std::ops::Range;
 
 use hikasa_core::{Pair, Side, Warning};
-use hikasa_text::{TextComparison, TextDocument};
+use hikasa_text::{FilteredView, TextComparison, TextDocument, ViewItem, ViewOptions};
 
 use crate::error::ReportError;
 use crate::meta::{Header, ReportMeta};
 use crate::options::{DisplayMode, HtmlStyle, OutputFormat, Wrap};
+use crate::request::{LineScope, StrikeOut};
 
 /// Default title of text reports.
 pub(crate) const TEXT_TITLE: &str = "Text Compare";
@@ -88,6 +92,10 @@ pub enum TextLayout {
     Patch(PatchStyle),
     /// Statistics CSV (one header row + one data row).
     Statistics,
+    /// One column of lines in row order (M2 W7, D-197): a changed row's left line, then its right line.
+    Interleaved,
+    /// The `hikasa-report` XML dump (M2 W7, D-198).
+    Xml,
 }
 
 impl TextLayout {
@@ -115,8 +123,9 @@ impl TextLayout {
         )
     }
 
-    /// Stable name: `annotated-unified`, `side-by-side`, `summary`, `patch`, `statistics` (the `layout` of
-    /// [`ReportError::Unsupported`]).
+    /// Stable name: `annotated-unified`, `side-by-side`, `summary`, `patch`, `statistics`, `interleaved`, `xml` (the
+    /// `layout` of [`ReportError::Unsupported`]). [`TextLayout::parse`] keeps M1's words: `interleaved` and `xml` are
+    /// read by [`crate::ReportRequest::parse`].
     pub const fn name(self) -> &'static str {
         match self {
             TextLayout::AnnotatedUnified { .. } => "annotated-unified",
@@ -124,6 +133,8 @@ impl TextLayout {
             TextLayout::Summary => "summary",
             TextLayout::Patch(_) => "patch",
             TextLayout::Statistics => "statistics",
+            TextLayout::Interleaved => "interleaved",
+            TextLayout::Xml => "xml",
         }
     }
 }
@@ -143,8 +154,10 @@ pub struct TextReportOptions {
     pub width: u16,
     /// Wrapping (side-by-side text).
     pub wrap: Wrap,
-    /// Output format (HTML allowed for SideBySide and Summary only).
+    /// Output format (HTML allowed for SideBySide, Summary and Interleaved only).
     pub format: OutputFormat,
+    /// Strike-out of a side's differences (Interleaved; M2 W7, D-197).
+    pub strike: StrikeOut,
 }
 
 impl Default for TextReportOptions {
@@ -159,6 +172,7 @@ impl Default for TextReportOptions {
             width: 160,
             wrap: Wrap::Character,
             format: OutputFormat::Text { ansi: false },
+            strike: StrikeOut::empty(),
         }
     }
 }
@@ -183,6 +197,18 @@ pub fn render_text_report_with(
     style: &HtmlStyle,
     out: &mut dyn Write,
 ) -> Result<Vec<Warning>, ReportError> {
+    render(cmp, opts, meta, style, None, out)
+}
+
+/// Renders a text report with a scope (`None`: every row).
+pub(crate) fn render(
+    cmp: &TextComparison,
+    opts: &TextReportOptions,
+    meta: &ReportMeta,
+    style: &HtmlStyle,
+    scope: Option<LineScope>,
+    out: &mut dyn Write,
+) -> Result<Vec<Warning>, ReportError> {
     let mut w = BufWriter::with_capacity(64 * 1024, out);
     let warnings = match (opts.layout, opts.format) {
         (TextLayout::AnnotatedUnified { lines }, OutputFormat::Text { ansi }) => {
@@ -198,11 +224,28 @@ pub fn render_text_report_with(
             normal::write(&mut w, cmp, opts, meta, ansi)?
         }
         (TextLayout::SideBySide, OutputFormat::Text { ansi }) => {
-            sbs::write(&mut w, cmp, opts, meta, ansi)?;
+            let items = Items::new(cmp, opts, scope);
+            sbs::write(&mut w, cmp, opts, meta, &items, ansi)?;
             Vec::new()
         }
         (TextLayout::SideBySide, OutputFormat::Html { mono }) => {
-            html::write(&mut w, cmp, opts, meta, mono, style.custom_css.as_deref())?;
+            let items = Items::new(cmp, opts, scope);
+            html::write(&mut w, cmp, opts, meta, &items, mono, style)?;
+            Vec::new()
+        }
+        (TextLayout::Interleaved, OutputFormat::Text { ansi }) => {
+            let items = Items::new(cmp, opts, scope);
+            interleaved::write_text(&mut w, cmp, opts, meta, &items, ansi)?;
+            Vec::new()
+        }
+        (TextLayout::Interleaved, OutputFormat::Html { mono }) => {
+            let items = Items::new(cmp, opts, scope);
+            interleaved::write_html(&mut w, cmp, opts, meta, &items, mono, style)?;
+            Vec::new()
+        }
+        (TextLayout::Xml, OutputFormat::Text { .. }) => {
+            let items = Items::new(cmp, opts, scope);
+            xml::write(&mut w, cmp, opts, meta, &items, scope)?;
             Vec::new()
         }
         (TextLayout::Summary, OutputFormat::Text { ansi }) => {
@@ -210,7 +253,7 @@ pub fn render_text_report_with(
             Vec::new()
         }
         (TextLayout::Summary, OutputFormat::Html { mono }) => {
-            summary::write_html(&mut w, cmp, opts, meta, mono, style.custom_css.as_deref())?;
+            summary::write_html(&mut w, cmp, opts, meta, mono, style)?;
             Vec::new()
         }
         (TextLayout::Statistics, OutputFormat::Text { .. }) => {
@@ -220,7 +263,8 @@ pub fn render_text_report_with(
         (
             layout @ (TextLayout::AnnotatedUnified { .. }
             | TextLayout::Patch(_)
-            | TextLayout::Statistics),
+            | TextLayout::Statistics
+            | TextLayout::Xml),
             format @ OutputFormat::Html { .. },
         ) => {
             return Err(ReportError::Unsupported {
@@ -231,6 +275,85 @@ pub fn render_text_report_with(
     };
     w.flush()?;
     Ok(warnings)
+}
+
+/// The rows a row layout shows: the display mode's view, cut to the scope's rows. Streams: the view holds runs of
+/// rows, never one entry per row.
+pub(crate) struct Items {
+    view: FilteredView,
+    /// The scope's rows; `None` = every row.
+    range: Option<Range<u32>>,
+}
+
+impl Items {
+    /// The items of `opts.display` within `scope`.
+    pub(crate) fn new(
+        cmp: &TextComparison,
+        opts: &TextReportOptions,
+        scope: Option<LineScope>,
+    ) -> Items {
+        let view = cmp.view(&ViewOptions {
+            filter: opts.display.text_filter(),
+            ignore_unimportant: opts.ignore_unimportant,
+            expanded: Vec::new(),
+        });
+        Items {
+            view,
+            range: scope.map(|scope| scope_rows(cmp, scope)),
+        }
+    }
+
+    /// The items in order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = ViewItem> + '_ {
+        let range = self.range.clone();
+        self.view
+            .iter()
+            .filter_map(move |item| match (&range, item) {
+                (None, item) => Some(item),
+                (Some(range), ViewItem::Row { row }) => {
+                    range.contains(&row.0).then_some(ViewItem::Row { row })
+                }
+                (Some(range), ViewItem::Gap { rows }) => {
+                    let rows = rows.start.max(range.start)..rows.end.min(range.end);
+                    (rows.start < rows.end).then_some(ViewItem::Gap { rows })
+                }
+            })
+    }
+
+    /// True when a scope holds no row: the report is the header and `0 rows`.
+    pub(crate) fn nothing(&self) -> bool {
+        self.range.as_ref().is_some_and(|r| r.start >= r.end)
+    }
+}
+
+/// The text of an empty scope.
+pub(crate) const NO_ROWS: &str = "0 rows";
+
+/// The rows of a line scope (D-209): from the first row whose line on the side is at least `first` to the last whose
+/// line is at most `last`, every row between them included. Empty when no line of the side is in range.
+pub(crate) fn scope_rows(cmp: &TextComparison, scope: LineScope) -> Range<u32> {
+    let doc = cmp.document(scope.side);
+    let mut start = None;
+    let mut end = 0u32;
+    for (i, row) in cmp.rows(0..cmp.row_count()).enumerate() {
+        let line = match scope.side {
+            Side::Right => row.right,
+            _ => row.left,
+        };
+        let Some(line) = line else { continue };
+        let n = doc.physical_line(line);
+        let i = i as u32;
+        if n >= scope.first && start.is_none() {
+            start = Some(i);
+        }
+        if n <= scope.last {
+            end = i + 1;
+        }
+    }
+    match start {
+        Some(start) if start < end => start..end,
+        _ => 0..0,
+    }
 }
 
 /// The spec text of a document (`<memory>` for in-memory documents).

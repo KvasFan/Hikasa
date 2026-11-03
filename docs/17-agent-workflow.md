@@ -50,6 +50,11 @@ These rules are binding for any agent (or human) implementing Hikasa.
    The two test files also remove `WAYLAND_DISPLAY` from the processes they start
    whenever `DISPLAY` is set. A measurement counts as "under Xvfb" only when its
    renderer is the software one (llvmpipe).
+6. A property test, and an integration test that stands in for one, must be able to fail: at least one
+   hand mutation of the code it guards (a named change in a named file: a dropped condition, a swapped
+   side, an off-by-one, a skipped escape) makes it fail, and is reverted. The wave's notes list each
+   mutation, the test that caught it and the seed where there is one; a test no mutation fails is
+   rewritten until one does. `cargo mutants` may help, but does not replace the list (M2 W7, §6.7).
 
 ## 4. Documentation
 1. Update the relevant `docs/*.md` when behaviour changes; add new requirement IDs

@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.1.93 (2026-11-03, pre-release)
+
+### Added
+- **Reports, the core of the next release.** The report library renders the new layouts: Interleaved (one column, the
+  left line above the right, as text, ANSI or HTML, with each side's changes struck out on request), XML dumps of text
+  and folder comparisons (schema `docs/schemas/hikasa-report-1.xsd`, namespace `urn:hikasa:report:1`), HTML wrapping
+  (`wrap-none`, `wrap-word`) and a print block (page orientation, a print palette), and folder side-by-side HTML with
+  links to a report per differing file pair. Reports stream: memory stays flat however many rows they have, and a
+  cancel stops within a MiB. Without the new words every existing report is byte for byte as before.
+- **`hikasa report text|folder`.** Compares and writes a report, side-by-side by default, to standard output, a file, the
+  clipboard (`--output-to clipboard`: an HTML report with a plain-text alternative; on Linux a small helper keeps it
+  after `hikasa` ends), or the browser (`browser`, and `printer` with a print block), through a new folder in the cache
+  that is cleaned after seven days. `--session <ref>` reports a saved session; `-` and `clipboard://` work as sources.
+  The exit code is the comparison's.
+- **One set of report flags** on `text compare`, `folder compare`, `session run` and both `report` subcommands:
+  `--layout` (`--report`), `--options` and `--output-options` with the report vocabulary (`display-*`,
+  `ignore-unimportant`, `line-numbers`, `no-line-numbers`, `strikeout-*`, `patch-*`, `column-*`, `include-file-links`,
+  `html-*`, `print-*`, `wrap-*`), `--output-to`, `--title`, `--lines` (a range of lines), `--select` and `--path`
+  (part of a folder tree), and `--dry-run`, which says what would be written. Two words of one slot are refused, a word
+  the layout does not use gives one warning, and every word is checked before anything is compared.
+- **Links to file reports.** `--options include-file-links` with folder side-by-side HTML writes a report per differing
+  file pair into `<name>_files` beside the report and links them both ways. A later report to the same file replaces
+  that folder whole (a marker says it is the report's); a folder of that name that is not the report's is never touched,
+  and the report uses `<name>_files-2`. A failure or Ctrl-C leaves the old report and folder as they were.
+- **Identical output.** `SOURCE_DATE_EPOCH` fixes the report time, so one comparison and one request give the same bytes
+  through `report`, the compare subcommands, a file, standard output, the clipboard and the printer's page.
+- **`hikasa.report.v1`** with `--json` (39 schemas), and the warnings `report_option_unused`, `report_folder_renamed`,
+  `report_old_folder_kept`, `file_report_failed` and `source_date_epoch_invalid`.
+- **Remembered report choices** for the coming report dialog, in `state.toml` (`[dialogs."report-text"]`,
+  `[dialogs."report-folder"]`); the command line never reads them.
+
+### Changed
+- **A report combination that cannot be made is refused before the comparison** (`--report patch --html`, links to
+  standard output): exit 100 as before, but nothing is compared first.
+- `session run` takes the report flags of the compare subcommands; its `--dry-run` is the report's for a comparison and
+  the sync's for a Folder Sync session, as before.
+
+### Fixed
+- **Review of the report writer** (before release): `printer` and `browser` with `include-file-links` always failed
+  "not found" and now write the report with its folder of file reports; two reports in the same second no longer share
+  a print folder; a report file that is a symbolic link to another folder gets its file reports beside the file it
+  names, so the links work; a folder named as the report file is refused by `--dry-run` as by the run; links into an
+  archive are refused before anything is compared; a clipboard that cannot be written says "cannot write the
+  clipboard" (`io`), and no display is `unsupported`; on Linux the clipboard's helper runs detached from the folder and
+  the terminal it was started in, and `hikasa-gui` serves it too; M1's flags (`--wrap`, `--patch-style`,
+  `--no-line-numbers`, `--columns`) no longer warn "does not use" on a layout that ignores them; `session run` of a
+  folder-sync session names the report flags it ignores in one warning. On Linux and macOS a rename onto a free name
+  (folder operations, the report's folders) can no longer replace what another program put there in between.
+- **A test of folder sync no longer fails now and then**: it ran too few cases for the share of rare situations it
+  checks.
+- **`folder op copyto` and `moveto` of an aligned folder pair.** With `--structure base` or `relative`, a pair whose
+  folders differ only in case (under `--case-insensitive`) or in NFC/NFD form now lands in one folder at the target, the
+  one the target already holds by either name, else a new one named as the left spells it (the right's spelling when only
+  the right is written). Before, onto a case-sensitive target, the right side's files went to a folder of their own
+  spelling that was never made, and failed `not_found`. A file and a folder whose names differ only in case, under
+  `--case-insensitive`, now both go to a case-sensitive target, whichever side holds the file; before, the second was
+  skipped as `duplicate_target`.
+
 ## 0.1.92 (2026-11-02, pre-release)
 
 ### Added

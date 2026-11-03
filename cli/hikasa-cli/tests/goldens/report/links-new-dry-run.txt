@@ -1,0 +1,4 @@
+write <TMP>/out/report.html
+mkdir <TMP>/out/report_files
+write <TMP>/out/report_files/1-a.txt.html  a.txt
+would write 3 files

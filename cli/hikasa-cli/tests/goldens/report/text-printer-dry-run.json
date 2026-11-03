@@ -1,0 +1,37 @@
+{
+  "schema": "hikasa.report.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "type": "text",
+    "layout": "side-by-side",
+    "format": "html",
+    "target": "printer",
+    "output": "<TMP>/cfg/cache/print/20231114-221320-1/report.html",
+    "replaced": false,
+    "dry_run": true,
+    "cancelled": false,
+    "bytes": 0,
+    "verdict": {
+      "result": "important_differences"
+    },
+    "words": {
+      "layout": "side-by-side",
+      "options": [
+        "display-all",
+        "line-numbers"
+      ],
+      "output_options": [
+        "html-color",
+        "print-portrait"
+      ]
+    },
+    "unused": [],
+    "links": null,
+    "clipboard": null,
+    "opened": null
+  },
+  "warnings": [],
+  "error": null
+}

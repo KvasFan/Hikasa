@@ -1,0 +1,3 @@
+mkdir <TMP>/cfg/cache/print/20231114-221320-1
+write <TMP>/cfg/cache/print/20231114-221320-1/report.html
+would write 1 file
