@@ -17,6 +17,38 @@ use crate::parse::parse_line_owned;
 pub trait WordChecker {
     /// `Ok` when the host takes `word` in `slot`.
     fn check(&self, slot: Slot, word: &str) -> Result<(), String>;
+
+    /// The words of one command together, in grammar order, each already taken alone by [`WordChecker::check`]:
+    /// what only the words together can refuse (`attrib +r -r`, a new name that uses a group the expression lacks).
+    /// `Err((i, message))` points at the `i`-th word. Called only when no word of the command expands; the default
+    /// takes them.
+    fn check_command(
+        &self,
+        name: CommandName,
+        words: &[(Slot, &str)],
+    ) -> Result<(), (usize, String)> {
+        let _ = (name, words);
+        Ok(())
+    }
+}
+
+/// The refusal of a spec word that names standard input, the clipboard or nothing where a folder or a target is wanted
+/// (§1.8.6: `-` and `clipboard://` are refused as bases and as targets other than `output-to:`); `what` names them
+/// (`base folders`, `targets of copyto`).
+pub fn spec_word_refusal(word: &std::ffi::OsStr, what: &str) -> Option<String> {
+    let refused = word.is_empty()
+        || word == "-"
+        || word
+            .to_str()
+            .is_some_and(|w| w.eq_ignore_ascii_case("clipboard://"));
+    refused.then(|| {
+        let shown = if word.is_empty() {
+            "\"\"".to_owned()
+        } else {
+            crate::interp::display_os(word)
+        };
+        format!("{shown}: standard input, the clipboard and an empty word are no {what}")
+    })
 }
 
 /// A checker that takes every word: the script's own syntax only (tests of the pure layer, tools that only lex).
@@ -97,19 +129,62 @@ pub fn check_word(
     Ok(word.into_owned())
 }
 
-/// The slot errors of one command: each word without `%` checked now; a word with `%` is checked when it ran (§1.8.4).
+/// The spec words of `command` that must name a folder or a target (the bases of a load, the target of `copyto` and
+/// `moveto`), with what they are.
+fn folder_specs(command: &Command) -> Vec<(&crate::lex::Word, String)> {
+    match &command.args {
+        Args::Load(LoadArgs::Folders { left, right, .. }) => vec![
+            (left, "base folders".to_owned()),
+            (right, "base folders".to_owned()),
+        ],
+        Args::CopyTo(args) | Args::MoveTo(args) => {
+            vec![(
+                &args.target,
+                format!("targets of {}", command.name.as_str()),
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The slot errors of one command: each word without `%` checked now, then the words together when none expands; a
+/// word with `%` is checked when it runs (§1.8.4).
 fn slot_errors(command: &Command, checker: &dyn WordChecker, errors: &mut Errors) {
-    for (slot, word) in command.slots() {
+    let specs = folder_specs(command);
+    let slots = command.slots();
+    let mut checked: Vec<(Slot, String)> = Vec::with_capacity(slots.len());
+    let mut alone_ok = true;
+    for (slot, word) in &slots {
         if word.expands {
             continue;
         }
-        if let Err(message) = check_word(slot, &word.text, word.quoted, checker) {
-            errors.push(ScriptError::new(
-                word.pos,
-                ScriptErrorCode::InvalidWord,
-                message,
-            ));
+        let refusal = specs
+            .iter()
+            .find(|(w, _)| std::ptr::eq(*w, *word))
+            .and_then(|(_, what)| spec_word_refusal(std::ffi::OsStr::new(&word.text), what));
+        let result = match refusal {
+            Some(message) => Err(message),
+            None => check_word(*slot, &word.text, word.quoted, checker),
+        };
+        match result {
+            Ok(normal) => checked.push((*slot, normal)),
+            Err(message) => {
+                alone_ok = false;
+                errors.push(ScriptError::new(
+                    word.pos,
+                    ScriptErrorCode::InvalidWord,
+                    message,
+                ));
+            }
         }
+    }
+    if !alone_ok || slots.iter().any(|(_, w)| w.expands) || slots.is_empty() {
+        return;
+    }
+    let words: Vec<(Slot, &str)> = checked.iter().map(|(s, w)| (*s, w.as_str())).collect();
+    if let Err((at, message)) = checker.check_command(command.name, &words) {
+        let pos = slots.get(at).map_or(command.pos, |(_, w)| w.pos);
+        errors.push(ScriptError::new(pos, ScriptErrorCode::InvalidWord, message));
     }
 }
 

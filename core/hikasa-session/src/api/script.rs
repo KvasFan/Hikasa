@@ -462,7 +462,17 @@ impl WordChecker for Vocabulary<'_> {
                     super::parse_time(word).map(drop).map_err(text)
                 }
             }
-            Slot::ContentMethod => super::parse_content_method(word).map(drop).map_err(text),
+            // `none` parses (as `--content none` does) but tests nothing: `compare` refuses it when it runs.
+            Slot::ContentMethod => match super::parse_content_method(word) {
+                Ok(hikasa_core::ContentMethod::None) => {
+                    Err("a content test needs a method".to_owned())
+                }
+                Ok(_) => Ok(()),
+                Err(e) => Err(text(e)),
+            },
+            Slot::Regex => hikasa_folder::ops::RegexRename::new(word, "")
+                .map(drop)
+                .map_err(folder),
             Slot::AttribChange => super::parse_attrib_change(&[word.to_owned()])
                 .map(drop)
                 .map_err(text),
@@ -493,13 +503,86 @@ impl WordChecker for Vocabulary<'_> {
             | Slot::Recycle
             | Slot::LogLevel
             | Slot::RenameMask
-            | Slot::Regex
             | Slot::Spec
             | Slot::Session
             | Slot::Path
             | Slot::Text => Ok(()),
         }
     }
+
+    fn check_command(
+        &self,
+        name: CommandName,
+        words: &[(Slot, &str)],
+    ) -> Result<(), (usize, String)> {
+        match name {
+            CommandName::Attrib => first_refused(words, &|words| {
+                let changes: Vec<String> = words.iter().map(|(_, w)| (*w).to_owned()).collect();
+                super::parse_attrib_change(&changes)
+                    .map(drop)
+                    .map_err(|e| e.to_string())
+            }),
+            CommandName::Rename => match words {
+                [(Slot::Regex, old), (Slot::Text, new)] => {
+                    hikasa_folder::ops::RegexRename::new(old, new)
+                        .map(drop)
+                        .map_err(|e| (1, e.to_string()))
+                }
+                _ => Ok(()),
+            },
+            _ if name.report().is_some() => first_refused(words, &|words| self.report_words(words)),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl Vocabulary<'_> {
+    /// The report words of a command (layout, options, output options) through one `report_request`, as the command
+    /// builds them when it runs.
+    fn report_words(&self, words: &[(Slot, &str)]) -> Result<(), String> {
+        let mut flags = ReportFlags::default();
+        let mut kind = None;
+        for (slot, word) in words {
+            match slot {
+                Slot::ReportLayout(k) => {
+                    kind = report_kind(*k);
+                    flags.words.layout = Some((*word).to_owned());
+                }
+                Slot::ReportOptions(k) => {
+                    kind = report_kind(*k);
+                    flags.words.options.push((*word).to_owned());
+                }
+                Slot::ReportOutputOptions(k) => {
+                    kind = report_kind(*k);
+                    flags.words.output_options.push((*word).to_owned());
+                }
+                _ => {}
+            }
+        }
+        let Some(kind) = kind else { return Ok(()) };
+        let target = ReportTarget::File(OsString::from("report"));
+        self.service
+            .report_request(kind, "side-by-side", &flags, &target)
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The first `i` such that `words[..=i]` is refused by `refuses`, when `words` as a whole is: the word that makes a
+/// command's words conflict.
+fn first_refused(
+    words: &[(Slot, &str)],
+    refuses: &dyn Fn(&[(Slot, &str)]) -> Result<(), String>,
+) -> Result<(), (usize, String)> {
+    let Err(message) = refuses(words) else {
+        return Ok(());
+    };
+    for end in 1..words.len() {
+        if let Err(message) = refuses(&words[..end]) {
+            return Err((end - 1, message));
+        }
+    }
+    Err((words.len().saturating_sub(1), message))
 }
 
 /// The message of `output-to:-` refused with `--json` (§1.8.12).

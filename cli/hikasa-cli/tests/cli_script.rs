@@ -599,3 +599,108 @@ fn a8_21_help_script_resolves() {
         assert!(stdout(&out).contains("hikasa script"), "{words:?}");
     }
 }
+
+/// A1: a load that fails for any cause (standard input, the clipboard, an empty word given as an argument) ends the
+/// script with 107; nothing runs on the comparison loaded before it, so nothing in `r/` is deleted.
+#[test]
+fn a_failed_load_never_leaves_the_earlier_comparison() {
+    for arg in ["-", "", "clipboard://", "no-such-folder"] {
+        let s = sandbox();
+        let before = tree(&s.join("r"));
+        let out = script(
+            &s,
+            "option confirm:yes-to-all\nload l r\nload %1 other\nselect all\ndelete right\n",
+            &[arg],
+        );
+        assert_eq!(code(&out), 107, "{arg:?}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(
+            err.contains("Script stopped at line 3 (exit 107)"),
+            "{arg:?}: {err}"
+        );
+        assert!(!err.contains("run L4"), "{arg:?}: {err}");
+        assert_eq!(tree(&s.join("r")), before, "{arg:?}");
+    }
+}
+
+/// A1, A7: a base or a target written `-`, `""` or `clipboard://` is refused when the script is checked (106), at its
+/// position; so are `compare none`, a bad regular expression, attrib words that conflict across words, and report words
+/// that conflict.
+#[test]
+fn static_words_the_run_would_refuse_are_106() {
+    let cases = [
+        ("load l -\n", ":1:8: error: "),
+        ("load \"\" r\n", ":1:6: error: "),
+        ("load CLIPBOARD:// r\n", ":1:6: error: "),
+        ("load l r\ncopyto all -\n", ":2:12: error: "),
+        ("load l r\nmoveto \"\"\n", ":2:8: error: "),
+        (
+            "load l r\ncompare none\n",
+            ":2:9: error: a content test needs a method",
+        ),
+        ("load l r\nrename regexpr \"(\" x\n", ":2:16: error: "),
+        ("load l r\nrename regexpr \"(a)\" $2\n", ":2:22: error: "),
+        ("load l r\nattrib +r -r\n", ":2:11: error: "),
+        ("load l r\nattrib +h -s +a -h\n", ":2:17: error: "),
+    ];
+    for (text, expected) in cases {
+        let s = sandbox();
+        s.file("s.txt", text);
+        let out = s.cmd().args(["script", "check", "s.txt"]).output().unwrap();
+        assert_eq!(code(&out), 106, "{text}: {}", stderr(&out));
+        let err = stderr(&out);
+        let first = err.lines().next().unwrap_or("");
+        assert!(first.contains(&format!("s.txt{expected}")), "{text}: {err}");
+        // The same words expanded from an argument pass the check and fail when they run.
+    }
+    let s = sandbox();
+    s.file("s.txt", "load l r\nattrib %1 %2\n");
+    let out = s
+        .cmd()
+        .args(["script", "check", "s.txt", "--", "+r", "-r"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+}
+
+/// A2: `load <left> <right>` after a folder-sync session drops the session's preset: a bare `sync` fails with the
+/// contract's message and `b/precious.txt` survives.
+#[test]
+fn a_folder_load_drops_the_sync_preset_of_a_session() {
+    let s = sandbox();
+    s.file("a/x.txt", "x\n");
+    s.file("b/x.txt", "x\n");
+    s.file("b/precious.txt", "keep\n");
+    s.file(
+        "cfg/sessions/SL.toml",
+        format!(
+            "schema_version = 1\ntype = \"folder-sync\"\n\n[specs]\nleft = {:?}\nright = {:?}\n\n[rules.sync]\npreset = \
+             \"mirror_right\"\n",
+            s.join("l").display().to_string(),
+            s.join("r").display().to_string()
+        ),
+    );
+    let out = script(
+        &s,
+        "option confirm:yes-to-all\nload SL\nload a b\nsync\n",
+        &[],
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("error L4 no sync direction and the session holds none"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(s.join("b/precious.txt").exists());
+    // The session's own preset still applies to a sync after loading it.
+    let out = script(
+        &s,
+        "option confirm:yes-to-all\nload a b\nload SL\nsync\n",
+        &[],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        !s.join("r/ronly.txt").exists(),
+        "mirror_right removed the right orphan"
+    );
+}

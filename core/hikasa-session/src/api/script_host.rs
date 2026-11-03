@@ -571,14 +571,25 @@ impl<'a> Host<'a> {
 
     // ---- the commands ---------------------------------------------------------------------------------------------
 
+    /// `load` (§1.8.5): the comparison, the selection, the open folders and the sync preset go first, so nothing can
+    /// run on an earlier comparison; any failure of a load ends the script (107), whatever its cause.
     fn load(&mut self, index: usize, line: u32, args: &LoadArgs<OsString>) -> CommandOutcome {
+        self.loaded = None;
+        self.selection = Selection::default();
+        self.expanded = Expanded::Paths(BTreeSet::new());
+        self.preset = None;
+        match self.load_inner(index, line, args) {
+            CommandOutcome::Failed { message } | CommandOutcome::Refused { message } => {
+                CommandOutcome::LoadFailed { message }
+            }
+            outcome => outcome,
+        }
+    }
+
+    fn load_inner(&mut self, index: usize, line: u32, args: &LoadArgs<OsString>) -> CommandOutcome {
         match args {
             LoadArgs::Default => {
                 self.settings = default_settings(self.service);
-                self.preset = None;
-                self.loaded = None;
-                self.selection = Selection::default();
-                self.expanded = Expanded::Paths(BTreeSet::new());
                 CommandOutcome::Ok
             }
             LoadArgs::Session(name) => {
@@ -713,14 +724,8 @@ impl<'a> Host<'a> {
     /// A base this version cannot load (D-221): a remote scheme, a `.hksnap` file; `-` and `clipboard://` are refused.
     fn base_refusal(&self, base: &OsStr) -> Option<CommandOutcome> {
         let shown = hikasa_script::display_os(base);
-        if base == "-"
-            || base
-                .to_str()
-                .is_some_and(|b| b.eq_ignore_ascii_case("clipboard://"))
-        {
-            return Some(failed(format!(
-                "{shown}: standard input and the clipboard are no base folders"
-            )));
+        if let Some(message) = hikasa_script::spec_word_refusal(base, "base folders") {
+            return Some(failed(message));
         }
         if shown
             .to_ascii_lowercase()
@@ -1789,17 +1794,10 @@ impl Host<'_> {
             Some(Err(outcome)) => return outcome,
         };
         let target = args.target.clone();
-        if target == "-"
-            || target
-                .to_str()
-                .is_some_and(|t| t.eq_ignore_ascii_case("clipboard://"))
+        if let Some(message) =
+            hikasa_script::spec_word_refusal(&target, &format!("targets of {}", name.as_str()))
         {
-            let error = ApiError::InvalidArgument(format!(
-                "{}: standard input and the clipboard are no targets of {}",
-                hikasa_script::display_os(&target),
-                name.as_str()
-            ));
-            return self.fail_with(index, &error);
+            return self.fail_with(index, &ApiError::InvalidArgument(message));
         }
         let op = if name == CommandName::CopyTo {
             OpRequest::CopyTo {

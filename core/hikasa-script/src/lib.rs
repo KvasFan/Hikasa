@@ -25,6 +25,7 @@ pub use ast::{
 };
 pub use check::{
     AnyWord, RefCheck, WordChecker, check_word, parse, parse_checked, references, script_syntax,
+    spec_word_refusal,
 };
 pub use error::{Pos, ScriptError, ScriptErrorCode};
 pub use expand::{ExpandContext, LocalTime, References, expand, has_forms, normalize_sides};

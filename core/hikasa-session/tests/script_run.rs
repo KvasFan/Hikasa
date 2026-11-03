@@ -204,7 +204,7 @@ fn a8_7_exit_codes_stop_lines_and_not_run() {
             &["failed", "not_run"],
         ),
         (
-            "load l r\ncopyto all -\nload l nothere\nbeep\n",
+            "load l r\nexpand nothere\nload l nothere\nbeep\n",
             ExitCode::LoadFailed,
             Some((3, StopReason::LoadFailed)),
             &["ok", "failed", "failed", "not_run"],
