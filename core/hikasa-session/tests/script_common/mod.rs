@@ -38,13 +38,18 @@ pub struct Ui {
     pub clipboard: Vec<ClipboardPayload>,
     /// Cancelled at the first question (a cancel while a question waits).
     pub cancel_at_question: Option<CancelToken>,
+    /// Called with each log line as it comes (a test changes the disk between two commands).
+    pub on_line: Option<Box<dyn FnMut(&str)>>,
 }
 
 impl HostUi for Ui {
     fn event(&mut self, event: ScriptEvent) {
         if let ScriptEvent::Log { kind, line, text } = &event {
-            self.lines
-                .push(hikasa_session::api::script_log::line(*kind, *line, text));
+            let shown = hikasa_session::api::script_log::line(*kind, *line, text);
+            if let Some(hook) = &mut self.on_line {
+                hook(&shown);
+            }
+            self.lines.push(shown);
         }
         self.events.push(event);
     }

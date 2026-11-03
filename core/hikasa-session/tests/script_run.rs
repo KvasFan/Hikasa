@@ -621,3 +621,113 @@ fn a8_6_a_flat_comparison_is_compared_again_after_a_copy() {
         ui.lines
     );
 }
+
+/// D-219: `criteria` after a load runs it again and keeps the selected rows by path, even when the new comparison
+/// numbers its rows otherwise (here two files appeared before them): the copy after it copies what was selected.
+#[test]
+fn a8_6_criteria_after_a_load_keeps_the_selection_by_path_when_rows_move() {
+    let w = world();
+    let root = w.path("");
+    let mut ui = Ui {
+        on_line: Some(Box::new(move |line: &str| {
+            if line == "run L4 criteria size" {
+                std::fs::write(root.join("l/0.txt"), "new left 0\n").unwrap();
+                std::fs::write(root.join("r/0.txt"), "right 0\n").unwrap();
+                std::fs::create_dir_all(root.join("l/0dir")).unwrap();
+            }
+        })),
+        ..Ui::default()
+    };
+    let outcome = w.run_with(
+        "load l r\nexpand sub\nselect left.diff.files\ncriteria size\ncopy left->right\n",
+        yes(),
+        &mut ui,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert_eq!(
+        std::fs::read_to_string(w.path("r/a.txt")).unwrap(),
+        "left a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(w.path("r/sub/x.txt")).unwrap(),
+        "left x\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(w.path("r/0.txt")).unwrap(),
+        "right 0\n"
+    );
+    assert!(!w.path("r/only.txt").exists() && !w.path("r/0dir").exists());
+}
+
+/// §1.8.6: `sync create-empty` creates the empty folders the sync would skip.
+#[test]
+fn a8_6_sync_create_empty_creates_empty_folders() {
+    let w = world();
+    w.dir("l/empty");
+    let (outcome, ui) = w.run("load l r\nsync update:left->right\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert!(!w.path("r/empty").exists(), "{:?}", ui.lines);
+    let (outcome, ui) = w.run("load l r\nsync create-empty update:left->right\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert!(w.path("r/empty").is_dir(), "{:?}", ui.lines);
+}
+
+/// §1.8.6: `delete recyclebin=yes` plans moves to the recycle bin and `recyclebin=no` (or none) removes; seen in a dry
+/// run, so the test never touches the real recycle bin.
+#[test]
+fn a8_6_delete_recyclebin_yes_plans_the_recycle_bin() {
+    let w = world();
+    let before = w.dump("r");
+    let dry = || ScriptRunRequest {
+        dry_run: true,
+        ..yes()
+    };
+    let actions = |outcome: &hikasa_session::api::script::ScriptOutcome| -> Vec<String> {
+        outcome.commands[2].result.as_ref().unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["action"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for (word, action) in [
+        ("recyclebin=yes ", "trash"),
+        ("recyclebin:YES ", "trash"),
+        ("recyclebin=no ", "remove"),
+        ("", "remove"),
+    ] {
+        let mut ui = Ui::default();
+        let source = format!("load l r\nselect right.orphan.files\ndelete {word}right\n");
+        let outcome = w.run_with(&source, dry(), &mut ui);
+        assert_eq!(
+            outcome.exit_code,
+            ExitCode::Success,
+            "{source}: {:?}",
+            ui.lines
+        );
+        assert_eq!(actions(&outcome), [action], "{source}");
+    }
+    assert_eq!(w.dump("r"), before);
+}
+
+/// §1.8.6: `sync visible` syncs the rows the script's display shows (`FolderSyncRequest::visible`): a row a filter hides
+/// is out of its scope, while a sync without it leaves that row as filtered.
+#[test]
+fn a8_6_sync_visible_scopes_the_sync_to_the_displayed_rows() {
+    let w = world();
+    w.file("r/sub/hidden.dat", "dat\n", 1_000_000);
+    let reasons = |visible: &str| -> Vec<String> {
+        let source = format!("filter \"-*.dat\"\nload l r\nsync {visible}update:left->right\n");
+        let (outcome, ui) = w.run(&source);
+        assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+        outcome.commands[2].result.as_ref().unwrap()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["path"] == "sub/hidden.dat")
+            .map(|r| r["reason"].as_str().unwrap_or("").to_owned())
+            .collect()
+    };
+    assert_eq!(reasons("visible "), ["out_of_scope"]);
+    assert_eq!(reasons(""), ["filtered"]);
+}
