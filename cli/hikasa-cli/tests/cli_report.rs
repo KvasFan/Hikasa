@@ -418,6 +418,68 @@ fn a7_15_the_clipboard_file_and_its_failure() {
     );
 }
 
+/// A7.15 (review): on Linux the system clipboard goes through the helper; a helper that cannot place the report is a
+/// failed *write* of the clipboard (`io`, "cannot write the clipboard"), exit 100. The helper's fake placer
+/// (`HIKASA_CLIPBOARD_HELPER_FILE`, in a folder that does not exist) stands in for the clipboard: no display is used.
+#[cfg(target_os = "linux")]
+#[test]
+fn a7_15_a_failed_helper_is_a_write_of_the_clipboard() {
+    let s = Sandbox::new();
+    let (l, r, _, _) = inputs(&s);
+    let out = cmd(&s)
+        .env_remove("HIKASA_CLIPBOARD_FILE")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env(
+            "HIKASA_CLIPBOARD_HELPER_FILE",
+            s.join("no/such/folder/clip"),
+        )
+        .args([
+            "--json",
+            "report",
+            "text",
+            &l,
+            &r,
+            "--output-to",
+            "clipboard",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    let doc = json(&out);
+    assert_eq!(doc["error"]["kind"], "io", "{doc}");
+    let message = doc["error"]["message"].as_str().unwrap();
+    assert!(message.contains("cannot write the clipboard"), "{message}");
+    assert!(!message.contains("cannot read"), "{message}");
+    // Placed through the same helper: the file holds a file target's bytes.
+    let placed = s.join("placed.txt");
+    let out = cmd(&s)
+        .env_remove("HIKASA_CLIPBOARD_FILE")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env("HIKASA_CLIPBOARD_HELPER_FILE", &placed)
+        .args(["report", "text", &l, &r, "--output-to", "clipboard"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 13, "{}", stderr(&out));
+    let file = s.join("same.txt");
+    run(
+        &s,
+        &[
+            "report",
+            "text",
+            &l,
+            &r,
+            "--output-to",
+            &file.display().to_string(),
+        ],
+    );
+    assert_eq!(
+        std::fs::read(&placed).unwrap(),
+        std::fs::read(&file).unwrap()
+    );
+}
+
 /// A7.15: the Linux helper's hidden entry reads a payload from stdin and reports it placed (a fake placer, never the
 /// real clipboard); the entry is in no help, no reference and no topic.
 #[test]
