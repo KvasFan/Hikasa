@@ -50,6 +50,15 @@ pub const HOSTILE: &[char] = &[
     '\u{1f469}',
 ];
 
+/// The characters of a generated file name for a spec in an attribute: a backslash, the characters of an escape and a
+/// control on Unix; on Windows (where a backslash separates and a control is refused) the spec's own `C:\…` has the
+/// backslashes.
+pub const NAME_CHARS: &[char] = if cfg!(windows) {
+    &['a', 'u', '{', '1', '}', ' ']
+} else {
+    &['a', 'u', '{', '1', '}', ' ', '\\', '\u{1}']
+};
+
 /// Plain characters only (properties that read the text form back, where tabs and controls are shown escaped).
 pub const PLAIN: &[char] = &['a', 'b', 'c', 'x', 'y', ' ', '-', '+', '[', ']', 'é', '日'];
 
@@ -97,11 +106,12 @@ pub fn text_pair(alphabet: &'static [char]) -> impl Strategy<Value = (String, St
 
 /// Compares two strings as UTF-8 (no detection, so every character reaches the report), under `rules`.
 pub fn compare_strings(left: &str, right: &str, rules: &TextRules) -> TextComparison {
-    compare_strings_cpl(left, right, rules, None)
+    compare_strings_cpl("left.txt", left, right, rules, None)
 }
 
-/// [`compare_strings`] with a characters-per-line limit (`None`: the format's).
+/// [`compare_strings`] with the left file's name and a characters-per-line limit (`None`: the format's).
 pub fn compare_strings_cpl(
+    left_name: &str,
     left: &str,
     right: &str,
     rules: &TextRules,
@@ -111,7 +121,7 @@ pub fn compare_strings_cpl(
     load.decode.override_encoding = Some(TextEncoding::UTF_8);
     load.chars_per_line_limit = chars_per_line;
     compare_bytes_with(
-        ("left.txt", left.as_bytes()),
+        (left_name, left.as_bytes()),
         ("right.txt", right.as_bytes()),
         rules,
         &load,

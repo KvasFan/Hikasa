@@ -5,7 +5,9 @@
 //! Escaping: `&`, `<`, `>` always, `"` in attributes; a CR is `&#13;`, a TAB and an LF in an attribute `&#9;`,
 //! `&#10;` (parsers normalise them away otherwise); a character XML 1.0 cannot carry (C0 controls except TAB, LF and
 //! CR; U+FFFE, U+FFFF) is the empty element `<c x="1b"/>` in text content and its escape `\u{1b}` in an attribute,
-//! where elements cannot go (names come escaped by `escape_name` and carry `raw-name`).
+//! where elements cannot go, and there a backslash is `\\`, so every attribute reads back to one string (D-198, W7a
+//! review). Names come escaped by `escape_name` (which doubles the backslash itself) through [`name_attr`] and carry
+//! `raw-name`.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -41,10 +43,17 @@ pub(crate) fn push_text(out: &mut String, s: &str) {
     }
 }
 
-/// Appends `s` as an attribute value (without the quotes).
+/// Appends `s` as an attribute value (without the quotes): a character XML cannot carry as `\u{…}` and a backslash
+/// as `\\`, as `escape_name` writes them.
 pub(crate) fn push_attr_value(out: &mut String, s: &str) {
+    push_attr_chars(out, s, true);
+}
+
+/// Appends an attribute value; `double_backslash` false for a name `escape_name` already escaped.
+fn push_attr_chars(out: &mut String, s: &str, double_backslash: bool) {
     for c in s.chars() {
         match c {
+            '\\' if double_backslash => out.push_str("\\\\"),
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
@@ -66,6 +75,16 @@ pub(crate) fn attr(out: &mut String, name: &str, value: &str) {
     out.push_str(name);
     out.push_str("=\"");
     push_attr_value(out, value);
+    out.push('"');
+}
+
+/// Appends ` name="value"` for a name or path `escape_name` already escaped (its backslashes doubled, its controls
+/// `\u{…}`): the backslash is not doubled again.
+pub(crate) fn name_attr(out: &mut String, name: &str, escaped: &str) {
+    out.push(' ');
+    out.push_str(name);
+    out.push_str("=\"");
+    push_attr_chars(out, escaped, false);
     out.push('"');
 }
 
@@ -273,6 +292,14 @@ mod tests {
         let mut out = String::new();
         attr(&mut out, "n", "a\"b\tc\nd\re\u{1}<&");
         assert_eq!(out, " n=\"a&quot;b&#9;c&#10;d&#13;e\\u{1}&lt;&amp;\"");
+        // A backslash is doubled, so a control and the six characters of its escape differ.
+        let mut out = String::new();
+        attr(&mut out, "n", "\u{1}|\\u{1}|C:\\x");
+        assert_eq!(out, " n=\"\\u{1}|\\\\u{1}|C:\\\\x\"");
+        // A name comes escaped: its doubled backslash stays as it is.
+        let mut out = String::new();
+        name_attr(&mut out, "name", "n\\\\b\\u{1}");
+        assert_eq!(out, " name=\"n\\\\b\\u{1}\"");
         assert_eq!(hex(&[0xff, 0x0a]), "ff0a");
         assert!(forbidden('\u{8}') && !forbidden('\t') && !forbidden('\u{7f}'));
     }

@@ -329,3 +329,35 @@ pub fn counts(doc: &Document<'_>) -> Vec<(String, String, u64)> {
         })
         .collect()
 }
+
+/// Decodes an attribute value as the dumps escape it: `\\` a backslash, `\n`, `\t`, `\r` (names, `escape_name`),
+/// `\u{…}` a character; any other backslash is an error, so an undoubled backslash is caught.
+pub fn unescape(value: &str) -> Result<String, String> {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('u') => {
+                if chars.next() != Some('{') {
+                    return Err(format!("\\u without {{ in {value:?}"));
+                }
+                let hex: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                let code = u32::from_str_radix(&hex, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| format!("\\u{{{hex}}} in {value:?}"))?;
+                out.push(code);
+            }
+            other => return Err(format!("a lone backslash before {other:?} in {value:?}")),
+        }
+    }
+    Ok(out)
+}

@@ -90,8 +90,8 @@ fn push_row(
         .unwrap_or_default();
     let m = marker(read, row.node, iu);
     xml::open(out, depth, if folder { "folder" } else { "entry" });
-    xml::attr(out, "name", &name);
-    xml::attr(out, "path", &escape_name(path.as_str()));
+    xml::name_attr(out, "name", &name);
+    xml::name_attr(out, "path", &escape_name(path.as_str()));
     xml::attr(out, "state", state_word(m));
     let mut buf = [0u8; 4];
     xml::attr(out, "marker", m.encode_utf8(&mut buf));
@@ -115,7 +115,7 @@ fn push_row(
         };
         xml::open(out, depth + 1, element);
         let shown = escape_name(entry.name);
-        xml::attr(out, "name", &shown);
+        xml::name_attr(out, "name", &shown);
         let raw = read.raw_name(row.node, side);
         let exact = raw
             .as_ref()

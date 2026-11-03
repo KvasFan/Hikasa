@@ -7,8 +7,8 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::inputs::{
-    HOSTILE, PLAIN, compare_memory, compare_on, compare_strings, compare_strings_cpl, folder_tree,
-    materialize, text_pair,
+    HOSTILE, NAME_CHARS, PLAIN, compare_memory, compare_on, compare_strings, compare_strings_cpl,
+    folder_tree, materialize, text_pair,
 };
 use common::{config, xmlcheck};
 use hikasa_core::Side;
@@ -18,7 +18,7 @@ use hikasa_folder::{
 use hikasa_report::links::href_segments;
 use hikasa_report::{
     HtmlStyle, ReportDefaults, ReportInput, ReportKind, ReportMeta, ReportRequest, ReportWords,
-    escape_name, folder_compare_json, href, render_report, summary_counts, text_compare_json,
+    folder_compare_json, href, render_report, summary_counts, text_compare_json,
 };
 use hikasa_text::{Importance, LineIdx, RowIdx, RowState, TextComparison, TextRules, ViewOptions};
 use proptest::prelude::*;
@@ -200,10 +200,12 @@ proptest! {
     fn p_xml_text_dump_round_trips(
         (left, right) in text_pair(HOSTILE),
         cpl in proptest::option::weighted(0.6, 1u32..8),
+        name in proptest::collection::vec(proptest::sample::select(NAME_CHARS), 0..6),
         iu in any::<bool>(),
         title in proptest::collection::vec(proptest::sample::select(&['T', ' ', '\r', '\n', '&', '<', '"', '\u{0}', '\u{1b}', '\u{ffff}', '\u{202e}'][..]), 0..10),
     ) {
-        let cmp = compare_strings_cpl(&left, &right, &TextRules::default(), cpl);
+        let name = format!("n{}.txt", name.into_iter().collect::<String>());
+        let cmp = compare_strings_cpl(&name, &left, &right, &TextRules::default(), cpl);
         let title: String = title.into_iter().collect();
         let mut options = vec!["display-all"];
         if iu {
@@ -220,6 +222,9 @@ proptest! {
             }
             prop_assert_eq!(&rebuilt, source, "{}", xml);
         }
+        // Every attribute reads back to one string: the spec with its backslashes and controls.
+        let spec = doc.descendants().find(|n| n.has_tag_name((xmlcheck::NAMESPACE, "side"))).unwrap().attribute("spec").unwrap();
+        prop_assert_eq!(xmlcheck::unescape(spec).map_err(TestCaseError::fail)?, cmp.document(Side::Left).origin().display(), "{}", xml);
         let read_title = doc.descendants().find(|n| n.has_tag_name((xmlcheck::NAMESPACE, "title"))).map(xmlcheck::line_text).unwrap();
         let want_title = if title.is_empty() { "Text Compare".to_owned() } else { title.clone() };
         prop_assert_eq!(read_title, want_title);
@@ -271,7 +276,11 @@ proptest! {
             .filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "entry")) || n.has_tag_name((xmlcheck::NAMESPACE, "folder")))
             .map(|n| {
                 let state = n.attribute("state").unwrap();
-                (n.attribute("path").unwrap().to_owned(), if state == "unimportant" { "different".to_owned() } else { state.to_owned() })
+                // The path and the name read back to the tree's own (`\\`, `\u{…}`).
+                let path = xmlcheck::unescape(n.attribute("path").unwrap()).unwrap();
+                let name = xmlcheck::unescape(n.attribute("name").unwrap()).unwrap();
+                assert_eq!(path.rsplit('/').next(), Some(name.as_str()), "{xml}");
+                (path, if state == "unimportant" { "different".to_owned() } else { state.to_owned() })
             })
             .collect();
         prop_assert_eq!(got.len(), doc.descendants().filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "entry")) || n.has_tag_name((xmlcheck::NAMESPACE, "folder"))).count());
@@ -319,7 +328,7 @@ fn folder_dump(
                 "right_orphan" => "right-only".to_owned(),
                 other => other.replace('_', "-"),
             };
-            (escape_name(&item.path).into_owned(), state)
+            (item.path.clone(), state)
         })
         .collect();
     (xml, items)

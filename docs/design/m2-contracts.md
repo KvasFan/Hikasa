@@ -5877,7 +5877,9 @@ one element per line, a text `row` with its children on one line; attributes in 
 otherwise); a character XML 1.0 cannot carry (C0 controls except TAB and LF, U+FFFE, U+FFFF) is the empty element
 `<c x="1b"/>` (lower-case hex code point) in text content. In an attribute, where elements cannot go, a name is written
 as the folder list writes it (`escape_name`: such characters as `\u{…}`, a backslash as `\\`), and `raw-name` then
-holds its exact bytes.
+holds its exact bytes; every other attribute (a spec, a link target, an error, a reason) writes such a character as
+`\u{…}` and a backslash as `\\` too, so a literal `\u{1}` and U+0001 differ and every attribute reads back to one
+string (W7a note 17).
 Bidirectional formatting characters are data and stay. Display modes, `ignore-unimportant` and the scope apply; colours,
 wrap, width and columns do not (a dump has every column).
 
@@ -6373,6 +6375,13 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
     read-back of A7.5 (`xmlcheck::side_lines`) joins a side's rows by that side's attribute alone and checks the line
     number repeats, P-XML draws a limit of 1–7 in most cases and rebuilds both source strings byte for byte, and
     `xml/pieces/expected.xml` pins the bytes.
+17. **A backslash in every escaped attribute (W7a review).** `push_attr_value` wrote a forbidden character as
+    `\u{…}` but left a backslash alone, so in a spec, a link target or an error `\u{1}` could be U+0001 or six
+    characters. It now doubles the backslash, as `escape_name` does; names and paths, which `escape_name` has already
+    escaped, go through `xml::name_attr`, which does not double it again. The read-back (`xmlcheck::unescape`: `\\`,
+    `\n`, `\t`, `\r`, `\u{…}`) decodes both: P-XML over a side's spec (generated names with a backslash and a
+    control on Unix, the `C:\…` spec on Windows), P-FXML over every `path` and side `name`. On Windows the goldens'
+    `C:\\l\\…` spellings become `/l/…` like the single ones (`unix_paths`).
 
 **W7a mutations** (A7.23; each applied by hand, the named test run, then reverted with `git checkout`):
 

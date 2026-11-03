@@ -91,8 +91,12 @@ pub fn unix_paths(bytes: &[u8]) -> Vec<u8> {
     }
     let text = String::from_utf8(bytes.to_vec()).expect("reports are UTF-8");
     let mut out = text;
-    for base in ["l", "r", "o"] {
-        let windows = format!("C:\\{base}");
+    // An XML attribute doubles a backslash (`C:\\l\\…`): that spelling first.
+    for (base, sep) in ["l", "r", "o"]
+        .into_iter()
+        .flat_map(|base| [(base, "\\\\"), (base, "\\")])
+    {
+        let windows = format!("C:{sep}{base}");
         let mut fixed = String::with_capacity(out.len());
         let mut rest = out.as_str();
         while let Some(at) = rest.find(&windows) {
@@ -104,7 +108,7 @@ pub fn unix_paths(bytes: &[u8]) -> Vec<u8> {
             let end = rest
                 .find(['"', ' ', '<', '\n', ')', ','])
                 .unwrap_or(rest.len());
-            fixed.push_str(&rest[..end].replace('\\', "/"));
+            fixed.push_str(&rest[..end].replace(sep, "/"));
             rest = &rest[end..];
         }
         fixed.push_str(rest);
