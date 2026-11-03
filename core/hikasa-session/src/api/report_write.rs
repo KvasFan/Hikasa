@@ -131,6 +131,9 @@ pub fn pair_file_name(n: usize, total: usize, left_name: &OsStr) -> String {
 /// The last `_files-<n>` tried before `already_exists` (§1.7.9 step 3).
 const MAX_FOLDER_ATTEMPT: u32 = 99;
 
+/// The most symbolic links a linked report's main file is followed through.
+const MAX_LINKS: usize = 40;
+
 /// How long printer and browser folders below `<cache>/print/` are kept (§1.7.11).
 const PRINT_KEEP_DAYS: i64 = 7;
 
@@ -771,6 +774,23 @@ impl Service {
                     (Some(main), Some(folder))
                 }
             };
+            let linked = matches!(req.body, ReportBody::Folder { links: Some(_), .. });
+            // A linked main file that is a symbolic link is followed (W7b review): the files folder goes beside the
+            // file the report is written to, so its hrefs resolve; the plan names that file.
+            let main = match (main, &print_folder) {
+                (Some(main), None) if linked => Some(self.followed(vfs, main)?),
+                (main, _) => main,
+            };
+            if let (Some(main), None) = (&main, &print_folder)
+                && vfs
+                    .stat(main, FollowLinks::Yes)
+                    .is_ok_and(|entry| entry.kind == EntryKind::Dir)
+            {
+                // Refused in the plan, so a dry run says what execution does (T12).
+                return Err(ApiError::from_vfs(VfsError::IsADirectory {
+                    spec: main.canonical(),
+                }));
+            }
             let replaces = match (&main, &print_folder) {
                 (Some(main), None) => vfs.stat(main, FollowLinks::No).is_ok(),
                 _ => false,
@@ -838,6 +858,41 @@ impl Service {
         })
     }
 
+    /// `main` with its symbolic links followed (at most [`MAX_LINKS`]): the file a write through it reaches. A relative
+    /// link is taken from the link's folder; a spec that cannot be looked at is itself.
+    fn followed(&self, vfs: &dyn Vfs, main: Spec) -> Result<Spec, ApiError> {
+        let mut spec = main;
+        for _ in 0..MAX_LINKS {
+            let Ok(entry) = vfs.stat(&spec, FollowLinks::No) else {
+                return Ok(spec);
+            };
+            if entry.kind != EntryKind::Symlink {
+                return Ok(spec);
+            }
+            let Some(to) = entry
+                .link_target_raw
+                .clone()
+                .or_else(|| entry.link_target.clone().map(OsString::from))
+            else {
+                return Ok(spec);
+            };
+            let to = PathBuf::from(to);
+            let path = if to.is_absolute() {
+                to
+            } else {
+                match spec.parent().as_ref().and_then(local_path) {
+                    Some(dir) => dir.join(to),
+                    None => return Ok(spec),
+                }
+            };
+            spec = self.parse_spec(path.as_os_str())?;
+        }
+        Err(ApiError::InvalidArgument(format!(
+            "{}: more than {MAX_LINKS} symbolic links",
+            spec.canonical()
+        )))
+    }
+
     /// The spec of a file target on `vfs` (as `--output`: an archive member is a member, its folder must exist).
     fn target_spec(&self, vfs: &dyn Vfs, raw: &OsStr) -> Result<Spec, ApiError> {
         let spec = Spec::parse_os(raw, &self.spec_context())?;
@@ -890,6 +945,54 @@ impl Service {
         )))
     }
 
+    /// Makes the planned print folder (§1.7.11): `<cache>/print` with its parents, then the folder itself without, so it
+    /// is this report's own; a name another report took since the plan gives the next `n`.
+    fn make_print_folder(&self, vfs: &dyn Vfs, planned: &Spec) -> Result<Spec, ApiError> {
+        let root = planned
+            .parent()
+            .ok_or_else(|| ApiError::Internal("a print folder without a parent".into()))?;
+        vfs.create_dir(&root, true).map_err(ApiError::from_vfs)?;
+        let name = final_name(planned)
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let (stamp, first) = name
+            .rsplit_once('-')
+            .and_then(|(stamp, n)| Some((stamp.to_owned(), n.parse::<u32>().ok()?)))
+            .unwrap_or((name.clone(), 1));
+        for n in first..=9999u32 {
+            let spec = self.child_of(vfs, &root, OsStr::new(&format!("{stamp}-{n}")))?;
+            match vfs.create_dir(&spec, false) {
+                Ok(_) => return Ok(spec),
+                Err(e) if e.kind() == hikasa_core::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(ApiError::from_vfs(e)),
+            }
+        }
+        Err(ApiError::AlreadyExists(format!(
+            "every print folder of {stamp} below {} is taken",
+            root.canonical()
+        )))
+    }
+
+    /// A printer or browser plan moved into the print folder `to`: its main file and its files folder.
+    fn move_print_plan(
+        &self,
+        vfs: &dyn Vfs,
+        plan: &mut ReportPlan,
+        to: &Spec,
+    ) -> Result<(), ApiError> {
+        let into = |spec: &Spec| self.child_of(vfs, to, &final_name(spec).unwrap_or_default());
+        if let Some(main) = &plan.main {
+            plan.main = Some(into(main)?);
+        }
+        if let Some(links) = &mut plan.links {
+            links.folder = into(&links.folder)?;
+            links.wanted = into(&links.wanted)?;
+        }
+        plan.print_folder = Some(to.clone());
+        Ok(())
+    }
+
     /// `<cache>/print`.
     fn print_root(&self) -> Result<Spec, ApiError> {
         let path = self.config().cache_dir.join("print");
@@ -911,17 +1014,20 @@ impl Service {
         let dir = main
             .parent()
             .ok_or_else(|| ApiError::InvalidArgument("the report needs a folder".into()))?;
-        // The main file's folder must exist (as `--output`'s), before any name below it is tried.
-        match vfs.stat(&dir, FollowLinks::Yes) {
-            Ok(entry) if entry.kind == EntryKind::Dir => {}
-            Ok(_) => {
-                return Err(ApiError::from_vfs(VfsError::from_io(
-                    dir.canonical(),
-                    hikasa_vfs::VfsOp::Stat,
-                    std::io::Error::from(std::io::ErrorKind::NotADirectory),
-                )));
+        // The main file's folder must exist (as `--output`'s), before any name below it is tried. A printer or browser
+        // report's folder is made at execution, fresh: nothing below it is looked at.
+        if !fresh {
+            match vfs.stat(&dir, FollowLinks::Yes) {
+                Ok(entry) if entry.kind == EntryKind::Dir => {}
+                Ok(_) => {
+                    return Err(ApiError::from_vfs(VfsError::from_io(
+                        dir.canonical(),
+                        hikasa_vfs::VfsOp::Stat,
+                        std::io::Error::from(std::io::ErrorKind::NotADirectory),
+                    )));
+                }
+                Err(e) => return Err(ApiError::from_vfs(e)),
             }
-            Err(e) => return Err(ApiError::from_vfs(e)),
         }
         let read = cmp.read();
         let total = rows.len();
@@ -949,6 +1055,16 @@ impl Service {
             });
         }
         let wanted = self.child_of(vfs, &dir, OsStr::new(&files_folder_name(&main_name, 1)))?;
+        if fresh {
+            // §1.7.9: a plan of a printer or browser target is always `New` in a fresh folder.
+            return Ok(LinksPlan {
+                folder: wanted.clone(),
+                wanted,
+                state: FilesFolder::New,
+                pairs,
+                stamps: Vec::new(),
+            });
+        }
         for attempt in 1..=MAX_FOLDER_ATTEMPT {
             job.cancel.check().map_err(|_| ApiError::Cancelled)?;
             let folder = if attempt == 1 {
@@ -1137,13 +1253,18 @@ impl Service {
                     outcome.clipboard = Some(payload);
                 }
                 TargetDto::File | TargetDto::Printer | TargetDto::Browser => {
+                    if let Some(planned) = plan.print_folder.clone() {
+                        self.prune_print_folders(vfs);
+                        let made = self.make_print_folder(vfs, &planned)?;
+                        if made != planned {
+                            // Another report took the name since the plan (the same second): the next `n`.
+                            self.move_print_plan(vfs, &mut plan, &made)?;
+                            outcome.plan = plan.clone();
+                        }
+                    }
                     let main = plan.main.clone().ok_or_else(|| {
                         ApiError::Internal("a file report without a main file".into())
                     })?;
-                    if let Some(folder) = &plan.print_folder {
-                        self.prune_print_folders(vfs);
-                        vfs.create_dir(folder, true).map_err(ApiError::from_vfs)?;
-                    }
                     let result = match &plan.links {
                         None => {
                             let durability = if plan.replaces {
