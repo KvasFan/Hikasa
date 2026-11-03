@@ -145,6 +145,17 @@ impl EnvFacts {
     }
 }
 
+/// The environment a script references (§1.8.4, D-217): only the names `%NAME%` of its text, read once before the run, as
+/// [`capture_env`] reads its facts; a name that is not set is absent (set and empty is kept). Never the whole environment.
+pub fn capture_script_env<'n>(
+    names: impl IntoIterator<Item = &'n String>,
+) -> std::collections::BTreeMap<String, std::ffi::OsString> {
+    names
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (name.clone(), value)))
+        .collect()
+}
+
 /// Reads the real process environment (`std::env`, `std::env::current_exe`, `directories::BaseDirs` for the
 /// home folder). ADAPTER-ONLY: the architecture test fails if anything under `core/` calls it (except
 /// hikasa-session's own tests).

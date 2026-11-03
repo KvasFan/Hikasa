@@ -227,7 +227,7 @@ pub struct References {
 
 impl References {
     /// Adds the forms of `word`.
-    pub(crate) fn add(&mut self, word: &Word) {
+    pub fn add(&mut self, word: &Word) {
         if !word.expands {
             return;
         }

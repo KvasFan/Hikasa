@@ -36,6 +36,9 @@ mod report;
 pub mod report_write;
 pub mod requests;
 pub mod responses;
+pub mod script;
+mod script_host;
+pub mod script_log;
 pub mod sessions;
 pub mod settings;
 pub mod vfs_ops;
@@ -254,6 +257,8 @@ pub enum ApiOp {
         /// The kind of the report.
         kind: hikasa_report::ReportKind,
     },
+    /// `script run|check` (M2 W8a, §1.8.12): a `load` whose base cannot be loaded is 107, as `folder op`.
+    Script,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }

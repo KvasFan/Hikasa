@@ -57,6 +57,7 @@ pub use api::{ApiError, ApiOp, HIKASA_VERSION, Service, ServiceInit, StdinSource
 pub use atomic::{TEMP_NAME_PREFIX_MAX, write_atomic};
 pub use error::SessionError;
 pub use formats::FormatStore;
+pub use host::capture_script_env;
 pub use host::{Clock, EnvFacts, FixedClock, Platform};
 pub use host::{SystemClipboard, SystemClock, SystemLauncher, capture_env, clipboard_provider};
 pub use jobs::{JobControl, JobHandle, run_guarded};

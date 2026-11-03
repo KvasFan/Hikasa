@@ -74,6 +74,53 @@ pub fn ask(machine: &mut Confirmation, cancel: &CancelToken, output: &mut dyn Wr
     drive(machine, &mut next, output);
 }
 
+/// Asks every question of `machine` with lines from `line` (a script's scripted answers in tests; `None` is `Cancel`).
+pub fn ask_with(
+    machine: &mut Confirmation,
+    line: &mut dyn FnMut() -> Option<String>,
+    output: &mut dyn Write,
+) {
+    drive(machine, line, output);
+}
+
+/// The prompt of a yes-or-no question (the stop-on-error question of a script, §1.8.7).
+const YES_NO: &str = "[y]es [n]o";
+
+/// Asks `question` until a line answers it: `y`/`yes` is true, `n`/`no` false; the end of the input or a stop is No.
+pub fn ask_yes_no_from(
+    question: &str,
+    line: &mut dyn FnMut() -> Option<String>,
+    output: &mut dyn Write,
+) -> bool {
+    let text = escape_controls(question).into_owned();
+    loop {
+        let _ = writeln!(output, "{text} {YES_NO}");
+        let _ = output.flush();
+        match line().map(|l| l.trim().to_ascii_lowercase()) {
+            None => return false,
+            Some(word) if word == "y" || word == "yes" => return true,
+            Some(word) if word == "n" || word == "no" => return false,
+            Some(_) => {}
+        }
+    }
+}
+
+/// [`ask_yes_no_from`] on the terminal: Ctrl-C answers No at once.
+pub fn ask_yes_no(question: &str, cancel: &CancelToken, output: &mut dyn Write) -> bool {
+    let lines = stdin_lines();
+    let mut next = || loop {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        match lines.recv_timeout(LOOK) {
+            Ok(line) => return Some(line),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    };
+    ask_yes_no_from(question, &mut next, output)
+}
+
 /// [`drive`] over a reader.
 #[cfg(test)]
 fn ask_from(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {

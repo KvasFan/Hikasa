@@ -96,6 +96,12 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ReportCmd,
     },
+    /// Run or check a script: a batch of commands over one invisible folder comparison.
+    Script {
+        /// The script subcommand.
+        #[command(subcommand)]
+        cmd: ScriptCmd,
+    },
     /// Named sessions, session folders, defaults and auto-saved sessions.
     Session {
         /// The session subcommand.
@@ -117,6 +123,61 @@ pub enum Command {
     Version,
     /// Print a help topic (`hikasa help text compare`), or the contents.
     Help(HelpArgs),
+}
+
+/// `hikasa script run|check` (M2 W8a, §1.8.12).
+#[derive(Debug, clap::Subcommand)]
+pub enum ScriptCmd {
+    /// Run a script headless: its log goes to stderr, a report with `output-to:-` to stdout.
+    Run(ScriptRunArgs),
+    /// Check a script without running it: exit 0, 105 (cannot be read) or 106 (errors, each with its position).
+    Check(ScriptCheckArgs),
+}
+
+/// `hikasa script run <FILE|-> [<ARG>…]`.
+#[derive(Debug, clap::Args)]
+pub struct ScriptRunArgs {
+    /// The script (`-` reads standard input); a relative name absent here is looked up in the shared scripts folder.
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// The arguments `%1`…`%9` (one that starts with `-` follows `--`).
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
+    /// Ask nothing: a question declines its command, stop on error ends the run.
+    #[arg(long, conflicts_with = "gui")]
+    pub silent: bool,
+    /// Stop at the first failed command (ask to continue on a terminal).
+    #[arg(long)]
+    pub stop_on_error: bool,
+    /// The confirm mode before line 1: prompt, yes-to-all, no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Run every command as it would, but execute no plan and write no file.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Run the script in the GUI with its status window (as `gui script`).
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait for the script and exit with its code.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start a GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+    /// With `--gui`: close the status window at the end.
+    #[arg(long, requires = "gui")]
+    pub closescript: bool,
+}
+
+/// `hikasa script check <FILE|-> [<ARG>…]`.
+#[derive(Debug, clap::Args)]
+pub struct ScriptCheckArgs {
+    /// The script (`-` reads standard input).
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// Arguments: with them, `%n` above their number is an error.
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
 }
 
 /// `hikasa help [topic…]`.

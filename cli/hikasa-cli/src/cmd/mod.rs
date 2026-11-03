@@ -11,6 +11,7 @@ pub mod gui;
 pub mod help;
 pub mod quick;
 pub mod report;
+pub mod script;
 pub mod session;
 pub mod settings;
 pub mod text;
@@ -25,11 +26,11 @@ use hikasa_session::api::dto::{
     FORMAT_EXPORT_SCHEMA, FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA,
     FORMAT_TOKENS_SCHEMA, FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
     GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, REPORT_SCHEMA,
-    SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA,
-    SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA,
-    SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA,
-    VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA,
-    WORKSPACE_WRITE_SCHEMA,
+    SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
+    SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, VERSION_SCHEMA,
+    VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA,
+    WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -181,6 +182,7 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         | Command::Settings { .. }
         | Command::Report { .. }
         | Command::Session { .. }
+        | Command::Script { .. }
         | Command::Workspace { .. } => None,
     }
 }
@@ -262,6 +264,7 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             | SessionCmd::Mkdir { .. }
             | SessionCmd::Rmdir { .. } => (SESSION_WRITE_SCHEMA, ApiOp::Other),
         },
+        Command::Script { .. } => (SCRIPT_SCHEMA, ApiOp::Script),
         Command::Workspace { cmd } => match cmd {
             WorkspaceCmd::List => (WORKSPACE_LIST_SCHEMA, ApiOp::Other),
             WorkspaceCmd::Show { .. } => (WORKSPACE_SHOW_SCHEMA, ApiOp::Other),
@@ -320,6 +323,7 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Settings { cmd } => settings::run(ctx, cmd),
         Command::Report { cmd } => report::run(ctx, cmd),
         Command::Session { cmd } => session::run(ctx, cmd),
+        Command::Script { cmd } => script::run(ctx, cmd),
         Command::Workspace { cmd } => workspace::run(ctx, cmd),
         Command::Completions { shell } => completions::run(ctx.out, *shell),
         Command::Version => version::run(ctx.out),

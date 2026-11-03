@@ -2196,6 +2196,7 @@ dependencies = [
  "hikasa-folder",
  "hikasa-formats",
  "hikasa-report",
+ "hikasa-script",
  "hikasa-text",
  "hikasa-vfs",
  "interprocess",

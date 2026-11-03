@@ -16,6 +16,7 @@ hikasa-formats.workspace = true
 hikasa-text.workspace = true
 hikasa-folder.workspace = true
 hikasa-report.workspace = true
+hikasa-script.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

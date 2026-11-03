@@ -1030,6 +1030,7 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
         let lines: Vec<&str> = code.lines().collect();
         for token in [
             "capture_env",
+            "capture_script_env",
             "SystemClock",
             "SystemClipboard",
             "clipboard_provider",
@@ -1087,6 +1088,108 @@ fn report_violations(rel: &str, raw: &str) -> Vec<String> {
             violations.push(format!(
                 "{rel}: names `std::fs` (a report is written through the VFS)"
             ));
+        }
+    }
+    violations
+}
+
+/// The script rules of M2 W8a (D-230), part of check 2: `core/hikasa-script/src` names no `std::fs`, `std::process`,
+/// `std::net`, `File::`; among the script files of the session (`api/script*.rs`) only `script_log.rs` names `std::fs`,
+/// and none calls a planner, an executor or a renderer directly (`execute_with`, `plan_op`, `ReportRequest::parse`,
+/// `render_report`): the host reaches behaviour through the Service (T11).
+fn script_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = compact(&code_only(raw));
+    let imported = |head: &str| {
+        imports(&code_only(raw))
+            .into_iter()
+            .any(|(_, (path, _))| path.len() >= 2 && path[0] == "std" && path[1] == head)
+    };
+    let mut violations = Vec::new();
+    if rel.starts_with("core/hikasa-script/src/") {
+        for (token, head) in [
+            ("std::fs", "fs"),
+            ("std::process", "process"),
+            ("std::net", "net"),
+        ] {
+            if code.contains(token) || imported(head) {
+                violations.push(format!(
+                    "{rel}: names `{token}` (the script crate is pure, D-215)"
+                ));
+            }
+        }
+        if code.contains("File::") {
+            violations.push(format!(
+                "{rel}: names `File::` (the script crate is pure, D-215)"
+            ));
+        }
+    }
+    let script_file = rel
+        .strip_prefix("core/hikasa-session/src/api/")
+        .is_some_and(|name| name.starts_with("script"));
+    if script_file {
+        if rel != "core/hikasa-session/src/api/script_log.rs"
+            && (code.contains("std::fs") || imported("fs"))
+        {
+            violations.push(format!(
+                "{rel}: names `std::fs` (only script_log.rs opens a file without the VFS)"
+            ));
+        }
+        for token in [
+            "execute_with",
+            "plan_op",
+            "ReportRequest::parse",
+            "render_report",
+        ] {
+            if code.contains(token) {
+                violations.push(format!(
+                    "{rel}: names `{token}` (a script reaches behaviour through the Service, T11)"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn check_script_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["core/hikasa-script/src", "core/hikasa-session/src/api"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(script_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// Check 7's script rule (D-230): the adapters name no `hikasa_script` item; they reach scripts through
+/// `hikasa_session::api::script` only.
+fn script_adapter_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    if !adapter {
+        return Vec::new();
+    }
+    find_token(&code, "hikasa_script")
+        .into_iter()
+        .map(|at| {
+            format!(
+                "{rel}:{}: names `hikasa_script` (adapters use hikasa_session::api::script)",
+                line_of(&code, at)
+            )
+        })
+        .collect()
+}
+
+fn check_script_adapters(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["cli", "gui"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(script_adapter_violations(&rel, &raw));
+            }
         }
     }
     violations
@@ -1565,6 +1668,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-text",
             "hikasa-folder",
             "hikasa-report",
+            "hikasa-script",
             "serde",
             "serde_json",
             "toml",
@@ -2736,6 +2840,7 @@ fn check_2_no_banned_tokens_in_core() {
     violations.extend(check_confined_crates(&root));
     violations.extend(check_inclusions(&root));
     violations.extend(check_report_rules(&root));
+    violations.extend(check_script_rules(&root));
     assert_none(
         "2 (banned tokens, adapter-only functions, file inclusion, report writes)",
         violations,
@@ -2778,6 +2883,57 @@ fn check_7_adapters_parse_no_vocabulary() {
         "7 (report slot parsers, ReportRequest::parse)",
         check_slot_parsers(&workspace_root()),
     );
+    assert_none(
+        "7 (hikasa_script in the adapters)",
+        check_script_adapters(&workspace_root()),
+    );
+}
+
+/// A8.22 (D-230): each script rule of check 2 and check 7 finds a planted violation.
+#[test]
+fn check_2_and_7_script_rules_find_planted_violations() {
+    for planted in [
+        "use std::fs;\nfn f() {}\n",
+        "fn f() { let _ = std::process::id(); }\n",
+        "fn f() { let _ = std::net::Ipv4Addr::LOCALHOST; }\n",
+        "fn f() { let _ = File::open(\"x\"); }\n",
+    ] {
+        assert_eq!(
+            script_violations("core/hikasa-script/src/lex.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+    }
+    let fs = "fn f() { let _ = std::fs::read(\"x\"); }\n";
+    assert_eq!(
+        script_violations("core/hikasa-session/src/api/script_host.rs", fs).len(),
+        1
+    );
+    assert!(script_violations("core/hikasa-session/src/api/script_log.rs", fs).is_empty());
+    assert!(script_violations("core/hikasa-session/src/api/compare.rs", fs).is_empty());
+    for token in [
+        "execute_with",
+        "plan_op",
+        "ReportRequest::parse",
+        "render_report",
+    ] {
+        let planted = format!("fn f() {{ {token}(); }}\n");
+        assert_eq!(
+            script_violations("core/hikasa-session/src/api/script.rs", &planted).len(),
+            1,
+            "{token}"
+        );
+    }
+    let adapter = "use hikasa_script::lex;\n";
+    assert_eq!(
+        script_adapter_violations("cli/hikasa-cli/src/cmd/script.rs", adapter).len(),
+        1
+    );
+    assert_eq!(
+        script_adapter_violations("gui/hikasa-gui/src/app.rs", adapter).len(),
+        1
+    );
+    assert!(script_adapter_violations("core/hikasa-session/src/api/script.rs", adapter).is_empty());
 }
 
 /// A7.21: no package is added for W7 (`roxmltree` was in the lock through `fontique`): the package count of

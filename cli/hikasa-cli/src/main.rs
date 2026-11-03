@@ -399,6 +399,7 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Gui { .. }
         | Command::Settings { .. }
         | Command::Session { .. }
+        | Command::Script { .. }
         | Command::Workspace { .. }
         | Command::Completions { .. }
         | Command::Version

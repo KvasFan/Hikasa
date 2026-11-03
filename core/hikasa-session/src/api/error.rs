@@ -89,6 +89,22 @@ pub enum ApiError {
     /// A panic or invariant violation (bug).
     #[error("internal error: {0}")]
     Internal(String),
+    /// A script that cannot be located or read (exit 105, §1.8.7; M2 W8a): not found, a folder, unreadable, too large.
+    #[error("{message}")]
+    ScriptLoad {
+        /// `not_found`, `io`, `too_large`, `invalid_input`, … .
+        kind: ErrorKind,
+        /// The message, naming the script.
+        message: String,
+    },
+    /// A script that does not check (exit 106, §1.8.7; M2 W8a): every error with its position.
+    #[error("{} errors in {script}; nothing was run", errors.total())]
+    ScriptSyntax {
+        /// The script as located.
+        script: String,
+        /// The errors.
+        errors: hikasa_script::Errors,
+    },
     /// A rules file (`--rules-file`, `--text-rules-file`) that does not parse or validate: the error of the file,
     /// named by its canonical spec (JSON `error.spec`). Its kind and exit code are those of `source`. Added in
     /// the wave-4 review (§1.8.7).
@@ -131,6 +147,8 @@ impl ApiError {
             ApiError::Cancelled => ErrorKind::Cancelled,
             ApiError::Internal(_) => ErrorKind::Internal,
             ApiError::RulesFile { source, .. } => source.kind(),
+            ApiError::ScriptLoad { kind, .. } => *kind,
+            ApiError::ScriptSyntax { .. } => ErrorKind::InvalidInput,
         }
     }
 
@@ -146,10 +164,13 @@ impl ApiError {
     pub fn exit_code(&self, op: ApiOp) -> ExitCode {
         match self {
             ApiError::GuiNotFound | ApiError::GuiNotStartable(_) => ExitCode::GuiNotFound,
+            ApiError::ScriptLoad { .. } => ExitCode::ScriptLoadError,
+            ApiError::ScriptSyntax { .. } => ExitCode::ScriptSyntaxError,
             ApiError::LoadFailed { .. } => match op {
                 ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
+                | ApiOp::Script
                 | ApiOp::Report {
                     kind: ReportKind::Folder,
                 } => ExitCode::LoadFailed,
@@ -168,6 +189,7 @@ impl ApiError {
                 ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
+                | ApiOp::Script
                 | ApiOp::Report {
                     kind: ReportKind::Folder,
                 } => match e {
@@ -220,6 +242,7 @@ impl ApiError {
                 | ApiOp::Vfs
                 | ApiOp::GuiControl
                 | ApiOp::Report { .. }
+                | ApiOp::Script
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::InvalidArgument(_)
@@ -269,7 +292,9 @@ impl ApiError {
             | ApiError::GuiNotFound
             | ApiError::GuiNotStartable(_)
             | ApiError::Cancelled
-            | ApiError::Internal(_) => None,
+            | ApiError::Internal(_)
+            | ApiError::ScriptLoad { .. }
+            | ApiError::ScriptSyntax { .. } => None,
         };
         report
     }

@@ -188,32 +188,45 @@ impl FolderOpOutcome {
         }
     }
 
-    /// `hikasa.folder_op.v1` (`result`).
-    pub fn dto(&self) -> FolderOpDto {
-        let items = self
-            .report
+    /// One item of `hikasa.folder_op.v1` (additive, M2 W8a): a script's verbose log makes them one at a time, so a
+    /// million items never stand as a million DTOs at once.
+    pub fn item_dto(&self, index: usize) -> Option<FolderOpItemDto> {
+        let item = self.report.plan.items.get(index)?;
+        let result = self.report.results.get(index)?;
+        let meta = self.meta.get(index)?;
+        Some(FolderOpItemDto {
+            action: item.action.as_str(),
+            kind: item.kind,
+            side: meta.side.map(Side::as_str),
+            path: meta.path.clone(),
+            source: item.source.as_ref().map(Spec::canonical),
+            target: item.target.canonical(),
+            size: item.size,
+            replaces: item.replaces,
+            backup: item.backup.as_ref().map(Spec::canonical),
+            conflicts: meta.conflicts.names(),
+            answer: meta.answer,
+            status: result.status,
+            reason: result.skip.or(item.skip),
+            error: result.error.clone(),
+            change: item.attrs.as_ref().map(change_text),
+        })
+    }
+
+    /// The number of items.
+    pub fn item_count(&self) -> usize {
+        self.report
             .plan
             .items
-            .iter()
-            .zip(&self.report.results)
-            .zip(&self.meta)
-            .map(|((item, result), meta)| FolderOpItemDto {
-                action: item.action.as_str(),
-                kind: item.kind,
-                side: meta.side.map(Side::as_str),
-                path: meta.path.clone(),
-                source: item.source.as_ref().map(Spec::canonical),
-                target: item.target.canonical(),
-                size: item.size,
-                replaces: item.replaces,
-                backup: item.backup.as_ref().map(Spec::canonical),
-                conflicts: meta.conflicts.names(),
-                answer: meta.answer,
-                status: result.status,
-                reason: result.skip.or(item.skip),
-                error: result.error.clone(),
-                change: item.attrs.as_ref().map(change_text),
-            })
+            .len()
+            .min(self.report.results.len())
+            .min(self.meta.len())
+    }
+
+    /// `hikasa.folder_op.v1` (`result`).
+    pub fn dto(&self) -> FolderOpDto {
+        let items = (0..self.item_count())
+            .filter_map(|index| self.item_dto(index))
             .collect();
         FolderOpDto {
             op: self.verb.as_str(),
@@ -1453,6 +1466,20 @@ impl Service {
             let read = model.read();
             let (selection, _) = self.select_of(&read, select, SideSet::all())?;
             Ok(selection.iter().map(|(node, _)| node).collect())
+        })
+    }
+
+    /// The selection of `select` on `model`, with the sides of each row (additive, M2 W8a): what a script's `select`
+    /// holds for its later commands, through the one selection parser (T11).
+    pub fn folder_selection(
+        &self,
+        model: &Arc<FolderModel>,
+        select: &SelectRequest,
+    ) -> Result<Selection, ApiError> {
+        run_guarded(|| {
+            let read = model.read();
+            let (selection, _) = self.select_of(&read, select, SideSet::all())?;
+            Ok(selection)
         })
     }
 
