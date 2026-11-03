@@ -22,6 +22,8 @@
 //! | `settings import` | `add`/`replace <path>`, `delete <path>`, one summary line per category, failures ([`settings_import_lines`]) |
 //! | `folder op` | one line per item, then the summary ([`folder_op_lines`]); `compare`, `crc`: [`folder_contents_lines`] |
 //! | `folder sync` | `<marker> <action> <path>` per row that is not `same`, the items and the summary, `# <counts>` ([`folder_sync_lines`]) |
+//!
+//! [`local_time_text`] is the Modified cell of the folder views (M2 W9a, D-237): a time in the clock's zone.
 
 use hikasa_folder::ops::OpVerb;
 use hikasa_report::{escape_controls, escape_name};
@@ -42,6 +44,18 @@ use super::vfs_ops::{VfsOpDto, VfsOpItemDto};
 use crate::ipc::ViewInfo;
 use crate::settings::ShortcutConflict;
 use crate::settings::tree::inline;
+
+/// A file time as `YYYY-MM-DD HH:MM:SS` in `zone` (the Modified column of the folder views, D-237: the zone of the
+/// Service's clock, `Service::clock().now().time_zone()`); a time outside jiff's range is its RFC 3339 text.
+pub fn local_time_text(time: hikasa_core::FileTime, zone: &jiff::tz::TimeZone) -> String {
+    match jiff::Timestamp::new(time.unix_seconds(), time.subsec_nanos() as i32) {
+        Ok(stamp) => stamp
+            .to_zoned(zone.clone())
+            .strftime("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        Err(_) => time.to_rfc3339(),
+    }
+}
 
 /// The `format tokens` lines: one per token, `L<line>:<start>-<end>\t<element>\t<escaped text>` (byte offsets,
 /// end exclusive).
@@ -584,5 +598,26 @@ mod tests {
             specs: vec!["/x".into(), "/y\\z".into()],
         };
         assert_eq!(gui_list_line(&view), "7\ttext_compare\ta\\nb\t/x\t/y\\\\z");
+    }
+
+    /// A9.3: the Modified cell in UTC, at +05:45 and on both sides of a DST change (zones fixed by the test, never the
+    /// machine's).
+    #[test]
+    fn local_time_text_in_fixed_zones() {
+        use hikasa_core::FileTime;
+        use jiff::tz::{Offset, TimeZone};
+        let t = FileTime::from_unix(1_700_000_000, 999_999_999).unwrap(); // 2023-11-14T22:13:20.999Z
+        assert_eq!(local_time_text(t, &TimeZone::UTC), "2023-11-14 22:13:20");
+        let kathmandu = TimeZone::fixed(Offset::from_seconds(5 * 3600 + 45 * 60).unwrap());
+        assert_eq!(local_time_text(t, &kathmandu), "2023-11-15 03:58:20");
+        // Central Europe: 2024-03-31 01:59:59Z is 03:59:59 CEST, one second before 01:59:59 CET.
+        let cet = TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").unwrap();
+        let before = FileTime::from_unix(1_711_846_799, 0).unwrap(); // 2024-03-31T00:59:59Z
+        let after = FileTime::from_unix(1_711_846_800, 0).unwrap(); // 2024-03-31T01:00:00Z
+        assert_eq!(local_time_text(before, &cet), "2024-03-31 01:59:59");
+        assert_eq!(local_time_text(after, &cet), "2024-03-31 03:00:00");
+        // Before 1970.
+        let old = FileTime::from_unix(-1, 0).unwrap();
+        assert_eq!(local_time_text(old, &TimeZone::UTC), "1969-12-31 23:59:59");
     }
 }
