@@ -1,0 +1,61 @@
+{
+  "schema": "hikasa.report.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "type": "folder",
+    "layout": "side-by-side",
+    "format": "html",
+    "target": "file",
+    "output": "<TMP>/out/report.html",
+    "replaced": false,
+    "dry_run": false,
+    "cancelled": false,
+    "bytes": 3333,
+    "verdict": "differences",
+    "words": {
+      "layout": "side-by-side",
+      "options": [
+        "display-context",
+        "column-size",
+        "column-timestamp",
+        "include-file-links"
+      ],
+      "output_options": [
+        "html-color"
+      ]
+    },
+    "unused": [],
+    "links": {
+      "folder": "<TMP>/out/report_files-2",
+      "wanted": "<TMP>/out/report_files",
+      "renamed": true,
+      "state": "new",
+      "pairs": [
+        {
+          "path": "a.txt",
+          "file": "1-a.txt.html",
+          "status": "written",
+          "reason": null,
+          "error": null
+        }
+      ],
+      "counts": {
+        "written": 1,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    "clipboard": null,
+    "opened": null
+  },
+  "warnings": [
+    {
+      "code": "report_folder_renamed",
+      "message": "<TMP>/out/report_files is not this report's, so the pair reports go to <TMP>/out/report_files-2",
+      "spec": null
+    }
+  ],
+  "error": null
+}

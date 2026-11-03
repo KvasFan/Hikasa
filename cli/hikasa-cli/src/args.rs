@@ -1644,3 +1644,48 @@ mod tests {
         Cli::command().debug_assert();
     }
 }
+
+#[cfg(test)]
+mod report_args_tests {
+    use super::*;
+    use clap::{Args, CommandFactory};
+
+    /// A7.18: the five commands flatten one `ReportArgs`: every REPORT argument, with the same long name and value
+    /// name, in each.
+    #[test]
+    fn a7_18_five_commands_flatten_one_report_args() {
+        let group = ReportArgs::augment_args(clap::Command::new("group"));
+        let report: Vec<&clap::Arg> = group.get_arguments().collect();
+        assert_eq!(report.len(), 22, "the flags of REPORT");
+        let cli = Cli::command();
+        for (outer, inner) in [
+            ("text", "compare"),
+            ("folder", "compare"),
+            ("session", "run"),
+            ("report", "text"),
+            ("report", "folder"),
+        ] {
+            let sub = cli
+                .find_subcommand(outer)
+                .and_then(|c| c.find_subcommand(inner))
+                .unwrap_or_else(|| panic!("{outer} {inner}"));
+            for arg in &report {
+                let theirs = sub
+                    .get_arguments()
+                    .find(|a| a.get_id() == arg.get_id())
+                    .unwrap_or_else(|| panic!("{outer} {inner} lacks --{:?}", arg.get_long()));
+                assert_eq!(theirs.get_long(), arg.get_long(), "{outer} {inner}");
+                assert_eq!(
+                    theirs.get_value_names(),
+                    arg.get_value_names(),
+                    "{outer} {inner}"
+                );
+                assert_eq!(
+                    theirs.get_visible_aliases(),
+                    arg.get_visible_aliases(),
+                    "{outer} {inner}"
+                );
+            }
+        }
+    }
+}

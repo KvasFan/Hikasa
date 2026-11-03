@@ -678,6 +678,67 @@ mod tests {
         }
     }
 
+    /// A7.15: the adapter's spawn passes the payload and returns after the status line while the helper runs on; a
+    /// helper that ends at once, reports a failure or cannot start is `Failed` (`io`).
+    #[cfg(unix)]
+    #[test]
+    fn a7_15_the_helper_spawn() {
+        use hikasa_core::{Classify, ErrorKind};
+        let dir = tempfile::tempdir().unwrap();
+        let got = dir.path().join("got");
+        let payload = ClipboardPayload {
+            text: "plain".into(),
+            html: Some("<b>html</b>".into()),
+        };
+        let mut command = std::process::Command::new("sh");
+        // `exec`: the shell (dash on Ubuntu) becomes the sleeping helper, so the kill below ends it.
+        command
+            .arg("-c")
+            .arg("cat > \"$1\"; echo placed; exec sleep 30")
+            .arg("sh")
+            .arg(&got);
+        let started = std::time::Instant::now();
+        let mut child = spawn_clipboard_helper(&mut command, &payload).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert!(child.try_wait().unwrap().is_none(), "the helper runs on");
+        assert_eq!(std::fs::read(&got).unwrap(), encode_payload(&payload));
+        let mut stdin = std::io::Cursor::new(encode_payload(&payload));
+        assert_eq!(decode_payload(&mut stdin).unwrap(), payload);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        for script in ["exit 0", "cat >/dev/null; echo 'failed: no display'"] {
+            let mut command = std::process::Command::new("sh");
+            command.arg("-c").arg(script);
+            let err = spawn_clipboard_helper(&mut command, &payload).unwrap_err();
+            assert!(
+                matches!(err, ClipboardError::Failed(_)),
+                "{script}: {err:?}"
+            );
+            assert_eq!(err.to_vfs().kind(), ErrorKind::Io, "{script}");
+            if script.contains("failed") {
+                assert!(err.to_string().contains("no display"), "{err}");
+            }
+        }
+        let mut command = std::process::Command::new(dir.path().join("no-such-helper"));
+        let err = spawn_clipboard_helper(&mut command, &payload).unwrap_err();
+        assert!(matches!(err, ClipboardError::Failed(_)), "{err:?}");
+        // The test placer of the hidden entry.
+        let file = dir.path().join("placed");
+        let mut input = std::io::Cursor::new(encode_payload(&payload));
+        let mut output = Vec::new();
+        assert_eq!(
+            clipboard_helper_main(&mut input, &mut output, &HelperPlacer::File(file.clone())),
+            0
+        );
+        assert_eq!(output, b"placed\n");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "<b>html</b>");
+        // A clipboard without a writer is `unsupported`.
+        let err = crate::clipboard::NoClipboard
+            .write_payload(&payload)
+            .unwrap_err();
+        assert_eq!(err.to_vfs().kind(), ErrorKind::Unsupported);
+    }
+
     #[test]
     fn platform_helpers() {
         assert_eq!(Platform::Windows.path_style(), PathStyle::Windows);
