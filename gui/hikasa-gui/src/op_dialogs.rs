@@ -103,6 +103,8 @@ pub struct PlanConfirmDialog {
     subject: String,
     /// `None`: a script's question, whose operation the dialog does not know (no "Do not ask again").
     verb: Option<OpVerb>,
+    /// The status window whose run asked (a script's question): its answers go there and nowhere else.
+    script: Option<u64>,
     /// `None` once taken.
     confirmation: Option<Confirmation>,
     counts: Vec<String>,
@@ -129,6 +131,7 @@ impl PlanConfirmDialog {
             title: title.into(),
             subject: subject.into(),
             verb: Some(plan.verb),
+            script: None,
             confirmation: Some(confirmation),
             counts: plan_counts(plan),
             ticked: false,
@@ -138,8 +141,10 @@ impl PlanConfirmDialog {
     }
 
     /// The questions of a script's command (M2 W8b, §1.8.14): stacked on the status window, its answers go back to the
-    /// run (`for_script`); no counts and no "Do not ask again" (a script line means the same whatever a dialog did).
+    /// run of the status window `script` (`for_script`); no counts and no "Do not ask again" (a script line means the
+    /// same whatever a dialog did).
     pub fn for_script(
+        script: u64,
         title: impl Into<String>,
         subject: impl Into<String>,
         confirmation: Confirmation,
@@ -149,6 +154,7 @@ impl PlanConfirmDialog {
             title: title.into(),
             subject: subject.into(),
             verb: None,
+            script: Some(script),
             confirmation: Some(confirmation),
             counts: Vec::new(),
             ticked: false,
@@ -159,7 +165,12 @@ impl PlanConfirmDialog {
 
     /// True for the questions of a script (their answers go to the status window).
     pub fn for_a_script(&self) -> bool {
-        self.verb.is_none()
+        self.script.is_some()
+    }
+
+    /// The status window whose run asked ([`ScriptDialog::id`](crate::script_dialog::ScriptDialog::id)).
+    pub fn script(&self) -> Option<u64> {
+        self.script
     }
 
     fn current(&self) -> Option<&hikasa_folder::ops::Question> {

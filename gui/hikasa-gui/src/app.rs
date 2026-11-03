@@ -697,11 +697,11 @@ impl AppCore {
         self.script_clipboard = provider;
     }
 
-    /// The status window of the script that runs (or ran last and is still shown).
-    pub(crate) fn script_dialog_mut(&mut self) -> Option<&mut ScriptDialog> {
+    /// The status window `id` (a question's, a notice's: never the first one found, review F1).
+    pub(crate) fn script_dialog_mut(&mut self, id: u64) -> Option<&mut ScriptDialog> {
         self.windows
             .iter_mut()
-            .find_map(|w| w.dialogs.find_mut::<ScriptDialog>())
+            .find_map(|w| w.dialogs.find_mut_where::<ScriptDialog>(|d| d.id() == id))
     }
 
     /// Opens the status window of a checked script in `window` and starts the run (§1.8.14).
@@ -2443,7 +2443,7 @@ impl AppCore {
         // A script that runs stops first (its current call ends as Ctrl-C ends it); a waiting client then gets
         // `ScriptFinished{100}` from the server's shutdown.
         for w in &mut self.windows {
-            if let Some(status) = w.dialogs.find_mut::<ScriptDialog>() {
+            for status in w.dialogs.all_mut::<ScriptDialog>() {
                 status.stop();
             }
         }
@@ -2709,15 +2709,15 @@ impl AppCore {
         if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>()
             && d.for_a_script()
         {
-            let answers = d.take_confirmation();
-            if let Some(status) = self.script_dialog_mut() {
+            let (script, answers) = (d.script(), d.take_confirmation());
+            if let Some(status) = script.and_then(|id| self.script_dialog_mut(id)) {
                 status.answered(answers);
             }
             return Vec::new();
         }
         if let Some(d) = closed.as_any_mut().downcast_mut::<ContinueDialog>() {
-            let yes = d.take_answer();
-            if let Some(status) = self.script_dialog_mut() {
+            let (script, yes) = (d.script(), d.take_answer());
+            if let Some(status) = self.script_dialog_mut(script) {
                 status.continued(yes);
             }
             return Vec::new();
@@ -3181,11 +3181,11 @@ impl AppCore {
                 return effects;
             }
             NoticeAction::OpenOptions => return self.open_options(window, None),
-            NoticeAction::ShowScript => {
+            NoticeAction::ShowScript(id) => {
                 if let Some(w) = self
                     .windows
                     .iter()
-                    .find(|w| w.dialogs.holds::<ScriptDialog>())
+                    .find(|w| w.dialogs.holds_where::<ScriptDialog>(|d| d.id() == id))
                     .map(|w| w.id)
                 {
                     self.focus(w);

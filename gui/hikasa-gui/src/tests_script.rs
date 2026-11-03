@@ -183,6 +183,7 @@ fn a8_19_a_failed_run_is_an_error_notice_with_show_and_error_entries() {
     start(&world, &mut app, "load l r\nload nowhere r\nbeep\n", &[]);
     run_until(&world, &mut app, ended);
     let d = status(&mut app);
+    let id = d.id();
     assert_eq!(d.end().map(|e| e.exit_code), Some(107));
     assert_eq!(d.end_line().as_deref(), Some("Script stopped at line 2"));
     assert!(d.lines().any(|(kind, _)| kind == LineKind::Error));
@@ -192,7 +193,7 @@ fn a8_19_a_failed_run_is_an_error_notice_with_show_and_error_entries() {
             .iter()
             .any(|(kind, text, actions)| *kind == NoticeKind::Error
                 && text == "Script s.txt failed: exit 107"
-                && actions == &[NoticeAction::ShowScript]),
+                && actions == &[NoticeAction::ShowScript(id)]),
         "{notices:?}"
     );
     assert!(
@@ -207,7 +208,7 @@ fn a8_19_a_failed_run_is_an_error_notice_with_show_and_error_entries() {
         app.window(w)
             .is_some_and(|w| w.dialogs.holds::<ScriptDialog>())
     );
-    let effects = app.notice_action(w, "script:s.txt", NoticeAction::ShowScript);
+    let effects = app.notice_action(w, "script:s.txt", NoticeAction::ShowScript(id));
     assert!(
         effects.contains(&crate::app::Effect::Raise(w)),
         "{effects:?}"
@@ -579,4 +580,88 @@ fn a8_19_a_status_window_that_goes_stops_its_run() {
     }
     assert_eq!(d.end().map(|e| e.exit_code), Some(100));
     assert!(!d.on_close(), "after the run it closes");
+}
+
+/// The status window that owns a question gets its answer (review F1): a failed run keeps its status window in the
+/// first window; the next run asks in the second; *Yes to all* there reaches that run, which copies and ends.
+#[test]
+fn a8_19_a_question_answered_in_a_second_window_reaches_its_own_run() {
+    let world = World::new();
+    folders(&world, 2);
+    let mut app = world.app(None);
+    let first = app.win();
+    app.execute(CommandId::WindowNew);
+    let second = app.windows().last().expect("two windows").id;
+    assert_ne!(first, second);
+    app.focus(first);
+    start(&world, &mut app, "load nowhere r\n", &[]);
+    run_until(&world, &mut app, ended);
+    let first_status = status(&mut app).id();
+    assert!(
+        app.window(first)
+            .is_some_and(|w| w.dialogs.holds::<ScriptDialog>()),
+        "the failed run's status window stays"
+    );
+    app.focus(second);
+    assert_eq!(app.win(), second);
+    start(
+        &world,
+        &mut app,
+        "load l r\nselect all\ncopy left->right\n",
+        &[],
+    );
+    run_until(&world, &mut app, |app| {
+        app.window(second)
+            .is_some_and(|w| w.dialogs.holds::<PlanConfirmDialog>())
+    });
+    app.dialog_button(second, crate::op_dialogs::YES_TO_ALL);
+    run_until(&world, &mut app, ended);
+    assert_eq!(status(&mut app).end().map(|e| e.exit_code), Some(0));
+    assert!(world.path("work/r/f01.txt").exists(), "the copy ran");
+    // The stop-on-error question of a run in the second window, answered there.
+    app.dialog_button(second, ButtonRole::Close);
+    world.write("work/s.txt", "snapshot x.hksnap\nbeep\n");
+    let claim = ScriptClaim::take(&world.shared).expect("free");
+    let mut ready = prepare(
+        &world.service,
+        OsStr::new("s.txt"),
+        Vec::new(),
+        None,
+        true,
+        None,
+        None,
+    )
+    .expect("checks");
+    ready.claim = Some(claim);
+    app.handle(UiMsg::RunScript(Box::new(ready)));
+    run_until(&world, &mut app, |app| {
+        app.window(second)
+            .is_some_and(|w| w.dialogs.holds::<ContinueDialog>())
+    });
+    app.dialog_button(second, ButtonRole::Yes);
+    run_until(&world, &mut app, ended);
+    assert_eq!(status(&mut app).beeps(), 1, "Yes reached the run");
+    // *Show* raises the window of the status window the notice names.
+    let second_status = status(&mut app).id();
+    assert_ne!(first_status, second_status);
+    let effects = app.notice_action(
+        second,
+        "script:s.txt",
+        NoticeAction::ShowScript(second_status),
+    );
+    assert!(
+        effects.contains(&crate::app::Effect::Raise(second)),
+        "{effects:?}"
+    );
+    // The first run's notice is in the first window.
+    app.focus(second);
+    let effects = app.notice_action(
+        first,
+        "script:s.txt",
+        NoticeAction::ShowScript(first_status),
+    );
+    assert!(
+        effects.contains(&crate::app::Effect::Raise(first)),
+        "{effects:?}"
+    );
 }

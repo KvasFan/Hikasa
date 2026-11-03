@@ -49,6 +49,9 @@ pub const BUSY: &str = "a script is running in the window; wait for it or stop i
 /// The width of the status window and the height of its body.
 const STATUS_SIZE: (f32, f32) = (640.0, 360.0);
 
+/// The ids of the status windows (a question, the stop-on-error question and the end notice name theirs).
+static NEXT_STATUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// One script at a time (§1.8.13): held from the check of a script until its run ended; dropping it frees the slot.
 #[derive(Debug)]
 pub struct ScriptClaim(Arc<Shared>);
@@ -294,6 +297,8 @@ fn phase_word(phase: Phase) -> String {
 /// The status window of a run (§1.8.14): the script's path, `Command <i> of <n>, line <l>: <text>`, the current
 /// call's progress, the log lines, the end line; *Stop* while it runs, *Close* after.
 pub struct ScriptDialog {
+    /// This status window's id: its questions and its notice carry it, so their answers come back here.
+    id: u64,
     name: String,
     path: String,
     commands: u32,
@@ -376,6 +381,7 @@ impl ScriptDialog {
             },
         );
         ScriptDialog {
+            id: NEXT_STATUS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             name,
             path,
             commands,
@@ -398,6 +404,11 @@ impl ScriptDialog {
             stopped: false,
             progress_seen: 0,
         }
+    }
+
+    /// The id its questions, its stop-on-error question and its end notice carry.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// The script as located.
@@ -552,7 +563,8 @@ impl ScriptDialog {
                     .current
                     .as_ref()
                     .map_or_else(String::new, |(_, line, text)| format!("L{line} {text}"));
-                let dialog = PlanConfirmDialog::for_script(self.title(), subject, confirmation);
+                let dialog =
+                    PlanConfirmDialog::for_script(self.id, self.title(), subject, confirmation);
                 self.confirm_reply = Some(reply);
                 self.requests.push(DialogRequest::Push(Box::new(dialog)));
             }
@@ -562,7 +574,7 @@ impl ScriptDialog {
                 reply,
             } => {
                 self.continue_reply = Some(reply);
-                let dialog = ContinueDialog::new(line, &message);
+                let dialog = ContinueDialog::new(self.id, line, &message);
                 self.requests.push(DialogRequest::Push(Box::new(dialog)));
             }
             RunMsg::Beep => {
@@ -608,7 +620,7 @@ impl ScriptDialog {
                 NoticeKind::Error,
                 format!("Script {} failed: exit {}", self.name, end.exit_code),
             )
-            .with_actions(vec![NoticeAction::ShowScript])
+            .with_actions(vec![NoticeAction::ShowScript(self.id)])
         };
         self.requests.push(DialogRequest::Notice(notice));
         self.claim = None;
@@ -718,17 +730,25 @@ impl DialogModel for ScriptDialog {
 /// Esc and the window's close button are No.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinueDialog {
+    /// The status window whose run asked.
+    script: u64,
     message: String,
     answer: Option<bool>,
 }
 
 impl ContinueDialog {
-    /// The question of the command at `line`.
-    pub fn new(line: u32, message: &str) -> ContinueDialog {
+    /// The question of the command at `line` of the run of the status window `script`.
+    pub fn new(script: u64, line: u32, message: &str) -> ContinueDialog {
         ContinueDialog {
+            script,
             message: format!("The command at line {line} failed: {message}. Continue the script?"),
             answer: None,
         }
+    }
+
+    /// The status window whose run asked ([`ScriptDialog::id`]).
+    pub fn script(&self) -> u64 {
+        self.script
     }
 
     /// The question.

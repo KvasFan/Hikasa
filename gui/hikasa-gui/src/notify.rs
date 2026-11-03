@@ -37,8 +37,8 @@ pub enum NoticeAction {
     OpenOptions,
     /// Shows the log panel of a folder view (an operation with failed items, M2 W6d).
     ShowLog(ViewId),
-    /// Raises the window of a script's status window (a script that failed, M2 W8b).
-    ShowScript,
+    /// Raises the window of a script's status window (a script that failed, M2 W8b): the status window's id.
+    ShowScript(u64),
     /// Hides the notice.
     Dismiss,
 }
@@ -53,7 +53,7 @@ impl NoticeAction {
             NoticeAction::ShowTab(_) => "Show",
             NoticeAction::OpenOptions => "Options…",
             NoticeAction::ShowLog(_) => "Show log",
-            NoticeAction::ShowScript => "Show",
+            NoticeAction::ShowScript(_) => "Show",
             NoticeAction::Dismiss => "Dismiss",
         }
     }

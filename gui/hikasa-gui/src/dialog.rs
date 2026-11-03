@@ -213,6 +213,30 @@ impl DialogStack {
             .find_map(|d| d.as_any_mut().downcast_mut::<T>())
     }
 
+    /// The dialog `T` of the stack for which `pick` holds, the top-most one first.
+    pub fn find_mut_where<T: DialogModel>(&mut self, pick: impl Fn(&T) -> bool) -> Option<&mut T> {
+        self.dialogs
+            .iter_mut()
+            .rev()
+            .filter_map(|d| d.as_any_mut().downcast_mut::<T>())
+            .find(|d| pick(&**d))
+    }
+
+    /// True when the stack holds a dialog `T` for which `pick` holds.
+    pub fn holds_where<T: DialogModel>(&self, pick: impl Fn(&T) -> bool) -> bool {
+        self.dialogs
+            .iter()
+            .filter_map(|d| d.as_any().downcast_ref::<T>())
+            .any(pick)
+    }
+
+    /// Every dialog `T` of the stack, bottom first.
+    pub fn all_mut<T: DialogModel>(&mut self) -> impl Iterator<Item = &mut T> {
+        self.dialogs
+            .iter_mut()
+            .filter_map(|d| d.as_any_mut().downcast_mut::<T>())
+    }
+
     /// True while a dialog's job runs.
     pub fn busy(&self) -> bool {
         self.dialogs.iter().any(|d| d.busy())
