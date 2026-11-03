@@ -748,3 +748,24 @@ fn non_utf8_arguments_reach_load_and_copyto_and_are_escaped() {
     );
 }
 
+/// A8.12, §1.8.11 step 2: a dangling link named as the script exists (any kind), so the shared folder is not tried and
+/// reading it is 105; a link to a folder is a folder.
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_is_a_script_that_cannot_be_read() {
+    let s = Sandbox::new();
+    s.file("shared/s.txt", "beep\n");
+    s.options(&format!(
+        "[tweaks.scripts]\nshared_scripts_folder = {:?}\n",
+        s.join("shared").display().to_string()
+    ));
+    std::os::unix::fs::symlink(s.join("nowhere"), s.join("s.txt")).unwrap();
+    let out = s.cmd().args(["script", "run", "s.txt"]).output().unwrap();
+    assert_eq!(code(&out), 105, "{}", stderr(&out));
+    assert!(!stderr(&out).contains("info L1 beep"), "{}", stderr(&out));
+    s.dir("d");
+    std::os::unix::fs::symlink(s.join("d"), s.join("dl.txt")).unwrap();
+    let out = s.cmd().args(["script", "run", "dl.txt"]).output().unwrap();
+    assert_eq!(code(&out), 105, "{}", stderr(&out));
+    assert!(stderr(&out).contains("is a folder"), "{}", stderr(&out));
+}

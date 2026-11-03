@@ -590,6 +590,20 @@ pub const STDOUT_SHARED: &str = "the report and the JSON document cannot share s
 /// The message of `output-to:-` where no standard output is a target (the GUI).
 pub const STDOUT_NONE: &str = "standard output is a report target only of `hikasa script run`";
 
+/// Whether `spec` exists, any kind (§1.8.11 step 2): `Ok(true)` for a folder (or a link to one), `Ok(false)` for
+/// anything else that exists, a dangling link included (it exists, and reading it fails with 105: only an absent name
+/// falls through to the shared scripts folder); `Err(NotFound)` when nothing has that name.
+fn present(router: &dyn Vfs, spec: &Spec) -> Result<bool, hikasa_vfs::VfsError> {
+    let entry = router.stat(spec, FollowLinks::No)?;
+    if entry.kind == EntryKind::Dir {
+        return Ok(true);
+    }
+    match router.stat(spec, FollowLinks::Yes) {
+        Ok(target) => Ok(target.kind == EntryKind::Dir),
+        Err(_) => Ok(false),
+    }
+}
+
 fn load_error(kind: hikasa_core::ErrorKind, message: String) -> ApiError {
     ApiError::ScriptLoad { kind, message }
 }
@@ -610,14 +624,14 @@ impl Service {
                 )
             })?;
             let router = self.router();
-            match router.stat(&spec, FollowLinks::Yes) {
-                Ok(entry) if entry.kind == EntryKind::Dir => {
+            match present(&*router, &spec) {
+                Ok(true) => {
                     return Err(load_error(
                         hikasa_core::ErrorKind::InvalidInput,
                         format!("{} is a folder", spec.canonical()),
                     ));
                 }
-                Ok(_) => return Ok(ScriptSource::Spec(spec)),
+                Ok(false) => return Ok(ScriptSource::Spec(spec)),
                 Err(hikasa_vfs::VfsError::NotFound { .. }) => {}
                 Err(e) => {
                     return Err(load_error(
@@ -648,14 +662,14 @@ impl Service {
                 let spec2 = self
                     .parse_spec_as(candidate.as_os_str(), SpecUse::Any)
                     .map_err(|e| load_error(hikasa_core::ErrorKind::InvalidInput, e.to_string()))?;
-                match router.stat(&spec2, FollowLinks::Yes) {
-                    Ok(entry) if entry.kind == EntryKind::Dir => {
+                match present(&*router, &spec2) {
+                    Ok(true) => {
                         return Err(load_error(
                             hikasa_core::ErrorKind::InvalidInput,
                             format!("{} is a folder", spec2.canonical()),
                         ));
                     }
-                    Ok(_) => return Ok(ScriptSource::Spec(spec2)),
+                    Ok(false) => return Ok(ScriptSource::Spec(spec2)),
                     Err(hikasa_vfs::VfsError::NotFound { .. }) => {
                         return Err(load_error(
                             hikasa_core::ErrorKind::NotFound,
