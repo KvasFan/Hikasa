@@ -46,7 +46,7 @@ fn rule(name: &str, parent: &str) -> Option<Rule> {
         ("row", _) => r(
             &["rows"],
             &["state"],
-            &["importance", "left", "right", "piece"],
+            &["importance", "left", "right", "left-piece", "right-piece"],
         ),
         ("l" | "r", _) => r(&["row"], &[], &[]),
         ("d" | "u", _) => r(&["l", "r"], &[], &[]),
@@ -272,11 +272,15 @@ pub fn line_text(node: Node<'_, '_>) -> String {
     out
 }
 
-/// The lines of one side read back from a text dump: the `l` (or `r`) of each row in order, the pieces of a line
-/// (rows of one line number) joined.
+/// The lines of one side read back from a text dump: the `l` (or `r`) of each row in order, a row whose
+/// `left-piece` (or `right-piece`) is 2, 3, … joined to the line before, which must carry the same number.
 pub fn side_lines(doc: &Document<'_>, left: bool) -> Vec<String> {
-    let (attr, element) = if left { ("left", "l") } else { ("right", "r") };
-    let mut out: Vec<(String, String)> = Vec::new();
+    let (attr, piece, element) = if left {
+        ("left", "left-piece", "l")
+    } else {
+        ("right", "right-piece", "r")
+    };
+    let mut out: Vec<(String, u32, String)> = Vec::new();
     for row in doc
         .descendants()
         .filter(|n| n.has_tag_name((NAMESPACE, "row")))
@@ -291,12 +295,22 @@ pub fn side_lines(doc: &Document<'_>, left: bool) -> Vec<String> {
             continue;
         };
         let text = line_text(line);
-        match out.last_mut() {
-            Some((n, t)) if n == number => t.push_str(&text),
-            _ => out.push((number.to_owned(), text)),
+        match row.attribute(piece).map(|p| p.parse::<u32>().unwrap_or(0)) {
+            Some(p) => {
+                let (n, last, t) = out
+                    .last_mut()
+                    .unwrap_or_else(|| panic!("{piece}={p} without a line before"));
+                assert!(
+                    n == number && p == *last + 1,
+                    "{piece}={p} of line {number} after piece {last} of line {n}"
+                );
+                *last = p;
+                t.push_str(&text);
+            }
+            None => out.push((number.to_owned(), 1, text)),
         }
     }
-    out.into_iter().map(|(_, t)| t).collect()
+    out.into_iter().map(|(_, _, t)| t).collect()
 }
 
 /// The `(group, name, value)` of the summary's counts.

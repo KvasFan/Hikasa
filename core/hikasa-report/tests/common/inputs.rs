@@ -97,8 +97,19 @@ pub fn text_pair(alphabet: &'static [char]) -> impl Strategy<Value = (String, St
 
 /// Compares two strings as UTF-8 (no detection, so every character reaches the report), under `rules`.
 pub fn compare_strings(left: &str, right: &str, rules: &TextRules) -> TextComparison {
+    compare_strings_cpl(left, right, rules, None)
+}
+
+/// [`compare_strings`] with a characters-per-line limit (`None`: the format's).
+pub fn compare_strings_cpl(
+    left: &str,
+    right: &str,
+    rules: &TextRules,
+    chars_per_line: Option<u32>,
+) -> TextComparison {
     let mut load = LoadOptions::default();
     load.decode.override_encoding = Some(TextEncoding::UTF_8);
+    load.chars_per_line_limit = chars_per_line;
     compare_bytes_with(
         ("left.txt", left.as_bytes()),
         ("right.txt", right.as_bytes()),

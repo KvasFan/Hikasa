@@ -200,18 +200,21 @@ pub(super) fn write(
                             Importance::None => {}
                         }
                     }
-                    let mut piece = 1;
+                    // Each side's piece apart: one side's line may be a piece while the other's is whole.
+                    let mut piece = [1; 2];
                     for (i, (name, line)) in [("left", row.left), ("right", row.right)]
                         .into_iter()
                         .enumerate()
                     {
                         if let Some(line) = line {
                             xml::attr(&mut out, name, &docs[i].physical_line(line).to_string());
-                            piece = piece.max(pieces[i].of(line));
+                            piece[i] = pieces[i].of(line);
                         }
                     }
-                    if piece > 1 {
-                        xml::attr(&mut out, "piece", &piece.to_string());
+                    for (name, piece) in [("left-piece", piece[0]), ("right-piece", piece[1])] {
+                        if piece > 1 {
+                            xml::attr(&mut out, name, &piece.to_string());
+                        }
                     }
                     out.push('>');
                     let inline = if row.state == RowState::Changed {

@@ -7,8 +7,8 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::inputs::{
-    HOSTILE, PLAIN, compare_memory, compare_on, compare_strings, folder_tree, materialize,
-    text_pair,
+    HOSTILE, PLAIN, compare_memory, compare_on, compare_strings, compare_strings_cpl, folder_tree,
+    materialize, text_pair,
 };
 use common::{config, xmlcheck};
 use hikasa_core::Side;
@@ -191,17 +191,19 @@ proptest! {
         prop_assert_eq!(struck_spans(&html), expected_spans(&cmp, iu, [strike & 1 != 0, strike & 2 != 0]), "{}", html);
     }
 
-    /// P-XML (A7.5): generated content with every character the escaping must handle: the document is well-formed and
-    /// passes the structure checks; reading it back (`l` and `r` texts, `c` as their characters, `&#13;` as CR, pieces
-    /// joined) gives each document's lines exactly in display all, and the title; `summary` equals `summary_counts`,
-    /// which equals the text summary's numbers; the `verdict` is `hikasa.text_compare.v1`'s.
+    /// P-XML (A7.5): generated content with every character the escaping must handle, under a random
+    /// characters-per-line limit: the document is well-formed and passes the structure checks; reading it back (`l`
+    /// and `r` texts, `c` as their characters, `&#13;` as CR, each side's pieces joined by its `*-piece`) rebuilds each
+    /// document exactly in display all, and the title; `summary` equals `summary_counts`, which equals the text
+    /// summary's numbers; the `verdict` is `hikasa.text_compare.v1`'s.
     #[test]
     fn p_xml_text_dump_round_trips(
         (left, right) in text_pair(HOSTILE),
+        cpl in proptest::option::weighted(0.6, 1u32..8),
         iu in any::<bool>(),
         title in proptest::collection::vec(proptest::sample::select(&['T', ' ', '\r', '\n', '&', '<', '"', '\u{0}', '\u{1b}', '\u{ffff}', '\u{202e}'][..]), 0..10),
     ) {
-        let cmp = compare_strings(&left, &right, &TextRules::default());
+        let cmp = compare_strings_cpl(&left, &right, &TextRules::default(), cpl);
         let title: String = title.into_iter().collect();
         let mut options = vec!["display-all"];
         if iu {
@@ -211,8 +213,13 @@ proptest! {
         let xml = render(ReportInput::Text(&cmp), ReportKind::Text, &words("xml", &options, &[], (!title.is_empty()).then(|| title.clone())), &defaults);
         xmlcheck::check(xml.as_bytes()).map_err(|e| TestCaseError::fail(format!("{e}\n{xml}")))?;
         let doc = roxmltree::Document::parse(&xml).unwrap();
-        prop_assert_eq!(xmlcheck::side_lines(&doc, true), doc_lines(&cmp, Side::Left));
-        prop_assert_eq!(xmlcheck::side_lines(&doc, false), doc_lines(&cmp, Side::Right));
+        for (lines, source) in [(xmlcheck::side_lines(&doc, true), &left), (xmlcheck::side_lines(&doc, false), &right)] {
+            let mut rebuilt = lines.join("\n");
+            if source.ends_with('\n') {
+                rebuilt.push('\n');
+            }
+            prop_assert_eq!(&rebuilt, source, "{}", xml);
+        }
         let read_title = doc.descendants().find(|n| n.has_tag_name((xmlcheck::NAMESPACE, "title"))).map(xmlcheck::line_text).unwrap();
         let want_title = if title.is_empty() { "Text Compare".to_owned() } else { title.clone() };
         prop_assert_eq!(read_title, want_title);

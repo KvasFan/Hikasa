@@ -316,7 +316,8 @@
           <xs:attribute name="importance" type="h:Importance"/>
           <xs:attribute name="left" type="xs:positiveInteger"/>
           <xs:attribute name="right" type="xs:positiveInteger"/>
-          <xs:attribute name="piece" type="h:Piece"/>
+          <xs:attribute name="left-piece" type="h:Piece"/>
+          <xs:attribute name="right-piece" type="h:Piece"/>
         </xs:complexType>
       </xs:element>
       <xs:element name="hidden">

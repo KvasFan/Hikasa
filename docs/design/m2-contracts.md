@@ -192,6 +192,7 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-210 | **HTML wrap and the print block** (RPT-002, §1.7.4). `wrap-none`, `wrap-character` (M1's rule, bytes unchanged), `wrap-word` set one CSS rule of text HTML; `print-portrait`/`print-landscape` (or the printer target) add `@page` and `@media print` with the print palette (`print-color`/`print-mono`). Without these words every HTML byte is M1's. | RPT-002 lists wrap for HTML and the printer; M1's goldens stay valid. | 13 |
 | D-211 | **Dependencies** (§1.7.16). No runtime crate. `roxmltree` 0.21.2 (MIT OR Apache-2.0) as a dev-dependency of `hikasa-report`, at the version already in `Cargo.lock`; `xmllint` as a CI tool. Check 3: `hikasa-report` dev += `roxmltree`; check 2: `write_payload` only in the clipboard module, `host.rs` and the adapters; check 7: the adapters call no report slot parser, and `ReportRequest::parse` only `hikasa_session::api::report`. | Plan §3 adds no crate for W7; D-199. | 02 |
 | D-212 | **G13 reports** (§1.7.17). Text: each new layout of the G1 pair to a file ≤ the summary run + 1.5 s, peak RSS ≤ + 24 MiB; folder: the G2 tree as side-by-side HTML and XML ≤ + 1.0 s, RSS ≤ + 32 MiB; links: 1,000 file reports ≤ 5 s, RSS ≤ + 64 MiB; streaming proven on CI by a counting allocator. A failure is reported, not relaxed. | The plan set no report gate; streaming is the property that matters and is cheap to prove on every run. | 02, 12 |
+| D-213 | **Pieces per side in the text XML** (§1.7.6, W7a review). A `row` carries `left-piece` and `right-piece`, each only when that side's line is piece 2, 3, … of a line broken by the characters-per-line limit; the single `piece` (the larger of both) is gone. The schema is unreleased, so version 1 changes in place. | With a limit, one side's line can be a piece while the other's is whole (a long left line beside two short right lines): one attribute made a reader join the right side's whole line to the line before. | 13 |
 
 ### 0.4 Dependencies
 
@@ -5893,7 +5894,7 @@ wrap, width and columns do not (a dump has every column).
 | `status` | header | **`complete`** = `false` | why (a cancelled comparison) |
 | `warning` | header | **`code`** | the message; the comparison's and the rendering's warnings |
 | `rows` | root (text) | — | (`row` \| `hidden`)* |
-| `row` | rows | **`state`** = `same`\|`changed`\|`left-only`\|`right-only`; `importance` = `important`\|`unimportant` (not on `same`); `left`, `right` (line numbers, absent on a missing side); `piece` (2, 3, … on a piece after an artificial break) | `l`?, `r`? (a same row has both) |
+| `row` | rows | **`state`** = `same`\|`changed`\|`left-only`\|`right-only`; `importance` = `important`\|`unimportant` (not on `same`); `left`, `right` (line numbers, absent on a missing side); `left-piece`, `right-piece` (2, 3, … when that side's line in the row is a piece after an artificial break; each side apart, D-213) | `l`?, `r`? (a same row has both) |
 | `l`, `r` | row | — | mixed: text, `d`, `u`, `c` |
 | `d`, `u` | l, r | — | mixed: text, `c`; an important (`d`) or unimportant (`u`) inline difference |
 | `c` | l, r, d, u; title, rules, error, status, warning (W7a note 6) | **`x`** | empty |
@@ -6366,6 +6367,12 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
     The interleaved wrap goldens are `golden_interleaved.rs`'s variants (`wrap-none-40.html`, `wrap-word-40.html`).
 15. **A unit test that cannot eat memory.** `CancelWriter`'s unit test writes into `io::sink()` with a bounded loop: with
     CANCEL-1 applied, the first version (a `Vec` and an unbounded loop) grew until the machine ran out of memory.
+16. **Pieces per side (D-213, W7a review).** The first `row/@piece` was the larger of both sides' piece numbers, so a
+    row with the left's second piece beside the right's whole next line (limit 10, `0123456789abcdefghij` against
+    `0123456789` and `abcdefghij`) said `piece="2"` of a whole right line. Each side now has its own attribute; the
+    read-back of A7.5 (`xmlcheck::side_lines`) joins a side's rows by that side's attribute alone and checks the line
+    number repeats, P-XML draws a limit of 1–7 in most cases and rebuilds both source strings byte for byte, and
+    `xml/pieces/expected.xml` pins the bytes.
 
 **W7a mutations** (A7.23; each applied by hand, the named test run, then reverted with `git checkout`):
 
@@ -7135,9 +7142,10 @@ Rules for every item: those of §6.6 (platforms, times, no timers, faults, GUI, 
   Mutations: swap the order of a changed row's lines; strike the other side.
 - A7.5 **Text XML (D-198) [W7a].** `golden_xml.rs`: `expected.xml` for every text fixture; a hostile fixture with NUL,
   ESC, CR inside a line, U+FFFE, U+FFFF, bidi controls, `]]>`, `&`, `<`, `"`, U+FFFD from a lossy decode, emoji
-  sequences. P-XML: random pairs with generated content including those characters: the document is well-formed,
-  and reading it back (`l` and `r` texts, `c` as their characters, `&#13;` as CR, `piece` joined) gives each document's
-  lines exactly in display all; `summary` equals `summary_counts`, which equals the text summary's numbers; the
+  sequences; a characters-per-line fixture (`xml/pieces`). P-XML: random pairs with generated content including those
+  characters, under a random characters-per-line limit: the document is well-formed, and reading it back (`l` and `r`
+  texts, `c` as their characters, `&#13;` as CR, each side's pieces joined by its `left-piece`/`right-piece`, D-213)
+  gives each document exactly in display all; `summary` equals `summary_counts`, which equals the text summary's numbers; the
   `verdict` equals `hikasa.text_compare.v1`'s. Mutation: skip the `c` escape (the parse fails); drop `&#13;` (the round
   trip fails).
 - A7.6 **Folder XML (D-198) [W7a].** `expected.xml` for every folder fixture (25 today), flatten included. P-FXML over

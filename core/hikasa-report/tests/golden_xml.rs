@@ -278,3 +278,49 @@ fn a7_5_hostile_text_xml() {
         .unwrap();
     assert_eq!(title, "title with CR\r, LF\n, NUL\u{0} & <tags> \"quoted\"");
 }
+
+/// A7.5, characters per line: each side's piece is its own (`left-piece`, `right-piece`), so a row whose left line is
+/// a piece and whose right line is whole marks the left only; reading back by `*-piece` rebuilds both documents.
+#[test]
+fn a7_5_characters_per_line_pieces_per_side() {
+    let load = LoadOptions {
+        chars_per_line_limit: Some(10),
+        ..LoadOptions::default()
+    };
+    const LEFT: &str = "0123456789abcdefghij\nzz\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
+    const RIGHT: &str = "0123456789\nabcdefghij\nzz\nABCDEFGHIJKLMNOPQRSTUVWXYz\n";
+    let cmp = compare_bytes_with(
+        ("l.txt", LEFT.as_bytes()),
+        ("r.txt", RIGHT.as_bytes()),
+        &TextRules::default(),
+        &load,
+    );
+    let bytes = text_xml(&cmp, &[], &ReportDefaults::new("xml"), None);
+    assert_golden(&fixtures("xml").join("pieces").join("expected.xml"), &bytes);
+    let text = String::from_utf8(bytes).unwrap();
+    let doc = roxmltree::Document::parse(&text).unwrap();
+    let rows: Vec<_> = doc
+        .descendants()
+        .filter(|n| n.has_tag_name((xmlcheck::NAMESPACE, "row")))
+        .collect();
+    // The left's second piece of line 1 beside the right's whole line 2.
+    let row = rows
+        .iter()
+        .find(|r| r.attribute("left") == Some("1") && r.attribute("right") == Some("2"))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert_eq!(row.attribute("left-piece"), Some("2"), "{text}");
+    assert_eq!(row.attribute("right-piece"), None, "{text}");
+    // Both sides' third pieces of the long line.
+    assert!(
+        rows.iter()
+            .any(|r| r.attribute("left-piece") == Some("3")
+                && r.attribute("right-piece") == Some("3")),
+        "{text}"
+    );
+    for (left, want) in [(true, LEFT), (false, RIGHT)] {
+        assert_eq!(
+            xmlcheck::side_lines(&doc, left),
+            want.lines().collect::<Vec<_>>()
+        );
+    }
+}
