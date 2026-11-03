@@ -493,13 +493,17 @@ fn a_sandbox_with_read_only_rows_is_removed_when_dropped() {
     let (outcome, ui) = w.run("load l r\nexpand all\nselect all\nattrib +r\n");
     assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
     let root = w.dir.path().to_path_buf();
-    assert!(
-        std::fs::metadata(w.path("l/sub"))
+    let read_only = |rel: &str| {
+        std::fs::metadata(w.path(rel))
             .unwrap()
             .permissions()
-            .readonly(),
-        "the folder row is read-only"
-    );
+            .readonly()
+    };
+    assert!(read_only("l/a.txt"), "the file row is read-only");
+    // A folder's read-only state is the write bits on Unix; wine keeps no read-only attribute on a folder (§6.6: its
+    // attributes are not trusted), so the folder is asserted on Unix only.
+    #[cfg(unix)]
+    assert!(read_only("l/sub"), "the folder row is read-only");
     drop(w);
     assert!(!root.exists(), "{} was left behind", root.display());
 }
