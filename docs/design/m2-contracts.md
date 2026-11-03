@@ -6452,7 +6452,125 @@ in the failure message. The ci profile retries a failing test twice; every row a
 to RD come from the W7a review: each was applied with only the named property selected (`-E 'test(p_…)'`), under
 `timeout 600` and an 8 GiB memory cap, and reverted with `git checkout`.
 
-**W7b.**
+**W7b.** Where the implementation interpreted or extended §1.7.8 (writing) … §1.7.19, and why.
+
+1. **`report_plan` takes the selection.** `ReportFlags::select` (`--select`, `--path`) needs the comparison, which
+   `report_request` runs before; so `report_request` sets a placeholder `ReportScope::FolderRows` (empty), which lets
+   `check_scope` refuse a layout without rows before anything is compared, and `report_plan` gains a parameter
+   `select: Option<&SelectRequest>` that resolves it with W6's `select_of` (every folder expanded, the display filter on
+   top). W8 sets `ReportScope::FolderRows` itself and passes `None`.
+2. **`ReportFlags::ansi`, and the target applied once.** Whether stdout takes colours is the adapter's fact (a terminal,
+   `--no-color`, `NO_COLOR`), so `ReportFlags` carries it, and `report_request` runs `parse`, `check_target` and
+   `apply_target`: the request it returns is the one every later step uses (the printer's print block, the browser's
+   palette, ANSI for a terminal), and its `words()` are the implied words of §1.7.11.
+3. **Flags as words, and flags as defaults.** `--html`, `--html-mono`, `--wrap`, `--patch-style`, `--columns` (a
+   `column-<item>` per item) and `--line-numbers`/`--no-line-numbers` become words appended after `--options` and
+   `--output-options`, so they conflict with a different word of their slot (§1.7.4). `--display`, `--context`,
+   `--folders`, `--suppress-filters` and `--width` fill `ReportDefaults` through M1's `resolve_text_display` and
+   `resolve_folder_display`, as the struct's comments say: M1's spellings, messages and the rule "`--context n` alone means
+   context" stay, and a `display-*` word wins over `--display`. The clap defaults of M1 (`--width 160`, `--wrap
+   character`, `--patch-style unified`, `--report unified|list`) are gone from the parser: an absent flag is no word, so
+   `--wrap` given without need is no conflict; the values are `ReportDefaults`'s. A flag only one kind takes
+   (`--folders`, `--suppress-filters`, `--columns`, `--select`/`--path` for text; `--patch-style`, `--wrap`,
+   `--line-numbers`, `--context`, `--width`, `--lines` for folders) is `invalid_input` "<flag> applies to <kind> reports".
+4. **Targets.** `ReportTarget::parse` takes the keywords exactly, in lower case (`Printer` is a file, as `./printer`);
+   `--output <FILE>` is always a file target, whatever its name, as in M1. `ReportTarget::kind(ansi)` and `dto()` are
+   additive helpers; `TargetDto` has `Stdout` too (a plan of the stdout target), which `hikasa.report.v1` never shows
+   (`--json` with stdout is refused).
+5. **`session run --dry-run`.** REPORT holds `--dry-run`, and `session run` already had one for folder-sync sessions:
+   the flattened group's flag serves both, the sync's plan for a folder-sync session and the report's dry run for a
+   comparison; it left `only_for_sync`'s list.
+6. **The target back-end is a parameter.** The Service's router is typed over `LocalVfs` (`VfsRouter::new(LocalVfs)`), so
+   a `MemoryVfs` cannot stand behind it. Every write of a report goes through a `&dyn Vfs`: `report_plan_on` and
+   `report_execute_on` (additive) take it, `report_plan` and `report_execute` pass the router. The comparisons, the
+   stylesheet of `html-custom` and the pair comparisons read their sources as always, so the `MemoryVfs` tests compare
+   trees on a tempdir and write the report to the `MemoryVfs` (faults, journal, durabilities, `dump()`).
+7. **Additive fields.** `ReportPlan` gains `layout`, `format`, `unused`, `print_folder` (the folder below
+   `<cache>/print/` a printer or browser report makes) and, not serialised, the report time, the stylesheet's text and
+   the comparison's verdict (`ReportVerdict`: a text comparison's `ContentResult`, a folder comparison's word, as their
+   documents write them), so a dry run's document has the verdict too and execution takes the plan's time. A
+   deserialised plan takes the time again. `ReportOutcome` gains `verdict`; `hikasa.report.v1`'s `clipboard` object is
+   `ReportClipboardDto` (the name `ClipboardDto` was `read_clipboard`'s).
+8. **`SOURCE_DATE_EPOCH`.** `EnvFacts::source_date_epoch` holds the variable as set (an empty value is set, and
+   ignored with the warning); `report_time` takes decimal digits only, no sign and no space, as reproducible-builds.org
+   defines it, so `-1` is invalid like `abc` and a value past jiff's range. The warning goes through the Service's
+   pending warnings (`take_warnings`), so the CLI shows it once.
+9. **Print folders.** `n` starts at 1 (`20231114-221320-1`); the plan picks the first free one, execution makes it
+   (with its parents) and removes it again when the report fails. Pruning compares the civil time of a name of the
+   pattern (`<8 digits>-<6 digits>-<n>`) with the clock's now in its zone minus seven days; other names stay. A failure
+   to remove is a debug line.
+10. **The Linux clipboard helper.** The hidden entry is `hikasa __clipboard-helper`, recognised in `main` before
+    arguments are parsed, so it is in no `--help`, completion, reference or topic. Its stdin carries the text's and the
+    HTML's lengths (8 bytes little-endian each, `u64::MAX` for no HTML) and the bytes, at most 128 MiB; it places the
+    payload once without waiting, writes `placed` (or `failed: <why>`), then places it again in arboard's wait mode,
+    which returns when another program owns the selection. `spawn_clipboard_helper` (host.rs, adapter-only) writes the
+    payload, closes stdin, reads the one line and returns the running child. `HIKASA_CLIPBOARD_HELPER_FILE` makes the
+    helper write the payload to a file instead (the tests' fake placer). The **manual check on X11 and Wayland** (a paste
+    after `hikasa` exited) was not done in W7b: the implementer's rules forbid the real desktop; it is the maintainer's.
+11. **Remembered choices, leniently.** `report_choices` checks the layout alone, then each option and output word
+    against the words kept before it, under the layout `side-by-side` (it uses the most slots, and remembered words span
+    layouts), so a refused word or the later of two conflicting words is dropped; every dropped word goes into one
+    `invalid_config_value` warning. A value of the wrong TOML type is dropped the same way. `remember_report_choices`
+    writes the table sparse (no empty list, no absent value).
+12. **Pairs in parallel.** The pair reports run on the service pool (`par_iter`), each acquiring
+    `min(left + right size, capacity)` of a `ByteBudget` of `content_budget_bytes` before it compares, and releasing it
+    after its file is written; the outcomes keep report order. The budget is internal to the run: A7.12's "`ByteBudget`
+    counters" check is not a test (no counter is visible outside `write_linked`).
+13. **`too_large` from the plan.** A pair is skipped `too_large` when either side's size in the folder comparison's model
+    is over `DEFAULT_RULES_MAX_BYTES` (128 MiB, the rules-based limit of `rules_size_limit`); the plan marks it, so it is
+    never opened. The test (`a7_12_skipped_and_failed_pairs`, a sparse 129 MiB file) checks the plan's mark; "without a
+    read, by the `MemoryVfs` journal" cannot hold for sources on disk (note 6).
+14. **The back link.** `ReportMeta::folder_link` (hikasa-report, additive; `None` changes no byte) writes
+    `Folder report: <name>` before `Left:`, a link in HTML. A pair report's title is the default, "Text Compare".
+15. **One `report_option_unused`.** The plan holds the warning (a dry run shows it); `render_report` returns it too, so
+    execution drops the rendering's copy.
+16. **Failed pairs and the marker.** A pair whose comparison fails, or whose file cannot be written, is `failed` with
+    its error and `file_report_failed`; its partial file is removed; the report goes on. The marker lists the written
+    files with their size and modification time as the back-end reports them after the commit; `modified` is left out
+    when the back-end has none (`MemoryVfs`), and "ours" then compares sizes and names only. On any failure before
+    step 5 the staging folder is removed whole (it is this run's own); after a failure at step 6 the files folder is
+    renamed back and removed the same way.
+17. **The dry run's lines.** For the targets without a file, `copy to the clipboard` or `write to standard output`; for
+    the printer and the browser `mkdir <cache>/print/<…>` first. `would write <n> files` counts the main file, the pair
+    reports and the marker.
+18. **`--json` of the compare subcommands.** With the stdout target, the JSON document only, as M1; with another target
+    the report is written there and the compare document goes to stdout (its warnings include the report's).
+19. **The GUI is not changed in W7b.** `FolderViewModel::open_request` (gui/hikasa-gui/src/folder_view.rs) still builds
+    its request with `TextCompareRequest::for_specs`; another session owns `gui/`. `Service::pair_text_request` gives the
+    same request for a file pair (its exact specs, the folder request's text rules and patch, the format overrides),
+    with the comparison's effective ignore-unimportant where the GUI takes its view's flag, and `None` for a link shown
+    as a link, which the GUI's own code does not refuse. The architecture grep "no `for_specs` in `gui/`" of A7.11 is
+    left for that change.
+20. **Sources of `report text|folder --session`.** The flags apply on top as in `session run`: for text, a given
+    `--format`, encoding or `--rules-file` replaces the session's and the importance and alignment flags form the
+    rules patch; for folders, a given `--rules-file`, `--criteria` or `--text-rules-file` replaces the session's, the rule
+    flags form the patch and the text patch. A session of the other kind is `invalid_input` naming the right command.
+21. **A7.17's printer and browser files in-process.** The CLI's printer and browser targets open the associated
+    application (`SystemLauncher`), so `cli_report.rs` runs them in an in-process Service on a `RecordingLauncher`
+    (the binary sees them only with `--dry-run`), and compares their files with the binary's file target given the
+    implied words.
+22. **`check_3` counts the lock.** "Cargo.lock's package count unchanged" is a test: 586 packages, 0.1.92's.
+23. **P-SYNC's flake (extra task).** `p_sync_the_tree_is_what_the_model_says` failed a coverage share now and then at
+    its default 384 cases: the rarest categories (a protected side, a failed listing, a refused incomplete comparison,
+    about 6 % of the cases each) lay two standard deviations above their 3 % share. The default is now 1,536 cases and
+    a protected side is drawn at 0.3 (0.2): over 30 runs every share stays at least 4.8 standard deviations above its
+    bound; the shares themselves are unchanged.
+
+**W7b mutations** (A7.23; each applied by hand with only the named tests selected, under `timeout 600` and an 8 GiB
+memory cap, and reverted; the session's tests write the report to `MemoryVfs`, note 6):
+
+| Mutation | File: change | Caught by | Seed |
+|---|---|---|---|
+| W-1 | `hikasa-session/src/api/report_write.rs`: a failed step 6 does not rename the files folder back | P-WRITE `p_write_plans_are_executed_whole_or_not_at_all` (a failed run changed the back-end) | — |
+| W-2 | `report_write.rs`: the marker leaves out its first file | P-WRITE (an earlier report is not found ours) | — |
+| W-3 | `report_write.rs`: step 4's stamp check skipped | `a7_12_a_folder_changed_since_the_plan_fails` (P-WRITE changes nothing between plan and run) | — |
+| W-4 | `report_write.rs`: a cancel keeps the staging folder | `a7_12_a_cancel_before_each_step_leaves_everything_as_before` | — |
+| STREAM-W | `hikasa-session/src/api/report.rs`: `stream_into` renders into a `Vec`, then writes it | `report_stream.rs` (both: the 4 MiB bound for text, the half-of-the-bytes bound for folders) | — |
+| A17 | `report.rs`: `report_request` does not apply the target | `cli_report.rs` `a7_17_one_request_gives_the_same_bytes_everywhere` (the printer's file lacks its print block) | — |
+
+A mutation that survived: removing the cancel check before step 3 changes nothing, because the main writer's
+`CancelWriter` stops at its first byte; the check stays for clarity. P-WRITE persists no failures
+(`failure_persistence: None`), so its rows have no seed.
 
 ### 1.8–1.14 W8–W14
 
