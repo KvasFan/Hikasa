@@ -12,7 +12,7 @@
     "replaced": true,
     "dry_run": false,
     "cancelled": false,
-    "bytes": 3329,
+    "bytes": "<BYTES>",
     "verdict": "differences",
     "words": {
       "layout": "side-by-side",

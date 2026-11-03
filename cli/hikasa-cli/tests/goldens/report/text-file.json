@@ -12,7 +12,7 @@
     "replaced": false,
     "dry_run": false,
     "cancelled": false,
-    "bytes": 1166,
+    "bytes": "<BYTES>",
     "verdict": {
       "result": "important_differences"
     },

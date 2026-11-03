@@ -12,7 +12,7 @@
     "replaced": false,
     "dry_run": false,
     "cancelled": false,
-    "bytes": 4089,
+    "bytes": "<BYTES>",
     "verdict": {
       "result": "important_differences"
     },
@@ -29,8 +29,8 @@
     "unused": [],
     "links": null,
     "clipboard": {
-      "text_bytes": 1166,
-      "html_bytes": 4089
+      "text_bytes": "<BYTES>",
+      "html_bytes": "<BYTES>"
     },
     "opened": null
   },

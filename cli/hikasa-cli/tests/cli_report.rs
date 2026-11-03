@@ -773,6 +773,31 @@ fn a7_18_the_flags_of_report() {
     assert_eq!(json(&out)["schema"], "hikasa.report.v1");
 }
 
+/// A JSON document with the sizes of a written report as `"<BYTES>"`: they hold the temporary folder's path, whose
+/// length differs between machines (a dry run's `0` stays).
+fn sizes(doc: &str) -> String {
+    let mut out = String::new();
+    for line in doc.lines() {
+        let trimmed = line.trim_start();
+        let key = ["\"bytes\": ", "\"text_bytes\": ", "\"html_bytes\": "]
+            .into_iter()
+            .find(|k| trimmed.starts_with(k));
+        match key {
+            Some(key)
+                if !trimmed[key.len()..].starts_with('0')
+                    && !trimmed[key.len()..].starts_with("null") =>
+            {
+                let indent = &line[..line.len() - trimmed.len()];
+                let comma = if trimmed.ends_with(',') { "," } else { "" };
+                out.push_str(&format!("{indent}{key}\"<BYTES>\"{comma}"));
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// A7.18: the dry run's lines and JSON for each target and links state, as goldens.
 #[test]
 fn a7_18_dry_runs_and_json_goldens() {
@@ -793,7 +818,10 @@ fn a7_18_dry_runs_and_json_goldens() {
     ];
     let golden = |name: &str, out: &std::process::Output| {
         assert!(code(out) < 100, "{name}: {}", stderr(out));
-        assert_golden(&format!("report/{name}"), &s.normalise(&stdout(out)));
+        assert_golden(
+            &format!("report/{name}"),
+            &sizes(&s.normalise(&stdout(out))),
+        );
     };
     let mut dry = links.to_vec();
     dry.push("--dry-run");
