@@ -1,0 +1,2 @@
+load "Sync Laptop"
+sync update:left->right

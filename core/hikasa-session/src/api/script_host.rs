@@ -79,11 +79,16 @@ struct LogUi<'a> {
     service: &'a Service,
     /// Warnings of the log itself (a file that failed).
     warnings: Vec<Warning>,
+    /// The `run` line of the current command: a file opened by `log` starts with it (its own line).
+    last_run: Option<(Option<u32>, String)>,
 }
 
 impl HostUi for LogUi<'_> {
     fn event(&mut self, event: ScriptEvent) {
         if let ScriptEvent::Log { kind, line, text } = &event {
+            if *kind == LineKind::Run {
+                self.last_run = Some((*line, text.clone()));
+            }
             if !self.level.shows(*kind) {
                 return;
             }
@@ -230,6 +235,7 @@ impl<'a> Host<'a> {
                 file: None,
                 service,
                 warnings: Vec::new(),
+                last_run: None,
             },
             stdout,
             settings: default_settings(service),
@@ -1543,7 +1549,22 @@ impl<'a> Host<'a> {
         // A second `log <file>` closes the first.
         self.log.file = None;
         match LogFile::open(local.as_path(), args.append) {
-            Ok(file) => {
+            Ok(mut file) => {
+                // The file starts with the `log` line itself, when the level shows it.
+                if let Some((at, text)) = self.log.last_run.clone()
+                    && self.log.level.shows(LineKind::Run)
+                {
+                    let now = local_time(self.service);
+                    if let Err(e) = file.write_line(&stamped(now, LineKind::Run, at, &text)) {
+                        let warning = Warning {
+                            code: WarningCode::LogNotWritten,
+                            message: format!("the script's log file could not be written: {e}"),
+                            spec: Some(spec.canonical()),
+                        };
+                        self.warn(line, std::slice::from_ref(&warning));
+                        return CommandOutcome::Ok;
+                    }
+                }
                 self.log.file = Some(Box::new(file));
                 CommandOutcome::Ok
             }
