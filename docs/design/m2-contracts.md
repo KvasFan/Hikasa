@@ -6626,7 +6626,8 @@ to RD come from the W7a review: each was applied with only the named property se
     Linux disk test stays the full case.
 32. **Case-insensitive disks (review).** `a7_12_case_insensitive_names_on_disk` (`cfg(any(windows, target_os =
     "macos"))`) runs on the Windows and macOS CI: an existing `REPORT_FILES` that is not ours makes `report_files-2` and
-    stays; a report of `REPORT.html` is ours for `report.html`. Under wine it is not skipped (see the gate's result).
+    stays; a report of `REPORT.html` is ours for `report.html`. It is not skipped under wine, and passes there (wine's
+    lookups fold case).
 
 **W7b mutations** (A7.23; each applied by hand with only the named tests selected, under `timeout 600` and an 8 GiB
 memory cap, and reverted; the session's tests write the report to `MemoryVfs`, note 6):
