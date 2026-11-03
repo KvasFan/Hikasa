@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use hikasa_core::{
     CancelToken, Classify, ErrorReport, FileTime, Phase, Side, Spec, Warning, WarningCode,
 };
-use hikasa_folder::{ByteBudget, NodeId};
+use hikasa_folder::{BudgetGuard, ByteBudget, NodeId};
 use hikasa_report::{
     FolderLink, HtmlStyle, OutputFormat, PairLink, PairLinks, ReportBody, ReportError, ReportInput,
     ReportKind, ReportMeta, ReportRequest, ReportScope, ReportWords, href, linked_rows,
@@ -26,7 +26,6 @@ use hikasa_vfs::{
     Capabilities, Durability, EntryKind, FileName, FollowLinks, ListOptions, Vfs, VfsError,
     WriteOptions,
 };
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::folder_ops::SelectRequest;
@@ -1635,18 +1634,12 @@ impl Service {
             scope: ReportScope::All,
             unused: Vec::new(),
         };
-        let results: Vec<Result<PairResult, ApiError>> = self.pool().install(|| {
-            links
-                .pairs
-                .par_iter()
-                .map(|pair| {
-                    self.write_pair(
-                        vfs, request, prepared, pair, &pair_req, &staging, &back, meta, style,
-                        &budget, job,
-                    )
-                })
-                .collect()
-        });
+        let work = |pair: &PairPlan| {
+            self.write_pair(
+                vfs, request, prepared, pair, &pair_req, &staging, &back, meta, style, job,
+            )
+        };
+        let results = self.run_pairs(&links.pairs, prepared, &budget, job, &work);
         let mut link_map = BTreeMap::new();
         let mut marker_files = Vec::new();
         for (pair, result) in links.pairs.iter().zip(results) {
@@ -1835,7 +1828,73 @@ impl Service {
         Ok(())
     }
 
-    /// One pair report into `staging` (§1.7.8): compared through the content budget, rendered, written, dropped.
+    /// Runs `work` for every pair on the service pool through the content budget (§1.7.8, D-174), results in report
+    /// order. The budget is taken on the calling thread, before a pair is handed to the pool, and given back when its
+    /// file is written: a pool thread never waits for the budget (W7b review: a thread waiting in a comparison's
+    /// `join` steals other work; had it stolen a pair that then waited for the budget the thread itself held, the run
+    /// would hang). Called from a pool thread, the pairs run one after the other on it. A skipped pair takes no budget.
+    fn run_pairs(
+        &self,
+        pairs: &[PairPlan],
+        prepared: &super::responses::PreparedFolderCompare,
+        budget: &ByteBudget,
+        job: &JobControl,
+        work: &(dyn Fn(&PairPlan) -> Result<PairResult, ApiError> + Sync),
+    ) -> Vec<Result<PairResult, ApiError>> {
+        let hooks = self.report_hooks();
+        let need = |pair: &PairPlan| -> u64 {
+            if pair.skip.is_some() {
+                return 0;
+            }
+            let read = prepared.model().read();
+            let sizes = read.node(pair.node).map_or(0, |view| {
+                view.left.as_ref().map_or(0, |e| e.size) + view.right.as_ref().map_or(0, |e| e.size)
+            });
+            sizes.min(budget.capacity())
+        };
+        let slots: Vec<parking_lot::Mutex<Option<Result<PairResult, ApiError>>>> = pairs
+            .iter()
+            .map(|_| parking_lot::Mutex::new(None))
+            .collect();
+        // One pair with its budget: the count of pairs at once goes down before the budget is free.
+        let run_one = |i: usize, pair: &PairPlan, held: BudgetGuard<'_>| {
+            let in_flight = InFlight(hooks);
+            let result = work(pair);
+            drop(in_flight);
+            drop(held);
+            *slots[i].lock() = Some(result);
+        };
+        let take = |pair: &PairPlan| -> Option<BudgetGuard<'_>> {
+            let held = budget.acquire(need(pair), &job.cancel).ok()?;
+            hooks.enter(budget.capacity() - budget.available());
+            Some(held)
+        };
+        let pool = self.pool();
+        if pool.current_thread_index().is_some() {
+            for (i, pair) in pairs.iter().enumerate() {
+                match take(pair) {
+                    Some(held) => run_one(i, pair, held),
+                    None => *slots[i].lock() = Some(Err(ApiError::Cancelled)),
+                }
+            }
+        } else {
+            let run_one = &run_one;
+            pool.in_place_scope(|scope| {
+                for (i, pair) in pairs.iter().enumerate() {
+                    match take(pair) {
+                        Some(held) => scope.spawn(move |_| run_one(i, pair, held)),
+                        None => *slots[i].lock() = Some(Err(ApiError::Cancelled)),
+                    }
+                }
+            });
+        }
+        slots
+            .into_iter()
+            .map(|slot| slot.into_inner().unwrap_or(Err(ApiError::Cancelled)))
+            .collect()
+    }
+
+    /// One pair report into `staging` (§1.7.8): compared, rendered, written; [`Service::run_pairs`] holds its budget.
     #[allow(clippy::too_many_arguments)]
     fn write_pair(
         &self,
@@ -1848,7 +1907,6 @@ impl Service {
         back: &FolderLink,
         folder_meta: &ReportMeta,
         style: &HtmlStyle,
-        budget: &ByteBudget,
         job: &JobControl,
     ) -> Result<PairResult, ApiError> {
         job.cancel.check().map_err(|_| ApiError::Cancelled)?;
@@ -1858,19 +1916,6 @@ impl Service {
         let Some(text_request) = self.pair_text_request(request, prepared, pair.node) else {
             return Ok(PairResult::Skipped("not_a_file_pair".into()));
         };
-        let sizes = {
-            let read = prepared.model().read();
-            read.node(pair.node).map_or(0, |view| {
-                view.left.as_ref().map_or(0, |e| e.size) + view.right.as_ref().map_or(0, |e| e.size)
-            })
-        };
-        let _held = budget
-            .acquire(sizes.min(budget.capacity()), &job.cancel)
-            .map_err(|_| ApiError::Cancelled)?;
-        self.report_hooks()
-            .enter(budget.capacity() - budget.available());
-        // Declared after the budget's guard, so it is dropped first: the count goes down before the budget is free.
-        let _in_flight = InFlight(self.report_hooks());
         let sub = JobControl {
             progress: std::sync::Arc::new(hikasa_core::NullProgress),
             ..job.clone()
