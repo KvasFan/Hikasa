@@ -7346,6 +7346,19 @@ numbered per part, with the mutations each property test was checked by (§6.8 r
     the end of the run (the `Finished` event) with the same script at level `none`: ≤ 4 MiB apart.
 21. `Service::folder_selection` (the selection with its sides), `FolderOpOutcome::item_dto`/`item_count` (the verbose
     log builds one item at a time), `host::capture_script_env` (adapter-only, like `capture_env`) are additive.
+22. A checked `Script` is compact (G14, D-231). The lexer gives the logical lines one at a time (`lex_each`; `lex`
+    collects them), and `parse_checked` and `hikasa_script::references` consume them as they come, so a script is never
+    held as lines. The script keeps every word's text once, quotes removed, in one string, 12 bytes a word (where its
+    text ends, its line, its column with the quoted and expands bits on top) and 12 a command (where its words end, its
+    last line, its name). A `Command` is made when it is asked for, its words from that store and its arguments again by
+    the grammar (`parse_args`, pure, so they are the ones checked). The field `Script.commands` became
+    `Script::commands()` (an iterator that skips without making), `command(i)`, `line(i)`, `len()`, `is_empty()`;
+    `ScriptCheck::commands()` counts, and `script check` without `--json` no longer builds the document's command list
+    to print `ok: <n> commands`. G14 parse went from 199.6 MiB to 29.5 MiB and from 0.199 s to 0.118 s on the same
+    machine (load 3.1 and 1.8): before, a checked command took about 480 bytes (each word a `Word` with its own `String`,
+    once in `words` and again in `args`, keyword values as new strings, `Args` sized for a report), the unused document
+    about 330 more, and the references' lex of the whole script 46 MiB at once. `script check --json` still builds its
+    document (about 330 bytes a command; not gated).
 
 Mutations (each reverted; a property's minimal case was not persisted):
 
@@ -7363,6 +7376,8 @@ Mutations (each reverted; a property's minimal case was not persisted):
 | 10 | log: every line kept in a `Vec` | `script_log.rs` `a8_15_a_million_log_lines_stream` |
 | 11 | host: the remote-scheme refusal dropped | `cli_script_examples.rs` `a8_11_example_2…` |
 | 12 | host: a direction swapped (`left->right` writes left) | `cli_script.rs` `a8_10_copy…`; P-SCRIPT |
+| 13 | compact script: a word's text starts one byte early (`Script::word`, the span of note 22) | `parse.rs` goldens, `copyto_left_alone_is_a_target`, `default_in_any_case`; P-PARSE `p_parse_round_trip`; `expand.rs` `a_value_with_spaces_and_quotes_stays_one_word` |
+| 14 | compact script: the expands bit left in the column | `parse.rs` goldens |
 
 **W8b.** (to be written)
 
