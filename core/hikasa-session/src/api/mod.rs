@@ -32,6 +32,7 @@ pub mod gui;
 pub mod human;
 mod info;
 pub mod package;
+pub mod paths;
 mod report;
 pub mod report_write;
 pub mod requests;
