@@ -174,3 +174,48 @@ fn a8_8_cancel_declines_that_command_only_and_delete_asks_whatever_confirm_delet
     assert_eq!(ui.questions.len(), 1, "D-77: the delete is asked");
     assert!(w.path("r/a.txt").exists());
 }
+
+/// A8.8, §1.8.8: silent mode opens no dialog, but `output-to:printer` still hands the report to the associated
+/// application (not a dialog, §1.7.18): the launcher records it.
+#[test]
+fn a8_8_the_printer_target_in_silent_mode_reaches_the_launcher() {
+    use std::sync::Arc;
+
+    use hikasa_session::launcher::{Recorded, RecordingLauncher};
+    use hikasa_session::{Service, ServiceInit};
+    let mut w = world();
+    let launcher = Arc::new(RecordingLauncher::default());
+    let init = ServiceInit {
+        config_dir: Some(w.dir.path().join("config")),
+        threads: std::num::NonZeroUsize::new(2),
+        launcher: launcher.clone(),
+        ..ServiceInit::new(
+            common::facts(w.dir.path()),
+            common::fixed_clock(),
+            Arc::new(common::UpperRunner::default()),
+        )
+    };
+    w.service = Service::new(init).unwrap();
+    let mut ui = Ui::default();
+    let req = ScriptRunRequest {
+        silent: true,
+        ..script_common::yes()
+    };
+    let outcome = w.run_with(
+        "load l r\nfolder-report layout:summary output-to:printer\n",
+        req,
+        &mut ui,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    let calls = launcher.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let Recorded::Associated(path) = &calls[0] else {
+        panic!("{calls:?}");
+    };
+    assert!(
+        path.components().any(|c| c.as_os_str() == "print"),
+        "{}",
+        path.display()
+    );
+    assert!(ui.questions.is_empty());
+}

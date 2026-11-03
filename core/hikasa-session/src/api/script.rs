@@ -845,6 +845,11 @@ impl Service {
             hikasa_script::ScriptHost::ui(&mut host).beep();
         }
         let (mut results, warnings) = host.finish();
+        // The command a cancel stopped fails `cancelled`, not `invalid_input`.
+        let cancelled_at = outcome
+            .stopped_at
+            .filter(|stop| stop.reason == StopReason::Cancelled)
+            .map(|stop| stop.line);
         let commands = script
             .commands()
             .zip(&outcome.records)
@@ -854,6 +859,9 @@ impl Service {
                     record.message.as_ref().map(|message| ErrorReport {
                         kind: match record.status {
                             CommandStatus::Refused => hikasa_core::ErrorKind::Unsupported,
+                            _ if cancelled_at == Some(command.pos.line) => {
+                                hikasa_core::ErrorKind::Cancelled
+                            }
                             _ => hikasa_core::ErrorKind::InvalidInput,
                         },
                         message: message.clone(),

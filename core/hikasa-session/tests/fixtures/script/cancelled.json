@@ -1,0 +1,92 @@
+{
+  "mode": "run",
+  "script": "<TMP>/work/s.txt",
+  "args": [],
+  "dry_run": false,
+  "silent": false,
+  "cancelled": true,
+  "stopped_at": {
+    "line": 2,
+    "reason": "cancelled"
+  },
+  "errors": [],
+  "errors_omitted": 0,
+  "commands": [
+    {
+      "line": 1,
+      "end_line": 1,
+      "name": "beep",
+      "words": [
+        "beep"
+      ],
+      "text": "beep",
+      "status": "ok",
+      "schema": null,
+      "result": null,
+      "items_omitted": 0,
+      "error": null,
+      "warnings": []
+    },
+    {
+      "line": 2,
+      "end_line": 2,
+      "name": "load",
+      "words": [
+        "load",
+        "l",
+        "r"
+      ],
+      "text": "load l r",
+      "status": "failed",
+      "schema": null,
+      "result": null,
+      "items_omitted": 0,
+      "error": {
+        "kind": "cancelled",
+        "message": "cancelled",
+        "spec": null,
+        "causes": []
+      },
+      "warnings": []
+    },
+    {
+      "line": 3,
+      "end_line": 3,
+      "name": "select",
+      "words": [
+        "select",
+        "all"
+      ],
+      "text": null,
+      "status": "not_run",
+      "schema": null,
+      "result": null,
+      "items_omitted": 0,
+      "error": null,
+      "warnings": []
+    },
+    {
+      "line": 4,
+      "end_line": 4,
+      "name": "beep",
+      "words": [
+        "beep"
+      ],
+      "text": null,
+      "status": "not_run",
+      "schema": null,
+      "result": null,
+      "items_omitted": 0,
+      "error": null,
+      "warnings": []
+    }
+  ],
+  "counts": {
+    "commands": 4,
+    "ok": 1,
+    "failed": 1,
+    "refused": 0,
+    "not_run": 2
+  },
+  "elapsed_s": 0.0
+}

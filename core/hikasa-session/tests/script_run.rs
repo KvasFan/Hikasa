@@ -304,6 +304,104 @@ impl ProgressSink for CancelAfter {
     }
 }
 
+/// A progress sink that cancels the run at the first report of `phase`.
+struct CancelIn {
+    phase: hikasa_core::Phase,
+    token: CancelToken,
+}
+
+impl ProgressSink for CancelIn {
+    fn report(&self, progress: Progress) {
+        if progress.phase == self.phase {
+            self.token.cancel();
+        }
+    }
+}
+
+/// The job of a run cancelled at the first report of `phase`.
+fn cancelled_in(w: &World, phase: hikasa_core::Phase) -> hikasa_session::jobs::JobControl {
+    let token = CancelToken::new();
+    hikasa_session::jobs::JobControl {
+        cancel: token.clone(),
+        progress: Arc::new(CancelIn { phase, token }),
+        ..common::job(&w.service, JobKind::Script)
+    }
+}
+
+/// A8.14: a cancel during a load's comparison stops it as `folder compare` stops: that line fails cancelled, the rest
+/// is not run, exit 100, `Script stopped at line <n>`.
+#[test]
+fn a8_14_a_cancel_during_a_comparison_stops_the_run_there() {
+    let w = world();
+    for i in 0..30 {
+        w.file(&format!("l/many/f{i:02}.txt"), "x", 1_000_000);
+    }
+    let job = cancelled_in(&w, hikasa_core::Phase::Scanning);
+    let mut ui = Ui::default();
+    let outcome = w.run_job(
+        "beep\nload l r\nselect all\nbeep\n",
+        yes(),
+        &mut ui,
+        &job,
+        None,
+    );
+    assert_eq!(outcome.exit_code, ExitCode::UnknownError, "{:?}", ui.lines);
+    assert!(outcome.cancelled);
+    assert_eq!(
+        outcome.stopped_at.map(|s| (s.line, s.reason)),
+        Some((2, StopReason::Cancelled))
+    );
+    assert_eq!(statuses(&outcome), ["ok", "failed", "not_run", "not_run"]);
+    assert_eq!(
+        ui.lines.last().unwrap(),
+        "info - Script stopped at line 2 (exit 100)"
+    );
+    // A8.13: the `hikasa.script.v1` result of a cancelled run (paths of the sandbox as `<TMP>`).
+    let text = w.text("beep\nload l r\nselect all\nbeep\n");
+    let dto = outcome.dto(&text, &[], false, false);
+    let json = serde_json::to_string_pretty(&dto)
+        .unwrap()
+        .replace(
+            &w.dir.path().display().to_string().replace('\\', "\\\\"),
+            "<TMP>",
+        )
+        .replace('\\', "/");
+    common::assert_golden(
+        &common::fixtures("script").join("cancelled.json"),
+        format!("{json}\n").as_bytes(),
+    );
+}
+
+/// A8.14: a cancel while a report is written stops it as `report` stops: no report file and no temporary file are left,
+/// the rest is not run.
+#[test]
+fn a8_14_a_cancel_during_a_report_write_leaves_no_file() {
+    let w = world();
+    let before = w.dump("");
+    // A linked report reports its writing (the files folder and the pair reports) before its first step.
+    let job = cancelled_in(&w, hikasa_core::Phase::Writing);
+    let mut ui = Ui::default();
+    let outcome = w.run_job(
+        "load l r\nfolder-report layout:side-by-side output-options:include-file-links,html-color output-to:rep.html\nbeep\n",
+        yes(),
+        &mut ui,
+        &job,
+        None,
+    );
+    assert!(outcome.cancelled, "{:?}", ui.lines);
+    assert_eq!(outcome.exit_code, ExitCode::UnknownError);
+    assert_eq!(statuses(&outcome), ["ok", "failed", "not_run"]);
+    assert!(!w.path("rep.html").exists());
+    let after: Vec<String> = w
+        .dump("")
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| name != "s.txt")
+        .collect();
+    let before: Vec<String> = before.into_iter().map(|(name, _)| name).collect();
+    assert_eq!(after, before, "no temporary file is left");
+}
+
 #[test]
 fn a8_14_a_cancel_during_a_copy_stops_it_and_the_rest_is_not_run() {
     let w = World::new();
@@ -404,4 +502,122 @@ fn a_sandbox_with_read_only_rows_is_removed_when_dropped() {
     );
     drop(w);
     assert!(!root.exists(), "{} was left behind", root.display());
+}
+
+/// Writes the session `name` of the world's configuration folder (`l` and `r` of `work/` as its bases).
+fn session(w: &World, name: &str, kind: &str, specs_extra: &str, rest: &str) {
+    let dir = w.dir.path().join("config/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{name}.toml")),
+        format!(
+            "schema_version = 1\ntype = \"{kind}\"\n\n[specs]\nleft = '{}'\nright = '{}'\n{specs_extra}\n{rest}",
+            w.path("l").display(),
+            w.path("r").display()
+        ),
+    )
+    .unwrap();
+}
+
+/// The `<n> items selected` counts of a run.
+fn selected_counts(ui: &Ui) -> Vec<String> {
+    ui.lines
+        .iter()
+        .filter(|l| l.ends_with("items selected"))
+        .cloned()
+        .collect()
+}
+
+/// A8.6, SES-010: a Folder Compare session's rules apply (`flatten`: every file is a row of the base) and its
+/// `[display]` is cleared (the equal file is selected, though the session shows differences only).
+#[test]
+fn a8_6_a_folder_compare_session_applies_its_rules_and_not_its_display() {
+    let w = world();
+    w.file("l/same.txt", "same\n", 1_000_000);
+    w.file("r/same.txt", "same\n", 1_000_000);
+    session(
+        &w,
+        "FC",
+        "folder-compare",
+        "",
+        "[rules.handling]\nflatten = true\n\n[display]\nfilter = \"differences\"\n",
+    );
+    let (outcome, ui) = w.run("load FC\nselect all.files\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    // a.txt, only.txt, r.txt, same.txt and sub/x.txt (flat: no expand needed).
+    assert_eq!(
+        selected_counts(&ui),
+        ["info L2 5 items selected"],
+        "{:?}",
+        ui.lines
+    );
+    // The same tree loaded as folders, with the default rules: sub/x.txt is inside a closed folder.
+    let (_, ui) = w.run("load l r\nselect all.files\n");
+    assert_eq!(selected_counts(&ui), ["info L2 4 items selected"]);
+}
+
+/// A8.6: a Folder Sync session's preset is the direction of a bare `sync` (here `mirror_right`: the right orphan goes).
+#[test]
+fn a8_6_a_folder_sync_session_gives_a_bare_sync_its_preset() {
+    let w = world();
+    session(
+        &w,
+        "SY",
+        "folder-sync",
+        "",
+        "[rules.sync]\npreset = \"mirror_right\"\n",
+    );
+    let (outcome, ui) = w.run("load SY\nsync\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert!(!w.path("r/r.txt").exists(), "{:?}", ui.lines);
+    assert_eq!(
+        std::fs::read_to_string(w.path("r/only.txt")).unwrap(),
+        "only\n"
+    );
+}
+
+/// A8.6, §1.8.6: a read-only side of a loaded session refuses a write: the command fails, nothing is written there.
+#[test]
+fn a8_6_a_read_only_side_of_a_session_refuses_a_write() {
+    let w = world();
+    session(&w, "RO", "folder-compare", "read_only_right = true\n", "");
+    let before = w.dump("r");
+    let (outcome, ui) = w.run("load RO\nselect all\ncopy left->right\ndelete right\nbeep\n");
+    assert_eq!(outcome.exit_code, ExitCode::UnknownError, "{:?}", ui.lines);
+    assert_eq!(statuses(&outcome), ["ok", "ok", "failed", "failed", "ok"]);
+    let error = outcome.commands[2].error.as_ref().unwrap();
+    assert!(error.message.contains("read-only"), "{error:?}");
+    assert_eq!(w.dump("r"), before);
+    // The other side is writable.
+    let (outcome, ui) = w.run("load RO\nselect right.orphan.files\ncopy right->left\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert!(w.path("l/r.txt").exists());
+}
+
+/// A8.6, §1.8.5: after a mutation in a flat comparison the refresh answers `RefreshFlat` and the comparison runs
+/// again, so the next `select` sees the tree as it is.
+#[test]
+fn a8_6_a_flat_comparison_is_compared_again_after_a_copy() {
+    let w = world();
+    session(
+        &w,
+        "FLAT",
+        "folder-compare",
+        "",
+        "[rules.handling]\nflatten = true\n",
+    );
+    let (outcome, ui) = w.run(
+        "load FLAT\nselect left.diff.files\ncopy left->right\nselect left.diff.files\nselect all.exact.files\n",
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    assert_eq!(
+        selected_counts(&ui),
+        [
+            "info L2 2 items selected",
+            "info L4 0 items selected",
+            "info L5 2 items selected"
+        ],
+        "{:?}",
+        ui.lines
+    );
 }
