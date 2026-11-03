@@ -14,8 +14,9 @@ use hikasa_session::api::{
 };
 use hikasa_session::sessions::{SessionRef, SessionType};
 
-use super::{Ctx, folder, folder_sync, text};
-use crate::args::{FolderCompareArgs, FolderRuleArgs, SessionCmd, SessionRunArgs, TextCompareArgs};
+use super::report::{self, Shape};
+use super::{Ctx, folder_sync};
+use crate::args::{SessionCmd, SessionRunArgs};
 
 /// Exit code of a successful command.
 const OK: u8 = ExitCode::Success.code();
@@ -179,7 +180,7 @@ fn write_done(ctx: &mut Ctx<'_>, result: Result<SessionWriteDto, ApiError>) -> u
     }
 }
 
-/// `session run`: the session's request through the `folder compare` / `text compare` output path (T11).
+/// `session run`: the session's request through the `folder compare` / `text compare` report path (T11).
 fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
     let request =
         SessionRef::parse(&args.reference).and_then(|r| ctx.service.session_run_request(&r));
@@ -189,14 +190,14 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
                 return ctx.fail(TEXT_COMPARE_SCHEMA, &e, ApiOp::TextCompare, &[]);
             }
             request.ignore_unimportant = args.ignore_unimportant;
-            text::execute(ctx, &text_args(args, &request), &request)
+            report::run_text(ctx, &args.report, request, "unified", Shape::Compare)
         }
         Ok(SessionRunRequest::Folder(mut request)) => {
             if let Err(e) = only_for_sync(args) {
                 return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::FolderCompare, &[]);
             }
             request.ignore_unimportant = args.ignore_unimportant;
-            folder::execute(ctx, &folder_args(args, &request), &request)
+            report::run_folder(ctx, &args.report, request, "list", Shape::Compare)
         }
         Ok(SessionRunRequest::Sync { request, options }) => {
             folder_sync::run_session(ctx, args, request, options)
@@ -206,87 +207,14 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
     }
 }
 
-/// `--yes`, `--confirm`, `--dry-run`, `--allow-empty-source`, `--all-rows` mean something to a folder-sync session only: a
-/// comparison would pass them by in silence.
+/// `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows` mean something to a folder-sync session only: a
+/// comparison would pass them by in silence. (`--dry-run` is the report's for the others, W7b.)
 fn only_for_sync(args: &SessionRunArgs) -> Result<(), ApiError> {
-    if args.yes
-        || args.confirm.is_some()
-        || args.dry_run
-        || args.allow_empty_source
-        || args.all_rows
-    {
+    if args.yes || args.confirm.is_some() || args.allow_empty_source || args.all_rows {
         return Err(ApiError::InvalidArgument(
-            "--yes, --confirm, --dry-run, --allow-empty-source and --all-rows apply to folder-sync sessions".to_owned(),
+            "--yes, --confirm, --allow-empty-source and --all-rows apply to folder-sync sessions"
+                .to_owned(),
         ));
     }
     Ok(())
-}
-
-/// The `text compare` arguments of `session run` (only the presentation words are read by `text::execute`).
-fn text_args(
-    args: &SessionRunArgs,
-    request: &hikasa_session::api::TextCompareRequest,
-) -> TextCompareArgs {
-    TextCompareArgs {
-        left: request.left.clone(),
-        right: request.right.clone(),
-        format: request.format.clone(),
-        encoding: None,
-        left_encoding: request.encodings.left.clone(),
-        right_encoding: request.encodings.right.clone(),
-        rules_file: None,
-        algorithm: None,
-        skew: None,
-        closeness: false,
-        no_closeness: false,
-        closeness_threshold: None,
-        never_align: false,
-        importance: crate::args::ImportanceArgs::default(),
-        compare_line_endings: false,
-        orphans_unimportant: false,
-        ignore_unimportant: args.ignore_unimportant,
-        context: args.context,
-        display: args.display.clone(),
-        report: args.report.clone().unwrap_or_else(|| "unified".into()),
-        patch_style: args.patch_style.clone(),
-        html: args.html,
-        html_mono: args.html_mono,
-        line_numbers: !args.no_line_numbers,
-        no_line_numbers: args.no_line_numbers,
-        width: args.width,
-        wrap: args.wrap.clone(),
-        title: args.title.clone(),
-        output: args.output.clone(),
-        stdin_name: None,
-        gui: false,
-        wait: false,
-        no_launch: false,
-    }
-}
-
-/// The `folder compare` arguments of `session run` (only the presentation words are read by
-/// `folder::execute`).
-fn folder_args(
-    args: &SessionRunArgs,
-    request: &hikasa_session::api::FolderCompareRequest,
-) -> FolderCompareArgs {
-    FolderCompareArgs {
-        left: request.left.clone(),
-        right: request.right.clone(),
-        rule: FolderRuleArgs::default(),
-        display: args.display.clone(),
-        folders: args.folders.clone(),
-        ignore_unimportant: args.ignore_unimportant,
-        suppress_filters: args.suppress_filters,
-        expand_all: false,
-        report: args.report.clone().unwrap_or_else(|| "list".into()),
-        columns: args.columns.clone(),
-        html: args.html,
-        html_mono: args.html_mono,
-        title: args.title.clone(),
-        output: args.output.clone(),
-        gui: false,
-        wait: false,
-        no_launch: false,
-    }
 }

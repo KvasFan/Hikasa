@@ -39,7 +39,7 @@ use hikasa_session::{
 };
 use hikasa_vfs::{VfsError, VfsOp};
 
-use crate::args::{Cli, Command, FormatCmd, GlobalArgs, GuiCmd, TextCmd};
+use crate::args::{Cli, Command, FormatCmd, GlobalArgs, GuiCmd, ReportCmd, TextCmd};
 use crate::interrupt::Interrupt;
 use crate::output::{Output, colour_enabled, stderr_line};
 use crate::progress::ProgressLine;
@@ -73,8 +73,15 @@ fn main() -> std::process::ExitCode {
 
 /// One invocation; returns the exit code.
 fn run() -> u8 {
-    let env = capture_env();
     let argv: Vec<OsString> = std::env::args_os().collect();
+    // The Linux clipboard helper (§1.7.10): a hidden internal entry, before any argument parsing, so it is in no help.
+    if argv
+        .get(1)
+        .is_some_and(|a| a == hikasa_session::host::CLIPBOARD_HELPER_ARG)
+    {
+        return clipboard_helper();
+    }
+    let env = capture_env();
     // Only the arguments before the first `--` can be flags: after it, `--json` is a file name.
     let flags = &argv[..options_end(&argv)];
     let json_anywhere = flags.iter().skip(1).any(|a| a == "--json");
@@ -168,6 +175,7 @@ fn execute(
         None => {
             // The clipboard is read only when a `clipboard://` spec is parsed (D-100).
             let clipboard = clipboard_provider(&env);
+            let placer = Arc::clone(&clipboard);
             let init = ServiceInit {
                 env,
                 config_dir: globals.config_dir.clone(),
@@ -196,6 +204,7 @@ fn execute(
                             progress: &progress,
                             interrupt: &interrupt,
                             matches: leaf_matches(matches),
+                            clipboard: &*placer,
                         };
                         Ok(cmd::dispatch(&mut ctx, command, open))
                     });
@@ -357,6 +366,20 @@ fn conflict(flag: &str, a: &Path, b: &Path) -> String {
     )
 }
 
+/// `hikasa __clipboard-helper`: places the payload on stdin and owns the selection (Linux, §1.7.10).
+/// `HIKASA_CLIPBOARD_HELPER_FILE` (tests) writes the payload to that file instead of the clipboard.
+fn clipboard_helper() -> u8 {
+    use hikasa_session::host::{HelperPlacer, clipboard_helper_main};
+    let placer = match std::env::var_os("HIKASA_CLIPBOARD_HELPER_FILE") {
+        Some(path) if !path.is_empty() => HelperPlacer::File(path.into()),
+        _ => HelperPlacer::System,
+    };
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    let code = clipboard_helper_main(&mut stdin, &mut stdout, &placer);
+    u8::try_from(code).unwrap_or(FAILURE)
+}
+
 /// Reads all of standard input (called by the service at most once, on the first `-` spec).
 fn read_stdin() -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -370,7 +393,10 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Quick(args) => args.stdin_name.clone(),
         Command::Text {
             cmd: TextCmd::Compare(args),
-        } => args.stdin_name.clone(),
+        } => args.rule.stdin_name.clone(),
+        Command::Report {
+            cmd: ReportCmd::Text(args),
+        } => args.rule.stdin_name.clone(),
         Command::Format {
             cmd: FormatCmd::Detect(args),
         } => args.stdin_name.clone(),
@@ -378,6 +404,7 @@ fn stdin_name(command: &Command) -> Option<String> {
             cmd: FormatCmd::Tokens(args),
         } => args.stdin_name.clone(),
         Command::Folder { .. }
+        | Command::Report { .. }
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }

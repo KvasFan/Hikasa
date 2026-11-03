@@ -267,7 +267,7 @@ pub fn run_session(
                 overrides: OpOverrides::default(),
             },
             mode,
-            dry_run: args.dry_run,
+            dry_run: args.report.dry_run,
             all_rows: args.all_rows,
         })
     };
