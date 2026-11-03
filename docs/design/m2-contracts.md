@@ -6384,6 +6384,12 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
     `\n`, `\t`, `\r`, `\u{…}`) decodes both: P-XML over a side's spec (generated names with a backslash and a
     control on Unix, the `C:\…` spec on Windows), P-FXML over every `path` and side `name`. On Windows the goldens'
     `C:\\l\\…` spellings become `/l/…` like the single ones (`unix_paths`).
+18. **`html-custom:` is last in a list (W7a review).** `ReportWords::split_list` gives an item that starts with
+    `html-custom:` the rest of the list, commas included (a stylesheet's path may hold them), so
+    `html-custom:a.css,wrap-word` was the stylesheet `a.css,wrap-word` and the wrap word vanished. The split stays;
+    `ReportRequest::parse` now refuses a `html-custom:` spec whose rest holds `,` and a word of the vocabulary (either
+    kind): `ReportError::Request` (`invalid_input`) saying to put `html-custom:` last. A comma followed by anything else
+    (`html-custom:x,1.css`) stays part of the path (`a7_2_html_custom_swallows_no_report_word`).
 
 **W7a mutations** (A7.23; each applied by hand, the named test run, then reverted with `git checkout`):
 

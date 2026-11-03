@@ -60,7 +60,8 @@ pub struct ReportWords {
 impl ReportWords {
     /// Splits a comma-separated list of words (a script line's `options:`, the CLI's `--options`): items are trimmed,
     /// empty ones dropped. An item that starts with `html-custom:` takes the rest of the list, commas included, as its
-    /// stylesheet spec, so put it last.
+    /// stylesheet spec, so put it last: [`ReportRequest::parse`] refuses such a spec when the rest holds `,` and a
+    /// report word (`ReportError::Request`).
     pub fn split_list(list: &str) -> Vec<String> {
         let mut out = Vec::new();
         let mut rest = list;
@@ -390,6 +391,21 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
                 word,
                 "html-custom:<css> with the stylesheet's path",
             ));
+        }
+        // `html-custom:` takes the rest of a list (a path may hold commas), so a report word after it would be
+        // swallowed into the path: refused, never guessed.
+        if let Some(swallowed) = css.split(',').skip(1).map(str::trim).find(|w| {
+            !w.is_empty()
+                && [ReportKind::Text, ReportKind::Folder]
+                    .into_iter()
+                    .any(|k| classify(w, k, lines).is_ok())
+        }) {
+            return Err(ReportError::Request {
+                message: format!(
+                    "`{HTML_CUSTOM}{css}` takes the rest of the list, so the report word `{swallowed}` would be \
+                     part of the stylesheet's path: put `{HTML_CUSTOM}` last in the list"
+                ),
+            });
         }
         return Ok((
             Slot::Palette,

@@ -544,6 +544,45 @@ fn a7_2_wrong_kind_unknown_and_unsupported() {
     }
 }
 
+/// `html-custom:` takes the rest of a list (a path may hold commas); a report word after it would vanish into the
+/// path, so the request is refused with a message that says to put `html-custom:` last. A comma not followed by a
+/// report word stays part of the path.
+#[test]
+fn a7_2_html_custom_swallows_no_report_word() {
+    for list in [
+        "html-custom:a.css,wrap-word",
+        "html-custom:a.css, Wrap_None",
+        "html-color,html-custom:x,y.css,print-portrait",
+        "html-custom:a.css,display-orphans",
+        "html-custom:a.css,html-custom:b.css",
+    ] {
+        let output = ReportWords::split_list(list);
+        let refs: Vec<&str> = output.iter().map(String::as_str).collect();
+        let err = text("sbs", &[], &refs).unwrap_err();
+        assert!(
+            matches!(err, ReportError::Request { .. }),
+            "{list}: {err:?}"
+        );
+        assert_eq!(err.kind(), ErrorKind::InvalidInput, "{list}");
+        assert!(
+            err.to_string()
+                .contains("put `html-custom:` last in the list"),
+            "{list}: {err}"
+        );
+    }
+    for (list, css) in [
+        ("wrap-word,html-custom:/a/b,c.css", "/a/b,c.css"),
+        ("html-custom:x,1.css", "x,1.css"),
+        ("html-custom:a,,b.css", "a,,b.css"),
+        ("html-custom:my,wrap.css", "my,wrap.css"),
+    ] {
+        let output = ReportWords::split_list(list);
+        let refs: Vec<&str> = output.iter().map(String::as_str).collect();
+        let req = text("sbs", &[], &refs).unwrap_or_else(|e| panic!("{list}: {e}"));
+        assert_eq!(req.css.as_deref(), Some(css), "{list}");
+    }
+}
+
 #[test]
 fn a7_2_unused_words_and_their_warning() {
     let req = text(
