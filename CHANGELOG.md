@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added (W8 scripts, part a: the language and headless runs)
+- **`hikasa script run` and `hikasa script check`.** A script is a text file of commands over one invisible folder
+  comparison: load a session or two folders, set criteria and filters, expand, select, compare, copy, move, copy or move
+  to a folder or a new archive, delete, rename, touch, set attributes, synchronize, write text and folder reports, log,
+  beep. `%1`…`%9`, `%0`, `%NAME%`, `%date%`, `%time%` and `%fn_time%` expand per word, just before a command runs;
+  `lt`/`rt` mean left and right where a side is expected; `"` quotes, `#` comments and a trailing `&` continues a line.
+  `script check` reports every error with its line and column (exit 106) and runs nothing; a script that cannot be found
+  or read is 105, a base that cannot be loaded ends the script with 107, a failed command makes it 100. Flags:
+  `--confirm`, `--stop-on-error`, `--silent`, `--dry-run`, `--json` (`hikasa.script.v1`, 40 schemas). Every command is
+  the matching `folder op`, `folder sync` or `report` command, with the same plans and results.
+- **`hikasa folder op attrib --change <CHANGE>…`** sets or clears the attributes a, s, h, r of the selected rows
+  themselves (on Unix modes `r` is the write bits; `a`, `s`, `h` are skipped `unsupported` with one warning).
+- The warnings `nothing_selected`, `attrib_unsupported` and `log_not_written`, and the help topic `script`.
+
 ## 0.1.93 (2026-11-03, pre-release)
 
 ### Added

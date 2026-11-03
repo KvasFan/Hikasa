@@ -889,3 +889,185 @@ fn g6_crc_index_of_1_gib_stays_small() {
         rss_text(peak)
     );
 }
+
+// ---- G14: scripts (M2 W8a, contract §1.8.17, D-231) ------------------------------------------------------------------
+
+/// A generated script of `lines` physical lines: every command kind, quotes, continuations, `%` forms.
+fn g14_script(lines: usize) -> String {
+    let block = [
+        "option confirm:yes-to-all",
+        "log normal",
+        "criteria size timestamp:2sec",
+        "filter \"*.txt;*.dat\"",
+        "load \"l\" r",
+        "expand all",
+        "select left.diff.files %1 # a comment",
+        "compare crc",
+        "copy left->right",
+        "copyto left path:relative \"t%date%.zip\"",
+        "delete recyclebin=no right",
+        "rename regexpr \"(.*)\\.bak\" \"$1.old\"",
+        "touch left:now",
+        "attrib +r",
+        "sync create-empty update:left->right",
+        "text-report layout:summary output-to:\"x.txt\" &",
+        "  a.txt b.txt",
+        "folder-report just-selection options:display-all output-to:f.txt",
+        "beep",
+        "snapshot save-crc left",
+    ];
+    let mut out = String::new();
+    let mut n = 0;
+    while n < lines {
+        for line in block {
+            out.push_str(line);
+            out.push('\n');
+            n += 1;
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_parse_of_a_200000_line_script() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let text = g14_script(200_000);
+    std::fs::write(dir.join("s.txt"), &text).unwrap();
+    let (median, min, max, peak) = measure(dir, &os(&["script", "check", "s.txt", "x"]), 0);
+    let size = text.len() as u64;
+    let rss_gate = (32 << 20) + 8 * size;
+    println!(
+        "G14 parse: {:.1} MB, {median:?} ({min:?}–{max:?}), peak RSS {} (gate {:.0} MiB), load {}",
+        size as f64 / 1e6,
+        rss_text(peak),
+        mib(rss_gate),
+        load()
+    );
+    assert!(
+        median <= Duration::from_millis(500),
+        "G14 parse: {median:?}"
+    );
+    assert!(
+        peak.is_none_or(|p| p <= rss_gate),
+        "G14 parse RSS: {}",
+        rss_text(peak)
+    );
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_copy_of_10000_files_against_folder_op_copyto() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    for i in 0..10_000 {
+        let path = dir.join(format!("l/d{:03}/f{i:05}.txt", i / 100));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, vec![b'x'; 1024 + i % 512]).unwrap();
+    }
+    std::fs::create_dir_all(dir.join("r")).unwrap();
+    std::fs::write(
+        dir.join("s.txt"),
+        "option confirm:yes-to-all\nload l r\nexpand all\nselect all\ncopyto all path:relative t1\n",
+    )
+    .unwrap();
+    let script = measure(dir, &os(&["script", "run", "s.txt"]), 0);
+    let direct = measure(
+        dir,
+        &os(&[
+            "folder",
+            "op",
+            "copyto",
+            "l",
+            "r",
+            "--select",
+            "all",
+            "--side",
+            "both",
+            "--target",
+            "t2",
+            "--overwrite",
+            "always",
+            "--yes",
+        ]),
+        0,
+    );
+    let gate = direct.0.mul_f64(1.05) + Duration::from_millis(200);
+    println!(
+        "G14 copy: script {:?} ({:?}–{:?}), folder op copyto {:?} ({:?}–{:?}), gate {gate:?}, load {}",
+        script.0,
+        script.1,
+        script.2,
+        direct.0,
+        direct.1,
+        direct.2,
+        load()
+    );
+    assert!(script.0 <= gate, "G14 copy: {:?} > {gate:?}", script.0);
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_sync_dry_run_of_the_g2_tree_against_folder_sync() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    tree_100k(dir);
+    std::fs::write(dir.join("s.txt"), "load l r\nsync update:left->right\n").unwrap();
+    let script = measure(dir, &os(&["script", "run", "s.txt", "--dry-run"]), 0);
+    let direct = measure(
+        dir,
+        &os(&["folder", "sync", "l", "r", "--update-right", "--dry-run"]),
+        0,
+    );
+    let gate = direct.0 + Duration::from_millis(200);
+    println!(
+        "G14 sync: script {:?} ({:?}–{:?}), folder sync {:?} ({:?}–{:?}), gate {gate:?}, load {}",
+        script.0,
+        script.1,
+        script.2,
+        direct.0,
+        direct.1,
+        direct.2,
+        load()
+    );
+    assert!(script.0 <= gate, "G14 sync: {:?} > {gate:?}", script.0);
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_overhead_of_10000_commands() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    for i in 0..100 {
+        std::fs::create_dir_all(dir.join("l")).unwrap();
+        std::fs::create_dir_all(dir.join("r")).unwrap();
+        std::fs::write(dir.join(format!("l/f{i:03}.txt")), format!("left {i}\n")).unwrap();
+        std::fs::write(
+            dir.join(format!("r/f{i:03}.txt")),
+            format!("right, longer {i}\n"),
+        )
+        .unwrap();
+    }
+    let mut text = String::from("load l r\n");
+    text.push_str(&"select left.diff.files\n".repeat(10_000));
+    std::fs::write(dir.join("s.txt"), text).unwrap();
+    let (median, min, max, _) = measure(dir, &os(&["script", "run", "s.txt", "--quiet"]), 0);
+    println!(
+        "G14 overhead: 10,000 commands {median:?} ({min:?}–{max:?}), gate 2 s, load {}",
+        load()
+    );
+    assert!(median <= Duration::from_secs(2), "G14 overhead: {median:?}");
+}

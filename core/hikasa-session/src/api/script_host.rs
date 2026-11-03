@@ -689,8 +689,13 @@ impl<'a> Host<'a> {
                 loaded.prepared.specs().right.canonical(),
                 stats.verdict.as_str().replace('_', " ")
             );
-            let display = self.display(loaded.response.ignore_unimportant);
-            let json = display.ok().map(|d| {
+            // The comparison's document only with `--json`: building it costs a pass over every row.
+            let display = self
+                .req
+                .json
+                .then(|| self.display(loaded.response.ignore_unimportant).ok())
+                .flatten();
+            let json = display.map(|d| {
                 let mut json = serde_json::to_value(loaded.response.json(&d)).unwrap_or_default();
                 if let Some(object) = json.as_object_mut() {
                     object.remove("items");
@@ -1200,10 +1205,15 @@ impl<'a> Host<'a> {
             }
         };
         self.log_outcome(line, &outcome);
-        let dto = outcome.dto();
         self.warn(line, &outcome.warnings);
-        self.keep(index, FOLDER_OP_SCHEMA, &dto, &outcome.warnings);
-        if !outcome.dry_run {
+        if self.req.json {
+            let dto = outcome.dto();
+            self.keep(index, FOLDER_OP_SCHEMA, &dto, &outcome.warnings);
+        } else {
+            self.keep(index, FOLDER_OP_SCHEMA, &(), &outcome.warnings);
+        }
+        // A `copyto` changes nothing of the bases: no refresh (its target lies outside the comparison).
+        if !outcome.dry_run && outcome.verb != hikasa_folder::ops::OpVerb::CopyTo {
             self.refresh(index, &outcome.refresh_nodes);
         }
         if outcome.report.cancelled || self.job.cancel.is_cancelled() {
@@ -1326,9 +1336,13 @@ impl<'a> Host<'a> {
             line,
             super::folder_ops::sync_counts_text(&outcome.counts),
         );
-        let dto = outcome.dto(&model.read(), false);
         self.warn(line, &outcome.op.warnings);
-        self.keep(index, FOLDER_SYNC_SCHEMA, &dto, &outcome.op.warnings);
+        if self.req.json {
+            let dto = outcome.dto(&model.read(), false);
+            self.keep(index, FOLDER_SYNC_SCHEMA, &dto, &outcome.op.warnings);
+        } else {
+            self.keep(index, FOLDER_SYNC_SCHEMA, &(), &outcome.op.warnings);
+        }
         if !outcome.op.dry_run {
             self.refresh(index, &outcome.op.refresh_nodes);
         }

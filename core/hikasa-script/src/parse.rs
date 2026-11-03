@@ -166,6 +166,24 @@ pub fn parse_line(line: &Line) -> Result<Command, ScriptError> {
     })
 }
 
+/// [`parse_line`] taking the line: its words move into the command (one copy fewer of a large script).
+pub fn parse_line_owned(line: Line) -> Result<Command, ScriptError> {
+    let Some((head, rest)) = line.words.split_first() else {
+        return parse_line(&line);
+    };
+    let Some(name) = CommandName::parse(&head.text) else {
+        return parse_line(&line);
+    };
+    let args = parse_args(name, head, rest)?;
+    Ok(Command {
+        pos: line.pos,
+        end_line: line.end_line,
+        name,
+        args,
+        words: line.words,
+    })
+}
+
 /// Refuses a keyword of another command among positional words.
 fn no_keyword(word: &Word, name: CommandName) -> Result<(), ScriptError> {
     match any_keyword(word) {

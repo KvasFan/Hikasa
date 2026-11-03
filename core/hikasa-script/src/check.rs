@@ -10,7 +10,7 @@ use crate::ast::{Args, Command, CommandName, LoadArgs, Script, Slot};
 use crate::error::{ScriptError, ScriptErrorCode};
 use crate::expand::{References, normalize_sides, reference_errors};
 use crate::lex::lex;
-use crate::parse::parse_line;
+use crate::parse::parse_line_owned;
 
 /// Judges a vocabulary word in its slot, with the parser the CLI flag uses (T11). The word holds no `%` form and its
 /// `lt`/`rt` are already normalized. `Err` is the message, which the check prints at the word.
@@ -162,7 +162,7 @@ pub fn parse_checked(
     let mut commands = Vec::with_capacity(lines.len());
     let mut references = References::default();
     let mut loaded = Loaded::Never;
-    for line in &lines {
+    for line in lines {
         for word in &line.words {
             references.add(word);
         }
@@ -176,7 +176,11 @@ pub fn parse_checked(
                 errors.push(error);
             }
         }
-        match parse_line(line) {
+        let is_load = line
+            .words
+            .first()
+            .is_some_and(|w| CommandName::parse(&w.text) == Some(CommandName::Load));
+        match parse_line_owned(line) {
             Ok(command) => {
                 slot_errors(&command, checker, &mut errors);
                 flow(&command, &mut loaded, &mut errors);
@@ -187,11 +191,7 @@ pub fn parse_checked(
             Err(error) => {
                 errors.push(error);
                 // The flow goes on as if the line were a load when it names one, so one typo gives one error.
-                if line
-                    .words
-                    .first()
-                    .is_some_and(|w| CommandName::parse(&w.text) == Some(CommandName::Load))
-                {
+                if is_load {
                     loaded = Loaded::Yes;
                 }
             }

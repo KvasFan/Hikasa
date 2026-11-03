@@ -7301,7 +7301,68 @@ docs/17 §5 anywhere: grep before each commit.
 *To be written by each part*, as §1.7.20: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property test was checked by (§6.8 rules).
 
-**W8a.** (to be written)
+**W8a.** Interpretations and extensions of §1.8.2–§1.8.17:
+
+1. `lex`/`parse` return `Errors { list, more }` instead of `Vec<ScriptError>`: at most `SCRIPT_MAX_ERRORS` errors are
+   kept in memory and the rest counted, so a 16 MiB file of garbage costs no more than a hundred errors.
+2. `ScriptErrorCode` gains `too_large` (exit 105): `lex` itself refuses a source over 16 MiB (A8.1's "one byte more").
+3. Invalid UTF-8 is one `invalid_utf8` error, at the first invalid byte: positions after it mean nothing.
+4. `Args<W>` is generic over its word (`Word` checked, `OsString` resolved) with `try_map`; `Resolved` holds
+   `Args<OsString>`. The slots are split finer than §1.8.2 lists: `NameFilter`, `Cutoff`, `SizeFilter`, `AttribFilter`,
+   `UnixTypeFilter`, `SyncDirection`, `Recycle`, `ReportTarget`, and the report slots carry the kind
+   (`ReportLayout(ReportFor)`).
+5. The host owns the interface: `ScriptHost::ui()` replaces the `ui` parameters of `run` and `execute`;
+   `ScriptHost::run_time()` gives the elapsed time (the architecture test bans `.elapsed()`); `HostUi` is `event`,
+   `can_ask`, `ask_continue`, `beep`, and `ScriptUi` adds `answer` (W6's machine) and `clipboard`.
+6. Keywords are found on the lexed text: a positional word that starts with a keyword of the language (`title:x`) is
+   `unknown_keyword`, written `./title:x`. `log`'s first word is a level when it is one.
+7. `lt`/`rt` are not normalized in a word any part of which was quoted ("a quoted-only word is never rewritten").
+8. The value of a keyword word keeps the keyword word's position (errors point at the word), except `touch`'s time.
+9. `serde_json` is a dev-dependency of `hikasa-script` (its goldens); the lock gains no package.
+10. The start line is `info - script <name> <args…>`; the end line is `info` (as §1.8.9's example) and so hidden at
+    level `none`. A log file opened by `log` starts with that `log` line; a file whose first line cannot be written
+    gives `log_not_written` and the stream goes on.
+11. `file-report` without specs and the P1 reports need no `output-to:` at check: they are refused when they run.
+    `criteria version` passes the check and is refused when it runs (like D-221), rather than 106.
+12. The Service's router serves local files only (`VfsRouter::new(LocalVfs)`), so the Service tests of W8a and P-SCRIPT
+    run on temporary folders on disk, with a dump of those trees where §1.8.15 says `MemoryVfs::dump()`; plumbing a
+    `MemoryVfs` through the router is left to a later wave.
+13. A `load` whose next comparison-using command is a `sync` with static words compares with that sync's rules
+    (`folder_sync_prepare`), as `folder sync` does, so a script's sync costs one scan (G14 sync); a folder-sync session
+    is loaded with its sync's rules; a `sync` on a comparison with other rules runs it again with the sync's first.
+14. `script run --gui` answers `unsupported` until W8b; `SCHEMAS` is 40 in W8a (`hikasa.gui_script.v1` is W8b's 41st).
+15. A command's JSON `result` is kept only with `--json` (`ScriptRunRequest::json`, additive): a run without it keeps no
+    item lists. `ScriptRunRequest::items_max` lowers the cap in tests (`HIKASA_TEST_SCRIPT_ITEMS_MAX`, debug builds).
+16. Dry-run plan lines and a report's dry-run lines go to the stream as `info L<n> <line>`.
+17. A script's `all` is both sides (`parse_sides` takes `both`); `rename` and `attrib` act on both sides, the
+    selection's sides deciding. `copy`, `move`, `copyto`, `moveto` replace existing targets (`overwrite: Always`);
+    the CLI's `copyto` defaults to `fail`, so the equivalence cases pass `--overwrite always`.
+18. A scripted terminal for the CLI tests: `HIKASA_TEST_ANSWERS` (`;`-separated lines), read by debug builds only.
+19. `attrib` adds `Action::SetAttrs` (`set_attrs`), `PlanItem::attrs`, `SkipReason::Unsupported` to hikasa-vfs,
+    `OpVerb::Attrib` (summary words `changed`/`change`) and a `change` field to `hikasa.folder_op.v1` items; `folder op
+    attrib` takes `--side` (default both) besides `--change`.
+20. The stream row of §1.8.17 (A8.15) cannot log a million detail lines: `LOG_DETAILS_MAX` caps the details of one
+    operation at 10,000. It runs 500,000 `beep` commands (over a million lines) and compares the peak of live heap at
+    the end of the run (the `Finished` event) with the same script at level `none`: ≤ 4 MiB apart.
+21. `Service::folder_selection` (the selection with its sides), `FolderOpOutcome::item_dto`/`item_count` (the verbose
+    log builds one item at a time), `host::capture_script_env` (adapter-only, like `capture_env`) are additive.
+
+Mutations (each reverted; a property's minimal case was not persisted):
+
+| # | Mutation | Failed |
+|---|---|---|
+| 1 | lexer: `""` inside quotes is no `"` | P-LEX `p_lex_round_trip` |
+| 2 | lexer: columns start at 1 (off by one) | P-LEX `p_lex_total` (the column names the word's first character) |
+| 3 | expansion: `%%` gives `%%` | P-EXPAND `p_expand_escaped_literal` (minimal: `"%"`) |
+| 4 | expansion: a value re-lexed (split at a blank) | `expand.rs` `the_form_table`, `a_value_with_spaces_and_quotes_stays_one_word` |
+| 5 | `Word::to_source`: a trailing `&` printed bare | P-PARSE `p_parse_round_trip`, P-LEX `p_lex_round_trip` |
+| 6 | interpreter: a load failure does not end the run | `script_run.rs` `a8_7_exit_codes_stop_lines_and_not_run` |
+| 7 | host: no refresh after an operation | `script_run.rs` `a8_6_a_copy_refreshes…`; P-SCRIPT |
+| 8 | host: a cancelled operation not reported cancelled | `script_run.rs` `a8_14_a_cancel_during_a_copy…` |
+| 9 | host: a silent question answered yes to all | `script_confirm.rs` `a8_8_silent_declines…` |
+| 10 | log: every line kept in a `Vec` | `script_log.rs` `a8_15_a_million_log_lines_stream` |
+| 11 | host: the remote-scheme refusal dropped | `cli_script_examples.rs` `a8_11_example_2…` |
+| 12 | host: a direction swapped (`left->right` writes left) | `cli_script.rs` `a8_10_copy…`; P-SCRIPT |
 
 **W8b.** (to be written)
 
