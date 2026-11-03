@@ -312,8 +312,8 @@ pub struct ScriptDialog {
     close_when_finished: bool,
     job: Option<Job<RunEnd>>,
     rx: Receiver<RunMsg>,
-    waiter: Option<ScriptWaiter>,
-    claim: Option<ScriptClaim>,
+    /// Alive while the run's job body runs (it holds the claim and the waiter until then): the shutdown waits for it.
+    alive: std::sync::Weak<()>,
     confirm_reply: Option<Sender<Confirmation>>,
     continue_reply: Option<Sender<bool>>,
     requests: Vec<DialogRequest>,
@@ -362,22 +362,33 @@ impl ScriptDialog {
         let commands = u32::try_from(script.len()).unwrap_or(u32::MAX);
         let (tx, rx) = crossbeam_channel::unbounded();
         let ui_wake = Arc::clone(wake);
+        let running = Arc::new(());
+        let alive = Arc::downgrade(&running);
         let job = Job::spawn(
             &service,
             JobKind::Script,
             format!("Script {name}"),
             wake,
             move |svc, job| {
+                // The job, not the status window, holds the slot and the waiter (review F6): a status window that
+                // goes while its run stops does not free the slot, nor answer a waiting client, before the run
+                // really ended (a cancelled copy ends its current item first).
+                let _running = running;
+                let _claim = claim;
                 let mut ui = WorkerUi {
                     tx,
                     wake: ui_wake,
                     clipboard,
                 };
                 let outcome = svc.script_run(&script, &text, &request, &mut ui, None, job);
-                Ok(RunEnd {
+                let end = RunEnd {
                     exit_code: outcome.exit_code.code(),
                     summary: outcome.summary(),
-                })
+                };
+                if let Some(waiter) = waiter {
+                    waiter.script_finished(outcome.exit_code, end.summary);
+                }
+                Ok(end)
             },
         );
         ScriptDialog {
@@ -395,8 +406,7 @@ impl ScriptDialog {
             close_when_finished,
             job: Some(job),
             rx,
-            waiter,
-            claim,
+            alive,
             confirm_reply: None,
             continue_reply: None,
             requests: Vec::new(),
@@ -409,6 +419,11 @@ impl ScriptDialog {
     /// The id its questions, its stop-on-error question and its end notice carry.
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// The script's file name (the source of its log entries is `script <name>`).
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// The script as located.
@@ -463,6 +478,11 @@ impl ScriptDialog {
     /// True while the run goes on.
     pub fn running(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// Alive while the run's job body runs, also after this status window went (the shutdown waits for it).
+    pub fn alive(&self) -> std::sync::Weak<()> {
+        self.alive.clone()
     }
 
     /// Beeps asked so far.
@@ -584,7 +604,8 @@ impl ScriptDialog {
         }
     }
 
-    /// The run's job ended: the waiter, the notice, the close options (OPT-021, `--closescript`), the slot.
+    /// The run's job ended (it answered the waiter and freed the slot): the notice, the close options (OPT-021,
+    /// `--closescript`).
     fn ended(&mut self, result: Result<RunEnd, ApiError>) {
         let end = match result {
             Ok(end) => end,
@@ -604,10 +625,6 @@ impl ScriptDialog {
         });
         finished.exit_code = end.exit_code;
         self.summary = Some(end.summary);
-        if let Some(waiter) = self.waiter.take() {
-            let code = ExitCode::from_code(end.exit_code).unwrap_or(ExitCode::UnknownError);
-            waiter.script_finished(code, end.summary);
-        }
         let notice = if end.exit_code == 0 {
             Notice::new(
                 format!("script:{}", self.name),
@@ -623,7 +640,6 @@ impl ScriptDialog {
             .with_actions(vec![NoticeAction::ShowScript(self.id)])
         };
         self.requests.push(DialogRequest::Notice(notice));
-        self.claim = None;
         self.confirm_reply = None;
         self.continue_reply = None;
         let closes = match self.close {
@@ -637,7 +653,8 @@ impl ScriptDialog {
 }
 
 impl Drop for ScriptDialog {
-    /// A status window that goes while its script runs (the program quits) stops the run.
+    /// A status window that goes while its script runs (its window closes, the program quits) stops the run; the job
+    /// keeps the slot and the waiter until it ended.
     fn drop(&mut self) {
         self.stop();
     }

@@ -284,6 +284,9 @@ pub struct AppCore {
     /// Operations whose view ended while they wrote: cancelled, they end after their current item, and their outcome
     /// goes to the log with one notice (§1.6.25 W6d after review).
     orphans: Vec<OrphanOp>,
+    /// The runs of the scripts started here (the status window's name, alive while the run's job body runs, also after
+    /// its status window went): the shutdown waits for them as for the orphaned operations (review F4).
+    script_runs: Vec<(String, std::sync::Weak<()>)>,
     /// The clipboard of a script's `output-to:clipboard` (the adapter's provider; none in tests).
     script_clipboard: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
@@ -399,6 +402,7 @@ impl AppCore {
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
             orphans: Vec::new(),
+            script_runs: Vec::new(),
             script_clipboard: Arc::new(hikasa_session::clipboard::NoClipboard),
             #[cfg(test)]
             before_wait: None,
@@ -719,6 +723,10 @@ impl AppCore {
             &self.wake(),
             Arc::clone(&self.script_clipboard),
         );
+        self.script_runs
+            .retain(|(_, alive)| alive.strong_count() > 0);
+        self.script_runs
+            .push((dialog.name().to_owned(), dialog.alive()));
         if let Some(w) = self.window_mut(window) {
             w.dialogs.push(Box::new(dialog));
         }
@@ -1498,10 +1506,13 @@ impl AppCore {
         !self.orphans.is_empty()
     }
 
-    /// Waits (at most `limit`) for the orphaned operations to end, so none is cut off mid-item with a temporary file
-    /// left (Quit). One still running after `limit` is logged as an error.
+    /// Waits (at most `limit`) for the orphaned operations and the stopped scripts' runs to end, so none is cut off
+    /// mid-item with a temporary file left (Quit; a script's waiting client gets its real `ScriptFinished` from the
+    /// run). One still running after `limit` is logged as an error.
     fn wait_operations(&mut self, limit: std::time::Duration) {
-        if self.orphans.is_empty() {
+        self.script_runs
+            .retain(|(_, alive)| alive.strong_count() > 0);
+        if self.orphans.is_empty() && self.script_runs.is_empty() {
             return;
         }
         #[cfg(test)]
@@ -1509,7 +1520,13 @@ impl AppCore {
             hook();
         }
         let began = std::time::Instant::now();
-        while self.poll_orphans() {
+        loop {
+            let orphans = self.poll_orphans();
+            self.script_runs
+                .retain(|(_, alive)| alive.strong_count() > 0);
+            if !orphans && self.script_runs.is_empty() {
+                return;
+            }
             if began.elapsed() >= limit {
                 let mut errors = Vec::new();
                 for orphan in &self.orphans {
@@ -1519,6 +1536,14 @@ impl AppCore {
                     );
                     tracing::error!(target: "hikasa::gui", "{text}");
                     errors.push((orphan.source.clone(), text));
+                }
+                for (name, _) in &self.script_runs {
+                    // The server's shutdown then answers a waiting client with `ScriptFinished{100}` and no counts.
+                    let text = format!(
+                        "Script {name} was still running at exit: its current command may have stopped mid-item."
+                    );
+                    tracing::error!(target: "hikasa::gui", "{text}");
+                    errors.push((format!("script {name}"), text));
                 }
                 for (source, text) in errors {
                     self.log_entry(LogKind::Error, &source, text);

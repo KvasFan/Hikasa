@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hikasa_session::api::script::LineKind;
-use hikasa_session::ipc::{IpcHandler, Request, Response};
+use hikasa_session::ipc::{
+    Endpoint, IpcClient, IpcHandler, IpcServer, Request, Response, ScriptSummary,
+};
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::Shortcut;
 
@@ -663,5 +665,278 @@ fn a8_19_a_question_answered_in_a_second_window_reaches_its_own_run() {
     assert!(
         effects.contains(&crate::app::Effect::Raise(first)),
         "{effects:?}"
+    );
+}
+
+/// The app on a real IPC server with the GUI's handler (the waited `RunScript` of a client).
+fn served(world: &World) -> (TestApp, Endpoint) {
+    let endpoint: Endpoint = world.service.endpoint().expect("endpoint");
+    let server = IpcServer::bind(&endpoint).expect("bind");
+    let handler = GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    let handle = server.spawn(Arc::new(handler)).expect("spawn");
+    (world.app(Some(handle)), endpoint)
+}
+
+/// A `RunScript` of `work/<script>` with the test's cwd `work/`, `wait: true`, the rest at its default.
+fn run_script(world: &World, script: &str) -> Request {
+    Request::RunScript {
+        path: world.path(&format!("work/{script}")).display().to_string(),
+        args: vec![],
+        cwd: Some(world.path("work").display().to_string()),
+        env: Default::default(),
+        wait: true,
+        stop_on_error: false,
+        confirm: None,
+        close: None,
+    }
+}
+
+/// Sends a waited `RunScript` from a client thread, which returns its `ScriptFinished`.
+fn send_waited(
+    endpoint: &Endpoint,
+    request: Request,
+) -> std::thread::JoinHandle<(u8, ScriptSummary)> {
+    let endpoint = endpoint.clone();
+    std::thread::spawn(move || {
+        let mut client =
+            IpcClient::connect(&endpoint, "test", Duration::from_secs(30)).expect("connect");
+        let (id, response) = client.request(request).expect("run_script");
+        assert_eq!(response, Response::Ok);
+        client.wait_script_finished(id).expect("script_finished")
+    })
+}
+
+/// The client's `ScriptFinished`, 60 s at most.
+fn finished(waiting: std::thread::JoinHandle<(u8, ScriptSummary)>) -> (u8, ScriptSummary) {
+    let began = Instant::now();
+    while !waiting.is_finished() {
+        assert!(
+            began.elapsed() < Duration::from_secs(60),
+            "no ScriptFinished"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    waiting.join().expect("the client")
+}
+
+/// A waited `RunScript` runs with the client's folder and environment and its flags (`stop_on_error`, `confirm`,
+/// `close`), and the client gets the run's exit code and counts (the review's surviving mutations M1, M2, M4, M13).
+#[test]
+fn a8_19_a_waited_run_script_runs_as_the_client_asked_and_gets_its_counts() {
+    let world = World::new();
+    for i in 0..2 {
+        world.write(&format!("work/there/l/f{i}.txt"), "left\n");
+    }
+    std::fs::create_dir_all(world.path("work/there/r")).expect("mkdir");
+    world.write(
+        "work/there/s.txt",
+        "load %HIKASA_W8B_TEST_SIDE% r\nselect all\ncopy left->right\nsnapshot x.hksnap\nbeep\n",
+    );
+    let (mut app, endpoint) = served(&world);
+    let mut request = run_script(&world, "there/s.txt");
+    if let Request::RunScript {
+        cwd,
+        env,
+        stop_on_error,
+        confirm,
+        close,
+        ..
+    } = &mut request
+    {
+        // Relative paths mean what they mean in the client's shell; `l` is not under the GUI's own cwd.
+        *cwd = Some(world.path("work/there").display().to_string());
+        env.insert("HIKASA_W8B_TEST_SIDE".into(), "l".into());
+        *stop_on_error = true;
+        *confirm = Some("yes-to-all".into());
+        *close = Some(true);
+    }
+    let waiting = send_waited(&endpoint, request);
+    let w = app.win();
+    run_until(&world, &mut app, |app| {
+        app.window(w).is_some_and(|w| {
+            w.dialogs.holds::<ContinueDialog>()
+                || w.dialogs.holds::<PlanConfirmDialog>()
+                || w.dialogs.holds_where::<ScriptDialog>(|d| !d.running())
+        })
+    });
+    assert!(
+        app.window(w)
+            .is_some_and(|w| w.dialogs.holds::<ContinueDialog>()),
+        "stop_on_error asks, yes-to-all asks nothing: {:?}",
+        status(&mut app).lines().collect::<Vec<_>>()
+    );
+    app.dialog_button(w, ButtonRole::No);
+    run_until(&world, &mut app, |_| waiting.is_finished());
+    let (code, summary) = finished(waiting);
+    assert_eq!(code, 100);
+    assert_eq!(
+        (
+            summary.commands,
+            summary.ok,
+            summary.not_run,
+            summary.stopped_at
+        ),
+        (5, 3, 1, Some(4)),
+        "{summary:?}"
+    );
+    assert!(world.path("work/there/r/f1.txt").exists(), "the copy ran");
+    // `close: Some(true)` closes the status window after any run.
+    run_until(&world, &mut app, |app| {
+        app.window(w)
+            .is_some_and(|w| !w.dialogs.holds::<ScriptDialog>())
+    });
+}
+
+/// A status window that goes with its window while the run waits stops the run; the waiting client gets the run's
+/// own end (its counts), sent once the job ended, not an empty `ScriptFinished{100}` at once (review F6).
+#[test]
+fn a8_19_a_status_window_closed_with_its_window_ends_its_run_before_the_client_hears() {
+    let world = World::new();
+    folders(&world, 2);
+    world.write(
+        "work/s.txt",
+        "load l r\nselect all\ncopy left->right\nbeep\n",
+    );
+    let (mut app, endpoint) = served(&world);
+    let first = app.win();
+    app.execute(CommandId::WindowNew);
+    let second = app.windows().last().expect("two windows").id;
+    app.focus(second);
+    let waiting = send_waited(&endpoint, run_script(&world, "s.txt"));
+    run_until(&world, &mut app, |app| {
+        app.window(second)
+            .is_some_and(|w| w.dialogs.holds::<PlanConfirmDialog>())
+    });
+    app.close_window_now(second);
+    assert!(app.window(first).is_some());
+    let (code, summary) = finished(waiting);
+    assert_eq!(code, 100);
+    assert_eq!(
+        (summary.commands, summary.not_run, summary.stopped_at),
+        (4, 1, Some(3)),
+        "the run's own end: {summary:?}"
+    );
+    assert!(!world.path("work/r/f01.txt").exists());
+    let began = Instant::now();
+    while world.shared.script_running() {
+        assert!(began.elapsed() < Duration::from_secs(60), "the slot stays");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The shutdown stops a run that waits on a question and waits for it: the client gets the run's own end, and the slot
+/// is free when the shutdown returns (review F4; the mutation M6).
+#[test]
+fn a8_19_the_shutdown_stops_a_waiting_run_and_waits_for_it() {
+    let world = World::new();
+    folders(&world, 2);
+    world.write(
+        "work/s.txt",
+        "load l r\nselect all\ncopy left->right\nbeep\n",
+    );
+    let (mut app, endpoint) = served(&world);
+    let w = app.win();
+    let waiting = send_waited(&endpoint, run_script(&world, "s.txt"));
+    run_until(&world, &mut app, |app| {
+        app.window(w)
+            .is_some_and(|w| w.dialogs.holds::<PlanConfirmDialog>())
+    });
+    let began = Instant::now();
+    app.shutdown();
+    assert!(
+        began.elapsed() < Duration::from_secs(20),
+        "the run was stopped, not waited for: {:?}",
+        began.elapsed()
+    );
+    assert!(!world.shared.script_running(), "the run ended first");
+    let (code, summary) = finished(waiting);
+    assert_eq!(code, 100);
+    assert_eq!(
+        (summary.commands, summary.not_run, summary.stopped_at),
+        (4, 1, Some(3)),
+        "the run's own end: {summary:?}"
+    );
+}
+
+/// A big copy stopped by its window's close or by the shutdown ends its current file before the slot is free and the
+/// shutdown returns: no temporary file is left (W6d's promise; review F4 and F6). The source is a hole, so it costs no
+/// disk; the copy is stopped as soon as its temporary file is seen. Unix: NTFS may allocate a hole's bytes.
+#[cfg(unix)]
+#[test]
+fn a8_19_a_stopped_big_copy_ends_before_the_slot_is_free_or_the_shutdown_returns() {
+    const HOLE: u64 = 2 << 30;
+    let world = World::new();
+    world.write("work/l/a.txt", "first\n");
+    let hole = std::fs::File::create(world.path("work/l/b.bin")).expect("create");
+    hole.set_len(HOLE).expect("a hole");
+    drop(hole);
+    std::fs::create_dir_all(world.path("work/r")).expect("mkdir");
+    world.write(
+        "work/s.txt",
+        "option confirm:yes-to-all\nload l r\nselect all\ncopy left->right\nbeep\n",
+    );
+    let names = || -> Vec<String> {
+        std::fs::read_dir(world.path("work/r"))
+            .expect("list")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect()
+    };
+    let copying = |app: &mut TestApp| {
+        let _ = app;
+        names().iter().any(|n| n.contains("b.bin"))
+    };
+    let mut app = world.app(None);
+    let first = app.win();
+    app.execute(CommandId::WindowNew);
+    let second = app.windows().last().expect("two windows").id;
+    app.focus(second);
+    // The window of the status window closes mid-copy: the slot stays taken until the copy stopped.
+    start(
+        &world,
+        &mut app,
+        "option confirm:yes-to-all\nload l r\nselect all\ncopy left->right\nbeep\n",
+        &[],
+    );
+    run_until(&world, &mut app, copying);
+    app.close_window_now(second);
+    assert!(
+        world.shared.script_running(),
+        "the cancelled copy still ends its current file"
+    );
+    let began = Instant::now();
+    while world.shared.script_running() {
+        assert!(began.elapsed() < Duration::from_secs(60), "the slot stays");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !names().iter().any(|n| n.contains("hikasa-tmp")),
+        "{:?}",
+        names()
+    );
+    // The shutdown mid-copy returns once the copy stopped.
+    for name in names() {
+        let _ = std::fs::remove_file(world.path(&format!("work/r/{name}")));
+    }
+    app.focus(first);
+    start(
+        &world,
+        &mut app,
+        "option confirm:yes-to-all\nload l r\nselect all\ncopy left->right\nbeep\n",
+        &[],
+    );
+    run_until(&world, &mut app, copying);
+    app.shutdown();
+    assert!(!world.shared.script_running(), "the run ended first");
+    assert!(
+        !names()
+            .iter()
+            .any(|n| n.contains("hikasa-tmp") || n == "b.bin"),
+        "nothing half-written: {:?}",
+        names()
     );
 }
