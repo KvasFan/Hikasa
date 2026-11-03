@@ -312,7 +312,9 @@ fn a8_17_an_older_gui_does_not_support_scripts() {
 fn a8_17_the_request_carries_the_path_cwd_and_the_referenced_variables() {
     let tmp = common::short_tempdir();
     let service = common::service(tmp.path());
-    let file = common::write(tmp.path(), "work/s.txt", b"log %LOGS%/x.txt\nbeep\n");
+    common::write(tmp.path(), "work/s.txt", b"log %LOGS%/x.txt\nbeep\n");
+    // The path as the platform spells it (`work\s.txt` on Windows).
+    let file = tmp.path().join("work").join("s.txt");
     let source = service.script_locate(&OsString::from("s.txt")).unwrap();
     let text = service.script_load(source, None).unwrap();
     let references = service.script_references(&text);
