@@ -15,6 +15,9 @@ use hikasa_session::api::script::{
 use hikasa_session::clipboard::ClipboardPayload;
 use hikasa_session::jobs::JobControl;
 
+/// A test's step at each log line.
+pub type LineHook = Box<dyn FnMut(&str)>;
+
 /// What a run told its interface.
 #[derive(Default)]
 pub struct Ui {
@@ -39,7 +42,7 @@ pub struct Ui {
     /// Cancelled at the first question (a cancel while a question waits).
     pub cancel_at_question: Option<CancelToken>,
     /// Called with each log line as it comes (a test changes the disk between two commands).
-    pub on_line: Option<Box<dyn FnMut(&str)>>,
+    pub on_line: Option<LineHook>,
 }
 
 impl HostUi for Ui {

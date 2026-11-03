@@ -706,8 +706,8 @@ impl<'a> Host<'a> {
             let stats = &loaded.response;
             let text = format!(
                 "compared {} and {}: {}",
-                spec_shown(&loaded.prepared.specs().left),
-                spec_shown(&loaded.prepared.specs().right),
+                spec_shown(loaded.prepared.specs().left),
+                spec_shown(loaded.prepared.specs().right),
                 stats.verdict.as_str().replace('_', " ")
             );
             // The comparison's document only with `--json`: building it costs a pass over every row.

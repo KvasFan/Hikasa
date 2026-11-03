@@ -568,12 +568,12 @@ impl Vocabulary<'_> {
     }
 }
 
+/// A judge of a command's words together.
+type WordsJudge<'a> = dyn Fn(&[(Slot, &str)]) -> Result<(), String> + 'a;
+
 /// The first `i` such that `words[..=i]` is refused by `refuses`, when `words` as a whole is: the word that makes a
 /// command's words conflict.
-fn first_refused(
-    words: &[(Slot, &str)],
-    refuses: &dyn Fn(&[(Slot, &str)]) -> Result<(), String>,
-) -> Result<(), (usize, String)> {
+fn first_refused(words: &[(Slot, &str)], refuses: &WordsJudge<'_>) -> Result<(), (usize, String)> {
     let Err(message) = refuses(words) else {
         return Ok(());
     };

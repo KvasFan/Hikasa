@@ -313,7 +313,7 @@ fn direct(
         paths: Vec::new(),
         selection: None,
         include_hidden: None,
-        display: Some(display.clone()),
+        display: Some(display),
         expand: if settings.expand_all {
             ExpandWords::All
         } else {
@@ -422,7 +422,7 @@ fn direct(
             s.folder_run(&prepared, &job, &NullObserver).map_err(text)?;
             let req = FolderSyncRequest {
                 options,
-                visible: visible.then(|| display.clone()),
+                visible: visible.then_some(display),
                 ..FolderSyncRequest::default()
             };
             let mut plan = s

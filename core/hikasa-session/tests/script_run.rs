@@ -365,7 +365,7 @@ fn a8_14_a_cancel_during_a_comparison_stops_the_run_there() {
             &w.dir.path().display().to_string().replace('\\', "\\\\"),
             "<TMP>",
         )
-        .replace('\\', "/");
+        .replace("\\\\", "/");
     common::assert_golden(
         &common::fixtures("script").join("cancelled.json"),
         format!("{json}\n").as_bytes(),
