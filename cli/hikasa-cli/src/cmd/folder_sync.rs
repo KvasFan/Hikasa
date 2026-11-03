@@ -46,6 +46,49 @@ struct SyncRun {
     mode: ConfirmMode,
     dry_run: bool,
     all_rows: bool,
+    /// Warnings of the flags, before the comparison's.
+    warnings: Vec<Warning>,
+}
+
+/// The warning `report_option_unused` of a folder-sync session run with REPORT's flags (W7b review): a sync writes no
+/// report, so they are named, not passed by in silence. `--dry-run` is the sync's.
+fn report_flags_ignored(report: &crate::args::ReportArgs) -> Option<Warning> {
+    let given = [
+        (report.layout.is_some(), "--layout"),
+        (!report.options.is_empty(), "--options"),
+        (!report.output_options.is_empty(), "--output-options"),
+        (report.output_to.is_some(), "--output-to"),
+        (report.output.is_some(), "--output"),
+        (report.title.is_some(), "--title"),
+        (report.display.is_some(), "--display"),
+        (report.folders.is_some(), "--folders"),
+        (report.suppress_filters, "--suppress-filters"),
+        (report.context.is_some(), "--context"),
+        (report.patch_style.is_some(), "--patch-style"),
+        (report.columns.is_some(), "--columns"),
+        (report.html, "--html"),
+        (report.html_mono, "--html-mono"),
+        (report.line_numbers, "--line-numbers"),
+        (report.no_line_numbers, "--no-line-numbers"),
+        (report.width.is_some(), "--width"),
+        (report.wrap.is_some(), "--wrap"),
+        (report.lines.is_some(), "--lines"),
+        (!report.select.is_empty(), "--select"),
+        (!report.paths.is_empty(), "--path"),
+    ];
+    let flags: Vec<&str> = given
+        .iter()
+        .filter(|(set, _)| *set)
+        .map(|(_, f)| *f)
+        .collect();
+    (!flags.is_empty()).then(|| Warning {
+        code: hikasa_core::WarningCode::ReportOptionUnused,
+        message: format!(
+            "a folder-sync session writes no report: {} ignored",
+            flags.join(", ")
+        ),
+        spec: None,
+    })
 }
 
 /// The words of the flags.
@@ -200,6 +243,7 @@ fn prepare(ctx: &Ctx<'_>, args: &FolderSyncArgs) -> Result<SyncRun, Failure> {
         mode,
         dry_run: args.confirm.dry_run,
         all_rows: args.all_rows,
+        warnings: Vec::new(),
     })
 }
 
@@ -269,6 +313,7 @@ pub fn run_session(
             mode,
             dry_run: args.report.dry_run,
             all_rows: args.all_rows,
+            warnings: report_flags_ignored(&args.report).into_iter().collect(),
         })
     };
     match prepared()
@@ -291,7 +336,8 @@ fn execute(ctx: &mut Ctx<'_>, run: SyncRun) -> Result<u8, Failure> {
         .service
         .folder_run(&prepared, &job, &NullObserver)
         .map_err(|e| failure(e, prepared.warnings()))?;
-    let mut warnings = response.warnings.clone();
+    let mut warnings = run.warnings.clone();
+    warnings.extend(response.warnings.iter().cloned());
     ctx.progress.clear();
     if job.cancel.is_cancelled() {
         return Err(failure(ApiError::Cancelled, &warnings));
