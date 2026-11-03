@@ -1187,13 +1187,21 @@ fn script_adapter_violations(rel: &str, raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check 7's lexing rule (D-230, W8b): the script code of the adapters splits no text into words itself (the Run
-/// Script dialog's arguments go through `Service::script_args`, the script lexer's rules), and the GUI's script dialog
-/// names `script_args`.
+/// The adapter files that split text into words for something other than a command line or a script: the GUI's
+/// benchmark reads `/proc` lines.
+const SPLIT_ALLOWED: &[&str] = &["gui/hikasa-gui/src/bench.rs"];
+
+/// Check 7's lexing rule (D-230, W8b): no source file of the adapters splits text into words itself, whatever its
+/// name (review: not only the script files; the Run Script dialog's arguments go through `Service::script_args`, the
+/// script lexer's rules), and the GUI's script dialog names `script_args`. Tests and [`SPLIT_ALLOWED`] are exempt.
 fn script_lex_violations(rel: &str, raw: &str) -> Vec<String> {
     let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    if !adapter || !name.contains("script") || name.starts_with("tests") {
+    if !adapter
+        || rel.contains("/tests/")
+        || name.starts_with("tests")
+        || SPLIT_ALLOWED.contains(&rel)
+    {
         return Vec::new();
     }
     let code = code_only(raw);
@@ -1201,7 +1209,7 @@ fn script_lex_violations(rel: &str, raw: &str) -> Vec<String> {
     for token in ["split_whitespace", "split_ascii_whitespace"] {
         for at in find_token(&code, token) {
             violations.push(format!(
-                "{rel}:{}: `{token}` in an adapter's script code (words are split by Service::script_args)",
+                "{rel}:{}: `{token}` in an adapter (a script's words are split by Service::script_args)",
                 line_of(&code, at)
             ));
         }
@@ -2984,7 +2992,18 @@ fn check_2_and_7_script_rules_find_planted_violations() {
         script_lex_violations("cli/hikasa-cli/src/cmd/script.rs", split).len(),
         1
     );
-    assert!(script_lex_violations("gui/hikasa-gui/src/app.rs", split).is_empty());
+    // Every adapter file, not only those named for scripts (review); tests and the benchmark's /proc reader are exempt.
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/app.rs", split).len(),
+        1
+    );
+    assert_eq!(
+        script_lex_violations("cli/hikasa-cli/src/cmd/gui.rs", split).len(),
+        1
+    );
+    assert!(script_lex_violations("gui/hikasa-gui/src/bench.rs", split).is_empty());
+    assert!(script_lex_violations("gui/hikasa-gui/src/tests_script.rs", split).is_empty());
+    assert!(script_lex_violations("cli/hikasa-cli/tests/cli_script.rs", split).is_empty());
     let without = "fn f(t: &str) -> String { t.to_owned() }\n";
     assert_eq!(
         script_lex_violations("gui/hikasa-gui/src/script_dialog.rs", without).len(),
