@@ -20,10 +20,12 @@ pub mod parse;
 use serde::Serialize;
 
 pub use ast::{
-    Args, Command, CommandName, CopyToArgs, ExpandArgs, FilterArgs, LoadArgs, LogArgs, OptionArgs,
-    RenameArgs, ReportArgs, ReportFor, Script, Slot, SyncArgs, SyncMode, TouchArgs,
+    Args, Command, CommandName, Commands, CopyToArgs, ExpandArgs, FilterArgs, LoadArgs, LogArgs,
+    OptionArgs, RenameArgs, ReportArgs, ReportFor, Script, Slot, SyncArgs, SyncMode, TouchArgs,
 };
-pub use check::{AnyWord, RefCheck, WordChecker, check_word, parse, parse_checked, script_syntax};
+pub use check::{
+    AnyWord, RefCheck, WordChecker, check_word, parse, parse_checked, references, script_syntax,
+};
 pub use error::{Pos, ScriptError, ScriptErrorCode};
 pub use expand::{ExpandContext, LocalTime, References, expand, has_forms, normalize_sides};
 pub use interp::{

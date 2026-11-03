@@ -16,8 +16,9 @@ struct Shown<'a> {
 }
 
 fn render(script: &Script) -> String {
-    let commands: Vec<Shown<'_>> = script
-        .commands
+    let made: Vec<hikasa_script::Command> = script.commands().collect();
+    assert_eq!(made.len(), script.len());
+    let commands: Vec<Shown<'_>> = made
         .iter()
         .map(|c| Shown {
             line: c.pos.line,
@@ -51,8 +52,9 @@ fn goldens() {
 #[test]
 fn copyto_left_alone_is_a_target() {
     let script = parse(b"load a b\ncopyto left\n", &AnyWord).unwrap();
-    let Args::CopyTo(CopyToArgs { sides, target, .. }) = &script.commands[1].args else {
-        panic!("{:?}", script.commands[1].args);
+    let command = script.command(1).unwrap();
+    let Args::CopyTo(CopyToArgs { sides, target, .. }) = &command.args else {
+        panic!("{:?}", command.args);
     };
     assert!(sides.is_none());
     assert_eq!(target.text, "left");
@@ -62,6 +64,9 @@ fn copyto_left_alone_is_a_target() {
 fn default_in_any_case() {
     for word in ["<default>", "<DEFAULT>", "<Default>"] {
         let script = parse(format!("load {word}").as_bytes(), &AnyWord).unwrap();
-        assert_eq!(script.commands[0].args, Args::Load(LoadArgs::Default));
+        assert_eq!(
+            script.command(0).unwrap().args,
+            Args::Load(LoadArgs::Default)
+        );
     }
 }

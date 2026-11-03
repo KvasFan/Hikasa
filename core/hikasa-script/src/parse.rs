@@ -203,7 +203,11 @@ fn no_keyword(word: &Word, name: CommandName) -> Result<(), ScriptError> {
     }
 }
 
-fn parse_args(name: CommandName, head: &Word, rest: &[Word]) -> Result<Args<Word>, ScriptError> {
+pub(crate) fn parse_args(
+    name: CommandName,
+    head: &Word,
+    rest: &[Word],
+) -> Result<Args<Word>, ScriptError> {
     let at_end = rest.last().unwrap_or(head);
     let exactly_one = |what: &str| -> Result<Word, ScriptError> {
         match rest {

@@ -449,7 +449,7 @@ pub fn run(
     cancel: &CancelToken,
 ) -> RunOutcome {
     let mut state = opts.state;
-    let total = script.commands.len();
+    let total = script.len();
     host.ui().event(ScriptEvent::Started {
         script: opts.display.to_owned(),
         commands: u32::try_from(total).unwrap_or(u32::MAX),
@@ -464,7 +464,7 @@ pub fn run(
     let mut stopped_at = None;
     let mut failed = false;
     let mut cancelled = false;
-    for (index, command) in script.commands.iter().enumerate() {
+    for (index, command) in script.commands().enumerate() {
         let line = command.pos.line;
         if cancel.is_cancelled() {
             cancelled = true;
@@ -474,7 +474,7 @@ pub fn run(
             });
             break;
         }
-        let (outcome, text) = match resolve(command, index, &*host, opts) {
+        let (outcome, text) = match resolve(&command, index, &*host, opts) {
             Err((text, message)) => {
                 host.ui().event(ScriptEvent::Command {
                     index: u32::try_from(index + 1).unwrap_or(u32::MAX),
@@ -491,7 +491,7 @@ pub fn run(
                     text: resolved.text.clone(),
                 });
                 log(host, LineKind::Run, Some(line), resolved.text.clone());
-                let outcome = match (&resolved.args, refusal(command)) {
+                let outcome = match (&resolved.args, refusal(&command)) {
                     (_, Some(message)) => CommandOutcome::Refused { message },
                     (Args::Option(OptionArgs::StopOnError), _) => {
                         state.stop_on_error = true;

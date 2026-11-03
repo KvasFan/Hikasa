@@ -9,7 +9,7 @@ use crate::Errors;
 use crate::ast::{Args, Command, CommandName, LoadArgs, Script, Slot};
 use crate::error::{ScriptError, ScriptErrorCode};
 use crate::expand::{References, normalize_sides, reference_errors};
-use crate::lex::lex;
+use crate::lex::lex_each;
 use crate::parse::parse_line_owned;
 
 /// Judges a vocabulary word in its slot, with the parser the CLI flag uses (T11). The word holds no `%` form and its
@@ -151,18 +151,18 @@ pub fn parse(source: &[u8], checker: &dyn WordChecker) -> Result<Script, Errors>
 }
 
 /// [`parse`], and with `refs` the references: a `%n` above the arguments given, a `%NAME%` not set. Every error is
-/// reported in line order (up to [`crate::SCRIPT_MAX_ERRORS`], the rest counted).
+/// reported in line order (up to [`crate::SCRIPT_MAX_ERRORS`], the rest counted). The lines are checked one at a time as
+/// they are lexed and kept in the script's compact store; a script with a lexical error has only those errors.
 pub fn parse_checked(
     source: &[u8],
     checker: &dyn WordChecker,
     refs: Option<&RefCheck<'_>>,
 ) -> Result<Script, Errors> {
-    let lines = lex(source)?;
     let mut errors = Errors::default();
-    let mut commands = Vec::with_capacity(lines.len());
+    let mut script = Script::for_source(source.len());
     let mut references = References::default();
     let mut loaded = Loaded::Never;
-    for line in lines {
+    let lexical = lex_each(source, &mut |line| {
         for word in &line.words {
             references.add(word);
         }
@@ -185,7 +185,7 @@ pub fn parse_checked(
                 slot_errors(&command, checker, &mut errors);
                 flow(&command, &mut loaded, &mut errors);
                 if errors.is_empty() {
-                    commands.push(command);
+                    script.push(&command);
                 }
             }
             Err(error) => {
@@ -196,12 +196,29 @@ pub fn parse_checked(
                 }
             }
         }
+    });
+    if !lexical.is_empty() {
+        return Err(lexical);
     }
     if errors.is_empty() {
-        Ok(Script {
-            commands,
-            references,
-        })
+        script.references = references;
+        script.shrink();
+        Ok(script)
+    } else {
+        Err(errors)
+    }
+}
+
+/// What `source` references (§1.8.4), lexed one line at a time; its lexical errors when it does not lex.
+pub fn references(source: &[u8]) -> Result<References, Errors> {
+    let mut references = References::default();
+    let errors = lex_each(source, &mut |line| {
+        for word in &line.words {
+            references.add(word);
+        }
+    });
+    if errors.is_empty() {
+        Ok(references)
     } else {
         Err(errors)
     }

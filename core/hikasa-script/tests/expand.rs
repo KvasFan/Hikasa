@@ -98,11 +98,12 @@ fn environment_case() {
 #[test]
 fn a_value_with_spaces_and_quotes_stays_one_word() {
     let script = parse(b"load %1 %2\n", &AnyWord).unwrap();
-    assert_eq!(script.commands[0].words.len(), 3);
+    let command = script.command(0).unwrap();
+    assert_eq!(command.words.len(), 3);
     let args: Vec<OsString> = vec!["a \"b\" & # c".into(), "%2".into()];
     let env = BTreeMap::new();
     let c = ctx(&args, &env, false);
-    let words: Vec<OsString> = script.commands[0].words[1..]
+    let words: Vec<OsString> = command.words[1..]
         .iter()
         .map(|w| expand(w, &c).unwrap())
         .collect();

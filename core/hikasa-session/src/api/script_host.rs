@@ -384,7 +384,7 @@ impl<'a> Host<'a> {
     /// The sync the comparison of the command at `index` will serve, when the next command that uses a comparison is a
     /// `sync` whose words are known: the load compares with the sync's rules, as `folder sync` does (one scan).
     fn sync_ahead(&self, index: usize) -> Option<SyncOptions> {
-        for command in self.script.commands.iter().skip(index + 1) {
+        for command in self.script.commands().skip(index + 1) {
             match command.name {
                 CommandName::Option | CommandName::Log | CommandName::Beep => {}
                 CommandName::Sync => {
@@ -561,7 +561,7 @@ impl<'a> Host<'a> {
                 if let Err(CommandOutcome::Failed { message }) = self.rerun(index, None) {
                     self.log(
                         LineKind::Warning,
-                        self.script.commands[index].pos.line,
+                        self.script.line(index).unwrap_or(0),
                         message,
                     );
                 }

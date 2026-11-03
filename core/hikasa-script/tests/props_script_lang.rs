@@ -134,10 +134,11 @@ proptest! {
             source.push('\n');
         }
         let first = parse(source.as_bytes(), &AnyWord).map_err(|e| TestCaseError::fail(format!("{:?}\n{source}", e.lines("s"))))?;
-        let printed: Vec<String> = first.commands.iter().map(|c| c.source()).collect();
+        let printed: Vec<String> = first.commands().map(|c| c.source()).collect();
         let again = parse(printed.join("\n").as_bytes(), &AnyWord).unwrap();
-        prop_assert_eq!(first.commands.len(), again.commands.len());
-        for (a, b) in first.commands.iter().zip(&again.commands) {
+        prop_assert_eq!(first.len(), again.len());
+        prop_assert_eq!(first.commands().count(), first.len());
+        for (a, b) in first.commands().zip(again.commands()) {
             prop_assert_eq!(a.name, b.name);
             prop_assert_eq!(texts(&a.args), texts(&b.args));
             prop_assert_eq!(a.word_texts(), b.word_texts());

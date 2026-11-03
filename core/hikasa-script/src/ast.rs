@@ -639,11 +639,225 @@ impl Command {
     }
 }
 
-/// A checked script.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// One word of a [`Script`]: where its text ends in the script's text, and its position. 12 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WordAt {
+    /// The end of its text in [`Script::text`]; it starts where the word before it ends.
+    end: u32,
+    /// Its line.
+    line: u32,
+    /// Its column (the low 30 bits), [`QUOTED`] and [`EXPANDS`].
+    column: u32,
+}
+
+/// [`WordAt::column`]: the word was quoted.
+const QUOTED: u32 = 1 << 31;
+/// [`WordAt::column`]: the word holds a `%` form.
+const EXPANDS: u32 = 1 << 30;
+/// [`WordAt::column`]: the column itself (a line of a 16 MiB script has fewer columns).
+const COLUMN: u32 = EXPANDS - 1;
+
+/// One command of a [`Script`]: where its words end in [`Script::words`], its last line, its name. 12 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CommandAt {
+    /// The end of its words; they start where the command before it ends.
+    words_end: u32,
+    /// Its last physical line.
+    end_line: u32,
+    /// The command.
+    name: CommandName,
+}
+
+/// A checked script. It keeps its commands compactly (G14, D-231): every word's text once in one string, 12 bytes a
+/// word and 12 a command. A [`Command`] is made when it is asked for, its words from that store and its arguments by the
+/// grammar that checked them.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Script {
+    /// The texts of every word, quotes removed, one after the other.
+    text: String,
+    /// The words, in order.
+    words: Vec<WordAt>,
     /// The commands, in order.
-    pub commands: Vec<Command>,
+    commands: Vec<CommandAt>,
     /// What it references.
     pub references: References,
+}
+
+impl Script {
+    /// A script that will hold the commands of a source of `len` bytes (its words' texts are not longer).
+    pub(crate) fn for_source(len: usize) -> Script {
+        Script {
+            text: String::with_capacity(len),
+            ..Script::default()
+        }
+    }
+
+    /// Adds a checked command.
+    pub(crate) fn push(&mut self, command: &Command) {
+        for word in &command.words {
+            self.text.push_str(&word.text);
+            debug_assert!(word.pos.column <= COLUMN, "a column past 2^30");
+            let mut column = word.pos.column & COLUMN;
+            if word.quoted {
+                column |= QUOTED;
+            }
+            if word.expands {
+                column |= EXPANDS;
+            }
+            self.words.push(WordAt {
+                // A script is at most 16 MiB (lex refuses more): its text and words fit in u32.
+                end: self.text.len() as u32,
+                line: word.pos.line,
+                column,
+            });
+        }
+        self.commands.push(CommandAt {
+            words_end: self.words.len() as u32,
+            end_line: command.end_line,
+            name: command.name,
+        });
+    }
+
+    /// Gives back what the store reserved and did not use.
+    pub(crate) fn shrink(&mut self) {
+        self.text.shrink_to_fit();
+        self.words.shrink_to_fit();
+        self.commands.shrink_to_fit();
+    }
+
+    /// The number of commands.
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// No command.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    /// The command at `index` (from 0).
+    pub fn command(&self, index: usize) -> Option<Command> {
+        let at = self.commands.get(index)?;
+        let from = match index.checked_sub(1) {
+            Some(before) => self.commands[before].words_end as usize,
+            None => 0,
+        };
+        let words: Vec<Word> = (from..at.words_end as usize)
+            .map(|i| self.word(i))
+            .collect();
+        let (head, rest) = words.split_first()?;
+        // The words are those the grammar took when the script was checked: it takes them again.
+        let args = crate::parse::parse_args(at.name, head, rest);
+        debug_assert!(args.is_ok(), "a checked command parses again: {args:?}");
+        Some(Command {
+            pos: head.pos,
+            end_line: at.end_line,
+            name: at.name,
+            args: args.ok()?,
+            words,
+        })
+    }
+
+    /// The line of the command at `index` (its name's), without making the command.
+    pub fn line(&self, index: usize) -> Option<u32> {
+        self.commands.get(index)?;
+        let from = match index.checked_sub(1) {
+            Some(before) => self.commands[before].words_end as usize,
+            None => 0,
+        };
+        self.words.get(from).map(|word| word.line)
+    }
+
+    /// The commands, in order, each made when the iterator reaches it.
+    pub fn commands(&self) -> Commands<'_> {
+        Commands {
+            script: self,
+            next: 0,
+        }
+    }
+
+    /// The word at `index` of [`Script::words`].
+    fn word(&self, index: usize) -> Word {
+        let at = self.words[index];
+        let start = match index.checked_sub(1) {
+            Some(before) => self.words[before].end as usize,
+            None => 0,
+        };
+        Word {
+            text: self.text[start..at.end as usize].to_owned(),
+            quoted: at.column & QUOTED != 0,
+            expands: at.column & EXPANDS != 0,
+            pos: Pos::new(at.line, at.column & COLUMN),
+        }
+    }
+}
+
+/// The commands of a [`Script`] ([`Script::commands`]).
+#[derive(Debug, Clone)]
+pub struct Commands<'a> {
+    script: &'a Script,
+    next: usize,
+}
+
+impl Iterator for Commands<'_> {
+    type Item = Command;
+
+    fn next(&mut self) -> Option<Command> {
+        let command = self.script.command(self.next)?;
+        self.next += 1;
+        Some(command)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.script.len().saturating_sub(self.next);
+        (left, Some(left))
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Command> {
+        // Skipped commands are not made.
+        self.next = self.next.saturating_add(n);
+        self.next()
+    }
+}
+
+impl ExactSizeIterator for Commands<'_> {}
+
+impl std::fmt::Debug for Script {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Script")
+            .field("commands", &self.commands().collect::<Vec<_>>())
+            .field("references", &self.references)
+            .finish()
+    }
+}
+
+/// The commands of a script as a list, for [`Script`]'s `Serialize`.
+struct CommandList<'a>(&'a Script);
+
+impl Serialize for CommandList<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.commands())
+    }
+}
+
+impl Serialize for Script {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut out = serializer.serialize_struct("Script", 2)?;
+        out.serialize_field("commands", &CommandList(self))?;
+        out.serialize_field("references", &self.references)?;
+        out.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandAt, WordAt};
+
+    /// G14's budget: a word and a command of a checked script take 12 bytes each.
+    #[test]
+    fn a_word_and_a_command_take_12_bytes() {
+        assert_eq!(std::mem::size_of::<WordAt>(), 12);
+        assert_eq!(std::mem::size_of::<CommandAt>(), 12);
+    }
 }

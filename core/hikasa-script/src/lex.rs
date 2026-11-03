@@ -250,20 +250,32 @@ pub fn too_large(len: u64) -> ScriptError {
 /// [`crate::SCRIPT_MAX_ERRORS`], the rest counted). A file over [`SCRIPT_MAX_BYTES`] is `too_large` and nothing is lexed;
 /// a byte that is not UTF-8 is one `invalid_utf8` error at the first such byte.
 pub fn lex(source: &[u8]) -> Result<Vec<Line>, Errors> {
+    let mut lines = Vec::new();
+    let errors = lex_each(source, &mut |line| lines.push(line));
+    if errors.is_empty() {
+        Ok(lines)
+    } else {
+        Err(errors)
+    }
+}
+
+/// [`lex`], giving each logical line to `each` as it ends instead of keeping them: a large script is never held as lines
+/// (G14). Once an error is found no further line is given (a script with an error has no lines); the errors are
+/// returned, empty when it lexed.
+pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Line)) -> Errors {
     let mut errors = Errors::default();
     if source.len() as u64 > SCRIPT_MAX_BYTES {
         errors.push(too_large(source.len() as u64));
-        return Err(errors);
+        return errors;
     }
     let body = source.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(source);
     let text = match decode(body) {
         Ok(text) => text,
         Err(error) => {
             errors.push(error);
-            return Err(errors);
+            return errors;
         }
     };
-    let mut lines = Vec::new();
     // A command continued by `&`: its words so far and where the `&` was.
     let mut pending: Option<(Vec<Word>, Pos)> = None;
     for (number, physical) in physical_lines(text) {
@@ -296,8 +308,10 @@ pub fn lex(source: &[u8]) -> Result<Vec<Line>, Errors> {
         match lexed.amp {
             Some(amp) => pending = Some((words, amp)),
             None => {
-                if let Some(first) = words.first() {
-                    lines.push(Line {
+                if errors.is_empty()
+                    && let Some(first) = words.first()
+                {
+                    each(Line {
                         pos: first.pos,
                         end_line: number,
                         words,
@@ -309,11 +323,7 @@ pub fn lex(source: &[u8]) -> Result<Vec<Line>, Errors> {
     if let Some((_, amp)) = pending {
         errors.push(continuation_at_end(amp));
     }
-    if errors.is_empty() {
-        Ok(lines)
-    } else {
-        Err(errors)
-    }
+    errors
 }
 
 fn continuation_at_end(amp: Pos) -> ScriptError {

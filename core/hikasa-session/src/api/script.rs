@@ -66,6 +66,11 @@ pub struct ScriptCheck {
 }
 
 impl ScriptCheck {
+    /// The number of commands checked (0 with errors), without making them (`ok: <n> commands`).
+    pub fn commands(&self) -> usize {
+        self.script.as_ref().map_or(0, Script::len)
+    }
+
     /// 0, 105 or 106.
     pub fn exit_code(&self) -> ExitCode {
         if self.errors.is_empty() {
@@ -307,7 +312,7 @@ impl ScriptCheck {
         let commands: Vec<ScriptCommandDto> = self
             .script
             .iter()
-            .flat_map(|script| script.commands.iter())
+            .flat_map(|script| script.commands())
             .map(|c| ScriptCommandDto {
                 line: c.pos.line,
                 end_line: c.end_line,
@@ -705,17 +710,7 @@ impl Service {
     /// The references of a script's text, before it is checked: what `capture_script_env` reads (an unreadable text
     /// references nothing).
     pub fn script_references(&self, text: &ScriptText) -> References {
-        hikasa_script::lex(&text.bytes)
-            .map(|lines| {
-                let mut references = References::default();
-                for line in &lines {
-                    for word in &line.words {
-                        references_add(&mut references, word);
-                    }
-                }
-                references
-            })
-            .unwrap_or_default()
+        hikasa_script::references(&text.bytes).unwrap_or_default()
     }
 
     /// Runs a checked script (§1.8.5–§1.8.9) over the host: every command through the calls of `folder op`, `folder sync`,
@@ -751,8 +746,7 @@ impl Service {
         let outcome = hikasa_script::run(script, &mut host, &opts, &job.cancel);
         let (mut results, warnings) = host.finish();
         let commands = script
-            .commands
-            .iter()
+            .commands()
             .zip(&outcome.records)
             .map(|(command, record)| {
                 let kept = results.remove(&record.index).unwrap_or_default();
@@ -796,11 +790,6 @@ impl Service {
     pub fn script_args(&self, text: &str) -> Result<Vec<String>, ScriptError> {
         hikasa_script::split_words(text)
     }
-}
-
-/// Adds the forms of `word` to `references`.
-fn references_add(references: &mut References, word: &hikasa_script::Word) {
-    references.add(word);
 }
 
 /// The names a set of references needs from the environment.
