@@ -218,6 +218,8 @@ pub struct GuiScriptCall {
     pub closescript: bool,
     /// `--silent`: headless, never through a GUI.
     pub silent: bool,
+    /// `--dry-run` (T12): no plan executed, no file written; sent only to a GUI that can (review F2).
+    pub dry_run: bool,
 }
 
 /// `gui script` (CLI-G02, D-228): `--silent` runs the script headless; otherwise it is located, read and checked here
@@ -232,7 +234,7 @@ pub fn gui_script(ctx: &mut Ctx<'_>, call: &GuiScriptCall, own: &[Warning]) -> u
             silent: true,
             stop_on_error: call.stop_on_error,
             confirm: call.confirm.clone(),
-            dry_run: false,
+            dry_run: call.dry_run,
             gui: false,
             wait: false,
             no_launch: false,
@@ -281,6 +283,7 @@ pub fn gui_script(ctx: &mut Ctx<'_>, call: &GuiScriptCall, own: &[Warning]) -> u
         stop_on_error: call.stop_on_error,
         confirm: call.confirm.clone(),
         closescript: call.closescript,
+        dry_run: call.dry_run,
     };
     let request = match ctx
         .service
@@ -321,6 +324,7 @@ fn run_script(ctx: &mut Ctx<'_>, args: &ScriptRunArgs) -> u8 {
             confirm: args.confirm.clone(),
             closescript: args.closescript,
             silent: false,
+            dry_run: args.dry_run,
         };
         return gui_script(ctx, &call, &[]);
     }

@@ -92,6 +92,7 @@ pub fn run(ctx: &mut Ctx<'_>, cmd: &GuiCmd, open: Option<&OpenArgs>) -> u8 {
                 confirm: args.confirm.clone(),
                 closescript: args.closescript,
                 silent: args.silent,
+                dry_run: args.dry_run,
             };
             super::script::gui_script(ctx, &call, &[])
         }

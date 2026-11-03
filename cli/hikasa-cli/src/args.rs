@@ -152,7 +152,7 @@ pub struct ScriptRunArgs {
     /// The confirm mode before line 1: prompt, yes-to-all, no-to-all.
     #[arg(long, value_name = "MODE")]
     pub confirm: Option<String>,
-    /// Run every command as it would, but execute no plan and write no file.
+    /// Run every command as it would, but execute no plan and write no file (with `--gui`, in the window).
     #[arg(long)]
     pub dry_run: bool,
     /// Run the script in the GUI with its status window (as `gui script`).
@@ -1697,6 +1697,10 @@ pub struct GuiScriptArgs {
     /// Never through a GUI: run the script headless here, as `script run --silent`.
     #[arg(long)]
     pub silent: bool,
+    /// Run every command as it would, but execute no plan and write no file (in the window, as `script run
+    /// --dry-run`; refused, exit 100, by a GUI that cannot).
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// `gui open`: every argument after `open` (except the global flags clap sees directly after it) is passed raw to
