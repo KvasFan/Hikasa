@@ -23,6 +23,12 @@
 //!   `folder compare tree tree.zip --content crc --json` of 10,000 files of 4 KiB in 100 folders < 2 s; the peak RSS
 //!   of the index of a 1 GiB `tar.gz` ≤ 64 MiB (its time is the bench `archive_crc_1gb`).
 //!
+//! - **G13** (contract M2 §1.7.17, D-212): `report text` of the G1 pair to a file (side-by-side HTML, interleaved HTML
+//!   and text, XML) ≤ the `--layout summary` run + 1.5 s and its peak RSS + 24 MiB; `report folder` of the G2 tree
+//!   (side-by-side HTML, XML, display all) ≤ the summary + 1.0 s and + 32 MiB; the G2 tree with about 1,000 differing
+//!   pairs of 4 KiB and `include-file-links` into a new files folder ≤ 5 s and the summary's RSS + 64 MiB. The load
+//!   average is printed beside each figure.
+//!
 //! Each command runs once to warm the cache, then three times; the median is checked against the threshold and
 //! every figure is printed.
 
@@ -224,6 +230,12 @@ fn folder_path(i: usize) -> PathBuf {
 
 /// Writes the two G2 trees below `dir` (`l`, `r`), several folders at a time; returns the changed files.
 fn tree_100k(dir: &Path) -> usize {
+    tree_100k_with(dir, None)
+}
+
+/// [`tree_100k`]; with `pair_bytes`, every changed pair is a text file of that many bytes whose right side has one
+/// line changed and a later time (G13's linked pairs, contract §1.7.17).
+fn tree_100k_with(dir: &Path, pair_bytes: Option<usize>) -> usize {
     let mtime = filetime::FileTime::from_unix_time(1_790_000_000, 0);
     let later = filetime::FileTime::from_unix_time(1_790_000_000 + 3_600, 0);
     for side in ["l", "r"] {
@@ -244,13 +256,24 @@ fn tree_100k(dir: &Path) -> usize {
                         for f in 0..FILES_PER_FOLDER {
                             let name = format!("f{f:02}.txt");
                             let len = 32 + rng.below(96) as usize;
-                            let content = vec![b'a' + (f as u8 % 26); len];
+                            let mut content = vec![b'a' + (f as u8 % 26); len];
                             let differs = rng.below(100) == 0;
+                            if let (true, Some(bytes)) = (differs, pair_bytes) {
+                                content = (0..)
+                                    .map(|n| format!("line {n:04} of folder {i} file {f}\n"))
+                                    .flat_map(String::into_bytes)
+                                    .take(bytes)
+                                    .collect();
+                            }
                             for side in ["l", "r"] {
                                 let path = dir.join(side).join(&folder).join(&name);
                                 let mut bytes = content.clone();
                                 let mut t = mtime;
-                                if differs && side == "r" {
+                                if differs && side == "r" && pair_bytes.is_some() {
+                                    // One line changed, the size kept: the time tells the pair apart.
+                                    bytes[5] = b'X';
+                                    t = later;
+                                } else if differs && side == "r" {
                                     if rng.below(2) == 0 {
                                         bytes.push(b'!');
                                     } else {
@@ -341,6 +364,202 @@ fn g2_folder_compare_100k_files_through_the_binary() {
         median < Duration::from_millis(1_500),
         "G2 warm: {median:?} ≥ 1.5 s"
     );
+}
+
+// ---- G13 (contract M2 §1.7.17, D-212) ------------------------------------------------------------------------------
+
+/// MiB of a byte count.
+fn mib(bytes: u64) -> f64 {
+    bytes as f64 / 1048576.0
+}
+
+/// The load average of the machine (Linux), printed with each figure: G13 is measured on a machine that may be busy.
+fn load() -> String {
+    std::fs::read_to_string("/proc/loadavg")
+        .map(|l| l.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
+        .unwrap_or_else(|_| "n/a".to_owned())
+}
+
+/// Measures each `(name, args)` against `baseline` (the `--layout summary` run of the same input): each median ≤ the
+/// baseline's + `extra`, each peak RSS ≤ the baseline's + `rss` bytes. Returns the failures.
+fn against_summary(
+    dir: &Path,
+    gate: &str,
+    baseline: &[OsString],
+    cases: &[(&str, Vec<OsString>)],
+    code: i32,
+    extra: Duration,
+    rss: u64,
+) -> Vec<String> {
+    let (base, bmin, bmax, base_peak) = measure(dir, baseline, code);
+    println!(
+        "{gate} summary (baseline): median {:.3} s (min {:.3}, max {:.3}); peak RSS {}; load {}",
+        base.as_secs_f64(),
+        bmin.as_secs_f64(),
+        bmax.as_secs_f64(),
+        rss_text(base_peak),
+        load()
+    );
+    let mut failures = Vec::new();
+    for (name, args) in cases {
+        let (median, min, max, peak) = measure(dir, args, code);
+        let bytes = std::fs::metadata(dir.join("out.report")).map_or(0, |m| m.len());
+        println!(
+            "{gate} {name}: median {:.3} s (min {:.3}, max {:.3}), {:+.3} s over the summary; peak RSS {} ({:+.1} MiB); \
+             {:.1} MB written; load {}",
+            median.as_secs_f64(),
+            min.as_secs_f64(),
+            max.as_secs_f64(),
+            median.as_secs_f64() - base.as_secs_f64(),
+            rss_text(peak),
+            match (peak, base_peak) {
+                (Some(p), Some(b)) => mib(p) - mib(b),
+                _ => f64::NAN,
+            },
+            bytes as f64 / 1e6,
+            load()
+        );
+        if median > base + extra {
+            failures.push(format!("{name}: {median:?} > the summary's {base:?} + {extra:?}"));
+        }
+        if let (Some(p), Some(b)) = (peak, base_peak)
+            && p > b + rss
+        {
+            failures.push(format!("{name}: peak RSS {} MiB > the summary's {} MiB + {} MiB", mib(p), mib(b), mib(rss)));
+        }
+    }
+    failures
+}
+
+/// G13 text: reports of the G1 pair to a file, display all: side-by-side HTML, interleaved HTML and text, XML; each
+/// ≤ the summary run + 1.5 s, peak RSS ≤ the summary's + 24 MiB.
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g13_text_reports_of_the_g1_pair() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (left, right) = inputs::c_pair(1_000_000, 0x0005_EED1);
+    std::fs::write(dir.join("l.c"), &left).unwrap();
+    std::fs::write(dir.join("r.c"), &right).unwrap();
+    let report = |layout: &str, extra: &[&str]| {
+        let mut args = vec!["report", "text", "l.c", "r.c", "--layout", layout, "--output-to", "out.report"];
+        args.extend(extra);
+        os(&args)
+    };
+    let cases = [
+        ("side-by-side HTML", report("side-by-side", &["--html"])),
+        ("interleaved HTML", report("interleaved", &["--html"])),
+        ("interleaved text", report("interleaved", &[])),
+        ("XML", report("xml", &[])),
+    ];
+    let failures = against_summary(
+        dir,
+        "G13 text",
+        &report("summary", &[]),
+        &cases,
+        13,
+        Duration::from_millis(1_500),
+        24 << 20,
+    );
+    assert!(failures.is_empty(), "G13 text: {failures:?}");
+}
+
+/// G13 folder: reports of the G2 tree (warm), display all: side-by-side HTML and XML; each ≤ the summary run + 1.0 s,
+/// peak RSS ≤ the summary's + 32 MiB.
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g13_folder_reports_of_the_g2_tree() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    tree_100k(dir);
+    let report = |layout: &str, extra: &[&str]| {
+        let mut args = vec!["report", "folder", "l", "r", "--content", "none", "--layout", layout];
+        args.extend(["--output-to", "out.report"]);
+        args.extend(extra);
+        os(&args)
+    };
+    let cases = [
+        ("side-by-side HTML", report("side-by-side", &["--html", "--options", "display-all"])),
+        ("XML", report("xml", &["--options", "display-all"])),
+    ];
+    let failures = against_summary(
+        dir,
+        "G13 folder",
+        &report("summary", &[]),
+        &cases,
+        13,
+        Duration::from_millis(1_000),
+        32 << 20,
+    );
+    assert!(failures.is_empty(), "G13 folder: {failures:?}");
+}
+
+/// G13 links: the G2 tree with about 1,000 differing pairs of 4 KiB files, `include-file-links`, a new files folder
+/// each run: ≤ 5 s end to end, peak RSS ≤ the summary run's + 64 MiB.
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g13_linked_reports_of_1000_pairs() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let changed = tree_100k_with(dir, Some(4096));
+    let summary = os(&["report", "folder", "l", "r", "--layout", "summary", "--output-to", "out.report"]);
+    let (base, _, _, base_peak) = measure(dir, &summary, 13);
+    println!(
+        "G13 links: {changed} differing pairs of 4 KiB; summary (baseline) median {:.3} s, peak RSS {}; load {}",
+        base.as_secs_f64(),
+        rss_text(base_peak),
+        load()
+    );
+    // A new files folder each run: a warm-up and three timed runs into fresh folders.
+    let mut runs = Vec::new();
+    for n in 0..4 {
+        let out = dir.join(format!("out{n}"));
+        std::fs::create_dir_all(&out).unwrap();
+        let main = out.join("report.html");
+        let mut args = os(&["report", "folder", "l", "r", "--html", "--options", "include-file-links", "--output-to"]);
+        args.push(main.into_os_string());
+        let run = run(dir, &args);
+        assert_eq!(run.code, Some(13), "{}", std::fs::read_to_string(dir.join("stderr.txt")).unwrap_or_default());
+        let written = std::fs::read_dir(out.join("report_files")).unwrap().count();
+        assert_eq!(written, changed + 1, "a report per pair, and the marker");
+        if n > 0 {
+            runs.push(run);
+        }
+    }
+    runs.sort_by_key(|r| r.elapsed);
+    let median = runs[1].elapsed;
+    let peak = runs.iter().filter_map(|r| r.peak_rss).max();
+    println!(
+        "G13 links: median {:.3} s (min {:.3}, max {:.3}); peak RSS {} ({:+.1} MiB over the summary); load {}",
+        median.as_secs_f64(),
+        runs[0].elapsed.as_secs_f64(),
+        runs[2].elapsed.as_secs_f64(),
+        rss_text(peak),
+        match (peak, base_peak) {
+            (Some(p), Some(b)) => mib(p) - mib(b),
+            _ => f64::NAN,
+        },
+        load()
+    );
+    let mut failures = Vec::new();
+    if median > Duration::from_secs(5) {
+        failures.push(format!("{median:?} > 5 s"));
+    }
+    if let (Some(p), Some(b)) = (peak, base_peak)
+        && p > b + (64 << 20)
+    {
+        failures.push(format!("peak RSS {} MiB > the summary's {} MiB + 64 MiB", mib(p), mib(b)));
+    }
+    assert!(failures.is_empty(), "G13 links: {failures:?}");
 }
 
 // ---- G6 (contract M2 §1.5.16, D-155) ------------------------------------------------------------------------------

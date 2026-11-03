@@ -509,3 +509,31 @@ The machine was not idle (unrelated builds, load average 5–9): the figures are
 with a small spread; a disturbed run stayed below 1.3 s for G1. The cold G2 figure (gate < 5 s) was measured on 2026-10-26 by the maintainer with
 `sync; echo 3 > /proc/sys/vm/drop_caches` (root) right before the run, on btrfs over NVMe: 0.694 s, exit 13 as
 expected (one file in 997 differs). No CI job runs these tests.
+
+**Gate G13 (reports, M2 W7b; contract §1.7.17, D-212).** The same harness (`g13_*` in `perf_gates.rs`) measures
+each report against `--layout summary` of the same input in the same run: `report text` of the G1 pair to a file,
+display all (side-by-side HTML, interleaved HTML and text, XML), each ≤ the summary + 1.5 s and its peak RSS + 24 MiB;
+`report folder` of the warm G2 tree, display all (side-by-side HTML, XML), ≤ the summary + 1.0 s and + 32 MiB; the
+G2 tree with about 1,000 differing pairs of 4 KiB text, `include-file-links`, into a new files folder each run,
+≤ 5 s end to end and ≤ the summary's RSS + 64 MiB. Measured on 2026-11-03 on the same machine, release build, with
+the load average printed beside each figure. **Loaded machine:** load 5–10 (other projects building), so these are
+upper figures; the two runs of the text gate are both given.
+
+| Gate | Report | Median (min–max) | Over the summary | Peak RSS (over the summary) | Written | Load (1 min) |
+|---|---|---|---|---|---|---|
+| G13 text | summary (baseline) | 0.548 s (0.543–0.553); 0.500 s | — | 300 MiB | — | 8.2; 7.9 |
+| G13 text | side-by-side HTML | 1.437 s (1.354–1.477); 1.676 s (1.092–2.052) | +0.889 s; +1.176 s | 301 MiB (+0.6) | 218 MB | 9.2; 7.5 |
+| G13 text | interleaved HTML | 0.971 s (0.920–1.133); 0.752 s | +0.423 s; +0.252 s | 301 MiB (+0.7) | 128 MB | 8.9; 7.5 |
+| G13 text | interleaved text | 1.095 s (1.077–1.331); 1.285 s | +0.547 s; +0.784 s | 301 MiB (+0.9) | 67 MB | 8.9; 7.1 |
+| G13 text | XML | 1.070 s (0.982–1.257); 1.330 s | +0.522 s; +0.830 s | 301 MiB (+0.4) | 166 MB | 9.6; 6.7 |
+| G13 folder | summary (baseline) | 0.063 s (0.061–0.082) | — | 35 MiB | — | 9.3 |
+| G13 folder | side-by-side HTML | 0.180 s (0.174–0.181) | +0.116 s | 37 MiB (+1.6) | 34 MB | 9.3 |
+| G13 folder | XML | 0.227 s (0.221–0.230) | +0.163 s | 36 MiB (+1.5) | 45 MB | 10.4 |
+| G13 links | 1,027 pairs of 4 KiB, a new files folder | 0.108 s (0.104–0.108) | (summary 0.055 s) | 41 MiB (+5.0) | 1,028 files | 8.6 |
+
+Every row is within its threshold. In the same session G1 and G2 were re-measured unchanged (G1 0.398 s auto,
+0.395 s standard, 0.316 s identical, peak RSS 301/301/278 MiB; G2 warm 0.051 s, 35 MiB; load 7–8), and the G4 bench
+`cancel_latency` (hikasa-text) gave a worst latency of 3.4–5.5 ms against 100 ms (load 5). The streaming row of
+§1.7.17 runs on CI (`core/hikasa-report/tests/stream_memory.rs`, and through the Service
+`core/hikasa-session/tests/report_stream.rs`: every text layout of a 50,000-line pair peaks at 0.14–0.71 MB of live
+heap writing 0.2–9 MB to a file, folder side-by-side HTML and XML at 0.19 MB).
