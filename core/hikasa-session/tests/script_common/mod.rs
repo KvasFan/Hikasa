@@ -249,15 +249,48 @@ pub fn set_read_only(path: &Path, read_only: bool) {
     let _ = std::fs::set_permissions(path, permissions);
 }
 
-/// Sets the modification time of a file or folder (std only: no time crate in this crate's tests).
+/// Sets the modification time of a file or folder (std only: no time crate in this crate's tests). A folder on Windows
+/// is opened with `FILE_FLAG_BACKUP_SEMANTICS` and `FILE_WRITE_ATTRIBUTES`, which `File::open` does not ask for.
 pub fn set_mtime(path: &Path, secs: i64) {
     let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(u64::try_from(secs).unwrap());
     let file = if path.is_dir() {
-        std::fs::File::open(path)
+        open_folder(path)
     } else {
         std::fs::File::options().write(true).open(path)
     };
     file.unwrap().set_modified(time).unwrap();
+}
+
+#[cfg(windows)]
+fn open_folder(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_folder(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+/// Gives every folder below `work/<rel>` (and itself) the time `secs`, the deepest first: called last, once every file
+/// and attribute is set, because NTFS moves a folder's time when something inside changes.
+pub fn set_folder_times(w: &World, rel: &str, secs: i64) {
+    let mut folders = vec![w.path(rel)];
+    let mut i = 0;
+    while i < folders.len() {
+        if let Ok(entries) = std::fs::read_dir(&folders[i]) {
+            folders.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+        i += 1;
+    }
+    for folder in folders.iter().rev() {
+        set_mtime(folder, secs);
+    }
 }
 
 /// A request with `--confirm yes-to-all`, JSON kept.

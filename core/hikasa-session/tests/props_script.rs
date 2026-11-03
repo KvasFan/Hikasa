@@ -85,8 +85,10 @@ fn entries() -> impl Strategy<Value = Vec<Entry>> {
     })
 }
 
-/// The tree on disk: files first with their times, read-only bits last (a read-only file's time is set before), and an
-/// empty folder on the left (`sync create-empty`).
+/// The tree on disk: files first with their times, then read-only bits (a read-only file's time is set before), and an
+/// empty folder on the left (`sync create-empty`); the folders' times last, the same in both worlds, so a document that
+/// shows a folder row (the empty folder, `sub`) shows the same time on NTFS too, where a folder's time moves when a file
+/// inside gets its time.
 fn build(w: &World, tree: &[Entry], empty_folder: bool) {
     w.dir("l");
     w.dir("r");
@@ -110,6 +112,8 @@ fn build(w: &World, tree: &[Entry], empty_folder: bool) {
             }
         }
     }
+    script_common::set_folder_times(w, "l", 900_000);
+    script_common::set_folder_times(w, "r", 900_000);
 }
 
 /// The command of the case: its script words and the direct call.
