@@ -547,17 +547,27 @@ of a generated 200,000-line script (every command kind, quotes, continuations, `
 + 8 × its size; a script's `copyto` of 10,000 small files against `folder op copyto … --select all --yes` in the same
 run, ≤ the direct × 1.05 + 0.2 s; a script's `--dry-run` sync of the G2 tree against `folder sync --update-right
 --dry-run`, ≤ the direct + 0.2 s; 10,000 `select` commands on a 100-file tree ≤ 2 s. Measured on 2026-11-03, release
-build, the load average beside each figure (load 4–5: not idle, under the "loaded machine" mark of 4 only at the start).
+build, after the compact checked script (contract §1.8.20 W8a note 22), the load average beside each figure (load 1.5–2.0:
+under the "loaded machine" mark of 4).
 
 | Gate | Measure | Median (min–max) | Threshold | Load (1 min) | Result |
 |---|---|---|---|---|---|
-| G14 parse | `script check`, 200,000 lines, 5.0 MB | 0.274 s (0.267–0.275) | ≤ 0.5 s | 4.1 | pass |
-| G14 parse | peak RSS of the same | 199.2 MiB | ≤ 70 MiB (32 MiB + 8 × 5.0 MB) | 4.1 | **fail** |
-| G14 copy | script 4.363 s (3.980–4.652) against direct 4.535 s (4.261–5.268) | — | ≤ 4.962 s | 4.1 | pass |
-| G14 sync | script 0.107 s (0.106–0.115) against direct 0.111 s (0.110–0.111) | — | ≤ 0.311 s | 5.3 | pass |
-| G14 overhead | 10,000 commands | 0.133 s (0.130–0.135) | ≤ 2 s | 4.1 | pass |
+| G14 parse | `script check`, 200,000 lines, 5.0 MB | 0.118 s (0.116–0.118) | ≤ 0.5 s | 1.8 | pass |
+| G14 parse | peak RSS of the same | 29.5 MiB | ≤ 70 MiB (32 MiB + 8 × 5.0 MB) | 1.8 | pass |
+| G14 copy | script 3.982 s (3.937–4.030) against direct 4.375 s (3.912–4.707) | — | ≤ 4.793 s | 1.6 | pass |
+| G14 sync | script 0.076 s (0.075–0.078) against direct 0.078 s (0.077–0.097) | — | ≤ 0.278 s | 1.8 | pass |
+| G14 overhead | 10,000 commands | 0.125 s (0.123–0.125) | ≤ 2 s | 1.8 | pass |
 
-The RSS row fails: the checked script holds about 1 KB per command (each word twice, in the command's words and in its
-typed slots, and slot structs sized for the largest command). It is reported, not relaxed (docs/17 §7.1); a compact
-command representation is left open. The stream row of §1.8.17 runs on CI (`core/hikasa-session/tests/script_log.rs`:
-500,000 commands log over a million lines within 4 MiB of the same run at level `none`).
+The first W8a measurement of the parse row (0.274 s, peak RSS 199.2 MiB, load 4.1) failed the RSS gate: the checked
+script held each word twice (in the command's words and its typed slots) with slots sized for the largest command, about
+480 bytes a command, `script check` built the JSON document's command list only to count it (about 330 more), and the
+references lexed the whole script at once. A checked script now keeps every word's text once and 12 bytes a word and a
+command, and is lexed and checked one line at a time. The copy row is bound by the disk: in the same session one run gave
+script 4.800 s (4.462–6.347) against direct 4.119 s (3.954–4.515), over its 4.525 s gate, and the next run passed as in
+the table (the first W8a measurement also passed: 4.363 s against 4.535 s); nothing in the copy path changed. In the same session G1, G2,
+G4 and G7 were re-measured unchanged: G1 0.395 s auto, 0.388 s standard, 0.305 s identical, peak RSS 301/301/279 MiB
+(load 1.5–1.7); G2 warm 0.048 s, 35 MiB (load 1.7); the G4 bench `cancel_latency` (hikasa-text) a worst latency of
+3.3–4.8 ms against 100 ms (load 1.5–3.8); G7 copy 1.49 × (374 ms against 250 ms, gate 1.5 ×, load 3.5) and G7 plan
+0.106 s (gate 0.5 s; **loaded machine**, load 4.3 at its end). The stream row of §1.8.17 runs on CI
+(`core/hikasa-session/tests/script_log.rs`: 500,000 commands log over a million lines within 4 MiB of the same run at
+level `none`).
