@@ -381,3 +381,27 @@ fn a8_14_a_cancel_while_a_question_waits_ends_the_run() {
     assert_eq!(statuses(&outcome), ["ok", "ok", "failed", "not_run"]);
     assert_eq!(w.dump("r"), before);
 }
+
+/// A6: a sandbox lives under the test's `TMPDIR` and is removed whole when dropped, even after `attrib +r` left its
+/// folders and files read-only.
+#[test]
+fn a_sandbox_with_read_only_rows_is_removed_when_dropped() {
+    let w = world();
+    assert!(
+        w.dir.path().starts_with(std::env::temp_dir()),
+        "{}",
+        w.dir.path().display()
+    );
+    let (outcome, ui) = w.run("load l r\nexpand all\nselect all\nattrib +r\n");
+    assert_eq!(outcome.exit_code, ExitCode::Success, "{:?}", ui.lines);
+    let root = w.dir.path().to_path_buf();
+    assert!(
+        std::fs::metadata(w.path("l/sub"))
+            .unwrap()
+            .permissions()
+            .readonly(),
+        "the folder row is read-only"
+    );
+    drop(w);
+    assert!(!root.exists(), "{} was left behind", root.display());
+}

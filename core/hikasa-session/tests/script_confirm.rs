@@ -146,18 +146,14 @@ fn a8_8_option_confirm_changes_the_mode_from_its_line_on() {
 
 #[test]
 fn a8_8_cancel_declines_that_command_only_and_delete_asks_whatever_confirm_delete_says() {
-    let w = world();
+    let mut w = world();
     std::fs::create_dir_all(w.dir.path().join("config")).unwrap();
     std::fs::write(
         w.dir.path().join("config/options.toml"),
         "[file_operations]\nconfirm_delete = false\n",
     )
     .unwrap();
-    let service = common::service(w.dir.path());
-    let w = World {
-        dir: w.dir,
-        service,
-    };
+    w.service = common::service(w.dir.path());
     let mut ui = Ui {
         can_ask: true,
         replies: [Reply::Cancel].into(),

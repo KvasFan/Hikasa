@@ -79,7 +79,8 @@ impl ScriptUi for Ui {
     }
 }
 
-/// A sandbox: the service's cwd is `root/work`.
+/// A sandbox under the test's `TMPDIR`: the service's cwd is `root/work`. Dropping it gives every folder and file its
+/// write bits back first (an `attrib +r` leaves read-only rows, which the temporary folder could not remove).
 pub struct World {
     pub dir: tempfile::TempDir,
     pub service: Service,
@@ -87,7 +88,7 @@ pub struct World {
 
 impl World {
     pub fn new() -> World {
-        let dir = crate::common::short_tempdir();
+        let dir = tempfile::Builder::new().prefix("hks").tempdir().unwrap();
         let service = crate::common::service(dir.path());
         World { dir, service }
     }
@@ -187,6 +188,57 @@ impl World {
         let outcome = self.run_with(source, yes(), &mut ui);
         (outcome, ui)
     }
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        writable_below(self.dir.path());
+    }
+}
+
+/// Makes `root` and everything below it writable again, folders before their contents (so they can be listed and
+/// emptied); links are not followed.
+pub fn writable_below(root: &Path) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        set_read_only(&path, false);
+        if meta.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&path)
+        {
+            pending.extend(entries.flatten().map(|e| e.path()));
+        }
+    }
+}
+
+/// Sets or clears the read-only state of a file or folder: the write bits on Unix (`0o222` off, `0o200` on, as W6's
+/// `READ_ONLY` conflict reads them), the DOS attribute on Windows.
+pub fn set_read_only(path: &Path, read_only: bool) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    let mut permissions = meta.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = permissions.mode();
+        permissions.set_mode(if read_only {
+            mode & !0o222
+        } else {
+            mode | 0o200
+        });
+    }
+    #[cfg(not(unix))]
+    {
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(read_only);
+    }
+    let _ = std::fs::set_permissions(path, permissions);
 }
 
 /// Sets the modification time of a file or folder (std only: no time crate in this crate's tests).
