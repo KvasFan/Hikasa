@@ -12,9 +12,11 @@ A [script](topic:script) can run in the window, with a status window that shows 
   nothing runs.
 - `hikasa gui script <file> [<arg>…]` and `hikasa script run <file> … --gui` check the script in the terminal, then run
   it in the window ([hikasa gui](topic:gui)). The script's relative paths and `%NAME%` variables mean what they mean
-  in that terminal.
+  in that terminal. With `--dry-run` the window runs it as a dry run: each command shows its plan, nothing is executed
+  and no file is written.
 - `hikasa-gui @<file> [<arg>…]` (and `hikasa gui open @<file> …`) starts the window with the script, or sends it to the
-  window that runs. With `--silent` the window is never used: the script runs where it was started, headless.
+  window that runs. With `--silent` the window is never used: the script runs where it was started, headless; Ctrl-C
+  stops it there as it stops `hikasa script run --silent`.
 
 One script runs at a time: another one is refused while it runs ("a script is running in the window; wait for it or
 stop it").
@@ -34,6 +36,9 @@ stop it").
 - **Stop** (Esc, or the window's close button, while it runs) cancels the script as Ctrl-C does: the command that runs
   stops as its command line command would (a copy finishes the current file), the rest is not run, exit 100.
 - **Close** (Esc) closes the status window once the script ended.
+- A status window that goes while its script runs (its window closes, the program quits) stops the script the same way;
+  the program waits for the command that runs to end (a copy finishes its file, no temporary file is left) before it
+  exits, and before another script can start.
 - `[tweaks.scripts] close_when_finished` closes it after a script that ended with exit 0; `--closescript` closes it
   after any script. `beep_when_finished` beeps at the end: the window asks for attention and the title flashes.
 

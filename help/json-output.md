@@ -33,7 +33,9 @@ go to stderr.
   `ok: true` with its exit code. See [hikasa script](topic:script).
 - `hikasa gui script` (and `script run --gui`, `gui open @script`) prints `hikasa.gui_script.v1`: the script as sent,
   its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
-  `refused`, `not_run`, `stopped_at`); without it both are `null`. The build lists 41 schemas.
+  `refused`, `not_run`, `stopped_at`); without it both are `null`. With `--silent` (`gui script --silent`, `gui open
+  @script --silent`) the script runs here, headless, and the document is `hikasa.script.v1`, as for `hikasa script run
+  --silent`. The build lists 41 schemas.
 - The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
   (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
   written: a dry run, or a write that failed).
