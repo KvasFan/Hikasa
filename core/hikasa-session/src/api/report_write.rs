@@ -1818,6 +1818,58 @@ mod tests {
         }
     }
 
+    /// A7.13, the pure table of the Windows spellings of a target (it runs on every host; `cfg(windows)` runs the same
+    /// on disk): `C:\…\a b\r#1%.html`, `\\?\C:\…\r.html` and `C:/…/r.html` give the same final names, so the
+    /// same files folder, and every href is relative with `/`, no drive and no `\\?\`.
+    #[test]
+    fn a7_13_windows_spellings_pure_table() {
+        use hikasa_core::{PathStyle, SpecContext};
+        let ctx = SpecContext {
+            style: PathStyle::Windows,
+            cwd: Some(std::path::PathBuf::from("C:\\work")),
+            home: None,
+        };
+        let table: [(&str, &str, &str, &str); 4] = [
+            (
+                "C:\\out\\a b\\r#1%.html",
+                "r#1%.html",
+                "r_1__files",
+                "../r%231%25.html",
+            ),
+            ("\\\\?\\C:\\out\\r.html", "r.html", "r_files", "../r.html"),
+            ("C:/out/r.html", "r.html", "r_files", "../r.html"),
+            (
+                "C:\\out\\Rapport été.html",
+                "Rapport été.html",
+                "Rapport_été_files",
+                "../Rapport%20%C3%A9t%C3%A9.html",
+            ),
+        ];
+        for (spelling, name, folder, back) in table {
+            let spec = Spec::parse(spelling, &ctx).unwrap_or_else(|e| panic!("{spelling}: {e}"));
+            let Spec::Local(path) = &spec else {
+                panic!("{spelling}: {spec:?}");
+            };
+            let final_name = path.file_name_in(PathStyle::Windows).unwrap();
+            assert_eq!(final_name, OsString::from(name), "{spelling}");
+            assert_eq!(files_folder_name(&final_name, 1), folder, "{spelling}");
+            let pair = pair_file_name(1, 1, OsStr::new("x.c"));
+            let link = href(&[folder.as_bytes().to_vec(), pair.into_bytes()]);
+            let back_link = back_link(&final_name).href.unwrap();
+            assert_eq!(back_link, back, "{spelling}");
+            for link in [&link, &back_link] {
+                assert!(
+                    !link.contains('\\') && !link.contains(':') && !link.starts_with('/'),
+                    "{link}"
+                );
+                assert!(
+                    !link.contains("?") && !link.to_ascii_lowercase().starts_with("file:"),
+                    "{link}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a7_9_names_of_the_files() {
         assert_eq!(main_stem(OsStr::new("report.html")), "report");

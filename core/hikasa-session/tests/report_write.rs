@@ -1995,3 +1995,157 @@ fn a7_14_a_cancel_at_the_nth_mib() {
         assert_eq!(vfs.dump(), before, "{n} MiB");
     }
 }
+
+// ---- A7.13 -----------------------------------------------------------------------------------------------------
+
+/// A7.13 on a Linux disk: a file and a folder whose names are not UTF-8 show their lossy names in the side-by-side HTML
+/// with links, the XML has `raw-name`, the pair report exists and its link resolves to it by the OS bytes; a main file
+/// named with bytes that are not UTF-8 keeps a working back link.
+#[cfg(target_os = "linux")]
+#[test]
+fn a7_13_names_that_are_not_utf8_on_a_linux_disk() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, &[]);
+    let folder = OsStr::from_bytes(b"d\xff");
+    let file = OsStr::from_bytes(b"f\xfe.txt");
+    for (side, body) in [("l", &b"left\n"[..]), ("r", &b"right!\n"[..])] {
+        std::fs::create_dir_all(root.join(side).join(folder)).unwrap();
+        std::fs::write(root.join(side).join(folder).join(file), body).unwrap();
+    }
+    let service = service(root);
+    let cmp = compare(&service, root);
+    let out = root.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let main_name = OsStr::from_bytes(b"r\xe9port.html");
+    let main = out.join(main_name);
+    let target = ReportTarget::File(main.clone().into_os_string());
+    let mut req = linked(&service, &target);
+    let router = service.vfs();
+    let outcome = run(
+        &service,
+        &*router,
+        &cmp,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    assert_eq!(outcome.pairs.len(), 1, "{:?}", outcome.pairs);
+    let html = String::from_utf8_lossy(&std::fs::read(&main).unwrap()).into_owned();
+    assert!(html.contains("f\u{fffd}.txt"), "the lossy name is shown");
+    let links = hrefs(&html);
+    assert!(!links.is_empty());
+    for link in links {
+        let mut path = out.clone().into_os_string().into_vec();
+        for segment in hikasa_report::links::href_segments(&link).unwrap() {
+            path.push(b'/');
+            path.extend(segment);
+        }
+        let pair = std::path::PathBuf::from(OsString::from_vec(path));
+        assert!(pair.is_file(), "{link} → {}", pair.display());
+        let back = hrefs(&String::from_utf8_lossy(&std::fs::read(&pair).unwrap()));
+        assert_eq!(back.len(), 1);
+        let segments = hikasa_report::links::href_segments(&back[0]).unwrap();
+        assert_eq!(
+            segments,
+            [b"..".to_vec(), main_name.as_bytes().to_vec()],
+            "the back link keeps the OS bytes"
+        );
+    }
+    // XML: `raw-name` holds the OS bytes of both names.
+    let xml_target = ReportTarget::File(out.join("r.xml").into_os_string());
+    let flags = ReportFlags {
+        words: ReportWords {
+            layout: Some("xml".into()),
+            options: vec!["display-all".into()],
+            ..ReportWords::default()
+        },
+        ..ReportFlags::default()
+    };
+    let mut req = service
+        .report_request(ReportKind::Folder, "side-by-side", &flags, &xml_target)
+        .unwrap();
+    run(
+        &service,
+        &*router,
+        &cmp,
+        &mut req,
+        &xml_target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let xml = std::fs::read_to_string(out.join("r.xml")).unwrap();
+    assert!(xml.contains("raw-name=\"64ff\""), "{xml}");
+    assert!(xml.contains("raw-name=\"66fe2e747874\""), "{xml}");
+}
+
+/// A7.13 on macOS: APFS refuses a name that is not UTF-8 (`EILSEQ`), so no such name reaches a report there.
+#[cfg(target_os = "macos")]
+#[test]
+fn a7_13_apfs_refuses_names_that_are_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let err = std::fs::write(dir.path().join(OsStr::from_bytes(b"f\xfe.txt")), b"x").unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(92), "{err}");
+}
+
+/// A7.13 on a Windows disk: `C:\…\a b\r#1%.html`, `\\?\C:\…\r.html` and `C:/…/r.html` write the same files, and every
+/// href is relative with `/`, no drive and no `\\?\`.
+#[cfg(windows)]
+#[test]
+fn a7_13_windows_spellings_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    let service = service(root);
+    let cmp = compare(&service, root);
+    std::fs::create_dir_all(root.join("a b")).unwrap();
+    let base = root.display().to_string();
+    let spellings = [
+        (
+            format!("{base}\\a b\\r#1%.html"),
+            root.join("a b").join("r_1__files"),
+        ),
+        (format!("\\\\?\\{base}\\r.html"), root.join("r_files")),
+        (
+            format!("{}/q.html", base.replace('\\', "/")),
+            root.join("q_files"),
+        ),
+    ];
+    let router = service.vfs();
+    for (spelling, folder) in spellings {
+        let target = ReportTarget::File(OsString::from(&spelling));
+        let mut req = linked(&service, &target);
+        run(
+            &service,
+            &*router,
+            &cmp,
+            &mut req,
+            &target,
+            &job(&service, JobKind::Report),
+        )
+        .unwrap_or_else(|e| panic!("{spelling}: {e}"));
+        assert!(folder.join(".hikasa-report.toml").is_file(), "{spelling}");
+        let main = folder.parent().unwrap().join(format!(
+            "{}.html",
+            folder
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .trim_end_matches("_files")
+                .replace("r_1_", "r#1%")
+        ));
+        let html =
+            std::fs::read_to_string(&main).unwrap_or_else(|e| panic!("{}: {e}", main.display()));
+        for link in hrefs(&html) {
+            assert!(
+                !link.contains('\\') && !link.contains(':') && !link.starts_with('/'),
+                "{link}"
+            );
+            let path = join_href(&folder.parent().unwrap().display().to_string(), &link, '\\');
+            assert!(Path::new(&path).is_file(), "{link} → {path}");
+        }
+    }
+}
