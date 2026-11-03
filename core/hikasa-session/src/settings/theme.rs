@@ -345,6 +345,8 @@ scheme_group! {
             mergeable,
             /// Conflict (merge).
             conflict,
+            /// A folder not opened yet because subfolders are not scanned automatically (FC-012; M2 W9a, D-236).
+            unopened_folder,
         }
         flags {
             /// Use the system selection colours.
@@ -842,6 +844,7 @@ fn light() -> Scheme {
             right_change: h(0x0a7d45),
             mergeable: h(0x7a6400),
             conflict: h(0xd9480f),
+            unopened_folder: h(0xc08a00),
             use_system_selection: false,
             use_system_log_colors: false,
             use_stripes: true,
@@ -929,6 +932,7 @@ fn dark() -> Scheme {
             right_change: h(0x6fcf97),
             mergeable: h(0xd9c45a),
             conflict: h(0xff9e5e),
+            unopened_folder: h(0xe0b33a),
             use_system_selection: false,
             use_system_log_colors: false,
             use_stripes: true,

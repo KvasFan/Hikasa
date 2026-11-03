@@ -202,6 +202,7 @@ scheme_map! {
     folder.older => [c_older],
     folder.orphan => [c_orphan, thumb_orph],
     folder.different => [c_different],
+    folder.unopened_folder => [c_unopened],
     file.default_text => [t_text],
     file.background => [t_bg],
     file.stripes => [t_stripes],

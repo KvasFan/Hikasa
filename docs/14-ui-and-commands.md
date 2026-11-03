@@ -149,7 +149,8 @@ Ctrl, Alt or Cmd only at the window root.
 - **UI-021** (P0): Folder view elements: default text, background, folder info,
   selection (custom or system), inactive selection background, stripes, log panel,
   filtered-out, unknown, same, newer, older, orphan, different (compare colours), left
-  change, right change, mergeable, conflict (merge colours); "Color folders to reflect
+  change, right change, mergeable, conflict (merge colours), unopened folder (`unopened_folder`, M2 W9a: the filled
+  folder of a folder not scanned because subfolders are not scanned automatically, FC-012); "Color folders to reflect
   content", "Use gradient for center background", system or custom font.
 - **UI-022** (P0): File view elements: default text, background, stripes, edited,
   saved, line numbers font, ignored section, current line (optionally only in over/
