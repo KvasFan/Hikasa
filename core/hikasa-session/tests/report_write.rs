@@ -1168,7 +1168,8 @@ proptest::proptest! {
                 let warned = outcome.warnings.iter().any(|w| w.code == WarningCode::ReportOldFolderKept);
                 proptest::prop_assert_eq!(old_kept, warned);
             }
-            Err(_) => {
+            Err(e) => {
+                proptest::prop_assert!(fault.is_some(), "no fault was injected, yet the run failed: {}", e);
                 proptest::prop_assert_eq!(paths(&vfs.dump()), paths(&state));
                 proptest::prop_assert_eq!(vfs.dump(), state, "a failed run changed the back-end");
             }
@@ -2464,5 +2465,965 @@ fn a7_18_m1_flags_are_not_reported_unused() {
         !warning.message.contains("line-numbers"),
         "{}",
         warning.message
+    );
+}
+
+// ---- W7b review: the mutations that survived ---------------------------------------------------------------------
+
+/// A back-end over a `MemoryVfs` with three behaviours of the world outside: a folder that appears right after a look
+/// found nothing (`appears`), a writer that cancels a token when flushed (the cancel lands after the last byte), and
+/// a writer whose commit lands and then fails (a sync after the rename).
+struct Hooked<'a> {
+    inner: &'a MemoryVfs,
+    appears: Option<String>,
+    cancel_on_flush: Option<(String, CancelToken)>,
+    commit_then_fail: Option<String>,
+}
+
+impl<'a> Hooked<'a> {
+    fn new(inner: &'a MemoryVfs) -> Hooked<'a> {
+        Hooked {
+            inner,
+            appears: None,
+            cancel_on_flush: None,
+            commit_then_fail: None,
+        }
+    }
+}
+
+struct HookedWriter {
+    inner: Box<dyn AtomicWrite>,
+    cancel: Option<CancelToken>,
+    fail_after_commit: Option<String>,
+}
+
+impl std::io::Write for HookedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(token) = &self.cancel {
+            token.cancel();
+        }
+        self.inner.flush()
+    }
+}
+
+impl std::io::Seek for HookedWriter {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+impl AtomicWrite for HookedWriter {
+    fn commit(self: Box<Self>) -> Result<(), VfsError> {
+        self.inner.commit()?;
+        match self.fail_after_commit {
+            Some(path) => Err(VfsError::from_io(
+                path,
+                VfsOp::Commit,
+                std::io::Error::other("the sync after the rename failed"),
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Vfs for Hooked<'_> {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        let got = self.inner.stat(spec, follow);
+        if got.is_err()
+            && let Some(path) = &self.appears
+            && spec.canonical() == *path
+        {
+            self.inner.insert_dir(path, MemMeta::default()).unwrap();
+        }
+        got
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let inner = self.inner.open_write(spec, opts)?;
+        let path = spec.canonical();
+        Ok(Box::new(HookedWriter {
+            inner,
+            cancel: self
+                .cancel_on_flush
+                .as_ref()
+                .filter(|(p, _)| *p == path)
+                .map(|(_, t)| t.clone()),
+            fail_after_commit: self
+                .commit_then_fail
+                .as_ref()
+                .filter(|p| **p == path)
+                .cloned(),
+        }))
+    }
+    fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
+        self.inner.child(dir, name)
+    }
+    fn create_dir(&self, spec: &Spec, parents: bool) -> Result<bool, VfsError> {
+        self.inner.create_dir(spec, parents)
+    }
+    fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
+        self.inner.remove(spec)
+    }
+    fn rename(&self, from: &Spec, to: &Spec, replace: bool) -> Result<(), VfsError> {
+        self.inner.rename(from, to, replace)
+    }
+}
+
+/// A linked report of the `OnMem` fixture on `vfs` with the job `control`.
+fn run_with(fx: &OnMem, vfs: &dyn Vfs, control: &JobControl) -> Result<ReportOutcome, ApiError> {
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&fx.service, &target);
+    run(&fx.service, vfs, &fx.folder, &mut req, &target, control)
+}
+
+/// A7.12 (review, M1 and P1): the old folder changed between the plan and step 4 with as many entries as before (a
+/// file of another size, a file under another name) fails "changed since the plan was made"; nothing changes.
+#[test]
+fn a7_12_a_change_that_keeps_the_count_still_fails_step_4() {
+    let fx = on_mem();
+    for change in ["another size", "another name"] {
+        let vfs = with_earlier(&fx);
+        let target = file_target(&host("/o/report.html"));
+        let mut req = linked(&fx.service, &target);
+        let control = job(&fx.service, JobKind::Report);
+        let plan = fx
+            .service
+            .report_plan_on(&vfs, fx.folder.source(), &mut req, &target, None, &control)
+            .unwrap();
+        assert_eq!(plan.links.as_ref().unwrap().state, FilesFolder::ReplaceOurs);
+        let pair = host("/o/report_files/2-a.txt.html");
+        if change == "another size" {
+            vfs.insert_file(&pair, &b"shorter"[..], MemMeta::default())
+                .unwrap();
+        } else {
+            let bytes = vfs.read_back(&pair).unwrap();
+            let folder_spec = plan.links.as_ref().unwrap().folder.clone();
+            let spec = vfs
+                .child(&folder_spec, &FileName::from_os(OsStr::new("2-a.txt.html")))
+                .unwrap();
+            vfs.remove(&spec).unwrap();
+            vfs.insert_file(
+                &host("/o/report_files/2-b.txt.html"),
+                bytes.to_vec(),
+                MemMeta::default(),
+            )
+            .unwrap();
+        }
+        let before = vfs.dump();
+        let err = fx
+            .service
+            .report_execute_on(&vfs, fx.folder.source(), &req, plan, None, &control)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("changed since the plan was made"),
+            "{change}: {err}"
+        );
+        assert_eq!(vfs.dump(), before, "{change}");
+    }
+    // Without a change the same plan runs (P1: the comparison is not inverted).
+    let vfs = with_earlier(&fx);
+    let outcome = fx.run(&vfs, "/o/report.html").unwrap();
+    assert_eq!(outcome.plan.links.unwrap().state, FilesFolder::ReplaceOurs);
+}
+
+/// A7.12 (review, M3, M4, M16, M24): folders that are not ours by the marker alone: another report's folder with
+/// every file as listed, a marker that names the report in another case on a case-sensitive back-end, a marker that
+/// lists a file that is gone, a marker that is a link to a good marker elsewhere.
+#[test]
+fn a7_12_markers_that_do_not_make_a_folder_ours() {
+    let fx = on_mem();
+    let ours = mem(CaseSensitivity::Sensitive);
+    fx.run(&ours, "/o/report.html").unwrap();
+    let marker = text_of(&ours, &host("/o/report_files/.hikasa-report.toml"));
+    let pair_b = ours.read_back(&host("/o/report_files/1-b.c.html")).unwrap();
+    let pair_a = ours
+        .read_back(&host("/o/report_files/2-a.txt.html"))
+        .unwrap();
+    let both = |v: &MemoryVfs| {
+        v.insert_file(
+            &host("/o/report_files/1-b.c.html"),
+            pair_b.to_vec(),
+            MemMeta::default(),
+        )
+        .unwrap();
+        v.insert_file(
+            &host("/o/report_files/2-a.txt.html"),
+            pair_a.to_vec(),
+            MemMeta::default(),
+        )
+        .unwrap();
+    };
+    let cases: Vec<(&str, Box<dyn Fn(&MemoryVfs)>)> = vec![
+        (
+            "another report's folder, every file as listed",
+            Box::new(|v: &MemoryVfs| {
+                let other = marker.replace("report = \"report.html\"", "report = \"other.html\"");
+                assert_ne!(other, marker);
+                v.insert_file(
+                    &host("/o/report_files/.hikasa-report.toml"),
+                    other.into_bytes(),
+                    MemMeta::default(),
+                )
+                .unwrap();
+                both(v);
+            }),
+        ),
+        (
+            "the report's name in another case",
+            Box::new(|v: &MemoryVfs| {
+                let other = marker.replace("report = \"report.html\"", "report = \"REPORT.html\"");
+                v.insert_file(
+                    &host("/o/report_files/.hikasa-report.toml"),
+                    other.into_bytes(),
+                    MemMeta::default(),
+                )
+                .unwrap();
+                both(v);
+            }),
+        ),
+        (
+            "a listed file that is gone",
+            Box::new(|v: &MemoryVfs| {
+                v.insert_file(
+                    &host("/o/report_files/.hikasa-report.toml"),
+                    marker.clone().into_bytes(),
+                    MemMeta::default(),
+                )
+                .unwrap();
+                v.insert_file(
+                    &host("/o/report_files/1-b.c.html"),
+                    pair_b.to_vec(),
+                    MemMeta::default(),
+                )
+                .unwrap();
+            }),
+        ),
+        (
+            "a marker that is a link",
+            Box::new(|v: &MemoryVfs| {
+                v.insert_file(
+                    &host("/o/elsewhere.toml"),
+                    marker.clone().into_bytes(),
+                    MemMeta::default(),
+                )
+                .unwrap();
+                v.insert_dir(&host("/o/report_files"), MemMeta::default())
+                    .unwrap();
+                v.insert_symlink(
+                    &host("/o/report_files/.hikasa-report.toml"),
+                    &host("/o/elsewhere.toml"),
+                    MemMeta::default(),
+                )
+                .unwrap();
+                both(v);
+            }),
+        ),
+    ];
+    for (what, setup) in cases {
+        let vfs = mem(CaseSensitivity::Sensitive);
+        setup(&vfs);
+        let before: Vec<MemDump> = vfs
+            .dump()
+            .into_iter()
+            .filter(|d| d.path.contains("report_files") && !d.path.contains("report_files-2"))
+            .collect();
+        let outcome = fx
+            .run(&vfs, "/o/report.html")
+            .unwrap_or_else(|e| panic!("{what}: {e}"));
+        let links = outcome.plan.links.as_ref().unwrap();
+        assert_eq!(
+            links.folder.canonical(),
+            host("/o/report_files-2"),
+            "{what}"
+        );
+        let after: Vec<MemDump> = vfs
+            .dump()
+            .into_iter()
+            .filter(|d| d.path.contains("report_files") && !d.path.contains("report_files-2"))
+            .collect();
+        assert_eq!(before, after, "{what}: the folder is as it was");
+    }
+}
+
+/// A7.12 (review, M2, `cfg(unix)` disk): an earlier report's pair file with its size but another modification time
+/// makes the folder not ours.
+#[cfg(unix)]
+#[test]
+fn a7_12_a_file_with_another_time_is_not_ours() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    let service = service(root);
+    let folder = compare(&service, root);
+    let target = ReportTarget::File(root.join("out/report.html").into_os_string());
+    let router = service.vfs();
+    let mut req = linked(&service, &target);
+    run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let pair = root.join("out/report_files/2-a.txt.html");
+    let modified = std::fs::metadata(&pair).unwrap().modified().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&pair)
+        .unwrap()
+        .set_modified(modified - std::time::Duration::from_secs(10))
+        .unwrap();
+    let mut req = linked(&service, &target);
+    let outcome = run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let links = outcome.plan.links.as_ref().unwrap();
+    assert_eq!(links.state, FilesFolder::New);
+    assert!(
+        links.folder.canonical().ends_with("report_files-2"),
+        "{}",
+        links.folder.canonical()
+    );
+    assert_eq!(
+        std::fs::metadata(&pair).unwrap().modified().unwrap(),
+        modified - std::time::Duration::from_secs(10)
+    );
+}
+
+/// A7.12 (review, M25, Linux disk): a file whose name is not UTF-8 makes a folder not ours, even when a marker lists
+/// its lossy spelling with its size and time; the foreign file stays where it is.
+#[cfg(target_os = "linux")]
+#[test]
+fn a7_12_a_name_that_is_not_utf8_is_never_ours() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    let service = service(root);
+    let folder = compare(&service, root);
+    let target = ReportTarget::File(root.join("out/report.html").into_os_string());
+    let router = service.vfs();
+    let mut req = linked(&service, &target);
+    run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let files = root.join("out/report_files");
+    let foreign = files.join(OsStr::from_bytes(b"x\xff.html"));
+    std::fs::write(&foreign, b"theirs").unwrap();
+    let meta = std::fs::metadata(&foreign).unwrap();
+    let nanos = meta
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let marker = files.join(".hikasa-report.toml");
+    let mut text = std::fs::read_to_string(&marker).unwrap();
+    text.push_str(&format!(
+        "\n[[file]]\nname = \"x\u{fffd}.html\"\nsize = {}\nmodified = {nanos}\n",
+        meta.len()
+    ));
+    std::fs::write(&marker, text).unwrap();
+    let mut req = linked(&service, &target);
+    let outcome = run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let links = outcome.plan.links.as_ref().unwrap();
+    assert!(
+        links.folder.canonical().ends_with("report_files-2"),
+        "{}",
+        links.folder.canonical()
+    );
+    assert_eq!(std::fs::read(&foreign).unwrap(), b"theirs");
+}
+
+/// A7.12 (review, M5, N8): a folder that appears at a name the run looked at and found free is never replaced: at the
+/// files folder's name before step 5 (a `New` plan), at the hidden old folder's name before step 4's rename. The run
+/// fails and the back-end is as before, the folder that appeared included.
+#[test]
+fn a7_12_a_folder_that_appears_is_never_replaced() {
+    let fx = on_mem();
+    // Step 5: the plan is `New`; an empty folder appears at report_files.
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&fx.service, &target);
+    let control = job(&fx.service, JobKind::Report);
+    let plan = fx
+        .service
+        .report_plan_on(&vfs, fx.folder.source(), &mut req, &target, None, &control)
+        .unwrap();
+    assert_eq!(plan.links.as_ref().unwrap().state, FilesFolder::New);
+    vfs.insert_dir(&host("/o/report_files"), MemMeta::default())
+        .unwrap();
+    let before = vfs.dump();
+    let result = fx
+        .service
+        .report_execute_on(&vfs, fx.folder.source(), &req, plan, None, &control);
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(vfs.dump(), before);
+    // Step 4: `.report_files.hikasa-old` appears right after the look that found it free.
+    let vfs = with_earlier(&fx);
+    let before = vfs.dump();
+    let mut hooked = Hooked::new(&vfs);
+    hooked.appears = Some(host("/o/.report_files.hikasa-old"));
+    let result = run_with(&fx, &hooked, &job(&fx.service, JobKind::Report));
+    assert!(result.is_err(), "{result:?}");
+    let mut after = vfs.dump();
+    after.retain(|d| d.path != host("/o/.report_files.hikasa-old"));
+    assert_eq!(after, before, "only the folder that appeared is new");
+    assert!(
+        vfs.dump()
+            .iter()
+            .any(|d| d.path == host("/o/.report_files.hikasa-old")),
+        "and it stays"
+    );
+}
+
+/// A7.12 (review, M9): the hidden folders a crash left (`.report_files.hikasa-tmp`, `.report_files.hikasa-old`) are
+/// not touched: the run picks other hidden names and leaves them byte for byte.
+#[test]
+fn a7_12_hidden_folders_a_crash_left_are_not_touched() {
+    let fx = on_mem();
+    let vfs = with_earlier(&fx);
+    for leftover in [
+        "/o/.report_files.hikasa-tmp/1-b.c.html",
+        "/o/.report_files.hikasa-old/.hikasa-report.toml",
+    ] {
+        vfs.insert_file(&host(leftover), &b"from a crash"[..], MemMeta::default())
+            .unwrap();
+    }
+    let leftovers = |vfs: &MemoryVfs| -> Vec<MemDump> {
+        vfs.dump()
+            .into_iter()
+            .filter(|d| {
+                d.path.ends_with(".hikasa-tmp")
+                    || d.path.ends_with(".hikasa-old")
+                    || d.path.contains(".hikasa-tmp/")
+                    || d.path.contains(".hikasa-old/")
+                    || d.path
+                        .contains(&format!(".hikasa-tmp{}", std::path::MAIN_SEPARATOR))
+                    || d.path
+                        .contains(&format!(".hikasa-old{}", std::path::MAIN_SEPARATOR))
+            })
+            .collect()
+    };
+    let before = leftovers(&vfs);
+    assert_eq!(before.len(), 4, "{before:?}");
+    let outcome = fx.run(&vfs, "/o/report.html").unwrap();
+    assert_eq!(outcome.plan.links.unwrap().state, FilesFolder::ReplaceOurs);
+    assert_eq!(leftovers(&vfs), before);
+    assert!(
+        !vfs.dump()
+            .iter()
+            .any(|d| d.path.contains("hikasa-tmp-2") || d.path.contains("hikasa-old-2")),
+        "this run's own hidden folders are gone"
+    );
+}
+
+/// A7.12 (review, M11): a pair file whose commit lands and then fails is `failed`, and the file that landed is
+/// removed: the files folder holds exactly the marker and the pairs it lists.
+#[test]
+fn a7_12_a_pair_that_landed_and_failed_is_removed() {
+    let fx = on_mem();
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let mut hooked = Hooked::new(&vfs);
+    hooked.commit_then_fail = Some(host("/o/.report_files.hikasa-tmp/2-a.txt.html"));
+    let outcome = run_with(&fx, &hooked, &job(&fx.service, JobKind::Report)).unwrap();
+    let failed: Vec<&str> = outcome
+        .pairs
+        .iter()
+        .filter(|p| p.status == PairStatus::Failed)
+        .map(|p| p.path.as_str())
+        .collect();
+    assert_eq!(failed, ["a.txt"]);
+    let held: BTreeSet<String> = paths(&vfs.dump())
+        .into_iter()
+        .filter(|p| p.starts_with(&host("/o/report_files/")))
+        .collect();
+    let want: BTreeSet<String> = [
+        "/o/report_files/.hikasa-report.toml",
+        "/o/report_files/1-b.c.html",
+    ]
+    .iter()
+    .map(|p| host(p))
+    .collect();
+    assert_eq!(held, want);
+}
+
+/// A7.12 (review, P5): a cancel that lands after the main report's last byte (its writer's flush) is seen before
+/// step 4: nothing changes. And (N4) the same for a file report without links: the target keeps what it had.
+#[test]
+fn a7_12_a_cancel_after_the_last_byte_is_seen_before_step_4() {
+    let fx = on_mem();
+    let vfs = with_earlier(&fx);
+    let before = vfs.dump();
+    let token = CancelToken::new();
+    let mut hooked = Hooked::new(&vfs);
+    hooked.cancel_on_flush = Some((host("/o/report.html"), token.clone()));
+    let control = JobControl {
+        cancel: token,
+        ..job(&fx.service, JobKind::Report)
+    };
+    let result = run_with(&fx, &hooked, &control);
+    assert!(matches!(result, Err(ApiError::Cancelled)), "{result:?}");
+    assert_eq!(vfs.dump(), before);
+    no_hidden(&vfs);
+    // N4: a text report into an existing file.
+    let dir = tempfile::tempdir().unwrap();
+    let resp = text_pair(&fx.service, dir.path());
+    let vfs = mem(CaseSensitivity::Sensitive);
+    vfs.insert_file(&host("/o/r.out"), &b"before"[..], MemMeta::default())
+        .unwrap();
+    let before = vfs.dump();
+    let token = CancelToken::new();
+    let mut hooked = Hooked::new(&vfs);
+    hooked.cancel_on_flush = Some((host("/o/r.out"), token.clone()));
+    let control = JobControl {
+        cancel: token,
+        ..job(&fx.service, JobKind::Report)
+    };
+    let target = file_target(&host("/o/r.out"));
+    let mut req = text_request(&fx.service, "unified", &[], &target).unwrap();
+    let result = text_run(&fx.service, &hooked, &resp, &mut req, &target, &control);
+    assert!(matches!(result, Err(ApiError::Cancelled)), "{result:?}");
+    assert_eq!(vfs.dump(), before);
+}
+
+/// A7.12 (review, M20): a cancel between pairs stops the next pair before it is compared or written (one thread, so
+/// the order is fixed): no pair file is opened after the cancel.
+#[test]
+fn a7_12_a_cancel_between_pairs_stops_the_next_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    trees(dir.path(), PAIRS);
+    let init = ServiceInit {
+        config_dir: Some(dir.path().join("config")),
+        threads: std::num::NonZeroUsize::new(1),
+        ..ServiceInit::new(
+            facts(dir.path()),
+            fixed_clock(),
+            Arc::new(common::UpperRunner::default()),
+        )
+    };
+    let service = Service::new(init).unwrap();
+    let folder = compare(&service, dir.path());
+    let vfs = mem(CaseSensitivity::Sensitive);
+    vfs.set_journal(true);
+    vfs.set_journal_writes(true);
+    let token = CancelToken::new();
+    // The first pair's writer cancels when flushed: the second pair must not start.
+    let mut hooked = Hooked::new(&vfs);
+    hooked.cancel_on_flush = Some((
+        host("/o/.report_files.hikasa-tmp/1-b.c.html"),
+        token.clone(),
+    ));
+    let control = JobControl {
+        cancel: token,
+        ..job(&service, JobKind::Report)
+    };
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&service, &target);
+    let result = run(&service, &hooked, &folder, &mut req, &target, &control);
+    assert!(matches!(result, Err(ApiError::Cancelled)), "{result:?}");
+    let opened: Vec<String> = vfs
+        .journal()
+        .into_iter()
+        .filter(|(op, path)| *op == VfsOp::Write && path.contains("2-a.txt"))
+        .map(|(_, path)| path)
+        .collect();
+    assert!(opened.is_empty(), "the second pair was written: {opened:?}");
+    no_hidden(&vfs);
+}
+
+/// A7.12 (review, M12): pruning keeps a print folder exactly seven days old by the clock.
+#[test]
+fn a7_16_a_print_folder_exactly_seven_days_old_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let resp = text_pair(&service, dir.path());
+    let cache = service.config().cache_dir.join("print");
+    // The clock is 2026-10-21T12:00:00Z.
+    for name in ["20261014-120000-1", "20261014-115959-1"] {
+        std::fs::create_dir_all(cache.join(name)).unwrap();
+    }
+    let mut req = text_request(&service, "side-by-side", &[], &ReportTarget::Browser).unwrap();
+    text_run(
+        &service,
+        &*service.vfs(),
+        &resp,
+        &mut req,
+        &ReportTarget::Browser,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    assert!(
+        cache.join("20261014-120000-1").exists(),
+        "seven days to the second stays"
+    );
+    assert!(!cache.join("20261014-115959-1").exists());
+}
+
+/// A clock that moves one second at each reading.
+struct TickingClock(std::sync::atomic::AtomicI64);
+
+impl hikasa_session::Clock for TickingClock {
+    fn now(&self) -> jiff::Zoned {
+        let s = self.0.fetch_add(1, Ordering::SeqCst);
+        jiff::Timestamp::from_second(s)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+    }
+}
+
+/// A7.17 (review, N9): one instant for a folder report and its pair reports, also when the clock moves between them
+/// (no `SOURCE_DATE_EPOCH`).
+#[test]
+fn a7_17_one_instant_when_the_clock_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    trees(dir.path(), PAIRS);
+    let init = ServiceInit {
+        config_dir: Some(dir.path().join("config")),
+        ..ServiceInit::new(
+            facts(dir.path()),
+            Arc::new(TickingClock(std::sync::atomic::AtomicI64::new(
+                1_792_584_000,
+            ))),
+            Arc::new(common::UpperRunner::default()),
+        )
+    };
+    let service = Service::new(init).unwrap();
+    let folder = compare(&service, dir.path());
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&service, &target);
+    run(
+        &service,
+        &vfs,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let stamps = |path: &str| -> BTreeSet<String> {
+        let text = text_of(&vfs, &host(path));
+        text.match_indices("2026-10-")
+            .filter_map(|(at, _)| text.get(at..at + 19))
+            .map(str::to_owned)
+            .collect()
+    };
+    let main = stamps("/o/report.html");
+    assert_eq!(main.len(), 1, "{main:?}");
+    for pair in ["/o/report_files/1-b.c.html", "/o/report_files/2-a.txt.html"] {
+        assert_eq!(stamps(pair), main, "{pair}");
+    }
+}
+
+/// A7.15 (review, M6, M7, M8): the clipboard's cap holds the text and the HTML flavours together; a report over it is
+/// `too_large` with nothing returned; a report of exactly the cap fits (the cap lowered through the test hook).
+#[test]
+fn a7_15_the_clipboard_cap_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let resp = text_pair(&service, dir.path());
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let clip = |service: &Service, layout: &str, palette: &[&str]| {
+        let mut req = text_request(service, layout, palette, &ReportTarget::Clipboard).unwrap();
+        text_run(
+            service,
+            &vfs,
+            &resp,
+            &mut req,
+            &ReportTarget::Clipboard,
+            &job(service, JobKind::Report),
+        )
+    };
+    let full = clip(&service, "side-by-side", &["html-color"])
+        .unwrap()
+        .clipboard
+        .unwrap();
+    let (html, text) = (
+        full.html.clone().unwrap().len() as u64,
+        full.text.len() as u64,
+    );
+    assert!(html > text && text > 0);
+    // Both flavours fit exactly; one byte less is too large, also when the HTML alone fits.
+    service.report_hooks().set_clipboard_cap(html + text);
+    assert_eq!(
+        clip(&service, "side-by-side", &["html-color"])
+            .unwrap()
+            .clipboard
+            .unwrap(),
+        full
+    );
+    service.report_hooks().set_clipboard_cap(html + text - 1);
+    let err = clip(&service, "side-by-side", &["html-color"]).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::TooLarge, "{err}");
+    service.report_hooks().set_clipboard_cap(html - 1);
+    let err = clip(&service, "side-by-side", &["html-color"]).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::TooLarge, "{err}");
+    // A text report of exactly the cap fits.
+    service.report_hooks().set_clipboard_cap(0);
+    let plain = clip(&service, "unified", &[]).unwrap().clipboard.unwrap();
+    service
+        .report_hooks()
+        .set_clipboard_cap(plain.text.len() as u64);
+    assert_eq!(
+        clip(&service, "unified", &[]).unwrap().clipboard.unwrap(),
+        plain
+    );
+    service.report_hooks().set_clipboard_cap(0);
+    assert_eq!(service.report_hooks().clipboard_cap(), CLIPBOARD_REPORT_MAX);
+}
+
+/// A7.12 (review): the pair comparisons stay within the content budget: with a budget of 1 MiB and pairs of 600 KiB
+/// and a byte each, one comparison holds its share at a time, and never more than the budget.
+#[test]
+fn a7_12_pair_comparisons_stay_within_the_content_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let big = |c: u8| vec![c; 300 << 10];
+    let files: Vec<(String, Vec<u8>, Vec<u8>)> = (0..3)
+        .map(|i| {
+            (format!("f{i}.txt"), big(b'a'), {
+                let mut r = big(b'a');
+                r.push(b'b');
+                r
+            })
+        })
+        .collect();
+    let borrowed: Vec<(&str, Option<&[u8]>, Option<&[u8]>)> = files
+        .iter()
+        .map(|(n, l, r)| (n.as_str(), Some(l.as_slice()), Some(r.as_slice())))
+        .collect();
+    trees(root, &borrowed);
+    write(
+        &root.join("config"),
+        "options.toml",
+        b"schema_version = 1\n[tweaks.file_operations]\ncontent_memory_budget_mib = 1\n",
+    );
+    let service = service(root);
+    assert_eq!(
+        service.options().content_budget_bytes(),
+        1 << 20,
+        "the options file is read"
+    );
+    let folder = compare(&service, root);
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&service, &target);
+    let outcome = run(
+        &service,
+        &vfs,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    assert_eq!(outcome.pairs.len(), 3);
+    let (capacity, peak) = service.report_hooks().budget();
+    assert_eq!(capacity, 1 << 20);
+    assert_eq!(
+        peak,
+        (600 << 10) + 1,
+        "a pair holds its two sides, one pair at a time"
+    );
+    assert!(peak <= capacity);
+    assert_eq!(service.report_hooks().pairs_at_once(), 1);
+}
+
+/// A7.19 (review): `state.toml` changed between the load and the save of `remember_report_choices` goes through
+/// `state_update`'s retry: both the other change and the choices are kept.
+#[test]
+fn a7_19_a_change_between_load_and_save_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    service
+        .state_update(&mut |state| state.set_dialog_text("options", "page", "tabs"))
+        .unwrap();
+    let path = dir.path().join("config/state.toml");
+    let other = service.clone();
+    service
+        .report_hooks()
+        .before_choices_save(Box::new(move || {
+            other
+                .state_update(&mut |state| {
+                    state.set_dialog_text("options", "page", "colours, a longer value")
+                })
+                .unwrap();
+        }));
+    let choices = ReportChoices {
+        layout: Some("interleaved".into()),
+        ..ReportChoices::default()
+    };
+    service
+        .remember_report_choices(ReportKind::Text, &choices)
+        .unwrap();
+    assert_eq!(service.report_choices(ReportKind::Text), choices);
+    let mut kept = None;
+    service
+        .state_update(&mut |state| kept = state.dialog_text("options", "page").map(str::to_owned))
+        .unwrap();
+    assert_eq!(
+        kept.as_deref(),
+        Some("colours, a longer value"),
+        "{}",
+        std::fs::read_to_string(&path).unwrap()
+    );
+}
+
+/// A7.12 (review, N10): `write_output_with` syncs a replaced file (`FileOnly`) and not a new one (`None`).
+#[test]
+fn a7_14_write_output_with_durabilities() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let vfs = mem(CaseSensitivity::Sensitive);
+    vfs.insert_file(&host("/o/old.txt"), &b"before"[..], MemMeta::default())
+        .unwrap();
+    let control = job(&service, JobKind::Report);
+    for name in ["/o/new.txt", "/o/old.txt"] {
+        service
+            .write_output_with_on(&vfs, OsStr::new(&host(name)), &control, &mut |out| {
+                out.write_all(b"report")
+                    .map_err(|e| ApiError::Internal(e.to_string()))
+            })
+            .unwrap();
+        assert_eq!(text_of(&vfs, &host(name)), "report");
+    }
+    assert_eq!(
+        vfs.durabilities(),
+        [
+            (host("/o/new.txt"), Durability::None),
+            (host("/o/old.txt"), Durability::FileOnly)
+        ]
+    );
+}
+
+/// A7.18 (review, N6): `--lines` is refused for a folder report by name, before anything is compared.
+#[test]
+fn a7_18_lines_are_refused_for_a_folder_report_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let flags = ReportFlags {
+        lines: Some("1-2".into()),
+        ..ReportFlags::default()
+    };
+    let err = service
+        .report_request(
+            ReportKind::Folder,
+            "side-by-side",
+            &flags,
+            &ReportTarget::Stdout,
+        )
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput, "{err}");
+    assert!(err.to_string().contains("--lines"), "{err}");
+}
+
+/// A7.12 (review, case-insensitive disks: macOS and Windows): an existing `REPORT_FILES` that is not ours makes
+/// `_files-2` and stays as it is; a report of `REPORT.html` is ours for `report.html`.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a7_12_case_insensitive_names_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    trees(root, PAIRS);
+    write(&root.join("out"), "REPORT_FILES/theirs.txt", b"theirs");
+    let service = service(root);
+    let folder = compare(&service, root);
+    let router = service.vfs();
+    let at = |name: &str| ReportTarget::File(root.join("out").join(name).into_os_string());
+    let target = at("report.html");
+    let mut req = linked(&service, &target);
+    let outcome = run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let links = outcome.plan.links.as_ref().unwrap();
+    assert!(
+        links.folder.canonical().ends_with("report_files-2"),
+        "{}",
+        links.folder.canonical()
+    );
+    assert_eq!(
+        std::fs::read(root.join("out/REPORT_FILES/theirs.txt")).unwrap(),
+        b"theirs"
+    );
+    let out2 = root.join("out2");
+    std::fs::create_dir_all(&out2).unwrap();
+    let upper = ReportTarget::File(out2.join("REPORT.html").into_os_string());
+    let mut req = linked(&service, &upper);
+    run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &upper,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    let lower = ReportTarget::File(out2.join("report.html").into_os_string());
+    let mut req = linked(&service, &lower);
+    let outcome = run(
+        &service,
+        &*router,
+        &folder,
+        &mut req,
+        &lower,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    assert_eq!(
+        outcome.plan.links.as_ref().unwrap().state,
+        FilesFolder::ReplaceOurs,
+        "{:?}",
+        outcome.warnings
     );
 }
