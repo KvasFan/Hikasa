@@ -275,7 +275,7 @@ impl Builder<'_, '_> {
                     moving,
                     overwrite,
                 };
-                self.copy_to_row(tr, source, &root, drop, fold, &mut below, &mut open)?;
+                self.copy_to_row(tr, source, &root, drop, &mut below, &mut open)?;
             }
             self.close_open(&mut open, 0);
         }
@@ -610,7 +610,6 @@ impl Builder<'_, '_> {
         source: &Source,
         root: &Spec,
         drop: usize,
-        fold: bool,
         below: &mut Below,
         open: &mut Vec<Open>,
     ) -> Result<(), FolderError> {
@@ -740,7 +739,7 @@ impl Builder<'_, '_> {
         if view.is_folder() && view.scan == ScanStatus::NotScanned {
             // Flat, and the model never listed it: rule 6 by name.
             let walk = Walk { tr, id, side: None };
-            self.expand_flat(walk, &entry, &from, root, fold, depth)?;
+            self.expand_flat(walk, &entry, &from, root, depth)?;
             self.cover(id);
             return Ok(());
         }

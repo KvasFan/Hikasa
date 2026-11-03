@@ -456,7 +456,6 @@ impl Builder<'_, '_> {
         entry: &EntryView<'_>,
         source: &Spec,
         root: &Spec,
-        fold: bool,
         depth: u32,
     ) -> Result<(), FolderError> {
         let follow = if entry.followed {
@@ -486,7 +485,7 @@ impl Builder<'_, '_> {
         };
         let tree = self.listed(source.clone(), stat, self.place_of(walk.id))?;
         let path = self.read.path(walk.id);
-        self.flat_listed(walk, &tree, root, fold, depth, &path)?;
+        self.flat_listed(walk, &tree, root, depth, &path)?;
         if let Some(meta) = self.meta.get_mut(first) {
             meta.node = Some(walk.id);
         }
@@ -500,7 +499,6 @@ impl Builder<'_, '_> {
         walk: Walk,
         folder: &Listed,
         root: &Spec,
-        fold: bool,
         depth: u32,
         path: &RelPath,
     ) -> Result<(), FolderError> {
@@ -549,7 +547,7 @@ impl Builder<'_, '_> {
                 .join(child.entry.name.as_str())
                 .unwrap_or_else(|_| path.clone());
             if child.entry.kind == EntryKind::Dir {
-                self.flat_listed(walk, child, root, fold, depth + 1, &below)?;
+                self.flat_listed(walk, child, root, depth + 1, &below)?;
                 continue;
             }
             let first = self.items.len();
