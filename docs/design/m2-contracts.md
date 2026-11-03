@@ -6306,7 +6306,89 @@ version and tags it after W7b's review (§6.7 A7.24). No product name of docs/17
 *To be written by each part*, as §1.6.25: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property test was checked by (§6.7 rules).
 
-**W7a.**
+**W7a.** Where the implementation interpreted or extended §1.7.2–§1.7.8 (rendering) and §1.7.17 (streaming), and why.
+
+1. **`made` compares as the back-end does (D-194).** Rule 16's pair choice needs `made` (note 36) to hold the pair's one
+   folder, so `made_key` now folds names only when the target back-end lacks `CASE_SENSITIVE`, no longer as the
+   comparison does (note 42): an aligned pair whose names differ is one folder by the rule's choice, and two folders the
+   comparison folds but a case-sensitive target keeps apart are two.
+2. **The M1 parsers stay.** `DisplayMode::parse`, `Wrap::parse`, `TextLayout::parse`, `FolderLayout::parse` and the rest
+   keep their words and their tests (`xml` and `none` are still invalid there); the W7 vocabulary lives in
+   `request.rs` (`ReportRequest::parse`), which M1's callers do not reach until W7b moves them.
+3. **`HtmlStyle` carries the wrap and the print block.** `HtmlStyle::{print, wrap}` are `None` by default, which is
+   every byte of M1; `render_report` fills each from the request when the caller's style leaves it `None`, so a caller
+   (the pair reports of W7b) can force its own. `Some(Wrap::Character)` adds no rule.
+4. **`print_mono` is kept apart from `print`.** `ReportRequest::print` is made only by an orientation word or the
+   printer target, as §1.7.4 says; `print-mono` alone records the print palette in `print_mono` and changes no byte of
+   a file report (it is not `unused`: the browser target uses it). `apply_target` gives the printer a portrait block
+   unless an orientation was given, gives the browser the print palette without a block, and puts the `html-color` or
+   `html-mono` it overrides into `unused`, in slot order.
+5. **New error and warning shapes.** `ReportError::Refused` (→ `unsupported`: a layout a target does not take, file
+   reports without a folder on disk) and `ReportError::Request` (→ `invalid_input`: a scope without rows, a request of
+   the other kind); `ReportError::is_cancelled` recognises a `CancelWriter`'s error, which classifies as `Cancelled`.
+   `WarningCode::ReportOptionUnused` (`report_option_unused`) is added in `hikasa-core`; its help entry is W7b's
+   (§1.7.19: `help/json-output.md` gains its warnings there).
+6. **`c` outside lines.** §1.7.6's table allowed `c` only in `l`, `r`, `d`, `u`; a title, a rules name, an error, a
+   status or a warning can hold the same characters (the hostile fixture has a CR and an ESC in its title), so they take
+   `c` as well; the table and the XSD say so.
+7. **Names that are not Unicode.** `MemoryVfs` names are `String`s, so a name that is not valid UTF-8 comes from disk
+   only: Linux bytes (`cfg(target_os = "linux")`), on Windows a lone surrogate on disk (where §6.7's table says
+   `MemoryVfs`, which cannot hold one), on macOS the refusal (`EILSEQ`) asserted. `raw-name` is the hex of the OS
+   name's encoded bytes (`OsStr::as_encoded_bytes`: the bytes on Unix, WTF-8 on Windows).
+8. **A flat tree nests nothing.** In the folder XML of a flatten comparison (`tree/@flat`), the only folder rows are
+   folders that failed to list; each is closed at once with its sides, so nothing nests, and `path` carries the
+   structure. Otherwise nesting follows the comparison's tree, as P-FXML checks.
+9. **`safe_component` and a trailing dot.** §1.7.8's steps leave `_CON.` for `CON.` (a leading `_` alone keeps the
+   trailing dot, which `windows_name_problem` refuses), so a trailing `.` also becomes `_`, before and after the device
+   prefix.
+10. **`CancelWriter`.** Its first write looks at the token, so a cancel before any byte writes nothing; a write is cut at
+    the next MiB boundary, so the check falls exactly there and at most `CANCEL_CHECK_BYTES` follow a cancel;
+    `written()` counts what the inner writer took. A7.10's cancel test uses a sink that cancels at the n-th MiB; the
+    target-and-folder half of §1.7.17's cancel row is W7b's (`report_write.rs`).
+11. **How the streaming row measures.** The peak is of live heap above the live heap before the render, so the
+    comparison itself (built before) is not counted; the counting `#[global_allocator]` lives in `stream_memory.rs`
+    only, and a mutex runs one measurement at a time. The CI profile runs it in debug. Measured (debug, Linux): every
+    text layout peaks at 67–69 KB at 50,000 and at 200,000 rows (3–36 MB written); folder side-by-side HTML and XML at
+    0.46 MB for 25,250 visible rows and 1.65 MB for 101,000 (about 16 B a row: the list of visible rows), under the
+    5.0 and 7.4 MB bounds.
+12. **`wrap-none` frees the table.** `white-space: pre` in a `table-layout: fixed` table at 100 % would overflow its
+    cells, so `wrap-none` also sets the table to `width: auto; table-layout: auto` (the page scrolls, as §1.7.4 says);
+    `wrap-word` adds only `overflow-wrap: break-word` to M1's `pre-wrap`.
+13. **The print block's rules.** `@page { size: …; margin: 12mm; }`, then in `@media print`: `body { margin: 0; }`,
+    `print-color-adjust: exact` with its `-webkit-` twin, `thead { display: table-header-group; }`, `tr { break-inside:
+    avoid; page-break-inside: avoid; }`. When the print palette differs from the screen palette, the screen palette goes
+    under `@media screen` and the print one under `@media print`, before the block; the layout rules stay shared.
+14. **A7.8's test file.** `tests/golden_print.rs` (not in §1.7's file list) holds A7.8: every text and folder fixture's
+    side-by-side and summary HTML through `render_report`, with no wrap or print word and with `wrap-character`, equals
+    the M1 renderer's bytes, which `golden_text.rs` and `golden_folder.rs` pin; no M1 HTML golden changed since 0.1.92.
+    The interleaved wrap goldens are `golden_interleaved.rs`'s variants (`wrap-none-40.html`, `wrap-word-40.html`).
+15. **A unit test that cannot eat memory.** `CancelWriter`'s unit test writes into `io::sink()` with a bounded loop: with
+    CANCEL-1 applied, the first version (a `Vec` and an unbounded loop) grew until the machine ran out of memory.
+
+**W7a mutations** (A7.23; each applied by hand, the named test run, then reverted with `git checkout`):
+
+| Mutation | File: change | Caught by | Seed |
+|---|---|---|---|
+| D194-a | `hikasa-folder/src/ops/copyto.rs`: `pair_name` returns the source side's own spelling | `ops_plan.rs` A7.1 rule-16 rows (3 tests), P-OPS aligned pairs (`props_ops_model.rs`); `cli_folder_op.rs` fails on the code before the fix | — |
+| D194-b | `copyto.rs`: step 1 (the left name's `lstat`) dropped | `a7_1_rule16_one_folder_per_aligned_pair` (second run plans a `mkdir`), P-OPS aligned pairs | — |
+| IL-1 | `hikasa-report/src/text/interleaved.rs`: a changed row's lines in reverse order | P-IL `p_il_interleaved_lines_are_both_documents` | `cc 59cb8f9d…` |
+| IL-2 | `interleaved.rs`: the strike-out applied to the other side | P-IL (the `<del>` scan) | `cc eaf41a3d…` |
+| XML-1 | `hikasa-report/src/xml.rs`: the `c` escape of a control skipped | P-XML `p_xml_text_dump_round_trips` (the parse fails) | — |
+| XML-2 | `xml.rs`: `&#13;` dropped from text | P-XML (the round trip fails) | `cc d8c24016…` |
+| FXML-1 | `hikasa-report/src/folder/xml.rs`: an entry closed under its grandparent | P-FXML `p_fxml_folder_dump_is_the_json_items` | — |
+| LINKS-1 | `hikasa-report/src/links.rs`: `:` kept as unreserved | P-LINKS `p_links_hrefs_decode_back` | — |
+| RPTREQ-1 | `hikasa-report/src/request.rs`: `words()` drops the strike-out unless both sides | P-RPTREQ `p_rptreq_words_round_trip` | `cc 23fa85ae…` |
+| RPTREQ-2 | `request.rs`: of two words of one slot the later wins (no conflict) | `a7_2_conflicts` (not P-RPTREQ: its generator draws one word per slot) | — |
+| CANCEL-1 | `hikasa-report/src/cancel.rs`: after the first check `next_check = u64::MAX` (the token is never looked at again) | `cancel::tests::writes_until_the_next_boundary_after_a_cancel`, `a7_10_cancel_stops_within_a_mib` (the render ends `Ok`) | — |
+| STREAM-1 | `hikasa-report/src/text/mod.rs`: the interleaved text rendered into a `Vec`, then written | `a7_10_text_layouts_stream` (the bound) | — |
+| STREAM-2 | `hikasa-report/src/folder/mod.rs`: the folder XML rendered into a `Vec`, then written | `a7_10_folder_layouts_stream` (the bound) | — |
+| LINKS-2 | `hikasa-session/src/api/report_write.rs`: `safe_component` keeps `#` | P-LINKS `p_links_safe_names` | — |
+| LINKS-3 | `report_write.rs`: the leading `.`/`-` rule dropped | P-LINKS `p_links_safe_names` | — |
+| PRINT-1 | `hikasa-report/src/style.rs`: the print block never appended | `golden_print.rs`: `a7_8_print_block_goldens`, `a7_8_a_print_palette_other_than_the_screens`, `a7_8_print_mono_alone_adds_no_block_and_the_printer_target_does` | — |
+| PRINT-2 | `style.rs`: a print palette other than the screen's not scoped (the screen palette only) | `a7_8_a_print_palette_other_than_the_screens` | — |
+
+P-LINKS's generator persists no failures (`failure_persistence: None`), so its rows have no seed; the minimal input is
+in the failure message. The ci profile retries a failing test twice; every row above failed all three tries.
 
 **W7b.**
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **Reports, the core of the next release.** The report library renders the new layouts: Interleaved (one column, the
+  left line above the right, as text, ANSI or HTML, with each side's changes struck out on request), XML dumps of text
+  and folder comparisons (schema `docs/schemas/hikasa-report-1.xsd`, namespace `urn:hikasa:report:1`), HTML wrapping
+  (`wrap-none`, `wrap-word`) and a print block (page orientation, a print palette), and folder side-by-side HTML with
+  links to a report per differing file pair. Reports stream: memory stays flat however many rows they have, and a
+  cancel stops within a MiB. The `hikasa report` command and the report flags that reach these come with the rest of
+  this release; without the new words every existing report is byte for byte as before.
+
 ### Fixed
 - **`folder op copyto` and `moveto` of an aligned folder pair.** With `--structure base` or `relative`, a pair whose
   folders differ only in case (under `--case-insensitive`) or in NFC/NFD form now lands in one folder at the target, the
