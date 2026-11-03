@@ -188,8 +188,10 @@ pub struct SetTimes {
     pub created: Option<FileTime>,
 }
 
-/// What [`Vfs::set_attrs`] changes. Owner and group are never changed (D-99).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What [`Vfs::set_attrs`] changes. Owner and group are never changed (D-99). Serialized in a plan's `set_attrs` item
+/// (M2 W8a, additive): `{"mode": 420}` or `{"dos": {"set": "R", "clear": "H"}}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AttrChange {
     /// Unix permission bits: `mode & 0o7777` is applied; other bits of the argument are an
     /// [`VfsError::InvalidAttributes`].

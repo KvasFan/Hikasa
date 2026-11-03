@@ -98,6 +98,13 @@ pub enum WarningCode {
     /// `SOURCE_DATE_EPOCH` is not a decimal count of seconds jiff can hold; the clock gave the report time (M2 W7,
     /// §1.7.12).
     SourceDateEpochInvalid,
+    /// A script's `select` selected nothing (M2 W8a, §1.8.6).
+    NothingSelected,
+    /// `attrib` named attributes the back-end does not have (`a`, `s`, `h` on Unix modes): those items are skipped (M2
+    /// W8a, D-220).
+    AttribUnsupported,
+    /// A script's log file is not written in a dry run (M2 W8a, §1.8.9).
+    LogNotWritten,
 }
 
 impl WarningCode {
@@ -140,6 +147,9 @@ impl WarningCode {
             WarningCode::ReportOldFolderKept => "report_old_folder_kept",
             WarningCode::FileReportFailed => "file_report_failed",
             WarningCode::SourceDateEpochInvalid => "source_date_epoch_invalid",
+            WarningCode::NothingSelected => "nothing_selected",
+            WarningCode::AttribUnsupported => "attrib_unsupported",
+            WarningCode::LogNotWritten => "log_not_written",
         }
     }
 }
@@ -194,6 +204,9 @@ mod tests {
             WarningCode::ReportOldFolderKept,
             WarningCode::FileReportFailed,
             WarningCode::SourceDateEpochInvalid,
+            WarningCode::NothingSelected,
+            WarningCode::AttribUnsupported,
+            WarningCode::LogNotWritten,
         ];
         for code in all {
             assert_eq!(

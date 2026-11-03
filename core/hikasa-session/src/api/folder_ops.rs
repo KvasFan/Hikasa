@@ -212,6 +212,7 @@ impl FolderOpOutcome {
                 status: result.status,
                 reason: result.skip.or(item.skip),
                 error: result.error.clone(),
+                change: item.attrs.as_ref().map(change_text),
             })
             .collect();
         FolderOpDto {
@@ -486,6 +487,26 @@ pub struct FolderOpItemDto {
     pub reason: Option<SkipReason>,
     /// The failure.
     pub error: Option<ErrorReport>,
+    /// The change of a `set_attrs` item: `+r-h`, or `mode 444` on Unix modes (M2 W8a, additive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change: Option<String>,
+}
+
+/// The change of a `set_attrs` item as `attrib` writes it.
+fn change_text(change: &hikasa_vfs::AttrChange) -> String {
+    match change {
+        hikasa_vfs::AttrChange::Mode(mode) => format!("mode {mode:o}"),
+        hikasa_vfs::AttrChange::Dos { set, clear } => {
+            let mut out = String::new();
+            for (flags, sign) in [(set, '+'), (clear, '-')] {
+                if !flags.is_empty() {
+                    out.push(sign);
+                    out.push_str(&flags.letters().to_ascii_lowercase());
+                }
+            }
+            out
+        }
+    }
 }
 
 /// A backup of an archive.
@@ -652,6 +673,7 @@ fn written_sides(op: &OpRequest) -> SideSet {
         OpRequest::Op(
             FolderOp::Delete { sides, .. }
             | FolderOp::Rename { sides, .. }
+            | FolderOp::Attrib { sides, .. }
             | FolderOp::Mkdir { sides, .. }
             | FolderOp::MoveTo { sides, .. },
         )
@@ -686,6 +708,7 @@ fn verb_sides(op: &OpRequest) -> SideSet {
             FolderOp::Delete { sides, .. }
             | FolderOp::Rename { sides, .. }
             | FolderOp::Touch { sides, .. }
+            | FolderOp::Attrib { sides, .. }
             | FolderOp::Mkdir { sides, .. }
             | FolderOp::CopyTo { sides, .. }
             | FolderOp::MoveTo { sides, .. },
@@ -1696,6 +1719,7 @@ pub fn verb_done(verb: OpVerb) -> &'static str {
         OpVerb::Delete => "deleted",
         OpVerb::Rename => "renamed",
         OpVerb::Touch => "touched",
+        OpVerb::Attrib => "changed",
         OpVerb::Mkdir => "created",
         OpVerb::Sync => "synchronized",
     }
@@ -1710,6 +1734,7 @@ pub fn verb_base(verb: OpVerb) -> &'static str {
         OpVerb::Delete => "delete",
         OpVerb::Rename => "rename",
         OpVerb::Touch => "touch",
+        OpVerb::Attrib => "change",
         OpVerb::Mkdir => "create",
         OpVerb::Sync => "synchronize",
     }
@@ -1754,6 +1779,7 @@ pub fn item_word(item: &FolderOpItemDto) -> &'static str {
         "link" if item.replaces => "replace with link",
         "remove_dir" => "rmdir",
         "create_archive" => "mkarchive",
+        "set_attrs" => "attrib",
         other => other,
     }
 }
@@ -1783,6 +1809,10 @@ pub fn item_line(item: &FolderOpItemDto, dry_run: bool) -> String {
                 (Some(source), "copy" | "link" | "rename" | "move") => {
                     format!("{side}{word} {} -> {target}", escape_controls(source))
                 }
+                (_, "set_attrs") => format!(
+                    "{side}{word} {target} {}",
+                    item.change.as_deref().unwrap_or("")
+                ),
                 _ => format!("{side}{word} {target}"),
             },
         },

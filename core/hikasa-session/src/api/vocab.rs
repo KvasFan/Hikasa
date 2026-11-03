@@ -262,6 +262,12 @@ pub fn parse_mkdir_name(name: &str, windows: bool) -> Result<(String, bool), Api
     Ok((bare.to_owned(), bare.len() != name.len()))
 }
 
+/// The change of `attrib` and `folder op attrib --change` (D-220): one parser for both (T11).
+pub fn parse_attrib_change(words: &[String]) -> Result<hikasa_folder::ops::AttribChange, ApiError> {
+    hikasa_folder::ops::AttribChange::parse(words.iter().map(String::as_str))
+        .map_err(|e| ApiError::InvalidArgument(e.to_string()))
+}
+
 /// The sync of `words` over `base` (a session's `[rules.sync]`, or the defaults), one parser for `folder sync`, `session run`
 /// and an `OpenView` of `folder_sync` (T11, D-190). A preset word replaces the base's preset; `--custom` writes on the base's
 /// matrix (a preset name may come first as its base) and makes the preset `custom`; flags only turn options on; an

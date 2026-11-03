@@ -204,7 +204,7 @@ impl ConfirmPolicy {
             OpVerb::Copy | OpVerb::CopyTo => self.copy,
             OpVerb::Move | OpVerb::Exchange | OpVerb::MoveTo => self.move_,
             OpVerb::Delete => self.delete,
-            OpVerb::Rename | OpVerb::Touch | OpVerb::Mkdir => false,
+            OpVerb::Rename | OpVerb::Touch | OpVerb::Attrib | OpVerb::Mkdir => false,
             OpVerb::Sync => true,
         }
     }

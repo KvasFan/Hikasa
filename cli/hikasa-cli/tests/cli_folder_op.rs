@@ -1944,3 +1944,88 @@ fn a7_1_copyto_of_an_aligned_folder_pair_makes_one_folder() {
     assert_eq!(std::fs::read(target.join("D/y.txt")).unwrap(), b"right\n");
     assert!(!target.join("d").exists());
 }
+
+/// A8.16 (D-220): `folder op attrib --change` on disk: a dry run writes nothing, a run sets `r` (Unix: the write bits,
+/// Windows: the attribute) and clears it again; `hikasa.folder_op.v1` names `set_attrs`; on Unix `+h` is skipped
+/// `unsupported` with one warning.
+#[test]
+fn a8_16_attrib_on_disk() {
+    let s = sandbox();
+    let file = s.join("l/only.txt");
+    let readonly = || std::fs::metadata(&file).unwrap().permissions().readonly();
+    let out = op(
+        &s,
+        &[
+            "attrib",
+            "--path",
+            "only.txt",
+            "--change",
+            "+r",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = s.normalise(&stdout(&out));
+    assert!(
+        text.contains("L attrib ") && text.contains("only.txt"),
+        "{text}"
+    );
+    assert!(text.contains("would change 1 items"), "{text}");
+    assert!(!readonly());
+    let out = op(
+        &s,
+        &[
+            "attrib", "--path", "only.txt", "--change", "+r", "--yes", "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["schema"], "hikasa.folder_op.v1");
+    assert_eq!(doc["result"]["op"], "attrib");
+    let item = &doc["result"]["items"][0];
+    assert_eq!(item["action"], "set_attrs");
+    assert_eq!(item["status"], "done");
+    if cfg!(windows) {
+        assert_eq!(item["change"], "+r");
+    }
+    assert!(readonly());
+    let out = op(
+        &s,
+        &["attrib", "--path", "only.txt", "--change=-r", "--yes"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!readonly());
+    #[cfg(unix)]
+    {
+        let out = op(
+            &s,
+            &[
+                "attrib",
+                "--select",
+                "left.all.files",
+                "--change",
+                "+h",
+                "--yes",
+                "--json",
+            ],
+        );
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        let doc = json(&out);
+        let items = doc["result"]["items"].as_array().unwrap();
+        assert!(
+            items.iter().all(|i| i["reason"] == "unsupported"),
+            "{items:?}"
+        );
+        let codes: Vec<&serde_json::Value> = doc["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| &w["code"])
+            .collect();
+        assert_eq!(
+            codes.iter().filter(|c| **c == "attrib_unsupported").count(),
+            1,
+            "{codes:?}"
+        );
+    }
+}

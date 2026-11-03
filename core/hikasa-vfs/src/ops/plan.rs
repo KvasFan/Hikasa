@@ -233,6 +233,8 @@ pub enum Action {
     CreateArchive,
     /// Swap two files or links (FC-071, D-165): `source` is the left one, `target` the right one.
     Exchange,
+    /// Set the attributes of an existing item ([`PlanItem::attrs`]; M2 W8a, D-220).
+    SetAttrs,
 }
 
 impl Action {
@@ -253,6 +255,7 @@ impl Action {
             Action::Skip => "skip",
             Action::CreateArchive => "create_archive",
             Action::Exchange => "exchange",
+            Action::SetAttrs => "set_attrs",
         }
     }
 
@@ -305,6 +308,8 @@ pub enum SkipReason {
     NoMatch,
     /// The new name is the old one.
     SameName,
+    /// The back-end has no such attribute (`attrib +h` on Unix modes; M2 W8a, D-220).
+    Unsupported,
 }
 
 impl SkipReason {
@@ -326,6 +331,7 @@ impl SkipReason {
             SkipReason::DuplicateTarget => "duplicate_target",
             SkipReason::NoMatch => "no_match",
             SkipReason::SameName => "same_name",
+            SkipReason::Unsupported => "unsupported",
         }
     }
 }
@@ -385,6 +391,9 @@ pub struct PlanItem {
     /// The times of a `touch` item of a batch; other plans use [`TouchOptions`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub times: Option<SetTimes>,
+    /// The change of a `set_attrs` item (M2 W8a, D-220).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<crate::vfs::AttrChange>,
     /// The source is a link the comparison followed (FC-013): stat and read through it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follow_source: bool,
@@ -429,6 +438,7 @@ impl PlanItem {
             expect: None,
             backup: None,
             times: None,
+            attrs: None,
             follow_source: false,
             clear_read_only: false,
             trash_fallback: false,

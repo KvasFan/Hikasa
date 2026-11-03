@@ -635,6 +635,24 @@ pub enum FolderOpVerb {
         #[arg(long)]
         from_other: bool,
     },
+    /// Set or clear the attributes a, s, h, r of what is selected (the rows themselves, not a folder's contents).
+    Attrib {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both (default both: the sides each row is selected on).
+        #[arg(long, value_name = "SIDE", default_value = "both")]
+        side: String,
+        /// A change: `+r`, `-hs`, `+a-r` (repeatable; Unix modes know `r` only).
+        #[arg(
+            long,
+            value_name = "CHANGE",
+            required = true,
+            allow_hyphen_values = true
+        )]
+        change: Vec<String>,
+    },
     /// Make a folder, or an archive by its name; a trailing separator wants a folder.
     Mkdir {
         #[command(flatten)]

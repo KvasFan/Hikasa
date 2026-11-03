@@ -98,10 +98,10 @@ pub use vfs_ops::{
     parse_overwrite, parse_time,
 };
 pub use vocab::{
-    parse_algorithm, parse_archive_handling, parse_confirm_mode, parse_content_method,
-    parse_exclude_what, parse_folder_mode, parse_line_range, parse_mkdir_name, parse_select_path,
-    parse_side, parse_sides, parse_structure, resolve_folder_display, resolve_text_display,
-    sync_options, sync_words_of,
+    parse_algorithm, parse_archive_handling, parse_attrib_change, parse_confirm_mode,
+    parse_content_method, parse_exclude_what, parse_folder_mode, parse_line_range,
+    parse_mkdir_name, parse_select_path, parse_side, parse_sides, parse_structure,
+    resolve_folder_display, resolve_text_display, sync_options, sync_words_of,
 };
 
 use crate::clipboard::{

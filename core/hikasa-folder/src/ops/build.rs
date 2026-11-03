@@ -288,6 +288,10 @@ pub(super) fn plan(
             builder.touch(&rows, *sides, *from)?;
             OpVerb::Touch
         }
+        FolderOp::Attrib { sides, change } => {
+            builder.attrib(&rows, &scope.selection, *sides, *change)?;
+            OpVerb::Attrib
+        }
         FolderOp::Mkdir {
             sides,
             parent,
@@ -2211,6 +2215,127 @@ impl<'a, 'r> Builder<'a, 'r> {
         });
         let found = self.found_of(id, &entry, &item.target);
         match found {
+            Ok(found) => {
+                item.expect = Some(Expect {
+                    source: None,
+                    target: Some(found.stamp),
+                });
+            }
+            Err(e) => item.error = Some(report(&e)),
+        }
+        let meta = self.meta_of(id, Some(side));
+        self.push(item, meta);
+    }
+
+    /// `Attrib` (D-220): one `set_attrs` item per selected row (a folder itself, never its contents) on each of its sides,
+    /// in plan order. DOS attributes where the back-end has them; on Unix modes `r` is the write bits (`+r` clears `0o222`,
+    /// `-r` sets `0o200`) and `a`, `s`, `h` make the item `skip (unsupported)` with one `attrib_unsupported` warning;
+    /// archive members are `unsupported` (W5b writes no attributes).
+    fn attrib(
+        &mut self,
+        rows: &[Resolved],
+        selection: &crate::select::Selection,
+        sides: SideSet,
+        change: super::AttribChange,
+    ) -> Result<(), FolderError> {
+        let selected: Vec<&Resolved> = rows
+            .iter()
+            .filter(|row| selection.get(row.node).intersects(sides) && row.sides.intersects(sides))
+            .collect();
+        if selected.is_empty() {
+            return Err(FolderError::InvalidRules(nothing_on(sides)));
+        }
+        for side in sides.sides() {
+            for row in &selected {
+                if !(selection.get(row.node).contains(SideSet::of(side))
+                    && row.sides.contains(SideSet::of(side)))
+                {
+                    continue;
+                }
+                self.ctl.check()?;
+                self.attrib_row(side, row, change);
+            }
+        }
+        Ok(())
+    }
+
+    /// One row of `attrib`.
+    fn attrib_row(&mut self, side: Side, row: &Resolved, change: super::AttribChange) {
+        use hikasa_vfs::{AttrChange, Attrs, DosAttrs};
+        let read = self.read;
+        let id = row.node;
+        let Some(view) = read.node(id) else { return };
+        let (Some(entry), Some(spec)) = (view.side(side).copied(), read.spec(id, side)) else {
+            return;
+        };
+        let kind = view.kind.entry_kind();
+        if let Some(reason) = self.refusal(id, &view, None, &[side]) {
+            return self.skip_row(id, kind, None, spec, 0, reason, Some(side));
+        }
+        if spec.container().is_some() {
+            let error = VfsError::OperationUnsupported {
+                spec: spec.canonical(),
+                op: hikasa_vfs::VfsOp::SetAttrs,
+            };
+            return self.fail_row(
+                id,
+                Action::SetAttrs,
+                kind,
+                None,
+                spec,
+                0,
+                report(&error),
+                Some(side),
+            );
+        }
+        if self.lacks(&spec, Capabilities::SET_ATTRS, "set_attrs", Some(side)) {
+            return self.skip_row(id, kind, None, spec, 0, SkipReason::Capability, Some(side));
+        }
+        let attrs = match entry.attrs {
+            Attrs::Dos { .. } => Some(AttrChange::Dos {
+                set: change.set,
+                clear: change.clear,
+            }),
+            Attrs::Unix { meta } => {
+                let others = (change.set | change.clear) - DosAttrs::READONLY;
+                if !others.is_empty() {
+                    let message = format!(
+                        "{side} side: attributes a, s, h do not exist on Unix modes: those items are skipped",
+                    );
+                    if self.warned.insert("attrib_unsupported".to_owned()) {
+                        self.warnings.push(Warning {
+                            code: WarningCode::AttribUnsupported,
+                            message,
+                            spec: Some(spec.canonical()),
+                        });
+                    }
+                    return self.skip_row(
+                        id,
+                        kind,
+                        None,
+                        spec,
+                        0,
+                        SkipReason::Unsupported,
+                        Some(side),
+                    );
+                }
+                let mode = if change.set.contains(DosAttrs::READONLY) {
+                    meta.mode & !0o222
+                } else if change.clear.contains(DosAttrs::READONLY) {
+                    meta.mode | 0o200
+                } else {
+                    meta.mode
+                };
+                Some(AttrChange::Mode(mode & 0o7777))
+            }
+            Attrs::None => None,
+        };
+        let Some(attrs) = attrs else {
+            return self.skip_row(id, kind, None, spec, 0, SkipReason::Unsupported, Some(side));
+        };
+        let mut item = PlanItem::planned(Action::SetAttrs, kind, None, spec, 0);
+        item.attrs = Some(attrs);
+        match self.found_of(id, &entry, &item.target) {
             Ok(found) => {
                 item.expect = Some(Expect {
                     source: None,

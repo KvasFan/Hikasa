@@ -738,6 +738,8 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
                 model.rename(&paths, &*rename);
             }
         }
+        // The model holds names, bytes and times: attributes change none of them (D-220).
+        FolderOp::Attrib { .. } => {}
         FolderOp::Touch { sides, .. } => {
             for side in sides.sides() {
                 for row in rows.iter().filter(|r| r.sides.contains(SideSet::of(side))) {

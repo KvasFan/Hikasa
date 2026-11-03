@@ -38,7 +38,9 @@ pub fn option_key(kind: QuestionKind, verb: OpVerb) -> Option<&'static str> {
             OpVerb::Copy | OpVerb::CopyTo => "file_operations.confirm_copy",
             OpVerb::Move | OpVerb::Exchange | OpVerb::MoveTo => "file_operations.confirm_move",
             OpVerb::Delete => "file_operations.confirm_delete",
-            OpVerb::Rename | OpVerb::Touch | OpVerb::Mkdir | OpVerb::Sync => return None,
+            OpVerb::Rename | OpVerb::Touch | OpVerb::Attrib | OpVerb::Mkdir | OpVerb::Sync => {
+                return None;
+            }
         },
         QuestionKind::ReadOnly => "file_operations.confirm_read_only",
         QuestionKind::System => "file_operations.confirm_system",

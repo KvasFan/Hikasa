@@ -1387,6 +1387,13 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
         Action::Touch | Action::Create => {
             touch::run_touch(exec, item).map_or_else(Outcome::Failed, |()| Outcome::Done(0))
         }
+        Action::SetAttrs => match &item.attrs {
+            Some(change) => exec
+                .dst
+                .set_attrs(&item.target, change)
+                .map_or_else(Outcome::Failed, |()| Outcome::Done(0)),
+            None => Outcome::Done(0),
+        },
         Action::CreateArchive => touch::run_create_archive(exec, item)
             .map_or_else(Outcome::Failed, |()| Outcome::Done(0)),
         Action::Skip => Outcome::Skipped(item.skip.unwrap_or(SkipReason::Exists)),

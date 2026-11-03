@@ -44,6 +44,8 @@ pub enum JobKind {
     FolderSync,
     /// A refresh of a folder comparison (M2 W6; additive).
     FolderRefresh,
+    /// A script run (M2 W8a, §1.8.12; additive): every call inside keeps its own kind.
+    Script,
 }
 
 impl JobKind {
@@ -61,6 +63,7 @@ impl JobKind {
             JobKind::FolderOp => "folder_op",
             JobKind::FolderSync => "folder_sync",
             JobKind::FolderRefresh => "folder_refresh",
+            JobKind::Script => "script",
         }
     }
 }

@@ -1965,3 +1965,141 @@ fn a7_1_a_file_and_a_folder_the_comparison_folds_both_go_to_a_case_sensitive_tar
         }
     }
 }
+
+// ---- attrib (M2 W8a, A8.16, D-220) ----------------------------------------------------------------------------
+
+fn dos_at(secs: i64, attrs: hikasa_vfs::DosAttrs) -> MemMeta {
+    MemMeta {
+        attrs: Some(Attrs::Dos { attrs }),
+        ..meta(secs)
+    }
+}
+
+fn mode_at(secs: i64, mode: u32) -> MemMeta {
+    MemMeta {
+        attrs: Some(Attrs::Unix {
+            meta: UnixMeta {
+                mode,
+                uid: 0,
+                gid: 0,
+            },
+        }),
+        ..meta(secs)
+    }
+}
+
+fn attrib(words: &[&str]) -> FolderOp {
+    FolderOp::Attrib {
+        sides: SideSet::all(),
+        change: hikasa_folder::ops::AttribChange::parse(words.iter().copied()).unwrap(),
+    }
+}
+
+fn attrs_at(vfs: &MemoryVfs, path: &str) -> Attrs {
+    vfs.stat(&mspec(path), hikasa_vfs::FollowLinks::No)
+        .unwrap()
+        .attrs
+}
+
+#[test]
+fn a8_16_attrib_parses_changes_and_refuses_a_letter_set_and_cleared() {
+    use hikasa_folder::ops::AttribChange;
+    use hikasa_vfs::DosAttrs;
+    let change = AttribChange::parse(["+a-r", "+HS"]).unwrap();
+    assert_eq!(
+        change.set,
+        DosAttrs::ARCHIVE | DosAttrs::HIDDEN | DosAttrs::SYSTEM
+    );
+    assert_eq!(change.clear, DosAttrs::READONLY);
+    assert_eq!(change.text(), "+ash-r");
+    for bad in [
+        vec!["+a-a"],
+        vec!["+r", "-r"],
+        vec!["r"],
+        vec!["+x"],
+        vec![""],
+        vec!["+"],
+    ] {
+        let err = AttribChange::parse(bad.iter().copied()).unwrap_err();
+        assert_eq!(
+            hikasa_core::Classify::kind(&err),
+            ErrorKind::InvalidInput,
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn a8_16_attrib_plans_one_item_per_selected_row_and_side_and_never_recurses() {
+    use hikasa_vfs::DosAttrs;
+    let vfs = memory();
+    vfs.insert_dir(&host("/l/d"), dos_at(1, DosAttrs::DIRECTORY))
+        .unwrap();
+    vfs.insert_dir(&host("/r/d"), dos_at(1, DosAttrs::DIRECTORY))
+        .unwrap();
+    vfs.insert_file(
+        &host("/l/d/inner"),
+        b"1".to_vec(),
+        dos_at(5, DosAttrs::empty()),
+    )
+    .unwrap();
+    vfs.insert_file(&host("/l/x"), b"1".to_vec(), dos_at(5, DosAttrs::HIDDEN))
+        .unwrap();
+    vfs.insert_file(&host("/r/x"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let out = plan(
+        &vfs,
+        &cmp,
+        &[("d", SideSet::all()), ("x", L)],
+        &attrib(&["+r-h"]),
+    );
+    // The folder itself (not `d/inner`), on both its sides; `x` on the left only; sides in order, rows in plan order.
+    assert_eq!(
+        lines(&out),
+        [
+            "set_attrs /l/d @0",
+            "set_attrs /l/x @0",
+            "set_attrs /r/d @0"
+        ]
+    );
+    assert_eq!(out.verb, hikasa_folder::ops::OpVerb::Attrib);
+    assert!(out.meta.iter().all(|m| m.conflicts.is_empty()));
+    let json = serde_json::to_value(&out.plan.items[1]).unwrap();
+    assert_eq!(json["action"], "set_attrs");
+    assert_eq!(json["attrs"]["dos"]["set"], "R");
+    assert_eq!(json["attrs"]["dos"]["clear"], "H");
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{report:?}");
+    assert_eq!(attrs_at(&vfs, "/l/x").dos(), Some(DosAttrs::READONLY));
+    assert_eq!(attrs_at(&vfs, "/l/d/inner").dos(), Some(DosAttrs::empty()));
+    assert_eq!(attrs_at(&vfs, "/r/x").dos(), Some(DosAttrs::empty()));
+}
+
+#[test]
+fn a8_16_attrib_on_unix_modes_maps_r_to_the_write_bits_and_skips_a_s_h() {
+    let vfs = memory();
+    vfs.insert_file(&host("/l/w"), b"1".to_vec(), mode_at(5, 0o664))
+        .unwrap();
+    vfs.insert_file(&host("/l/ro"), b"1".to_vec(), mode_at(5, 0o444))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let out = plan(&vfs, &cmp, &[("w", L)], &attrib(&["+r"]));
+    run(&vfs, out);
+    assert_eq!(attrs_at(&vfs, "/l/w").unix().unwrap().mode, 0o444);
+    let out = plan(&vfs, &cmp, &[("ro", L)], &attrib(&["-r"]));
+    assert!(out.warnings.is_empty());
+    run(&vfs, out);
+    assert_eq!(attrs_at(&vfs, "/l/ro").unix().unwrap().mode, 0o644);
+    let out = plan(&vfs, &cmp, &[("w", L), ("ro", L)], &attrib(&["+h"]));
+    assert_eq!(
+        lines(&out),
+        ["skip /l/ro @0 !unsupported", "skip /l/w @0 !unsupported"]
+    );
+    let codes: Vec<WarningCode> = out.warnings.iter().map(|w| w.code).collect();
+    assert_eq!(
+        codes,
+        [WarningCode::AttribUnsupported],
+        "one warning per command"
+    );
+}
