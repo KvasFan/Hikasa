@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.93 (2026-11-03, pre-release)
 
 ### Added
 - **Reports, the core of the next release.** The report library renders the new layouts: Interleaved (one column, the
