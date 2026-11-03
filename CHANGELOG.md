@@ -15,6 +15,22 @@
 - **`hikasa folder op attrib --change <CHANGE>…`** sets or clears the attributes a, s, h, r of the selected rows
   themselves (on Unix modes `r` is the write bits; `a`, `s`, `h` are skipped `unsupported` with one warning).
 - The warnings `nothing_selected`, `attrib_unsupported` and `log_not_written`, and the help topic `script`.
+- `[tweaks.scripts] beep_when_finished` beeps once at the end of a run that is not silent.
+
+### Fixed (W8a review)
+- Any failure of a script's `load` (standard input, the clipboard or an empty word as a base, an argument that
+  makes a bad base, `create:` that cannot create) ends the script with 107; before, some were exit 100 and the next
+  lines ran on the comparison loaded before. A load also drops the sync preset of an earlier Folder Sync session, so a
+  bare `sync` after `load <left> <right>` fails instead of mirroring the new pair.
+- `script check` reports every error: a lexical error no longer hides the others. It also refuses, at their position,
+  words the run would refuse: a base or target `-`, `""` or `clipboard://`, `compare none`, a bad regular expression,
+  `attrib +r -r`.
+- A dangling link named as the script is a script that cannot be read (105), not absent.
+- Base names that are not UTF-8 are shown escaped in every line of the log; a `%%` in an argument is shown as it is.
+- `attrib` on a Windows disk changes `r` and skips `a`, `s`, `h` with a warning instead of failing every item; an
+  item's change on Unix modes is shown `+r`/`-r`, not the mode.
+- A rename onto a free name never leaves two names on a file system without a no-replace rename; a linked report
+  runs at most one pair per thread at a time.
 
 ## 0.1.93 (2026-11-03, pre-release)
 

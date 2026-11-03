@@ -7363,6 +7363,44 @@ numbered per part, with the mutations each property test was checked by (§6.8 r
     once in `words` and again in `args`, keyword values as new strings, `Args` sized for a report), the unused document
     about 330 more, and the references' lex of the whole script 46 MiB at once. `script check --json` still builds its
     document (about 330 bytes a command; not gated).
+23. **Review: a load starts from nothing and any failure of it is 107.** `load` first drops the comparison, the
+    selection, the open folders and the sync preset; every failure of it, whatever the cause (a base refused as `-`,
+    `""` or `clipboard://`, an expanded word refused when it runs, a session whose read-only sides cannot be read,
+    `create:` sides that fail), is `LoadFailed`, so no line runs on an earlier comparison (§1.8.5's "the check is exact"
+    holds). Only a `folder-sync` session sets the preset again: a bare `sync` after `load <left> <right>` fails "no sync
+    direction and the session holds none".
+24. **Review: static refusals.** `WordChecker::check_command(name, words)` (default: takes them) judges the words of
+    one command together when none expands: `attrib` words that conflict across words (`+r -r`, at the word that makes
+    the conflict), `rename regexpr` (the regular expression alone through `Slot::Regex`, then the new name's groups),
+    and a report's words through one `report_request`. `hikasa_script::spec_word_refusal` refuses `-`, `""` and
+    `clipboard://` as a base or a `copyto`/`moveto` target at check time (106), and the run uses the same function.
+    `compare none` is refused at check ("a content test needs a method"). A `log` file that is not local keeps its
+    run-time refusal (A8.9's row: the stream goes on).
+25. **Review: a lexical error hides nothing.** `lex_each` gives `Lexed::Line` or `Lexed::Error { first }` in source
+    order and goes on at the next logical line; a broken line whose first word is `load` counts as a load for the flow
+    check, so one typo gives one error. `References::uses_script_path` (never read) is gone from §1.8.2's struct.
+26. **Review: lookup by the entry itself.** `script_locate` tests existence with `FollowLinks::No`: a dangling link
+    exists (and fails to read, 105); a link to a folder is a folder.
+27. **Review: `attrib` on a Windows disk.** The workspace denies `unsafe` (`unsafe_code = "deny"`, check 1) and no
+    approved crate sets `FILE_ATTRIBUTE_HIDDEN`/`SYSTEM`/`ARCHIVE` safely (`std` sets R only; `windows`/`windows-sys`
+    calls are `unsafe`), so `LocalVfs` on Windows changes R only. `Vfs::settable_dos_attrs` (additive, default every
+    bit; the router forwards) tells the planner: it plans the settable bits (`+r+h` sets R), skips an item left with
+    nothing to change `unsupported`, and warns `attrib_unsupported` once per command. `cfg(windows)` disk test in
+    `a8_16_attrib_on_disk` (`+h` skipped, `+r+h` sets R); it plans and sets R only, so it runs under wine too. The
+    `change` of an item on Unix modes is `+r`/`-r` (the new mode tells which), not the mode.
+28. **Review: the shown line.** A `%%` inside an expanded value stays `%%` (only the script's own `%%` is one `%`);
+    a local base whose name is not UTF-8 is shown escaped (`\xFF`) in `info … compared …`, `created …` and the dry-run
+    line, as in the `run` lines.
+29. **Review: `beep_when_finished`.** `Service::script_run` beeps through `HostUi::beep` once the run ended, any exit
+    code, unless silent (`beeps_when_finished`); the CLI's BEL decision (`rings`: a terminal, not `--quiet`) is a pure
+    function tested without a terminal.
+30. **Review: tests.** The script sandboxes (`World`) live under the test's `TMPDIR` and give every row its write bits
+    back when dropped (an `attrib +r` left 0o555 folders that `TempDir` could not remove; 374 folders `/tmp/hks*`,
+    3.8 MB, were left by earlier runs and are not removed by the tests). P-SCRIPT gains W6's generators (a name in two
+    cases, NFC/NFD, read-only files, an empty folder), `filter`, `no-to-all` and `prompt` with scripted replies, and
+    `moveto`, `delete recyclebin=yes` (compared as a dry run: never the real recycle bin), rename by mask, `touch` with a
+    direction, `attrib -r`, `sync visible`/`create-empty`; a refusal on both sides compares the messages. A command a
+    cancel stopped fails with the kind `cancelled` (it was `invalid_input`).
 
 Mutations (each reverted; a property's minimal case was not persisted):
 
@@ -7382,6 +7420,23 @@ Mutations (each reverted; a property's minimal case was not persisted):
 | 12 | host: a direction swapped (`left->right` writes left) | `cli_script.rs` `a8_10_copy…`; P-SCRIPT |
 | 13 | compact script: a word's text starts one byte early (`Script::word`, the span of note 22) | `parse.rs` goldens, `copyto_left_alone_is_a_target`, `default_in_any_case`; P-PARSE `p_parse_round_trip`; `expand.rs` `a_value_with_spaces_and_quotes_stays_one_word` |
 | 14 | compact script: the expands bit left in the column | `parse.rs` goldens |
+| 15 | expansion: a name is any run of characters but `%` (m06) | `expand.rs` `the_form_table` (`%x y%`, `%a-b%`) |
+| 16 | interpreter: the clock read again for each argument (m08) | `interp.rs` `one_instant_per_command_even_when_the_clock_moves` |
+| 17 | lexer: an empty quoted word before `&` dropped (m37) | `lex.rs` `an_empty_quoted_word_before_a_continuation_stays` |
+| 18 | host: a failed load not mapped to `LoadFailed` | `cli_script.rs` `a_failed_load_never_leaves_the_earlier_comparison` |
+| 19 | host: a load keeps the previous sync preset | `cli_script.rs` `a_folder_load_drops_the_sync_preset_of_a_session` |
+| 20 | host: `sync` without `create-empty` (s02) | `script_run.rs` `a8_6_sync_create_empty_creates_empty_folders` |
+| 21 | host: `sync` without `visible` (s05) | `script_run.rs` `a8_6_sync_visible_scopes_the_sync_to_the_displayed_rows`; P-SCRIPT at 3000 cases (minimal: `filter "-*.dat"`, `sync visible`, a filtered row `out_of_scope` against `filtered`) |
+| 22 | host: a re-run forgets the selection and the open folders (s06) | `script_run.rs` `a8_6_criteria_after_a_load_keeps_the_selection_by_path_when_rows_move` |
+| 23 | host: `delete recyclebin=yes` deletes for good (s08) | `script_run.rs` `a8_6_delete_recyclebin_yes_plans_the_recycle_bin`; P-SCRIPT |
+| 24 | host: no full run after `RefreshFlat` | `script_run.rs` `a8_6_a_flat_comparison_is_compared_again_after_a_copy` |
+| 25 | lookup: existence by following links | `cli_script.rs` `a_dangling_link_is_a_script_that_cannot_be_read` |
+| 26 | host: a base shown through `Spec::canonical` | `cli_script.rs` `non_utf8_arguments_reach_load_and_copyto_and_are_escaped` |
+| 27 | planner: the settable DOS bits ignored | `ops_plan.rs` `a8_16_attrib_where_only_r_can_change_applies_r_and_skips_a_s_h_with_a_warning` |
+| 28 | `beep_when_finished` also when silent; never | `script_log.rs` `beep_when_finished_beeps_once_at_the_end_unless_silent` |
+
+The review's s03 (`touch DIR` with sides `all`) is equivalent: the planner recomputes a direction's sides. The fixes of
+notes 23–29 were each checked against the code before them (the new test fails there).
 
 **W8b.** (to be written)
 
