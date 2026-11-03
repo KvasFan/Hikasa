@@ -1541,6 +1541,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "zstd",
             "jiff",
             "tempfile",
+            "rustix",
         ],
         &["proptest", "pretty_assertions", "criterion"],
     ),

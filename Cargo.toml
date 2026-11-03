@@ -115,6 +115,11 @@ egui = "0.37"
 open = { version = "5.4.5", default-features = false }
 fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
+# The kernel's no-replace rename (renameat2 RENAME_NOREPLACE, renameatx_np RENAME_EXCL) of hikasa-vfs on Unix
+# (W8a review): the version and the feature set tempfile already compiles, so no new package. Named only in
+# core/hikasa-vfs/src/local/unix.rs.
+rustix = { version = "1.1.5", features = ["fs"] }
+
 # --- dev / test ---
 tempfile = "3"
 proptest = "1"

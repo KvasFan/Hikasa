@@ -6629,14 +6629,18 @@ to RD come from the W7a review: each was applied with only the named property se
     `--output`) go into one `report_option_unused` warning "a folder-sync session writes no report: <flags> ignored";
     the exit code is the sync's; `--dry-run` stays the sync's.
 29. **`rename(replace = false)` onto a free name (review, vfs).** After `LocalVfs::rename`'s look found `to` free, the
-    rename is `rename_free`: on Linux and macOS the kernel's no-replace rename through tempfile's spelling
-    (`persist_noclobber`: `renameat2` `RENAME_NOREPLACE`, `renamex_np` `RENAME_EXCL`, rustix, so no new dependency and
-    no `unsafe`); `AlreadyExists` when something came in between. `EINVAL`/`ENOSYS` (a file system without it) go to a
-    hard link (a file) or, for a folder, to a second look and a plain rename. **Windows keeps the look and rename:**
+    rename is `rename_free`: on Linux and macOS the kernel's no-replace rename, called through `rustix` directly
+    (W8a review: `rustix` 1.1.5 with `fs`, the version and features `tempfile` compiles, a direct dependency of
+    `hikasa-vfs` named only in `local/unix.rs`, no new package, no `unsafe`; `renameat2` `RENAME_NOREPLACE`, `renameatx_np`
+    `RENAME_EXCL`); `AlreadyExists` when something came in between. `EINVAL`, `ENOSYS`, `ENOTSUP`/`EOPNOTSUPP` (a
+    file system or kernel without it) and the other Unix systems go to a second look and a plain rename, never to a
+    hard link: tempfile's `persist_noclobber`, used before, links and unlinks there and ignores a failed unlink, so
+    both names could stay. **Windows keeps the look and rename:**
     tempfile's `MoveFileExW` path first resets the item's attributes to normal (it is written for its own temporary
     files), which a user's file or folder must keep, and `windows-sys` would need `unsafe` outside the mmap module
     (check 1). A case-only rename (the same item) stays a plain rename. Test
-    `a_free_rename_replaces_nothing_that_appeared` (an empty folder, which a plain rename replaces on Unix).
+    `a_free_rename_replaces_nothing_that_appeared` (an empty folder, which a plain rename replaces on Unix, and a file
+    source onto a file or an empty folder that appeared: the source keeps its one name).
 30. **Test hooks and `write_output_with_on` (review).** `Service::report_hooks()` (`#[doc(hidden)]`): `set_clipboard_cap`
     (0: `CLIPBOARD_REPORT_MAX`; never above it), so `a7_15_the_clipboard_cap_end_to_end` reaches `too_large` with a few
     KiB, both flavours together and the cap itself fitting; the budget counters of note 12; `before_choices_save`, a

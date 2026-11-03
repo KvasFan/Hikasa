@@ -26,6 +26,8 @@ lzma-rust2.workspace = true
 zstd.workspace = true
 jiff.workspace = true
 tempfile.workspace = true
+# Named only in src/local/unix.rs (the no-replace rename); compiled everywhere, as the §0.5 table has no target sections.
+rustix.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

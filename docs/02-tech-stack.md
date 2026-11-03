@@ -84,7 +84,7 @@ needs the approval process of `17-agent-workflow.md` §2.6.
 | `infer` | Magic-number detection is an in-house table (`hikasa-formats`). |
 | `libc`, `thread-priority` | ARCH-061 comparison priority cannot be applied (a documented gap); owner and group are shown as numeric ids; the effective uid is obtained with std only. |
 | a signal-handling crate | M2: `ctrlc` (D-159), see the M2 table below. In M1 Ctrl-C terminated the CLI, and every `--output` file is written atomically. A cancelled comparison now ends with exit 100 before it renders, so `--output` keeps the report it had. |
-| `tempfile` (dev-only, but for one call) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). `hikasa-vfs` calls `TempPath::persist_noclobber` alone, in `local/mod.rs`: a rename that never replaces has no safe spelling in std, and `unsafe` stays in `mmap.rs`. It holds `renameat2`, `renamex_np` and `MoveFileExW`, with a hard link where a file system has none. |
+| `tempfile` (dev-only, but for one call) | Atomic writes in library code are hand-rolled (temp file + fsync + rename). `hikasa-vfs` calls `TempPath::persist_noclobber` alone, in `local/mod.rs`, to give a new temporary file its name: a rename that never replaces has no safe spelling in std, and `unsafe` stays in `mmap.rs`. It holds `renameat2`, `renamex_np` and `MoveFileExW`, with a hard link where a file system has none (harmless for a temporary file of its own). Renaming a user's item onto a free name calls `rustix` directly instead, without the hard link (M2 table). |
 
 Also inside the approved list, M1 code does not use `blake3` (content caches are P1; IPC endpoint hashing
 uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (one LCS implementation,
@@ -123,6 +123,7 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 | `ctrlc` 3.5.2 (MIT OR Apache-2.0) | 0.1.91 | default (no `termination`: SIGTERM and SIGHUP end the process as before) | Ctrl-C of the CLI (D-159): `hikasa-cli` only, named only in `interrupt.rs`. New in `Cargo.lock`: `ctrlc`; `nix` and the Windows and Apple crates it needs were there |
 | `open` 5.4.5 (MIT) | W6b | `default-features = false` | the associated application of FC-062 (D-186): `hikasa-session`, named only in `host.rs` (`SystemLauncher`, adapter-only) |
 | `fontique` 0.11.1 (Apache-2.0 OR MIT) | 0.1.91 | `default-features = false`, `system`, `fontconfig-dlopen`, what eframe's system font fallback already compiles | the theme's named fonts (D-160): `hikasa-gui` only, named only in `fonts.rs`. No new package. On Linux it opens fontconfig at run time, so no build or start-up needs it; without it no family is found |
+| `rustix` 1.1.5 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT) | W8a review | `fs`, what `tempfile` already compiles (no new crate in `Cargo.lock`) | the kernel's no-replace rename of `hikasa-vfs` on Unix (`renameat2` `RENAME_NOREPLACE`, `renameatx_np` `RENAME_EXCL`): `rename(replace = false)` onto a free name; named only in `core/hikasa-vfs/src/local/unix.rs` (a plain dependency: the §0.5 table has no target sections) |
 
 New crates in `Cargo.lock` with W5 besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`,
 `hybrid-array`, `typenum`, `const-oid`, `crypto-common`, `zstd-safe`, `zstd-sys`, and the build-time `cc`.

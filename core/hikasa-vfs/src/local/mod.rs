@@ -90,9 +90,10 @@ mod platform {
     pub(super) fn persist_new(from: &Path, to: &Path) -> std::io::Result<()> {
         super::persist_new(from, to)
     }
-    pub(super) fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
-        super::persist_new(from, to)
+    pub(super) fn rename_noreplace(_from: &Path, _to: &Path) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
     }
+    pub(super) const SETTABLE_DOS_ATTRS: crate::entry::DosAttrs = crate::entry::DosAttrs::all();
     pub(super) fn hold_through_rename(file: std::fs::File) -> Option<std::fs::File> {
         Some(file)
     }
@@ -914,13 +915,14 @@ fn rename_new(tmp: &Path, target: &Path) -> io::Result<()> {
 
 /// `from` (a file, a link or a folder) takes the name `to`, free when it was looked at, without replacing what another
 /// program put there since (the step after [`LocalVfs::rename`]'s check with `replace = false`): the platform's
-/// no-replace rename (`platform::rename_noreplace`: Linux `renameat2` with `RENAME_NOREPLACE`, macOS `renamex_np` with
-/// `RENAME_EXCL`, through [`tempfile`]'s spelling) → `AlreadyExists` when something came. Where the file system has no
-/// such rename (`EINVAL`, `ENOSYS`, a folder that cannot be hard-linked instead), and on Windows, whose no-replace
-/// call `tempfile` spells with a change of the item's attributes, what is left is to look again and rename.
+/// no-replace rename (`platform::rename_noreplace`: Linux `renameat2` with `RENAME_NOREPLACE`, macOS `renameatx_np`
+/// with `RENAME_EXCL`, through `rustix`) → `AlreadyExists` when something came. Where the file system or the platform
+/// has no such rename (`Unsupported`: `EINVAL`, `ENOSYS`, `ENOTSUP`, other Unix systems, and Windows, whose no-replace
+/// `MoveFileExW` changes the item's attributes), what is left is to look again and rename. Never a hard link and an
+/// unlink: an unlink that failed would leave both names.
 fn rename_free(from: &Path, to: &Path) -> io::Result<()> {
     match platform::rename_noreplace(from, to) {
-        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => {
             if fs::symlink_metadata(to).is_ok() {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }
@@ -1949,5 +1951,41 @@ mod tests {
         rename_free(&file, &root.join("g.txt")).unwrap();
         assert_eq!(fs::read(root.join("g.txt")).unwrap(), b"mine");
         assert!(!file.exists());
+        // A file source onto a name that appeared (a file, an empty folder): nothing moves, and never two names for
+        // the source (a hard link and an unlink that failed would leave both).
+        for appeared in ["file", "folder"] {
+            let from = root.join("mine.txt");
+            let to = root.join("theirs");
+            fs::write(&from, b"mine").unwrap();
+            if appeared == "file" {
+                fs::write(&to, b"theirs").unwrap();
+            } else {
+                fs::create_dir(&to).unwrap();
+            }
+            let err = rename_free(&from, &to).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{appeared}");
+            assert_eq!(
+                fs::read(&from).unwrap(),
+                b"mine",
+                "{appeared}: the source stays"
+            );
+            if appeared == "file" {
+                assert_eq!(fs::read(&to).unwrap(), b"theirs");
+                fs::remove_file(&to).unwrap();
+            } else {
+                assert_eq!(fs::read_dir(&to).unwrap().count(), 0);
+                fs::remove_dir(&to).unwrap();
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(
+                    fs::metadata(&from).unwrap().nlink(),
+                    1,
+                    "{appeared}: one name"
+                );
+            }
+            fs::remove_file(&from).unwrap();
+        }
     }
 }

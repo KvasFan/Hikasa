@@ -124,10 +124,33 @@ pub(super) fn persist_new(from: &Path, to: &Path) -> io::Result<()> {
     super::persist_new(from, to)
 }
 
-/// [`super::rename_free`]'s call: the kernel's no-replace rename (Linux `renameat2` `RENAME_NOREPLACE`, macOS
-/// `renamex_np` `RENAME_EXCL`), else a hard link and an unlink (a file; a folder refuses and is renamed after a look).
+/// [`super::rename_free`]'s call: the kernel's no-replace rename, through `rustix` (no `unsafe` here): Linux
+/// `renameat2` with `RENAME_NOREPLACE`, macOS `renameatx_np` with `RENAME_EXCL`. `EEXIST` is `AlreadyExists`. A file
+/// system or kernel without it (`EINVAL`, `ENOSYS`, `ENOTSUP`/`EOPNOTSUPP`), and the other Unix systems, answer
+/// `Unsupported`, and [`super::rename_free`] looks again and renames; never a hard link and an unlink, which could
+/// leave both names.
 pub(super) fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    super::persist_new(from, to)
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    {
+        use rustix::fs::{CWD, RenameFlags, renameat_with};
+        use rustix::io::Errno;
+        match renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE) {
+            Ok(()) => return Ok(()),
+            Err(e)
+                if e == Errno::INVAL
+                    || e == Errno::NOSYS
+                    || e == Errno::NOTSUP
+                    || e == Errno::OPNOTSUPP => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let _ = (from, to);
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// The handle stays open through a rename: nothing here keeps an open file from being renamed.

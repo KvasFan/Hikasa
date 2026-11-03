@@ -2261,6 +2261,7 @@ dependencies = [
  "memmap2",
  "pretty_assertions",
  "proptest",
+ "rustix 1.1.5",
  "same-file",
  "serde",
  "tar",
