@@ -1911,3 +1911,57 @@ fn a7_1_rule16_the_right_file_goes_into_the_folder_made_for_the_pair() {
         ["/o/t/D", "/o/t/D/x.txt", "/o/t/D/y.txt"]
     );
 }
+
+/// A7.1, a file and a folder the comparison folds together (case-insensitive alignment) onto a target that keeps
+/// `D` and `d` apart: both go, whichever side holds the file. `taken` keys file targets as `made` keys folders, by the
+/// target back-end (W7a note 1), so the file's `D` no longer stops the folder's `d` (nor the other way round).
+#[test]
+fn a7_1_a_file_and_a_folder_the_comparison_folds_both_go_to_a_case_sensitive_target() {
+    for (left_file, right_file) in [(true, false), (false, true)] {
+        for structure in [PathStructure::Base, PathStructure::Relative] {
+            let vfs = memory();
+            vfs.insert_dir(&host("/o"), meta(1)).unwrap();
+            let (left, right) = ("/l/D", "/r/d");
+            for (path, is_file) in [(left, left_file), (right, right_file)] {
+                if is_file {
+                    file(&vfs, path, b"file", 10);
+                } else {
+                    file(&vfs, &format!("{path}/y.txt"), b"in", 10);
+                }
+            }
+            let mut rules = FolderRules::default();
+            rules.alignment.case = CaseMode::Insensitive;
+            let cmp = compared(&vfs, &rules);
+            let op = FolderOp::CopyTo {
+                sides: BOTH,
+                target: mspec("/o/t"),
+                folder: false,
+                structure,
+                overwrite: OverwritePolicy::Always,
+            };
+            let rows: Vec<(String, SideSet)> = {
+                let read = cmp.read();
+                read.preorder()
+                    .map(|(row, _)| (read.path(row).as_str().to_owned(), BOTH))
+                    .collect()
+            };
+            let rows: Vec<(&str, SideSet)> = rows.iter().map(|(p, s)| (p.as_str(), *s)).collect();
+            let out = plan(&vfs, &cmp, &rows, &op);
+            let shown = lines(&out);
+            assert!(
+                shown.iter().all(|line| !line.contains('!')),
+                "left file {left_file}, {structure:?}: {shown:#?}"
+            );
+            let report = run(&vfs, out);
+            assert!(report.ok(), "{shown:#?} {:?}", report.results);
+            let (file_at, folder_at) = if left_file { ("D", "d") } else { ("d", "D") };
+            let mut want = vec![
+                format!("/o/t/{file_at}"),
+                format!("/o/t/{folder_at}"),
+                format!("/o/t/{folder_at}/y.txt"),
+            ];
+            want.sort();
+            assert_eq!(below_target(&vfs), want, "{shown:#?}");
+        }
+    }
+}

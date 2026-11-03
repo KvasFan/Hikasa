@@ -6314,7 +6314,13 @@ numbered per part, with the mutations each property test was checked by (§6.7 r
 1. **`made` compares as the back-end does (D-194).** Rule 16's pair choice needs `made` (note 36) to hold the pair's one
    folder, so `made_key` now folds names only when the target back-end lacks `CASE_SENSITIVE`, no longer as the
    comparison does (note 42): an aligned pair whose names differ is one folder by the rule's choice, and two folders the
-   comparison folds but a case-sensitive target keeps apart are two.
+   comparison folds but a case-sensitive target keeps apart are two. `taken` (the file targets) is keyed the same way
+   (`taken_key`, W7a review): with `made` exact and `taken` still folded by the comparison, a file `l/D` beside a
+   folder `r/d` under case-insensitive alignment wrote the file and skipped the folder `duplicate_target`, while a
+   folder `l/D` beside a file `r/d` wrote both. Before W7 both keys folded as the comparison did, so both orders
+   skipped the second (checked at 0ec20d6 with the new test); the asymmetry came with this note's first change. Now
+   both go on a case-sensitive target, in either order and structure
+   (`a7_1_a_file_and_a_folder_the_comparison_folds_both_go_to_a_case_sensitive_target`).
 2. **The M1 parsers stay.** `DisplayMode::parse`, `Wrap::parse`, `TextLayout::parse`, `FolderLayout::parse` and the rest
    keep their words and their tests (`xml` and `none` are still invalid there); the W7 vocabulary lives in
    `request.rs` (`ReportRequest::parse`), which M1's callers do not reach until W7b moves them.

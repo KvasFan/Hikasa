@@ -224,7 +224,8 @@ pub(super) struct Builder<'a, 'r> {
     flat_folders: BTreeMap<(Side, String), Option<u32>>,
     /// Folders this plan makes (canonical), with the depth of their item: a second source of one folder merges into it.
     pub(super) made: BTreeMap<String, u32>,
-    /// `copyto`, `moveto`: the file targets taken, as compared: the first source of one path goes, the others stay.
+    /// `copyto`, `moveto`: the file targets taken, keyed as `made` ([`Builder::taken_key`]): the first source of one
+    /// path goes, the others stay.
     pub(super) taken: BTreeSet<String>,
     /// `copyto`, `moveto`: the folders planned only as the way to a source, by item: they stay only if something goes there.
     pub(super) way: BTreeSet<usize>,
@@ -843,6 +844,13 @@ impl<'a, 'r> Builder<'a, 'r> {
             .capabilities(spec)
             .contains(Capabilities::CASE_SENSITIVE);
         key_of(&spec.canonical(), folds)
+    }
+
+    /// The key of a file target of `taken`: as [`Builder::made_key`], by the target back-end's comparison, so a file and
+    /// a folder meet where they would meet on the target (W7a note 1, review): a file `D` and a folder `d` the
+    /// comparison folds together are two targets on a case-sensitive back-end, whichever comes first.
+    pub(super) fn taken_key(&mut self, spec: &Spec) -> String {
+        self.made_key(spec)
     }
 
     /// Records a folder this plan makes, with the depth of its item.

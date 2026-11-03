@@ -301,7 +301,7 @@ impl Builder<'_, '_> {
                 self.note_made(&at, 0);
                 stack.extend(read.children(row).map(|child| (child, at.clone())));
             } else {
-                let key = key_of(&at.canonical(), self.folds(&at));
+                let key = self.taken_key(&at);
                 self.taken.insert(key);
             }
         }
@@ -439,8 +439,8 @@ impl Builder<'_, '_> {
             at = self.vfs.child(&at, &FileName::from_os(&folder))?;
             let key = at.canonical();
             // A file of this plan stands where this needs a folder.
-            let folded = key_of(&key, self.folds(&at));
-            if self.taken.contains(&folded) {
+            let taken = self.taken_key(&at);
+            if self.taken.contains(&taken) {
                 return Err(VfsError::NotADirectory { spec: key });
             }
             let known = match below.folders.get(&key) {
@@ -721,7 +721,7 @@ impl Builder<'_, '_> {
         if let (true, Spec::ArchiveMember { archive, .. }) = (opened, &from)
             && (tr.moving || flat)
         {
-            let key = target.canonical();
+            let key = self.taken_key(&target);
             let duplicate = !self.taken.insert(key);
             if duplicate {
                 let reason = SkipReason::DuplicateTarget;
@@ -759,11 +759,7 @@ impl Builder<'_, '_> {
             }
             return Ok(());
         }
-        let key = if fold {
-            hikasa_core::case::fold(&target.canonical()).into_owned()
-        } else {
-            target.canonical()
-        };
+        let key = self.taken_key(&target);
         // A second source of one path: a file, or a folder this plan makes there.
         if self.holds_folder(&target) || !self.taken.insert(key) {
             let reason = SkipReason::DuplicateTarget;
@@ -825,7 +821,7 @@ impl Builder<'_, '_> {
         open: &mut Vec<Open>,
     ) -> Result<(), FolderError> {
         let id = source.row.node;
-        let key = key_of(&target.canonical(), self.folds(&target));
+        let key = self.taken_key(&target);
         if self.taken.contains(&key) {
             let reason = SkipReason::DuplicateTarget;
             self.skip_row(id, EntryKind::Dir, Some(from), target, depth, reason, None);
