@@ -352,6 +352,13 @@ pub const CLIPBOARD_HELPER_ARG: &str = "__clipboard-helper";
 /// The status line of a helper that placed its payload.
 const HELPER_PLACED: &str = "placed";
 
+/// The prefix of a helper's status line when there is no clipboard (no display): `unavailable: <why>`, kind
+/// `unsupported`. Any other failure is `failed: <why>`, kind `io`.
+const HELPER_UNAVAILABLE: &str = "unavailable: ";
+
+/// The prefix of a helper's status line when placing failed.
+const HELPER_FAILED: &str = "failed: ";
+
 /// Places a payload with `arboard` and returns (Windows, macOS; the helper's first, non-waiting placement).
 fn place_payload(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
     let mut clipboard =
@@ -407,14 +414,21 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
     Ok(ClipboardPayload { text, html })
 }
 
-/// Starts a clipboard helper `command`, writes the payload to its stdin and waits for its one status line (§1.7.10):
-/// `placed` → `Ok` with the running child (the caller lets it run on); another line, none, or a helper that cannot
-/// start → `Failed` (`io`), nothing placed. Adapter-only, like [`SystemClipboard`].
+/// Starts a clipboard helper `command`, writes the payload to its stdin, closes it and waits for its one status line
+/// (§1.7.10): `placed` → `Ok` with the running child (the caller lets it run on); `unavailable: <why>` →
+/// `Unavailable` (`unsupported`); another line, none, or a helper that cannot start → `Failed` (`io`), nothing placed.
+/// On Unix the helper runs in the root folder (it keeps no folder of the caller's busy) and in a process group of its
+/// own (a Ctrl-C of the caller's terminal does not end it). Adapter-only, like [`SystemClipboard`].
 pub fn spawn_clipboard_helper(
     command: &mut std::process::Command,
     payload: &ClipboardPayload,
 ) -> Result<std::process::Child, ClipboardError> {
     use std::io::{BufRead, Write};
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.current_dir("/").process_group(0);
+    }
     let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -448,10 +462,15 @@ pub fn spawn_clipboard_helper(
             &mut child,
             "the clipboard helper ended without placing the report".into(),
         )),
+        Some(Ok(_)) if line.starts_with(HELPER_UNAVAILABLE) => {
+            let why = line.trim_end()[HELPER_UNAVAILABLE.len()..].to_owned();
+            let _ = fail(&mut child, String::new());
+            Err(ClipboardError::Unavailable(why))
+        }
         Some(Ok(_)) => {
             let message = line
                 .trim_end()
-                .strip_prefix("failed: ")
+                .strip_prefix(HELPER_FAILED)
                 .unwrap_or(line.trim_end())
                 .to_owned();
             Err(fail(
@@ -471,7 +490,8 @@ pub enum HelperPlacer {
     File(PathBuf),
 }
 
-/// The Linux clipboard helper (§1.7.10): reads a payload from `input`, places it, writes `placed` (or `failed: <why>`)
+/// The Linux clipboard helper (§1.7.10): reads a payload from `input`, places it, writes `placed` (or
+/// `unavailable: <why>` without a clipboard, `failed: <why>` otherwise)
 /// as one line to `output`, and with [`HelperPlacer::System`] keeps the selection until another program takes it.
 /// Returns the process exit code. Adapter-only.
 pub fn clipboard_helper_main(
@@ -483,10 +503,11 @@ pub fn clipboard_helper_main(
         let _ = writeln!(output, "{line}");
         let _ = output.flush();
     };
+    // A caller that went away before the whole payload came (stdin at its end) ends the helper here.
     let payload = match decode_payload(input) {
         Ok(payload) => payload,
         Err(e) => {
-            report(output, &format!("failed: {e}"));
+            report(output, &format!("{HELPER_FAILED}{e}"));
             return 1;
         }
     };
@@ -499,16 +520,17 @@ pub fn clipboard_helper_main(
                     0
                 }
                 Err(e) => {
-                    report(output, &format!("failed: {e}"));
+                    report(output, &format!("{HELPER_FAILED}{e}"));
                     1
                 }
             }
         }
         HelperPlacer::System => {
+            // No clipboard (no display, as `place_payload`'s `Unavailable`) is said apart from a failure.
             let mut clipboard = match arboard::Clipboard::new() {
                 Ok(clipboard) => clipboard,
                 Err(e) => {
-                    report(output, &format!("failed: {e}"));
+                    report(output, &format!("{HELPER_UNAVAILABLE}{e}"));
                     return 1;
                 }
             };
@@ -517,7 +539,7 @@ pub fn clipboard_helper_main(
                 None => clipboard.set_text(payload.text.as_str()),
             };
             if let Err(e) = placed {
-                report(output, &format!("failed: {e}"));
+                report(output, &helper_status(&arboard_error(e)));
                 return 1;
             }
             report(output, HELPER_PLACED);
@@ -525,6 +547,34 @@ pub fn clipboard_helper_main(
             0
         }
     }
+}
+
+/// The status line of a helper whose placement failed with `error`.
+fn helper_status(error: &ClipboardError) -> String {
+    match error {
+        ClipboardError::Unavailable(why) => format!("{HELPER_UNAVAILABLE}{why}"),
+        ClipboardError::Failed(why) => format!("{HELPER_FAILED}{why}"),
+        other => format!("{HELPER_FAILED}{other}"),
+    }
+}
+
+/// The hidden entry `__clipboard-helper` of an adapter's `main` (§1.7.10), for the CLI and the GUI alike: reads the
+/// payload on stdin, places it, reports on stdout and owns the selection. `HIKASA_CLIPBOARD_HELPER_FILE=<file>` (as
+/// `HIKASA_CLIPBOARD_FILE`: scripts, headless machines, tests) writes the payload's HTML, else its text, to that file
+/// instead of the clipboard. Returns the exit code.
+pub fn run_clipboard_helper() -> i32 {
+    let placer = match std::env::var_os("HIKASA_CLIPBOARD_HELPER_FILE") {
+        Some(path) if !path.is_empty() => HelperPlacer::File(path.into()),
+        _ => HelperPlacer::System,
+    };
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    clipboard_helper_main(&mut stdin, &mut stdout, &placer)
+}
+
+/// True when the process was started as the clipboard helper: its first argument is [`CLIPBOARD_HELPER_ARG`].
+pub fn is_clipboard_helper(argv: &[std::ffi::OsString]) -> bool {
+    argv.get(1).is_some_and(|a| a == CLIPBOARD_HELPER_ARG)
 }
 
 /// Places the payload once more in Linux's wait mode: returns when another program owns the selection.
@@ -737,6 +787,100 @@ mod tests {
             .write_payload(&payload)
             .unwrap_err();
         assert_eq!(err.to_vfs().kind(), ErrorKind::Unsupported);
+        assert_eq!(err.to_vfs_write().kind(), ErrorKind::Unsupported);
+    }
+
+    /// A7.15 (review): a helper without a clipboard (`unavailable: …`) is `Unavailable`, kind `unsupported`; a failed
+    /// one is `Failed`, kind `io`, a write of the clipboard ("cannot write the clipboard"), never a read.
+    #[cfg(unix)]
+    #[test]
+    fn a7_15_helper_failures_are_writes_and_unavailable_is_unsupported() {
+        use hikasa_core::{Classify, ErrorKind};
+        let payload = ClipboardPayload {
+            text: "plain".into(),
+            html: None,
+        };
+        let status = |script: &str| {
+            let mut command = std::process::Command::new("sh");
+            command.arg("-c").arg(script);
+            spawn_clipboard_helper(&mut command, &payload).unwrap_err()
+        };
+        let err = status("cat >/dev/null; echo 'unavailable: no display'");
+        assert!(
+            matches!(&err, ClipboardError::Unavailable(why) if why == "no display"),
+            "{err:?}"
+        );
+        assert_eq!(err.to_vfs_write().kind(), ErrorKind::Unsupported);
+        let err = status("cat >/dev/null; echo 'failed: the selection owner went away'");
+        assert!(matches!(err, ClipboardError::Failed(_)), "{err:?}");
+        let vfs = err.to_vfs_write();
+        assert_eq!(vfs.kind(), ErrorKind::Io);
+        let message = vfs.to_string();
+        assert!(message.contains("cannot write the clipboard"), "{message}");
+        assert!(
+            message.contains("the selection owner went away"),
+            "{message}"
+        );
+        assert!(!message.contains("read"), "{message}");
+        assert!(
+            matches!(
+                &vfs,
+                hikasa_vfs::VfsError::Io {
+                    op: hikasa_vfs::VfsOp::Write,
+                    ..
+                }
+            ),
+            "{vfs:?}"
+        );
+        // The helper's own status lines.
+        let error = arboard_error(arboard::Error::ClipboardNotSupported);
+        assert!(helper_status(&error).starts_with(HELPER_UNAVAILABLE));
+        let error = ClipboardError::Failed("boom".into());
+        assert_eq!(helper_status(&error), "failed: boom");
+    }
+
+    /// A7.15 (review): the helper runs in the root folder and in a process group of its own; a payload cut short
+    /// (the caller went away, stdin at its end) ends it with one failure line.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a7_15_the_helper_runs_detached() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = dir.path().join("where");
+        let payload = ClipboardPayload {
+            text: "plain".into(),
+            html: None,
+        };
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg("cat >/dev/null; pwd > \"$1\"; cut -d' ' -f5 /proc/$$/stat >> \"$1\"; echo placed; exec sleep 30")
+            .arg("sh")
+            .arg(&got);
+        let mut child = spawn_clipboard_helper(&mut command, &payload).unwrap();
+        let pid = child.id();
+        let text = std::fs::read_to_string(&got).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            ["/".to_owned(), pid.to_string()],
+            "cwd, then the process group"
+        );
+        // Stdin at its end before the whole payload.
+        let mut full = encode_payload(&payload);
+        full.truncate(full.len() - 2);
+        for input in [Vec::new(), full] {
+            let mut output = Vec::new();
+            let code = clipboard_helper_main(
+                &mut std::io::Cursor::new(input),
+                &mut output,
+                &HelperPlacer::File(dir.path().join("never")),
+            );
+            assert_eq!(code, 1);
+            assert!(String::from_utf8(output).unwrap().starts_with("failed: "));
+            assert!(!dir.path().join("never").exists());
+        }
     }
 
     #[test]

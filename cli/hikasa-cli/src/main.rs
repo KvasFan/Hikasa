@@ -75,11 +75,8 @@ fn main() -> std::process::ExitCode {
 fn run() -> u8 {
     let argv: Vec<OsString> = std::env::args_os().collect();
     // The Linux clipboard helper (§1.7.10): a hidden internal entry, before any argument parsing, so it is in no help.
-    if argv
-        .get(1)
-        .is_some_and(|a| a == hikasa_session::host::CLIPBOARD_HELPER_ARG)
-    {
-        return clipboard_helper();
+    if hikasa_session::host::is_clipboard_helper(&argv) {
+        return u8::try_from(hikasa_session::host::run_clipboard_helper()).unwrap_or(FAILURE);
     }
     let env = capture_env();
     // Only the arguments before the first `--` can be flags: after it, `--json` is a file name.
@@ -364,20 +361,6 @@ fn conflict(flag: &str, a: &Path, b: &Path) -> String {
         a.display(),
         b.display()
     )
-}
-
-/// `hikasa __clipboard-helper`: places the payload on stdin and owns the selection (Linux, §1.7.10).
-/// `HIKASA_CLIPBOARD_HELPER_FILE` (tests) writes the payload to that file instead of the clipboard.
-fn clipboard_helper() -> u8 {
-    use hikasa_session::host::{HelperPlacer, clipboard_helper_main};
-    let placer = match std::env::var_os("HIKASA_CLIPBOARD_HELPER_FILE") {
-        Some(path) if !path.is_empty() => HelperPlacer::File(path.into()),
-        _ => HelperPlacer::System,
-    };
-    let mut stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-    let code = clipboard_helper_main(&mut stdin, &mut stdout, &placer);
-    u8::try_from(code).unwrap_or(FAILURE)
 }
 
 /// Reads all of standard input (called by the service at most once, on the first `-` spec).

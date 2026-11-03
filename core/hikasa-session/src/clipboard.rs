@@ -77,6 +77,26 @@ impl ClipboardError {
             },
         }
     }
+
+    /// The VFS error of a report that could not be placed on the clipboard (§1.7.10): `Unavailable` →
+    /// `VfsError::Unavailable` (kind `unsupported`), `TooLarge` → `TooLarge`, anything else → `Io` (op `write`)
+    /// "cannot write the clipboard: <why>".
+    pub fn to_vfs_write(&self) -> VfsError {
+        let spec = CLIPBOARD_SPEC.to_owned();
+        match self {
+            ClipboardError::Unavailable(_) | ClipboardError::TooLarge(_) => self.to_vfs(),
+            ClipboardError::Failed(why) => VfsError::from_io(
+                spec,
+                VfsOp::Write,
+                std::io::Error::other(format!("cannot write the clipboard: {why}")),
+            ),
+            ClipboardError::Empty => VfsError::from_io(
+                spec,
+                VfsOp::Write,
+                std::io::Error::other(format!("cannot write the clipboard: {self}")),
+            ),
+        }
+    }
 }
 
 /// The most a report placed on the clipboard may hold, its text and HTML flavours together (§1.7.9): 128 MiB.

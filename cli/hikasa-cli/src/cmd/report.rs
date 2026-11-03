@@ -245,7 +245,7 @@ fn report(
     if let Some(payload) = &outcome.clipboard {
         ctx.clipboard
             .write_payload(payload)
-            .map_err(|e| ApiError::Vfs(e.to_vfs()))?;
+            .map_err(|e| ApiError::Vfs(e.to_vfs_write()))?;
     }
     Ok(Reported::Done(Box::new(outcome)))
 }
