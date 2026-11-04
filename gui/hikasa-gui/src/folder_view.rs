@@ -437,6 +437,8 @@ pub struct FolderViewModel {
     difference_walks: Memo<u64>,
     /// The log panel is shown (`ShowLog`, `[layout] log_panel`).
     show_log: bool,
+    /// The Legend panel is shown (`Legend`, `[layout] legend`, D-242).
+    show_legend: bool,
     /// The log panel's height (points, `[layout] log_height`).
     log_height: f64,
     /// What the log learns when a job ends (D-116), taken by the app.
@@ -558,6 +560,7 @@ impl FolderViewModel {
             differences: Memo::new(None),
             difference_walks: Memo::new(0),
             show_log: false,
+            show_legend: false,
             log_height: LOG_HEIGHT,
             notes: Vec::new(),
             expand_archive: None,
@@ -2347,6 +2350,7 @@ impl FolderViewModel {
             CommandId::InsigIgnored => self.display.ignore_unimportant,
             CommandId::SuppressFilters => self.display.suppress_filters,
             CommandId::ShowLog => self.show_log,
+            CommandId::Legend => self.show_legend,
             CommandId::DirFlatten => self.request.patch.flatten.unwrap_or_else(|| self.flat()),
             _ => {
                 if let Some(preset) = preset_of(id) {
@@ -2429,6 +2433,7 @@ impl FolderViewModel {
                 self.rebuild();
             }
             CommandId::ShowLog => self.show_log = !self.show_log,
+            CommandId::Legend => self.show_legend = !self.show_legend,
             CommandId::SelectAllFiles
             | CommandId::SelectNewerLeft
             | CommandId::SelectNewerRight
@@ -2597,6 +2602,22 @@ impl FolderViewModel {
         }
     }
 
+    /// True while the Legend panel shows (D-242).
+    pub fn show_legend(&self) -> bool {
+        self.show_legend
+    }
+
+    /// The comparison's statistics for the Info dialog (FC-064, D-242): read now in O(1), and whether they are
+    /// partial (the comparison still runs). `None` before a comparison was prepared.
+    pub fn info_stats(&self) -> Option<(hikasa_folder::FolderStats, bool)> {
+        let prepared = self.prepared()?;
+        let stats = prepared
+            .model()
+            .read()
+            .stats(self.display.ignore_unimportant);
+        Some((stats, self.scanning()))
+    }
+
     /// The log panel is shown.
     pub fn show_log(&self) -> bool {
         self.show_log
@@ -2630,6 +2651,12 @@ impl FolderViewModel {
         {
             self.show_log = on;
         }
+        if let Some(on) = layout
+            .layout_value(view, "legend")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_legend = on;
+        }
         if let Some(h) = layout
             .layout_value(view, "log_height")
             .and_then(LayoutValue::as_float)
@@ -2648,11 +2675,12 @@ impl FolderViewModel {
         self.rebuild();
     }
 
-    /// The layout keys this view owns (D-108): `log_panel`, `log_height`, and the columns' (D-234).
+    /// The layout keys this view owns (D-108): `log_panel`, `log_height`, `legend` (D-242), and the columns' (D-234).
     pub fn layout_keys(&self) -> Vec<(&'static str, LayoutValue)> {
         let mut keys = vec![
             ("log_panel", LayoutValue::Bool(self.show_log)),
             ("log_height", LayoutValue::Float(self.log_height)),
+            ("legend", LayoutValue::Bool(self.show_legend)),
         ];
         keys.extend(self.columns.to_layout());
         keys

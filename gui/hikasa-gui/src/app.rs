@@ -287,7 +287,8 @@ pub struct AppCore {
     /// The runs of the scripts started here (the status window's name, alive while the run's job body runs, also after
     /// its status window went): the shutdown waits for them as for the orphaned operations (review F4).
     script_runs: Vec<(String, std::sync::Weak<()>)>,
-    /// The clipboard of a script's `output-to:clipboard` (the adapter's provider; none in tests).
+    /// The GUI's clipboard for writing: a script's `output-to:clipboard`, the Info dialog's Copy (the adapter's
+    /// provider; none in tests).
     script_clipboard: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
@@ -1813,6 +1814,24 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::Info => {
+                let scope = self.scope(window);
+                let stats = match self.active_tab(window).and_then(Tab::model) {
+                    Some(ViewModel::Folder(m)) => m.info_stats(),
+                    _ => None,
+                };
+                if let Some((stats, partial)) = stats {
+                    let dialog = crate::info_dialog::InfoDialog::new(
+                        scope.type_title(),
+                        stats,
+                        partial,
+                        Arc::clone(&self.script_clipboard),
+                    );
+                    if let Some(w) = self.window_mut(window) {
+                        w.dialogs.push(Box::new(dialog));
+                    }
+                }
+            }
             CommandId::ColList => {
                 if let Some(CommandArg::Column(column)) = inv.arg
                     && let Some(ViewModel::Folder(m)) =

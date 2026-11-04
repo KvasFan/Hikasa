@@ -36,8 +36,10 @@ mod folder;
 mod folder_view;
 mod fonts;
 mod home;
+mod info_dialog;
 mod ipc;
 mod job;
+mod legend;
 mod mailbox;
 mod menus;
 mod notify;
@@ -66,6 +68,8 @@ mod tests_folder_ops;
 mod tests_folder_ops_fixes;
 #[cfg(test)]
 mod tests_folder_view;
+#[cfg(test)]
+mod tests_legend_info;
 #[cfg(test)]
 mod tests_options;
 #[cfg(test)]

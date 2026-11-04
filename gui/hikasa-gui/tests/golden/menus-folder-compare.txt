@@ -15,6 +15,7 @@ Session
   Save Session As...
   Session Settings...
   [ ] Locked (disabled)
+  Folder Compare Info	Ctrl+I
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
@@ -65,6 +66,7 @@ View
     [ ] CRC
     [ ] Owner
     [ ] Group
+  [ ] Legend	Ctrl+Alt+L
   [ ] Log
   ---
   [ ] Ignore Unimportant Differences

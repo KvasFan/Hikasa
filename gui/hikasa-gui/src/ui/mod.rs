@@ -15,6 +15,7 @@ pub mod hint;
 pub mod home;
 pub mod icons;
 pub mod keys;
+pub mod legend;
 pub mod log;
 pub mod menus;
 pub mod notify;
@@ -759,6 +760,33 @@ impl HikasaApp {
                     Some(help::HelpAction::Close) => actions.push(Action::CloseHelp),
                     None => {}
                 });
+        }
+
+        // The Legend panel of a folder view (D-242): beside the tree, not modal.
+        if let Some(view) = active_view
+            && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
+            && m.show_legend()
+        {
+            let sections = crate::legend::sections();
+            let panel = egui::Panel::right(format!("hk-legend-{}", view.0))
+                .resizable(true)
+                .default_size(300.0)
+                .min_size(200.0)
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| legend::show(ui, &sections, &pal));
+            match panel.inner {
+                Some(legend::LegendAction::Close) => {
+                    invocations.push(Invocation::new(CommandId::Legend));
+                }
+                Some(legend::LegendAction::Help) => {
+                    actions.push(Action::Help(crate::legend::LEGEND_TOPIC.to_owned()));
+                }
+                None => {}
+            }
         }
 
         // The view.

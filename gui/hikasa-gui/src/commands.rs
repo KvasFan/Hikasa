@@ -32,6 +32,16 @@ impl Scope {
     #[cfg_attr(not(test), allow(dead_code))]
     pub const VIEWS: [Scope; 3] = [Scope::Home, Scope::Folder, Scope::Text];
 
+    /// The view type's title (`<Type>` in a catalogue caption).
+    pub fn type_title(self) -> &'static str {
+        match self {
+            Scope::Global => "",
+            Scope::Home => "Home",
+            Scope::Folder => "Folder Compare",
+            Scope::Text => "Text Compare",
+        }
+    }
+
     /// The view type's name in the catalogue and `commands.toml` (`home`, `folder-compare`, `text-compare`;
     /// `Global` has none: its commands are in every view's table).
     pub fn view_name(self) -> Option<&'static str> {
@@ -185,6 +195,10 @@ command_ids! {
     DirFlatten,
     /// Folder (M2 W9a): shows or hides the column of the argument (`CommandArg::Column`, D-234).
     ColList,
+    /// Folder (M2 W9a): shows or hides the Legend panel (FC-030, D-242).
+    Legend,
+    /// Folder (M2 W9a): the Info dialog of the comparison's statistics (FC-064, D-242).
+    Info,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -398,6 +412,9 @@ pub fn in_a_list(id: CommandId) -> bool {
 pub enum Predicate {
     /// Always available.
     Always,
+    /// Never available: a session command whose row in this view waits for a later wave (§1.9.19: a text view's
+    /// `Info` and `SessionClear` are W11's).
+    Never,
     /// More than one tab is open in the window.
     MultipleTabs,
     /// Another window is open.
@@ -448,6 +465,7 @@ impl Predicate {
     pub fn holds(self, ctx: &Ctx) -> bool {
         match self {
             Predicate::Always => true,
+            Predicate::Never => false,
             Predicate::MultipleTabs => ctx.tabs > 1,
             Predicate::OtherWindows => ctx.windows > 1,
             Predicate::Busy => ctx.busy,
@@ -1419,6 +1437,9 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
+    row(C::Legend, S::Folder, None, None, G::Check, P::Always, NONE),
+    row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
+    row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
     // Text Compare
     row(
         C::Reload,
@@ -1763,7 +1784,8 @@ impl CommandTables {
     pub fn caption(&self, scope: Scope, id: CommandId) -> String {
         let caption = self.entry(scope, id).map_or("", |e| e.caption);
         if !caption.is_empty() {
-            return caption.to_owned();
+            // `<Type> Info`, `<Type> Report...`: the window writes the view's type (§1.9.21).
+            return caption.replace("<Type>", scope.type_title());
         }
         lookup(scope, id)
             .and_then(|r| r.toolbar_label)

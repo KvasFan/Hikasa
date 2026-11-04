@@ -17,6 +17,7 @@ Session
   Save Session As...
   Session Settings...
   [ ] Locked (disabled)
+  Text Compare Info	Ctrl+I (disabled)
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q

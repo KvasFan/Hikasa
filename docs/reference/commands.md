@@ -183,7 +183,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `FindFilenamePrev` | Search | Find Previous Filename | Shift+F3 | Finds previous filename matching search string. | planned |
 | `SuppressFilters` | View | Suppress Filters |  | Temporarily suppresses display and file filters. | implemented |
 | `ColList` | View | Columns |  | Shows or hides picked column. | implemented |
-| `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | planned |
+| `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | implemented |
 | `ShowLog` | View | Log |  | Shows or hides log panel. | implemented |
 
 Enter, Right and Left (keys without Ctrl or Alt that focused controls use themselves) act on the folder tree
@@ -387,7 +387,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `Rules` | Session |  |  | Edits current Rules definitions. | planned |
 | `Swap` | Session | Swap Sides |  | Exchanges left, right files. | planned |
 | `Report` | Session | <Type> Report... |  | Produces <type> report. | planned |
-| `Info` | Session | <Type> Info | Ctrl+I | Displays <type> statistics. | planned |
+| `Info` | Session | <Type> Info | Ctrl+I | Displays <type> statistics. | implemented |
 | `CompareParents` | Session | Compare Parent Folders |  | Compares folders containing current items in new view. | planned |
 | `MergeParents` | Session | Merge Parent Folders |  | Merges folders containing current items in new view. | planned |
 | `InsigIgnored` | View | Ignore Unimportant Differences |  | Treats unimportant differences as same. | implemented |

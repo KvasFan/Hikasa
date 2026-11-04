@@ -136,6 +136,17 @@ pub fn state_mark(category: Category) -> (&'static str, &'static str) {
     }
 }
 
+/// The centre's direction arrow and its title for the newer side (FC-032): left newer points right.
+pub fn newer_mark(side: Side) -> (&'static str, &'static str) {
+    match side {
+        Side::Right => ("◀", "Right is newer"),
+        _ => ("▶", "Left is newer"),
+    }
+}
+
+/// The badge of a row with an Ignored mark (FC-033), drawn at the centre's right edge.
+pub const IGNORED_BADGE: &str = "i";
+
 /// The mark and title of a content result.
 pub fn content_mark(kind: ContentKind) -> (&'static str, &'static str) {
     match kind {
@@ -157,8 +168,14 @@ pub fn centre_of(node: &NodeView<'_>, category: Category, marked: bool) -> Centr
         (CentreIcon::Content(content.kind), mark, title)
     } else {
         match category {
-            Category::LeftNewer => (CentreIcon::Newer(Side::Left), "▶", "Left is newer"),
-            Category::RightNewer => (CentreIcon::Newer(Side::Right), "◀", "Right is newer"),
+            Category::LeftNewer => {
+                let (mark, title) = newer_mark(Side::Left);
+                (CentreIcon::Newer(Side::Left), mark, title)
+            }
+            Category::RightNewer => {
+                let (mark, title) = newer_mark(Side::Right);
+                (CentreIcon::Newer(Side::Right), mark, title)
+            }
             other => {
                 let (mark, title) = state_mark(other);
                 (CentreIcon::State(other), mark, title)
@@ -182,7 +199,6 @@ pub fn centre_of(node: &NodeView<'_>, category: Category, marked: bool) -> Centr
 }
 
 /// One row of the glyph table: a glyph and what it means (the Legend lists these, D-242).
-#[cfg_attr(not(test), allow(dead_code))] // the Legend panel (D-242) reads it
 pub const GLYPH_TABLE: &[(GlyphView, &str)] = &[
     (
         GlyphView {

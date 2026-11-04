@@ -613,7 +613,7 @@ pub fn show(
             clip.text(
                 pos2(side_x[1] - 4.0, y + 4.0),
                 Align2::RIGHT_TOP,
-                "i",
+                crate::folder::glyphs::IGNORED_BADGE,
                 small.clone(),
                 pal.muted,
             );
@@ -691,7 +691,7 @@ fn column_spans(
 
 /// The glyph of a name cell (D-236): the colour spot, a folder (filled, hollow, unopened), the zipper; the red X and
 /// the link arrow on top.
-fn draw_glyph(
+pub(crate) fn draw_glyph(
     painter: &egui::Painter,
     at: egui::Pos2,
     glyph: GlyphView,

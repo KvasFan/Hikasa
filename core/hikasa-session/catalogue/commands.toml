@@ -1205,7 +1205,7 @@ menu = "View"
 caption = "Legend"
 shortcut = "Ctrl+Alt+L"
 description = "Shows or hides legend window."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowLog"
@@ -2357,7 +2357,7 @@ menu = "Session"
 caption = "<Type> Info"
 shortcut = "Ctrl+I"
 description = "Displays <type> statistics."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CompareParents"

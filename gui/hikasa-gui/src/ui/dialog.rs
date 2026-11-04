@@ -6,6 +6,7 @@
 use egui::{Align, Align2, Button, CursorIcon, Label, Layout, RichText, Sense, Ui, Vec2, vec2};
 
 use crate::dialog::{AboutDialog, ButtonRole, DialogModel, Prompt};
+use crate::info_dialog::InfoDialog;
 use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
 use crate::script_dialog::{ContinueDialog, RunScriptDialog, ScriptDialog};
@@ -103,6 +104,8 @@ pub fn show(
             }
         } else if let Some(about) = dialog.as_any().downcast_ref::<AboutDialog>() {
             ui.label(RichText::new(about.text()).color(pal.fg));
+        } else if let Some(d) = dialog.as_any().downcast_ref::<InfoDialog>() {
+            info(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveSessionDialog>() {
             session_dialog::save_as(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<NameDialog>() {
@@ -172,4 +175,40 @@ fn fixed_body(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui)) {
         ui.set_min_height(height);
         add(ui);
     });
+}
+
+/// The Info dialog's table (D-242): one grid per section, the figures right-aligned.
+fn info(ui: &mut Ui, d: &InfoDialog, pal: &Palette) {
+    if let Some(note) = d.note() {
+        ui.label(RichText::new(note).color(pal.accent));
+        ui.add_space(4.0);
+    }
+    for (k, section) in d.sections().iter().enumerate() {
+        ui.add_space(6.0);
+        egui::Grid::new(("hk-info", k))
+            .num_columns(1 + section.heads.len().max(1))
+            .spacing(vec2(18.0, 3.0))
+            .show(ui, |ui| {
+                ui.label(RichText::new(&section.title).strong().color(pal.fg));
+                for head in &section.heads {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(head).color(pal.muted));
+                    });
+                }
+                ui.end_row();
+                for row in &section.rows {
+                    ui.label(RichText::new(&row.label).color(pal.fg));
+                    for value in &row.values {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(RichText::new(value).color(pal.fg));
+                        });
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+    if let Some(message) = &d.message {
+        ui.add_space(6.0);
+        ui.label(RichText::new(message).color(pal.muted));
+    }
 }

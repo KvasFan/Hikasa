@@ -8,6 +8,7 @@ y = 30
 
 [layout.folder-compare]
 columns = ["name", "size", "modified", "path"]
+legend = false
 log_height = 160.0
 log_panel = true
 toolbar = true
