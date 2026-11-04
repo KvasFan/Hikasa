@@ -21,9 +21,9 @@ use hikasa_folder::{
     TreeRead, VisibleRow, expanded_on_load,
 };
 use hikasa_session::api::{
-    ExpandWords, FolderCompareRequest, FolderCompareResponse, FolderOpOutcome, FolderOpRequest,
-    OpOverrides, OpRequest, PreparedFolderCompare, RefreshDto, SelectRequest, TextCompareRequest,
-    ViewOutcome,
+    ContentsDto, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest,
+    FolderCompareResponse, FolderOpOutcome, FolderOpRequest, OpOverrides, OpRequest,
+    PreparedFolderCompare, RefreshDto, SelectRequest, TextCompareRequest, ViewOutcome,
 };
 use hikasa_session::ipc::{OpenOptions, ViewId};
 use hikasa_session::{ApiError, Service};
@@ -35,6 +35,7 @@ use crate::dialog::DialogModel;
 pub use crate::folder::cells::{Cell, size_text};
 use crate::folder::cells::{CellInput, cell_of};
 use crate::folder::columns::{ColumnId, ColumnLayout};
+use crate::folder::crc::{self, CrcDemand, CrcStep};
 use crate::folder::glyphs::{Centre, GlyphInput, centre_of, glyph_of};
 use crate::folder::selection::{Hit, Mods, Press, Swipe, ViewSelection};
 use crate::job::Job;
@@ -460,12 +461,45 @@ pub struct FolderViewModel {
     unscanned_open: Option<NodeId>,
     /// Folders an Expand asked for while a task ran, by path: refreshed and opened once it ends (FC-012).
     queued_expand: Vec<String>,
+    /// CRC on demand (D-237): the schedule, a due ask, the running job and the failures by (path, side).
+    crc: CrcDemand,
+    crc_due: bool,
+    crc_job: Option<CrcJob>,
+    /// A cancelled CRC job that has not ended yet: it still holds the model's refresh claim, so no CRC job starts
+    /// and the next job that claims it waits for it first (D-237).
+    crc_stale: Option<Job<ContentsDto>>,
+    crc_errors: HashMap<(String, Side), String>,
+    /// How many CRC jobs started (tests).
+    #[cfg(test)]
+    crc_jobs: u64,
     /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
     /// Tests hold a comparison here once it scanned, before it reports (a view that is still comparing).
     #[cfg(test)]
     pub scan_gate: Option<Gate>,
+}
+
+/// A cancelled CRC job a job that claims the model's refresh waits for (D-237).
+struct CrcYield(Option<Job<ContentsDto>>);
+
+impl CrcYield {
+    /// Blocks until the cancelled CRC job has ended (on the claiming job's thread).
+    fn wait(self) {
+        if let Some(job) = self.0 {
+            let _ = job.wait();
+        }
+    }
+}
+
+/// A CRC-on-demand job (D-237) and the window and rows revision it answers.
+struct CrcJob {
+    job: Job<ContentsDto>,
+    window: crc::Window,
+    revision: u64,
+    /// The rows it asked for (tests).
+    #[cfg(test)]
+    asked: Vec<NodeId>,
 }
 
 /// The status counts per side `(rows, bytes)` and the (selection moves, rows revision) they were computed for.
@@ -536,6 +570,13 @@ impl FolderViewModel {
             child_results: Vec::new(),
             unscanned_open: None,
             queued_expand: Vec::new(),
+            crc: CrcDemand::default(),
+            crc_due: false,
+            crc_job: None,
+            crc_stale: None,
+            crc_errors: HashMap::new(),
+            #[cfg(test)]
+            crc_jobs: 0,
             #[cfg(test)]
             gate: None,
             #[cfg(test)]
@@ -833,6 +874,7 @@ impl FolderViewModel {
             changed = true;
         }
         changed |= self.poll_task(service);
+        changed |= self.poll_crc(service);
         if self.task.is_none() && !self.scanning() && !self.queued_expand.is_empty() {
             changed |= self.run_queued_expands(service);
         }
@@ -919,6 +961,164 @@ impl FolderViewModel {
         self.first = first;
         self.viewport = viewport.max(1);
         moved
+    }
+
+    /// A frame at frame time `now` (D-237): while the CRC column shows, the rendered rows' CRCs are asked for once
+    /// the list has been still for 200 ms; a scroll cancels the job; hiding the column cancels it. Returns when to
+    /// draw again for the wait to end.
+    pub fn crc_frame(&mut self, now: Instant) -> Option<Duration> {
+        if !self.shown_columns().contains(&ColumnId::Crc) {
+            self.cancel_crc();
+            self.crc.reset();
+            self.crc_due = false;
+            return None;
+        }
+        match self
+            .crc
+            .frame((self.first, self.viewport), self.rows_revision, now)
+        {
+            CrcStep::Moved => {
+                self.cancel_crc();
+                self.crc_due = false;
+                Some(crc::SETTLE)
+            }
+            CrcStep::Wait(left) => Some(left),
+            CrcStep::Due => {
+                self.crc_due = self.crc_job.is_none();
+                None
+            }
+            CrcStep::Done => None,
+        }
+    }
+
+    /// Cancels the CRC job (its answer is dropped); it stays stale until it has really ended.
+    fn cancel_crc(&mut self) {
+        if let Some(running) = self.crc_job.take() {
+            running.job.cancel();
+            self.crc_stale = Some(running.job);
+        }
+    }
+
+    /// Cancels the CRC job for a job that claims the model's refresh (D-237): the returned job, if any, has not
+    /// ended yet and the claiming job waits for it first ([`CrcYield::wait`]), off the UI thread.
+    fn crc_yield(&mut self) -> CrcYield {
+        self.cancel_crc();
+        CrcYield(self.crc_stale.take())
+    }
+
+    /// True while a CRC job runs, a cancelled one has not ended, or a still window waits for its job (tests).
+    #[cfg(test)]
+    pub fn crc_pending(&self) -> bool {
+        self.crc_job.is_some() || self.crc_stale.is_some() || self.crc_due
+    }
+
+    /// How many CRC jobs started, and the rows the running one asked for (tests).
+    #[cfg(test)]
+    pub fn crc_jobs(&self) -> (u64, Option<&[NodeId]>) {
+        (
+            self.crc_jobs,
+            self.crc_job.as_ref().map(|j| j.asked.as_slice()),
+        )
+    }
+
+    /// Takes the CRC job's answer, or starts the job a frame found due: one `folder_contents` job with
+    /// `ContentsKind::Crc` over the rendered file rows without a CRC (at most 256), only while no other job of the
+    /// view runs (D-237).
+    fn poll_crc(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        if let Some(result) = self.crc_job.as_ref().and_then(|j| j.job.try_result()) {
+            let done = self.crc_job.take().expect("a job");
+            if let Ok(dto) = result {
+                for item in dto.items {
+                    let side = match item.side {
+                        Some("right") => Side::Right,
+                        _ => Side::Left,
+                    };
+                    if let Some(error) = item.error {
+                        self.crc_errors.insert((item.path, side), error.message);
+                    }
+                }
+            }
+            self.crc.answered(done.window, done.revision);
+            changed = true;
+        }
+        if self
+            .crc_stale
+            .as_ref()
+            .is_some_and(|j| j.try_result().is_some())
+        {
+            self.crc_stale = None;
+        }
+        if !self.crc_due || self.crc_job.is_some() || self.crc_stale.is_some() || self.busy() {
+            return changed;
+        }
+        self.crc_due = false;
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return changed;
+        };
+        let window = (self.first, self.viewport);
+        let revision = self.rows_revision;
+        let mut items = Selection::default();
+        let mut asked = Vec::new();
+        {
+            let read = model.read();
+            let first = (self.first as usize).min(self.rows.len());
+            let end = (first + self.viewport as usize).min(self.rows.len());
+            for row in &self.rows[first..end] {
+                let Some(node) = read.node(row.node) else {
+                    continue;
+                };
+                if node.is_folder() {
+                    continue;
+                }
+                let mut sides = SideSet::empty();
+                let mut path: Option<String> = None;
+                for (side, on) in [(Side::Left, SideSet::LEFT), (Side::Right, SideSet::RIGHT)] {
+                    if node.side(side).is_some_and(|e| e.crc32.is_none()) {
+                        let path =
+                            path.get_or_insert_with(|| read.path(row.node).as_str().to_owned());
+                        if !self.crc_errors.contains_key(&(path.clone(), side)) {
+                            sides |= on;
+                        }
+                    }
+                }
+                if !sides.is_empty() {
+                    items.insert(row.node, sides);
+                    asked.push(row.node);
+                    if asked.len() == crc::BATCH {
+                        break;
+                    }
+                }
+            }
+        }
+        if items.is_empty() {
+            self.crc.answered(window, revision);
+            return changed;
+        }
+        let request = ContentsRequest {
+            select: select_request(items, self.display),
+            kind: ContentsKind::Crc(SideSet::all()),
+            text_rules: None,
+        };
+        let job = Job::spawn(
+            service,
+            JobKind::FolderOp,
+            "CRC".into(),
+            &self.wake,
+            move |svc, job| svc.folder_contents(&model, &request, job),
+        );
+        #[cfg(test)]
+        {
+            self.crc_jobs += 1;
+        }
+        self.crc_job = Some(CrcJob {
+            job,
+            window,
+            revision,
+            #[cfg(test)]
+            asked,
+        });
+        changed
     }
 
     /// Selects a visible row.
@@ -1149,6 +1349,8 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let job_model = Arc::clone(&model);
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        let crc = self.crc_yield();
         #[cfg(test)]
         let gate = self.gate.clone();
         let job = Job::spawn(
@@ -1159,6 +1361,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_open_archive(&job_model, node, job, &hikasa_folder::NullObserver)
             },
         );
@@ -1198,6 +1401,8 @@ impl FolderViewModel {
     /// Prepares and runs the comparison again; the open folders and the selected row are found again by path once
     /// it has run (its ids are new).
     fn refresh(&mut self, service: &Service) {
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        self.cancel_crc();
         if let Some(task) = self.task.take() {
             task.cancel();
         }
@@ -1613,6 +1818,8 @@ impl FolderViewModel {
 
     /// Runs a confirmed plan in a job (`JobKind::FolderOp`).
     fn execute_plan(&mut self, service: &Service, caption: &str, plan: OpPlan, mark: Mark) {
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        let crc = self.crc_yield();
         let refresh = plan.refresh.clone();
         #[cfg(test)]
         let gate = self.gate.clone();
@@ -1624,6 +1831,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_op_execute(plan, job)
             },
         );
@@ -1638,6 +1846,11 @@ impl FolderViewModel {
 
     /// Refreshes `nodes` of the current model in a job (`folder_refresh`).
     fn refresh_rows(&mut self, service: &Service, nodes: Vec<NodeId>, after: AfterRefresh) {
+        if self.prepared().is_none() {
+            return;
+        }
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        let crc = self.crc_yield();
         let Some(prepared) = self.prepared() else {
             return;
         };
@@ -1653,6 +1866,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_refresh(&job_model, &nodes, job, &hikasa_folder::NullObserver)
             },
         );
@@ -2669,6 +2883,7 @@ impl FolderViewModel {
                     .mark
                     .filter(|(n, _)| *n == row.node)
                     .map(|(_, s)| s),
+                crc_errors: &self.crc_errors,
             };
             if let Some(view) = row_view(&read, row, index, &input) {
                 out.rows.push(RowView {
@@ -2937,6 +3152,8 @@ struct RowInput<'a> {
     zone: &'a TimeZone,
     running: bool,
     marked: Option<Side>,
+    /// The CRC failures by (path, side) (D-237: the cell says "error", the tooltip the message).
+    crc_errors: &'a HashMap<(String, Side), String>,
 }
 
 fn row_view(
@@ -2986,11 +3203,24 @@ fn row_view(
     };
     let category = read.category(row.node, iu);
     let centre = centre_of(&node, category, input.marked.is_some());
-    let errors = errors_of
+    let mut errors = errors_of
         .iter()
         .map(|e| e.error.message.clone())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect::<Vec<_>>();
+    let mut left = cell(node.left.as_ref(), Side::Left);
+    let mut right = cell(node.right.as_ref(), Side::Right);
+    if !input.crc_errors.is_empty() {
+        let path = read.path(row.node).as_str().to_owned();
+        for (side, cell) in [(Side::Left, &mut left), (Side::Right, &mut right)] {
+            if let Some(c) = cell.as_mut().filter(|c| c.crc.is_empty())
+                && let Some(message) = input.crc_errors.get(&(path.clone(), side))
+            {
+                c.crc = "error".to_owned();
+                errors.push(format!("CRC: {message}"));
+            }
+        }
+    }
+    let errors = errors.join("\n");
     Some(RowView {
         index,
         node: row.node.0,
@@ -3000,8 +3230,8 @@ fn row_view(
         has_children: folder && node.scan == ScanStatus::Scanned,
         archive,
         opens_archive,
-        left: cell(node.left.as_ref(), Side::Left),
-        right: cell(node.right.as_ref(), Side::Right),
+        left,
+        right,
         mark: centre.mark,
         mark_title: centre.tooltip.clone(),
         centre,

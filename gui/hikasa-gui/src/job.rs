@@ -68,6 +68,11 @@ impl<T> Job<T> {
         self.handle.try_result()
     }
 
+    /// Blocks until the job has finished (`JobHandle::wait`).
+    pub fn wait(self) -> Result<T, ApiError> {
+        self.handle.wait()
+    }
+
     /// Requests cancellation.
     pub fn cancel(&self) {
         self.handle.cancel();

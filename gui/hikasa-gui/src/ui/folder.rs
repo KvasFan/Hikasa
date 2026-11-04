@@ -458,6 +458,10 @@ pub fn show(
     let first = st.top.floor() as u32;
     let frac = (st.top - st.top.floor()) as f32;
     m.set_scroll(first, page as u32 + 1);
+    // CRC on demand (D-237): the frame time decides when the list has been still long enough.
+    if let Some(after) = m.crc_frame(std::time::Instant::now()) {
+        ui.ctx().request_repaint_after(after);
+    }
     let window = m.window();
 
     // Clicks: select, open/close a folder (triangle or double-click), open a pair (double-click).

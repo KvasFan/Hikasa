@@ -356,3 +356,102 @@ fn a9_1_col_list_and_the_header_menu_toggle_the_columns() {
             .contains(&ColumnId::Path)
     );
 }
+
+/// Polls the app until the view's CRC job ended (bounded).
+fn crc_settle(world: &World, app: &mut crate::tests::TestApp, view: ViewId) {
+    let began = std::time::Instant::now();
+    loop {
+        world.settle(app);
+        if !folder_model(app, view).crc_pending() {
+            return;
+        }
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(60),
+            "CRC job did not end"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a9_3_crc_on_demand_asks_for_the_rendered_rows_once_still() {
+    use std::time::{Duration, Instant};
+    let world = World::new();
+    for i in 0..40 {
+        let name = format!("f{i:02}.txt");
+        put(&world, "l", &name, &format!("left {i}\n"), 1_000);
+        put(&world, "r", &name, &format!("right {i}\n"), 2_000);
+    }
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    app.execute(CommandId::FavCompareAll);
+    world.settle(&mut app);
+    let t0 = Instant::now();
+    let ms = |n: u64| t0 + Duration::from_millis(n);
+    let crc_column = ColumnId::Crc;
+    // Hidden: never asked.
+    let m = folder_model(&mut app, view);
+    m.set_scroll(0, 10);
+    assert_eq!(m.crc_frame(ms(0)), None);
+    assert_eq!(m.crc_frame(ms(1_000)), None);
+    world.settle(&mut app);
+    assert_eq!(folder_model(&mut app, view).crc_jobs().0, 0);
+    // Shown: nothing before the list has been still for 200 ms.
+    let m = folder_model(&mut app, view);
+    m.toggle_column(crc_column);
+    assert!(m.crc_frame(ms(1_000)).is_some(), "the wait starts");
+    assert_eq!(m.crc_frame(ms(1_150)), Some(Duration::from_millis(50)));
+    world.settle(&mut app);
+    assert_eq!(folder_model(&mut app, view).crc_jobs().0, 0);
+    // Still for 200 ms: one job for the ten rendered file rows.
+    let m = folder_model(&mut app, view);
+    assert_eq!(m.crc_frame(ms(1_200)), None);
+    let rendered: Vec<NodeId> = m.rows()[0..10].iter().map(|r| r.node).collect();
+    app.0.handle(crate::app::UiMsg::Tick);
+    let (jobs, asked) = folder_model(&mut app, view).crc_jobs();
+    assert_eq!(jobs, 1);
+    assert_eq!(asked.map(<[NodeId]>::to_vec), Some(rendered));
+    // A scroll cancels it; the new window is asked for once still again.
+    let m = folder_model(&mut app, view);
+    m.set_scroll(20, 10);
+    assert!(m.crc_frame(ms(1_210)).is_some());
+    assert_eq!(m.crc_jobs().1, None, "the scroll cancelled the job");
+    assert_eq!(m.crc_frame(ms(1_420)), None);
+    crc_settle(&world, &mut app, view);
+    let m = folder_model(&mut app, view);
+    assert_eq!(m.crc_jobs().0, 2);
+    // The cells of the rendered window (the window's overscan rows aside).
+    let crc = |m: &crate::folder_view::FolderViewModel, from: u32| -> Vec<String> {
+        m.window()
+            .rows
+            .iter()
+            .filter(|r| (from..from + 10).contains(&r.index))
+            .flat_map(|r| [r.left.as_ref(), r.right.as_ref()])
+            .map(|c| c.map(|c| c.crc.clone()).unwrap_or_default())
+            .collect()
+    };
+    let shown = crc(m, 20);
+    assert_eq!(shown.len(), 20);
+    assert!(
+        shown
+            .iter()
+            .all(|c| c.len() == 8 && c.chars().all(|ch| ch.is_ascii_hexdigit())),
+        "{shown:?}"
+    );
+    // Answered: a still frame asks nothing more; rows outside every window stay without.
+    assert_eq!(m.crc_frame(ms(2_000)), None);
+    world.settle(&mut app);
+    let m = folder_model(&mut app, view);
+    assert_eq!(m.crc_jobs().0, 2, "nothing left to ask for");
+    m.set_scroll(30, 10);
+    assert!(
+        crc(m, 30).iter().all(String::is_empty),
+        "never rendered, never asked"
+    );
+    // Hidden while waiting: no job.
+    assert!(m.crc_frame(ms(2_010)).is_some());
+    m.toggle_column(crc_column);
+    assert_eq!(m.crc_frame(ms(3_000)), None);
+    world.settle(&mut app);
+    assert_eq!(folder_model(&mut app, view).crc_jobs().0, 2);
+}
