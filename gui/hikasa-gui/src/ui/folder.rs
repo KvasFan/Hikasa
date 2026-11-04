@@ -867,7 +867,7 @@ fn path_edit(
         }
     }
     let changed = m.path_edit(k).changed();
-    let buttons = if changed { 3.0 } else { 1.0 } * 24.0;
+    let buttons = if changed { 4.0 } else { 2.0 } * 24.0;
     let field = Rect::from_min_max(
         rect.min,
         pos2(
@@ -921,7 +921,13 @@ fn path_edit(
             m.path_edit(k).cancel();
         }
     }
-    let _ = run;
+    if button(ui, "…", "Browse") {
+        run.push(Invocation::new(if k == 0 {
+            CommandId::BrowseLeft
+        } else {
+            CommandId::BrowseRight
+        }));
+    }
     let below = pos2(field.left(), field.bottom() + 1.0);
     if ui
         .data(|d| d.get_temp::<bool>(recent_open))

@@ -17,10 +17,11 @@ use hikasa_vfs::{EntryKind, FollowLinks};
 
 use super::flow::{StoreDone, stored_specs};
 use super::{AppCore, CoreJob};
+use crate::browse::{BROWSE_DIALOG, BrowseDialog, BrowseMode, BrowseTarget};
 use crate::dialog::{ButtonRole, Followup, Prompt};
 use crate::job::Job;
 use crate::session_dialog::SessionAction;
-use crate::window::ViewModel;
+use crate::window::{ViewModel, WindowId};
 
 /// What the check of new base folders found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,5 +216,101 @@ impl AppCore {
                 dirty,
             })
         });
+    }
+}
+
+impl AppCore {
+    /// Opens the browse dialog in `window` (D-240) in `mode` at `start` for `target`, with the active folder view's
+    /// bases among the places and *Show hidden items* as remembered (`state.dialogs.browse.show_hidden`).
+    pub fn open_browse(
+        &mut self,
+        window: WindowId,
+        mode: BrowseMode,
+        start: String,
+        target: BrowseTarget,
+    ) {
+        let bases = match self.active_tab_mut(window).and_then(|t| t.model_mut()) {
+            Some(ViewModel::Folder(m)) => vec![
+                m.path_edit(0).committed.clone(),
+                m.path_edit(1).committed.clone(),
+            ],
+            _ => Vec::new(),
+        };
+        let show_hidden = self.state.dialog_text(BROWSE_DIALOG, "show_hidden") == Some("true");
+        let dialog = BrowseDialog::new(mode, &start, target, bases, show_hidden, self.wake());
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
+    }
+
+    /// `BrowseLeft` / `BrowseRight` (side 0, 1): the browse dialog in folder mode at the field's folder.
+    pub(super) fn browse_base(&mut self, window: WindowId, side: usize) {
+        let Some(tab) = self.active_tab_mut(window) else {
+            return;
+        };
+        let view = tab.id;
+        let Some(ViewModel::Folder(m)) = tab.model_mut() else {
+            return;
+        };
+        let start = m.path_edit(side).text.clone();
+        self.open_browse(
+            window,
+            BrowseMode::Folder,
+            start,
+            BrowseTarget::PathEdit { view, side },
+        );
+    }
+
+    /// The browse dialog closed: its answer goes to its target (a path edit commits it as if typed and accepted);
+    /// a confirmed folder enters `mru.folders`, a file `mru.files`; *Show hidden items* is remembered.
+    pub(super) fn browsed(
+        &mut self,
+        window: WindowId,
+        target: BrowseTarget,
+        answer: Option<(String, bool)>,
+        show_hidden: bool,
+    ) {
+        self.state.set_dialog_text(
+            BROWSE_DIALOG,
+            "show_hidden",
+            if show_hidden { "true" } else { "false" },
+        );
+        let Some((spec, folder)) = answer else {
+            return;
+        };
+        self.push_mru(
+            if folder {
+                MruList::Folders
+            } else {
+                MruList::Files
+            },
+            spec.clone(),
+        );
+        match target {
+            BrowseTarget::PathEdit { view, side } => {
+                if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    m.path_edit(side).set_text(&spec);
+                    m.accept_paths();
+                }
+                // The view's outbox is read with its next poll.
+                let _ = window;
+            }
+            BrowseTarget::Export => {
+                if let Some(d) = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<crate::wizards::ExportWizard>())
+                {
+                    d.target = spec;
+                }
+            }
+            BrowseTarget::RunScript => {
+                if let Some(d) = self.window_mut(window).and_then(|w| {
+                    w.dialogs
+                        .find_mut::<crate::script_dialog::RunScriptDialog>()
+                }) {
+                    d.path = spec;
+                }
+            }
+        }
     }
 }

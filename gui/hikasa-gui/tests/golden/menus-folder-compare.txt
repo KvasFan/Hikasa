@@ -10,6 +10,10 @@ Session
   Manage Workspaces...
   Save Workspace As...
   ---
+  > Browse for Folder
+    Left Side
+    Right Side
+  ---
   Go to Home	Alt+Home
   Save Session	Shift+Ctrl+S
   Save Session As...

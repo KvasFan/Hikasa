@@ -152,10 +152,10 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
 | `Swap` |  |  |  | Exchanges left, right base folders. | planned |
-| `BrowseList` | Session | Browse for Folder |  | Browses for an existing folder on picked side. | planned |
-| `BrowseLeft` | Session | Left Side |  | Browses for an existing folder on left side. | planned |
+| `BrowseList` | Session | Browse for Folder |  | Browses for an existing folder on picked side. | implemented |
+| `BrowseLeft` | Session | Left Side |  | Browses for an existing folder on left side. | implemented |
 | `BrowseCenter` | Session | Center Side |  | Browses for an existing folder on center side. | planned |
-| `BrowseRight` | Session | Right Side |  | Browses for an existing folder on right side. | planned |
+| `BrowseRight` | Session | Right Side |  | Browses for an existing folder on right side. | implemented |
 | `BrowseOutput` | Session | Output Side |  | Browses for an existing folder on output side. | planned |
 | `Stop` | Session |  |  | Terminates comparison. | implemented |
 | `Expand` | Actions | Open Folder | Right | Opens selected folder. | implemented |

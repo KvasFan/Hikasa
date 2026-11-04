@@ -34,6 +34,14 @@ pub enum DialogInput {
     Help(&'static str),
     /// A field of the dialog changed (the theme preview, D-130).
     Edited,
+    /// The browse dialog's Up or double-click (D-240).
+    Browse(crate::ui::browse::BrowseInput),
+    /// A Browse button of a dialog: the browse dialog over it (D-240).
+    BrowseFor(
+        crate::browse::BrowseMode,
+        String,
+        crate::browse::BrowseTarget,
+    ),
 }
 
 /// Draws `dialog` (the top of a window's stack) as a modal.
@@ -106,6 +114,13 @@ pub fn show(
             ui.label(RichText::new(about.text()).color(pal.fg));
         } else if let Some(d) = dialog.as_any().downcast_ref::<InfoDialog>() {
             info(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::browse::BrowseDialog>()
+        {
+            if let Some(input) = crate::ui::browse::show(ui, d, pal) {
+                out.push(DialogInput::Browse(input));
+            }
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveSessionDialog>() {
             session_dialog::save_as(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<NameDialog>() {
@@ -121,6 +136,15 @@ pub fn show(
             out.push(DialogInput::Edited);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ExportWizard>() {
             fixed_body(ui, height, |ui| wizards::export(ui, d, pal));
+            if std::mem::take(&mut d.browse) {
+                out.push(DialogInput::BrowseFor(
+                    crate::browse::BrowseMode::SaveFile {
+                        default_name: crate::browse::file_name_of(&d.target),
+                    },
+                    crate::browse::folder_of(&d.target),
+                    crate::browse::BrowseTarget::Export,
+                ));
+            }
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ImportWizard>() {
             fixed_body(ui, height, |ui| wizards::import(ui, d, pal));
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RestoreWizard>() {
@@ -134,7 +158,13 @@ pub fn show(
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {
             script_dialog::ask_continue(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RunScriptDialog>() {
-            script_dialog::run_script(ui, d, pal);
+            if script_dialog::run_script(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(
+                    crate::browse::BrowseMode::File,
+                    d.path.clone(),
+                    crate::browse::BrowseTarget::RunScript,
+                ));
+            }
         }
         ui.add_space(12.0);
         // A row of its own height: a layout that fills what is left would centre the buttons in it.

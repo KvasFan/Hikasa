@@ -76,13 +76,17 @@ pub fn ask_continue(ui: &mut Ui, dialog: &ContinueDialog, pal: &Palette) {
     ui.label(RichText::new(dialog.message()).color(pal.fg));
 }
 
-/// The Run Script dialog.
-pub fn run_script(ui: &mut Ui, dialog: &mut RunScriptDialog, pal: &Palette) {
+/// Draws the Run Script dialog; true when its Browse button was pressed (D-240).
+pub fn run_script(ui: &mut Ui, dialog: &mut RunScriptDialog, pal: &Palette) -> bool {
+    let mut browse = false;
     egui::Grid::new("hk-run-script")
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("Script");
-            ui.add(TextEdit::singleline(&mut dialog.path).desired_width(360.0));
+            ui.horizontal(|ui| {
+                ui.add(TextEdit::singleline(&mut dialog.path).desired_width(300.0));
+                browse = ui.button("Browse…").clicked();
+            });
             ui.end_row();
             ui.label("Arguments");
             ui.add(TextEdit::singleline(&mut dialog.args).desired_width(360.0));
@@ -110,4 +114,5 @@ pub fn run_script(ui: &mut Ui, dialog: &mut RunScriptDialog, pal: &Palette) {
             }
         });
     }
+    browse
 }

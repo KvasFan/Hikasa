@@ -199,6 +199,12 @@ command_ids! {
     Legend,
     /// Folder (M2 W9a): the Info dialog of the comparison's statistics (FC-064, D-242).
     Info,
+    /// Folder (M2 W9a): the Browse submenu (D-240).
+    BrowseList,
+    /// Folder (M2 W9a): the browse dialog for the left base.
+    BrowseLeft,
+    /// Folder (M2 W9a): the browse dialog for the right base.
+    BrowseRight,
     /// Folder (M2 W9a): opens the Find Filename panel (FC-061, D-241).
     FindFilename,
     /// Folder (M2 W9a): the next row whose name matches the last query.
@@ -380,6 +386,10 @@ pub struct Ctx {
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
 pub const LIST_CHILDREN: &[(CommandId, &[CommandId])] = &[
+    (
+        CommandId::BrowseList,
+        &[CommandId::BrowseLeft, CommandId::BrowseRight],
+    ),
     (
         CommandId::SelectNewerList,
         &[
@@ -1446,6 +1456,33 @@ pub const PRESENTATION: &[Row] = &[
     row(C::Legend, S::Folder, None, None, G::Check, P::Always, NONE),
     row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
     row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::BrowseList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::BrowseLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::BrowseRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(
         C::FindFilename,
         S::Folder,

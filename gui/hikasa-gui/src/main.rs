@@ -29,6 +29,7 @@
 
 mod app;
 mod bench;
+mod browse;
 mod commands;
 mod dialog;
 mod dnd;
@@ -62,6 +63,8 @@ mod workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_browse;
 #[cfg(test)]
 mod tests_find;
 #[cfg(test)]

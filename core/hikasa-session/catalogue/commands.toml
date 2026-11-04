@@ -974,14 +974,14 @@ id = "BrowseList"
 menu = "Session"
 caption = "Browse for Folder"
 description = "Browses for an existing folder on picked side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BrowseLeft"
 menu = "Session"
 caption = "Left Side"
 description = "Browses for an existing folder on left side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BrowseCenter"
@@ -995,7 +995,7 @@ id = "BrowseRight"
 menu = "Session"
 caption = "Right Side"
 description = "Browses for an existing folder on right side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BrowseOutput"

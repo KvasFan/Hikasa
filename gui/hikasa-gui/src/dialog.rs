@@ -75,6 +75,18 @@ pub enum Followup {
     WizardOverwrite,
     /// The Import wizard drops its choices and takes this package (D-127).
     SwitchPackage(PathBuf),
+    /// The browse dialog's "Replace …?": Yes (SaveFile, D-240).
+    BrowseReplace,
+    /// The browse dialog closed (M2 W9a, D-240): its answer (a spec, and whether it is a folder) for `target`, and
+    /// *Show hidden items* to remember.
+    Browsed {
+        /// Where the answer goes.
+        target: crate::browse::BrowseTarget,
+        /// The spec picked and whether it is a folder; `None` after Cancel.
+        answer: Option<(String, bool)>,
+        /// *Show hidden items*.
+        show_hidden: bool,
+    },
 }
 
 /// The body of a write on the window's settings queue: writes and returns the paths to acknowledge.

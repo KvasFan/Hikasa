@@ -1819,6 +1819,8 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::BrowseLeft => self.browse_base(window, 0),
+            CommandId::BrowseRight => self.browse_base(window, 1),
             CommandId::FindFilenameNext | CommandId::FindFilenamePrev => {
                 self.find_filename(window, inv.id == CommandId::FindFilenamePrev);
             }
@@ -2597,6 +2599,35 @@ impl AppCore {
             Some(top) => top.on_button(role, &service),
             None => return Vec::new(),
         };
+        self.dialog_step(window, step)
+    }
+
+    /// The browse dialog's Up and double-click (they need the service; D-240).
+    pub fn browse_input(
+        &mut self,
+        window: WindowId,
+        input: crate::ui::browse::BrowseInput,
+    ) -> Vec<Effect> {
+        let service = self.service.clone();
+        let step = match self
+            .window_mut(window)
+            .and_then(|w| w.dialogs.top_mut())
+            .and_then(|d| d.as_any_mut().downcast_mut::<crate::browse::BrowseDialog>())
+        {
+            Some(d) => match input {
+                crate::ui::browse::BrowseInput::Up => {
+                    d.up(&service);
+                    DialogStep::Stay
+                }
+                crate::ui::browse::BrowseInput::Open(i) => d.open(&service, i),
+            },
+            None => return Vec::new(),
+        };
+        self.dialog_step(window, step)
+    }
+
+    /// What a step of the top dialog does: it stays, closes, or closes and the window runs its follow-ups.
+    fn dialog_step(&mut self, window: WindowId, step: DialogStep) -> Vec<Effect> {
         let mut effects = Vec::new();
         match step {
             DialogStep::Stay => {}
@@ -2930,6 +2961,29 @@ impl AppCore {
             Followup::CloseWindow => self.close_window_confirmed(window),
             Followup::Exit => self.exit_confirmed(),
             Followup::Session(action) => self.session_action(window, action),
+            Followup::BrowseReplace => {
+                let service = self.service.clone();
+                let step = match self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.top_mut())
+                    .and_then(|d| d.as_any_mut().downcast_mut::<crate::browse::BrowseDialog>())
+                {
+                    Some(d) => {
+                        d.replace_asked = true;
+                        d.on_button(ButtonRole::Ok, &service)
+                    }
+                    None => return Vec::new(),
+                };
+                self.dialog_step(window, step)
+            }
+            Followup::Browsed {
+                target,
+                answer,
+                show_hidden,
+            } => {
+                self.browsed(window, target, answer, show_hidden);
+                Vec::new()
+            }
             Followup::DisableOption(key) => {
                 self.set_option_false(key);
                 Vec::new()

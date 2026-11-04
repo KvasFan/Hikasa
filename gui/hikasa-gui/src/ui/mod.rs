@@ -7,6 +7,7 @@
 //! The windows repaint on demand: the mailbox's notifier is `Context::request_repaint`, so an IPC request, the
 //! watch thread or a job's news wakes them; while a job runs they also poll at a low rate.
 
+pub mod browse;
 pub mod dialog;
 pub mod find_panel;
 pub mod folder;
@@ -331,6 +332,11 @@ impl HikasaApp {
                 Vec::new()
             }
             Action::Dialog(DialogInput::Edited) => self.core.dialog_edited(window),
+            Action::Dialog(DialogInput::Browse(input)) => self.core.browse_input(window, input),
+            Action::Dialog(DialogInput::BrowseFor(mode, start, target)) => {
+                self.core.open_browse(window, mode, start, target);
+                Vec::new()
+            }
             Action::Notice(key, action) => self.core.notice_action(window, &key, action),
             Action::Message(view, m) => {
                 self.core
