@@ -21,7 +21,8 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
   closing several tabs or windows.
 - Ctrl+Q quits; every view that a waiting `hikasa gui open --wait` started reports its result first.
 - The size of the last window closed and the layout of each view type (toolbar shown, log panel, font size,
-  thumbnail) are remembered in `state.toml`.
+  thumbnail; for folder views the columns, their widths and the sort, the [Legend](topic:panel-legend) and the
+  [Find Filename](topic:panel-find-filename) panel) are remembered in `state.toml`.
 
 ## Menus, toolbars and keys
 
@@ -51,7 +52,10 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
 Dialogs open inside their window and take its input until they close. Enter presses the default button, Esc
 cancels, F1 opens the dialog's help topic. "Do not ask again" turns the warning off in `options.toml`. File
 operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete). Tools ▸ Run Script…
-runs a script with its [status window](topic:dialog-script).
+runs a script with its [status window](topic:dialog-script). Every **Browse…** button opens the in-house
+[Browse](topic:dialog-browse) dialog, which also reads archives. Session ▸ Folder Compare Info shows the
+[statistics](topic:dialog-folder-info) of a folder comparison. Panels such as the Legend and Find Filename are not
+dialogs: the view stays usable while they are open, and their **?** button shows their help.
 Help ▸ About shows the version.
 
 ## Drag and drop
