@@ -8343,8 +8343,8 @@ product name of docs/17 §5 anywhere: grep before each commit.
 *To be written by each part*, as §1.8.20: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property and integration test was checked by (§6.9 rules).
 
-**W9a.** *(in progress; the part's first implementer stopped at a clean commit, a second one continues.)*
-Interpretations and extensions of §1.9.2–§1.9.11 so far:
+**W9a.** Interpretations and extensions of §1.9.2–§1.9.11 (three implementers in turn, each stopping at a clean
+commit):
 
 1. `ColumnId` is `hikasa_folder::view::SortColumn` re-exported (one set of ids for the header, the sort and the layout
    files); `extension` and `attributes_text` live in `hikasa_folder::view` so the cells and the sort share them.
@@ -8406,8 +8406,25 @@ Interpretations and extensions of §1.9.2–§1.9.11 so far:
     specs; a view without bases prepares nothing (`Stopped`) until Accept. Compare Parent Folders takes, per side, the
     nearest folder above the row that the side has (the base at the top). The folder-sync Swap with
     `SyncOptions::swapped` waits for the Folder Sync view (W9b).
+19. `FOLDER_COMMANDS` (A9.10) names per row a preparation of a fixture view of its own and one effect class: a
+    submenu (`commands::LIST_CHILDREN`), a dialog, the model (rows, selection, columns, display, panels, busy), the check
+    state, the bases (the committed specs), a tab (a new one, or the tab becoming Home), a job, the session combo's
+    focus. Implemented entries are taken from the four sections for the ids `Scope::Folder` has a row for. §1.4.16 rule 1
+    for `Scope::Sync` is checked when W9b adds the scope.
+20. The W9a bench modes reuse `folder`'s script: `folder_columns` shows every column (Path is offered only flat) and
+    sorts Size descending on the left before the first frame; `select` runs 30 idle frames after the scan, then one
+    command a frame (Select All Files, Invert Selection, Shift+Left) and 300 frames of Shift+Down, each frame's work
+    labelled; `completion` puts the left base and a separator in the field and types `file_01234` one character a frame
+    (the list time includes the 150 ms debounce); `browse` opens the dialog on the left base and scrolls its listing
+    600 frames by a fixed offset (`BrowseDialog::bench_scroll`). The browse listing lays out only the rows in view
+    (`ScrollArea::show_rows`).
+21. G15 at the end of W9a (`docs/02`, a loaded machine, load 4.7–12.7): completion (171 ms) and browse (288 ms, scroll
+    max 5.1 ms) met; **tree not met** (Size descending: rebuild max 33 ms, frames to 30 ms, where the tree order gives
+    8 ms) and **select not met** (Select All Files 65 ms, Invert Selection 112 ms, Shift+Left 42 ms over 111,150 rows;
+    Shift+Down p95 1.4 ms met). Reported as found, thresholds unchanged; the remedies (an incremental sorted rebuild,
+    a range-based selection or the whole-tree commands in a job) wait for the maintainer's decision.
 
-Mutations so far (each failed the tests named, then was reverted):
+Mutations (each failed the tests named, then was reverted):
 
 | Mutation | Caught by |
 |---|---|
@@ -8441,6 +8458,9 @@ Mutations so far (each failed the tests named, then was reverted):
 | Set as Base on Other Side sets the same side | `a9_9_set_as_base_folders_and_on_the_other_side` |
 | Swap Sides a no-op | `a9_9_swap_sides_of_a_folder_and_a_text_view` |
 | Clear Session keeps the bases | `a9_9_clear_session_gives_an_empty_view_that_runs_after_accept` |
+| a `FOLDER_COMMANDS` row dropped | `tests_folder_commands::a9_10_every_implemented_folder_entry_has_a_row_and_its_effect` |
+| `Legend` does nothing | `a9_10_every_implemented_folder_entry_…` |
+| `Swap` does nothing | `a9_10_every_implemented_folder_entry_…` |
 
 **W9b.** *(empty until W9b)*
 

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Added (W9 Folder Compare and Sync in the window, part a: the view; in progress)
+### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
   the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,
   `widths`, `sort`, `sort_side`, `sort_descending`) and in a session's `[view]`. A header click sorts by that column on
@@ -16,6 +16,23 @@
   status bar counts the selected items and bytes per side. Edit ▸ Select All Files, Select Newer and Select Orphans
   (left, right, both) and Invert Selection select what the same `--select` words select; Search ▸ Next/Previous Item on
   This Side skip over the gaps of the focused side; View ▸ Ignore Folder Structure.
+- **View ▸ Columns** and the header's context menu show or hide each column; drag a header to move it, a separator to
+  resize it, double-click a separator to fit it. With the CRC column shown, the CRCs of the rows on screen are computed
+  once the list has been still for 200 ms.
+- **Base folder fields** above the panes: completion while typing (folders and archives first), the recent folders of
+  each side, Accept and Cancel, a missing folder created after a question, a **Browse…** button.
+- **The browse dialog**, Hikasa's own: places (home, the current folder, `/` or the drives, the view's bases, the recent
+  folders), Up (also out of an archive), folders first, archives opened as folders, *Show hidden items*, a filter;
+  folder, file and Save As modes. It serves the base fields (Session ▸ Browse for Folder), the Home panel, Session
+  Settings, the Options path keys, Run Script and Export Settings.
+- **Find Filename** (Ctrl+F): a panel above the tree with match case, whole word, regular expression, wrap around,
+  search up and the sides; a hit inside a closed folder opens it; F3 and Shift+F3 repeat the search.
+- **View ▸ Legend** (Ctrl+Alt+L): a panel that explains the colours, glyphs and centre marks in the theme's colours.
+  **Session ▸ Folder Compare Info** (Ctrl+I): the comparison's statistics, with Copy.
+- **Base commands**: Session ▸ Up One Level (Left Side, Right Side, the new Both Sides), Actions ▸ Set as Base Folders
+  and Set as Base on Other Side, Session ▸ Compare Parent Folders (also in the Text Compare view), Swap Sides (folder
+  and text views) and Clear Session.
+- Help topics `dialog-browse`, `dialog-folder-info`, `panel-legend`, `panel-find-filename`.
 - Core: `hikasa_folder::view` (the sort), `SyncOptions::swapped`, `api::paths` (`path_completions`, `browse_places`,
   `archive_format_of`), `vfs_op_plan`/`vfs_op_execute`, `human::local_time_text`.
 
