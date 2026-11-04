@@ -20,6 +20,8 @@ use crate::window::Invocation;
 pub enum HomeAction {
     /// A command.
     Run(CommandId),
+    /// A field's Browse button (0 left, 1 right; D-240).
+    Browse(usize),
     /// A row was selected.
     Select(String),
     /// A row was opened or closed.
@@ -354,6 +356,13 @@ fn panel(ui: &mut Ui, view: ViewId, home: &mut HomeModel, pal: &Palette, out: &m
                 egui::vec2(72.0, 24.0),
                 egui::Label::new(RichText::new(caption).color(pal.muted)),
             );
+            if ui
+                .add_enabled(!read_only, egui::Button::new("…"))
+                .hint("Browse")
+                .clicked()
+            {
+                out.actions.push(HomeAction::Browse(usize::from(right)));
+            }
             let value = if right {
                 &mut home.panel.right
             } else {

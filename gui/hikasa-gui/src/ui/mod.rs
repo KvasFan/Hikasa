@@ -397,6 +397,10 @@ impl HikasaApp {
             Action::Drop(target, paths) => self.core.drop_paths(window, target, paths),
             Action::Home(action) => match action {
                 ui_home::HomeAction::Run(id) => self.core.execute(window, id),
+                ui_home::HomeAction::Browse(side) => {
+                    self.core.home_browse(window, side);
+                    Vec::new()
+                }
                 ui_home::HomeAction::Select(key) => {
                     self.core.home_select(window, &key);
                     Vec::new()

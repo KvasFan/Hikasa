@@ -54,6 +54,17 @@ pub enum BrowseTarget {
     RunScript,
     /// The package file of the Export wizard (SaveFile).
     Export,
+    /// A field of a Home tab's management panel (0 left, 1 right).
+    Home {
+        /// The Home tab.
+        view: ViewId,
+        /// The side.
+        side: usize,
+    },
+    /// A spec of the Session Settings dialog's Specs tab (0 left, 1 right).
+    Specs(usize),
+    /// A path key of the Options dialog (its dotted path).
+    OptionKey(&'static str),
 }
 
 /// The last name of a typed path (the SaveFile name offered).

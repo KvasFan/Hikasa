@@ -127,6 +127,18 @@ pub fn show(
             session_dialog::name(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SessionSettingsDialog>() {
             session_dialog::settings(ui, d, pal);
+            if let Some((side, start, folder)) = d.take_browse() {
+                let mode = if folder {
+                    crate::browse::BrowseMode::Folder
+                } else {
+                    crate::browse::BrowseMode::File
+                };
+                out.push(DialogInput::BrowseFor(
+                    mode,
+                    start,
+                    crate::browse::BrowseTarget::Specs(side),
+                ));
+            }
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveWorkspaceDialog>() {
             workspace::save_as(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ManageWorkspacesDialog>() {
@@ -134,6 +146,18 @@ pub fn show(
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<OptionsDialog>() {
             options::show(ui, d, pal);
             out.push(DialogInput::Edited);
+            if let Some((key, text)) = d.browse.take() {
+                let mode = if key.contains("folder") {
+                    crate::browse::BrowseMode::Folder
+                } else {
+                    crate::browse::BrowseMode::File
+                };
+                out.push(DialogInput::BrowseFor(
+                    mode,
+                    text,
+                    crate::browse::BrowseTarget::OptionKey(key),
+                ));
+            }
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ExportWizard>() {
             fixed_body(ui, height, |ui| wizards::export(ui, d, pal));
             if std::mem::take(&mut d.browse) {

@@ -214,3 +214,89 @@ fn a9_6_file_mode_for_run_script_and_save_file_for_export() {
     press(&world, &mut app, ButtonRole::Ok);
     assert_eq!(top_title(&app).as_deref(), Some("Export Settings"));
 }
+
+/// Selects `name` in the listing and presses OK.
+fn pick(world: &World, app: &mut TestApp, name: &str) {
+    listed(world, app);
+    let d = browse(app);
+    d.selected = Some(index(d, name));
+    press(world, app, ButtonRole::Ok);
+}
+
+#[test]
+fn a9_6_home_specs_and_option_keys_take_the_answer() {
+    let world = World::new();
+    put(&world, "l", "sub/b.txt", "b\n", 1_000);
+    put(&world, "r", "a.txt", "a\n", 1_000);
+    let folder = world.path("work/l").to_string_lossy().into_owned();
+    let mut app = world.app(None);
+    let w = app.win();
+    // Home: the panel's field, folder mode without a session.
+    app.0.home_browse(w, 0);
+    assert_eq!(browse(&mut app).mode, BrowseMode::Folder);
+    browse(&mut app).go(&folder);
+    pick(&world, &mut app, "sub");
+    let left = match app.active_tab().and_then(|t| t.model()) {
+        Some(crate::window::ViewModel::Home(h)) => h.panel.left.clone(),
+        _ => panic!("home"),
+    };
+    assert!(left.ends_with("sub"), "{left}");
+    // The Specs tab of Session Settings: its Browse button asks for a folder of a folder session.
+    let view = open(&world, &mut app);
+    app.0.execute(w, CommandId::SessionEdit);
+    world.settle(&mut app);
+    let d = app
+        .0
+        .window_mut(w)
+        .and_then(|w| {
+            w.dialogs
+                .find_mut::<crate::session_dialog::SessionSettingsDialog>()
+        })
+        .expect("Session Settings");
+    d.specs_mut().browse = Some(1);
+    let (side, start, folder_mode) = d.take_browse().expect("asked");
+    assert_eq!((side, folder_mode), (1, true));
+    app.0.open_browse(
+        w,
+        BrowseMode::Folder,
+        start,
+        crate::browse::BrowseTarget::Specs(1),
+    );
+    browse(&mut app).go(&folder);
+    pick(&world, &mut app, "sub");
+    let right = app
+        .0
+        .window_mut(w)
+        .and_then(|w| {
+            w.dialogs
+                .find_mut::<crate::session_dialog::SessionSettingsDialog>()
+        })
+        .expect("Session Settings")
+        .specs_mut()
+        .right
+        .clone();
+    assert!(right.ends_with("sub"), "{right}");
+    press(&world, &mut app, ButtonRole::Cancel);
+    // An Options path key.
+    app.execute(CommandId::ProgramOptions);
+    world.settle(&mut app);
+    let key = "tweaks.scripts.shared_scripts_folder";
+    app.0.open_browse(
+        w,
+        BrowseMode::Folder,
+        folder,
+        crate::browse::BrowseTarget::OptionKey(key),
+    );
+    pick(&world, &mut app, "sub");
+    let value = app
+        .0
+        .window_mut(w)
+        .and_then(|w| w.dialogs.find_mut::<crate::options::OptionsDialog>())
+        .and_then(|d| d.field(key).map(|f| f.value.clone()))
+        .expect("the key");
+    assert!(
+        matches!(&value, hikasa_session::settings::form::FormValue::Text(t) if t.ends_with("sub")),
+        "{value:?}"
+    );
+    let _ = view;
+}

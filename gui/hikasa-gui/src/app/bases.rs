@@ -243,6 +243,35 @@ impl AppCore {
         }
     }
 
+    /// A Home tab's Browse button (side 0, 1): folder mode for a folder session (or no session), else file mode.
+    pub fn home_browse(&mut self, window: WindowId, side: usize) {
+        let Some(tab) = self.active_tab_mut(window) else {
+            return;
+        };
+        let view = tab.id;
+        let Some(ViewModel::Home(home)) = tab.model_mut() else {
+            return;
+        };
+        let folder = home.panel.session.as_ref().is_none_or(|s| {
+            matches!(
+                s.kind,
+                hikasa_session::sessions::SessionType::FolderCompare
+                    | hikasa_session::sessions::SessionType::FolderSync
+            )
+        });
+        let start = if side == 0 {
+            home.panel.left.clone()
+        } else {
+            home.panel.right.clone()
+        };
+        let mode = if folder {
+            BrowseMode::Folder
+        } else {
+            BrowseMode::File
+        };
+        self.open_browse(window, mode, start, BrowseTarget::Home { view, side });
+    }
+
     /// `BrowseLeft` / `BrowseRight` (side 0, 1): the browse dialog in folder mode at the field's folder.
     pub(super) fn browse_base(&mut self, window: WindowId, side: usize) {
         let Some(tab) = self.active_tab_mut(window) else {
@@ -301,6 +330,41 @@ impl AppCore {
                     .and_then(|w| w.dialogs.find_mut::<crate::wizards::ExportWizard>())
                 {
                     d.target = spec;
+                }
+            }
+            BrowseTarget::Home { view, side } => {
+                if let Some(ViewModel::Home(home)) = self.tab_mut(view).and_then(|t| t.model_mut())
+                {
+                    if side == 0 {
+                        home.panel.left = spec;
+                    } else {
+                        home.panel.right = spec;
+                    }
+                    home.error = None;
+                }
+            }
+            BrowseTarget::Specs(side) => {
+                if let Some(specs) = self
+                    .window_mut(window)
+                    .and_then(|w| {
+                        w.dialogs
+                            .find_mut::<crate::session_dialog::SessionSettingsDialog>()
+                    })
+                    .map(|d| d.specs_mut())
+                {
+                    if side == 0 {
+                        specs.left = spec;
+                    } else {
+                        specs.right = spec;
+                    }
+                }
+            }
+            BrowseTarget::OptionKey(key) => {
+                if let Some(d) = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<crate::options::OptionsDialog>())
+                {
+                    d.set_field(key, hikasa_session::settings::form::FormValue::Text(spec));
                 }
             }
             BrowseTarget::RunScript => {

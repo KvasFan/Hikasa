@@ -75,8 +75,16 @@ pub fn name(ui: &mut Ui, dialog: &mut NameDialog, pal: &Palette) {
     error_line(ui, dialog.error.as_ref(), pal);
 }
 
-fn path_row(ui: &mut Ui, caption: &str, id: &str, value: &mut String, mru: &[String], on: bool) {
+fn path_row(
+    ui: &mut Ui,
+    caption: &str,
+    id: &str,
+    value: &mut String,
+    mru: &[String],
+    on: bool,
+) -> bool {
     ui.label(caption);
+    let mut browse = false;
     ui.horizontal(|ui| {
         ui.add_enabled(
             on,
@@ -94,8 +102,10 @@ fn path_row(ui: &mut Ui, caption: &str, id: &str, value: &mut String, mru: &[Str
                     }
                 }
             });
+        browse = ui.add_enabled(on, egui::Button::new("Browse…")).clicked();
     });
     ui.end_row();
+    browse
 }
 
 fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab) {
@@ -104,15 +114,19 @@ fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab) {
         .num_columns(2)
         .show(ui, |ui| {
             let (mru_left, mru_right) = (specs.mru_left.clone(), specs.mru_right.clone());
-            path_row(ui, "Left", "hk-mru-left", &mut specs.left, &mru_left, on);
-            path_row(
+            if path_row(ui, "Left", "hk-mru-left", &mut specs.left, &mru_left, on) {
+                specs.browse = Some(0);
+            }
+            if path_row(
                 ui,
                 "Right",
                 "hk-mru-right",
                 &mut specs.right,
                 &mru_right,
                 on,
-            );
+            ) {
+                specs.browse = Some(1);
+            }
             ui.label("Description");
             ui.add(TextEdit::singleline(&mut specs.description).desired_width(320.0));
             ui.end_row();

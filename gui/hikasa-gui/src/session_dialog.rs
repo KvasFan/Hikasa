@@ -341,6 +341,8 @@ pub trait SessionTab: Any + Send {
 /// The Specs tab (§1.4.10).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SpecsTab {
+    /// A Browse button was pressed (0 left, 1 right; the window opens the browse dialog, D-240).
+    pub browse: Option<usize>,
     /// Left.
     pub left: String,
     /// Right.
@@ -425,6 +427,24 @@ pub const SCOPES: [(Scope, &str); 4] = [
     (Scope::Type, "All files within parent"),
 ];
 
+impl SessionSettingsDialog {
+    /// The Specs tab's Browse button: the side, the field's text and whether a folder is picked (D-240).
+    pub fn take_browse(&mut self) -> Option<(usize, String, bool)> {
+        let folder = matches!(
+            self.session.kind,
+            SessionType::FolderCompare | SessionType::FolderSync
+        );
+        let specs = self.specs_mut();
+        let side = specs.browse.take()?;
+        let start = if side == 0 {
+            specs.left.clone()
+        } else {
+            specs.right.clone()
+        };
+        Some((side, start, folder))
+    }
+}
+
 /// The Session Settings dialog (D-122).
 pub struct SessionSettingsDialog {
     /// What it edits.
@@ -459,6 +479,7 @@ impl SessionSettingsDialog {
         let [mru_left, mru_right] = mru;
         if let Some(specs) = tabs[0].as_any_mut().downcast_mut::<SpecsTab>() {
             *specs = SpecsTab {
+                browse: None,
                 left: session.specs.left.clone(),
                 right: session.specs.right.clone(),
                 description: session.description.clone(),
