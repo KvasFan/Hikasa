@@ -67,37 +67,41 @@ pub fn show(ui: &mut Ui, d: &mut BrowseDialog, pal: &Palette) -> Option<BrowseIn
             } else {
                 height - 70.0
             };
-            ScrollArea::vertical()
+            if let Some(error) = &d.error {
+                ui.label(RichText::new(error).color(pal.error));
+            }
+            // Only the rows in view are laid out: a folder may hold 100,000 entries (G15 browse).
+            let shown = d.shown();
+            let row_height = ui.spacing().interact_size.y;
+            let mut area = ScrollArea::vertical()
                 .id_salt("hk-browse-list")
                 .max_height(list_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if let Some(error) = &d.error {
-                        ui.label(RichText::new(error).color(pal.error));
-                    }
-                    for i in d.shown() {
-                        let entry = &d.entries[i];
-                        let mark = if entry.archive {
-                            "▣"
-                        } else if entry.folder {
-                            "▸"
-                        } else {
-                            " "
-                        };
-                        let r = ui.selectable_label(
-                            d.selected == Some(i),
-                            format!("{mark} {}", entry.name),
-                        );
-                        if r.double_clicked() {
-                            input = Some(BrowseInput::Open(i));
-                        } else if r.clicked() {
-                            d.selected = Some(i);
-                            if matches!(d.mode, BrowseMode::SaveFile { .. }) && !entry.opens() {
-                                d.name.clone_from(&entry.name);
-                            }
+                .auto_shrink([false, false]);
+            if let Some(offset) = d.bench_scroll {
+                area = area.vertical_scroll_offset(offset);
+            }
+            area.show_rows(ui, row_height, shown.len(), |ui, range| {
+                for &i in &shown[range] {
+                    let entry = &d.entries[i];
+                    let mark = if entry.archive {
+                        "▣"
+                    } else if entry.folder {
+                        "▸"
+                    } else {
+                        " "
+                    };
+                    let r = ui
+                        .selectable_label(d.selected == Some(i), format!("{mark} {}", entry.name));
+                    if r.double_clicked() {
+                        input = Some(BrowseInput::Open(i));
+                    } else if r.clicked() {
+                        d.selected = Some(i);
+                        if matches!(d.mode, BrowseMode::SaveFile { .. }) && !entry.opens() {
+                            d.name.clone_from(&entry.name);
                         }
                     }
-                });
+                }
+            });
             if matches!(d.mode, BrowseMode::SaveFile { .. }) {
                 ui.horizontal(|ui| {
                     ui.label("Name");

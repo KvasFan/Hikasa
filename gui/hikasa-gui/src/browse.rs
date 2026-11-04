@@ -130,6 +130,8 @@ pub struct BrowseDialog {
     pub error: Option<String>,
     /// SaveFile: the replacement of an existing file was confirmed.
     pub replace_asked: bool,
+    /// The benchmark's scroll offset of the listing (G15 browse; `None`: the user's).
+    pub bench_scroll: Option<f32>,
     requests: Vec<DialogRequest>,
     target: BrowseTarget,
     bases: Vec<String>,
@@ -167,6 +169,7 @@ impl BrowseDialog {
             places: Vec::new(),
             error: None,
             replace_asked: false,
+            bench_scroll: None,
             requests: Vec::new(),
             target,
             bases,

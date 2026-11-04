@@ -205,6 +205,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "two_windows" => Some(BenchKind::TwoWindows),
         Some(v) if v == "workspace" => Some(BenchKind::Workspace),
         Some(v) if v == "options" => Some(BenchKind::Options),
+        Some(v) if v == "folder_columns" => Some(BenchKind::FolderColumns),
+        Some(v) if v == "select" => Some(BenchKind::Select),
+        Some(v) if v == "completion" => Some(BenchKind::Completion),
+        Some(v) if v == "browse" => Some(BenchKind::Browse),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"
@@ -355,12 +359,14 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         }
     }
     if let Some((resolved, mut request)) = initial {
-        if bench == Some(BenchKind::Folder)
-            && let ViewRequest::Folder {
-                request: folder,
-                display,
-                expand_all,
-            } = &mut request
+        if matches!(
+            bench,
+            Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
+        ) && let ViewRequest::Folder {
+            request: folder,
+            display,
+            expand_all,
+        } = &mut request
         {
             // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
             // content tests keep the scan running while the tree is drawn.

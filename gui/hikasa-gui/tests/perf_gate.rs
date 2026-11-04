@@ -599,3 +599,115 @@ fn workspace_restore() {
     assert!(first < 1000.0, "first screen {first} ms");
     assert!(pss < 20.0, "{pss} MiB per pending tab");
 }
+
+/// `n` empty files `file_00000…` in a new folder `name` of `dir` (G15 completion, browse).
+fn generate_flat(dir: &Path, name: &str, n: u64) -> PathBuf {
+    let folder = dir.join(name);
+    std::fs::create_dir_all(&folder).expect("mkdir");
+    for i in 0..n {
+        std::fs::write(folder.join(format!("file_{i:05}")), b"").expect("write");
+    }
+    folder
+}
+
+/// Prints and returns the frame work of one labelled action of a W9a run.
+fn action(doc: &Value, label: &str) -> (f64, f64) {
+    let a = &doc["actions"][label];
+    eprintln!(
+        "  {label}: {} frames, work p50 {} / p95 {} / max {} ms",
+        a["count"], a["p50"], a["p95"], a["max"]
+    );
+    (f(&a["p95"]), f(&a["max"]))
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn folder_columns() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let top = tree_top();
+    let (l, r) = generate_tree(dir.path(), top);
+    let doc = bench("folder_columns", dir.path(), &l, &r);
+    let work = &doc["while_scanning"]["frame_work_ms"];
+    let pss = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "G15 tree (every column, Size descending): scan {} ms, {} frames while scanning, UI work p95 {} / max {} ms ({} \
+         above 16.7 ms); PSS {pss} MiB; load {}",
+        doc["view"]["scan_ms"],
+        doc["while_scanning"]["frames"],
+        work["p95"],
+        work["max"],
+        work["over_16_7ms"],
+        load()
+    );
+    eprintln!(
+        "gate: max ≤ 16.7 ms {}, p95 < 8 ms {}, PSS < 381.5 MiB {}",
+        f(&work["max"]) <= 1000.0 / 60.0,
+        f(&work["p95"]) < 8.0,
+        pss < 381.5
+    );
+    assert_eq!(doc["view"]["files"][0], top * 10_000 + top * 2, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn select() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench("select", dir.path(), &l, &r);
+    eprintln!("G15 select (load {}):", load());
+    let commands: Vec<f64> = ["select_all", "invert_selection", "shift_left"]
+        .iter()
+        .map(|label| action(&doc, label).1)
+        .collect();
+    let (down_p95, down_max) = action(&doc, "shift_down");
+    eprintln!(
+        "gate: each command ≤ 16.7 ms {}, Shift+Down p95 < 4 ms {} (max {down_max} ms)",
+        commands.iter().all(|w| *w <= 1000.0 / 60.0),
+        down_p95 < 4.0
+    );
+    assert_eq!(doc["actions"]["shift_down"]["count"], 300, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 10,000 files: run in release with --ignored"]
+fn completion() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let l = generate_flat(dir.path(), "left", 10_000);
+    let r = generate_flat(dir.path(), "right", 0);
+    let doc = bench("completion", dir.path(), &l, &r);
+    let list = f(&doc["done_ms"]);
+    eprintln!(
+        "G15 completion (load {}): the list {list} ms after the last key",
+        load()
+    );
+    let (_, typing_max) = action(&doc, "typing");
+    action(&doc, "waiting");
+    eprintln!(
+        "gate: the list ≤ 200 ms {}, no frame above 16.7 ms while typing {}",
+        list <= 200.0,
+        typing_max <= 1000.0 / 60.0
+    );
+    assert!(list.is_finite(), "the list never showed: {doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 100,000 files: run in release with --ignored"]
+fn browse() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let l = generate_flat(dir.path(), "left", 100_000);
+    let r = generate_flat(dir.path(), "right", 0);
+    let doc = bench("browse", dir.path(), &l, &r);
+    let listed = f(&doc["done_ms"]);
+    eprintln!(
+        "G15 browse (load {}): listed {listed} ms after it opened; PSS {} MiB",
+        load(),
+        doc["memory"]["total_pss_mib"]
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: listed ≤ 1 s {}, scrolling frame work max < 16.7 ms {}",
+        listed <= 1000.0,
+        scroll_max < 1000.0 / 60.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}

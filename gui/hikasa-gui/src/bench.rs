@@ -30,7 +30,36 @@ pub enum BenchKind {
     Workspace,
     /// The Options dialog: every page once, then idle frames (M2 W4c, D-132).
     Options,
+    /// G15 tree (M2 W9a, D-257): `Folder` with every column shown and the sort Size descending on the left.
+    FolderColumns,
+    /// G15 select: `Folder`'s tree, then Select All, Invert Selection, Shift+Left and 300 frames of Shift+Down.
+    Select,
+    /// G15 completion: 10 characters typed in the left path edit, the folder holding 10,000 entries.
+    Completion,
+    /// G15 browse: the browse dialog on the left base (100,000 entries), then 600 frames of scrolling.
+    Browse,
 }
+
+impl BenchKind {
+    /// The kinds that scan `Folder`'s tree while the tree scrolls.
+    fn scans(self) -> bool {
+        matches!(
+            self,
+            BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select
+        )
+    }
+}
+
+/// `select`: frames of Shift+Down after the three commands.
+const SELECT_DOWN_FRAMES: u32 = 300;
+/// `select`, `completion`, `browse`: idle frames before the script starts and after it ends.
+const W9A_IDLE_FRAMES: u32 = 30;
+/// `completion`: the characters typed, one a frame.
+const TYPED: &str = "file_01234";
+/// `browse`: frames of scrolling the listing.
+const BROWSE_SCROLL_FRAMES: u32 = 600;
+/// `browse`: points scrolled a frame (about three rows).
+const BROWSE_SCROLL_STEP: f32 = 54.0;
 
 /// One scroll phase of the text benchmark.
 #[derive(Debug, Clone, Copy)]
@@ -166,6 +195,14 @@ pub struct BenchState {
     second_after_coloured: bool,
     /// `options`: the frames of the script.
     options_frame: u32,
+    /// W9a scripts (D-257): frames since their start, the label of this frame's action and the labelled works.
+    w9a_frame: u32,
+    w9a_label: Option<&'static str>,
+    w9a_works: Vec<(&'static str, f64)>,
+    /// `completion`: when the last key was typed and when the list showed; `browse`: when the dialog opened and was
+    /// listed.
+    w9a_mark: Option<Instant>,
+    w9a_done_ms: Option<f64>,
 }
 
 impl BenchState {
@@ -199,6 +236,180 @@ impl BenchState {
             second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
                 .is_some_and(|v| v == "coloured"),
             options_frame: 0,
+            w9a_frame: 0,
+            w9a_label: None,
+            w9a_works: Vec::new(),
+            w9a_mark: None,
+            w9a_done_ms: None,
+        }
+    }
+
+    /// The W9a G15 scripts (D-257), run on the window's core before the frame is drawn.
+    pub fn drive_w9a(&mut self, core: &mut AppCore) {
+        use crate::commands::CommandId;
+        if !matches!(
+            self.kind,
+            BenchKind::FolderColumns
+                | BenchKind::Select
+                | BenchKind::Completion
+                | BenchKind::Browse
+        ) {
+            return;
+        }
+        let Some(view) = self.view else {
+            return;
+        };
+        let root = core.root();
+        if self.kind == BenchKind::FolderColumns {
+            if self.w9a_frame == 0
+                && let Some(ViewModel::Folder(m)) = core.tab_mut(view).and_then(|t| t.model_mut())
+            {
+                m.change_columns(|c| {
+                    for id in crate::folder::columns::ColumnId::ALL {
+                        if !c.is_visible(id) && id != crate::folder::columns::ColumnId::Path {
+                            c.toggle(id);
+                        }
+                    }
+                    c.sort = Some(hikasa_folder::view::SortKey {
+                        column: crate::folder::columns::ColumnId::Size,
+                        side: hikasa_core::Side::Left,
+                        descending: true,
+                    });
+                });
+            }
+            self.w9a_frame += 1;
+            return;
+        }
+        // The other scripts start once the comparison has ended and the window has been idle a little.
+        let busy = core
+            .tab(view)
+            .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
+        if busy && self.w9a_frame == 0 {
+            return;
+        }
+        if self.scan_done.is_none() {
+            self.scan_done = Some(Instant::now());
+        }
+        self.w9a_frame += 1;
+        let k = self.w9a_frame.saturating_sub(W9A_IDLE_FRAMES);
+        if self.w9a_frame <= W9A_IDLE_FRAMES {
+            return;
+        }
+        match self.kind {
+            BenchKind::Select => match k {
+                1 => {
+                    self.w9a_label = Some("select_all");
+                    core.execute(root, CommandId::SelectAllFiles);
+                }
+                2 => {
+                    self.w9a_label = Some("invert_selection");
+                    core.execute(root, CommandId::SelectInvert);
+                }
+                3 => {
+                    self.w9a_label = Some("shift_left");
+                    if let Some(m) = folder_of(core, view) {
+                        m.restrict(hikasa_core::Side::Left);
+                    }
+                }
+                k if k < 4 + SELECT_DOWN_FRAMES => {
+                    self.w9a_label = Some("shift_down");
+                    if let Some(m) = folder_of(core, view) {
+                        let shift = crate::folder::selection::Mods {
+                            shift: true,
+                            ..Default::default()
+                        };
+                        m.move_by(1, shift);
+                    }
+                }
+                k if k > 4 + SELECT_DOWN_FRAMES + W9A_IDLE_FRAMES => self.script = Script::Done,
+                _ => {}
+            },
+            BenchKind::Completion => {
+                let typed = TYPED.chars().count() as u32;
+                if k == 1
+                    && let Some(m) = folder_of(core, view)
+                {
+                    let base = m.path_edit(0).committed.clone();
+                    m.path_edit(0)
+                        .set_text(&format!("{base}{}", std::path::MAIN_SEPARATOR));
+                }
+                if (2..2 + typed).contains(&k)
+                    && let Some(m) = folder_of(core, view)
+                {
+                    self.w9a_label = Some("typing");
+                    let c = TYPED.chars().nth((k - 2) as usize).unwrap_or('x');
+                    m.path_edit(0).text.push(c);
+                    m.path_edit(0).edited(Instant::now());
+                    if k == 1 + typed {
+                        self.w9a_mark = Some(Instant::now());
+                    }
+                }
+                if k > 1 + typed && self.w9a_done_ms.is_none() {
+                    self.w9a_label = Some("waiting");
+                    if let (Some(m), Some(at)) = (folder_of(core, view), self.w9a_mark)
+                        && m.path_edit(0).open
+                    {
+                        self.w9a_done_ms = Some(at.elapsed().as_secs_f64() * 1000.0);
+                    }
+                }
+                if self.w9a_done_ms.is_some() {
+                    self.w9a_label = None;
+                    self.tail += 1;
+                    if self.tail > W9A_IDLE_FRAMES {
+                        self.script = Script::Done;
+                    }
+                }
+                if k > 1 + typed + 2_000 {
+                    self.script = Script::Done;
+                }
+            }
+            BenchKind::Browse => {
+                if k == 1 {
+                    let start = folder_of(core, view)
+                        .map(|m| m.path_edit(0).committed.clone())
+                        .unwrap_or_default();
+                    core.open_browse(
+                        root,
+                        crate::browse::BrowseMode::Folder,
+                        start,
+                        crate::browse::BrowseTarget::PathEdit { view, side: 0 },
+                    );
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                let Some(d) = core
+                    .window_mut(root)
+                    .and_then(|w| w.dialogs.find_mut::<crate::browse::BrowseDialog>())
+                else {
+                    self.script = Script::Done;
+                    return;
+                };
+                if self.w9a_done_ms.is_none() {
+                    if !d.listing()
+                        && !d.entries.is_empty()
+                        && let Some(at) = self.w9a_mark
+                    {
+                        self.w9a_done_ms = Some(at.elapsed().as_secs_f64() * 1000.0);
+                        self.tail = 0;
+                    }
+                    if k > 20_000 {
+                        self.script = Script::Done;
+                    }
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= BROWSE_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    d.bench_scroll = Some(self.tail as f32 * BROWSE_SCROLL_STEP);
+                } else {
+                    self.w9a_label = None;
+                    if self.tail > BROWSE_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                        self.settled_memory = memory();
+                        self.script = Script::Done;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -278,7 +489,7 @@ impl BenchState {
                 samples.cpu.push(ms);
             }
             push(&mut self.all.cpu, ms);
-            if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+            if self.kind.scans() && self.scan_done.is_none() {
                 push(&mut self.scanning.cpu, ms);
             }
         }
@@ -314,7 +525,9 @@ impl BenchState {
                 }
             }
             BenchKind::Options => {}
-            BenchKind::Folder => {
+            BenchKind::Completion | BenchKind::Browse => {}
+            BenchKind::Select if self.scan_done.is_some() => {}
+            BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select => {
                 let busy = core
                     .tab(view)
                     .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
@@ -482,7 +695,10 @@ impl BenchState {
                 samples.slices.push(s);
             }
         }
-        if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+        if let Some(label) = self.w9a_label.take() {
+            self.w9a_works.push((label, work));
+        }
+        if self.kind.scans() && self.scan_done.is_none() {
             push(&mut self.scanning.work, work);
             if let Some(i) = interval {
                 push(&mut self.scanning.interval, i);
@@ -530,6 +746,10 @@ impl BenchState {
                 BenchKind::TwoWindows => "two_windows",
                 BenchKind::Workspace => "workspace_restore",
                 BenchKind::Options => "options_memory",
+                BenchKind::FolderColumns => "folder_columns",
+                BenchKind::Select => "select",
+                BenchKind::Completion => "completion",
+                BenchKind::Browse => "browse",
             },
             "windows": core.windows().len(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
@@ -570,7 +790,27 @@ impl BenchState {
                 BenchKind::Options => {
                     obj.insert("pages".into(), json!(crate::options::pages::PAGES.len()));
                 }
-                BenchKind::Folder => {
+                BenchKind::Completion | BenchKind::Browse | BenchKind::Select => {
+                    let mut labels: Vec<&str> = self.w9a_works.iter().map(|(l, _)| *l).collect();
+                    labels.dedup();
+                    let mut actions = serde_json::Map::new();
+                    for label in labels {
+                        let works: Vec<f64> = self
+                            .w9a_works
+                            .iter()
+                            .filter(|(l, _)| *l == label)
+                            .map(|(_, w)| *w)
+                            .collect();
+                        actions.insert(label.to_owned(), stats(&works));
+                    }
+                    obj.insert("actions".into(), Value::Object(actions));
+                    obj.insert("done_ms".into(), json!(self.w9a_done_ms.map(round)));
+                    obj.insert(
+                        "scan_ms_from_view_open".into(),
+                        self.since_view(self.scan_done),
+                    );
+                }
+                BenchKind::Folder | BenchKind::FolderColumns => {
                     obj.insert(
                         "scan_ms_from_view_open".into(),
                         self.since_view(self.scan_done),
@@ -584,6 +824,14 @@ impl BenchState {
             }
         }
         serde_json::to_string(&report).ok()
+    }
+}
+
+/// The folder view `view` of `core`.
+fn folder_of(core: &mut AppCore, view: ViewId) -> Option<&mut crate::folder_view::FolderViewModel> {
+    match core.tab_mut(view).and_then(|t| t.model_mut()) {
+        Some(ViewModel::Folder(m)) => Some(m),
+        _ => None,
     }
 }
 
