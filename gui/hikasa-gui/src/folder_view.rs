@@ -1182,7 +1182,7 @@ impl FolderViewModel {
     }
 
     /// The selection (D-238).
-    #[cfg_attr(not(test), allow(dead_code))] // the tests; W9b's dialogs plan it
+    #[cfg(test)]
     pub fn selection(&self) -> &ViewSelection {
         &self.selection
     }
