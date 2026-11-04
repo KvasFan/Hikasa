@@ -3,6 +3,18 @@
 The Folder Compare view shows two folder trees side by side, aligned by name. Each item's colour tells its
 state: same, different, newer or older, orphan (on one side only), filtered, or not compared.
 
+## Base folders
+
+The two fields above the panes hold the left and the right base folder. Type in one: 150 ms after the last key a
+list of the matching folders, archives and files below it opens; Up and Down move in it, Tab or Enter puts the item in
+the field (a folder with its separator, so you can go on typing), Esc closes it. The ▾ button lists the folders you
+compared recently on that side.
+
+Enter, or the ✓ button, accepts both fields: the view compares the new folders (a named session becomes modified).
+Esc with the list closed, or ✕, puts the folder back. A folder that does not exist asks whether to create it; No
+keeps your text with the message under the field. A file where a folder is needed, or a path that cannot be read,
+shows its message there and nothing runs. Only a folder that could be opened enters the recent list.
+
 ## Navigating
 
 - Up and Down move the selection; Right and Left open and close a folder while the tree has the focus.
