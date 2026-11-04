@@ -49,6 +49,7 @@ pub use crate::window::{
 };
 use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
+mod bases;
 mod flow;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
@@ -164,6 +165,8 @@ enum CoreJob {
     Drop(WindowId, Job<HomeOpen>),
     /// A store job (`flow`): session and workspace files, one at a time.
     Store(Job<StoreDone>, Option<ViewId>, StoreKind),
+    /// The check of a folder view's new base folders (D-239): its view and the specs.
+    Rebase(ViewId, [String; 2], Job<bases::BaseCheck>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -197,6 +200,7 @@ impl CoreJob {
             CoreJob::Log(_, j) => j.settling(),
             CoreJob::Drop(_, j) => j.settling(),
             CoreJob::Store(j, ..) => j.settling(),
+            CoreJob::Rebase(_, _, j) => j.settling(),
         }
     }
 }
@@ -1377,6 +1381,7 @@ impl AppCore {
                     outcome,
                     elapsed,
                 } => self.op_outcome(window, view, None, source, &caption, &outcome, elapsed),
+                FolderEvent::Rebase(specs) => self.rebase(view, specs, None),
             }
         }
         effects
@@ -1445,7 +1450,7 @@ impl AppCore {
         let window = self.window_of(view).unwrap_or_else(|| self.focused());
         for event in retired.events {
             match event {
-                FolderEvent::Dialog(_) => {}
+                FolderEvent::Dialog(_) | FolderEvent::Rebase(_) => {}
                 FolderEvent::Notice { kind, text } => {
                     let log = match kind {
                         NoticeKind::Info => LogKind::Summary,
@@ -3435,6 +3440,10 @@ impl AppCore {
                         self.store_running = false;
                         effects.extend(self.store_finished(result, view, kind));
                     }
+                },
+                CoreJob::Rebase(view, specs, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Rebase(view, specs, j)),
+                    Some(result) => self.rebase_checked(view, specs, result),
                 },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),

@@ -42,11 +42,13 @@ use crate::folder::selection::{Hit, Mods, Press, Swipe, ViewSelection};
 use crate::job::Job;
 use crate::notify::NoticeKind;
 use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
+use crate::path_edit::{PathEdit, PathKey, PathKeyOutcome};
 use crate::status::{JobStatus, LogNote, StatusItems};
 use hikasa_session::api::human::TimeZone;
+use hikasa_session::api::paths::CompletionDto;
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::State;
-use hikasa_session::settings::state::LayoutValue;
+use hikasa_session::settings::state::{LayoutValue, MruList};
 
 /// Default height of the log panel (points, `[layout.folder-compare] log_height`).
 pub const LOG_HEIGHT: f64 = 160.0;
@@ -205,6 +207,8 @@ pub enum FolderEvent {
         /// Its text.
         text: String,
     },
+    /// Accept of the path edits (D-239): the window checks the specs and re-roots the view on them.
+    Rebase([String; 2]),
     /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
     Outcome {
         /// The command's caption.
@@ -443,6 +447,10 @@ pub struct FolderViewModel {
     /// The Find Filename panel and its query (D-241); shown per `[layout] find_panel`.
     find: FindPanel,
     show_find: bool,
+    /// The path edits above the panes (D-239), a due completion and the running one: (side index, generation).
+    paths: [PathEdit; 2],
+    path_due: Option<(usize, u64)>,
+    path_job: Option<(usize, u64, Job<CompletionDto>)>,
     /// The log panel's height (points, `[layout] log_height`).
     log_height: f64,
     /// What the log learns when a job ends (D-116), taken by the app.
@@ -534,7 +542,14 @@ impl FolderViewModel {
             request.right.to_string_lossy().into_owned(),
         ];
         let state = FolderViewModel::prepare(service, &request, &wake);
+        let paths = [
+            PathEdit::new(Side::Left, &names[0]),
+            PathEdit::new(Side::Right, &names[1]),
+        ];
         FolderViewModel {
+            paths,
+            path_due: None,
+            path_job: None,
             request,
             titles,
             names,
@@ -884,6 +899,7 @@ impl FolderViewModel {
         }
         changed |= self.poll_task(service);
         changed |= self.poll_crc(service);
+        changed |= self.poll_paths(service);
         if self.task.is_none() && !self.scanning() && !self.queued_expand.is_empty() {
             changed |= self.run_queued_expands(service);
         }
@@ -2614,6 +2630,79 @@ impl FolderViewModel {
         self.show_find
     }
 
+    /// The path edit of side `k` (0 left, 1 right; D-239).
+    pub fn path_edit(&mut self, k: usize) -> &mut PathEdit {
+        &mut self.paths[k.min(1)]
+    }
+
+    /// A frame at `now` for the path edits: a completion 150 ms after the last key (the frame time decides). Returns
+    /// when to draw again for a wait to end.
+    pub fn path_frame(&mut self, now: Instant) -> Option<Duration> {
+        let mut wait: Option<Duration> = None;
+        for k in 0..2 {
+            match self.paths[k].due(now) {
+                Ok(generation) => self.path_due = Some((k, generation)),
+                Err(Some(w)) => wait = Some(wait.map_or(w, |v| v.min(w))),
+                Err(None) => {}
+            }
+        }
+        wait
+    }
+
+    /// A key of path edit `k` at `now`; Enter with the list closed accepts both fields.
+    pub fn path_key(&mut self, k: usize, key: PathKey, now: Instant) -> PathKeyOutcome {
+        let outcome = self.paths[k.min(1)].key(key, now);
+        if outcome == PathKeyOutcome::Accept {
+            self.accept_paths();
+        }
+        outcome
+    }
+
+    /// Accept (D-239): the window re-roots the view on both fields' texts once it has checked them.
+    pub fn accept_paths(&mut self) {
+        for edit in &mut self.paths {
+            edit.open = false;
+            edit.error = None;
+        }
+        let specs = [self.paths[0].text.clone(), self.paths[1].text.clone()];
+        self.outbox.push(FolderEvent::Rebase(specs));
+    }
+
+    /// The recent specs of the path edits' drop-downs (`state.mru.left`, `.right`).
+    pub fn set_recent_paths(&mut self, recent: [Vec<String>; 2]) {
+        for (edit, list) in self.paths.iter_mut().zip(recent) {
+            edit.recent = list;
+        }
+    }
+
+    /// Takes a completion answer, or starts the completion a frame found due (each one cancels the running one; an
+    /// answer for an older generation is dropped).
+    fn poll_paths(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        if let Some(result) = self.path_job.as_ref().and_then(|(_, _, j)| j.try_result()) {
+            let (k, generation, _) = self.path_job.take().expect("a job");
+            if let Ok(dto) = result {
+                changed |= self.paths[k].answer(generation, dto);
+            }
+        }
+        let Some((k, generation)) = self.path_due.take() else {
+            return changed;
+        };
+        if let Some((_, _, job)) = self.path_job.take() {
+            job.cancel();
+        }
+        let typed = std::ffi::OsString::from(self.paths[k].text.clone());
+        let job = Job::spawn(
+            service,
+            JobKind::VfsRead,
+            "complete the path".into(),
+            &self.wake,
+            move |svc, job| svc.path_completions(&typed, crate::path_edit::LIMIT, job),
+        );
+        self.path_job = Some((k, generation, job));
+        changed
+    }
+
     /// Opens the Find Filename panel with the keyboard in its text field.
     pub fn open_find(&mut self) {
         self.show_find = true;
@@ -2761,6 +2850,10 @@ impl FolderViewModel {
             self.show_find = on;
         }
         self.find = FindPanel::from_state(layout);
+        self.set_recent_paths([
+            layout.mru(MruList::Left).to_vec(),
+            layout.mru(MruList::Right).to_vec(),
+        ]);
         if let Some(h) = layout
             .layout_value(view, "log_height")
             .and_then(LayoutValue::as_float)

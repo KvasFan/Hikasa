@@ -798,7 +798,7 @@ impl AppCore {
 
     /// What a job needs to build the current session of a tab (D-105); `None` for Home and pending tabs. Disable
     /// editing goes with it: the session of a protected view stays protected (`[specs] read_only_*`).
-    fn capture(tab: &Tab) -> Option<ViewCapture> {
+    pub(super) fn capture(tab: &Tab) -> Option<ViewCapture> {
         let (request, write) = match tab.model()? {
             ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
@@ -3035,6 +3035,12 @@ impl AppCore {
                 });
             }
             SessionAction::Settings(result) => self.settings_ok(*result),
+            SessionAction::CreateBase { view, specs, side } => self.rebase(view, specs, Some(side)),
+            SessionAction::BaseError {
+                view,
+                side,
+                message,
+            } => self.base_error(view, side, message),
             SessionAction::WorkspaceSave { name, confirmed } => {
                 let wanted = name.to_string().to_lowercase();
                 let exists = self
@@ -3105,7 +3111,7 @@ impl AppCore {
     }
 
     /// Pushes a value on an MRU list of `state.toml` (through `state_update`, D-108).
-    fn push_mru(&mut self, list: MruList, value: String) {
+    pub(super) fn push_mru(&mut self, list: MruList, value: String) {
         if value.is_empty() {
             return;
         }
@@ -3183,7 +3189,7 @@ fn session_write(session: &Session) -> WritePolicy {
 }
 
 /// A session with its specs in stored form (D-80; a typed relative path becomes absolute).
-fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
+pub(super) fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
     for slot in [&mut session.specs.left, &mut session.specs.right] {
         if !slot.is_empty() {
             *slot = service.stored_spec(slot)?.0;

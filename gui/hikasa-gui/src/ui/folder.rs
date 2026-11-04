@@ -175,17 +175,21 @@ pub fn show(
     // Base folders, then the column header.
     let bases = Rect::from_min_size(full.min, vec2(full.width(), STRIP_H));
     painter.rect_filled(bases, CornerRadius::ZERO, pal.chrome);
-    for (k, base) in status.bases.iter().enumerate() {
+    let _ = &status.bases;
+    for k in 0..2 {
         let cell = Rect::from_min_max(
             pos2(side_x[k], bases.top()),
             pos2(side_x[k] + side_w, bases.bottom()),
         );
-        painter.with_clip_rect(cell).text(
-            pos2(cell.left() + 8.0, cell.center().y),
-            Align2::LEFT_CENTER,
-            base,
-            mono_small.clone(),
-            pal.fg,
+        path_edit(
+            ui,
+            view,
+            m,
+            k,
+            cell.shrink2(vec2(4.0, 2.0)),
+            &mono_small,
+            pal,
+            &mut run,
         );
     }
     let header = Rect::from_min_size(
@@ -460,6 +464,10 @@ pub fn show(
     m.set_scroll(first, page as u32 + 1);
     // CRC on demand (D-237): the frame time decides when the list has been still long enough.
     if let Some(after) = m.crc_frame(std::time::Instant::now()) {
+        ui.ctx().request_repaint_after(after);
+    }
+    // Path completion (D-239): 150 ms after the last key, by the frame time.
+    if let Some(after) = m.path_frame(std::time::Instant::now()) {
         ui.ctx().request_repaint_after(after);
     }
     let window = m.window();
@@ -821,4 +829,156 @@ fn draw_side(
         widths.push((*column, drawn.width()));
     }
     widths
+}
+
+/// The path edit of side `k` above its pane (D-239): the field, the recent specs, Accept and Cancel while the text
+/// differs from the committed spec, Browse; the completion list below it; the message under it.
+#[allow(clippy::too_many_arguments)] // the field, its place and its look
+fn path_edit(
+    ui: &mut Ui,
+    view: ViewId,
+    m: &mut FolderViewModel,
+    k: usize,
+    rect: Rect,
+    font: &FontId,
+    pal: &Palette,
+    run: &mut Vec<Invocation>,
+) {
+    use crate::path_edit::{PathKey, PathKeyOutcome};
+    let now = std::time::Instant::now();
+    let id = egui::Id::unique(("hk-path", view.0, k));
+    let recent_open = id.with("recent-open");
+    let focused = ui.memory(|mem| mem.has_focus(id));
+    if focused {
+        for (key, pk) in [
+            (egui::Key::ArrowDown, PathKey::Down),
+            (egui::Key::ArrowUp, PathKey::Up),
+            (egui::Key::Tab, PathKey::Tab),
+            (egui::Key::Enter, PathKey::Enter),
+            (egui::Key::Escape, PathKey::Esc),
+        ] {
+            let open = m.path_edit(k).open;
+            let ours = open || matches!(pk, PathKey::Enter | PathKey::Esc);
+            if ours && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
+                if m.path_key(k, pk, now) == PathKeyOutcome::Accept {
+                    ui.memory_mut(|mem| mem.surrender_focus(id));
+                }
+            }
+        }
+    }
+    let changed = m.path_edit(k).changed();
+    let buttons = if changed { 3.0 } else { 1.0 } * 24.0;
+    let field = Rect::from_min_max(
+        rect.min,
+        pos2(
+            (rect.right() - buttons).max(rect.left() + 40.0),
+            rect.bottom(),
+        ),
+    );
+    let edit = m.path_edit(k);
+    let before = edit.text.clone();
+    let response = ui.put(
+        field,
+        egui::TextEdit::singleline(&mut edit.text)
+            .id(id)
+            .font(font.clone())
+            .text_color(pal.fg)
+            .margin(vec2(4.0, 2.0)),
+    );
+    if edit.text != before {
+        edit.edited(now);
+    }
+    if let Some(error) = &edit.error {
+        response.clone().hint(error.clone());
+        ui.painter().rect_stroke(
+            field,
+            CornerRadius::same(2),
+            Stroke::new(1.0, pal.error),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let mut x = field.right() + 2.0;
+    let mut button = |ui: &mut Ui, text: &str, hint: &str| {
+        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(22.0, rect.height()));
+        x += 24.0;
+        ui.put(r, egui::Button::new(text).small())
+            .hint(hint)
+            .clicked()
+    };
+    let recent = edit.recent.clone();
+    let recent_button = button(ui, "▾", "Recent folders");
+    if recent_button && !recent.is_empty() {
+        let open = ui
+            .data(|d| d.get_temp::<bool>(recent_open))
+            .unwrap_or(false);
+        ui.data_mut(|d| d.insert_temp(recent_open, !open));
+    }
+    if changed {
+        if button(ui, "✓", "Accept (Enter)") {
+            m.accept_paths();
+        }
+        if button(ui, "✕", "Cancel (Esc)") {
+            m.path_edit(k).cancel();
+        }
+    }
+    let _ = run;
+    let below = pos2(field.left(), field.bottom() + 1.0);
+    if ui
+        .data(|d| d.get_temp::<bool>(recent_open))
+        .unwrap_or(false)
+    {
+        let mut close = false;
+        egui::Area::new(id.with("recent-area"))
+            .fixed_pos(below)
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    for text in &recent {
+                        if ui.selectable_label(false, text).clicked() {
+                            m.path_edit(k).set_text(text);
+                            close = true;
+                        }
+                    }
+                });
+            });
+        if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ui.data_mut(|d| d.insert_temp(recent_open, false));
+        }
+    }
+    let edit = m.path_edit(k);
+    if edit.open && focused {
+        let mut take = None;
+        egui::Area::new(id.with("completions"))
+            .fixed_pos(below)
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(field.width());
+                    egui::ScrollArea::vertical()
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            for (i, item) in edit.completions.iter().enumerate() {
+                                let mark = if item.archive {
+                                    "▣ "
+                                } else if item.folder {
+                                    "▸ "
+                                } else {
+                                    "  "
+                                };
+                                let label = format!("{mark}{}", item.name);
+                                if ui
+                                    .selectable_label(edit.highlighted == Some(i), label)
+                                    .clicked()
+                                {
+                                    take = Some(i);
+                                }
+                            }
+                        });
+                });
+            });
+        if let Some(i) = take {
+            m.path_edit(k).take(i, now);
+            ui.memory_mut(|mem| mem.request_focus(id));
+        }
+    }
 }

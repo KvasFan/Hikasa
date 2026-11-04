@@ -98,6 +98,24 @@ pub enum SessionAction {
     WorkspaceAskDelete(SessionName),
     /// Set a workspace's shortcut.
     WorkspaceShortcut(SessionName, String),
+    /// "Folder … does not exist. Create it?": Yes (M2 W9a, D-239): create it, then re-root the view.
+    CreateBase {
+        /// The folder view.
+        view: hikasa_session::ipc::ViewId,
+        /// Both specs.
+        specs: [String; 2],
+        /// The side whose folder is created (0 left, 1 right).
+        side: usize,
+    },
+    /// The same question: No; the message stays under the field.
+    BaseError {
+        /// The folder view.
+        view: hikasa_session::ipc::ViewId,
+        /// The side (0 left, 1 right).
+        side: usize,
+        /// The message.
+        message: String,
+    },
 }
 
 /// One button.

@@ -46,6 +46,7 @@ mod menus;
 mod notify;
 mod op_dialogs;
 mod options;
+mod path_edit;
 mod script_dialog;
 mod session_dialog;
 mod shared;
@@ -77,6 +78,8 @@ mod tests_legend_info;
 mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;
+#[cfg(test)]
+mod tests_paths;
 #[cfg(test)]
 mod tests_script;
 #[cfg(test)]
