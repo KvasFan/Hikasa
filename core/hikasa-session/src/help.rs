@@ -59,6 +59,7 @@ topics!(
     "dialog-confirm",
     "dialog-delete",
     "dialog-script",
+    "dialog-browse",
     "dialog-folder-info",
     "panel-legend",
     "panel-find-filename",

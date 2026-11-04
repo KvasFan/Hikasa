@@ -5,7 +5,7 @@ A [script](topic:script) can run in the window, with a status window that shows 
 
 ## Starting a script
 
-- **Tools ▸ Run Script…**: the script (a file name is looked up in the current folder, then in
+- **Tools ▸ Run Script…**: the script (**Browse…** picks it in the [Browse](topic:dialog-browse) dialog; a file name is looked up in the current folder, then in
   `[tweaks.scripts] shared_scripts_folder`), its arguments (split as a script line is: `"a b" c` is two arguments),
   *Stop on error* and the confirm mode (*Ask*, *Yes to all*, *No to all*). **Run** checks the script first: a script
   that cannot be read or does not check stays in the dialog with its errors (`<script>:<line>:<column>: error: …`), and

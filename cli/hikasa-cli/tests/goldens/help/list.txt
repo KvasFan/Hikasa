@@ -31,6 +31,7 @@ wizard-restore	Restore Factory Defaults
 dialog-confirm	Confirm an operation
 dialog-delete	Delete
 dialog-script	Scripts in the window
+dialog-browse	Browse
 dialog-folder-info	Folder Compare Info
 panel-legend	Legend
 panel-find-filename	Find Filename
