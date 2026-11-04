@@ -8373,6 +8373,13 @@ Interpretations and extensions of §1.9.2–§1.9.11 so far:
 11. The re-run and refresh restore keep every selected row by path with its sides and the current row.
 12. `SyncBaseView`, `CompareBaseView` and `Scope::Sync` need the Folder Sync view and stay `planned` until W9b;
     W6d's `plan_counts` moves to core with `OpPreview` in W9b (§1.9.12, §1.9.22).
+13. CRC on demand (D-237) is the toolkit-free schedule `folder::crc::CrcDemand` (frame time, no timer thread) and one
+    `folder_contents` job with `ContentsKind::Crc` that starts only while no other job of the view runs. The job holds
+    the model's refresh claim, so it yields: a scroll, a hidden column, a refresh, an operation or an archive open
+    cancels it, and the cancelled job is kept *stale* until it has really ended: no new CRC job starts before, and a
+    job that claims the model (`folder_refresh`, `folder_op_execute`, `folder_open_archive`) first waits for it on its
+    own thread. A side whose CRC failed shows `error` with the message in the row's tooltip and is not asked again
+    until the comparison runs again.
 
 Mutations so far (each failed the tests named, then was reverted):
 
@@ -8387,6 +8394,9 @@ Mutations so far (each failed the tests named, then was reverted):
 | a selection that keeps rows no longer shown (`retain_shown` keeps all) | `rows_no_longer_shown_leave_the_selection`, `p_random_gestures_keep_the_selection_shown_and_present` |
 | the hollow and unopened glyphs swapped | `tests_folder_view::each_row_of_the_glyph_table` |
 | `SelectNewerLeft` selecting the right | `tests_folder_commands::a9_4_each_edit_command_equals_the_cli_selection` |
+| a new CRC job while the cancelled one still runs (stale job ignored) | `tests_folder_commands::a9_3_crc_on_demand_asks_for_the_rendered_rows_once_still` (`RefreshBusy`, cells empty) |
+| a scroll that does not restart the wait (`Moved` dropped) | `a9_3_crc_on_demand_…` |
+| no 200 ms wait (`SETTLE` ignored) | `a9_3_crc_on_demand_…` |
 
 **W9b.** *(empty until W9b)*
 
