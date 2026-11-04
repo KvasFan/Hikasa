@@ -8380,6 +8380,32 @@ Interpretations and extensions of §1.9.2–§1.9.11 so far:
     job that claims the model (`folder_refresh`, `folder_op_execute`, `folder_open_archive`) first waits for it on its
     own thread. A side whose CRC failed shows `error` with the message in the row's tooltip and is not asked again
     until the comparison runs again.
+14. The Legend (D-242) has three groups: the FC-031 colour classes as (class, category) pairs (newer and different,
+    older and unknown share a class and differ by the category's colour), the name column's `GLYPH_TABLE`, and the
+    centre column (both arrows, the other categories' marks, every content result, the Ignored badge, the Space ring).
+    Info's Copy writes through the GUI's writing clipboard (the provider a script's `output-to:clipboard` uses); a
+    catalogue caption's `<Type>` is written from `Scope::type_title`; the text view's `Info` and `SessionClear` rows are
+    `Predicate::Never` until W11 (the catalogue's session section is implemented, so each view needs a row).
+15. Find Previous is the query's direction reversed; the sides a hit is selected on are found by a one-side `Finder` on
+    the hit row; the options are stored as `"true"`/`"false"` texts and `sides` as `left`/`right`/`both` in
+    `[dialogs.find-filename]`; F3 with no text yet opens the panel; "Filename not found." carries the message panel's
+    *Do not show again* (`next_difference.show_message_panel`).
+16. Accept checks every changed spec in a job before the view re-runs (`vfs_stat_in`, following links): a folder, or a
+    file `archive_format_of` knows, is a base; another file is "`<spec>` is not a folder."; `not_found` asks to create
+    it (`mkdir --parents` through `vfs_op_plan` + `vfs_op_execute`). The MRU push follows that check (the base loads),
+    and the reopen is Session Settings' path: dirty is `is_dirty(loaded, session)`.
+17. The browse dialog sorts folders first itself (`vfs_ls` sorts by name only); archives stay among the files with their
+    mark. SaveFile's "Replace `<name>`?" is a Prompt over the dialog whose Yes runs OK again
+    (`Followup::BrowseReplace`). Child specs are built with `Spec::archive_member` and `LocalPath::join_name`, so a
+    member of an archive is picked like a file. The bases are places of kind `Base` placed before the recent folders.
+    Every W9a user is wired (the base fields, Home's panel, the Specs tab, the Options path keys, Run Script, Export);
+    Copy/Move to Folder and Compare To (W9b) reuse `BrowseTarget`.
+18. The base commands re-root through note 16's check, so they share its messages and the MRU; `reopen_changed` patches
+    the new specs into the captured request first (a cleared view has none to build a session from). Clear Session
+    builds its view from the type's defaults with the bases cleared, since `session_view_of` refuses a session without
+    specs; a view without bases prepares nothing (`Stopped`) until Accept. Compare Parent Folders takes, per side, the
+    nearest folder above the row that the side has (the base at the top). The folder-sync Swap with
+    `SyncOptions::swapped` waits for the Folder Sync view (W9b).
 
 Mutations so far (each failed the tests named, then was reverted):
 
@@ -8397,6 +8423,24 @@ Mutations so far (each failed the tests named, then was reverted):
 | a new CRC job while the cancelled one still runs (stale job ignored) | `tests_folder_commands::a9_3_crc_on_demand_asks_for_the_rendered_rows_once_still` (`RefreshBusy`, cells empty) |
 | a scroll that does not restart the wait (`Moved` dropped) | `a9_3_crc_on_demand_…` |
 | no 200 ms wait (`SETTLE` ignored) | `a9_3_crc_on_demand_…` |
+| the Legend skips a glyph row | `tests_legend_info::a9_8_the_legend_lists_every_glyph_and_colour_class_once` |
+| a class spot painted in the text colour | `a9_8_the_legend_paints_with_the_palette` |
+| Info never partial | `a9_8_info_while_scanning_says_partial` |
+| a Find hit's ancestors not opened | `tests_find::a9_7_a_hit_in_a_closed_folder_…`, `a9_7_each_query_option` |
+| a Find hit selected on both sides always | `a9_7_each_query_option`, `a9_7_a_hit_in_a_closed_folder_…` |
+| Find Previous not reversed | `a9_7_each_query_option` |
+| a completion answer of an older generation taken | `tests_paths::a9_5_the_debounce_and_the_generations` |
+| no 150 ms debounce | `a9_5_the_debounce_…`, `a9_5_completion_from_disk_and_accept_re_roots_the_view` |
+| MRU pushed for an unchanged side | `a9_5_completion_from_disk_…` |
+| a missing folder not detected | `a9_5_a_missing_folder_asks_yes_creates_no_keeps_the_text` |
+| hidden entries always shown | `tests_browse::a9_6_folder_mode_from_a_path_edit` |
+| no folders-first order | `a9_6_folder_mode_from_a_path_edit` |
+| SaveFile replaces without asking | `a9_6_file_mode_for_run_script_and_save_file_for_export` |
+| `mru.folders` and `mru.files` swapped | `a9_6_folder_mode_…`, `a9_6_file_mode_…` |
+| Up One Level Left moves both bases | `tests_bases::a9_9_up_one_level_per_side_and_both` |
+| Set as Base on Other Side sets the same side | `a9_9_set_as_base_folders_and_on_the_other_side` |
+| Swap Sides a no-op | `a9_9_swap_sides_of_a_folder_and_a_text_view` |
+| Clear Session keeps the bases | `a9_9_clear_session_gives_an_empty_view_that_runs_after_accept` |
 
 **W9b.** *(empty until W9b)*
 
