@@ -41,7 +41,10 @@
 - **New and clear (SES-001, SES-008).** A new session copies the defaults of its type (`_defaults/<type>.toml`,
   else the built-in defaults) without lock, favorite, parent or overrides; Clear Session is a new session of the
   same type; Swap Sides exchanges specs, encodings, the parent's relative paths, pair overrides and every `view`
-  key ending in `_left`/`_right`.
+  key ending in `_left`/`_right`. *M2 W9a (D-243):* the window's Swap Sides (folder and text views) applies that to
+  the view's session and runs it again (origin kept, dirty); Clear Session (folder views) shows the type's defaults
+  with empty base fields and runs once both are accepted; a text view's Clear Session is W11's, a sync session's Swap
+  (with `SyncOptions::swapped`) comes with the Folder Sync view (W9b).
 - **Auto-save (SES-002, D-83).** One file per open view: the first save creates
   `_autosaved/<YYYYMMDD-HHMMSS>-<n>.toml` (local time, `n` the first free counter), later saves of the view
   overwrite it; `saved_at` is RFC 3339 with the local offset. Groups (Today, Yesterday, 2–6 days ago, More than
@@ -311,6 +314,15 @@ options = ["display-context", "line-numbers"]   # (warning invalid_config_value)
 output_options = ["html-color", "wrap-word"]
 output_to = "file"                       # file, clipboard, printer, browser
 file = "/home/u/reports/a.html"          # the last file target, as typed; the CLI never reads these
+[dialogs.find-filename]                  # M2 W9a (D-241): the Find Filename panel's options, as "true"/"false" texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+wrap = "true"
+up = "false"
+sides = "both"                           # left, right, both
+[dialogs.browse]                         # M2 W9a (D-240): the browse dialog
+show_hidden = "false"                    # Show hidden items
 [layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
 font_size = 13.0                         # points; the text view's font commands
 thumbnail = true
@@ -319,10 +331,19 @@ toolbar = true
 log_panel = false                        # View ▸ Log
 log_height = 160.0                       # points
 toolbar = true
+columns = ["name", "size", "modified"]   # M2 W9a (D-234): the shown columns in order (Name first)
+widths = { size = 90.0 }                 # only the columns whose width was dragged; clamped to 2,000
+sort = "size"                            # absent: the tree order
+sort_side = "left"                       # left, right
+sort_descending = false
+legend = false                           # View ▸ Legend (D-242)
+find_panel = false                       # the Find Filename panel (D-241)
 ```
 
 Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
-`[tweaks.metrics] max_mru_items` entries.
+`[tweaks.metrics] max_mru_items` entries. *M2 W9a:* `left`/`right` take a folder view's base once it loads (a path
+edit's Accept, Browse, the base commands; D-239), `folders`/`files` every folder and file the browse dialog confirms
+(D-240, also its *recent* places), `find` the Find Filename texts (D-241); `name_filters` waits for W9c.
 
 *M2 W4a (D-108):* the GUI writes `[window]` (the geometry of the last window closed) and the `[layout.<view
 type>]` tables (the last closed view of a type wins) when a window closes and at exit; a view that opens takes

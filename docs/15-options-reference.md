@@ -233,6 +233,11 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-021 | P0 | `[tweaks.scripts] beep_when_finished`, `close_when_finished` | bool | false |
 | OPT-021 | P0 | `[tweaks.scripts] shared_scripts_folder` | path | `""` |
 
+*M2 W9a (OPT-019):* `max_mru_items` caps every list of `state.toml [mru]` when the window pushes to it: `left`/`right`
+(a folder view's base once it loads: the path edits, Browse, the base commands), `folders`/`files` (what the browse
+dialog confirms; its recent places), `find` (the Find Filename texts). The path edits' drop-downs and the browse
+dialog's places show them newest first.
+
 *M2 W8 (OPT-021):* `shared_scripts_folder` is where a script named by a relative path is looked up when it is absent from
 the current folder (a relative folder is relative to the configuration folder; only an absent script falls through,
 never an unreadable one). `beep_when_finished` beeps once a script ended, whatever its exit code (BEL on a terminal's

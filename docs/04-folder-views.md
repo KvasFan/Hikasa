@@ -13,7 +13,10 @@ replaces free-form actions with a planned operation per item.
   handling mode (`folder compare a.zip b/`); a base that cannot be read is exit 107.
 - **FC-002** (P0): Path edits above each pane accept typed paths with completion and
   an MRU dropdown; a Browse button opens the folder picker (local or "Browse Using
-  Profile"); Enter accepts. Typing a non-existent folder offers to create it.
+  Profile"); Enter accepts. Typing a non-existent folder offers to create it. *M2 W9a (D-239):* the window's fields
+  above the panes: completion 150 ms after the last key (`path_completions`, at most 200 items, folders and archives
+  first), the recent bases of each side (`mru.left`/`.right`, pushed only for a base that loads), Accept/Cancel, a
+  missing folder created after a question, Browse… (the in-house dialog, D-240, which also reads archives).
 - **FC-003** (P0): "Disable editing" per session makes every file operation and
   child-session editing read-only. *M2 W6b (D-184):* per side (`specs.read_only_left`, `read_only_right`, `--read-only`), and
   enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
@@ -25,7 +28,11 @@ replaces free-form actions with a planned operation per item.
 - **FC-004** (P0): "Up One Level" (Left/Right/Both/All), "Set as Base Folder(s)",
   "Set as Base on Other Side", "Compare Parent Folders", "Merge Base Folders",
   "Sync Base Folders", "Compare Base Folders" (from Sync), "Compare to Output"
-  (from Merge: left/center/right vs output) open new sessions or re-root the current one.
+  (from Merge: left/center/right vs output) open new sessions or re-root the current one. *M2 W9a (D-243):* Up One Level
+  Left/Right/Both (`UpOneLevelBoth`, new), Set as Base Folders, Set as Base on Other Side, Compare Parent Folders
+  (folder and text views), Swap Sides (folder and text views; a sync session's `SyncOptions::swapped` comes with the
+  Folder Sync view, W9b) and Clear Session re-root the view through its reopen path (origin kept, dirty); *Sync Base
+  Folders* waits for W9b.
 
 ## 2. Scanning and alignment
 
@@ -44,11 +51,15 @@ replaces free-form actions with a planned operation per item.
   orphans are coloured without scanning); *Expand subfolders when loading session*;
   *Only expand subfolders with differences*. Unscanned folders render "hollow";
   folders not yet opened when auto-scan is off render yellow; folders that failed to
-  open carry a red X glyph; symlinks/junctions carry an arrow glyph.
+  open carry a red X glyph; symlinks/junctions carry an arrow glyph. *M2 W9a (D-236):* the glyph table — hollow folder
+  (not scanned while running, after a stop, an orphan left unscanned), filled `unopened_folder` (auto-scan off), red X
+  (listing failed), the link arrow, the zipper — feeds the tree and the Legend.
 - **FC-013** (P0): **Follow symbolic links** (treat links as their target for
-  kind/size/time/attributes) — default off.
+  kind/size/time/attributes) — default off. *M2 W9a (D-236):* a link, followed or not, carries the arrow overlay on its
+  glyph.
 - **FC-014** (P0): **Ignore Folder Structure (Flatten)**: compare all files as if in
-  one folder (aligned by file name only, path shown in a Path column).
+  one folder (aligned by file name only, path shown in a Path column). *M2 W9a (D-234):* View ▸ Ignore Folder Structure
+  toggles the rule and re-runs; the Path column is offered only while the comparison is flat.
 - **FC-015** (P0): Archive handling: *As files always* / *As folders once opened*
   (default) / *As folders always*. Archives show a zipper icon and expand on
   double-click; nested archives are supported. *M2 W5 (D-151):* `handling.archives` = `as_files`, `once_opened`,
@@ -178,7 +189,9 @@ Tests that require reading files:
   (content), Orphan (left/right), Filtered (shown only under Suppress Filters). Folder
   state aggregates its visible children: Same (black), Contains newer/different
   (red), Contains orphans (purple), Contains older (grey), mixtures, Unknown/scanning,
-  Only filtered. A **Legend** window (Ctrl+Alt+L) lists all icon/colour combinations.
+  Only filtered. A **Legend** window (Ctrl+Alt+L) lists all icon/colour combinations. *M2 W9a (D-242):* View ▸ Legend
+  (Ctrl+Alt+L) is a right-hand panel, not a dialog, painted from the glyph table, the FC-031 classes and the centre
+  marks in the current colours; remembered in `[layout] legend`.
 - **FC-031** (P0): Default colours: grey = unknown/older, black = same, purple =
   orphan, red = newer/different, teal = filtered-out item shown by Suppress Filters.
   Merge colours: teal = left change, magenta = right change, orange = mergeable,
@@ -186,7 +199,9 @@ Tests that require reading files:
 - **FC-032** (P0): Each row shows a colour spot before the name (visible even when
   selected), the centre column shows the content-comparison result icon when a
   content test ran (binary same, binary different, rules same, similar/unimportant,
-  important difference) and the comparison direction arrows.
+  important difference) and the comparison direction arrows. *M2 W9a (D-236):* the centre column shows the content
+  result, else the newer side's arrow, else the state mark; an Ignored row has the small *i* badge, the Space mark a
+  ring.
 - **FC-012, M2 (D-170).** `auto_scan_subfolders` off scans the bases, and with `scan_orphan_folders` the orphan folders
   directly in a base with their subtrees. A folder pair not scanned is unknown, so the verdict is `incomplete`; a refresh of
   it scans it. `expand_on_load` and `expand_differences_only` change no result. *M2 W6d:* the window opens the folders
@@ -228,9 +243,13 @@ Tests that require reading files:
   Path (flatten mode); Merge adds Result and Remaining Actions; Sync adds the planned
   action. Column visibility via View ▸ Columns or header context menu; click header
   to sort (both sides sort together), drag to reorder/resize; widths persist per
-  session type.
+  session type. *M2 W9a (D-234, D-237):* View ▸ Columns and the header's context menu show or hide Ext, Size, Modified,
+  Attributes, CRC, Owner, Group (and Path when flat); header drags reorder, separator drags resize, a double-click fits;
+  a header click cycles the sort (per side, both directions); the layout is remembered. CRC is computed on demand for
+  the rendered rows once the list has been still for 200 ms (at most 256 a job, cancelled by a scroll).
 - **FC-041** (P0): When Ext is hidden, read-only/system/hidden flags are shown as
-  `(r)`, `(s)`, `(h)` after the name.
+  `(r)`, `(s)`, `(h)` after the name. *M2 W9a (D-235):* without Ext the attribute letters follow the name; the
+  Attributes column shows them with Ext.
 
 A folder's size is the total size of the files below it on that side, excluding hidden (filtered) items; it is
 maintained while the scan runs. Statistics (FC-064) count file and folder pairs per category, the files,
@@ -392,11 +411,17 @@ Orphans = every atom except the two orphan atoms; …).
   (Left/Right/Both), Select Orphans (Left/Right/Both), Invert Selection; Expand All /
   Collapse All; Open/Close Folder; Open/Close Subfolders. *M2 W6b (D-175):* `hikasa_folder::select` owns the words of the
   script `select`: `<side>.<state>.<kind>`, OR-ed, `diff` = differences other than the time, a folder matching only if what
-  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row.
+  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row. *M2
+  W9a (D-238):* the selection model — a selection per side, the current row, the anchor, Ctrl/Shift clicks, swipes
+  across the centre, the keyboard table, the Space mark — and Edit ▸ Select All Files, Select Newer, Select Orphans,
+  Invert Selection; the operations act on the whole selection.
 - **FC-061** (P0): Search ▸ Next/Previous Difference (Ctrl+N/P) move to the next item
   that is not "same"; Alt+Up/Down move skipping gaps; **Find Filename** (Ctrl+F; case,
   whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3). *M2 W6b:* `select::Finder` is the pure
-  part; the panel is W9.
+  part; the panel is W9. *M2 W9a (D-241):* the Find Filename panel above the tree (Ctrl+F; F3/Shift+F3 with it closed)
+  searches every shown row, closed folders included, opens a hit's folders and selects the side that matched; options in
+  `[dialogs.find-filename]`, texts in `mru.find`; Next/Previous Item on This Side (Alt+Down/Up) step over the focus
+  side's gaps.
 - **FC-062** (P0): Double-click / Enter / **Open** opens the item pair in the file
   view chosen by file formats (two selected items anywhere → compare them; one item →
   with its counterpart). **Open With** submenu: a specific view type (Text, Table,
@@ -405,13 +430,16 @@ Orphans = every atom except the two orphan atoms; …).
   With). **Quick Compare** shows a dialog with the content-comparison result instead of
   opening a view. **Compare To** (F7) compares two arbitrary items in a new view. *M2 W6b (D-186):* `folder op open-with`
   expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
-  `select::open_pair` says what a command compares.
+  `select::open_pair` says what a command compares. *M2 W9a:* Open acts on the selection's pair or the Space-marked item
+  and the selected one (D-238).
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
-  copies the selected paths.
+  copies the selected paths. *M2 W9a:* unchanged; the pane context menus and file-manager entries are W9c's.
 - **FC-064** (P0): Status bar: counts of selected items per side, total sizes, and the
   comparison state summary; **Folder Compare Info** (Ctrl+I) dialog shows statistics
-  (files/folders per state).
+  (files/folders per state). *M2 W9a (D-238, D-242):* the status bar counts the selection per side (`Selected: L n
+  (bytes) · R n (bytes)`, once per change); Session ▸ Folder Compare Info (Ctrl+I) shows `TreeRead::stats` with Copy,
+  partial while the comparison runs.
 
 ## 8. File operations (Actions menu)
 

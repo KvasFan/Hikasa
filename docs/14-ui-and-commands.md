@@ -6,6 +6,11 @@
   path/File Info bar, content, optional panels, status bar). The Home view is the
   default content of a new tab/window. Views remember layout per session type (panel
   visibility, splitter positions when "sticky", column widths, font size).
+  *M2 W9a (D-241, D-242):* a folder view's panels are not dialogs: the **Legend** (View ▸ Legend, Ctrl+Alt+L) is a
+  right-hand panel painted from the glyph table, the FC-031 colour classes and the centre marks in the current palette,
+  so it cannot disagree with the tree; the **Find Filename** panel is one line above the tree. Each has a help button
+  (`panel-legend`, `panel-find-filename`) and is remembered in `[layout.folder-compare]` (`legend`, `find_panel`). The
+  base folder fields above the panes are path edits with completion, the recent bases and Browse (D-239).
 - **UI-002** (P0): Menus change with the active view type. The **common** menus are:
   - **Session**: New Session ▸ (one entry per type), New Tab (Ctrl+T), New Window,
     Open Session (Shift+Ctrl+O), Load Workspace ▸ (…, Manage Workspaces…), Save
@@ -299,7 +304,7 @@ and greyed and no fallback. Both are toolkit-free models (architecture check 7);
 *M2 W8b (§1.8.14, D-229):* the catalogue command `RunScript` (Tools, "Run Script...", no default shortcut, help
 `dialog-script`) opens the Run Script dialog: the script (the lookup of `hikasa script run`), its arguments (split by the
 script lexer's word rules, `Service::script_args`), *Stop on error*, the confirm mode; Run checks the script and shows
-its errors with their positions instead of running (the browse button comes with W9's browse dialog). A run (from the
+its errors with their positions instead of running (*M2 W9a:* its **Browse…** opens the browse dialog in file mode). A run (from the
 dialog, `RunScript` over IPC, `hikasa-gui @script`) shows its **status window** (`ScriptDialog`) in the window focused
 last: the script's path, "Command <i> of <n>, line <l>: <text>", the current call's progress, the log lines (the last
 `[tweaks.log_panel] display_up_to`, errors in the error colour), the end line; *Stop* while it runs (Esc and the close
@@ -312,6 +317,17 @@ status window they belong to, so an answer given in another window reaches the r
 one-script slot and a waiting client's answer until it really ended: a status window that goes with its window, or the
 quit, stops the run and the program waits for its current command (a copy ends its file) before it exits. The models
 are toolkit-free (check 7).
+
+
+*M2 W9a (D-240, D-242):* **Browse for Folder / File / Save As** is an in-house dialog over the VFS (`BrowseDialog`, help
+`dialog-browse`): places (home, the current folder, `/` or the drives, the view's bases, the recent folders), a
+location with Up (out of an archive's root into its folder), the listing of `vfs_ls` in a job with folders first and
+archives opening as folders, *Show hidden items* (remembered), a substring filter; Folder, File and SaveFile modes (an
+existing name asks "Replace …?"). Its users in W9a: the base fields of a folder view, Home's management panel, the
+Session Settings Specs tab, the Options dialog's path keys, Run Script and the Export wizard; Copy/Move to Folder and
+Compare To come with W9b. Browse Using Profile stays P1. **Folder Compare Info** (`InfoDialog`, Ctrl+I, help
+`dialog-folder-info`): the comparison's statistics read when it opens — pairs per category, per side files, folders
+and bytes, the content results, Ignored — partial while scanning, with Copy (the table as text on the clipboard).
 
 ## 5. Optional helpers
 
