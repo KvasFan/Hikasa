@@ -25,6 +25,8 @@ A file this version cannot read (written by a newer version, or not valid TOML) 
 names it and says why, and Apply offers only **Reload** and **Cancel** for it. `hikasa settings restore-defaults` or an
 editor can change it.
 
+A path option has a **Browse…** button: the [Browse](topic:dialog-browse) dialog picks the folder or the file.
+
 ## Pages
 
 - **Startup**: the workspace loaded at start and the one saved on exit.

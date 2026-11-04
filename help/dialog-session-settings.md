@@ -5,7 +5,7 @@ Session ▸ Session Settings… edits the session of the active view; Session Se
 
 ## Specs
 
-The left and right inputs (each with its recent paths), a description and, for file sessions, the format (*Detect*
+The left and right inputs (each with its recent paths and **Browse…**, the [Browse](topic:dialog-browse) dialog), a description and, for file sessions, the format (*Detect*
 or a [file format](topic:format)) and the two encodings (empty detects them; an unknown encoding is refused). The
 defaults of a type hold no inputs, so those fields are off there.
 

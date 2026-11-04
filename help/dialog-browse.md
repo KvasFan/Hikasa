@@ -2,8 +2,9 @@
 
 The **Browse** buttons of Hikasa open this dialog to pick a folder or a file: the **…** button of a
 [Folder Compare view](topic:view-folder-compare)'s base folder field (Session ▸ Browse for Folder ▸ Left Side, Right
-Side), the Script field of [Run Script](topic:dialog-script), and the package file of the
-[Export Settings wizard](topic:wizard-export). It reads through Hikasa's own file access, so archives and every
+Side), the **…** buttons of the [Home view](topic:view-home)'s Left and Right fields, the Specs tab of
+[Session Settings](topic:dialog-session-settings), the path options of [Options](topic:dialog-options), the Script
+field of [Run Script](topic:dialog-script), and the package file of the [Export Settings wizard](topic:wizard-export). It reads through Hikasa's own file access, so archives and every
 supported location browse alike.
 
 ## Places
