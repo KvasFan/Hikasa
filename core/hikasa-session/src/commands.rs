@@ -587,7 +587,7 @@ status = "implemented"
             "the text view's own entry is implemented"
         );
         // Planned entries are in the table, marked.
-        let save = text.get("SessionClear").expect("SessionClear");
+        let save = text.get("MergeParents").expect("MergeParents");
         assert!(!save.implemented());
         // Ids are unique; the order is view_sections then catalogue order.
         let ids: Vec<&str> = text.entries.iter().map(|e| e.id()).collect();

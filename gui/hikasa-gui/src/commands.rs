@@ -199,6 +199,24 @@ command_ids! {
     Legend,
     /// Folder (M2 W9a): the Info dialog of the comparison's statistics (FC-064, D-242).
     Info,
+    /// Folder (M2 W9a): the Up One Level submenu (FC-004).
+    UpOneLevelList,
+    /// Folder (M2 W9a): the left base becomes its parent.
+    UpOneLevelLeft,
+    /// Folder (M2 W9a): the right base becomes its parent.
+    UpOneLevelRight,
+    /// Folder (M2 W9a): both bases become their parents.
+    UpOneLevelBoth,
+    /// Folder (M2 W9a): the selected folders become the bases.
+    SetAsBaseFolders,
+    /// Folder (M2 W9a): the selected folder becomes the other side's base.
+    SetAsOtherBaseFolder,
+    /// Folder and Text (M2 W9a): a new Folder Compare of the folders holding the row's (the files') items.
+    CompareParents,
+    /// Folder and Text (M2 W9a): exchanges the sides (SES-008).
+    Swap,
+    /// Folder (M2 W9a): the view becomes an empty session of its type.
+    SessionClear,
     /// Folder (M2 W9a): the Browse submenu (D-240).
     BrowseList,
     /// Folder (M2 W9a): the browse dialog for the left base.
@@ -382,6 +400,14 @@ pub struct Ctx {
     pub tree_folder: bool,
     /// Sessions tree: a *New* type is selected.
     pub tree_new: bool,
+    /// Folder (M2 W9a): the base of each side has a parent folder (`UpOneLevel*`).
+    pub base_parent: [bool; 2],
+    /// Folder: the selection names two base folders (`SetAsBaseFolders`).
+    pub bases_selected: bool,
+    /// Folder: one folder is selected on one side (`SetAsOtherBaseFolder`).
+    pub other_base_selected: bool,
+    /// Folder: one row is selected (`CompareParents`); a text view: always.
+    pub parents_available: bool,
 }
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
@@ -389,6 +415,14 @@ pub const LIST_CHILDREN: &[(CommandId, &[CommandId])] = &[
     (
         CommandId::BrowseList,
         &[CommandId::BrowseLeft, CommandId::BrowseRight],
+    ),
+    (
+        CommandId::UpOneLevelList,
+        &[
+            CommandId::UpOneLevelLeft,
+            CommandId::UpOneLevelRight,
+            CommandId::UpOneLevelBoth,
+        ],
     ),
     (
         CommandId::SelectNewerList,
@@ -474,6 +508,14 @@ pub enum Predicate {
     TreeRenamable,
     /// Tree: a named session or a *New* type (its defaults).
     TreeEditable,
+    /// Folder (M2 W9a): the base of this side has a parent (`Center`: each side's has).
+    BaseParent(Side),
+    /// Folder: the selection names two base folders.
+    BasesSelected,
+    /// Folder: one folder is selected on one side.
+    OtherBaseSelected,
+    /// `CompareParents` can run.
+    ParentsAvailable,
 }
 
 impl Predicate {
@@ -508,6 +550,13 @@ impl Predicate {
             Predicate::TreeDeletable => ctx.tree_named || ctx.tree_auto || ctx.tree_folder,
             Predicate::TreeRenamable => ctx.tree_named || ctx.tree_folder,
             Predicate::TreeEditable => ctx.tree_named || ctx.tree_new,
+            Predicate::BaseParent(side) => match side_index(side) {
+                Some(k) => ctx.base_parent[k],
+                None => ctx.base_parent[0] && ctx.base_parent[1],
+            },
+            Predicate::BasesSelected => ctx.bases_selected,
+            Predicate::OtherBaseSelected => ctx.other_base_selected,
+            Predicate::ParentsAvailable => ctx.parents_available,
         }
     }
 }
@@ -1456,6 +1505,98 @@ pub const PRESENTATION: &[Row] = &[
     row(C::Legend, S::Folder, None, None, G::Check, P::Always, NONE),
     row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
     row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::UpOneLevelList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::UpOneLevelLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::BaseParent(Side::Left),
+        NONE,
+    ),
+    row(
+        C::UpOneLevelRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::BaseParent(Side::Right),
+        NONE,
+    ),
+    row(
+        C::UpOneLevelBoth,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::BaseParent(Side::Center),
+        NONE,
+    ),
+    row(
+        C::SetAsBaseFolders,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::BasesSelected,
+        NONE,
+    ),
+    row(
+        C::SetAsOtherBaseFolder,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::OtherBaseSelected,
+        NONE,
+    ),
+    row(
+        C::CompareParents,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::ParentsAvailable,
+        NONE,
+    ),
+    row(
+        C::CompareParents,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::ParentsAvailable,
+        NONE,
+    ),
+    row(C::Swap, S::Folder, None, None, G::None, P::Ready, NONE),
+    row(C::Swap, S::Text, None, None, G::None, P::Always, NONE),
+    row(
+        C::SessionClear,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionClear,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
     row(
         C::BrowseList,
         S::Folder,

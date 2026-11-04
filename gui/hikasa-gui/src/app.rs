@@ -1819,6 +1819,14 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::UpOneLevelLeft
+            | CommandId::UpOneLevelRight
+            | CommandId::UpOneLevelBoth
+            | CommandId::SetAsBaseFolders
+            | CommandId::SetAsOtherBaseFolder
+            | CommandId::CompareParents
+            | CommandId::Swap
+            | CommandId::SessionClear => self.base_command(window, inv.id),
             CommandId::BrowseLeft => self.browse_base(window, 0),
             CommandId::BrowseRight => self.browse_base(window, 1),
             CommandId::FindFilenameNext | CommandId::FindFilenamePrev => {

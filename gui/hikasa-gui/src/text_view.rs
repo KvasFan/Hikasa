@@ -330,7 +330,6 @@ impl TextViewModel {
     }
 
     /// The comparison request.
-    #[cfg(test)]
     pub fn request(&self) -> &TextCompareRequest {
         &self.request
     }
@@ -820,6 +819,8 @@ impl TextViewModel {
         ctx.ready = self.response.is_some();
         ctx.next_difference = self.section_target(Direction::Forward).is_some();
         ctx.prev_difference = self.section_target(Direction::Backward).is_some();
+        // Compare Parent Folders: always (FC-004).
+        ctx.parents_available = true;
     }
 
     /// The atomic toggles the current filter shows (TC-040; the core's table).

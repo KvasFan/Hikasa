@@ -18,6 +18,7 @@ use hikasa_vfs::{EntryKind, FollowLinks};
 use super::flow::{StoreDone, stored_specs};
 use super::{AppCore, CoreJob};
 use crate::browse::{BROWSE_DIALOG, BrowseDialog, BrowseMode, BrowseTarget};
+use crate::commands::CommandId;
 use crate::dialog::{ButtonRole, Followup, Prompt};
 use crate::job::Job;
 use crate::session_dialog::SessionAction;
@@ -128,12 +129,7 @@ impl AppCore {
                         self.push_mru(list, specs[k].clone());
                     }
                 }
-                let [left, right] = specs;
-                self.reopen_changed(view, "change the base folders", move |_, session| {
-                    session.specs.left = left;
-                    session.specs.right = right;
-                    Ok(())
-                });
+                self.reopen_changed(view, "change the base folders", Some(specs), |_, _| Ok(()));
             }
             Ok(BaseCheck::Missing(k, path)) => {
                 let Some(window) = self.window_of(view) else {
@@ -187,14 +183,22 @@ impl AppCore {
         &mut self,
         view: ViewId,
         title: &str,
+        specs: Option<[String; 2]>,
         change: impl FnOnce(&Service, &mut Session) -> Result<(), ApiError> + Send + 'static,
     ) {
         let Some(tab) = self.tab(view) else {
             return;
         };
-        let Some(capture) = AppCore::capture(tab) else {
+        let Some(mut capture) = AppCore::capture(tab) else {
             return;
         };
+        // New bases go into the captured request (a cleared view has none to read the session from).
+        if let Some([left, right]) = specs
+            && let hikasa_session::api::ViewRequest::Folder { request, .. } = &mut capture.request
+        {
+            request.left = OsString::from(left);
+            request.right = OsString::from(right);
+        }
         let vs = tab.session.as_ref();
         let name = vs
             .and_then(|s| s.reference().map(ToString::to_string))
@@ -376,5 +380,145 @@ impl AppCore {
                 }
             }
         }
+    }
+}
+
+impl AppCore {
+    /// The base commands of the active view (FC-004, SES-008; D-243): Up One Level, Set as Base Folders, Set as Base
+    /// on Other Side and Clear Session re-root the view through its reopen path; Swap Sides exchanges the sides of its
+    /// session; Compare Parent Folders opens a new Folder Compare view of the folders holding the row's (the files')
+    /// items.
+    pub(super) fn base_command(&mut self, window: WindowId, id: CommandId) {
+        let service = self.service.clone();
+        let Some(tab) = self.active_tab_mut(window) else {
+            return;
+        };
+        let view = tab.id;
+        match tab.model_mut() {
+            Some(ViewModel::Folder(m)) => {
+                let mut specs = [
+                    m.path_edit(0).committed.clone(),
+                    m.path_edit(1).committed.clone(),
+                ];
+                match id {
+                    CommandId::UpOneLevelLeft
+                    | CommandId::UpOneLevelRight
+                    | CommandId::UpOneLevelBoth => {
+                        let parents = m.base_parents();
+                        let sides: &[usize] = match id {
+                            CommandId::UpOneLevelLeft => &[0],
+                            CommandId::UpOneLevelRight => &[1],
+                            _ => &[0, 1],
+                        };
+                        for &k in sides {
+                            let Some(parent) = parents[k].clone() else {
+                                return;
+                            };
+                            specs[k] = parent;
+                        }
+                        self.rebase(view, specs, None);
+                    }
+                    CommandId::SetAsBaseFolders => {
+                        if let Some(bases) = m.selected_bases() {
+                            self.rebase(view, bases, None);
+                        }
+                    }
+                    CommandId::SetAsOtherBaseFolder => {
+                        if let Some((k, spec)) = m.selected_other_base() {
+                            specs[k] = spec;
+                            self.rebase(view, specs, None);
+                        }
+                    }
+                    CommandId::CompareParents => {
+                        if let Some(parents) = m.row_parents() {
+                            self.open_folders(window, parents);
+                        }
+                    }
+                    CommandId::Swap => self.swap_sides(view),
+                    CommandId::SessionClear => self.clear_session(view),
+                    _ => {}
+                }
+            }
+            Some(ViewModel::Text(m)) => match id {
+                CommandId::Swap => self.swap_sides(view),
+                CommandId::CompareParents => {
+                    let parent = |spec: &std::ffi::OsStr| {
+                        service
+                            .parse_spec(spec)
+                            .ok()
+                            .and_then(|s| s.parent())
+                            .map(|p| p.canonical())
+                    };
+                    let (left, right) = (m.request().left.clone(), m.request().right.clone());
+                    if let (Some(l), Some(r)) = (parent(&left), parent(&right)) {
+                        self.open_folders(window, [l, r]);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// Clear Session (D-243): the view becomes an empty session of its type (`session_defaults`): empty path edits,
+    /// no comparison, the specs' recent lists offered; Accept runs it. The request is the defaults' with the bases
+    /// cleared (a session without specs has no view of its own).
+    fn clear_session(&mut self, view: ViewId) {
+        let Some(tab) = self.tab(view) else {
+            return;
+        };
+        let Some(capture) = AppCore::capture(tab) else {
+            return;
+        };
+        if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+            vs.settings_pending = true;
+        }
+        self.store("clear the session", Some(view), move |svc, _| {
+            let (current, _) = capture.session(svc)?;
+            let mut session = svc.session_defaults(current.kind)?;
+            let mut probe = session.clone();
+            probe.specs.left.clone_from(&current.specs.left);
+            probe.specs.right.clone_from(&current.specs.right);
+            let mut opened = svc.session_view_of(&probe, String::new())?;
+            if let hikasa_session::api::ViewRequest::Folder { request, .. } = &mut opened.request {
+                request.left.clear();
+                request.right.clear();
+            }
+            opened.specs = vec![String::new(), String::new()];
+            opened.title = String::new();
+            session.specs.left.clear();
+            session.specs.right.clear();
+            Ok(StoreDone::Reopen {
+                view,
+                opened: Box::new(opened),
+                session: Box::new(session),
+                dirty: true,
+            })
+        });
+    }
+
+    /// Swap Sides (SES-008): `Session::swap_sides` (specs, encodings, read-only sides, parent paths, the `_left` /
+    /// `_right` view keys), then the view runs again (a swapped model is not derived).
+    fn swap_sides(&mut self, view: ViewId) {
+        self.reopen_changed(view, "swap the sides", None, |_, session| {
+            session.swap_sides();
+            Ok(())
+        });
+    }
+
+    /// A new Folder Compare view of `folders` in `window` (`CompareParents`), resolved as two dropped paths are.
+    fn open_folders(&mut self, window: WindowId, folders: [String; 2]) {
+        let request = hikasa_session::api::GuiOpenRequest {
+            specs: folders.into_iter().map(OsString::from).collect(),
+            ..hikasa_session::api::GuiOpenRequest::default()
+        };
+        let job = Job::spawn(
+            &self.service,
+            JobKind::VfsRead,
+            "open the parent folders".into(),
+            &self.wake(),
+            move |svc, _| crate::home::resolve(svc, &request),
+        );
+        self.jobs.push(CoreJob::Drop(window, job));
     }
 }

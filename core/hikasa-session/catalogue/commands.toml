@@ -298,14 +298,14 @@ id = "UpOneLevelList"
 menu = "Session"
 caption = "Up One Level"
 description = "Changes base folders on picked sides to their parent folders."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "UpOneLevelLeft"
 menu = "Session"
 caption = "Left Side"
 description = "Changes left base folder to its parent folder."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "UpOneLevelCenter"
@@ -319,7 +319,14 @@ id = "UpOneLevelRight"
 menu = "Session"
 caption = "Right Side"
 description = "Changes right base folder to its parent folder."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "UpOneLevelBoth"
+menu = "Session"
+caption = "Both Sides"
+description = "Changes both base folders to their parent folders."
+status = "implemented"
 
 [[section.command]]
 id = "UpOneLevelOutput"
@@ -966,8 +973,9 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 [[section.command]]
 id = "Swap"
+caption = "Swap Sides"
 description = "Exchanges left, right base folders."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BrowseList"
@@ -1044,15 +1052,16 @@ status = "implemented"
 [[section.command]]
 id = "SetAsBaseFolders"
 menu = "Actions"
+caption = "Set as Base Folders"
 description = "Sets selected folders as base folders."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SetAsOtherBaseFolder"
 menu = "Actions"
 caption = "Set as Base on Other Side"
 description = "Sets selected folder as base folder on other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Open"
@@ -2329,7 +2338,7 @@ menu = "Session"
 caption = "Clear Session"
 shortcut = "Shift+Ctrl+C"
 description = "Replaces current view with empty session."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Rules"
@@ -2342,7 +2351,7 @@ id = "Swap"
 menu = "Session"
 caption = "Swap Sides"
 description = "Exchanges left, right files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Report"
@@ -2364,7 +2373,7 @@ id = "CompareParents"
 menu = "Session"
 caption = "Compare Parent Folders"
 description = "Compares folders containing current items in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MergeParents"

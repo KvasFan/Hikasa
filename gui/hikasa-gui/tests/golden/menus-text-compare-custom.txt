@@ -15,7 +15,10 @@ Session
   Save Session As...
   Session Settings...
   [ ] Locked (disabled)
+  Clear Session	Shift+Ctrl+C (disabled)
+  Swap Sides
   Text Compare Info	Ctrl+I (disabled)
+  Compare Parent Folders
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q

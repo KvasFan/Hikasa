@@ -541,7 +541,12 @@ impl FolderViewModel {
             request.left.to_string_lossy().into_owned(),
             request.right.to_string_lossy().into_owned(),
         ];
-        let state = FolderViewModel::prepare(service, &request, &wake);
+        // A cleared session (`SessionClear`) has no bases yet: nothing runs until Accept (D-243).
+        let state = if names.iter().all(String::is_empty) {
+            FolderState::Stopped { prepared: None }
+        } else {
+            FolderViewModel::prepare(service, &request, &wake)
+        };
         let paths = [
             PathEdit::new(Side::Left, &names[0]),
             PathEdit::new(Side::Right, &names[1]),
@@ -2359,6 +2364,95 @@ impl FolderViewModel {
         ctx.pair_selected =
             self.selected_pair().is_some() || self.selected_closed_archive().is_some();
         (ctx.next_difference, ctx.prev_difference) = self.differences_around();
+        let parents = self.base_parents();
+        ctx.base_parent = [parents[0].is_some(), parents[1].is_some()];
+        ctx.bases_selected = self.selected_bases().is_some();
+        ctx.other_base_selected = self.selected_other_base().is_some();
+        ctx.parents_available = self.row_parents().is_some();
+    }
+
+    /// The parent of each base (`UpOneLevel*`, FC-004): `Spec::parent`, so an archive's root goes to its folder;
+    /// `None` for a root or a spec without one.
+    pub fn base_parents(&self) -> [Option<String>; 2] {
+        let Some(prepared) = self.prepared() else {
+            return [None, None];
+        };
+        let specs = prepared.specs();
+        [specs.left, specs.right].map(|s| s.parent().map(|p| p.canonical()))
+    }
+
+    /// The selected folder items as (node, side) pairs, when the selection holds folders only.
+    fn selected_folders(&self) -> Option<Vec<(NodeId, Side)>> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let mut out = Vec::new();
+        for (node, sides) in self.selection.items.iter() {
+            if !read.node(node)?.is_folder() {
+                return None;
+            }
+            for (side, on) in [(Side::Left, SideSet::LEFT), (Side::Right, SideSet::RIGHT)] {
+                if sides.contains(on) {
+                    out.push((node, side));
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// `SetAsBaseFolders` (FC-004): one folder row selected on both sides, or one folder on each side: their specs.
+    pub fn selected_bases(&self) -> Option<[String; 2]> {
+        let folders = self.selected_folders()?;
+        let left = folders
+            .iter()
+            .filter(|(_, s)| *s == Side::Left)
+            .collect::<Vec<_>>();
+        let right = folders
+            .iter()
+            .filter(|(_, s)| *s == Side::Right)
+            .collect::<Vec<_>>();
+        let ([l], [r]) = (left.as_slice(), right.as_slice()) else {
+            return None;
+        };
+        let read = self.prepared()?.model().read();
+        Some([
+            read.spec(l.0, Side::Left)?.canonical(),
+            read.spec(r.0, Side::Right)?.canonical(),
+        ])
+    }
+
+    /// `SetAsOtherBaseFolder`: one folder selected on one side: the other side (0, 1) and the folder's spec.
+    pub fn selected_other_base(&self) -> Option<(usize, String)> {
+        let folders = self.selected_folders()?;
+        let [(node, side)] = folders.as_slice() else {
+            return None;
+        };
+        let read = self.prepared()?.model().read();
+        let spec = read.spec(*node, *side)?.canonical();
+        Some((if *side == Side::Left { 1 } else { 0 }, spec))
+    }
+
+    /// `CompareParents` (FC-004): one row selected: the folders that hold its item on each side (for a side the row
+    /// lacks, the folder its item would be in).
+    pub fn row_parents(&self) -> Option<[String; 2]> {
+        let mut nodes = self.selection.items.iter().map(|(n, _)| n);
+        let node = nodes.next()?;
+        if nodes.next().is_some() || node == NodeId::ROOT {
+            return None;
+        }
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let ancestors = read.ancestors(node);
+        let specs = prepared.specs();
+        // The nearest folder above the row that the side has; the base at the top.
+        let of = |side: Side, base: &hikasa_core::spec::Spec| {
+            ancestors
+                .iter()
+                .filter(|a| **a != NodeId::ROOT)
+                .find_map(|a| read.spec(*a, side))
+                .map_or_else(|| base.canonical(), |s| s.canonical())
+        };
+        ancestors.first()?;
+        Some([of(Side::Left, specs.left), of(Side::Right, specs.right)])
     }
 
     /// The check state of a radio or toggle command (`None`: not a checkable command of this view).

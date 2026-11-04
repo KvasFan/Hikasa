@@ -51,10 +51,11 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `NameFilter` | Session |  |  | Edits name file filters. | planned |
 | `SpecsBack` | Session | Back | Alt+Left | Changes to previous base folders. | planned |
 | `SpecsForward` | Session | Forward | Alt+Right | Changes to next base folders. | planned |
-| `UpOneLevelList` | Session | Up One Level |  | Changes base folders on picked sides to their parent folders. | planned |
-| `UpOneLevelLeft` | Session | Left Side |  | Changes left base folder to its parent folder. | planned |
+| `UpOneLevelList` | Session | Up One Level |  | Changes base folders on picked sides to their parent folders. | implemented |
+| `UpOneLevelLeft` | Session | Left Side |  | Changes left base folder to its parent folder. | implemented |
 | `UpOneLevelCenter` | Session | Center Side |  | Changes center base folder to its parent folder. | planned |
-| `UpOneLevelRight` | Session | Right Side |  | Changes right base folder to its parent folder. | planned |
+| `UpOneLevelRight` | Session | Right Side |  | Changes right base folder to its parent folder. | implemented |
+| `UpOneLevelBoth` | Session | Both Sides |  | Changes both base folders to their parent folders. | implemented |
 | `UpOneLevelOutput` | Session | Output Side |  | Changes output base folder to its parent folder. | planned |
 | `MergeBaseView` | Session | Merge Base Folders |  | Merges base folders in new view. | planned |
 | `SyncBaseView` | Session | Sync Base Folders |  | Synchronizes base folders in new view. | planned |
@@ -151,7 +152,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `Swap` |  |  |  | Exchanges left, right base folders. | planned |
+| `Swap` |  | Swap Sides |  | Exchanges left, right base folders. | implemented |
 | `BrowseList` | Session | Browse for Folder |  | Browses for an existing folder on picked side. | implemented |
 | `BrowseLeft` | Session | Left Side |  | Browses for an existing folder on left side. | implemented |
 | `BrowseCenter` | Session | Center Side |  | Browses for an existing folder on center side. | planned |
@@ -162,8 +163,8 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Collapse` | Actions | Close Folder | Left | Closes selected folder. | implemented |
 | `ExpandSubfolders` | Actions | Open Subfolders |  | Opens selected folders and all their subfolders. | implemented |
 | `CollapseSubfolders` | Actions | Close Subfolders |  | Closes selected folders and their subfolders. | implemented |
-| `SetAsBaseFolders` | Actions |  |  | Sets selected folders as base folders. | planned |
-| `SetAsOtherBaseFolder` | Actions | Set as Base on Other Side |  | Sets selected folder as base folder on other side. | planned |
+| `SetAsBaseFolders` | Actions | Set as Base Folders |  | Sets selected folders as base folders. | implemented |
+| `SetAsOtherBaseFolder` | Actions | Set as Base on Other Side |  | Sets selected folder as base folder on other side. | implemented |
 | `Open` | Actions |  | Enter | Opens selected items in new view. | implemented |
 | `OpenWithList` | Actions | Open With |  | Opens selected items in new view of picked type. | planned |
 | `AssocApp` | Actions | Associated Application |  | Opens selected items with associated application. | planned |
@@ -383,12 +384,12 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `SessionSaveAs` | Session | Save Session As... |  | Saves this session with new name. | implemented |
 | `SessionEdit` | Session | Session Settings... |  | Edits current session settings. | implemented |
 | `SessionLocked` | Session | Locked |  | Locks or unlocks current session. | implemented |
-| `SessionClear` | Session | Clear Session | Shift+Ctrl+C | Replaces current view with empty session. | planned |
+| `SessionClear` | Session | Clear Session | Shift+Ctrl+C | Replaces current view with empty session. | implemented |
 | `Rules` | Session |  |  | Edits current Rules definitions. | planned |
-| `Swap` | Session | Swap Sides |  | Exchanges left, right files. | planned |
+| `Swap` | Session | Swap Sides |  | Exchanges left, right files. | implemented |
 | `Report` | Session | <Type> Report... |  | Produces <type> report. | planned |
 | `Info` | Session | <Type> Info | Ctrl+I | Displays <type> statistics. | implemented |
-| `CompareParents` | Session | Compare Parent Folders |  | Compares folders containing current items in new view. | planned |
+| `CompareParents` | Session | Compare Parent Folders |  | Compares folders containing current items in new view. | implemented |
 | `MergeParents` | Session | Merge Parent Folders |  | Merges folders containing current items in new view. | planned |
 | `InsigIgnored` | View | Ignore Unimportant Differences |  | Treats unimportant differences as same. | implemented |
 | `SameModIgnored` | View | Ignore Same Changes |  | Treats same changes as same. | planned |

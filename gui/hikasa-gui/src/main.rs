@@ -64,6 +64,8 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_bases;
+#[cfg(test)]
 mod tests_browse;
 #[cfg(test)]
 mod tests_find;
