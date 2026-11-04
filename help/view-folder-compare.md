@@ -15,6 +15,13 @@ Esc with the list closed, or ✕, puts the folder back. A folder that does not e
 keeps your text with the message under the field. A file where a folder is needed, or a path that cannot be read,
 shows its message there and nothing runs. Only a folder that could be opened enters the recent list.
 
+Session ▸ **Up One Level** ▸ Left Side, Right Side, Both Sides compares the parent folders instead (out of an archive,
+the folder holding it). Actions ▸ **Set as Base Folders** compares the selected folder row (or one folder selected on
+each side); **Set as Base on Other Side** makes the folder selected on one side the other side's base. Session ▸
+**Swap Sides** exchanges the left and the right (with their read-only setting) and compares again; **Compare Parent
+Folders** opens a new view of the folders holding the selected row; **Clear Session** (Shift+Ctrl+C) empties both
+fields: type or browse two folders and accept to compare.
+
 ## Navigating
 
 - Up and Down move the selection; Right and Left open and close a folder while the tree has the focus.

@@ -9,6 +9,8 @@ left shows where the differences are.
 - Ctrl+N and Ctrl+P go to the next and the previous difference section.
 - F5 reloads the files and compares them again.
 - Ctrl+Num + and Ctrl+Num - change the font size; Ctrl+Num 0 restores it.
+- Session ▸ **Swap Sides** exchanges the left and the right file and compares again; **Compare Parent Folders** opens
+  a [Folder Compare view](topic:view-folder-compare) of the folders holding the two files.
 
 ## Display filters
 
