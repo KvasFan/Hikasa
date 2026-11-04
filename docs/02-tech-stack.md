@@ -526,6 +526,34 @@ font files through fontconfig) takes **221 ms** the first time in a process and 
 the window shows the built-in font until it answers. The `ctx.set_fonts` of an apply runs on the UI thread and was not
 timed; it happens once per change of family, never in a frame of its own.
 
+### M2 W9a: gate G15 (tree, select, completion, browse; D-257)
+
+`env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored --nocapture
+--test-threads 1 <name>` (2026-11-05, the same desktop, Mesa llvmpipe, **loaded machine**: other projects' builds and
+tests ran meanwhile, load 4.7 to 12.7; one run each, no repeats to fight the noise). New modes
+`HIKASA_GUI_BENCH=folder_columns|select|completion|browse` (§1.9.25 note 20).
+
+| Row | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G15 tree (`folder_columns`) | 5.9 | scan 538 ms, 8 frames while scanning: UI work p95 29.95 / max 29.95 ms (2 above 16.7 ms), tree rebuild max 33.1 ms; PSS 140.1 MiB | max ≤ 16.7, p95 < 8 ms; PSS < 381.5 MiB and ≤ M1 + 48 MiB | **not met** (frames); PSS met |
+| same tree, tree order, default columns (`folder_scan`, for comparison) | 5.6 | scan 439 ms, 18 frames: p95 7.03 / max 8.35 ms, rebuild max 8.1 ms; PSS 135.7 MiB | (M1 (b)) | met |
+| G15 select | 5.7 | Select All Files 65.4 ms, Invert Selection 112.0 ms, Shift+Left 41.8 ms (one frame each, 111,150 rows); 300 × Shift+Down p95 1.37 / max 2.06 ms | each command ≤ 16.7 ms; Shift+Down p95 < 4 ms | **not met** (commands); Shift+Down met |
+| G15 completion | 4.7 | the list 171 ms after the last key (the 150 ms debounce included); typing max 1.38 ms | ≤ 200 ms; no frame above 16.7 ms | **met** |
+| G15 browse | 5.3 | listed 288 ms after it opened (100,000 entries); 600 frames of scrolling p95 2.70 / max 5.14 ms; PSS 179.3 MiB | ≤ 1 s; max < 16.7 ms | **met** |
+| ARCH-GUI-003 `text_scroll` | 7.4–9.5 | PSS 257.7, 262.1, 262.7 (**262.1**) MiB; 221.9 / 172.7 / 122.8 fps; first screen 281 ms, coloured 895 ms | < 381.5 MiB, ≥ 60 fps, < 1 s | met |
+| ARCH-GUI-003 `two_windows` | 11.3–12.5 | PSS 264.4, 261.9, 267.6 (**264.4**) MiB; last run UI work p95 6.9, max 17.38 ms | < 381.5 MiB, p95 < 8, max < 16.7 ms | PSS met; **max not met** (one frame, at load 12) |
+| G12 `workspace_restore` | 12.5 | per pending tab 0.03 MiB PSS, 0.00 anonymous; first screen 420 ms | ≤ 20 MiB a tab | met |
+
+**What fails and why.** The tree row fails in the sort, not in the columns or the drawing: with Size descending every
+rebuild while scanning sorts 111,150 rows (`visible_rows_sorted`, max 33 ms), where the tree order's rebuild takes 8 ms
+on the same tree at the same load. The select row fails in the selection's whole-tree work on the UI thread: each of the
+three commands builds a `Selection` over every shown row, `retain_shown` copies it through a hash set of the 111,150
+shown rows, and the status counts walk it once; Shift+Down, which touches one row, is far inside its budget. Both are
+reported as found (docs/17 §7.1); the thresholds stay. The remedy — a rebuild that re-sorts only the folders whose
+children changed, and a selection stored as ranges of the shown rows (or the whole-tree commands in a job) — is left to
+the maintainer's decision for W9b/W9c. `two_windows`' one 17.4 ms frame came at load 12 with the other figures as in W4c;
+it is not re-measured on the real display by an agent (D-132). The PSS figures are W4c's (255–262 MiB) within the noise.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
