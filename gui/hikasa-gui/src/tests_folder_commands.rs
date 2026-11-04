@@ -1,4 +1,4 @@
-//! M2 W9a acceptance A9.1, A9.2, A9.4 and A9.10 through the view model on disk trees: the Edit commands equal the
+//! M2 W9a acceptance A9.1, A9.2, A9.4 and A9.10 (the `FOLDER_COMMANDS` parity table) through the view model on disk trees: the Edit commands equal the
 //! CLI's `--select` words on the same tree, gap navigation, Ignore Folder Structure, the sort's header cycle (a plan's
 //! selection unchanged by any sort), the status counts once per change, and the columns written to and read from the
 //! layout.
@@ -454,4 +454,384 @@ fn a9_3_crc_on_demand_asks_for_the_rendered_rows_once_still() {
     assert_eq!(m.crc_frame(ms(3_000)), None);
     world.settle(&mut app);
     assert_eq!(folder_model(&mut app, view).crc_jobs().0, 2);
+}
+
+/// What a row of [`FOLDER_COMMANDS`] needs before it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Prep {
+    /// The opened fixture, nothing selected.
+    None,
+    /// The file pair `d/x.txt` selected (`d` open).
+    File,
+    /// The closed folder `d` selected.
+    ClosedFolder,
+    /// The open folder `d` selected.
+    OpenFolder,
+    /// The folder `e` selected on the left only.
+    LeftFolder,
+    /// The last row selected.
+    Last,
+    /// Every folder open.
+    Expanded,
+    /// Another display filter first (a radio entry).
+    OtherFilter,
+    /// Another folder mode first (a radio entry).
+    OtherMode,
+    /// The Find query `x`.
+    FindText,
+    /// A comparison held while it runs.
+    Running,
+    /// The view's session is named.
+    Named,
+}
+
+/// The effect a row's `Invocation` has on the fixture view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// A `…List` entry: a submenu of its children (no effect of its own).
+    Submenu,
+    /// A dialog opens on the window's stack (after its job, if one plans first).
+    Dialog,
+    /// The view model changes (selection, rows, columns, panels, the display).
+    Model,
+    /// The check state of a check or radio entry changes.
+    Checked,
+    /// The view runs on other bases (its committed specs change).
+    Bases,
+    /// A tab opens, or the tab becomes another view.
+    Tab,
+    /// A job of the view starts.
+    Job,
+    /// The window's session combo takes the focus.
+    Focus,
+}
+
+/// A9.10: one row per `implemented` entry of the `folder-compare`, `folder-shared`, `folder-sync` and `session`
+/// sections that a Folder Compare view offers, with its effect.
+const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
+    use CommandId as C;
+    use Expect as E;
+    use Prep as P;
+    &[
+        // folder-compare
+        (C::UpOneLevelList, P::None, E::Submenu),
+        (C::UpOneLevelLeft, P::None, E::Bases),
+        (C::UpOneLevelRight, P::None, E::Bases),
+        (C::UpOneLevelBoth, P::None, E::Bases),
+        (C::CopyRight, P::File, E::Dialog),
+        (C::CopyLeft, P::File, E::Dialog),
+        (C::Delete, P::File, E::Dialog),
+        (C::PermanentDelete, P::File, E::Dialog),
+        (C::SelectAllFiles, P::None, E::Model),
+        (C::SelectNewerList, P::None, E::Submenu),
+        (C::SelectNewerLeft, P::None, E::Model),
+        (C::SelectNewerRight, P::None, E::Model),
+        (C::SelectNewerBoth, P::None, E::Model),
+        (C::SelectOrphanList, P::None, E::Submenu),
+        (C::SelectOrphanLeft, P::None, E::Model),
+        (C::SelectOrphanRight, P::None, E::Model),
+        (C::SelectOrphanBoth, P::None, E::Model),
+        (C::DiffNext, P::None, E::Model),
+        (C::DiffPrev, P::Last, E::Model),
+        (C::FavCompareAll, P::OtherFilter, E::Checked),
+        (C::FavDiff, P::OtherFilter, E::Checked),
+        (C::FavSame, P::OtherFilter, E::Checked),
+        (C::FavNoOrphan, P::OtherFilter, E::Checked),
+        (C::FavDiffNoOrphan, P::OtherFilter, E::Checked),
+        (C::FavOrphan, P::OtherFilter, E::Checked),
+        (C::FavLeftNewer, P::OtherFilter, E::Checked),
+        (C::FavRightNewer, P::OtherFilter, E::Checked),
+        (C::FavLeftNewerOrphan, P::OtherFilter, E::Checked),
+        (C::FavRightNewerOrphan, P::OtherFilter, E::Checked),
+        (C::FavLeftOrphan, P::OtherFilter, E::Checked),
+        (C::FavRightOrphan, P::OtherFilter, E::Checked),
+        (C::FavCompareNone, P::OtherFilter, E::Checked),
+        (C::TogSame, P::None, E::Checked),
+        (C::TogLeftOrphan, P::None, E::Checked),
+        (C::TogRightOrphan, P::None, E::Checked),
+        (C::TogLeftNewer, P::None, E::Checked),
+        (C::TogRightNewer, P::None, E::Checked),
+        (C::TogDiff, P::None, E::Checked),
+        (C::DirShowAll, P::OtherMode, E::Checked),
+        (C::DirCompareStructure, P::OtherMode, E::Checked),
+        (C::DirCompareFilesOnly, P::OtherMode, E::Checked),
+        (C::DirFlatten, P::None, E::Checked),
+        // folder-shared
+        (C::Swap, P::None, E::Bases),
+        (C::BrowseList, P::None, E::Submenu),
+        (C::BrowseLeft, P::None, E::Dialog),
+        (C::BrowseRight, P::None, E::Dialog),
+        (C::Stop, P::Running, E::Model),
+        (C::Expand, P::ClosedFolder, E::Model),
+        (C::Collapse, P::OpenFolder, E::Model),
+        (C::ExpandSubfolders, P::ClosedFolder, E::Model),
+        (C::CollapseSubfolders, P::OpenFolder, E::Model),
+        (C::SetAsBaseFolders, P::ClosedFolder, E::Bases),
+        (C::SetAsOtherBaseFolder, P::LeftFolder, E::Bases),
+        (C::Open, P::File, E::Tab),
+        (C::ExpandAll, P::None, E::Model),
+        (C::CollapseAll, P::Expanded, E::Model),
+        (C::SelectInvert, P::None, E::Model),
+        (C::FullRefresh, P::None, E::Job),
+        (C::ExistsNext, P::None, E::Model),
+        (C::ExistsPrev, P::Last, E::Model),
+        (C::FindFilename, P::None, E::Model),
+        (C::FindFilenameNext, P::FindText, E::Model),
+        (C::FindFilenamePrev, P::FindText, E::Model),
+        (C::SuppressFilters, P::None, E::Checked),
+        (C::ColList, P::None, E::Model),
+        (C::Legend, P::None, E::Checked),
+        (C::ShowLog, P::None, E::Checked),
+        // session
+        (C::SessionHome, P::None, E::Tab),
+        (C::SessionsCombo, P::None, E::Focus),
+        (C::SessionSave, P::None, E::Dialog),
+        (C::SessionSaveAs, P::None, E::Dialog),
+        (C::SessionEdit, P::None, E::Dialog),
+        (C::SessionLocked, P::Named, E::Checked),
+        (C::SessionClear, P::None, E::Bases),
+        (C::Info, P::None, E::Dialog),
+        (C::CompareParents, P::File, E::Tab),
+        (C::InsigIgnored, P::None, E::Checked),
+        (C::ShowToolbar, P::None, E::Checked),
+    ]
+};
+
+/// The fixture: a folder pair with a difference, a newer file each way, orphans and a left-only folder.
+fn parity_fixture(world: &World) -> (crate::tests::TestApp, ViewId) {
+    put(world, "l", "d/x.txt", "left x\n", 3_000);
+    put(world, "r", "d/x.txt", "right\n", 1_000);
+    put(world, "l", "e/y.txt", "y\n", 1_000);
+    put(world, "l", "lnew.txt", "new left\n", 3_000);
+    put(world, "r", "lnew.txt", "old\n", 1_000);
+    put(world, "l", "rnew.txt", "old\n", 1_000);
+    put(world, "r", "rnew.txt", "new right\n", 3_000);
+    put(world, "r", "ronly.txt", "r\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(world, &mut app);
+    app.execute(CommandId::FavCompareAll);
+    world.settle(&mut app);
+    (app, view)
+}
+
+/// What the test compares before and after a row's invocation.
+fn fingerprint(app: &mut crate::tests::TestApp, view: ViewId) -> String {
+    let m = folder_model(app, view);
+    format!(
+        "{:?}",
+        (
+            m.rows().iter().map(|r| r.node).collect::<Vec<_>>(),
+            m.selection().items.iter().collect::<Vec<_>>(),
+            m.selection().current,
+            m.shown_columns(),
+            *m.display_options(),
+            (m.show_log(), m.show_legend(), m.show_find()),
+            m.busy(),
+        )
+    )
+}
+
+fn settle_all(world: &World, app: &mut crate::tests::TestApp) {
+    for _ in 0..3 {
+        app.0.handle(crate::app::UiMsg::Tick);
+        world.settle(app);
+    }
+}
+
+fn prepare(
+    world: &World,
+    app: &mut crate::tests::TestApp,
+    view: ViewId,
+    id: CommandId,
+    prep: Prep,
+) {
+    use crate::tests_folder_ops::select;
+    match prep {
+        Prep::None => {}
+        Prep::File => {
+            select(app, view, "d");
+            app.execute(CommandId::Expand);
+            world.settle(app);
+            select(app, view, "d/x.txt");
+        }
+        Prep::ClosedFolder => select(app, view, "d"),
+        Prep::OpenFolder => {
+            select(app, view, "d");
+            app.execute(CommandId::Expand);
+            world.settle(app);
+            select(app, view, "d");
+        }
+        Prep::LeftFolder => {
+            let m = folder_model(app, view);
+            let model = Arc::clone(m.prepared().expect("prepared").model());
+            let read = model.read();
+            let index = m
+                .rows()
+                .iter()
+                .position(|r| read.path(r.node).as_str() == "e")
+                .expect("e");
+            m.click(index, Hit::Side(Side::Left), Mods::default());
+        }
+        Prep::Last => {
+            let m = folder_model(app, view);
+            let last = m.rows().len() - 1;
+            m.select(last);
+        }
+        Prep::Expanded => {
+            app.execute(CommandId::ExpandAll);
+            world.settle(app);
+        }
+        Prep::OtherFilter => {
+            let other = if id == CommandId::FavCompareAll {
+                CommandId::FavDiff
+            } else {
+                CommandId::FavCompareAll
+            };
+            app.execute(other);
+            world.settle(app);
+        }
+        Prep::OtherMode => {
+            let other = if id == CommandId::DirShowAll {
+                CommandId::DirCompareStructure
+            } else {
+                CommandId::DirShowAll
+            };
+            app.execute(other);
+            world.settle(app);
+        }
+        Prep::FindText => folder_model(app, view).find_panel().text = "x".into(),
+        Prep::Running => {
+            let g = crate::tests_folder_ops::gate(false);
+            folder_model(app, view).scan_gate = Some(Arc::clone(&g));
+            app.execute(CommandId::FullRefresh);
+            crate::tests_folder_ops::poll_until(world, app, |a| folder_model(a, view).scanning());
+            // The gate opens once Stop has been asked for (the scan then ends as stopped).
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                crate::tests_folder_ops::set_gate(&g, true);
+            });
+        }
+        Prep::Named => {
+            app.execute(CommandId::SessionSaveAs);
+            world.settle(app);
+            let w = app.win();
+            let d = app
+                .0
+                .window_mut(w)
+                .and_then(|w| {
+                    w.dialogs
+                        .find_mut::<crate::session_dialog::SaveSessionDialog>()
+                })
+                .expect("Save As");
+            d.name = "parity".into();
+            crate::tests_folder_ops::press(world, app, crate::dialog::ButtonRole::Ok);
+            settle_all(world, app);
+        }
+    }
+}
+
+#[test]
+fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
+    use crate::commands::{Scope, list_children, lookup};
+    use crate::window::{CommandArg, Invocation};
+    use hikasa_session::commands::{CommandStatus, catalogue};
+    // Every implemented entry the Folder Compare view offers has a row, and no row is unknown.
+    let core = catalogue();
+    let mut implemented = Vec::new();
+    for section in ["folder-compare", "folder-shared", "folder-sync", "session"] {
+        let Some(s) = core.section(section) else {
+            continue;
+        };
+        for entry in s
+            .commands
+            .iter()
+            .filter(|e| e.status == CommandStatus::Implemented)
+        {
+            let id = CommandId::from_name(&entry.id).expect("known to the GUI");
+            if lookup(Scope::Folder, id).is_some() && !implemented.contains(&id) {
+                implemented.push(id);
+            }
+        }
+    }
+    for id in &implemented {
+        assert!(
+            FOLDER_COMMANDS.iter().any(|(c, _, _)| c == id),
+            "{id:?} is implemented but FOLDER_COMMANDS has no row"
+        );
+    }
+    for (id, _, _) in FOLDER_COMMANDS {
+        assert!(
+            implemented.contains(id),
+            "{id:?} has a row but is not an implemented folder entry"
+        );
+    }
+    // Each row's effect happens on a fixture view of its own.
+    for &(id, prep, expect) in FOLDER_COMMANDS {
+        let world = World::new();
+        let (mut app, view) = parity_fixture(&world);
+        prepare(&world, &mut app, view, id, prep);
+        if expect == Expect::Submenu {
+            assert!(!list_children(id).is_empty(), "{id:?}: a submenu");
+            continue;
+        }
+        assert!(
+            app.enabled(id),
+            "{id:?} is not available on the fixture ({prep:?})"
+        );
+        let w = app.win();
+        let dialogs = crate::tests_folder_ops::dialogs(&app);
+        let tabs = (app.tabs().len(), app.active(), app.tabs()[app.active()].id);
+        let checked = app.checked(id);
+        let before = fingerprint(&mut app, view);
+        let committed = {
+            let m = folder_model(&mut app, view);
+            [
+                m.path_edit(0).committed.clone(),
+                m.path_edit(1).committed.clone(),
+            ]
+        };
+        let invocation = if id == CommandId::ColList {
+            Invocation::with(id, CommandArg::Column(ColumnId::Ext))
+        } else {
+            Invocation::new(id)
+        };
+        app.0.execute(w, invocation);
+        if expect == Expect::Job {
+            assert!(folder_model(&mut app, view).busy(), "{id:?}: a job runs");
+            settle_all(&world, &mut app);
+            continue;
+        }
+        settle_all(&world, &mut app);
+        match expect {
+            Expect::Dialog => assert!(
+                crate::tests_folder_ops::dialogs(&app) > dialogs,
+                "{id:?}: a dialog"
+            ),
+            Expect::Checked => assert_ne!(app.checked(id), checked, "{id:?}: the check state"),
+            Expect::Model => assert_ne!(fingerprint(&mut app, view), before, "{id:?}: the model"),
+            Expect::Bases => {
+                let m = folder_model(&mut app, view);
+                let now = [
+                    m.path_edit(0).committed.clone(),
+                    m.path_edit(1).committed.clone(),
+                ];
+                assert_ne!(now, committed, "{id:?}: the bases");
+            }
+            Expect::Tab => {
+                let now = (app.tabs().len(), app.active(), app.tabs()[app.active()].id);
+                let home = matches!(
+                    app.tabs()[app.active()].model(),
+                    Some(crate::window::ViewModel::Home(_))
+                );
+                assert!(now != tabs || home, "{id:?}: a tab");
+            }
+            Expect::Focus => {
+                assert!(
+                    app.0.window(w).is_some_and(|w| w.focus_sessions),
+                    "{id:?}: the focus"
+                );
+            }
+            Expect::Submenu | Expect::Job => unreachable!(),
+        }
+    }
 }
