@@ -61,6 +61,7 @@ topics!(
     "dialog-script",
     "dialog-folder-info",
     "panel-legend",
+    "panel-find-filename",
     "view-folder-compare",
     "view-text-compare",
 );

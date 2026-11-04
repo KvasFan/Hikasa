@@ -8,6 +8,8 @@ state: same, different, newer or older, orphan (on one side only), filtered, or 
 - Up and Down move the selection; Right and Left open and close a folder while the tree has the focus.
 - Enter opens the selected file pair in a [Text Compare view](topic:view-text-compare).
 - Ctrl+N and Ctrl+P go to the next and the previous difference.
+- Ctrl+F opens [Find Filename](topic:panel-find-filename) above the tree; F3 and Shift+F3 repeat the last search.
+  Alt+Down and Alt+Up step to the next and the previous row present on the focused side.
 - Edit ▸ Expand All and Collapse All; Actions ▸ Open Subfolders and Close Subfolders.
 - Ctrl+F5 compares everything again; Stop ends a running comparison.
 

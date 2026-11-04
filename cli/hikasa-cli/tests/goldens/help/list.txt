@@ -33,5 +33,6 @@ dialog-delete	Delete
 dialog-script	Scripts in the window
 dialog-folder-info	Folder Compare Info
 panel-legend	Legend
+panel-find-filename	Find Filename
 view-folder-compare	The Folder Compare view
 view-text-compare	The Text Compare view
