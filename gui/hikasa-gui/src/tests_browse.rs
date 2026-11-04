@@ -91,7 +91,10 @@ fn a9_6_folder_mode_from_a_path_edit() {
     world.settle(&mut app);
     let left = folder_model(&mut app, view).path_edit(0).committed.clone();
     assert!(left.ends_with("sub"), "{left}");
-    assert_eq!(app.0.state().mru(MruList::Folders), [left.clone()]);
+    assert_eq!(
+        app.0.state().mru(MruList::Folders),
+        std::slice::from_ref(&left)
+    );
     assert_eq!(app.0.state().mru(MruList::Left), [left]);
     assert_eq!(
         app.0.state().dialog_text(BROWSE_DIALOG, "show_hidden"),

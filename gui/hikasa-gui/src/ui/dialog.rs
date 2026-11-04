@@ -181,14 +181,14 @@ pub fn show(
             fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {
             script_dialog::ask_continue(ui, d, pal);
-        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RunScriptDialog>() {
-            if script_dialog::run_script(ui, d, pal) {
-                out.push(DialogInput::BrowseFor(
-                    crate::browse::BrowseMode::File,
-                    d.path.clone(),
-                    crate::browse::BrowseTarget::RunScript,
-                ));
-            }
+        } else if let Some(d) = dialog.as_any_mut().downcast_mut::<RunScriptDialog>()
+            && script_dialog::run_script(ui, d, pal)
+        {
+            out.push(DialogInput::BrowseFor(
+                crate::browse::BrowseMode::File,
+                d.path.clone(),
+                crate::browse::BrowseTarget::RunScript,
+            ));
         }
         ui.add_space(12.0);
         // A row of its own height: a layout that fills what is left would centre the buttons in it.

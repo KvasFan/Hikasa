@@ -139,7 +139,10 @@ fn a9_5_completion_from_disk_and_accept_re_roots_the_view() {
     let [left, right] = committed(&mut app, view);
     assert!(left.contains("sub"), "{left}");
     assert!(right.ends_with('r'), "{right}");
-    assert_eq!(app.0.state().mru(MruList::Left), [text.clone()]);
+    assert_eq!(
+        app.0.state().mru(MruList::Left),
+        std::slice::from_ref(&text)
+    );
     assert!(app.0.state().mru(MruList::Right).is_empty());
     let m = folder_model(&mut app, view);
     assert!(

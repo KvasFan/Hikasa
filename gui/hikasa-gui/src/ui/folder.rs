@@ -176,11 +176,8 @@ pub fn show(
     let bases = Rect::from_min_size(full.min, vec2(full.width(), STRIP_H));
     painter.rect_filled(bases, CornerRadius::ZERO, pal.chrome);
     let _ = &status.bases;
-    for k in 0..2 {
-        let cell = Rect::from_min_max(
-            pos2(side_x[k], bases.top()),
-            pos2(side_x[k] + side_w, bases.bottom()),
-        );
+    for (k, x) in side_x.iter().enumerate() {
+        let cell = Rect::from_min_max(pos2(*x, bases.top()), pos2(*x + side_w, bases.bottom()));
         path_edit(
             ui,
             view,
@@ -859,10 +856,11 @@ fn path_edit(
         ] {
             let open = m.path_edit(k).open;
             let ours = open || matches!(pk, PathKey::Enter | PathKey::Esc);
-            if ours && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
-                if m.path_key(k, pk, now) == PathKeyOutcome::Accept {
-                    ui.memory_mut(|mem| mem.surrender_focus(id));
-                }
+            if ours
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
+                && m.path_key(k, pk, now) == PathKeyOutcome::Accept
+            {
+                ui.memory_mut(|mem| mem.surrender_focus(id));
             }
         }
     }
