@@ -49,6 +49,9 @@ Search
   ---
   Next Item on This Side	Alt+Down
   Previous Item on This Side	Alt+Up
+  Find Filename...	Ctrl+F
+  Find Next Filename	F3
+  Find Previous Filename	Shift+F3
 View
   ( ) Show None
   ( ) Always Show Folders

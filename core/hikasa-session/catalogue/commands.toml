@@ -1167,7 +1167,7 @@ menu = "Search"
 caption = "Find Filename..."
 shortcut = "Ctrl+F"
 description = "Finds filename matching search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindFilenameNext"
@@ -1175,7 +1175,7 @@ menu = "Search"
 caption = "Find Next Filename"
 shortcut = "F3"
 description = "Finds next filename matching search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindFilenamePrev"
@@ -1183,7 +1183,7 @@ menu = "Search"
 caption = "Find Previous Filename"
 shortcut = "Shift+F3"
 description = "Finds previous filename matching search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SuppressFilters"

@@ -178,9 +178,9 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `FullRefresh` | Edit | Full Refresh | Ctrl+F5 | Refreshes entire comparison. | implemented |
 | `ExistsNext` | Search | Next Item on This Side | Alt+Down | Positions at next filename, skipping over gaps. | implemented |
 | `ExistsPrev` | Search | Previous Item on This Side | Alt+Up | Positions at previous filename, skipping over gaps. | implemented |
-| `FindFilename` | Search | Find Filename... | Ctrl+F | Finds filename matching search string. | planned |
-| `FindFilenameNext` | Search | Find Next Filename | F3 | Finds next filename matching search string. | planned |
-| `FindFilenamePrev` | Search | Find Previous Filename | Shift+F3 | Finds previous filename matching search string. | planned |
+| `FindFilename` | Search | Find Filename... | Ctrl+F | Finds filename matching search string. | implemented |
+| `FindFilenameNext` | Search | Find Next Filename | F3 | Finds next filename matching search string. | implemented |
+| `FindFilenamePrev` | Search | Find Previous Filename | Shift+F3 | Finds previous filename matching search string. | implemented |
 | `SuppressFilters` | View | Suppress Filters |  | Temporarily suppresses display and file filters. | implemented |
 | `ColList` | View | Columns |  | Shows or hides picked column. | implemented |
 | `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | implemented |

@@ -199,6 +199,12 @@ command_ids! {
     Legend,
     /// Folder (M2 W9a): the Info dialog of the comparison's statistics (FC-064, D-242).
     Info,
+    /// Folder (M2 W9a): opens the Find Filename panel (FC-061, D-241).
+    FindFilename,
+    /// Folder (M2 W9a): the next row whose name matches the last query.
+    FindFilenameNext,
+    /// Folder (M2 W9a): the previous row whose name matches the last query.
+    FindFilenamePrev,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -1440,6 +1446,33 @@ pub const PRESENTATION: &[Row] = &[
     row(C::Legend, S::Folder, None, None, G::Check, P::Always, NONE),
     row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
     row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::FindFilename,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::FindFilenameNext,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::FindFilenamePrev,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
     // Text Compare
     row(
         C::Reload,

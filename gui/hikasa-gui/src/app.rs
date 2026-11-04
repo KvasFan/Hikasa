@@ -1814,6 +1814,9 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::FindFilenameNext | CommandId::FindFilenamePrev => {
+                self.find_filename(window, inv.id == CommandId::FindFilenamePrev);
+            }
             CommandId::Info => {
                 let scope = self.scope(window);
                 let stats = match self.active_tab(window).and_then(Tab::model) {
@@ -3168,6 +3171,40 @@ impl AppCore {
             .and_then(|m| m.do_not_show);
         if do_not_show && let Some(key) = key {
             self.set_option_false(key);
+        }
+    }
+
+    /// Find Next or Previous (`reverse`) in the active folder view (D-241): with no text yet the panel opens; the
+    /// options are remembered and the text pushed to `mru.find`; no hit shows "Filename not found." in the message
+    /// panel (`[next_difference] show_message_panel`), a bad regular expression shows in the Find panel.
+    pub fn find_filename(&mut self, window: WindowId, reverse: bool) {
+        let max = self.options().tweaks.metrics.max_mru_items as usize;
+        let show_message = self.options().next_difference.show_message_panel;
+        let Some(tab) = self.active_tab_mut(window) else {
+            return;
+        };
+        let view = tab.id;
+        let Some(ViewModel::Folder(m)) = tab.model_mut() else {
+            return;
+        };
+        if m.find_panel().text.is_empty() {
+            m.open_find();
+            return;
+        }
+        let outcome = m.find(reverse);
+        let mut panel = m.find_panel().clone();
+        panel.save(&mut self.state, max);
+        if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+            m.find_panel().recent = panel.recent;
+        }
+        if outcome == crate::find_panel::FindOutcome::NotFound && show_message {
+            self.set_message(
+                view,
+                Message {
+                    do_not_show: Some("next_difference.show_message_panel"),
+                    ..Message::info(crate::find_panel::NOT_FOUND)
+                },
+            );
         }
     }
 

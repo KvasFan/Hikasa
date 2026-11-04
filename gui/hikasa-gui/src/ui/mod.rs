@@ -8,6 +8,7 @@
 //! watch thread or a job's news wakes them; while a job runs they also poll at a low rate.
 
 pub mod dialog;
+pub mod find_panel;
 pub mod folder;
 pub mod fonts;
 pub mod help;
@@ -760,6 +761,34 @@ impl HikasaApp {
                     Some(help::HelpAction::Close) => actions.push(Action::CloseHelp),
                     None => {}
                 });
+        }
+
+        // The Find Filename panel of a folder view (D-241): above the tree, not modal.
+        if let Some(view) = active_view
+            && !dialog_open
+            && let Some(ViewModel::Folder(m)) = self.core.tab_mut(view).and_then(|t| t.model_mut())
+            && m.show_find()
+        {
+            let panel = egui::Panel::top(format!("hk-find-{}", view.0))
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 4)),
+                )
+                .show(ui, |ui| find_panel::show(ui, m.find_panel(), &pal));
+            match panel.inner {
+                Some(find_panel::FindAction::Next) => {
+                    invocations.push(Invocation::new(CommandId::FindFilenameNext));
+                }
+                Some(find_panel::FindAction::Prev) => {
+                    invocations.push(Invocation::new(CommandId::FindFilenamePrev));
+                }
+                Some(find_panel::FindAction::Close) => m.close_find(),
+                Some(find_panel::FindAction::Help) => {
+                    actions.push(Action::Help(crate::find_panel::FIND_TOPIC.to_owned()));
+                }
+                None => {}
+            }
         }
 
         // The Legend panel of a folder view (D-242): beside the tree, not modal.

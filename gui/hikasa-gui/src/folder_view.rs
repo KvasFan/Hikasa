@@ -14,7 +14,7 @@ use hikasa_core::{
     CompareVerdict, ContentMethod, ContentOutcome, ContentResult, JobKind, Pair, RelPath, Side,
 };
 use hikasa_folder::ops::{Confirmation, FolderOp, OpPlan, ReadOnlySides};
-use hikasa_folder::select::{Selection, SideSet};
+use hikasa_folder::select::{FindQuery, Finder, Selection, SideSet};
 use hikasa_folder::{
     ArchiveHandling, Category, ChannelObserver, DisplayOptions, EntryView, FolderDisplayFilter,
     FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind, NodeView, ScanStatus,
@@ -32,6 +32,7 @@ use hikasa_vfs::ops::{ItemStamp, OverwritePolicy};
 
 use crate::commands::{CommandId, Ctx};
 use crate::dialog::DialogModel;
+use crate::find_panel::{FindOutcome, FindPanel};
 pub use crate::folder::cells::{Cell, size_text};
 use crate::folder::cells::{CellInput, cell_of};
 use crate::folder::columns::{ColumnId, ColumnLayout};
@@ -439,6 +440,9 @@ pub struct FolderViewModel {
     show_log: bool,
     /// The Legend panel is shown (`Legend`, `[layout] legend`, D-242).
     show_legend: bool,
+    /// The Find Filename panel and its query (D-241); shown per `[layout] find_panel`.
+    find: FindPanel,
+    show_find: bool,
     /// The log panel's height (points, `[layout] log_height`).
     log_height: f64,
     /// What the log learns when a job ends (D-116), taken by the app.
@@ -561,6 +565,8 @@ impl FolderViewModel {
             difference_walks: Memo::new(0),
             show_log: false,
             show_legend: false,
+            find: FindPanel::default(),
+            show_find: false,
             log_height: LOG_HEIGHT,
             notes: Vec::new(),
             expand_archive: None,
@@ -2434,6 +2440,7 @@ impl FolderViewModel {
             }
             CommandId::ShowLog => self.show_log = !self.show_log,
             CommandId::Legend => self.show_legend = !self.show_legend,
+            CommandId::FindFilename => self.open_find(),
             CommandId::SelectAllFiles
             | CommandId::SelectNewerLeft
             | CommandId::SelectNewerRight
@@ -2602,6 +2609,96 @@ impl FolderViewModel {
         }
     }
 
+    /// True while the Find Filename panel shows (D-241).
+    pub fn show_find(&self) -> bool {
+        self.show_find
+    }
+
+    /// Opens the Find Filename panel with the keyboard in its text field.
+    pub fn open_find(&mut self) {
+        self.show_find = true;
+        self.find.focus = true;
+    }
+
+    /// Closes the Find Filename panel (Esc, its × button).
+    pub fn close_find(&mut self) {
+        self.show_find = false;
+    }
+
+    /// The Find Filename panel's query (the panel edits it).
+    pub fn find_panel(&mut self) -> &mut FindPanel {
+        &mut self.find
+    }
+
+    /// Find Next (`reverse`: Find Previous) with the panel's query (D-241): core's `Finder` over every row the display
+    /// filter shows, collapsed folders included, in the view's sort order, from the current row. A hit inside a
+    /// closed folder opens its ancestors; the row is selected on the sides whose name matched and scrolled to.
+    pub fn find(&mut self, reverse: bool) -> FindOutcome {
+        self.find.error = None;
+        if self.find.text.is_empty() {
+            return FindOutcome::Nothing;
+        }
+        let query = self.find.query(reverse);
+        let finder = match Finder::new(&query) {
+            Ok(f) => f,
+            Err(e) => {
+                let message = ApiError::from(e).to_string();
+                self.find.error = Some(message.clone());
+                return FindOutcome::Invalid(message);
+            }
+        };
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return FindOutcome::Nothing;
+        };
+        let (node, sides, ancestors) = {
+            let read = model.read();
+            let mut all = Vec::new();
+            read.visible_rows_sorted(
+                &self.display,
+                &|_| true,
+                self.columns.sort.as_ref(),
+                &mut all,
+            );
+            let from = self
+                .selection
+                .current
+                .and_then(|c| all.iter().position(|r| r.node == c));
+            let Some(hit) = finder.next(&read, &all, from) else {
+                return FindOutcome::NotFound;
+            };
+            let row = &all[hit..=hit];
+            let mut sides = SideSet::empty();
+            for on in [SideSet::LEFT, SideSet::RIGHT] {
+                if !query.sides.contains(on) {
+                    continue;
+                }
+                let one = FindQuery {
+                    sides: on,
+                    wrap: false,
+                    up: false,
+                    ..query.clone()
+                };
+                if Finder::new(&one).is_ok_and(|f| f.next(&read, row, None).is_some()) {
+                    sides |= on;
+                }
+            }
+            (row[0].node, sides, read.ancestors(row[0].node))
+        };
+        for ancestor in ancestors {
+            if ancestor != NodeId::ROOT {
+                self.set_open(ancestor, true);
+            }
+        }
+        self.rebuild();
+        let Some(index) = self.rows.iter().position(|r| r.node == node) else {
+            return FindOutcome::NotFound;
+        };
+        self.selection.select_one(node, sides);
+        self.selected_index = Some(index);
+        self.scroll_to = Some(index as u32);
+        FindOutcome::Found(index)
+    }
+
     /// True while the Legend panel shows (D-242).
     pub fn show_legend(&self) -> bool {
         self.show_legend
@@ -2657,6 +2754,13 @@ impl FolderViewModel {
         {
             self.show_legend = on;
         }
+        if let Some(on) = layout
+            .layout_value(view, "find_panel")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_find = on;
+        }
+        self.find = FindPanel::from_state(layout);
         if let Some(h) = layout
             .layout_value(view, "log_height")
             .and_then(LayoutValue::as_float)
@@ -2681,6 +2785,7 @@ impl FolderViewModel {
             ("log_panel", LayoutValue::Bool(self.show_log)),
             ("log_height", LayoutValue::Float(self.log_height)),
             ("legend", LayoutValue::Bool(self.show_legend)),
+            ("find_panel", LayoutValue::Bool(self.show_find)),
         ];
         keys.extend(self.columns.to_layout());
         keys

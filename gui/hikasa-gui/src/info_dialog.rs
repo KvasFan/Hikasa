@@ -69,11 +69,13 @@ impl InfoDialog {
     }
 
     /// The figures the dialog shows.
+    #[cfg(test)]
     pub fn stats(&self) -> &FolderStats {
         &self.stats
     }
 
     /// True when the comparison was still running when the dialog opened.
+    #[cfg(test)]
     pub fn partial(&self) -> bool {
         self.partial
     }

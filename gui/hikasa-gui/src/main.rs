@@ -32,6 +32,7 @@ mod bench;
 mod commands;
 mod dialog;
 mod dnd;
+mod find_panel;
 mod folder;
 mod folder_view;
 mod fonts;
@@ -60,6 +61,8 @@ mod workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_find;
 #[cfg(test)]
 mod tests_folder_commands;
 #[cfg(test)]
