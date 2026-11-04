@@ -31,5 +31,7 @@ wizard-restore	Restore Factory Defaults
 dialog-confirm	Confirm an operation
 dialog-delete	Delete
 dialog-script	Scripts in the window
+dialog-folder-info	Folder Compare Info
+panel-legend	Legend
 view-folder-compare	The Folder Compare view
 view-text-compare	The Text Compare view

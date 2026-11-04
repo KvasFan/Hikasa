@@ -50,6 +50,13 @@ more than one row, come later; [hikasa folder op](topic:folder-op) has them all 
 - Ignore Unimportant Differences treats unimportant differences as same; Suppress Filters temporarily shows
   filtered items.
 
+## Legend and Info
+
+- View ▸ **Legend** (Ctrl+Alt+L) shows the [Legend](topic:panel-legend) beside the tree: what each colour, glyph and
+  centre mark means, in the colours of the current theme. The view remembers whether it is shown.
+- Session ▸ **Folder Compare Info** (Ctrl+I) shows the [statistics](topic:dialog-folder-info) of the comparison: the
+  pairs per state, per side the files, folders and bytes, the content results; Copy places them on the clipboard.
+
 ## Log
 
 View ▸ Log shows the log panel at the bottom: finished comparisons and file operations, warnings (with their codes)

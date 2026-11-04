@@ -59,6 +59,8 @@ topics!(
     "dialog-confirm",
     "dialog-delete",
     "dialog-script",
+    "dialog-folder-info",
+    "panel-legend",
     "view-folder-compare",
     "view-text-compare",
 );
