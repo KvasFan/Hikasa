@@ -20,6 +20,7 @@
 //! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
 //! | `--path` | [`parse_select_path`] |
 //! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
+//! | `--time` and the Touch dialog's local time (M2 W9b) | [`parse_touch_time`] |
 //! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
@@ -506,4 +507,40 @@ mod tests {
         assert!(resolve_folder_display(Some("bogus"), None, false, false).is_err());
         assert!(resolve_folder_display(None, Some("tree"), false, false).is_err());
     }
+}
+
+/// The time of a Touch (M2 W9b, D-245): the CLI's `--time` rule (RFC 3339, an explicit offset) or the local form the
+/// Touch dialog shows, `YYYY-MM-DD HH:MM:SS` (also `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DD HH:MM`, `YYYY-MM-DD`, fractional
+/// seconds allowed) in `zone`, the zone of the Service's clock. A local time a DST change skips is taken after the gap,
+/// one it repeats is the earlier of the two (jiff's *compatible* rule). Leading and trailing blanks are ignored.
+pub fn parse_touch_time(
+    text: &str,
+    zone: &jiff::tz::TimeZone,
+) -> Result<hikasa_core::FileTime, ApiError> {
+    let text = text.trim();
+    if let Ok(time) = hikasa_core::FileTime::parse(text) {
+        return Ok(time);
+    }
+    let local: Option<jiff::civil::DateTime> = text
+        .parse::<jiff::civil::DateTime>()
+        .ok()
+        .or_else(|| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", text).ok())
+        .or_else(|| {
+            text.parse::<jiff::civil::Date>()
+                .ok()
+                .map(|date| date.to_datetime(jiff::civil::Time::midnight()))
+        });
+    let bad = || {
+        ApiError::InvalidArgument(format!(
+            "invalid time `{text}` (expected YYYY-MM-DD HH:MM:SS, or an RFC 3339 time such as 2026-01-02T03:04:05Z)"
+        ))
+    };
+    let local = local.ok_or_else(bad)?;
+    let zoned = zone
+        .to_ambiguous_zoned(local)
+        .compatible()
+        .map_err(|_| bad())?;
+    let stamp = zoned.timestamp();
+    hikasa_core::FileTime::from_unix(stamp.as_second(), stamp.subsec_nanosecond().max(0) as u32)
+        .ok_or_else(bad)
 }

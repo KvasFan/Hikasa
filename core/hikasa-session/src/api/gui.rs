@@ -529,6 +529,14 @@ pub enum ViewOutcome {
         /// The verdict at close time (`Incomplete` while scanning).
         verdict: CompareVerdict,
     },
+    /// A Folder Sync view (M2 W9b, D-248; additive): the exit code is the last Run's (`FolderSyncOutcome::exit_code`,
+    /// 0 or 100); without a Run, 0 when the comparison completed, else 100.
+    Sync {
+        /// The exit code of the view's last Run (`None`: no Run).
+        last_run: Option<ExitCode>,
+        /// The comparison completed.
+        complete: bool,
+    },
 }
 
 impl ViewOutcome {
@@ -580,6 +588,14 @@ impl ViewOutcome {
             ViewOutcome::Folder { verdict } => (
                 ViewResult::new(None, Some(*verdict), saved, reason),
                 ExitCode::for_verdict(*verdict),
+            ),
+            ViewOutcome::Sync { last_run, complete } => (
+                ViewResult::new(None, None, saved, reason),
+                match last_run {
+                    Some(code) => *code,
+                    None if *complete => ExitCode::Success,
+                    None => ExitCode::UnknownError,
+                },
             ),
         }
     }

@@ -554,6 +554,14 @@ fn between_archives(source: &Spec, target: &Spec) -> bool {
 /// when its rebuild is in place. A record that turns out not to be able to leave (an encrypted one, a hard link) is
 /// only known when the run takes it out.
 pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
+    let notes = shadow_drop_warnings(src, dst, plan);
+    plan.warnings.extend(notes);
+}
+
+/// The warnings [`note_shadow_drops`] adds, for a plan that is only borrowed (a preview of a plan that is executed
+/// later as it is, M2 W9b).
+pub fn shadow_drop_warnings(src: &dyn Vfs, dst: &dyn Vfs, plan: &Plan) -> Vec<Warning> {
+    let mut notes = Vec::new();
     let mut gone = 0;
     let mut travel = 0;
     for item in plan.items.iter().filter(|item| item.error.is_none()) {
@@ -575,7 +583,7 @@ pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
         }
     }
     let mut note = |message: String| {
-        plan.warnings.push(Warning {
+        notes.push(Warning {
             code: WarningCode::ArchiveDuplicateMember,
             message,
             spec: None,
@@ -591,6 +599,7 @@ pub fn note_shadow_drops(src: &dyn Vfs, dst: &dyn Vfs, plan: &mut Plan) {
             "{travel} shadowed members would move to the other archive with the members they share a path with"
         ));
     }
+    notes
 }
 
 /// The target's state at planning: absent, or its unfollowed entry.

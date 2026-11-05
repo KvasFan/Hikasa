@@ -194,23 +194,13 @@ impl FolderOpOutcome {
         let item = self.report.plan.items.get(index)?;
         let result = self.report.results.get(index)?;
         let meta = self.meta.get(index)?;
-        Some(FolderOpItemDto {
-            action: item.action.as_str(),
-            kind: item.kind,
-            side: meta.side.map(Side::as_str),
-            path: meta.path.clone(),
-            source: item.source.as_ref().map(Spec::canonical),
-            target: item.target.canonical(),
-            size: item.size,
-            replaces: item.replaces,
-            backup: item.backup.as_ref().map(Spec::canonical),
-            conflicts: meta.conflicts.names(),
-            answer: meta.answer,
-            status: result.status,
-            reason: result.skip.or(item.skip),
-            error: result.error.clone(),
-            change: item.attrs.as_ref().map(change_text),
-        })
+        Some(item_dto_of(
+            item,
+            meta,
+            result.status,
+            result.skip.or(item.skip),
+            result.error.clone(),
+        ))
     }
 
     /// The number of items.
@@ -457,10 +447,15 @@ pub fn sync_counts_text(counts: &SyncCounts) -> String {
 
 /// The marker of a sync row in the human output: `L>R`, `R>L`, `delL`, `delR`, `----`, `<!>` for a conflict.
 pub fn sync_marker(row: &SyncRowDto) -> &'static str {
-    if row.conflict {
+    marker_of(row.action, row.conflict)
+}
+
+/// [`sync_marker`] of an action and its conflict flag (a preview's rows, M2 W9b).
+pub(crate) fn marker_of(action: SyncAction, conflict: bool) -> &'static str {
+    if conflict {
         return "<!>";
     }
-    match row.action {
+    match action {
         SyncAction::CopyRight => "L>R",
         SyncAction::CopyLeft => "R>L",
         SyncAction::DeleteLeft => "delL",
@@ -504,6 +499,34 @@ pub struct FolderOpItemDto {
     /// change planned there) (M2 W8a, additive).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<String>,
+}
+
+/// One item of `hikasa.folder_op.v1` from a plan item, its meta and its result: the one builder of the executed and the
+/// dry-run items and of a preview's lines (M2 W9b, D-244).
+pub(crate) fn item_dto_of(
+    item: &hikasa_vfs::ops::PlanItem,
+    meta: &ItemMeta,
+    status: ItemStatus,
+    reason: Option<SkipReason>,
+    error: Option<ErrorReport>,
+) -> FolderOpItemDto {
+    FolderOpItemDto {
+        action: item.action.as_str(),
+        kind: item.kind,
+        side: meta.side.map(Side::as_str),
+        path: meta.path.clone(),
+        source: item.source.as_ref().map(Spec::canonical),
+        target: item.target.canonical(),
+        size: item.size,
+        replaces: item.replaces,
+        backup: item.backup.as_ref().map(Spec::canonical),
+        conflicts: meta.conflicts.names(),
+        answer: meta.answer,
+        status,
+        reason,
+        error,
+        change: item.attrs.as_ref().map(change_text),
+    }
 }
 
 /// The change of a `set_attrs` item as `attrib` writes it (§1.8.10: `attrib <target> +r-h`). On Unix modes `attrib`
@@ -1706,7 +1729,7 @@ fn command_of(
 }
 
 /// Each outermost file of `items` with its backup.
-fn archive_backups(
+pub(crate) fn archive_backups(
     items: &[hikasa_vfs::ops::PlanItem],
     backups: &BTreeMap<String, Spec>,
 ) -> Vec<(Spec, Spec)> {

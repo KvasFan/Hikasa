@@ -42,6 +42,24 @@ pub enum PathStructure {
     None,
 }
 
+impl PathStructure {
+    /// Every layout, in the order the Copy to Folder dialog offers them (M2 W9b).
+    pub const ALL: [PathStructure; 3] = [
+        PathStructure::Relative,
+        PathStructure::Base,
+        PathStructure::None,
+    ];
+
+    /// The word of `--structure` (`relative`, `base`, `none`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PathStructure::Relative => "relative",
+            PathStructure::Base => "base",
+            PathStructure::None => "none",
+        }
+    }
+}
+
 /// The times of a `touch`. "Now" is resolved by the Service (T1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchFrom {

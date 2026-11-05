@@ -389,7 +389,8 @@ impl Session {
     }
 
     /// Swap Sides (SES-008): specs, encodings, parent paths, pair overrides and the `view` keys ending in
-    /// `_left`/`_right` (at any depth) are exchanged.
+    /// `_left`/`_right` (at any depth) are exchanged; a folder-sync session's options become
+    /// [`SyncOptions::swapped`](hikasa_folder::sync::SyncOptions::swapped) (M2 W9b, D-243).
     pub fn swap_sides(&mut self) {
         let s = &mut self.specs;
         std::mem::swap(&mut s.left, &mut s.right);
@@ -404,6 +405,10 @@ impl Session {
             }
         }
         swap_side_keys(&mut self.view);
+        // A folder-sync session (M2 W9b, D-243): the sync options mirrored, so the same folders get the same actions.
+        if let SessionRules::Sync(rules) = &mut self.rules {
+            rules.sync = rules.sync.swapped();
+        }
     }
 
     /// The session as a script loads it (SES-010): `display` cleared.

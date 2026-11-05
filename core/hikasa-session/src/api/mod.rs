@@ -28,6 +28,7 @@ mod compare;
 pub mod dto;
 mod error;
 pub mod folder_ops;
+pub mod folder_preview;
 pub mod gui;
 pub mod human;
 mod info;
@@ -67,6 +68,7 @@ pub use folder_ops::{
     FolderOpOutcome, FolderOpRequest, FolderSyncDto, FolderSyncOutcome, FolderSyncRequest,
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
 };
+pub use folder_preview::{CountKind, OpPreview, PreviewCount, PreviewItem, SyncLine, SyncPreview};
 pub use gui::{
     GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, GuiScriptOptions,
     GuiScriptReport, LaunchError, OpenArgs, ResolvedOpen, ScriptArgs, ViewOutcome, ViewRequest,
@@ -106,7 +108,7 @@ pub use vocab::{
     parse_algorithm, parse_archive_handling, parse_attrib_change, parse_confirm_mode,
     parse_content_method, parse_exclude_what, parse_folder_mode, parse_line_range,
     parse_mkdir_name, parse_select_path, parse_side, parse_sides, parse_structure,
-    resolve_folder_display, resolve_text_display, sync_options, sync_words_of,
+    parse_touch_time, resolve_folder_display, resolve_text_display, sync_options, sync_words_of,
 };
 
 use crate::clipboard::{
