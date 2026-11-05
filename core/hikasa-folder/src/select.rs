@@ -377,15 +377,18 @@ fn present_sides(view: Option<&NodeView<'_>>) -> SideSet {
     sides
 }
 
-/// The rows `scope` shows (its own when it has them).
-fn shown_rows(read: &TreeRead<'_>, scope: &SelectScope<'_>) -> Vec<VisibleRow> {
+/// The rows `scope` shows (its own when it has them, not copied).
+fn shown_rows<'s>(
+    read: &TreeRead<'_>,
+    scope: &SelectScope<'s>,
+) -> std::borrow::Cow<'s, [VisibleRow]> {
     if let Some(rows) = scope.rows {
-        return rows.to_vec();
+        return std::borrow::Cow::Borrowed(rows);
     }
     let mut rows = Vec::new();
     let all = |_: NodeId| true;
     read.visible_rows(scope.display, scope.expanded.unwrap_or(&all), &mut rows);
-    rows
+    std::borrow::Cow::Owned(rows)
 }
 
 /// True for a content result that differs.
@@ -400,12 +403,20 @@ fn content_differs(kind: Option<ContentKind>) -> bool {
     )
 }
 
-/// The file-like row `view` against `state`, on `side`; `category` is its category (§1.6.9).
-fn file_matches(view: &NodeView<'_>, category: Category, state: SelState, side: Side) -> bool {
-    if view.side(side).is_none() {
+/// The file-like row `id` against `state`, on `side`; `present` its sides, `category` its category (§1.6.9). The
+/// difference flags are read (a `NodeView`) only for `diff`.
+fn file_matches(
+    read: &TreeRead<'_>,
+    id: NodeId,
+    present: [bool; 2],
+    category: Category,
+    state: SelState,
+    side: Side,
+) -> bool {
+    if !present[usize::from(side == Side::Right)] {
         return false;
     }
-    let both = view.left.is_some() && view.right.is_some();
+    let both = present[0] && present[1];
     let certain = !matches!(
         category,
         Category::Unknown | Category::Error | Category::Filtered
@@ -416,8 +427,10 @@ fn file_matches(view: &NodeView<'_>, category: Category, state: SelState, side: 
         SelState::Exact => category == Category::Same && both,
         SelState::Diff => {
             both && category != Category::Same
-                && (!view.diffs.difference(DiffFlags::TIME).is_empty()
-                    || content_differs(view.content.map(|c| c.kind)))
+                && read.node(id).is_some_and(|view| {
+                    !view.diffs.difference(DiffFlags::TIME).is_empty()
+                        || content_differs(view.content.map(|c| c.kind))
+                })
         }
         SelState::Newer => matches!(
             (category, side),
@@ -435,12 +448,12 @@ fn file_matches(view: &NodeView<'_>, category: Category, state: SelState, side: 
 }
 
 /// The verdict of a folder with no shown row on `side`: only `all`, `orphan` when it is one, `exact` when it is on both.
-fn empty_folder_matches(view: &NodeView<'_>, state: SelState, side: Side) -> bool {
-    let both = view.left.is_some() && view.right.is_some();
+fn empty_folder_matches(present: [bool; 2], state: SelState, side: Side) -> bool {
+    let both = present[0] && present[1];
     match state {
         SelState::All => true,
         SelState::Exact => both,
-        SelState::Orphan => !both && view.side(side).is_some(),
+        SelState::Orphan => !both && present[usize::from(side == Side::Right)],
         SelState::Diff | SelState::Newer | SelState::Older => false,
     }
 }
@@ -454,29 +467,40 @@ fn result_matches(
 ) -> Vec<SideSet> {
     let store = read.store();
     let mut found = vec![SideSet::empty(); read.len() as usize];
+    // Raw nodes (M2 W9a after review, G15 select): no `NodeView` per node and child.
+    let live = |node: &&crate::model::store::Node| {
+        node.internal & crate::model::store::internal::GONE == 0
+    };
     for id in store.post_order() {
         let node_id = NodeId(id);
-        let Some(view) = read.node(node_id) else {
+        let Some(node) = store.node(node_id).filter(live) else {
             continue;
         };
+        let present = [node.sides[0].present(), node.sides[1].present()];
+        let folder = node.is_folder();
+        let scan = node.scan();
+        let category = store.category_of(node, iu);
         let mut sides = SideSet::empty();
         for side in [Side::Left, Side::Right] {
-            let hit = if !view.is_folder() {
-                file_matches(&view, read.category(node_id, iu), state, side)
-            } else if view.side(side).is_some() && view.scan == ScanStatus::Failed {
+            let k = usize::from(side == Side::Right);
+            let hit = if !folder {
+                file_matches(read, node_id, present, category, state, side)
+            } else if present[k] && scan == ScanStatus::Failed {
                 // What cannot be read is no match of anything said about it, but `all` takes error rows: a plan has to show
                 // it, or `--select all` passes over a folder that failed and calls that a success.
                 state == SelState::All
-            } else if view.side(side).is_none() || view.scan != ScanStatus::Scanned {
+            } else if !present[k] || scan != ScanStatus::Scanned {
                 false
             } else {
                 let mut any_row = false;
                 let mut all_match = true;
-                for child in read.children(node_id) {
-                    let shown = store
-                        .node(child)
-                        .is_some_and(|node| is_visible(store, node, display));
-                    let here = read.node(child).is_some_and(|v| v.side(side).is_some());
+                for child in node.children() {
+                    let child = NodeId(child);
+                    let Some(raw) = store.node(child).filter(live) else {
+                        continue;
+                    };
+                    let shown = is_visible(store, raw, display);
+                    let here = raw.sides[k].present();
                     if shown && here {
                         any_row = true;
                         let matched = found
@@ -488,7 +512,7 @@ fn result_matches(
                 if any_row {
                     all_match
                 } else {
-                    empty_folder_matches(&view, state, side)
+                    empty_folder_matches(present, state, side)
                 }
             };
             sides.set(SideSet::of(side), hit);
@@ -557,7 +581,7 @@ pub fn select(
             SelSide::All => SideSet::all(),
         };
         let store = read.store();
-        for row in &rows {
+        for row in rows.iter() {
             let Some(node) = store.node(row.node) else {
                 continue;
             };

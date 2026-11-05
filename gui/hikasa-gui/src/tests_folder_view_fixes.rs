@@ -753,3 +753,46 @@ fn a9_1_a_session_s_columns_win_over_the_layout() {
     assert_eq!(columns.visible, [ColumnId::Name, ColumnId::Ext]);
     assert_eq!(columns.sort, None, "the session's tree order wins");
 }
+
+// ---- G15: the rows rebuilt off the window's thread while the comparison runs ------------------------------------
+
+/// While the comparison runs the rows are rebuilt on a thread of their own and swapped in (G15 tree): they are what a
+/// rebuild here gives, sorted too.
+#[test]
+fn rows_rebuilt_in_the_background_while_scanning_are_the_rows() {
+    let world = World::new();
+    for d in 0..4 {
+        for f in 0..6 {
+            let rel = format!("d{d}/f{f}.txt");
+            put(&world, "l", &rel, &"x".repeat(d * 10 + f), 1_000);
+            put(&world, "r", &rel, &"y".repeat(f), 2_000);
+        }
+    }
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    app.execute(CommandId::ExpandAll);
+    world.settle(&mut app);
+    folder_model(&mut app, view).header_click(ColumnId::Size, Side::Left);
+    let g = gate(false);
+    folder_model(&mut app, view).scan_gate = Some(Arc::clone(&g));
+    app.execute(CommandId::FullRefresh);
+    // The scan has ended but not reported (held): the view still runs, its rows come from the background.
+    poll_until(&world, &mut app, |a| {
+        let m = folder_model(a, view);
+        m.scanning() && m.rows().len() >= 28
+    });
+    let m = folder_model(&mut app, view);
+    assert!(m.rebuild_stats().during_scan > 0, "rebuilt while scanning");
+    assert!(m.background_rebuilds > 0, "off the window's thread");
+    let model = Arc::clone(m.prepared().expect("prepared").model());
+    let mut fresh = Vec::new();
+    model.read().visible_rows_sorted(
+        m.display_options(),
+        &|_| true,
+        m.columns().sort.as_ref(),
+        &mut fresh,
+    );
+    assert_eq!(m.rows(), fresh.as_slice());
+    set_gate(&g, true);
+    world.settle(&mut app);
+}

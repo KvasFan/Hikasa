@@ -420,8 +420,13 @@ pub struct FolderViewModel {
     selected_index: Option<usize>,
     /// The columns, their widths and the sort (D-234, D-235).
     columns: ColumnLayout,
-    /// Each open folder's sorted children between rebuilds (G15 tree: only changed folders are sorted again).
+    /// Each open folder's sorted children between rebuilds (G15 tree: only changed folders are sorted again); on the
+    /// background rebuild's thread while one runs.
     sort_cache: hikasa_folder::view::SortCache,
+    /// The rows of the rebuild before last, reused by the next background rebuild (no allocation per rebuild).
+    spare_rows: Vec<VisibleRow>,
+    /// A rebuild of the rows while the comparison runs, on a thread of its own (G15 tree).
+    background: Option<std::sync::mpsc::Receiver<Rebuilt>>,
     /// The selection-derived context flags for (selection moves, rows revision, generation, task state).
     ctx_memo: Memo<Option<CtxMemo>>,
     /// The zone of the Service's clock: the Modified column's (D-237).
@@ -492,6 +497,9 @@ pub struct FolderViewModel {
     /// How many CRC jobs started (tests).
     #[cfg(test)]
     crc_jobs: u64,
+    /// How many background rebuilds were swapped in (tests).
+    #[cfg(test)]
+    pub background_rebuilds: u64,
     /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
@@ -523,6 +531,19 @@ struct CrcJob {
     /// The rows it asked for (tests).
     #[cfg(test)]
     asked: Vec<NodeId>,
+}
+
+/// The rows a background rebuild made, with what it read (G15 tree).
+struct Rebuilt {
+    rows: Vec<VisibleRow>,
+    cache: hikasa_folder::view::SortCache,
+    generation: u64,
+    cache_generation: u64,
+    /// The open folders it used ([`FolderViewModel::open_fingerprint`]).
+    open: (bool, usize, usize, u64),
+    /// The model it read.
+    model: Arc<FolderModel>,
+    ms: f64,
 }
 
 /// The status counts per side `(rows, bytes)` and the (selection moves, rows revision) they were computed for.
@@ -590,6 +611,8 @@ impl FolderViewModel {
             seen_generation: u64::MAX,
             seen_cache_generation: 0,
             sort_cache: hikasa_folder::view::SortCache::default(),
+            background: None,
+            spare_rows: Vec::new(),
             ctx_memo: Memo::new(None),
             rebuilt_at: None,
             selection: ViewSelection::new(),
@@ -632,6 +655,8 @@ impl FolderViewModel {
             crc_errors: HashMap::new(),
             #[cfg(test)]
             crc_jobs: 0,
+            #[cfg(test)]
+            background_rebuilds: 0,
             #[cfg(test)]
             gate: None,
             #[cfg(test)]
@@ -963,9 +988,19 @@ impl FolderViewModel {
                 .is_some_and(|k| k.column == hikasa_folder::view::SortColumn::Crc)
                 && prepared.model().cache_generation() != self.seen_cache_generation
                 && throttled;
-            if (generation != self.seen_generation && due) || crc_order || changed {
+            if crc_order || changed {
                 self.rebuild();
                 changed = true;
+            } else if self.take_background() {
+                changed = true;
+            } else if generation != self.seen_generation && due && self.background.is_none() {
+                // While the comparison runs the rows are rebuilt off the window's thread (G15 tree); otherwise here.
+                if self.scanning() {
+                    self.rebuild_in_background();
+                } else {
+                    self.rebuild();
+                    changed = true;
+                }
             }
         }
         changed
@@ -973,6 +1008,12 @@ impl FolderViewModel {
 
     /// Rebuilds the visible rows from the model (O(visible), §1.6.4).
     pub fn rebuild(&mut self) {
+        // A background rebuild in flight is waited for (its cache comes back; its rows are not used).
+        if let Some(done) = self.background.take()
+            && let Ok(rebuilt) = done.recv()
+        {
+            self.sort_cache = rebuilt.cache;
+        }
         self.open_pending_archive();
         let began = Instant::now();
         let Some(prepared) = self.prepared() else {
@@ -1022,6 +1063,130 @@ impl FolderViewModel {
         if self.scanning() {
             self.stats.during_scan += 1;
         }
+    }
+
+    /// A fingerprint of the open folders (a background rebuild's rows are taken only while it holds).
+    fn open_fingerprint(&self) -> (bool, usize, usize, u64) {
+        let sum = |set: &HashSet<NodeId>| {
+            set.iter().fold(0u64, |acc, id| {
+                acc.wrapping_add(u64::from(id.0).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            })
+        };
+        (
+            self.expand_all,
+            self.expanded.len(),
+            self.collapsed.len(),
+            sum(&self.expanded) ^ sum(&self.collapsed).rotate_left(1),
+        )
+    }
+
+    /// Starts a rebuild of the rows on a thread of its own (while the comparison runs, G15 tree): it reads the model
+    /// there, with the open folders, the display and the sort as they are now; [`FolderViewModel::take_background`]
+    /// swaps its rows in.
+    fn rebuild_in_background(&mut self) {
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let expand_all = self.expand_all;
+        let expanded = self.expanded.clone();
+        let collapsed = self.collapsed.clone();
+        let open = self.open_fingerprint();
+        let display = self.display;
+        let sort = self.columns.sort;
+        let mut cache = std::mem::take(&mut self.sort_cache);
+        let mut rows = std::mem::take(&mut self.spare_rows);
+        let wake = Arc::clone(&self.wake);
+        let spawned = thread::Builder::new()
+            .name("hikasa-gui-rebuild".into())
+            .spawn(move || {
+                let began = Instant::now();
+                let generation = model.generation();
+                let cache_generation = model.cache_generation();
+                rows.clear();
+                {
+                    let read = model.read();
+                    let is_open = |id: NodeId| {
+                        if expand_all {
+                            !collapsed.contains(&id)
+                        } else {
+                            expanded.contains(&id)
+                        }
+                    };
+                    read.visible_rows_sorted_cached(
+                        &display,
+                        &is_open,
+                        sort.as_ref(),
+                        &mut cache,
+                        &mut rows,
+                    );
+                }
+                let ms = began.elapsed().as_secs_f64() * 1000.0;
+                let _ = tx.send(Rebuilt {
+                    rows,
+                    cache,
+                    generation,
+                    cache_generation,
+                    open,
+                    model,
+                    ms,
+                });
+                wake();
+            });
+        if spawned.is_ok() {
+            self.background = Some(rx);
+        } else {
+            self.rebuild();
+        }
+    }
+
+    /// Takes a background rebuild's rows when it has ended: swapped in while the open folders, the display, the sort
+    /// and the model are those it read (else a rebuild on this thread follows). True when the rows changed.
+    fn take_background(&mut self) -> bool {
+        let Some(done) = &self.background else {
+            return false;
+        };
+        let rebuilt = match done.try_recv() {
+            Ok(rebuilt) => rebuilt,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.background = None;
+                return false;
+            }
+        };
+        self.background = None;
+        self.sort_cache = rebuilt.cache;
+        let same_model = self
+            .prepared()
+            .is_some_and(|p| Arc::ptr_eq(p.model(), &rebuilt.model));
+        if !same_model || rebuilt.open != self.open_fingerprint() {
+            self.spare_rows = rebuilt.rows;
+            self.rebuild();
+            return true;
+        }
+        self.spare_rows = std::mem::replace(&mut self.rows, rebuilt.rows);
+        #[cfg(test)]
+        {
+            self.background_rebuilds += 1;
+        }
+        {
+            let read = rebuilt.model.read();
+            let present = |id: NodeId| present_sides(&read, id);
+            self.selection.retain_shown(&self.rows, &present);
+        }
+        self.rows_revision += 1;
+        self.seen_generation = rebuilt.generation;
+        self.seen_cache_generation = rebuilt.cache_generation;
+        self.rebuilt_at = Some(Instant::now());
+        self.selected_index = self.selection.current_index(&self.rows);
+        if self.stats.samples.len() < 100_000 {
+            self.stats.samples.push(rebuilt.ms);
+        }
+        self.stats.rows = self.rows.len();
+        if self.scanning() {
+            self.stats.during_scan += 1;
+        }
+        true
     }
 
     fn is_open(&self, id: NodeId) -> bool {

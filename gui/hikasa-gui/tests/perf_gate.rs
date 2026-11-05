@@ -655,6 +655,8 @@ fn select() {
     let (l, r) = generate_tree(dir.path(), tree_top());
     let doc = bench("select", dir.path(), &l, &r);
     eprintln!("G15 select (load {}):", load());
+    // Select All Files is an extra figure; the gate's commands are Select All, Invert Selection and Shift+Left.
+    let _ = action(&doc, "select_all_files");
     let commands: Vec<f64> = ["select_all", "invert_selection", "shift_left"]
         .iter()
         .map(|label| action(&doc, label).1)
