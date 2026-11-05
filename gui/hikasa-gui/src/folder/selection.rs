@@ -122,7 +122,8 @@ impl ViewSelection {
         index_of(rows, self.current?)
     }
 
-    fn changed(&mut self) {
+    /// Bumps `moves` (a change the user made; also an Edit command that changed the items in place).
+    pub fn changed(&mut self) {
         self.moves += 1;
     }
 

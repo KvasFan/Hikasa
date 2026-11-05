@@ -617,6 +617,7 @@ fn a6_19_script_example_four() {
     let view = SelectScope {
         display: &display,
         expanded: None,
+        rows: None,
     };
     let masks = [
         SelectMask::parse("left.diff.files").unwrap(),

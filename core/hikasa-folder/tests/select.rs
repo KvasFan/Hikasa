@@ -8,7 +8,7 @@ use hikasa_core::filter::NameFilterLists;
 use hikasa_core::{CaseSensitivity, FileTime, RelPath, Side};
 use hikasa_folder::select::{
     FindQuery, Finder, Include, SelKind, SelSide, SelState, SelectMask, SelectScope, Selection,
-    SideSet, open_pair, resolve, select, select_all_files,
+    SideSet, open_pair, resolve, select, select_all_files, selection_counts,
 };
 use hikasa_folder::{
     DisplayOptions, FilterRules, FolderComparison, FolderDisplayFilter, FolderError, FolderMode,
@@ -92,6 +92,7 @@ fn picked(cmp: &FolderComparison, word: &str) -> Vec<String> {
     let scope = SelectScope {
         display: &shown,
         expanded: None,
+        rows: None,
     };
     let mut sel = Selection::default();
     select(
@@ -260,6 +261,7 @@ fn a6_14_masks_are_ored_and_add_to_what_is_there() {
     let scope = SelectScope {
         display: &shown,
         expanded: None,
+        rows: None,
     };
     let masks = [
         SelectMask::parse("left.orphan.files").unwrap(),
@@ -283,6 +285,7 @@ fn a6_14_a_collapsed_folder_is_one_row() {
     let scope = SelectScope {
         display: &shown,
         expanded: Some(&closed),
+        rows: None,
     };
     let mut sel = Selection::default();
     select(
@@ -310,6 +313,7 @@ fn a6_14_all_files_invert_restrict() {
     let scope = SelectScope {
         display: &shown,
         expanded: None,
+        rows: None,
     };
     let mut sel = Selection::default();
     select_all_files(&read, &scope, &mut sel);
@@ -330,6 +334,62 @@ fn a6_14_all_files_invert_restrict() {
     assert!(!sel.is_empty());
 }
 
+/// The rows a scope is given are the rows it shows (M2 W9a after review): the same selection as listing them again,
+/// in any order.
+#[test]
+fn a9_4_a_scope_with_its_rows_selects_the_same() {
+    let cmp = compared(&tree(), &FolderRules::default());
+    let read = cmp.read();
+    let shown = all();
+    let listed = SelectScope {
+        display: &shown,
+        expanded: None,
+        rows: None,
+    };
+    let mut rows = Vec::new();
+    read.visible_rows(&shown, &|_| true, &mut rows);
+    rows.reverse();
+    let given = SelectScope {
+        rows: Some(&rows),
+        ..listed
+    };
+    let (mut a, mut b) = (Selection::default(), Selection::default());
+    select_all_files(&read, &listed, &mut a);
+    select_all_files(&read, &given, &mut b);
+    assert_eq!(a, b);
+    a.invert(&read, &listed);
+    b.invert(&read, &given);
+    assert_eq!(a, b);
+    let word = [SelectMask::parse("left.newer.files").unwrap()];
+    let (mut a, mut b) = (Selection::default(), Selection::default());
+    select(&read, &listed, &word, false, &mut a);
+    select(&read, &given, &word, false, &mut b);
+    assert_eq!(a, b);
+    assert!(!a.is_empty());
+}
+
+/// FC-064 (M2 W9a after review): each item counts once and each byte once; a folder counts the bytes of the files
+/// below it the display shows.
+#[test]
+fn a9_4_selection_counts_each_byte_once() {
+    let cmp = compared(&tree(), &FolderRules::default());
+    let read = cmp.read();
+    let mixed = id(&read, "mixed");
+    let other = id(&read, "mixed/other");
+    let mut sel = Selection::default();
+    sel.insert(mixed, SideSet::all());
+    sel.insert(other, SideSet::LEFT);
+    sel.insert(id(&read, "lonly"), SideSet::LEFT);
+    // Left: mixed (same 1 + other 2) with other inside it, and lonly (1); right: mixed (1 + 1).
+    assert_eq!(selection_counts(&read, &sel, &all()), [(3, 4), (1, 2)]);
+    // The same file hidden: its byte goes.
+    let diffs = display(FolderDisplayFilter::Differences);
+    assert_eq!(selection_counts(&read, &sel, &diffs), [(3, 3), (1, 1)]);
+    // The file alone: its own bytes.
+    sel.remove(mixed, SideSet::all());
+    assert_eq!(selection_counts(&read, &sel, &all()), [(2, 3), (0, 0)]);
+}
+
 #[test]
 fn a6_14_iu_reads_the_category_of_the_mask() {
     // Differences a content test calls unimportant: `exact` under `iu`, a difference without.
@@ -347,6 +407,7 @@ fn a6_14_iu_reads_the_category_of_the_mask() {
     let scope = SelectScope {
         display: &shown,
         expanded: None,
+        rows: None,
     };
     let picked_with = |word: &str, iu: bool| {
         let mut sel = Selection::default();
@@ -470,6 +531,7 @@ fn a6_14_resolve_a_folder_with_all_it_shows_selected_is_the_folder() {
     let scope = SelectScope {
         display: &shown,
         expanded: None,
+        rows: None,
     };
     let mut sel = Selection::default();
     select(
@@ -809,6 +871,51 @@ fn matches_name(name: &str, other: &str) -> bool {
 
 proptest! {
     #![proptest_config(common::config("tests/proptest-regressions/select.txt"))]
+
+    /// The dense `Selection` behaves as the map node → sides it stands for (M2 W9a after review): insert, remove,
+    /// restrict, `get`, `len`, `iter` in id order, equality and its serialised form.
+    #[test]
+    fn a9_4_selection_is_the_map(ops in proptest::collection::vec((0u8..4, 0u32..64, 1u8..4), 0..80)) {
+        use std::collections::BTreeMap;
+        let mut sel = Selection::default();
+        let mut map: BTreeMap<NodeId, SideSet> = BTreeMap::new();
+        for (op, node, bits) in ops {
+            let (node, sides) = (NodeId(node), SideSet::from_bits_truncate(bits));
+            match op {
+                0 | 1 => {
+                    sel.insert(node, sides);
+                    *map.entry(node).or_default() |= sides;
+                }
+                2 => {
+                    sel.remove(node, sides);
+                    if let Some(set) = map.get_mut(&node) {
+                        set.remove(sides);
+                    }
+                }
+                _ => {
+                    let side = if bits & 1 == 1 { Side::Left } else { Side::Right };
+                    sel.restrict(side);
+                    for set in map.values_mut() {
+                        *set &= SideSet::of(side);
+                    }
+                }
+            }
+            map.retain(|_, set| !set.is_empty());
+            prop_assert_eq!(sel.len(), map.len());
+            prop_assert_eq!(sel.is_empty(), map.is_empty());
+            let listed: Vec<(NodeId, SideSet)> = sel.iter().collect();
+            let expected: Vec<(NodeId, SideSet)> = map.iter().map(|(&n, &s)| (n, s)).collect();
+            prop_assert_eq!(&listed, &expected);
+            for probe in 0..66 {
+                prop_assert_eq!(sel.get(NodeId(probe)), map.get(&NodeId(probe)).copied().unwrap_or_default());
+            }
+            prop_assert_eq!(&Selection::from(map.clone()), &sel);
+        }
+        let json = serde_json::to_string(&sel).unwrap();
+        prop_assert_eq!(&json, &serde_json::to_string(&map).unwrap());
+        let back: Selection = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(back, sel);
+    }
 
     /// The escaped mask matches its name and no other of a generated set.
     #[test]

@@ -516,3 +516,84 @@ fn a_reopen_that_ends_during_an_operation_is_refused() {
     world.settle(&mut app);
     assert_eq!(dialogs(&app), 1, "its question");
 }
+
+// ---- 4: status counts ---------------------------------------------------------------------------------------------
+
+/// Review finding 4 (R2): a folder and a file below it, both selected, count two items and the file's bytes once.
+#[test]
+fn counts_take_each_byte_once() {
+    use crate::folder::selection::{Hit, Mods};
+    let world = World::new();
+    put(&world, "l", "d/f.txt", &"x".repeat(100), 1_000);
+    put(&world, "r", "d/f.txt", &"x".repeat(100), 1_000);
+    put(&world, "l", "d/g.txt", &"y".repeat(10), 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    app.execute(CommandId::ExpandAll);
+    world.settle(&mut app);
+    let d = node_of(&mut app, view, "d").expect("d");
+    let f = node_of(&mut app, view, "d/f.txt").expect("f");
+    let m = folder_model(&mut app, view);
+    let di = m.rows().iter().position(|r| r.node == d).expect("d row");
+    let fi = m.rows().iter().position(|r| r.node == f).expect("f row");
+    m.click(di, Hit::Side(hikasa_core::Side::Left), Mods::default());
+    m.click(
+        fi,
+        Hit::Centre,
+        Mods {
+            ctrl: true,
+            shift: false,
+        },
+    );
+    // Left: d (110 bytes below it) and d/f.txt inside it; right: d/f.txt alone (100).
+    assert_eq!(m.selection_counts(), [(2, 110), (1, 100)]);
+    let items = m.status_items();
+    assert!(
+        items
+            .right
+            .iter()
+            .any(|t| t.starts_with("Selected: L 2 (110) · R 1 (100)")),
+        "{:?}",
+        items.right
+    );
+}
+
+/// A folder counts the bytes of its shown rows only (§1.9.7): a display that hides a file below it takes its bytes
+/// away; and the counts follow a rebuild that keeps the selection (mutation AF: a memo that ignores the rows).
+#[test]
+fn counts_follow_the_shown_rows() {
+    let world = World::new();
+    put(&world, "l", "d/same.txt", &"s".repeat(7), 1_000);
+    put(&world, "r", "d/same.txt", &"s".repeat(7), 1_000);
+    put(&world, "l", "d/diff.txt", &"l".repeat(30), 3_000);
+    put(&world, "r", "d/diff.txt", &"r".repeat(20), 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select(&mut app, view, "d");
+    let m = folder_model(&mut app, view);
+    assert_eq!(m.selection_counts(), [(1, 37), (1, 27)], "every row shown");
+    app.execute(CommandId::FavDiff);
+    world.settle(&mut app);
+    let m = folder_model(&mut app, view);
+    assert!(
+        m.selection()
+            .items
+            .get(node_of_m(m, "d"))
+            .contains(SideSet::LEFT),
+        "d stays selected"
+    );
+    assert_eq!(
+        m.selection_counts(),
+        [(1, 30), (1, 20)],
+        "the same file is hidden"
+    );
+}
+
+fn node_of_m(m: &FolderViewModel, path: &str) -> hikasa_folder::NodeId {
+    let model = Arc::clone(m.prepared().expect("prepared").model());
+    let read = model.read();
+    read.preorder()
+        .map(|(id, _)| id)
+        .find(|&id| read.path(id).as_str() == path)
+        .expect(path)
+}

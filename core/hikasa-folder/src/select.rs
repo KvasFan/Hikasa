@@ -191,6 +191,9 @@ pub struct SelectScope<'a> {
     pub display: &'a DisplayOptions,
     /// Whether a folder is open.
     pub expanded: Option<&'a dyn Fn(NodeId) -> bool>,
+    /// The rows `display` and `expanded` show, in any order, when the caller has them already (a view's rows, sorted
+    /// or not): they are taken as they are instead of listed again (M2 W9a after review, G15).
+    pub rows: Option<&'a [VisibleRow]>,
 }
 
 impl fmt::Debug for SelectScope<'_> {
@@ -202,68 +205,166 @@ impl fmt::Debug for SelectScope<'_> {
     }
 }
 
-/// Selected rows, each with its sides.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Selected rows, each with its sides. Stored densely by node id (O(1) lookups and updates, a copy is one block; M2
+/// W9a after review, G15); serialised as the map node → sides it always was.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(from = "BTreeMap<NodeId, SideSet>", into = "BTreeMap<NodeId, SideSet>")]
 pub struct Selection {
-    rows: BTreeMap<NodeId, SideSet>,
+    /// The sides of each node id; the last entry is never empty.
+    sides: Vec<SideSet>,
+    /// Entries below this index are empty.
+    lo: usize,
+    /// The selected rows.
+    len: usize,
+}
+
+impl From<BTreeMap<NodeId, SideSet>> for Selection {
+    fn from(map: BTreeMap<NodeId, SideSet>) -> Selection {
+        let mut selection = Selection::default();
+        for (node, sides) in map {
+            selection.insert(node, sides);
+        }
+        selection
+    }
+}
+
+impl From<Selection> for BTreeMap<NodeId, SideSet> {
+    fn from(selection: Selection) -> BTreeMap<NodeId, SideSet> {
+        selection.iter().collect()
+    }
+}
+
+impl PartialEq for Selection {
+    fn eq(&self, other: &Selection) -> bool {
+        self.len == other.len && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for Selection {}
+
+impl fmt::Debug for Selection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
 }
 
 impl Selection {
     /// Adds `sides` of `node`.
     pub fn insert(&mut self, node: NodeId, sides: SideSet) {
-        if !sides.is_empty() {
-            *self.rows.entry(node).or_default() |= sides;
+        if sides.is_empty() {
+            return;
         }
+        let at = node.0 as usize;
+        if at >= self.sides.len() {
+            self.sides.resize(at + 1, SideSet::empty());
+        }
+        if self.sides[at].is_empty() {
+            self.len += 1;
+            if self.len == 1 || at < self.lo {
+                self.lo = at;
+            }
+        }
+        self.sides[at] |= sides;
     }
 
     /// Removes `sides` of `node`.
     pub fn remove(&mut self, node: NodeId, sides: SideSet) {
-        if let Some(set) = self.rows.get_mut(&node) {
-            set.remove(sides);
-            if set.is_empty() {
-                self.rows.remove(&node);
-            }
+        let at = node.0 as usize;
+        let Some(set) = self.sides.get_mut(at) else {
+            return;
+        };
+        if set.is_empty() {
+            return;
+        }
+        set.remove(sides);
+        if set.is_empty() {
+            self.len -= 1;
+            self.trim();
         }
     }
 
-    /// The sides of `node` (empty when it is not selected).
+    /// Keeps the invariants after entries became empty: no empty entry last, `lo` at the first selected one.
+    fn trim(&mut self) {
+        if self.len == 0 {
+            self.sides.clear();
+            self.lo = 0;
+            return;
+        }
+        while self.sides.last().is_some_and(|s| s.is_empty()) {
+            self.sides.pop();
+        }
+        while self.sides.get(self.lo).is_some_and(|s| s.is_empty()) {
+            self.lo += 1;
+        }
+    }
+
+    /// The sides of `node` (empty when it is not selected), O(1).
     pub fn get(&self, node: NodeId) -> SideSet {
-        self.rows.get(&node).copied().unwrap_or_default()
+        self.sides.get(node.0 as usize).copied().unwrap_or_default()
     }
 
     /// True when nothing is selected.
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.len == 0
     }
 
     /// The number of rows.
     pub fn len(&self) -> usize {
-        self.rows.len()
+        self.len
     }
 
     /// The rows, in id order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, SideSet)> + '_ {
-        self.rows.iter().map(|(&node, &sides)| (node, sides))
+        let lo = self.lo.min(self.sides.len());
+        self.sides[lo..]
+            .iter()
+            .enumerate()
+            .filter(|(_, sides)| !sides.is_empty())
+            .map(move |(k, &sides)| (NodeId((lo + k) as u32), sides))
     }
 
-    /// Keeps `side` alone (Shift+Left, Shift+Right).
+    /// Keeps `side` alone (Shift+Left, Shift+Right), in place.
     pub fn restrict(&mut self, side: Side) {
         let keep = SideSet::of(side);
-        self.rows.retain(|_, set| {
+        let lo = self.lo.min(self.sides.len());
+        let mut len = 0;
+        for set in &mut self.sides[lo..] {
             *set &= keep;
-            !set.is_empty()
-        });
+            len += usize::from(!set.is_empty());
+        }
+        self.len = len;
+        self.trim();
     }
 
-    /// Inverts every shown row, on every side it has.
+    /// Inverts every shown row, on every side it has, in place.
     pub fn invert(&mut self, read: &TreeRead<'_>, scope: &SelectScope<'_>) {
-        for row in shown_rows(read, scope) {
-            let present = present_sides(read.node(row.node).as_ref());
+        let listed;
+        let rows = match scope.rows {
+            Some(rows) => rows,
+            None => {
+                listed = shown_rows(read, scope);
+                &listed
+            }
+        };
+        let store = read.store();
+        for row in rows {
+            let present = store.node(row.node).map_or(SideSet::empty(), raw_sides);
             let now = self.get(row.node);
-            self.remove(row.node, now);
-            self.insert(row.node, present.difference(now));
+            let next = present.difference(now);
+            if next != now {
+                self.remove(row.node, now);
+                self.insert(row.node, next);
+            }
         }
     }
+}
+
+/// The sides a raw node has (no `NodeView` built).
+fn raw_sides(node: &crate::model::store::Node) -> SideSet {
+    let mut sides = SideSet::empty();
+    sides.set(SideSet::LEFT, node.sides[0].present());
+    sides.set(SideSet::RIGHT, node.sides[1].present());
+    sides
 }
 
 /// The sides a node has.
@@ -276,8 +377,11 @@ fn present_sides(view: Option<&NodeView<'_>>) -> SideSet {
     sides
 }
 
-/// The rows `scope` shows.
+/// The rows `scope` shows (its own when it has them).
 fn shown_rows(read: &TreeRead<'_>, scope: &SelectScope<'_>) -> Vec<VisibleRow> {
+    if let Some(rows) = scope.rows {
+        return rows.to_vec();
+    }
     let mut rows = Vec::new();
     let all = |_: NodeId| true;
     read.visible_rows(scope.display, scope.expanded.unwrap_or(&all), &mut rows);
@@ -452,14 +556,15 @@ pub fn select(
             SelSide::Right => SideSet::RIGHT,
             SelSide::All => SideSet::all(),
         };
+        let store = read.store();
         for row in &rows {
-            let Some(view) = read.node(row.node) else {
+            let Some(node) = store.node(row.node) else {
                 continue;
             };
             let fits = match kind {
                 SelKind::All => true,
-                SelKind::Files => !view.is_folder(),
-                SelKind::Folders => view.is_folder(),
+                SelKind::Files => !node.is_folder(),
+                SelKind::Folders => node.is_folder(),
             };
             if fits {
                 let hit = found.get(row.node.0 as usize).copied().unwrap_or_default();
@@ -471,13 +576,101 @@ pub fn select(
 
 /// Adds every shown file-like row, on every side it has.
 pub fn select_all_files(read: &TreeRead<'_>, scope: &SelectScope<'_>, into: &mut Selection) {
-    for row in shown_rows(read, scope) {
-        if let Some(view) = read.node(row.node)
-            && !view.is_folder()
+    let store = read.store();
+    let mut each = |row: &VisibleRow| {
+        if let Some(node) = store.node(row.node)
+            && !node.is_folder()
         {
-            into.insert(row.node, present_sides(Some(&view)));
+            into.insert(row.node, raw_sides(node));
+        }
+    };
+    match scope.rows {
+        Some(rows) => rows.iter().for_each(&mut each),
+        None => shown_rows(read, scope).iter().for_each(&mut each),
+    }
+}
+
+/// The status counts of a selection (FC-064, D-238): per side, the selected items and their bytes. Each item counts
+/// once, and each byte once: a file or folder inside a folder selected on the same side adds no bytes of its own; a
+/// folder adds the bytes of the files below it that `display` shows (every folder open), as a file its own. O(items ·
+/// depth + the shown subtrees of the outermost selected folders).
+pub fn selection_counts(
+    read: &TreeRead<'_>,
+    items: &Selection,
+    display: &DisplayOptions,
+) -> [(u64, u64); 2] {
+    let store = read.store();
+    let mut counts = [(0u64, 0u64); 2];
+    for (id, sides) in items.iter() {
+        if id == NodeId::ROOT {
+            continue;
+        }
+        let Some(node) = store.node(id) else {
+            continue;
+        };
+        for (k, side) in [(0usize, SideSet::LEFT), (1, SideSet::RIGHT)] {
+            if !sides.contains(side) {
+                continue;
+            }
+            counts[k].0 += 1;
+            // Inside a folder selected on this side: its bytes are that folder's.
+            let mut up = node.parent;
+            let mut inside = false;
+            while let Some(parent) = store.node(NodeId(up)).filter(|_| up != NodeId::ROOT.0) {
+                if items.get(NodeId(up)).contains(side) {
+                    inside = true;
+                    break;
+                }
+                up = parent.parent;
+            }
+            if inside {
+                continue;
+            }
+            counts[k].1 += if node.is_folder() {
+                shown_bytes(store, id, display, k)
+            } else {
+                file_bytes(&node.sides[k])
+            };
         }
     }
+    counts
+}
+
+/// The bytes of a regular file's side record (0 for other kinds, as the totals count them).
+fn file_bytes(rec: &crate::model::store::SideRec) -> u64 {
+    if rec.present() && rec.kind() == hikasa_vfs::EntryKind::File {
+        rec.size()
+    } else {
+        0
+    }
+}
+
+/// The bytes on side `k` of the files below folder `id` that `display` shows, every folder open.
+fn shown_bytes(
+    store: &crate::model::store::Store,
+    id: NodeId,
+    display: &DisplayOptions,
+    k: usize,
+) -> u64 {
+    let mut bytes = 0u64;
+    let mut stack: Vec<u32> = store
+        .node(id)
+        .map(|n| n.children().collect())
+        .unwrap_or_default();
+    while let Some(child) = stack.pop() {
+        let Some(node) = store.node(NodeId(child)) else {
+            continue;
+        };
+        if !is_visible(store, node, display) {
+            continue;
+        }
+        if node.is_folder() {
+            stack.extend(node.children());
+        } else {
+            bytes = bytes.saturating_add(file_bytes(&node.sides[k]));
+        }
+    }
+    bytes
 }
 
 /// The items of a selection in tree order: `(row, side)`, left first on one row.

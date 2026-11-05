@@ -2644,10 +2644,19 @@ impl FolderViewModel {
             return;
         };
         let read = model.read();
-        let is_open = |node: NodeId| self.is_open(node);
+        let (expand_all, expanded, collapsed) = (self.expand_all, &self.expanded, &self.collapsed);
+        let is_open = |node: NodeId| {
+            if expand_all {
+                !collapsed.contains(&node)
+            } else {
+                expanded.contains(&node)
+            }
+        };
+        // The view's rows are what the scope shows (sorted or not): core takes them as they are.
         let scope = SelectScope {
             display: &self.display,
             expanded: Some(&is_open),
+            rows: Some(&self.rows),
         };
         let iu = self.display.ignore_unimportant;
         let mask = |side, state, kind| [SelectMask::Result { side, state, kind }];
@@ -2699,8 +2708,11 @@ impl FolderViewModel {
                 &mut items,
             ),
             CommandId::SelectInvert => {
-                items = self.selection.items.clone();
-                items.invert(&read, &scope);
+                // In place: no copy of the selection.
+                self.selection.items.invert(&read, &scope);
+                drop(read);
+                self.selection.changed();
+                return;
             }
             _ => return,
         }
@@ -3082,33 +3094,12 @@ impl FolderViewModel {
             return counts;
         }
         self.counts_computed.set(self.counts_computed.get() + 1);
-        let mut counts = [(0u64, 0u64); 2];
-        if let Some(prepared) = self.prepared() {
+        // Core counts each item once and each byte once (a file inside a selected folder adds none of its own), a
+        // folder with the bytes of its shown rows (D-238).
+        let counts = self.prepared().map_or([(0, 0); 2], |prepared| {
             let read = prepared.model().read();
-            for (node, sides) in self.selection.items.iter() {
-                let Some(view) = read.node(node) else {
-                    continue;
-                };
-                let totals = read.totals(node);
-                for (k, side) in [(0, SideSet::LEFT), (1, SideSet::RIGHT)] {
-                    if !sides.contains(side) {
-                        continue;
-                    }
-                    let entry = if k == 0 { view.left } else { view.right };
-                    let bytes = if view.is_folder() {
-                        if k == 0 {
-                            totals.left.bytes
-                        } else {
-                            totals.right.bytes
-                        }
-                    } else {
-                        entry.map_or(0, |e| e.size)
-                    };
-                    counts[k].0 += 1;
-                    counts[k].1 += bytes;
-                }
-            }
-        }
+            hikasa_folder::select::selection_counts(&read, &self.selection.items, &self.display)
+        });
         self.counts.set(Some((key, counts)));
         counts
     }

@@ -857,6 +857,7 @@ impl Service {
         let scope = SelectScope {
             display: &display,
             expanded,
+            rows: None,
         };
         let mut selection = req.selection.clone().unwrap_or_default();
         select(read, &scope, &masks, req.iu, &mut selection);
