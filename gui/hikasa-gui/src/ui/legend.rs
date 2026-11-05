@@ -35,6 +35,8 @@ pub fn swatch_colour(swatch: Swatch, pal: &Palette) -> Color32 {
         },
         Swatch::Mark(..) | Swatch::Ignored => pal.muted,
         Swatch::Marked => pal.accent,
+        Swatch::SyncAction(_, true) => pal.warning,
+        Swatch::SyncAction(..) => pal.fg,
     }
 }
 
@@ -97,5 +99,16 @@ fn paint_swatch(ui: &Ui, rect: egui::Rect, swatch: Swatch, pal: &Palette) {
             colour,
         ),
         Swatch::Marked => icons::paint(painter, rect.shrink(1.0), IconId::Mark, colour),
+        Swatch::SyncAction(action, conflict) => icons::paint(
+            painter,
+            rect.shrink(1.0),
+            crate::ui::folder::sync_icon(crate::folder_view::sync::RowAction {
+                action,
+                overridden: false,
+                conflict,
+                reason: None,
+            }),
+            colour,
+        ),
     }
 }

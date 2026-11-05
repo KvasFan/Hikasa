@@ -840,7 +840,11 @@ impl HikasaApp {
             && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
             && m.show_legend()
         {
-            let sections = crate::legend::sections();
+            let sections = if m.is_sync() {
+                crate::legend::sync_sections()
+            } else {
+                crate::legend::sections()
+            };
             let panel = egui::Panel::right(format!("hk-legend-{}", view.0))
                 .resizable(true)
                 .default_size(300.0)

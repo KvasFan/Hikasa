@@ -33,6 +33,10 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [Options](topic:dialog-options), and the settings wizards [Export](topic:wizard-export),
   [Import](topic:wizard-import) and [Restore Factory Defaults](topic:wizard-restore).
 - [The Folder Compare view](topic:view-folder-compare), with its file operations: [Confirm an
-  operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
+  operation](topic:dialog-confirm), [Delete](topic:dialog-delete), [Copy to Folder](topic:dialog-copy-to-folder),
+  [Rename](topic:dialog-rename), [Touch](topic:dialog-touch), [New Folder](topic:dialog-new-folder),
+  [Exclude](topic:dialog-exclude), [Compare Contents](topic:dialog-compare-contents),
+  [Quick Compare](topic:dialog-quick-compare) and [Synchronize](topic:dialog-sync-preview).
+- [The Folder Sync view](topic:view-folder-sync).
 - [The Text Compare view](topic:view-text-compare).
 - [Scripts in the window](topic:dialog-script): Tools ▸ Run Script…, the status window, Stop.

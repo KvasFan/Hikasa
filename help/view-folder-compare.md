@@ -40,12 +40,28 @@ horizontal wheel (Shift and the wheel). Name keeps at least 80 points.
 
 ## File operations
 
-Select one row, then:
+Select one row or more, then, from the Actions menu:
 
-- Actions ▸ **Copy to Right** (Ctrl+R) and **Copy to Left** (Ctrl+L) copy it to the other side, a folder with what it
-  shows; a file there is replaced.
-- Actions ▸ **Delete** (Del) and **Delete Permanently** (Shift+Del) ask the sides and the recycle bin in the
+- **Copy to Right** (Ctrl+R), **Copy to Left** (Ctrl+L), **Move to Right**, **Move to Left**, **Copy to Side…** and
+  **Move to Side…** (which ask the side), **Copy to Other Side** and **Move to Other Side** (from a pane's context
+  menu), **Exchange** (both sides at once): the selected items go to the other side, a folder with what it shows; a file
+  there is replaced.
+- **Copy to Folder…**, **Move to Folder…**: to a folder outside the comparison ([dialog](topic:dialog-copy-to-folder)).
+- **Delete** (Del) and **Delete Permanently** (Shift+Del) ask the sides and the recycle bin in the
   [Delete dialog](topic:dialog-delete).
+- **Rename** (F2): one row in place, more rows with a mask ([dialog](topic:dialog-rename)). **Touch…**
+  ([dialog](topic:dialog-touch)), **New Folder…** (Ins, [dialog](topic:dialog-new-folder)).
+- **Ignored** marks the selected rows Ignored (their differences do not count) and keeps the marks in the session;
+  **Exclude** hides them by name ([dialog](topic:dialog-exclude)).
+- **Compare Contents** ([dialog](topic:dialog-compare-contents)), **Quick Compare** ([dialog](topic:dialog-quick-compare)),
+  **Compare To…** (F7: two selected items, one and the item marked with Space, or one and an item you browse to),
+  **Open With** ▸ (a Text Compare view, a Folder Compare view of two folders, an application of the Open With page of
+  [Options](topic:dialog-options), the associated application).
+- **Synchronize** ▸ Update Right, Update Left, Update Both, Mirror to Right, Mirror to Left: the
+  [sync preview](topic:dialog-sync-preview). Session ▸ **Sync Base Folders** opens a [Folder Sync view](topic:view-folder-sync).
+
+A verb with options opens its dialog, which plans on every change and shows the plan line by line as `hikasa folder op
+… --dry-run` prints it; a verb without options shows the same list in its questions. *Include hidden items* is in each.
 
 Each operation is planned first, then its questions are asked in [Confirm an operation](topic:dialog-confirm); Stop
 ends one that runs (what ran stays). The log gets its summary and its failures, a notice sums it up, and the rows it
@@ -54,8 +70,8 @@ stays so). A side that is read-only (Disable editing: `--ro`, `--ro1`, `--ro2`, 
 `read_only_right`) is never written: the commands that would are off. It stays read-only through Session Settings,
 Save, Save As, Duplicate Tab and workspaces, and a session saved from the view keeps `read_only_left`,
 `read_only_right`. `--nobackups` turns backups off for the view's operations; Duplicate Tab and a workspace keep it, a
-session does not. The other operations of the Actions menu, and selecting
-more than one row, come later; [hikasa folder op](topic:folder-op) has them all from the command line.
+session does not. An operation, a sync or a content compare of 10 seconds or more beeps at its end with
+`beep_after_long_operations`. [hikasa folder op](topic:folder-op) has every operation from the command line.
 
 ## Folders and archives
 

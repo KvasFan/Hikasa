@@ -32,3 +32,10 @@ holds: a folder holding newer items is drawn as newer.
   important differences, a failed comparison.
 - A small *i*: the row is marked Ignored; its difference counts as same.
 - A ring: the item marked with Space, which Open and Compare To pair with the selected item.
+
+## Folder Sync actions
+
+In a [Folder Sync view](topic:view-folder-sync) the centre column shows the planned action instead: copy left to right,
+copy right to left, delete on the left, delete on the right, leave alone, and a conflict (different on both sides, which
+the matrix leaves). An action an override chose is drawn in the accent colour; a folder whose rows below act shows a
+small Folder Sync mark.

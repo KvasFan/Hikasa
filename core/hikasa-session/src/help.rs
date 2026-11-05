@@ -61,9 +61,18 @@ topics!(
     "dialog-script",
     "dialog-browse",
     "dialog-folder-info",
+    "dialog-copy-to-folder",
+    "dialog-rename",
+    "dialog-touch",
+    "dialog-new-folder",
+    "dialog-exclude",
+    "dialog-compare-contents",
+    "dialog-quick-compare",
+    "dialog-sync-preview",
     "panel-legend",
     "panel-find-filename",
     "view-folder-compare",
+    "view-folder-sync",
     "view-text-compare",
 );
 

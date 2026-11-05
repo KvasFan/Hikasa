@@ -1228,7 +1228,7 @@ status = "implemented"
 [[section]]
 key = "folder-sync"
 title = "Folder Sync"
-help = "view-folder-compare"
+help = "view-folder-sync"
 
 [[section.command]]
 id = "Run"

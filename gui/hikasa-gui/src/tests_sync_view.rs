@@ -608,3 +608,39 @@ fn p_the_view_plan_is_folder_sync_plan() {
         );
     }
 }
+
+/// A9.28: every W9b dialog and the Folder Sync view name a registered help topic (F1 shows it); the Legend of a sync
+/// view adds the actions.
+#[test]
+fn a9_28_help_topics_and_the_sync_legend() {
+    use crate::content_dialogs::{COMPARE_CONTENTS_TOPIC, EXCLUDE_TOPIC, QUICK_COMPARE_TOPIC};
+    use crate::folder_view::sync::SYNC_PREVIEW_TOPIC;
+    use crate::op_dialogs::{COPY_TO_TOPIC, NEW_FOLDER_TOPIC, RENAME_TOPIC, TOUCH_TOPIC};
+    for topic in [
+        COPY_TO_TOPIC,
+        RENAME_TOPIC,
+        TOUCH_TOPIC,
+        NEW_FOLDER_TOPIC,
+        EXCLUDE_TOPIC,
+        COMPARE_CONTENTS_TOPIC,
+        QUICK_COMPARE_TOPIC,
+        SYNC_PREVIEW_TOPIC,
+        Scope::Sync.help_topic(),
+    ] {
+        assert!(hikasa_session::help::topic(topic).is_some(), "{topic}");
+    }
+    assert_eq!(Scope::Sync.help_topic(), "view-folder-sync");
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    open_sync(&world, &mut app, SyncOptions::default());
+    app.execute(CommandId::ContextHelp);
+    assert_eq!(app.help(), Some("view-folder-sync"));
+    let sections = crate::legend::sync_sections();
+    let actions = sections
+        .iter()
+        .find(|s| s.title == "Sync actions")
+        .expect("the actions");
+    assert_eq!(actions.entries.len(), 6);
+    assert_eq!(sections.len(), crate::legend::sections().len() + 1);
+}

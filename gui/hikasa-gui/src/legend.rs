@@ -25,6 +25,8 @@ pub enum Swatch {
     Ignored,
     /// The Space mark's ring (D-238).
     Marked,
+    /// A Folder Sync view's planned action (M2 W9b, FS-001); `true` for a conflict.
+    SyncAction(hikasa_folder::sync::SyncAction, bool),
 }
 
 /// One line of the Legend.
@@ -146,6 +148,34 @@ pub fn sections() -> Vec<LegendSection> {
     ]
 }
 
+/// The Legend of a Folder Sync view (§1.9.11: it adds the action icons): every section of [`sections`] and the actions.
+pub fn sync_sections() -> Vec<LegendSection> {
+    use hikasa_folder::sync::SyncAction;
+    let mut out = sections();
+    let mut entries: Vec<LegendEntry> = [
+        SyncAction::CopyRight,
+        SyncAction::CopyLeft,
+        SyncAction::DeleteLeft,
+        SyncAction::DeleteRight,
+        SyncAction::Leave,
+    ]
+    .into_iter()
+    .map(|action| LegendEntry {
+        swatch: Swatch::SyncAction(action, false),
+        text: crate::folder_view::sync::action_text(action).to_owned(),
+    })
+    .collect();
+    entries.push(LegendEntry {
+        swatch: Swatch::SyncAction(SyncAction::Leave, true),
+        text: "A conflict: different on both sides, and the matrix leaves it".to_owned(),
+    });
+    out.push(LegendSection {
+        title: "Sync actions",
+        entries,
+    });
+    out
+}
+
 /// The Legend as text, one line per entry (tests, the help topic's table).
 #[cfg(test)]
 pub fn text() -> String {
@@ -160,6 +190,9 @@ pub fn text() -> String {
                 Swatch::Mark(_, m) => m.to_owned(),
                 Swatch::Ignored => crate::folder::glyphs::IGNORED_BADGE.to_owned(),
                 Swatch::Marked => "( )".to_owned(),
+                Swatch::SyncAction(action, conflict) => {
+                    format!("{action:?}{}", if conflict { "!" } else { "" })
+                }
             };
             out.push_str(&format!("  {swatch}\t{}\n", entry.text));
         }

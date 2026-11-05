@@ -108,8 +108,8 @@ A folder-sync session keeps the options in `[rules.sync]` (`preset`, `orphans`, 
 warning when a session runs; in `[specs]` or `[rules]` of a folder-sync session it stops the run, naming the nearest known
 key. `hikasa session run <REF>` runs it, with
 `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows`; flags of `folder sync` go on top with `folder sync
---session <REF>`. `folder sync --gui` checks the words here, then asks the GUI for a Folder Sync view, which this version
-cannot show yet (exit 100).
+--session <REF>`. `folder sync --gui` checks the words here, then opens a [Folder Sync view](topic:view-folder-sync) in the window,
+the GUI form of this command; with `--wait` the command exits with the view's code (its last Run's).
 
 ## Output
 

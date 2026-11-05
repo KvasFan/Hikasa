@@ -58,5 +58,7 @@ through a window: it runs headless where it was started, as `hikasa script run -
 command exits with its code; `--json` then prints `hikasa.script.v1`. `--silent` with neither a script nor a settings
 package, and `--closescript` without a script, warn `switch_ignored`.
 
-`hikasa text compare … --gui` and `hikasa folder compare … --gui` send the comparison to the window. See
+`hikasa text compare … --gui` and `hikasa folder compare … --gui` send the comparison to the window; `gui open … --sync`
+and `hikasa folder sync … --gui` open a [Folder Sync view](topic:view-folder-sync) (`gui list` names its kind
+`folder_sync`; `--wait` exits with the code of its last Run). See
 [Exit codes](topic:exit-codes) and [The main window](topic:main-window).

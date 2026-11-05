@@ -33,7 +33,16 @@ dialog-delete	Delete
 dialog-script	Scripts in the window
 dialog-browse	Browse
 dialog-folder-info	Folder Compare Info
+dialog-copy-to-folder	Copy to Folder, Move to Folder
+dialog-rename	Rename
+dialog-touch	Touch
+dialog-new-folder	New Folder
+dialog-exclude	Exclude
+dialog-compare-contents	Compare Contents
+dialog-quick-compare	Quick Compare
+dialog-sync-preview	Synchronize
 panel-legend	Legend
 panel-find-filename	Find Filename
 view-folder-compare	The Folder Compare view
+view-folder-sync	The Folder Sync view
 view-text-compare	The Text Compare view
