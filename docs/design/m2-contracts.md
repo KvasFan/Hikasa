@@ -8674,6 +8674,14 @@ Mutations (each failed the tests named, then was reverted):
 17. D-256's threshold is the constant `LONG_OPERATION` (10 s) against the time from the execute job's start to its
     outcome; an operation's, a sync's and a content compare's outcome effect is `Effect::Beep` of its window.
 18. Check 7's planner rule reads every Rust file under `gui/` (tests too); `op_dialogs.rs` names no `plan_counts`.
+19. G15 at the end of W9b (`docs/02`, load 3.2–7.1): the bench modes `preview` (every row shown, Select All on the left,
+    Copy to Right: 100,020 items) and `sync_view` (`--sync`, Mirror to Right, then Leave Alone on one row). Sync **met**
+    (plan 145 ms after the comparison, an override 234 ms, scrolling max 1.0 ms). Preview: scrolling (max 2.2 ms), PSS
+    (+69 MiB) and the 2 bytes an item **met**; the first frame **not met** (1,281 ms against 1 s): the time is core's
+    `folder_op_plan` (0.62 s for the plan alone on a tree with a tenth of the folders, preview and confirmation 3 ms);
+    reported as found, the threshold unchanged. The W9a rows measured again: select, completion, browse met; tree max
+    met and p95 not (9.28 ms), as after W9a. A Folder Sync view shows every row unless its request names a display (its
+    catalogue section has no display-filter commands, §1.9.15).
 
 Mutations (each failed the tests named, then was reverted):
 

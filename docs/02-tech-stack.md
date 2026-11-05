@@ -582,6 +582,30 @@ unchanged; not re-measured on a real GPU by an agent (D-132). The scan itself to
 (963 ms against 452 ms in the tree order): not a gate figure. The PSS figures of `text_scroll` and `two_windows` are
 within W4c's and W9a's noise plus the W9a code (+10 to +14 MiB against the first W9a run).
 
+### M2 W9b: gate G15 (preview, sync; D-257)
+
+The same command and desktop (2026-11-05, release build, `env -u WAYLAND_DISPLAY xvfb-run -a`, Mesa llvmpipe; other
+sessions' builds ran meanwhile, load 3.2 to 7.1; one run each). New bench modes `preview` (the `folder_scan` tree,
+every row shown, Select All on the left, Copy to Right: ≈100,000 file items, every one replacing) and `sync_view` (a
+Folder Sync view of the same tree, `--sync`, Mirror to Right; then Leave Alone on one row). No new crate (D-258).
+
+| Row | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G15 preview | 4.4 | 100,021 lines (100,020 items and the summary); the preview's first frame 1,281 ms after the command (the plan job included); 600 frames of scrolling p95 1.35 / max 2.21 ms; PSS 165.4 MiB before, 234.8 MiB while open (+69.3 MiB); the preview's own memory 2 bytes an item (`folder_preview.rs`, counting allocator) | first frame < 1.0 s; max < 16.7 ms; ≤ view + 96 MiB; ≤ 16 B an item | first frame **not met**; scrolling, PSS and memory **met** |
+| G15 sync | 4.7 | plan shown 145 ms after the comparison ended; an override of one row re-planned and repainted in 234 ms; 600 frames of scrolling p95 0.67 / max 1.01 ms; PSS 154.0 MiB | ≤ 0.5 s; ≤ 0.5 s; max < 16.7 ms | **met** |
+| G15 tree (`folder_columns`), again | 5.1 | scan 474 ms, 13 frames while scanning: UI work p95 9.28 / max 14.28 ms; PSS 157.5 MiB | max ≤ 16.7, p95 < 8 ms | max met; p95 **not met** (as after W9a) |
+| G15 select, again | 5.8 | Select All 12.3 ms, Invert 4.2 ms, Shift+Left 0.9 ms; Shift+Down p95 1.54 / max 1.89 ms; Select All Files 8.3 ms | each ≤ 16.7 ms; p95 < 4 ms | met |
+| G15 completion, again | 7.1 | the list 165 ms after the last key; typing max 1.78 ms | ≤ 200 ms; ≤ 16.7 ms | met |
+| G15 browse, again | 6.7 | listed 287 ms; scrolling p95 2.32 / max 3.29 ms; PSS 191.4 MiB | ≤ 1 s; < 16.7 ms | met |
+
+**What fails and why.** The preview's first frame waits for the plan job, and the plan is core's `plan_op` of W6
+(`folder_op_plan`): a release run of the Service alone on a tree of 100,000 files in 1,110 folders gave 0.62–0.64 s for
+the plan, 2 ms for `folder_op_preview` and 1 ms for `folder_confirmation`; the bench's tree has ten times the folders and
+the machine was loaded, hence 1.28 s. The window adds one frame (the dialog's first frame drew in 3.4 ms). Bringing the
+row under 1 s needs a faster planner (W6's item builder: target stats and specs per item), not a change of the dialog;
+reported as found (docs/17 §7.1), threshold unchanged. The tree row's p95 is W9a's open finding (§1.9.25 W9a note 34);
+no profiler (`perf`) is installed on this machine, so it was not profiled further.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
