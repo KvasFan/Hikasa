@@ -12,6 +12,9 @@ find_panel = false
 legend = false
 log_height = 160.0
 log_panel = true
+sort = ""
+sort_descending = false
+sort_side = "left"
 toolbar = true
 
 [layout.text-compare]

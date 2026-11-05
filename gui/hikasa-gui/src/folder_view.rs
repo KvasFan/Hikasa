@@ -3013,7 +3013,8 @@ impl FolderViewModel {
             self.set_log_height(h);
         }
         // The columns, widths and sort (D-234): an unknown column id is dropped with one warning.
-        let (columns, warning) = ColumnLayout::from_values(&|key| layout.layout_value(view, key));
+        let (columns, warning) =
+            ColumnLayout::from_kept(&|key| layout.layout_value_kept(view, key));
         if let Some(text) = warning {
             self.notes.push(LogNote {
                 kind: LogKind::Warning,

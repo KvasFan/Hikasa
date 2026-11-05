@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hikasa_core::JobKind;
+use hikasa_core::{JobKind, Side};
 use hikasa_folder::select::{Selection, SideSet};
 use hikasa_session::api::{ContentsKind, ContentsRequest};
 use hikasa_session::ipc::ViewId;
@@ -596,4 +596,84 @@ fn node_of_m(m: &FolderViewModel, path: &str) -> hikasa_folder::NodeId {
         .map(|(id, _)| id)
         .find(|&id| read.path(id).as_str() == path)
         .expect(path)
+}
+
+// ---- 5: the layout's sort and its entries -------------------------------------------------------------------------
+
+/// Review finding 5 (R5): a sort set once is forgotten when the header goes back to the tree order; and a session's
+/// tree order wins over the view type's remembered sort (D-108 overlays key by key).
+#[test]
+fn the_tree_order_is_remembered_and_a_session_s_wins() {
+    use crate::folder::columns::ColumnLayout;
+    use hikasa_session::settings::State;
+    let mut state = State::default();
+    let mut layout = ColumnLayout::default();
+    layout.header_click(ColumnId::Size, Side::Left);
+    for (k, v) in layout.to_layout() {
+        state.set_layout_value("folder-compare", k, v);
+    }
+    let sorted = layout.clone();
+    layout.header_click(ColumnId::Size, Side::Left);
+    layout.header_click(ColumnId::Size, Side::Left);
+    assert_eq!(layout.sort, None, "back to the tree order");
+    let tree_keys = layout.to_layout();
+    for (k, v) in tree_keys.clone() {
+        state.set_layout_value("folder-compare", k, v);
+    }
+    let (read, warning) =
+        ColumnLayout::from_kept(&|k| state.layout_value_kept("folder-compare", k));
+    assert_eq!(read.sort, None, "the tree order is remembered");
+    assert_eq!(warning, None);
+    // The view type remembers a sort; a session saved in the tree order opens in the tree order.
+    let mut global = State::default();
+    for (k, v) in sorted.to_layout() {
+        global.set_layout_value("folder-compare", k, v);
+    }
+    let mut session_view = hikasa_session::sessions::OpaqueTable::new();
+    for (k, v) in tree_keys {
+        session_view.insert(k.to_owned(), v.to_toml());
+    }
+    global.overlay_view("folder-compare", &session_view);
+    let (read, _) = ColumnLayout::from_kept(&|k| global.layout_value_kept("folder-compare", k));
+    assert_eq!(read.sort, None, "the session's tree order wins");
+}
+
+/// Item 13 and mutation AJ: a repeated id, an entry that is not a word and a width that is not a number are dropped
+/// with one warning and the good entries kept; a sort on a column that is not shown leaves the tree order.
+#[test]
+fn bad_layout_entries_are_dropped_one_by_one_with_a_warning() {
+    use hikasa_session::log::LogKind;
+    let (size, crc, owner) = (
+        ColumnId::Size.as_str(),
+        ColumnId::Crc.as_str(),
+        ColumnId::Owner.as_str(),
+    );
+    let state = format!(
+        "schema_version = 1\n\n[layout.folder-compare]\ncolumns = [\"{size}\", 3, \"{crc}\", \"{size}\"]\n\
+         sort = \"{owner}\"\n\n[layout.folder-compare.widths]\n{crc} = 90\n{owner} = \"wide\"\n"
+    );
+    let world = World::with_files(&[("state.toml", &state)]);
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let m = folder_model(&mut app, view);
+    let columns = m.columns().clone();
+    assert_eq!(
+        columns.visible,
+        [ColumnId::Name, ColumnId::Size, ColumnId::Crc],
+        "kept once each"
+    );
+    assert_eq!(columns.width(ColumnId::Crc), 90.0, "the good width kept");
+    assert_eq!(columns.sort, None, "no sort on a column not shown");
+    let warnings: Vec<String> = crate::tests_folder_ops::logged(&app, LogKind::Warning)
+        .into_iter()
+        .filter(|w| w.contains("folder layout"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let warning = &warnings[0];
+    assert!(warning.contains("invalid_config_value"), "{warning}");
+    assert!(
+        warning.contains("`3`") && warning.contains(owner) && warning.contains("again"),
+        "{warning}"
+    );
 }

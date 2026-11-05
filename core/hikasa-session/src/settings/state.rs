@@ -202,7 +202,51 @@ impl LayoutValue {
     }
 }
 
+impl LayoutValue {
+    /// The value of `value` keeping the good entries of a list or a table (M2 W9a after review): a list keeps its
+    /// words, a table its numbers; what was left out comes back as text (an entry's value, a table's key), so the
+    /// reader warns once and keeps the rest. A value of no layout type is `None`.
+    pub fn of_toml_kept(value: &toml::Value) -> Option<(LayoutValue, Vec<String>)> {
+        match value {
+            toml::Value::Array(items) => {
+                let mut kept = Vec::new();
+                let mut dropped = Vec::new();
+                for item in items {
+                    match item.as_str() {
+                        Some(word) => kept.push(word.to_owned()),
+                        None => dropped.push(item.to_string()),
+                    }
+                }
+                Some((LayoutValue::Texts(kept), dropped))
+            }
+            toml::Value::Table(table) => {
+                let mut kept = BTreeMap::new();
+                let mut dropped = Vec::new();
+                for (key, item) in table {
+                    match item {
+                        toml::Value::Float(f) if f.is_finite() => {
+                            kept.insert(key.clone(), *f);
+                        }
+                        toml::Value::Integer(i) => {
+                            kept.insert(key.clone(), *i as f64);
+                        }
+                        _ => dropped.push(key.clone()),
+                    }
+                }
+                Some((LayoutValue::Numbers(kept), dropped))
+            }
+            other => LayoutValue::of_toml(other).map(|v| (v, Vec::new())),
+        }
+    }
+}
+
 impl State {
+    /// `key` of `[layout.<view>]` with the good entries of a list or a table kept and the others named
+    /// ([`LayoutValue::of_toml_kept`]).
+    pub fn layout_value_kept(&self, view: &str, key: &str) -> Option<(LayoutValue, Vec<String>)> {
+        LayoutValue::of_toml_kept(self.layout.get(view)?.get(key)?)
+    }
+
     /// A text remembered for a dialog (`[dialogs.<dialog>] <key>`; another type reads as none).
     pub fn dialog_text(&self, dialog: &str, key: &str) -> Option<&str> {
         self.dialogs.get(dialog)?.get(key)?.as_str()

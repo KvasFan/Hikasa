@@ -85,45 +85,69 @@ impl Default for ColumnLayout {
 
 impl ColumnLayout {
     /// The layout of `[layout.<view>]` (with the session's `[view]` overlaid: D-108's precedence is the caller's).
-    /// Unknown column ids are dropped; a width is clamped; a bad sort word leaves the tree order. The text of one
-    /// `invalid_config_value` warning comes back when anything was dropped.
+    /// Values as read (no entry of a list or a table left out); see [`ColumnLayout::from_kept`] (tests).
+    #[cfg(test)]
     pub fn from_values(
         value: &dyn Fn(&str) -> Option<LayoutValue>,
     ) -> (ColumnLayout, Option<String>) {
+        ColumnLayout::from_kept(&|key| value(key).map(|v| (v, Vec::new())))
+    }
+
+    /// The layout of `[layout.<view>]` from values that keep the good entries of a list or a table and name the
+    /// others (`State::layout_value_kept`). Unknown column ids, entries of the wrong type and a repeated id are
+    /// dropped and the rest kept; a width is clamped; a sort on a column that is not shown, or a bad sort word,
+    /// leaves the tree order (`sort = ""` is the tree order written explicitly). The text of one
+    /// `invalid_config_value` warning comes back when anything was dropped.
+    pub fn from_kept(
+        value: &dyn Fn(&str) -> Option<(LayoutValue, Vec<String>)>,
+    ) -> (ColumnLayout, Option<String>) {
         let mut layout = ColumnLayout::default();
         let mut dropped: Vec<String> = Vec::new();
-        if let Some(words) = value("columns").and_then(LayoutValue::as_texts) {
-            let mut visible = vec![ColumnId::Name];
-            for word in words {
-                match ColumnId::parse(&word) {
-                    Some(ColumnId::Name) => {}
-                    Some(id) if !visible.contains(&id) => visible.push(id),
-                    Some(_) => {}
-                    None => dropped.push(word),
-                }
-            }
-            layout.visible = visible;
-        }
-        if let Some(widths) = value("widths").and_then(LayoutValue::as_numbers) {
-            for (word, width) in widths {
-                match ColumnId::parse(&word) {
-                    Some(ColumnId::Name) => {}
-                    Some(id) => {
-                        layout.widths.insert(id, clamp_width(id, width as f32));
+        if let Some((words, bad)) = value("columns") {
+            dropped.extend(bad.iter().map(|b| format!("`{b}` in columns")));
+            match words.as_texts() {
+                Some(words) => {
+                    let mut visible = vec![ColumnId::Name];
+                    for word in words {
+                        match ColumnId::parse(&word) {
+                            Some(ColumnId::Name) => {}
+                            Some(id) if !visible.contains(&id) => visible.push(id),
+                            Some(_) => dropped.push(format!("`{word}` again in columns")),
+                            None => dropped.push(format!("`{word}`")),
+                        }
                     }
-                    None => dropped.push(word),
+                    layout.visible = visible;
                 }
+                None => dropped.push("columns (not a list)".to_owned()),
             }
         }
-        if let Some(word) = value("sort").and_then(LayoutValue::as_text) {
+        if let Some((widths, bad)) = value("widths") {
+            dropped.extend(bad.iter().map(|b| format!("`{b}` in widths")));
+            match widths.as_numbers() {
+                Some(widths) => {
+                    for (word, width) in widths {
+                        match ColumnId::parse(&word) {
+                            Some(ColumnId::Name) => {}
+                            Some(id) => {
+                                layout.widths.insert(id, clamp_width(id, width as f32));
+                            }
+                            None => dropped.push(format!("`{word}`")),
+                        }
+                    }
+                }
+                None => dropped.push("widths (not a table)".to_owned()),
+            }
+        }
+        let text = |key: &str| value(key).and_then(|(v, _)| v.as_text());
+        if let Some(word) = text("sort").filter(|w| !w.is_empty()) {
             match ColumnId::parse(&word) {
-                Some(column) => {
-                    let side = match value("sort_side").and_then(LayoutValue::as_text).as_deref() {
+                Some(column) if layout.visible.contains(&column) => {
+                    let side = match text("sort_side").as_deref() {
                         Some("right") => Side::Right,
                         _ => Side::Left,
                     };
                     let descending = value("sort_descending")
-                        .and_then(LayoutValue::as_bool)
+                        .and_then(|(v, _)| v.as_bool())
                         .unwrap_or(false);
                     layout.sort = Some(SortKey {
                         column,
@@ -131,24 +155,23 @@ impl ColumnLayout {
                         descending,
                     });
                 }
-                None => dropped.push(word),
+                Some(_) => dropped.push(format!("the sort on `{word}`, a column not shown")),
+                None => dropped.push(format!("`{word}`")),
             }
         }
         let warning = (!dropped.is_empty()).then(|| {
             format!(
-                "[invalid_config_value] unknown folder column id(s) {} in the layout: dropped",
-                dropped
-                    .iter()
-                    .map(|w| format!("`{w}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                "[invalid_config_value] folder layout: unknown column id(s) or bad entries {}: dropped",
+                dropped.join(", ")
             )
         });
         (layout, warning)
     }
 
     /// The keys of `[layout.<view>]` this layout owns: `columns`, `widths` (only those dragged), `sort`, `sort_side`,
-    /// `sort_descending` (the sort keys only with a sort).
+    /// `sort_descending`. The sort keys are always written, the tree order as `sort = ""` (left, ascending), so a
+    /// tree order replaces a remembered sort and a session's tree order wins over the view type's sort (D-108 overlays
+    /// key by key).
     pub fn to_layout(&self) -> Vec<(&'static str, LayoutValue)> {
         let mut out = vec![(
             "columns",
@@ -165,21 +188,16 @@ impl ColumnLayout {
                 ),
             ));
         }
-        if let Some(sort) = &self.sort {
-            out.push(("sort", LayoutValue::Text(sort.column.as_str().to_owned())));
-            out.push((
-                "sort_side",
-                LayoutValue::Text(
-                    if sort.side == Side::Right {
-                        "right"
-                    } else {
-                        "left"
-                    }
-                    .to_owned(),
-                ),
-            ));
-            out.push(("sort_descending", LayoutValue::Bool(sort.descending)));
-        }
+        let (column, side, descending) = match &self.sort {
+            Some(sort) => (sort.column.as_str(), sort.side, sort.descending),
+            None => ("", Side::Left, false),
+        };
+        out.push(("sort", LayoutValue::Text(column.to_owned())));
+        out.push((
+            "sort_side",
+            LayoutValue::Text(if side == Side::Right { "right" } else { "left" }.to_owned()),
+        ));
+        out.push(("sort_descending", LayoutValue::Bool(descending)));
         out
     }
 
