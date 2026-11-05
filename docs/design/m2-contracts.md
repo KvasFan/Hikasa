@@ -8491,7 +8491,13 @@ commit):
     memoises its selection flags by (moves, rows revision, generation, task state) without a copy of the selection;
     `selected_folders` stops at its third item; `retain_shown` does nothing without a selection. The bench runs Select
     All as §1.9.21 says (`FolderViewModel::select_all`: every shown row, every present side — the command itself is
-    W9c's, D-252) and Select All Files as an extra figure.
+    W9c's, D-252) and Select All Files as an extra figure. While the comparison runs the rows are rebuilt on a thread of
+    their own (the model's read lock there, the sort cache with them) and swapped in, unless the open folders or the
+    model changed meanwhile; every other rebuild runs on the window's thread and waits for one in flight. G15 after the
+    fixes (`docs/02`, load 4.1–8.8): select **met** (Select All 10.7 ms, Invert 3.1, Shift+Left 0.8, Shift+Down p95
+    1.0), completion and browse met; tree max **met** (9.7 ms) and p95 **not met** (9.54 ms against 8; the tree order
+    with the default columns 6.19 ms at the same load): the remaining frame work is drawing a sorted window whose texts
+    change as the scan adds sizes, not the sort. ARCH-GUI-003 met.
 35. The catalogue's `<type>` in a description is the view's type where it is shown (`Info`: "Displays folder compare
     statistics."), as `<Type>` in a caption. Clear Session on a view without bases and comparison does nothing. The
     `FOLDER_COMMANDS` test's Stop row opens its scan gate once Stop ran (no sleep).

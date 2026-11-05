@@ -554,6 +554,34 @@ children changed, and a selection stored as ranges of the shown rows (or the who
 the maintainer's decision for W9b/W9c. `two_windows`' one 17.4 ms frame came at load 12 with the other figures as in W4c;
 it is not re-measured on the real display by an agent (D-132). The PSS figures are W4c's (255–262 MiB) within the noise.
 
+### M2 W9a after the review: gate G15 again (D-257)
+
+The same command and desktop (2026-11-05, Mesa llvmpipe; other sessions' builds and tests ran meanwhile, load 4.1 to
+8.8; one run each), after the review's fixes (§1.9.25 notes 23–35): each folder's sorted order cached between rebuilds,
+the rows rebuilt off the window's thread while the comparison runs, the frame's command context computed once, the
+selection's flags memoised, a dense `Selection` and raw select passes, the counts' totals, and Select All measured as
+§1.9.21 says (Select All Files kept as an extra figure).
+
+| Row | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G15 tree (`folder_columns`) | 4.3 | scan 963 ms, 15 frames while scanning: UI work p95 9.54 / max 9.70 ms (none above 16.7 ms); PSS 169.1 MiB | max ≤ 16.7, p95 < 8 ms; PSS < 381.5 MiB and ≤ M1 + 48 MiB | max **met**; p95 **not met**; PSS met |
+| same tree, tree order, default columns (`folder_scan`) | 4.1 | scan 452 ms, 15 frames: p95 6.19 / max 6.44 ms, rebuilds max 5.1 ms; PSS 152.8 MiB | (M1 (b)) | met |
+| G15 select | 4.3 | Select All 10.7 ms, Invert Selection 3.1 ms, Shift+Left 0.8 ms (one frame each, 111,150 rows); 300 × Shift+Down p95 1.04 / max 1.36 ms; Select All Files (extra) 7.0 ms | each command ≤ 16.7 ms; Shift+Down p95 < 4 ms | **met** |
+| G15 completion | 4.2 | the list 165 ms after the last key (the 150 ms debounce included); typing max 1.26 ms | ≤ 200 ms; no frame above 16.7 ms | **met** |
+| G15 browse | 4.1 | listed 267 ms after it opened (100,000 entries); 600 frames of scrolling p95 2.17 / max 2.80 ms; PSS 193.8 MiB | ≤ 1 s; max < 16.7 ms | **met** |
+| ARCH-GUI-003 `text_scroll` | 4.5–4.9 | PSS 271.9, 271.6, 272.4 (**271.9**) MiB; 215.7 / 172.2 / 156.1 fps; first screen 261 ms, coloured 937 ms | < 381.5 MiB, ≥ 60 fps, < 1 s | met |
+| ARCH-GUI-003 `two_windows` | 7.2–8.8 | PSS 282.7, 278.3, 276.0 (**278.3**) MiB; last run UI work p95 5.52, max 7.59 ms | < 381.5 MiB, p95 < 8, max < 16.7 ms | met |
+| G12 `workspace_restore` | 8.8 | per pending tab −0.02 MiB PSS, −0.02 anonymous | ≤ 20 MiB a tab | met |
+
+**What still fails and why.** The tree row's frames are no longer the sort's: the rebuild runs on its own thread while
+the comparison runs (max 8 ms there, off the window's thread) and sorts again only the folders that changed; the worst
+frames now are the drawing of a window whose sorted rows change under the pointer while the scan adds sizes (new texts
+to lay out each rebuild, every column shown, llvmpipe). The tree order with the default columns stays at 6.2 ms on the
+same tree at the same load; the step from 6.2 to 9.5 ms is that drawing. Reported as found (docs/17 §7.1), threshold
+unchanged; not re-measured on a real GPU by an agent (D-132). The scan itself took longer with every column and the sort
+(963 ms against 452 ms in the tree order): not a gate figure. The PSS figures of `text_scroll` and `two_windows` are
+within W4c's and W9a's noise plus the W9a code (+10 to +14 MiB against the first W9a run).
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
