@@ -51,6 +51,8 @@ pub struct FolderModel {
     rules: FolderRules,
     store: RwLock<Store>,
     generation: AtomicU64,
+    /// Bumped by changes of cached values only (CRCs on demand): nothing a comparison, a plan or a count reads.
+    cache_generation: AtomicU64,
     finished: AtomicBool,
     claimed: AtomicBool,
     /// A refresh or a content test on demand runs.
@@ -108,6 +110,7 @@ impl FolderModel {
             rules,
             store: RwLock::new(store),
             generation: AtomicU64::new(0),
+            cache_generation: AtomicU64::new(0),
             finished: AtomicBool::new(false),
             claimed: AtomicBool::new(false),
             busy: AtomicBool::new(false),
@@ -127,6 +130,13 @@ impl FolderModel {
     /// Incremented after every applied mutation (cheap change detection for the GUI).
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    /// Incremented after every change of a cached value only (a CRC on demand, FC-040): the shown cells and a sort
+    /// on it change, while the categories, counts and everything a plan reads stay; [`generation`](Self::generation)
+    /// stays too, so a plan made before still holds (M2 W9a).
+    pub fn cache_generation(&self) -> u64 {
+        self.cache_generation.load(Ordering::Acquire)
     }
 
     /// True once `compare_into` returned (complete or cancelled).
@@ -174,6 +184,15 @@ impl FolderModel {
         let mut store = self.store.write();
         let result = f(&mut store);
         self.generation.fetch_add(1, Ordering::AcqRel);
+        drop(store);
+        result
+    }
+
+    /// Applies a change of cached values only under the write lock and bumps [`cache_generation`](Self::cache_generation).
+    pub(crate) fn mutate_cache<R>(&self, f: impl FnOnce(&mut Store) -> R) -> R {
+        let mut store = self.store.write();
+        let result = f(&mut store);
+        self.cache_generation.fetch_add(1, Ordering::AcqRel);
         drop(store);
         result
     }

@@ -411,6 +411,8 @@ pub struct FolderViewModel {
     state: FolderState,
     rows: Vec<VisibleRow>,
     seen_generation: u64,
+    /// The model's cache generation (CRCs on demand) the rows were built at: a sort on CRC rebuilds for it.
+    seen_cache_generation: u64,
     rebuilt_at: Option<Instant>,
     /// The selection (D-238).
     selection: ViewSelection,
@@ -492,6 +494,9 @@ pub struct FolderViewModel {
     /// Tests hold a comparison here once it scanned, before it reports (a view that is still comparing).
     #[cfg(test)]
     pub scan_gate: Option<Gate>,
+    /// Tests hold a CRC-on-demand job here before it reads (a job in flight).
+    #[cfg(test)]
+    pub crc_gate: Option<Gate>,
 }
 
 /// A cancelled CRC job a job that claims the model's refresh waits for (D-237).
@@ -565,6 +570,7 @@ impl FolderViewModel {
             state,
             rows: Vec::new(),
             seen_generation: u64::MAX,
+            seen_cache_generation: 0,
             rebuilt_at: None,
             selection: ViewSelection::new(),
             selected_index: None,
@@ -610,6 +616,8 @@ impl FolderViewModel {
             gate: None,
             #[cfg(test)]
             scan_gate: None,
+            #[cfg(test)]
+            crc_gate: None,
         }
     }
 
@@ -782,6 +790,7 @@ impl FolderViewModel {
             }
             None => None,
         };
+        self.cancel_crc();
         self.cancel();
         Retired {
             events: std::mem::take(&mut self.outbox),
@@ -914,11 +923,19 @@ impl FolderViewModel {
         }
         if let Some(prepared) = self.prepared() {
             let generation = prepared.model().generation();
-            let due = !self.scanning()
-                || self
-                    .rebuilt_at
-                    .is_none_or(|at| at.elapsed() >= REBUILD_INTERVAL);
-            if (generation != self.seen_generation && due) || changed {
+            let throttled = self
+                .rebuilt_at
+                .is_none_or(|at| at.elapsed() >= REBUILD_INTERVAL);
+            let due = !self.scanning() || throttled;
+            // A CRC found on demand changes the cells (read at render) and, sorted on CRC, the order: rebuilt at most
+            // once per interval, as a scan's results are (the job's end rebuilds at once).
+            let crc_order = self
+                .columns
+                .sort
+                .is_some_and(|k| k.column == hikasa_folder::view::SortColumn::Crc)
+                && prepared.model().cache_generation() != self.seen_cache_generation
+                && throttled;
+            if (generation != self.seen_generation && due) || crc_order || changed {
                 self.rebuild();
                 changed = true;
             }
@@ -936,6 +953,7 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let generation = model.generation();
+        let cache_generation = model.cache_generation();
         let read = model.read();
         let mut rows = std::mem::take(&mut self.rows);
         rows.clear();
@@ -964,6 +982,7 @@ impl FolderViewModel {
         self.rows = rows;
         self.rows_revision += 1;
         self.seen_generation = generation;
+        self.seen_cache_generation = cache_generation;
         self.rebuilt_at = Some(Instant::now());
         self.selected_index = self.selection.current_index(&self.rows);
         let ms = began.elapsed().as_secs_f64() * 1000.0;
@@ -1079,7 +1098,14 @@ impl FolderViewModel {
         {
             self.crc_stale = None;
         }
-        if !self.crc_due || self.crc_job.is_some() || self.crc_stale.is_some() || self.busy() {
+        // Never beside a task of the view (a dialog or a question waiting counts): an operation's plan must find the
+        // model as it was made from (D-237, §1.9.2 rule 4).
+        if !self.crc_due
+            || self.crc_job.is_some()
+            || self.crc_stale.is_some()
+            || self.busy()
+            || self.task.is_some()
+        {
             return changed;
         }
         self.crc_due = false;
@@ -1130,12 +1156,18 @@ impl FolderViewModel {
             kind: ContentsKind::Crc(SideSet::all()),
             text_rules: None,
         };
+        #[cfg(test)]
+        let gate = self.crc_gate.clone();
         let job = Job::spawn(
             service,
             JobKind::FolderOp,
             "CRC".into(),
             &self.wake,
-            move |svc, job| svc.folder_contents(&model, &request, job),
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_contents(&model, &request, job)
+            },
         );
         #[cfg(test)]
         {
@@ -1453,6 +1485,8 @@ impl FolderViewModel {
         self.selected_index = None;
         self.children.clear();
         self.child_results.clear();
+        // The comparison runs again: a CRC that failed is asked again (D-237).
+        self.crc_errors.clear();
         self.loaded = false;
         self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
         self.rows.clear();
@@ -1603,6 +1637,9 @@ impl FolderViewModel {
     ) -> Option<Box<dyn DialogModel>> {
         let (items, on) = self.operable()?;
         let mark = Mark::of(self.prepared()?);
+        // An operation starts: the CRC job gives way at once (it is stale until it ended, and the execution waits for
+        // it); a CRC it still finds changes no generation the plan checks.
+        self.cancel_crc();
         match command {
             CommandId::CopyRight | CommandId::CopyLeft => {
                 let to = if command == CommandId::CopyRight {
@@ -1879,8 +1916,10 @@ impl FolderViewModel {
         if self.prepared().is_none() {
             return;
         }
-        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        // The CRC job holds the model's refresh claim: it gives way (D-237); the rows are compared again, so a CRC
+        // that failed is asked again.
         let crc = self.crc_yield();
+        self.crc_errors.clear();
         let Some(prepared) = self.prepared() else {
             return;
         };

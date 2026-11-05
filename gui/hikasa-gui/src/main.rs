@@ -78,6 +78,8 @@ mod tests_folder_ops_fixes;
 #[cfg(test)]
 mod tests_folder_view;
 #[cfg(test)]
+mod tests_folder_view_fixes;
+#[cfg(test)]
 mod tests_legend_info;
 #[cfg(test)]
 mod tests_options;
