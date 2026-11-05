@@ -660,20 +660,32 @@ pub struct SystemLauncher;
 
 impl AppLauncher for SystemLauncher {
     fn run(&self, command: &OpenCommand) -> Result<i32, ApiError> {
-        let status = std::process::Command::new(&command.program)
+        (self.start(command)?)()
+    }
+
+    fn start<'a>(
+        &'a self,
+        command: &'a OpenCommand,
+    ) -> Result<crate::launcher::Started<'a>, ApiError> {
+        let mut child = std::process::Command::new(&command.program)
             .args(&command.args)
             .current_dir(&command.cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
+            .spawn()
             .map_err(|e| {
                 ApiError::InvalidArgument(format!(
                     "cannot start {}: {e}",
                     command.program.to_string_lossy()
                 ))
             })?;
-        Ok(status.code().unwrap_or(-1))
+        Ok(Box::new(move || {
+            let status = child.wait().map_err(|e| {
+                ApiError::InvalidArgument(format!("{}: {e}", command.program.to_string_lossy()))
+            })?;
+            Ok(status.code().unwrap_or(-1))
+        }))
     }
 
     fn open_associated(&self, path: &std::path::Path) -> Result<(), ApiError> {

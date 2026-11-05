@@ -50,9 +50,19 @@ pub trait AppLauncher: Send + Sync {
     /// Starts the program and returns when it has ended (a job thread waits: `refresh_when_finished`,
     /// `wait_for_previous`). `Err` when it cannot start; its own exit code is the program's.
     fn run(&self, command: &OpenCommand) -> Result<i32, ApiError>;
+    /// Starts the program and returns once it started (additive, W9b review): `Err` when it cannot start, else what
+    /// waits for its end. Programs that do not wait for each other start one after the other, so the first that cannot
+    /// start stops the rest. The default runs the program to its end here (a launcher that cannot tell the two apart).
+    fn start<'a>(&'a self, command: &'a OpenCommand) -> Result<Started<'a>, ApiError> {
+        let code = self.run(command)?;
+        Ok(Box::new(move || Ok(code)))
+    }
     /// FC-062 *Associated Application*.
     fn open_associated(&self, path: &Path) -> Result<(), ApiError>;
 }
+
+/// What [`AppLauncher::start`] gives back: waits for the started program's end, with its exit code.
+pub type Started<'a> = Box<dyn FnOnce() -> Result<i32, ApiError> + Send + 'a>;
 
 /// No programs here: every call is `unsupported`. The default of `ServiceInit::new`.
 #[derive(Debug, Clone, Copy, Default)]

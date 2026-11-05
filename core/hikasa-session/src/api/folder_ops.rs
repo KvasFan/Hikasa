@@ -1647,8 +1647,9 @@ impl Service {
         Ok(ExpandItem { path, base })
     }
 
-    /// Runs the commands: one after another with `wait_for_previous`, else all at once, each on a thread of its own. A
-    /// program that cannot start is the error; a program's own exit code is not Hikasa's.
+    /// Runs the commands: one after another with `wait_for_previous`, else each started in turn and waited for on a
+    /// thread of its own. A program that cannot start is the error and starts none after it, as a cancel does; a
+    /// program's own exit code is not Hikasa's.
     pub fn open_with_run(
         &self,
         commands: &[OpenCommand],
@@ -1664,12 +1665,24 @@ impl Service {
                 }
                 return Ok(());
             }
+            // One after the other they start (a cancel or the first that cannot start stops the rest, W9b review),
+            // then each is waited for on a thread of its own.
             std::thread::scope(|scope| {
-                let runs: Vec<_> = commands
-                    .iter()
-                    .map(|command| scope.spawn(move || launcher.run(command)))
-                    .collect();
                 let mut first = Ok(());
+                let mut runs = Vec::with_capacity(commands.len());
+                for command in commands {
+                    if job.cancel.check().is_err() {
+                        first = Err(ApiError::Cancelled);
+                        break;
+                    }
+                    match launcher.start(command) {
+                        Ok(wait) => runs.push(scope.spawn(wait)),
+                        Err(e) => {
+                            first = Err(e);
+                            break;
+                        }
+                    }
+                }
                 for run in runs {
                     let result = run
                         .join()
