@@ -224,6 +224,11 @@ pub enum FolderEvent {
         /// How long it ran.
         elapsed: Duration,
     },
+    /// A Compare Contents ended (M2 W9b): the window beeps after a long one (`beep_after_long_operations`, D-256).
+    Ended {
+        /// How long it ran.
+        elapsed: Duration,
+    },
     /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
     Outcome {
         /// The command's caption.
@@ -563,8 +568,12 @@ pub struct FolderViewModel {
     sync: Option<Box<sync::SyncViewModel>>,
     /// The view's sync options or rules changed since the window last asked (its session becomes dirty).
     dirty_options: bool,
-    /// How long the last Compare Contents ran (`beep_after_long_operations`, D-256), taken by the window.
-    contents_elapsed: Option<Duration>,
+    /// Tests: the next sync's execute job fails as a whole (its job's error, A9.17).
+    #[cfg(test)]
+    pub fail_sync: bool,
+    /// Tests: the duration a task's end reports instead of the time it ran (D-256's beep, an injected duration).
+    #[cfg(test)]
+    pub fake_elapsed: Option<Duration>,
     /// The one-row Rename's inline edit (D-245).
     inline_rename: Option<verbs::InlineRename>,
     /// The plan the last execute job received, serialized (tests: A9.12's identity).
@@ -748,7 +757,10 @@ impl FolderViewModel {
             inline_rename: None,
             sync,
             dirty_options: false,
-            contents_elapsed: None,
+            #[cfg(test)]
+            fake_elapsed: None,
+            #[cfg(test)]
+            fail_sync: false,
             #[cfg(test)]
             executed: None,
             #[cfg(test)]
@@ -1895,6 +1907,15 @@ impl FolderViewModel {
     // ---- operations (M2 W6d, §1.6.20) ------------------------------------------------------------------------------
 
     /// What the window takes since the last call: dialogs, notices, outcomes.
+    /// The time a task ran since `began` (tests inject one, D-256).
+    fn elapsed_since(&self, began: Instant) -> Duration {
+        #[cfg(test)]
+        if let Some(fake) = self.fake_elapsed {
+            return fake;
+        }
+        began.elapsed()
+    }
+
     /// Puts an event in the outbox (tests: an outcome with an injected duration, D-256).
     #[cfg(test)]
     pub fn push_event(&mut self, event: FolderEvent) {
@@ -2376,7 +2397,7 @@ impl FolderViewModel {
                         self.outbox.push(FolderEvent::Outcome {
                             caption,
                             outcome: Box::new(outcome),
-                            elapsed: began.elapsed(),
+                            elapsed: self.elapsed_since(began),
                         });
                         nodes
                     }
@@ -2505,12 +2526,12 @@ impl FolderViewModel {
                         self.outbox.push(FolderEvent::SyncOutcome {
                             caption,
                             outcome: Box::new(outcome),
-                            elapsed: began.elapsed(),
+                            elapsed: self.elapsed_since(began),
                         });
                         nodes
                     }
                     Err(e) => {
-                        self.sync_replan();
+                        self.sync_failed();
                         self.outbox.push(FolderEvent::Notice {
                             kind: NoticeKind::Error,
                             text: format!("{caption}: {e}"),
@@ -2543,7 +2564,9 @@ impl FolderViewModel {
                                 text: format!("{caption}: {last}"),
                             });
                         }
-                        self.contents_elapsed = Some(began.elapsed());
+                        self.outbox.push(FolderEvent::Ended {
+                            elapsed: self.elapsed_since(began),
+                        });
                         if show_results {
                             self.outbox.push(FolderEvent::Dialog(Box::new(
                                 crate::content_dialogs::ContentsResultsDialog::new(dto),
@@ -3271,17 +3294,18 @@ impl FolderViewModel {
     /// not start or load its bases is `LoadFailed`.
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
         self.poll(service);
+        // A view that could not load its bases is `load_failed` whatever its type (D-23), a Folder Sync view too.
+        if matches!(self.state, FolderState::Failed { .. }) {
+            return ViewOutcome::LoadFailed;
+        }
         if let Some(outcome) = self.sync_outcome() {
             return outcome;
         }
-        match &self.state {
-            FolderState::Failed { .. } => ViewOutcome::LoadFailed,
-            _ => ViewOutcome::for_folder(
-                self.prepared(),
-                self.display.ignore_unimportant,
-                self.scanning(),
-            ),
-        }
+        ViewOutcome::for_folder(
+            self.prepared(),
+            self.display.ignore_unimportant,
+            self.scanning(),
+        )
     }
 
     /// True while the Find Filename panel shows (D-241).

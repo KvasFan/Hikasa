@@ -27,7 +27,7 @@ use crate::window::{CommandArg, Invocation};
 
 // ---- helpers ------------------------------------------------------------------------------------------------------
 
-fn tree(world: &World, side: &str) -> BTreeMap<String, String> {
+pub(crate) fn tree(world: &World, side: &str) -> BTreeMap<String, String> {
     let root = world.path(&format!("work/{side}"));
     let mut out = BTreeMap::new();
     let mut stack = vec![root.clone()];
@@ -53,12 +53,12 @@ fn tree(world: &World, side: &str) -> BTreeMap<String, String> {
     out
 }
 
-fn trees(world: &World) -> [BTreeMap<String, String>; 2] {
+pub(crate) fn trees(world: &World) -> [BTreeMap<String, String>; 2] {
     [tree(world, "l"), tree(world, "r")]
 }
 
 /// A newer file each way, orphans each side, a folder with a difference.
-fn fixture(world: &World) {
+pub(crate) fn fixture(world: &World) {
     put(world, "l", "a.txt", "new left\n", 3_000);
     put(world, "r", "a.txt", "old\n", 1_000);
     put(world, "l", "b.txt", "old\n", 1_000);
@@ -70,12 +70,12 @@ fn fixture(world: &World) {
     put(world, "l", "d/y.txt", "y left\n", 3_000);
 }
 
-fn find<T: DialogModel>(app: &mut TestApp) -> Option<&mut T> {
+pub(crate) fn find<T: DialogModel>(app: &mut TestApp) -> Option<&mut T> {
     let w = app.win();
     app.0.window_mut(w).and_then(|w| w.dialogs.find_mut::<T>())
 }
 
-fn ticks(world: &World, app: &mut TestApp) {
+pub(crate) fn ticks(world: &World, app: &mut TestApp) {
     for _ in 0..4 {
         app.0.handle(crate::app::UiMsg::Tick);
         world.settle(app);
@@ -83,7 +83,7 @@ fn ticks(world: &World, app: &mut TestApp) {
 }
 
 /// Opens a Folder Sync view of `work/l` and `work/r` with `options`.
-fn open_sync(world: &World, app: &mut AppCore, options: SyncOptions) -> ViewId {
+pub(crate) fn open_sync(world: &World, app: &mut AppCore, options: SyncOptions) -> ViewId {
     for side in ["work/l", "work/r"] {
         std::fs::create_dir_all(world.path(side)).expect("mkdir");
     }
@@ -120,7 +120,11 @@ fn open_sync(world: &World, app: &mut AppCore, options: SyncOptions) -> ViewId {
 
 /// The same sync through the Service on a twin tree, as `hikasa folder sync --<preset> --yes` makes it
 /// (`--just-selection` with `paths`).
-fn cli_twin(world: &World, options: SyncOptions, paths: Option<Vec<(&str, SideSet)>>) -> ExitCode {
+pub(crate) fn cli_twin(
+    world: &World,
+    options: SyncOptions,
+    paths: Option<Vec<(&str, SideSet)>>,
+) -> ExitCode {
     let request = FolderCompareRequest {
         left: world.path("work/l").into_os_string(),
         right: world.path("work/r").into_os_string(),
@@ -154,7 +158,7 @@ fn cli_twin(world: &World, options: SyncOptions, paths: Option<Vec<(&str, SideSe
 }
 
 /// Answers every question of a sync with Yes to All.
-fn confirm_all(world: &World, app: &mut TestApp) {
+pub(crate) fn confirm_all(world: &World, app: &mut TestApp) {
     for _ in 0..4 {
         if find::<PlanConfirmDialog>(app).is_some() {
             crate::tests_folder_ops::press(world, app, YES_TO_ALL);

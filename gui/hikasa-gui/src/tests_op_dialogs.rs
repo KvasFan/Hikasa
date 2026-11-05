@@ -827,6 +827,45 @@ fn a9_13_compare_contents_asks_and_shows_the_results() {
     );
 }
 
+/// D-256 for Compare Contents (review F3): its end beeps after ≥ 10 s with `beep_after_long_operations`, not before
+/// (the duration injected into the view, the path from the job's end to the window's effect real).
+#[test]
+fn compare_contents_beeps_after_a_long_run() {
+    let world = World::with_files(&[(
+        "options.toml",
+        "schema_version = 1\n[tweaks.file_operations]\nbeep_after_long_operations = true\n",
+    )]);
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    for (secs, beeps) in [(10, true), (9, false)] {
+        select_all_of(&mut app, view, &["a.txt"]);
+        folder_model(&mut app, view).fake_elapsed =
+            Some(Duration::from_millis(secs * 1_000 - u64::from(!beeps)));
+        app.execute(CommandId::Compare);
+        world.settle(&mut app);
+        let d = find::<CompareContentsDialog>(&mut app).expect("Compare Contents");
+        d.show_results = false;
+        let w = app.win();
+        app.0.dialog_button(w, ButtonRole::Ok);
+        let effects = world.settle(&mut app);
+        assert!(
+            logged(&app, LogKind::Summary)
+                .iter()
+                .any(|l| l.starts_with("Compare Contents")),
+            "{:?}",
+            logged(&app, LogKind::Summary)
+        );
+        assert_eq!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Beep(x) if *x == w)),
+            beeps,
+            "{secs} s: {effects:?}"
+        );
+    }
+}
+
 /// Quick Compare's results equal `hikasa quick`'s for each pair; Open opens the selected one.
 #[test]
 fn a9_13_quick_compare_equals_quick_and_opens_a_pair() {

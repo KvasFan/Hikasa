@@ -101,6 +101,8 @@ mod tests_sessions;
 mod tests_shell;
 #[cfg(test)]
 mod tests_sync_view;
+#[cfg(test)]
+mod tests_sync_view_fixes;
 
 use std::ffi::OsString;
 use std::io::Read;

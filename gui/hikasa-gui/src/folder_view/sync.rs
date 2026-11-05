@@ -538,7 +538,7 @@ impl FolderViewModel {
         let crc = self.crc_yield();
         let refresh = plan.op.refresh.clone();
         #[cfg(test)]
-        let gate = self.gate.clone();
+        let (gate, fail) = (self.gate.clone(), self.fail_sync);
         let job = Job::spawn(
             service,
             JobKind::FolderSync,
@@ -547,6 +547,10 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 super::wait_at(gate.as_ref());
+                #[cfg(test)]
+                if fail {
+                    return Err(ApiError::InvalidData("the sync failed (test)".into()));
+                }
                 crc.wait();
                 svc.folder_sync_execute(plan, job)
             },
@@ -574,6 +578,14 @@ impl FolderViewModel {
     pub(super) fn sync_ran(&mut self, outcome: &FolderSyncOutcome) {
         if let Some(sync) = self.sync.as_deref_mut() {
             sync.last_run = Some(outcome.exit_code());
+        }
+        self.sync_replan();
+    }
+
+    /// A Run that failed as a whole (its job's error): the waited exit code is 100 (A9.17).
+    pub(super) fn sync_failed(&mut self) {
+        if let Some(sync) = self.sync.as_deref_mut() {
+            sync.last_run = Some(ExitCode::UnknownError);
         }
         self.sync_replan();
     }

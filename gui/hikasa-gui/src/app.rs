@@ -1442,6 +1442,11 @@ impl AppCore {
                         effects.push(Effect::Beep(window));
                     }
                 }
+                FolderEvent::Ended { elapsed } => {
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
                 FolderEvent::Rebase(specs) => self.rebase(view, specs, None),
             }
         }
@@ -1568,7 +1573,7 @@ impl AppCore {
         let window = self.window_of(view).unwrap_or_else(|| self.focused());
         for event in retired.events {
             match event {
-                FolderEvent::Dialog(_) | FolderEvent::Rebase(_) => {}
+                FolderEvent::Dialog(_) | FolderEvent::Rebase(_) | FolderEvent::Ended { .. } => {}
                 FolderEvent::Notice { kind, text } => {
                     let log = match kind {
                         NoticeKind::Info => LogKind::Summary,
