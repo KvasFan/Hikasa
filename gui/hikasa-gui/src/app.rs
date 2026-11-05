@@ -3023,11 +3023,14 @@ impl AppCore {
             .downcast_mut::<crate::op_dialogs::OpDialog>()
         {
             let (view, again, started) = (d.view(), d.plan_again(), d.take_started());
-            let remembered = if started.is_some() {
-                d.remembered()
+            let (remembered, target) = if started.is_some() {
+                (d.remembered(), d.target().map(str::to_owned))
             } else {
-                Vec::new()
+                (Vec::new(), None)
             };
+            if let Some(target) = target.filter(|t| !t.is_empty()) {
+                self.push_mru(MruList::Folders, target);
+            }
             let command = d.context().command;
             let service = self.service.clone();
             if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {

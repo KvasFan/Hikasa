@@ -148,6 +148,17 @@ pub fn op_dialog(ui: &mut Ui, d: &mut OpDialog, pal: &Palette) -> bool {
                         }
                     });
                 }
+                if !d.recent.is_empty() {
+                    let recent = d.recent.clone();
+                    ui.menu_button("▾", |ui| {
+                        for folder in recent {
+                            if ui.button(&folder).clicked() {
+                                d.set_target(&folder);
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 if ui.button("Browse…").clicked() {
                     browse = true;
                 }

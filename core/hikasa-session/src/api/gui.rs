@@ -1662,8 +1662,14 @@ impl Service {
                 if let Some(filters) = &options.filters {
                     patch.name_filter = Some(filters.clone());
                 }
+                // A Folder Sync view has no display-filter commands: it shows every row unless the request says
+                // otherwise (§1.9.15, M2 W9b).
+                let display_word = match (kind, options.display.as_deref()) {
+                    (ViewKind::FolderSync, None) => Some("all"),
+                    (_, word) => word,
+                };
                 let display = resolve_folder_display(
-                    options.display.as_deref(),
+                    display_word,
                     options.folders.as_deref(),
                     options.suppress_filters,
                     options.ignore_unimportant,

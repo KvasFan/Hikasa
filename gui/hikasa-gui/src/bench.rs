@@ -217,6 +217,8 @@ pub struct BenchState {
     w9b_plan_ms: Option<f64>,
     w9b_override_ms: Option<f64>,
     w9b_scrolling: bool,
+    /// `preview`: the lines of the preview list (the items and the summary).
+    w9b_lines: Option<usize>,
 }
 
 impl BenchState {
@@ -258,6 +260,7 @@ impl BenchState {
             w9b_plan_ms: None,
             w9b_override_ms: None,
             w9b_scrolling: false,
+            w9b_lines: None,
         }
     }
 
@@ -289,6 +292,10 @@ impl BenchState {
         match self.kind {
             BenchKind::Preview => {
                 let k = self.w9a_frame.saturating_sub(W9A_IDLE_FRAMES);
+                if self.w9a_frame == 2 {
+                    // Every row shown (the default display shows the differences only): the copy takes every file.
+                    core.execute(root, CommandId::FavCompareAll);
+                }
                 if self.w9a_frame <= W9A_IDLE_FRAMES {
                     return;
                 }
@@ -315,6 +322,7 @@ impl BenchState {
                     return;
                 };
                 if self.w9a_done_ms.is_none() {
+                    self.w9b_lines = d.list().map(crate::op_preview::PreviewList::len);
                     self.w9a_done_ms = self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
                     self.w9a_label = Some("first_preview_frame");
                     self.tail = 0;
@@ -959,6 +967,7 @@ impl BenchState {
                 | BenchKind::SyncView => {
                     obj.insert("plan_ms".into(), json!(self.w9b_plan_ms.map(round)));
                     obj.insert("override_ms".into(), json!(self.w9b_override_ms.map(round)));
+                    obj.insert("preview_lines".into(), json!(self.w9b_lines));
                     let mut labels: Vec<&str> = self.w9a_works.iter().map(|(l, _)| *l).collect();
                     labels.dedup();
                     let mut actions = serde_json::Map::new();

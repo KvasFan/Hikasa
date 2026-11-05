@@ -644,3 +644,97 @@ fn a9_28_help_topics_and_the_sync_legend() {
     assert_eq!(actions.entries.len(), 6);
     assert_eq!(sections.len(), crate::legend::sections().len() + 1);
 }
+
+/// A9.10 for `Scope::Sync`: every implemented entry of the `folder-sync` section has a row here and its effect happens
+/// on a Folder Sync view (the entries it shares with Folder Compare are `FOLDER_COMMANDS`').
+#[test]
+fn a9_10_every_folder_sync_entry_has_its_effect() {
+    use hikasa_session::commands::{CommandStatus, catalogue};
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Effect {
+        Question,
+        Tab,
+        Override(SyncAction),
+        Selects,
+    }
+    let rows: &[(CommandId, Effect)] = &[
+        (CommandId::Run, Effect::Question),
+        (CommandId::CompareBaseView, Effect::Tab),
+        (CommandId::SyncLeave, Effect::Override(SyncAction::Leave)),
+        (
+            CommandId::SyncCopyLeft,
+            Effect::Override(SyncAction::CopyLeft),
+        ),
+        (
+            CommandId::SyncCopyRight,
+            Effect::Override(SyncAction::CopyRight),
+        ),
+        (
+            CommandId::SyncDeleteLeft,
+            Effect::Override(SyncAction::DeleteLeft),
+        ),
+        (
+            CommandId::SyncDeleteRight,
+            Effect::Override(SyncAction::DeleteRight),
+        ),
+        (CommandId::ConflictNext, Effect::Selects),
+        (CommandId::ConflictPrev, Effect::Selects),
+    ];
+    let section = catalogue().section("folder-sync").expect("folder-sync");
+    for entry in section
+        .commands
+        .iter()
+        .filter(|e| e.status == CommandStatus::Implemented)
+    {
+        let id = CommandId::from_name(&entry.id).expect("known");
+        assert!(
+            rows.iter().any(|(r, _)| *r == id),
+            "{id:?} is implemented but has no row"
+        );
+    }
+    for &(id, effect) in rows {
+        let world = World::new();
+        fixture(&world);
+        put(&world, "l", "c.txt", "conflict left\n", 2_000);
+        put(&world, "r", "c.txt", "conflict right!\n", 2_000);
+        let mut app = world.app(None);
+        let options = SyncOptions {
+            preset: SyncPreset::UpdateBoth,
+            ..SyncOptions::default()
+        };
+        let view = open_sync(&world, &mut app, options);
+        // Previous Conflict walks up from the last row.
+        let start = if id == CommandId::ConflictPrev {
+            "only-right.txt"
+        } else {
+            "a.txt"
+        };
+        select(&mut app, view, start);
+        assert!(app.enabled(id), "{id:?} is available");
+        let tabs = app.tabs().len();
+        app.execute(id);
+        ticks(&world, &mut app);
+        match effect {
+            Effect::Question => assert!(find::<PlanConfirmDialog>(&mut app).is_some(), "{id:?}"),
+            Effect::Tab => {
+                assert_eq!(app.tabs().len(), tabs + 1, "{id:?}");
+                assert_eq!(app.scope(), Scope::Folder);
+            }
+            Effect::Override(action) => {
+                let options = &folder_model(&mut app, view).sync().expect("sync").options;
+                // An override a.txt (newer on the left) cannot take is removed again (copy left, delete right).
+                let kept = options.overrides.get("a.txt").copied();
+                assert!(
+                    kept == Some(action)
+                        || notices(&app).iter().any(|(_, t, _)| t.contains("a.txt")),
+                    "{id:?}: {kept:?}"
+                );
+            }
+            Effect::Selects => assert_eq!(
+                crate::tests_folder_ops::selected_path(&mut app, view).as_deref(),
+                Some("c.txt"),
+                "{id:?}"
+            ),
+        }
+    }
+}

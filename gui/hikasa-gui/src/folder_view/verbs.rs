@@ -246,13 +246,12 @@ impl FolderViewModel {
                     .dialog_text(COPY_TO_DIALOG, crate::op_dialogs::overwrite_key())
                     .and_then(|w| parse_overwrite(w).ok())
                     .unwrap_or(OverwritePolicy::Fail);
-                let target = state
+                let recent = state
                     .mru(hikasa_session::settings::state::MruList::Folders)
-                    .first()
-                    .cloned()
-                    .unwrap_or_default();
+                    .to_vec();
+                let target = recent.first().cloned().unwrap_or_default();
                 let sides = self.side_preset(on, moving);
-                self.open_dialog(
+                let started = self.open_dialog(
                     service,
                     view,
                     command,
@@ -267,7 +266,16 @@ impl FolderViewModel {
                         sides,
                         overwrite,
                     },
-                )
+                );
+                match started {
+                    VerbStart::Dialog(mut dialog) => {
+                        if let Some(d) = dialog.as_any_mut().downcast_mut::<OpDialog>() {
+                            d.recent = recent;
+                        }
+                        VerbStart::Dialog(dialog)
+                    }
+                    other => other,
+                }
             }
             CommandId::Rename => {
                 if items.len() == 1 {

@@ -736,6 +736,8 @@ pub struct OpDialog {
     started: Option<(PreviewList, Confirmation)>,
     again: bool,
     wake: Arc<dyn Fn() + Send + Sync>,
+    /// The recent folders (`state.mru.folders`), offered for Copy/Move to Folder's target.
+    pub recent: Vec<String>,
     /// How many plan jobs started (tests: an option change re-plans, the older job is cancelled).
     pub plans: u64,
 }
@@ -768,7 +770,16 @@ impl OpDialog {
             started: None,
             again: false,
             wake,
+            recent: Vec::new(),
             plans: 0,
+        }
+    }
+
+    /// The target folder of Copy/Move to Folder (`None` for the other verbs): it joins `mru.folders` once started.
+    pub fn target(&self) -> Option<&str> {
+        match &self.form {
+            OpForm::CopyTo { target, .. } => Some(target.trim()),
+            _ => None,
         }
     }
 
