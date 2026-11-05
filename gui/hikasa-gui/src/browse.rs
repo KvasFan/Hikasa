@@ -9,11 +9,12 @@ use std::ffi::OsStr;
 
 use hikasa_core::JobKind;
 use hikasa_core::spec::Spec;
-use hikasa_session::Service;
-use hikasa_session::api::dto::VfsListDto;
-use hikasa_session::api::paths::{PlaceDto, PlaceKind};
+use hikasa_session::api::paths::{
+    BrowseListing, INPUT_SPEC_REFUSED, PlaceDto, PlaceKind, browse_child,
+};
 use hikasa_session::ipc::ViewId;
-use hikasa_vfs::{EntryKind, FollowLinks};
+use hikasa_session::{Platform, Service};
+use hikasa_vfs::EntryKind;
 
 use crate::dialog::{
     ButtonRole, DialogButton, DialogModel, DialogRequest, DialogStep, Followup, Prompt,
@@ -92,7 +93,13 @@ pub struct BrowseEntry {
     pub folder: bool,
     /// A file `archives.toml` knows: shown with the zipper, opens as a folder.
     pub archive: bool,
+    /// The name is not valid Unicode: shown with its replacement characters and marked, never picked (no spec can
+    /// name it back).
+    pub lossy: bool,
 }
+
+/// The tooltip and message of an entry whose name is not valid Unicode.
+pub const LOSSY_NAME: &str = "This name is not valid Unicode: it cannot be picked here.";
 
 impl BrowseEntry {
     /// Opens as a folder (a folder or an archive).
@@ -128,14 +135,20 @@ pub struct BrowseDialog {
     pub places: Vec<PlaceDto>,
     /// The listing's error (shown in the list), or a refused OK.
     pub error: Option<String>,
-    /// SaveFile: the replacement of an existing file was confirmed.
-    pub replace_asked: bool,
+    /// SaveFile: the name whose replacement was confirmed (another name asks again).
+    pub replace_asked: Option<String>,
     /// The benchmark's scroll offset of the listing (G15 browse; `None`: the user's).
     pub bench_scroll: Option<f32>,
     requests: Vec<DialogRequest>,
     target: BrowseTarget,
     bases: Vec<String>,
-    listing: Option<Job<VfsListDto>>,
+    listing: Option<Job<BrowseListing>>,
+    /// The listed folder (resolved) and its parent's spec, from the listing's job: a child's spec and Up need no
+    /// reading on the window's thread.
+    folder: Option<Spec>,
+    parent: Option<String>,
+    /// Names compare case-insensitively (Windows, macOS): SaveFile's "Replace?".
+    fold_names: bool,
     places_job: Option<Job<Vec<PlaceDto>>>,
     /// A location to list once the dialog is polled (the listing needs the service).
     pending: Option<String>,
@@ -168,12 +181,15 @@ impl BrowseDialog {
             name,
             places: Vec::new(),
             error: None,
-            replace_asked: false,
+            replace_asked: None,
             bench_scroll: None,
             requests: Vec::new(),
             target,
             bases,
             listing: None,
+            folder: None,
+            parent: None,
+            fold_names: matches!(Platform::HOST, Platform::Windows | Platform::MacOs),
             places_job: None,
             pending: Some(start.to_owned()),
             wake,
@@ -194,7 +210,8 @@ impl BrowseDialog {
             .collect()
     }
 
-    /// Lists `location` (Enter in the location field, a place, a double-click on a folder).
+    /// Lists `location` (Enter in the location field, a place, a double-click on a folder). The entries of the
+    /// previous folder go at once: nothing is picked from them while the new listing runs.
     pub fn go(&mut self, location: &str) {
         if let Some(job) = self.listing.take() {
             job.cancel();
@@ -202,8 +219,21 @@ impl BrowseDialog {
         self.location = location.to_owned();
         self.typed = location.to_owned();
         self.pending = Some(location.to_owned());
+        self.entries.clear();
+        self.folder = None;
+        self.parent = None;
         self.selected = None;
-        self.replace_asked = false;
+        self.replace_asked = None;
+        self.error = None;
+    }
+
+    /// Names compare by the platform's rule (case-insensitive on Windows and macOS).
+    pub fn same_name(&self, a: &str, b: &str) -> bool {
+        if self.fold_names {
+            hikasa_core::case::fold(a) == hikasa_core::case::fold(b)
+        } else {
+            a == b
+        }
     }
 
     /// True while the listing runs.
@@ -211,30 +241,34 @@ impl BrowseDialog {
         self.listing.is_some() || self.pending.is_some()
     }
 
-    /// The spec of entry `index` in the location.
-    pub fn child(&self, svc: &Service, index: usize) -> Option<String> {
+    /// The spec of entry `index` in the listed folder (pure: the listing's job resolved the folder); `None` for a name
+    /// that is not valid Unicode (no spec names it back) or before the listing arrived.
+    pub fn child(&self, index: usize) -> Option<String> {
         let entry = self.entries.get(index)?;
-        child_spec(svc, &self.location, &entry.name)
+        if entry.lossy {
+            return None;
+        }
+        browse_child(self.folder.as_ref()?, &entry.name)
     }
 
-    /// Up: the parent of the location (out of an archive's root into its folder).
-    pub fn up(&mut self, svc: &Service) {
-        let parent = svc
-            .parse_spec(OsStr::new(&self.location))
-            .ok()
-            .and_then(|s| s.parent())
-            .map(|p| p.canonical());
-        if let Some(parent) = parent {
+    /// Up: the parent of the listed folder (out of an archive's root into its folder), as its listing gave it.
+    pub fn up(&mut self) {
+        if let Some(parent) = self.parent.clone() {
             self.go(&parent);
         }
     }
 
-    /// A double-click or Enter on entry `index`: a folder or an archive opens; a file in File mode is the answer.
-    pub fn open(&mut self, svc: &Service, index: usize) -> DialogStep {
+    /// A double-click or Enter on entry `index`: a folder or an archive opens; a file in File mode is the answer. A
+    /// name that is not valid Unicode is never picked.
+    pub fn open(&mut self, index: usize) -> DialogStep {
         let Some(entry) = self.entries.get(index).cloned() else {
             return DialogStep::Stay;
         };
-        let Some(spec) = self.child(svc, index) else {
+        if entry.lossy {
+            self.error = Some(LOSSY_NAME.to_owned());
+            return DialogStep::Stay;
+        }
+        let Some(spec) = self.child(index) else {
             return DialogStep::Stay;
         };
         // A folder or an archive opens (an archive's members can be picked, Q5).
@@ -249,27 +283,40 @@ impl BrowseDialog {
         DialogStep::Stay
     }
 
-    /// The answer of OK, if the mode has one now.
-    fn ok(&mut self, svc: &Service) -> DialogStep {
+    /// The answer of OK, if the mode has one now. Nothing is answered while the listing runs (the entries of the
+    /// folder are not known yet: a SaveFile name could replace one).
+    fn ok(&mut self) -> DialogStep {
         self.error = None;
+        if self.listing() || self.folder.is_none() {
+            self.error = Some(if self.listing() {
+                "Wait for the listing to end.".to_owned()
+            } else {
+                "This folder cannot be listed.".to_owned()
+            });
+            return DialogStep::Stay;
+        }
+        if self
+            .selected
+            .and_then(|i| self.entries.get(i))
+            .is_some_and(|e| e.lossy)
+        {
+            self.error = Some(LOSSY_NAME.to_owned());
+            return DialogStep::Stay;
+        }
         match self.mode.clone() {
             BrowseMode::Folder => {
                 let spec = match self.selected {
-                    Some(i) if self.entries.get(i).is_some_and(BrowseEntry::opens) => {
-                        self.child(svc, i)
-                    }
+                    Some(i) if self.entries.get(i).is_some_and(BrowseEntry::opens) => self.child(i),
                     _ => Some(self.location.clone()),
                 };
                 spec.map_or(DialogStep::Stay, |s| self.answer(s, true))
             }
             BrowseMode::File => match self.selected {
-                Some(i) if self.entries.get(i).is_some_and(|e| !e.folder) => {
-                    match self.child(svc, i) {
-                        Some(spec) => self.answer(spec, false),
-                        None => DialogStep::Stay,
-                    }
-                }
-                Some(i) => self.open(svc, i),
+                Some(i) if self.entries.get(i).is_some_and(|e| !e.folder) => match self.child(i) {
+                    Some(spec) => self.answer(spec, false),
+                    None => DialogStep::Stay,
+                },
+                Some(i) => self.open(i),
                 None => {
                     self.error = Some("Select a file.".to_owned());
                     DialogStep::Stay
@@ -281,7 +328,12 @@ impl BrowseDialog {
                     self.error = Some("Type a file name.".to_owned());
                     return DialogStep::Stay;
                 }
-                if self.entries.iter().any(|e| e.name == name) && !self.replace_asked {
+                let exists = self.entries.iter().any(|e| self.same_name(&e.name, &name));
+                let asked = self
+                    .replace_asked
+                    .as_deref()
+                    .is_some_and(|a| self.same_name(a, &name));
+                if exists && !asked {
                     self.requests.push(DialogRequest::Ask(Box::new(Prompt::ask(
                         "Replace",
                         format!("Replace {name}?"),
@@ -294,9 +346,12 @@ impl BrowseDialog {
                     ))));
                     return DialogStep::Stay;
                 }
-                match child_spec(svc, &self.location, &name) {
+                match self.folder.as_ref().and_then(|f| browse_child(f, &name)) {
                     Some(spec) => self.answer(spec, false),
-                    None => DialogStep::Stay,
+                    None => {
+                        self.error = Some(format!("{name} is not a file name."));
+                        DialogStep::Stay
+                    }
                 }
             }
         }
@@ -309,40 +364,6 @@ impl BrowseDialog {
             show_hidden: self.show_hidden,
         }])
     }
-}
-
-/// The spec of `name` in the folder `location`: a local folder's child, a member of an archive (an archive file
-/// listed as a folder is the root of its members).
-pub fn child_spec(svc: &Service, location: &str, name: &str) -> Option<String> {
-    let spec = svc.parse_spec(OsStr::new(location)).ok()?;
-    let child = match spec {
-        Spec::ArchiveMember { archive, member } => {
-            let member = if member.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{member}/{name}")
-            };
-            Spec::archive_member(*archive, member)
-        }
-        Spec::Local(path) => {
-            if svc.archive_format_of(&spec_name(&path)).is_some()
-                && svc
-                    .vfs_stat(OsStr::new(location), FollowLinks::Yes)
-                    .is_ok_and(|s| s.entry.kind != EntryKind::Dir.as_str())
-            {
-                Spec::archive_member(Spec::Local(path), name.to_owned())
-            } else {
-                Spec::Local(path.join_name(OsStr::new(name)).ok()?)
-            }
-        }
-        _ => return None,
-    };
-    Some(child.canonical())
-}
-
-/// The last name of a local path.
-fn spec_name(path: &hikasa_core::spec::LocalPath) -> String {
-    Spec::Local(path.clone()).file_name().unwrap_or_default()
 }
 
 impl DialogModel for BrowseDialog {
@@ -364,7 +385,7 @@ impl DialogModel for BrowseDialog {
             DialogButton {
                 label: "OK".to_owned(),
                 role: ButtonRole::Ok,
-                enabled: true,
+                enabled: !self.listing(),
                 default: true,
             },
             DialogButton {
@@ -376,9 +397,9 @@ impl DialogModel for BrowseDialog {
         ]
     }
 
-    fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep {
+    fn on_button(&mut self, role: ButtonRole, _svc: &Service) -> DialogStep {
         match role {
-            ButtonRole::Ok => self.ok(svc),
+            ButtonRole::Ok => self.ok(),
             _ => DialogStep::CloseWith(vec![Followup::Browsed {
                 target: self.target.clone(),
                 answer: None,
@@ -419,21 +440,27 @@ impl DialogModel for BrowseDialog {
             changed = true;
         }
         if let Some(location) = self.pending.take() {
+            // `-` and `clipboard://` read standard input or the clipboard: never from the dialog.
+            if svc.reads_input(OsStr::new(&location)) {
+                self.error = Some(INPUT_SPEC_REFUSED.to_owned());
+                return true;
+            }
             let wake = std::sync::Arc::clone(&self.wake);
             self.listing = Some(Job::spawn(
                 svc,
                 JobKind::VfsRead,
                 "list the folder".into(),
                 &wake,
-                move |svc, job| svc.vfs_ls(OsStr::new(&location), FollowLinks::Yes, job),
+                move |svc, job| svc.browse_list(OsStr::new(&location), job),
             ));
             changed = true;
         }
         if let Some(result) = self.listing.as_ref().and_then(Job::try_result) {
             self.listing = None;
             match result {
-                Ok(dto) => {
+                Ok(listed) => {
                     self.error = None;
+                    let dto = listed.listing;
                     self.entries = dto
                         .entries
                         .into_iter()
@@ -442,6 +469,7 @@ impl DialogModel for BrowseDialog {
                             BrowseEntry {
                                 archive: !folder && svc.archive_format_of(&e.name).is_some(),
                                 folder,
+                                lossy: e.name_lossy,
                                 name: e.name,
                             }
                         })
@@ -450,6 +478,8 @@ impl DialogModel for BrowseDialog {
                     self.entries.sort_by_key(|e| !e.folder);
                     self.location = dto.spec;
                     self.typed.clone_from(&self.location);
+                    self.folder = Some(listed.folder);
+                    self.parent = listed.parent;
                 }
                 Err(e) => {
                     self.entries.clear();

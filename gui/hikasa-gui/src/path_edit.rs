@@ -14,6 +14,9 @@ pub const DEBOUNCE: Duration = Duration::from_millis(150);
 /// The most completions one answer holds (D-239).
 pub const LIMIT: usize = 200;
 
+/// The tooltip and message of a completion whose name is not valid Unicode.
+pub const LOSSY_ITEM: &str = "This name is not valid Unicode: it cannot be typed or taken here.";
+
 /// A key the field gives the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathKey {
@@ -131,6 +134,17 @@ impl PathEdit {
         true
     }
 
+    /// True when the field takes `key` now (the window gives the others on: Tab with nothing highlighted moves the
+    /// focus as usual).
+    pub fn handles(&self, key: PathKey) -> bool {
+        let n = self.completions.len();
+        match key {
+            PathKey::Down | PathKey::Up => self.open && n > 0,
+            PathKey::Tab => self.open && self.highlighted.is_some(),
+            PathKey::Enter | PathKey::Esc => true,
+        }
+    }
+
     /// A key of the field at `now`.
     pub fn key(&mut self, key: PathKey, now: Instant) -> PathKeyOutcome {
         let n = self.completions.len();
@@ -165,11 +179,16 @@ impl PathEdit {
     }
 
     /// Puts item `index` of the list in the field: a folder's text ends with its separator, so the next completion
-    /// lists its entries.
+    /// lists its entries. An item whose name is not valid Unicode is not taken (it cannot be typed back; the list
+    /// says so).
     pub fn take(&mut self, index: usize, now: Instant) {
         let Some(item) = self.completions.get(index) else {
             return;
         };
+        if item.lossy {
+            self.error = Some(LOSSY_ITEM.to_owned());
+            return;
+        }
         self.text = item.text.clone();
         self.open = false;
         self.highlighted = None;

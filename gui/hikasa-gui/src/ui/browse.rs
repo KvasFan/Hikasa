@@ -90,13 +90,26 @@ pub fn show(ui: &mut Ui, d: &mut BrowseDialog, pal: &Palette) -> Option<BrowseIn
                     } else {
                         " "
                     };
-                    let r = ui
-                        .selectable_label(d.selected == Some(i), format!("{mark} {}", entry.name));
+                    // A name that is not valid Unicode is shown, marked, and cannot be picked.
+                    let label = if entry.lossy {
+                        format!("{mark} {} (not valid Unicode)", entry.name)
+                    } else {
+                        format!("{mark} {}", entry.name)
+                    };
+                    let r = ui.selectable_label(d.selected == Some(i), label);
+                    let r = if entry.lossy {
+                        r.hint(crate::browse::LOSSY_NAME)
+                    } else {
+                        r
+                    };
                     if r.double_clicked() {
                         input = Some(BrowseInput::Open(i));
                     } else if r.clicked() {
                         d.selected = Some(i);
-                        if matches!(d.mode, BrowseMode::SaveFile { .. }) && !entry.opens() {
+                        if matches!(d.mode, BrowseMode::SaveFile { .. })
+                            && !entry.opens()
+                            && !entry.lossy
+                        {
                             d.name.clone_from(&entry.name);
                         }
                     }

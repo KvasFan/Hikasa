@@ -66,6 +66,13 @@ fn check(
         if spec.is_empty() {
             return Ok(BaseCheck::Bad(k, "Type a folder.".to_owned()));
         }
+        // `-` and `clipboard://` read standard input or the clipboard: never for a field of the window.
+        if svc.reads_input(std::ffi::OsStr::new(spec)) {
+            return Ok(BaseCheck::Bad(
+                k,
+                hikasa_session::api::paths::INPUT_SPEC_REFUSED.to_owned(),
+            ));
+        }
         match svc.vfs_stat_in(std::ffi::OsStr::new(spec), FollowLinks::Yes, job) {
             Ok(stat) => {
                 let folder = stat.entry.kind == EntryKind::Dir.as_str();
@@ -134,11 +141,13 @@ impl AppCore {
                     ],
                     _ => return,
                 };
-                for (k, list) in [(0, MruList::Left), (1, MruList::Right)] {
-                    if specs[k] != old[k] {
-                        self.push_mru(list, specs[k].clone());
-                    }
-                }
+                // Pushed once the view runs on the new base (a base that loads, D-239), not before.
+                let waiting: Vec<(MruList, String)> = [(0, MruList::Left), (1, MruList::Right)]
+                    .into_iter()
+                    .filter(|&(k, _)| specs[k] != old[k])
+                    .map(|(k, list)| (list, specs[k].clone()))
+                    .collect();
+                self.mru_after_load.insert(view, (false, waiting));
                 self.reopen_changed(view, "change the base folders", Some(specs), |_, _| Ok(()));
             }
             Ok(BaseCheck::Missing(k, path)) => {
@@ -176,7 +185,16 @@ impl AppCore {
                 }
             }
             Ok(BaseCheck::Bad(k, message)) => self.base_error(view, k, message),
-            Err(e) => self.base_error(view, 0, e.to_string()),
+            Err(e) => {
+                // The check itself failed: under the first field that changed.
+                let k = match self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    Some(ViewModel::Folder(m)) => (0..2)
+                        .find(|&k| m.path_edit(k).committed != specs[k])
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                self.base_error(view, k, e.to_string());
+            }
         }
     }
 
@@ -422,7 +440,6 @@ impl AppCore {
     /// session; Compare Parent Folders opens a new Folder Compare view of the folders holding the row's (the files')
     /// items.
     pub(super) fn base_command(&mut self, window: WindowId, id: CommandId) {
-        let service = self.service.clone();
         let Some(tab) = self.active_tab_mut(window) else {
             return;
         };
@@ -475,17 +492,10 @@ impl AppCore {
             Some(ViewModel::Text(m)) => match id {
                 CommandId::Swap => self.swap_sides(view),
                 CommandId::CompareParents => {
-                    let parent = |spec: &std::ffi::OsStr| {
-                        service
-                            .parse_spec(spec)
-                            .ok()
-                            .and_then(|s| s.parent())
-                            .map(|p| p.canonical())
-                    };
+                    // The specs are parsed in the job (an archive member's resolution reads the archive), never
+                    // standard input or the clipboard.
                     let (left, right) = (m.request().left.clone(), m.request().right.clone());
-                    if let (Some(l), Some(r)) = (parent(&left), parent(&right)) {
-                        self.open_folders(window, [l, r]);
-                    }
+                    self.open_parents(window, [left, right]);
                 }
                 _ => {}
             },
@@ -538,6 +548,39 @@ impl AppCore {
             session.swap_sides();
             Ok(())
         });
+    }
+
+    /// A new Folder Compare view of the folders holding the files `specs` (a text view's `CompareParents`): the specs
+    /// are parsed and resolved in the job; `-` and `clipboard://` have no folder.
+    fn open_parents(&mut self, window: WindowId, specs: [OsString; 2]) {
+        let job = Job::spawn(
+            &self.service,
+            JobKind::VfsRead,
+            "open the parent folders".into(),
+            &self.wake(),
+            move |svc, _| {
+                let parent = |spec: &OsString| {
+                    if svc.reads_input(spec) {
+                        return None;
+                    }
+                    svc.parse_spec(spec)
+                        .ok()
+                        .and_then(|s| s.parent())
+                        .map(|p| p.canonical())
+                };
+                let (Some(left), Some(right)) = (parent(&specs[0]), parent(&specs[1])) else {
+                    return Err(ApiError::InvalidArgument(
+                        "These files have no parent folders to compare.".to_owned(),
+                    ));
+                };
+                let request = hikasa_session::api::GuiOpenRequest {
+                    specs: vec![OsString::from(left), OsString::from(right)],
+                    ..hikasa_session::api::GuiOpenRequest::default()
+                };
+                crate::home::resolve(svc, &request)
+            },
+        );
+        self.jobs.push(CoreJob::Drop(window, job));
     }
 
     /// A new Folder Compare view of `folders` in `window` (`CompareParents`), resolved as two dropped paths are.

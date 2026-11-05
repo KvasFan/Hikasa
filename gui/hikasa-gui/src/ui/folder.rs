@@ -854,8 +854,8 @@ fn path_edit(
             (egui::Key::Enter, PathKey::Enter),
             (egui::Key::Escape, PathKey::Esc),
         ] {
-            let open = m.path_edit(k).open;
-            let ours = open || matches!(pk, PathKey::Enter | PathKey::Esc);
+            // Only the keys the field takes now are consumed (Tab with nothing highlighted moves the focus).
+            let ours = m.path_edit(k).handles(pk);
             if ours
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
                 && m.path_key(k, pk, now) == PathKeyOutcome::Accept
@@ -969,11 +969,19 @@ fn path_edit(
                                 } else {
                                     "  "
                                 };
-                                let label = format!("{mark}{}", item.name);
-                                if ui
-                                    .selectable_label(edit.highlighted == Some(i), label)
-                                    .clicked()
-                                {
+                                // A name that is not valid Unicode is shown, marked, and cannot be taken.
+                                let label = if item.lossy {
+                                    format!("{mark}{} (not valid Unicode)", item.name)
+                                } else {
+                                    format!("{mark}{}", item.name)
+                                };
+                                let r = ui.selectable_label(edit.highlighted == Some(i), label);
+                                let r = if item.lossy {
+                                    r.hint(crate::path_edit::LOSSY_ITEM)
+                                } else {
+                                    r
+                                };
+                                if r.clicked() {
                                     take = Some(i);
                                 }
                             }

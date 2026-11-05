@@ -115,21 +115,20 @@ fn a9_6_an_archive_opens_as_a_folder_and_up_leaves_it() {
     let (mut app, _view) = opened(&world);
     app.execute(CommandId::BrowseLeft);
     listed(&world, &mut app);
-    let service = world.service.clone();
     let left = browse(&mut app).location.clone();
     let i = index(browse(&mut app), "z.zip");
-    browse(&mut app).open(&service, i);
+    browse(&mut app).open(i);
     listed(&world, &mut app);
     assert_eq!(names(browse(&mut app)), ["in"]);
     let i = index(browse(&mut app), "in");
-    browse(&mut app).open(&service, i);
+    browse(&mut app).open(i);
     listed(&world, &mut app);
     assert_eq!(names(browse(&mut app)), ["m.txt"]);
     // Up: the archive's root, then out of it to its folder.
-    browse(&mut app).up(&service);
+    browse(&mut app).up();
     listed(&world, &mut app);
     assert_eq!(names(browse(&mut app)), ["in"]);
-    browse(&mut app).up(&service);
+    browse(&mut app).up();
     listed(&world, &mut app);
     let d = browse(&mut app);
     assert_eq!(d.location, left);
@@ -302,4 +301,172 @@ fn a9_6_home_specs_and_option_keys_take_the_answer() {
         "{value:?}"
     );
     let _ = view;
+}
+
+// ---- after the W9a review ------------------------------------------------------------------------------------------
+
+/// A9.6 places (review): Home and the current folder name the service's folders; the view's bases come before the
+/// recent folders (mutation Y).
+#[test]
+fn a9_6_home_current_and_the_bases_before_the_recent() {
+    let world = World::with_files(&[(
+        "state.toml",
+        "schema_version = 1\n\n[mru]\nfolders = [\"/recent/one\"]\n",
+    )]);
+    let (mut app, _view) = opened(&world);
+    app.execute(CommandId::BrowseLeft);
+    listed(&world, &mut app);
+    let d = browse(&mut app);
+    let spec_of = |kind: PlaceKind| {
+        d.places
+            .iter()
+            .find(|p| p.kind == kind)
+            .map(|p| std::path::PathBuf::from(&p.spec))
+    };
+    assert_eq!(spec_of(PlaceKind::Home), Some(world.path("home")));
+    assert_eq!(spec_of(PlaceKind::Current), Some(world.path("work")));
+    let at = |kind: PlaceKind| d.places.iter().position(|p| p.kind == kind);
+    let last_base = d.places.iter().rposition(|p| p.kind == PlaceKind::Base);
+    assert!(at(PlaceKind::Recent).is_some(), "{:?}", d.places);
+    assert!(last_base < at(PlaceKind::Recent), "{:?}", d.places);
+}
+
+/// Mutation X: the filter is a case-insensitive substring.
+#[test]
+fn a9_6_the_filter_ignores_case() {
+    let world = World::new();
+    let (mut app, _view) = opened(&world);
+    app.execute(CommandId::BrowseLeft);
+    listed(&world, &mut app);
+    let d = browse(&mut app);
+    d.filter = "Z.ZI".into();
+    assert_eq!(names(d), ["z.zip"]);
+}
+
+/// Review finding 9: `-` and `clipboard://` typed as the location are refused with a message; nothing is listed
+/// (standard input and the clipboard are never read by the dialog).
+#[test]
+fn a9_6_input_specs_are_refused() {
+    let world = World::new();
+    let (mut app, _view) = opened(&world);
+    app.execute(CommandId::BrowseLeft);
+    listed(&world, &mut app);
+    for typed in ["-", "clipboard://"] {
+        browse(&mut app).go(typed);
+        listed(&world, &mut app);
+        let d = browse(&mut app);
+        assert_eq!(
+            d.error.as_deref(),
+            Some(hikasa_session::api::paths::INPUT_SPEC_REFUSED),
+            "{typed}"
+        );
+        assert!(d.entries.is_empty());
+        // Up and OK have nothing to act on.
+        d.up();
+        assert_eq!(d.location, typed);
+    }
+    press(&world, &mut app, ButtonRole::Ok);
+    assert_eq!(
+        top_title(&app).as_deref(),
+        Some("Browse for Folder"),
+        "OK refused"
+    );
+}
+
+/// Review finding 11: SaveFile's question follows the platform's case rule, is asked again for another name, and
+/// nothing is answered while a new folder is listed (the old entries are gone at once).
+#[test]
+fn a9_6_save_file_replace_follows_the_name_and_the_listing() {
+    let world = World::new();
+    let (mut app, _view) = opened(&world);
+    let folder = world.path("work/l").to_string_lossy().into_owned();
+    let w = app.win();
+    app.execute(CommandId::Export);
+    app.0.open_browse(
+        w,
+        BrowseMode::SaveFile {
+            default_name: "A.TXT".into(),
+        },
+        folder.clone(),
+        crate::browse::BrowseTarget::Export,
+    );
+    listed(&world, &mut app);
+    let d = browse(&mut app);
+    let folds = matches!(
+        hikasa_session::Platform::HOST,
+        hikasa_session::Platform::Windows | hikasa_session::Platform::MacOs
+    );
+    assert_eq!(d.same_name("a.txt", "A.TXT"), folds);
+    assert!(d.same_name("a.txt", "a.txt"));
+    // `a.txt` exists: confirmed for it, then the name changes to another existing one: asked again.
+    d.name = "a.txt".into();
+    press(&world, &mut app, ButtonRole::Ok);
+    assert_eq!(top_title(&app).as_deref(), Some("Replace"));
+    press(&world, &mut app, ButtonRole::No);
+    let d = browse(&mut app);
+    d.replace_asked = Some("a.txt".into());
+    d.name = "z.zip".into();
+    press(&world, &mut app, ButtonRole::Ok);
+    assert_eq!(
+        top_title(&app).as_deref(),
+        Some("Replace"),
+        "another name asks again"
+    );
+    press(&world, &mut app, ButtonRole::No);
+    // Going to another folder: its entries are not known yet, so OK answers nothing.
+    let d = browse(&mut app);
+    d.go(&world.path("work/l/sub").to_string_lossy());
+    assert!(d.entries.is_empty(), "the old entries went");
+    assert!(!d.buttons()[0].enabled, "OK waits for the listing");
+    d.name = "a.txt".into();
+    press(&world, &mut app, ButtonRole::Ok);
+    assert_eq!(top_title(&app).as_deref(), Some("Save As"));
+    listed(&world, &mut app);
+    press(&world, &mut app, ButtonRole::Ok);
+    // `sub` holds only `b.txt`: a new name there answers.
+    assert_eq!(top_title(&app).as_deref(), Some("Export Settings"));
+}
+
+/// Review finding 12: a name that is not valid Unicode is listed and marked, and never picked (no spec with U+FFFD).
+#[cfg(target_os = "linux")]
+#[test]
+fn a9_6_a_lossy_name_is_shown_but_never_picked() {
+    use std::os::unix::ffi::OsStrExt;
+    let world = World::new();
+    let (mut app, _view) = opened(&world);
+    std::fs::write(
+        world
+            .path("work/l")
+            .join(std::ffi::OsStr::from_bytes(b"bad\xff.txt")),
+        b"x",
+    )
+    .expect("a lossy name");
+    let folder = world.path("work/l").to_string_lossy().into_owned();
+    let w = app.win();
+    app.execute(CommandId::RunScript);
+    app.0.open_browse(
+        w,
+        BrowseMode::File,
+        folder,
+        crate::browse::BrowseTarget::RunScript,
+    );
+    listed(&world, &mut app);
+    let d = browse(&mut app);
+    let i = d
+        .entries
+        .iter()
+        .position(|e| e.name.starts_with("bad"))
+        .expect("listed");
+    assert!(d.entries[i].lossy && d.entries[i].name.contains('\u{fffd}'));
+    assert_eq!(d.child(i), None, "no spec names it");
+    assert_eq!(d.open(i), crate::dialog::DialogStep::Stay);
+    assert_eq!(d.error.as_deref(), Some(crate::browse::LOSSY_NAME));
+    d.selected = Some(i);
+    press(&world, &mut app, ButtonRole::Ok);
+    assert_eq!(
+        top_title(&app).as_deref(),
+        Some("Browse for File"),
+        "not picked"
+    );
+    assert!(app.0.state().mru(MruList::Files).is_empty());
 }

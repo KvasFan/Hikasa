@@ -2790,6 +2790,15 @@ impl FolderViewModel {
     /// A frame at `now` for the path edits: a completion 150 ms after the last key (the frame time decides). Returns
     /// when to draw again for a wait to end.
     pub fn path_frame(&mut self, now: Instant) -> Option<Duration> {
+        // A key since the running completion was asked for: it is cancelled now (its answer would be dropped).
+        if self
+            .path_job
+            .as_ref()
+            .is_some_and(|(k, generation, _)| self.paths[*k].generation != *generation)
+            && let Some((_, _, job)) = self.path_job.take()
+        {
+            job.cancel();
+        }
         let mut wait: Option<Duration> = None;
         for k in 0..2 {
             match self.paths[k].due(now) {
@@ -2818,6 +2827,12 @@ impl FolderViewModel {
         }
         let specs = [self.paths[0].text.clone(), self.paths[1].text.clone()];
         self.outbox.push(FolderEvent::Rebase(specs));
+    }
+
+    /// The side and generation of the completion job that runs, if one does (tests).
+    #[cfg(test)]
+    pub fn completion_job(&self) -> Option<(usize, u64)> {
+        self.path_job.as_ref().map(|(k, g, _)| (*k, *g))
     }
 
     /// The recent specs of the path edits' drop-downs (`state.mru.left`, `.right`).

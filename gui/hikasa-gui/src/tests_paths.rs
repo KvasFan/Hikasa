@@ -25,6 +25,7 @@ fn item(name: &str, folder: bool) -> Completion {
         },
         folder,
         archive: false,
+        lossy: false,
     }
 }
 
@@ -218,4 +219,175 @@ fn a9_5_a_file_or_a_bad_spec_shows_its_message_and_does_not_run() {
     accept(&world, &mut app, view);
     assert!(folder_model(&mut app, view).path_edit(0).error.is_some());
     assert_eq!(committed(&mut app, view), before);
+}
+
+// ---- after the W9a review ------------------------------------------------------------------------------------------
+
+fn lossy_item() -> Completion {
+    Completion {
+        name: "bad\u{fffd}.txt".into(),
+        text: String::new(),
+        folder: false,
+        archive: false,
+        lossy: true,
+    }
+}
+
+/// Mutation O and review item 13: Esc with the list open closes the list and keeps the text; Tab with nothing
+/// highlighted is not the field's (the focus moves on); a lossy item is never taken (finding 12).
+#[test]
+fn esc_tab_and_a_lossy_item() {
+    let now = Instant::now();
+    let mut edit = PathEdit::new(Side::Left, "/x");
+    edit.text = "/x/ab".into();
+    edit.edited(now);
+    let generation = edit.generation;
+    let dto = CompletionDto {
+        base: "/x/".into(),
+        items: vec![item("abc", true), lossy_item()],
+        truncated: false,
+    };
+    assert!(edit.answer(generation, dto));
+    assert!(edit.open);
+    assert!(
+        !edit.handles(PathKey::Tab),
+        "nothing highlighted: Tab moves the focus"
+    );
+    assert_eq!(edit.key(PathKey::Esc, now), PathKeyOutcome::Handled);
+    assert!(!edit.open, "the list closed");
+    assert_eq!(edit.text, "/x/ab", "the text stays");
+    // The list again; the lossy item highlighted: Tab takes nothing and says why.
+    edit.open = true;
+    edit.highlighted = Some(1);
+    assert!(edit.handles(PathKey::Tab));
+    assert_eq!(edit.key(PathKey::Tab, now), PathKeyOutcome::Handled);
+    assert_eq!(edit.text, "/x/ab", "no text with a replacement character");
+    assert_eq!(edit.error.as_deref(), Some(crate::path_edit::LOSSY_ITEM));
+}
+
+/// Review item 13: a key cancels the running completion job (its answer would be dropped anyway).
+#[test]
+fn a_key_cancels_the_running_completion() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let t0 = Instant::now();
+    let other = world.path("work/l").to_string_lossy().into_owned();
+    let m = folder_model(&mut app, view);
+    m.path_edit(0).text = format!("{other}/");
+    m.path_edit(0).edited(t0);
+    assert_eq!(m.path_frame(t0 + DEBOUNCE), None);
+    app.0.handle(crate::app::UiMsg::Tick);
+    let m = folder_model(&mut app, view);
+    let asked = m.completion_job().map(|(_, g)| g);
+    if asked.is_some() {
+        m.path_edit(0).text = format!("{other}/a");
+        m.path_edit(0).edited(t0 + DEBOUNCE);
+        let _ = m.path_frame(t0 + DEBOUNCE);
+        assert_eq!(m.completion_job(), None, "the key cancelled it");
+    }
+    // Either way the next completion answers the newest text only.
+    let _ = m.path_frame(t0 + DEBOUNCE * 3);
+    let began = Instant::now();
+    while folder_model(&mut app, view)
+        .path_edit(0)
+        .completions
+        .is_empty()
+    {
+        app.0.handle(crate::app::UiMsg::Tick);
+        world.settle(&mut app);
+        assert!(began.elapsed() < Duration::from_secs(30), "no completion");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let names: Vec<String> = folder_model(&mut app, view)
+        .path_edit(0)
+        .completions
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert_eq!(names, ["a.txt"]);
+}
+
+/// Finding 9 and item 13: `-` in the right field is refused under the right field; nothing reads standard input.
+#[test]
+fn a_typed_input_spec_is_refused_under_its_field() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let before = committed(&mut app, view);
+    folder_model(&mut app, view).path_edit(1).text = "-".into();
+    accept(&world, &mut app, view);
+    let m = folder_model(&mut app, view);
+    assert_eq!(
+        m.path_edit(1).error.as_deref(),
+        Some(hikasa_session::api::paths::INPUT_SPEC_REFUSED)
+    );
+    assert_eq!(m.path_edit(0).error, None, "not under the left field");
+    assert_eq!(committed(&mut app, view), before);
+}
+
+/// A9.5: `max_mru_items` caps the list a base enters.
+#[test]
+fn a9_5_mru_capped_at_max_mru_items() {
+    let world = World::with_files(&[("options.toml", "[tweaks.metrics]\nmax_mru_items = 2\n")]);
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    for name in ["one", "two", "three"] {
+        put(&world, name, "x.txt", "x\n", 1_000);
+    }
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    for name in ["one", "two", "three"] {
+        let spec = world
+            .path(&format!("work/{name}"))
+            .to_string_lossy()
+            .into_owned();
+        folder_model(&mut app, view).path_edit(0).text = spec;
+        accept(&world, &mut app, view);
+        app.0.handle(crate::app::UiMsg::Tick);
+        world.settle(&mut app);
+    }
+    let spec = |name: &str| {
+        world
+            .path(&format!("work/{name}"))
+            .to_string_lossy()
+            .into_owned()
+    };
+    assert_eq!(
+        app.0.state().mru(MruList::Left),
+        [spec("three"), spec("two")]
+    );
+}
+
+/// Review item 13: a base enters the recent list once the view runs on it, not when its check passed: a re-root
+/// refused because an operation started meanwhile leaves the list as it was.
+#[test]
+fn the_mru_waits_for_the_base_to_load() {
+    use crate::tests_folder_ops::{gate, poll_until, select, set_gate};
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    put(&world, "other", "b.txt", "b\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let other = world.path("work/other").to_string_lossy().into_owned();
+    folder_model(&mut app, view).path_edit(0).text = other;
+    folder_model(&mut app, view).accept_paths();
+    // The check passes; its reopen is still to come.
+    poll_until(&world, &mut app, |a| a.mru_after_load.contains_key(&view));
+    assert!(
+        app.0.state().mru(MruList::Left).is_empty(),
+        "not before the base loads"
+    );
+    let g = gate(false);
+    folder_model(&mut app, view).gate = Some(std::sync::Arc::clone(&g));
+    select(&mut app, view, "a.txt");
+    app.execute(crate::commands::CommandId::CopyRight);
+    poll_until(&world, &mut app, |a| !a.mru_after_load.contains_key(&view));
+    assert!(
+        app.0.state().mru(MruList::Left).is_empty(),
+        "the re-root was refused"
+    );
+    set_gate(&g, true);
+    world.settle(&mut app);
 }

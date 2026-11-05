@@ -127,6 +127,20 @@ fn completions_on_disk_home_and_archives() {
         .unwrap();
     assert_eq!(two.items.len(), 2);
     assert!(two.truncated);
+    // Exactly `limit` matches: all of them, nothing more matched (mutation P: `>=`).
+    let three = root.join("three");
+    for name in ["a", "b", "c"] {
+        write(&three, name, b"x");
+    }
+    let typed = format!("{}{sep}", three.display());
+    let exact = svc
+        .path_completions(OsStr::new(&typed), 3, &job(&svc, JobKind::VfsList))
+        .unwrap();
+    assert_eq!(exact.items.len(), 3);
+    assert!(
+        !exact.truncated,
+        "three entries, a limit of three: {exact:?}"
+    );
     // A zip and a member folder (the archive's members, D-137).
     let zip = format!("{base}ALso.zip/");
     let members = svc
@@ -156,6 +170,125 @@ fn completions_on_disk_home_and_archives() {
         .unwrap();
     assert_eq!(here.base, "");
     assert_eq!(here.items[0].text, "here.txt");
+}
+
+/// `-` and `clipboard://` read standard input or the clipboard: a completion refuses them and reads neither (M2 W9a
+/// after review).
+#[test]
+fn input_specs_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let svc = service(&root);
+    assert!(svc.reads_input(OsStr::new("-")) && svc.reads_input(OsStr::new("clipboard://")));
+    for typed in ["-", "-/", "clipboard://"] {
+        let err = svc
+            .path_completions(OsStr::new(typed), 200, &job(&svc, JobKind::VfsList))
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            hikasa_core::ErrorKind::InvalidInput,
+            "{typed}: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            hikasa_session::api::paths::INPUT_SPEC_REFUSED
+        );
+    }
+    for typed in ["-", "clipboard://"] {
+        let err = svc
+            .browse_list(OsStr::new(typed), &job(&svc, JobKind::VfsList))
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            hikasa_core::ErrorKind::InvalidInput,
+            "{typed}: {err}"
+        );
+    }
+    assert!(!svc.reads_input(OsStr::new("./-")));
+}
+
+/// A name that is not valid Unicode is listed, marked, and has no text to put in the field (mutation Q).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lossy_name_is_listed_marked_without_text() {
+    use std::os::unix::ffi::OsStrExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let svc = service(&root);
+    let dir = root.join("d");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(OsStr::from_bytes(b"bad\xff.txt")), b"x").unwrap();
+    write(&dir, "good.txt", b"g");
+    let base = format!("{}/", dir.display());
+    let all = svc
+        .path_completions(OsStr::new(&base), 200, &job(&svc, JobKind::VfsList))
+        .unwrap();
+    let bad = all
+        .items
+        .iter()
+        .find(|c| c.name.starts_with("bad"))
+        .expect("listed");
+    assert!(bad.lossy && bad.text.is_empty(), "{bad:?}");
+    assert!(bad.name.contains('\u{fffd}'));
+    let good = all
+        .items
+        .iter()
+        .find(|c| c.name == "good.txt")
+        .expect("listed");
+    assert!(!good.lossy && good.text.ends_with("good.txt"));
+}
+
+/// The browse dialog's listing gives the folder's resolved spec and its parent, so a child's spec is pure; an
+/// archive lists as its root and goes up to its folder.
+#[test]
+fn browse_list_gives_the_folder_and_its_parent() {
+    use hikasa_session::api::paths::browse_child;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let svc = service(&root);
+    let dir = root.join("d");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.zip"), zip_bytes(&[("m/x.txt", b"x")])).unwrap();
+    let listed = svc
+        .browse_list(dir.as_os_str(), &job(&svc, JobKind::VfsList))
+        .unwrap();
+    let names: Vec<&str> = listed
+        .listing
+        .entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(names, ["a.zip", "sub"]);
+    assert_eq!(
+        listed.parent.as_deref(),
+        Some(root.to_string_lossy().as_ref())
+    );
+    let sub = browse_child(&listed.folder, "sub").unwrap();
+    assert_eq!(Path::new(&sub), dir.join("sub"));
+    let zip = browse_child(&listed.folder, "a.zip").unwrap();
+    let inside = svc
+        .browse_list(OsStr::new(&zip), &job(&svc, JobKind::VfsList))
+        .unwrap();
+    let names: Vec<&str> = inside
+        .listing
+        .entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(names, ["m"]);
+    let member = browse_child(&inside.folder, "m").unwrap();
+    let deeper = svc
+        .browse_list(OsStr::new(&member), &job(&svc, JobKind::VfsList))
+        .unwrap();
+    assert_eq!(deeper.listing.entries[0].name, "x.txt");
+    assert_eq!(deeper.parent.as_deref(), Some(inside.listing.spec.as_str()));
+    // Up out of the archive's root: the archive's folder.
+    assert_eq!(
+        inside.parent.as_deref().map(Path::new),
+        Some(dir.as_path()),
+        "{:?}",
+        inside.parent
+    );
 }
 
 #[test]

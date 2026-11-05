@@ -8,10 +8,11 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use hikasa_core::case::{fold, nfc};
-use hikasa_core::spec::PathStyle;
+use hikasa_core::spec::{PathStyle, Spec};
 use hikasa_vfs::{ArchiveFormat, Capabilities, EntryKind, ListOptions, Vfs as _};
 use serde::{Deserialize, Serialize};
 
+use super::dto::VfsListDto;
 use super::{ApiError, JobControl, Service, run_guarded};
 use crate::host::Platform;
 use crate::settings::state::{MruList, State};
@@ -29,6 +30,44 @@ pub struct Completion {
     pub folder: bool,
     /// A file whose name the archive masks know (it opens as a folder, D-240).
     pub archive: bool,
+    /// The name is not valid Unicode (M2 W9a after review): shown with its replacement characters and marked, never
+    /// put in the field (`text` is empty), since it cannot be typed back.
+    pub lossy: bool,
+}
+
+/// What a typed `-` or `clipboard://` answers where the window parses a spec it browses or roots a view at: they read
+/// standard input or the clipboard, which a window's field never does (M2 W9a after review).
+pub const INPUT_SPEC_REFUSED: &str = "`-` (standard input) and `clipboard://` cannot be browsed or typed here: give them on the command line.";
+
+/// A folder as the browse dialog lists it (M2 W9a after review): `vfs_ls`'s listing, the folder's resolved spec (an
+/// archive's root for an archive) and its parent's spec, so the dialog builds a child's spec and goes up without
+/// reading anything on the window's thread.
+#[derive(Debug, Clone)]
+pub struct BrowseListing {
+    /// The entries, as `vfs ls` lists them.
+    pub listing: VfsListDto,
+    /// The folder listed (resolved).
+    pub folder: Spec,
+    /// The canonical spec of its parent (out of an archive's root: the archive's folder); `None` at a root.
+    pub parent: Option<String>,
+}
+
+/// The canonical spec of `name` in the listed `folder` (pure): a member of an archive, or a local folder's child.
+/// `None` for another back-end or a name that is no single path component.
+pub fn browse_child(folder: &Spec, name: &str) -> Option<String> {
+    let child = match folder {
+        Spec::ArchiveMember { archive, member } => {
+            let member = if member.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{member}/{name}")
+            };
+            Spec::archive_member((**archive).clone(), member)
+        }
+        Spec::Local(path) => Spec::Local(path.join_name(OsStr::new(name)).ok()?),
+        _ => return None,
+    };
+    Some(child.canonical())
 }
 
 /// The completions of a typed path.
@@ -177,17 +216,52 @@ pub fn places(
 }
 
 impl Service {
+    /// True when `typed` is a spec that reads standard input or the clipboard (`-`, `clipboard://`); pure: nothing is
+    /// read. The window refuses such text in its fields and its browse dialog ([`INPUT_SPEC_REFUSED`]).
+    pub fn reads_input(&self, typed: &OsStr) -> bool {
+        matches!(
+            Spec::parse_os(typed, &self.spec_context()),
+            Ok(Spec::Stdin | Spec::Clipboard)
+        )
+    }
+
+    /// The browse dialog's listing of `location` (D-240; M2 W9a after review), in a job: `vfs_ls` with links followed,
+    /// the folder's resolved spec and its parent's. `-` and `clipboard://` are refused ([`INPUT_SPEC_REFUSED`]).
+    pub fn browse_list(
+        &self,
+        location: &OsStr,
+        job: &JobControl,
+    ) -> Result<BrowseListing, ApiError> {
+        if self.reads_input(location) {
+            return Err(ApiError::InvalidArgument(INPUT_SPEC_REFUSED.to_owned()));
+        }
+        let listing = self.vfs_ls(location, hikasa_vfs::FollowLinks::Yes, job)?;
+        let folder = run_guarded(|| {
+            self.parse_spec_in(OsStr::new(&listing.spec), SpecUse::Folder, &job.cancel)
+        })?;
+        let parent = folder.parent().map(|p| p.canonical());
+        Ok(BrowseListing {
+            listing,
+            folder,
+            parent,
+        })
+    }
+
     /// The entries of the typed text's folder part whose names start with its last part (case-insensitive where the
     /// back-end is), folders and archives first, then by the D-20 key; at most `limit` (D-239). The folder part is
     /// parsed as a folder spec (`~`, archives and their members included, as `vfs ls` does); a folder that does not
-    /// exist is `not_found`. Names that are not valid Unicode are left out (they cannot be typed back). Entries whose
-    /// kind the folder record gives are not stat'ed.
+    /// exist is `not_found`. Names that are not valid Unicode are listed with `lossy` and no `text` (they cannot be
+    /// typed back). Entries whose kind the folder record gives are not stat'ed. `-` and `clipboard://` are refused
+    /// ([`INPUT_SPEC_REFUSED`]): nothing reads standard input or the clipboard for a completion.
     pub fn path_completions(
         &self,
         typed: &OsStr,
         limit: usize,
         job: &JobControl,
     ) -> Result<CompletionDto, ApiError> {
+        if self.reads_input(typed) {
+            return Err(ApiError::InvalidArgument(INPUT_SPEC_REFUSED.to_owned()));
+        }
         run_guarded(|| {
             let style = self.env().platform.path_style();
             let typed = typed.to_string_lossy();
@@ -202,6 +276,9 @@ impl Service {
                 (false, true) => base,
                 (false, false) => trimmed,
             };
+            if self.reads_input(OsStr::new(folder_text)) {
+                return Err(ApiError::InvalidArgument(INPUT_SPEC_REFUSED.to_owned()));
+            }
             let spec = self.parse_spec_in(OsStr::new(folder_text), SpecUse::Folder, &job.cancel)?;
             let vfs = self.vfs();
             let case_sensitive = vfs
@@ -232,20 +309,28 @@ impl Service {
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
                 }
-                if name.is_lossy() || !completion_matches(name.as_str(), prefix, case_sensitive) {
+                if !completion_matches(name.as_str(), prefix, case_sensitive) {
                     continue;
                 }
+                let lossy = name.is_lossy();
                 let folder = kind == EntryKind::Dir;
                 let archive = !folder && vfs.archive_format(name.as_str()).is_some();
-                let mut text = format!("{base}{}", name.as_str());
-                if folder {
-                    text.push(separator);
-                }
+                // A name that is not valid Unicode cannot be typed back: no text to put in the field.
+                let text = if lossy {
+                    String::new()
+                } else {
+                    let mut text = format!("{base}{}", name.as_str());
+                    if folder {
+                        text.push(separator);
+                    }
+                    text
+                };
                 items.push(Completion {
                     name: name.as_str().to_owned(),
                     text,
                     folder,
                     archive,
+                    lossy,
                 });
             }
             items.sort_by(completion_order);

@@ -17,7 +17,7 @@ use hikasa_session::ipc::{CloseReason, OpenOptions, ServerHandle, ViewId, ViewIn
 use hikasa_session::log::{LogBook, LogEntry, LogFilter, LogKind};
 use hikasa_session::settings::commands::DisplayFilterMode;
 use hikasa_session::settings::options::OpenIn;
-use hikasa_session::settings::state::{LayoutValue, WindowState};
+use hikasa_session::settings::state::{LayoutValue, MruList, WindowState};
 use hikasa_session::settings::{
     ChangeKind, ConfigChange, FileOutcome, LoadMode, Options, Scheme, SettingsChanges,
     SettingsSnapshot, Shortcut, State, ThemeSelection, parse_key,
@@ -279,6 +279,9 @@ pub struct AppCore {
     startup: Option<Startup>,
     /// Views built so far (the G12 job counter: a pending tab builds none).
     views_built: u64,
+    /// The new bases of a re-rooted folder view, pushed to `mru.left` / `.right` once the view runs on them (D-239:
+    /// a base that loads; M2 W9a after review): armed when the view took its new model.
+    pub(crate) mru_after_load: std::collections::HashMap<ViewId, (bool, Vec<(MruList, String)>)>,
     /// The theme of the Options dialog's working copies while it differs from the files (D-130).
     preview: Option<Preview>,
     /// FC-029(c): each child Text Compare view whose result its folder view waits for, with that view.
@@ -403,6 +406,7 @@ impl AppCore {
             exit_saved: false,
             startup: None,
             views_built: 0,
+            mru_after_load: std::collections::HashMap::new(),
             preview: None,
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
@@ -1254,6 +1258,7 @@ impl AppCore {
         let mut opened: Vec<(WindowId, usize, HomeOpen)> = Vec::new();
         let mut notes: Vec<(WindowId, ViewId, bool, String, Vec<LogNote>)> = Vec::new();
         let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
+        let mut loaded_mru: Vec<(MruList, String)> = Vec::new();
         for w in &mut self.windows {
             let active = w.active;
             for (index, tab) in w.tabs.iter_mut().enumerate() {
@@ -1280,6 +1285,12 @@ impl AppCore {
                     }
                     Some(ViewModel::Folder(m)) => {
                         m.poll(&service);
+                        // Pushed once the new model's comparison was prepared on its bases.
+                        if let Some((true, waiting)) = self.mru_after_load.get_mut(&id)
+                            && m.prepared().is_some()
+                        {
+                            loaded_mru.append(waiting);
+                        }
                         let e = m.take_events();
                         if !e.is_empty() {
                             events.push((w.id, id, caption.clone(), e));
@@ -1299,6 +1310,11 @@ impl AppCore {
                     None => {}
                 }
             }
+        }
+        self.mru_after_load
+            .retain(|_, (_, waiting)| !waiting.is_empty());
+        for (list, spec) in loaded_mru {
+            self.push_mru(list, spec);
         }
         for (window, index, open) in opened {
             let active = self.window(window).map(|w| w.active);
@@ -2616,7 +2632,6 @@ impl AppCore {
         window: WindowId,
         input: crate::ui::browse::BrowseInput,
     ) -> Vec<Effect> {
-        let service = self.service.clone();
         let step = match self
             .window_mut(window)
             .and_then(|w| w.dialogs.top_mut())
@@ -2624,10 +2639,10 @@ impl AppCore {
         {
             Some(d) => match input {
                 crate::ui::browse::BrowseInput::Up => {
-                    d.up(&service);
+                    d.up();
                     DialogStep::Stay
                 }
-                crate::ui::browse::BrowseInput::Open(i) => d.open(&service, i),
+                crate::ui::browse::BrowseInput::Open(i) => d.open(i),
             },
             None => return Vec::new(),
         };
@@ -2977,7 +2992,7 @@ impl AppCore {
                     .and_then(|d| d.as_any_mut().downcast_mut::<crate::browse::BrowseDialog>())
                 {
                     Some(d) => {
-                        d.replace_asked = true;
+                        d.replace_asked = Some(d.name.trim().to_owned());
                         d.on_button(ButtonRole::Ok, &service)
                     }
                     None => return Vec::new(),

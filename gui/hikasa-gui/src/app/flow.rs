@@ -627,8 +627,13 @@ impl AppCore {
                     if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
                         vs.settings_pending = false;
                     }
+                    self.mru_after_load.remove(&view);
                 } else {
                     self.reopen(view, *opened, *session, dirty);
+                    // The new bases enter the recent lists once the new model loads them.
+                    if let Some((armed, _)) = self.mru_after_load.get_mut(&view) {
+                        *armed = rebase;
+                    }
                 }
             }
             StoreDone::Panel(view, target, session) => {
