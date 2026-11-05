@@ -37,10 +37,10 @@ pub fn confirm(ui: &mut Ui, dialog: &mut PlanConfirmDialog, pal: &Palette) {
         ui.add_space(6.0);
         ui.checkbox(&mut dialog.ticked, "Do not ask again");
     }
-    if let Some(mut hidden) = dialog.include_hidden() {
-        if ui.checkbox(&mut hidden, "Include hidden items").changed() {
-            dialog.set_include_hidden(hidden);
-        }
+    if let Some(mut hidden) = dialog.include_hidden()
+        && ui.checkbox(&mut hidden, "Include hidden items").changed()
+    {
+        dialog.set_include_hidden(hidden);
     }
     let scroll = dialog.bench_scroll();
     if let Some(list) = dialog.list() {

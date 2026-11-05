@@ -86,6 +86,7 @@ impl FolderViewModel {
     }
 
     /// The context a verb dialog plans on.
+    #[allow(clippy::too_many_arguments)] // what a dialog plans on
     fn op_context(
         &self,
         service: &Service,
@@ -340,9 +341,7 @@ impl FolderViewModel {
                             .to_string()
                     });
                 let sides = self.side_preset(on, true);
-                let to = if on[1] && !on[0] {
-                    Side::Right
-                } else if writable(Side::Right) {
+                let to = if (on[1] && !on[0]) || writable(Side::Right) {
                     Side::Right
                 } else {
                     Side::Left

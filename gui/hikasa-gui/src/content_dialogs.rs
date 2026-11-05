@@ -34,6 +34,9 @@ pub const QUICK_LIMIT: usize = 1000;
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// The masks of Exclude: for files and for folders.
+pub type Masks = (Vec<String>, Vec<String>);
+
 fn ok_cancel(ok: &str, enabled: bool) -> Vec<DialogButton> {
     vec![
         DialogButton {
@@ -67,7 +70,7 @@ pub struct ExcludeDialog {
     select: SelectRequest,
     what: ExcludeWhat,
     job: Option<Job<(Vec<String>, Vec<String>)>>,
-    masks: Option<Result<(Vec<String>, Vec<String>), String>>,
+    masks: Option<Result<Masks, String>>,
     dirty: bool,
     chosen: Option<(Vec<String>, Vec<String>)>,
     wake: Wake,
@@ -109,7 +112,7 @@ impl ExcludeDialog {
     }
 
     /// The masks for files and for folders, or the message of a selection that gives none; `None` while read.
-    pub fn masks(&self) -> Option<&Result<(Vec<String>, Vec<String>), String>> {
+    pub fn masks(&self) -> Option<&Result<Masks, String>> {
         self.masks.as_ref()
     }
 

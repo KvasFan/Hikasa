@@ -386,13 +386,12 @@ fn a9_16_presets_overrides_and_conflicts() {
     app.execute(CommandId::SyncCopyLeft);
     ticks(&world, &mut app);
     assert!(
-        folder_model(&mut app, view)
+        !folder_model(&mut app, view)
             .sync()
             .expect("sync")
             .options
             .overrides
-            .get("only-left.txt")
-            .is_none(),
+            .contains_key("only-left.txt"),
         "removed"
     );
     assert!(

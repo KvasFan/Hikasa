@@ -225,7 +225,13 @@ fn a9_12_the_executed_plan_is_the_previewed_plan() {
 #[test]
 fn a9_13_copy_move_sides_and_exchange_equal_the_cli() {
     let both = SideSet::LEFT | SideSet::RIGHT;
-    let cases: Vec<(Invocation, &[&str], OpRequest, Vec<(&str, SideSet)>)> = vec![
+    type Case<'a> = (
+        Invocation,
+        &'a [&'a str],
+        OpRequest,
+        Vec<(&'a str, SideSet)>,
+    );
+    let cases: Vec<Case<'_>> = vec![
         (
             Invocation::new(CommandId::MoveRight),
             &["a.txt", "only-left.txt"],
@@ -477,17 +483,15 @@ fn a9_13_rename_inline_and_with_masks() {
     });
     planned(&gui, &mut app);
     start_and_confirm(&gui, &mut app);
-    // The twin: the inline renames as `--name`, then the regex.
-    for (path, name) in [("only-left.txt", "renamed.txt")] {
-        cli_twin(
-            &twin,
-            OpRequest::Op(FolderOp::Rename {
-                sides: SideSet::LEFT,
-                mask: RenameMask::Name(name.into()),
-            }),
-            &[(path, SideSet::LEFT)],
-        );
-    }
+    // The twin: the inline rename as `--name`, then the regex.
+    cli_twin(
+        &twin,
+        OpRequest::Op(FolderOp::Rename {
+            sides: SideSet::LEFT,
+            mask: RenameMask::Name("renamed.txt".into()),
+        }),
+        &[("only-left.txt", SideSet::LEFT)],
+    );
     cli_twin(
         &twin,
         OpRequest::Op(FolderOp::Rename {
