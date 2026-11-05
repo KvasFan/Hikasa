@@ -1003,7 +1003,7 @@ fn dispatch(
             call_script_handler(handler, request, waiter, reply);
             return Ok(());
         }
-        Request::OpenView { kind, .. } if !kind.is_served_in_m1() => {
+        Request::OpenView { kind, .. } if !kind.is_served() => {
             Response::error(IpcErrorCode::UnsupportedView, unserved_view(kind))
         }
         request @ (Request::OpenView { wait: true, .. }
@@ -1081,11 +1081,8 @@ fn call_script_handler(
 /// The message of an `OpenView` of a kind this window cannot show (D-190): the Folder Sync view is W9's, and the CLI's
 /// switch, request and checks are W6's.
 pub fn unserved_view(kind: ViewKind) -> String {
-    match kind {
-        ViewKind::FolderSync => "this window cannot show a Folder Sync view yet".to_owned(),
-        other => format!(
-            "view kind `{}` is not supported in this version",
-            other.as_str()
-        ),
-    }
+    format!(
+        "view kind `{}` is not supported in this version",
+        kind.as_str()
+    )
 }

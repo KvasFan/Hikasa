@@ -1546,7 +1546,7 @@ impl Service {
     /// file, `--criteria`, the patch and the text rules of `--content rules`. Kinds other than Text and Folder
     /// Compare are left to the GUI (`unsupported_view`).
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
-        if !resolved.kind.is_served_in_m1() && resolved.kind != ViewKind::FolderSync {
+        if !resolved.kind.is_served() {
             return Ok(());
         }
         let mut warnings = Vec::new();
@@ -1695,9 +1695,18 @@ impl Service {
                 };
                 let words = options.sync.clone().unwrap_or_default();
                 let windows = self.env().platform == Platform::Windows;
+                // The words apply over the `folder-sync` defaults' options (M2 W9b): a view opened without a preset
+                // syncs as a new Folder Sync session would.
+                let base = match self
+                    .session_defaults(crate::sessions::SessionType::FolderSync)
+                    .map(|s| s.rules)
+                {
+                    Ok(crate::sessions::SessionRules::Sync(rules)) => rules.sync,
+                    _ => SyncOptions::default(),
+                };
                 Ok(ViewRequest::Sync {
                     request,
-                    options: sync_options(&words, &SyncOptions::default(), windows)?,
+                    options: sync_options(&words, &base, windows)?,
                     allow_empty_source: words.allow_empty_source,
                     display,
                 })

@@ -326,6 +326,11 @@ impl ViewKind {
     pub const fn is_served_in_m1(self) -> bool {
         matches!(self, ViewKind::FolderCompare | ViewKind::TextCompare)
     }
+
+    /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`. Additive.
+    pub const fn is_served(self) -> bool {
+        self.is_served_in_m1() || matches!(self, ViewKind::FolderSync)
+    }
 }
 
 /// View id (unique per GUI process).

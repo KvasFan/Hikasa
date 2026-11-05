@@ -133,7 +133,7 @@ pub struct PendingTab {
 
 /// True for a view kind this window shows: Folder Compare, Text Compare and (M2 W9b, D-248) Folder Sync.
 pub fn served(kind: hikasa_session::ipc::ViewKind) -> bool {
-    kind.is_served_in_m1() || kind == hikasa_session::ipc::ViewKind::FolderSync
+    kind.is_served()
 }
 
 /// The command scope of a session type.

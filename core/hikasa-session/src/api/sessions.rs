@@ -1262,7 +1262,7 @@ impl Service {
     /// The view of a session (absolute specs required).
     fn view_of(&self, session: &Session, title: String) -> Result<SessionView, ApiError> {
         let kind = session.kind.view_kind();
-        if !kind.is_served_in_m1() {
+        if !kind.is_served() {
             return Err(ApiError::Unsupported(format!(
                 "{} sessions cannot be opened in this version",
                 session.kind
@@ -1308,6 +1308,25 @@ impl Service {
                     request,
                     display,
                     expand_all,
+                }
+            }
+            // A Folder Sync session (M2 W9b, D-247): its folder rules and its `[rules.sync]`.
+            (
+                ViewRequest::Sync {
+                    mut request,
+                    allow_empty_source,
+                    display,
+                    ..
+                },
+                SessionRules::Sync(rules),
+            ) => {
+                request.base_rules = Some(rules.folder.clone());
+                request.base_text_rules.clone_from(&session.text_rules);
+                ViewRequest::Sync {
+                    request,
+                    options: rules.sync.clone(),
+                    allow_empty_source,
+                    display,
                 }
             }
             (other, _) => other,

@@ -433,10 +433,12 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     );
     let resolved = service.resolve_open(&bad).unwrap();
     assert!(service.check_open(&resolved).is_err());
-    // The GUI's answer to a sync view.
+    // The GUI serves a sync view since M2 W9b (D-248): only kinds of later waves are refused.
+    assert!(ViewKind::FolderSync.is_served());
+    assert!(!ViewKind::HexCompare.is_served());
     assert_eq!(
-        hikasa_session::ipc::unserved_view(ViewKind::FolderSync),
-        "this window cannot show a Folder Sync view yet"
+        hikasa_session::ipc::unserved_view(ViewKind::HexCompare),
+        "view kind `hex_compare` is not supported in this version"
     );
     // One parser for the CLI and the IPC: the session's matrix is the base of `--custom`.
     let base = SyncOptions {
@@ -484,4 +486,24 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
         assert_eq!(back, options);
     }
     let _ = OpOverrides::default();
+}
+
+/// A9.17 (D-248): the exit code of a waited Folder Sync view is its last Run's; without a Run, 0 when the comparison
+/// completed, else 100.
+#[test]
+fn a9_17_the_waited_outcome_of_a_sync_view() {
+    use hikasa_core::ExitCode;
+    use hikasa_session::api::ViewOutcome;
+    use hikasa_session::ipc::CloseReason;
+    for (last_run, complete, code) in [
+        (None, true, ExitCode::Success),
+        (None, false, ExitCode::UnknownError),
+        (Some(ExitCode::Success), false, ExitCode::Success),
+        (Some(ExitCode::UnknownError), true, ExitCode::UnknownError),
+    ] {
+        let (result, exit) =
+            ViewOutcome::Sync { last_run, complete }.close(CloseReason::User, false);
+        assert_eq!(exit, code, "{last_run:?} {complete}");
+        assert_eq!(result.reason, CloseReason::User.as_str());
+    }
 }
