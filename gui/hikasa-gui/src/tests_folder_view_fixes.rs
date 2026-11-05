@@ -796,3 +796,28 @@ fn rows_rebuilt_in_the_background_while_scanning_are_the_rows() {
     set_gate(&g, true);
     world.settle(&mut app);
 }
+
+/// Mutation E: the Space mark goes when its row no longer has the marked side (a refresh found the left item gone).
+#[test]
+fn the_mark_goes_with_its_side() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "left\n", 1_000);
+    put(&world, "r", "a.txt", "right\n", 2_000);
+    put(&world, "l", "b.txt", "b\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select(&mut app, view, "a.txt");
+    let m = folder_model(&mut app, view);
+    m.space();
+    assert!(m.marked(), "marked on the left");
+    std::fs::remove_file(world.path("work/l/a.txt")).expect("remove");
+    let a = node_of(&mut app, view, "a.txt").expect("a");
+    let service = world.service.clone();
+    folder_model(&mut app, view).refresh_for_test(&service, vec![a]);
+    world.settle(&mut app);
+    // The refresh may renumber the row: found again by path.
+    let a = node_of(&mut app, view, "a.txt").expect("a.txt is still there (right only)");
+    let m = folder_model(&mut app, view);
+    assert!(m.rows().iter().any(|r| r.node == a), "and shown");
+    assert!(!m.marked(), "the mark went with its side");
+}
