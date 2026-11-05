@@ -97,7 +97,23 @@ impl FolderViewModel {
         on: [bool; 2],
         windows: bool,
     ) -> Option<(OpContext, Mark)> {
-        let mark = Mark::of(self.prepared()?);
+        let prepared = self.prepared()?;
+        let mark = Mark::of(prepared);
+        // The source side: the focus side, else the side that has the items, else the left (review F13).
+        let source = match (self.selection.focus, on) {
+            (f, _) if f == SideSet::RIGHT => Side::Right,
+            (f, _) if f == SideSet::LEFT => Side::Left,
+            (_, [false, true]) => Side::Right,
+            _ => Side::Left,
+        };
+        let style = service.spec_context().style;
+        let target_context = match prepared.specs().get(source) {
+            Some(hikasa_core::Spec::Local(path)) => Some(hikasa_core::SpecContext {
+                cwd: Some(path.as_path().to_path_buf()),
+                ..service.spec_context()
+            }),
+            _ => None,
+        };
         Some((
             OpContext {
                 view,
@@ -112,6 +128,8 @@ impl FolderViewModel {
                 on,
                 zone: service.clock().now().time_zone().clone(),
                 windows,
+                target_context,
+                style,
             },
             mark,
         ))

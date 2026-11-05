@@ -3108,7 +3108,7 @@ impl AppCore {
         {
             let (view, again, started) = (d.view(), d.plan_again(), d.take_started());
             let (remembered, target) = if started.is_some() {
-                (d.remembered(), d.target().map(str::to_owned))
+                (d.remembered(), d.target())
             } else {
                 (Vec::new(), None)
             };

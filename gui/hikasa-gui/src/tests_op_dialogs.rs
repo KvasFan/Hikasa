@@ -1014,6 +1014,59 @@ fn a9_13_open_with_views_applications_and_the_associated_one() {
     );
 }
 
+// ---- After the W9b review: Copy to Folder's relative target (F13) -----------------------------------------------------
+
+/// A relative target of Copy to Folder is the source side's base folder's (the focus side's, else the side with the
+/// items), never the program's current folder; the dialog shows it absolute before Start, and the recent folders keep
+/// it absolute.
+#[test]
+fn a_relative_copy_to_target_is_the_source_base_s() {
+    for (side, base) in [(SideSet::RIGHT, "r"), (SideSet::LEFT, "l")] {
+        let world = World::new();
+        fixture(&world);
+        let mut app = world.app(None);
+        let view = open(&world, &mut app);
+        select_all_of(&mut app, view, &["a.txt"]);
+        folder_model(&mut app, view).with_selection(|sel, _, _| sel.focus = side);
+        app.execute(CommandId::CopyTo);
+        let d = op_dialog(&mut app);
+        d.set_target("out");
+        d.edit(|f| {
+            if let OpForm::CopyTo { sides, .. } = f {
+                *sides = if side == SideSet::RIGHT {
+                    SideChoice::Right
+                } else {
+                    SideChoice::Left
+                };
+            }
+        });
+        let expected = world.path(&format!("work/{base}/out"));
+        let resolved = op_dialog(&mut app)
+            .resolved_target()
+            .expect("a target")
+            .expect("resolved");
+        assert_eq!(
+            hikasa_session::api::spec_os_string(&resolved),
+            expected.clone().into_os_string(),
+            "shown absolute before Start"
+        );
+        planned(&world, &mut app);
+        start_and_confirm(&world, &mut app);
+        assert!(
+            expected.join("a.txt").is_file(),
+            "{side:?}: copied into {expected:?}"
+        );
+        assert_eq!(
+            app.0
+                .state()
+                .mru(hikasa_session::settings::state::MruList::Folders)
+                .first(),
+            Some(&expected.to_string_lossy().into_owned()),
+            "the recent folder is absolute"
+        );
+    }
+}
+
 // ---- After the W9b review: launches (F5, F10, R14, R15) -------------------------------------------------------------
 
 /// A launcher that records its calls (a [`RecordingLauncher`]) and holds each at a gate first.

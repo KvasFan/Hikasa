@@ -163,6 +163,22 @@ pub fn op_dialog(ui: &mut Ui, d: &mut OpDialog, pal: &Palette) -> bool {
                     browse = true;
                 }
             });
+            // The folder the items go to, as it will be read (a relative text is the source side's base's, F13).
+            match d.resolved_target() {
+                Some(Ok(spec)) => {
+                    ui.label(
+                        RichText::new(format!(
+                            "Into {}",
+                            crate::shared::shown_path(&spec.canonical())
+                        ))
+                        .color(pal.muted),
+                    );
+                }
+                Some(Err(message)) => {
+                    ui.label(RichText::new(message).color(pal.error));
+                }
+                None => {}
+            }
             for (value, label) in [
                 (PathStructure::Relative, "Keep relative folder structure"),
                 (PathStructure::Base, "Keep base folder structure"),

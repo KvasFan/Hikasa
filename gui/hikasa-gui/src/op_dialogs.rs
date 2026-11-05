@@ -634,6 +634,11 @@ pub struct OpContext {
     pub zone: TimeZone,
     /// `windows` rules for names (New Folder).
     pub windows: bool,
+    /// How Copy/Move to Folder reads its target: relative to the source side's base folder (the focus side's, else
+    /// the side that has the items), `~` the home folder (review F13); `None` when that base is not a local folder.
+    pub target_context: Option<hikasa_core::SpecContext>,
+    /// The path style of the platform (a target typed absolute).
+    pub style: hikasa_core::PathStyle,
 }
 
 impl std::fmt::Debug for OpContext {
@@ -775,11 +780,39 @@ impl OpDialog {
         }
     }
 
-    /// The target folder of Copy/Move to Folder (`None` for the other verbs): it joins `mru.folders` once started.
-    pub fn target(&self) -> Option<&str> {
-        match &self.form {
-            OpForm::CopyTo { target, .. } => Some(target.trim()),
-            _ => None,
+    /// The target folder of Copy/Move to Folder as it is read (`None` for the other verbs and an empty field): an
+    /// absolute spec, a relative text taken in the source side's base folder (review F13). The dialog shows it before
+    /// Start; it joins `mru.folders` once started.
+    pub fn resolved_target(&self) -> Option<Result<hikasa_core::Spec, String>> {
+        let OpForm::CopyTo { target, .. } = &self.form else {
+            return None;
+        };
+        let text = target.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let absolute = hikasa_core::SpecContext::absolute_only(self.ctx.style);
+        let typed = std::ffi::OsStr::new(text);
+        Some(match hikasa_core::Spec::parse_os(typed, &absolute) {
+            Ok(spec) => Ok(spec),
+            Err(_) => match &self.ctx.target_context {
+                Some(context) => {
+                    hikasa_core::Spec::parse_os(typed, context).map_err(|e| e.to_string())
+                }
+                None => Err(
+                    "Type an absolute folder: the source side's base is not a local folder."
+                        .to_owned(),
+                ),
+            },
+        })
+    }
+
+    /// The target folder of Copy/Move to Folder, resolved (`None` for the other verbs): it joins `mru.folders` once
+    /// started.
+    pub fn target(&self) -> Option<String> {
+        match self.resolved_target()? {
+            Ok(spec) => Some(spec.canonical()),
+            Err(_) => None,
         }
     }
 
@@ -954,7 +987,12 @@ impl OpDialog {
                 if target.trim().is_empty() {
                     return Err("Choose the folder the items go to.".to_owned());
                 }
-                let target = std::ffi::OsString::from(target.trim());
+                // A relative text is the source side's base folder's, never the program's current folder (F13).
+                let target = match self.resolved_target() {
+                    Some(Ok(spec)) => hikasa_session::api::spec_os_string(&spec),
+                    Some(Err(message)) => return Err(message),
+                    None => return Err("Choose the folder the items go to.".to_owned()),
+                };
                 if *moving {
                     OpRequest::MoveTo {
                         sides: sides.sides(),
