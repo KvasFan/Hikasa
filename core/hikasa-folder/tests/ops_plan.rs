@@ -311,6 +311,70 @@ fn a6_15_rule2_a_name_that_is_not_utf8_survives_on_disk() {
     assert_eq!(std::fs::read(r.join(raw)).unwrap(), b"x");
 }
 
+/// W9b review (G15): the plan compares the identities the scan recorded instead of asking the disk per item; a pair whose
+/// two names are one file (a hard link) is still refused, and a pair of two files is planned.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_pair_is_the_source_itself_and_two_files_are_planned() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (l, r) = (root.join("l"), root.join("r"));
+    std::fs::create_dir(&l).unwrap();
+    std::fs::create_dir(&r).unwrap();
+    std::fs::write(l.join("one.txt"), b"left").unwrap();
+    std::fs::hard_link(l.join("one.txt"), r.join("one.txt")).unwrap();
+    std::fs::write(l.join("two.txt"), b"left two").unwrap();
+    std::fs::write(r.join("two.txt"), b"right two!").unwrap();
+    let spec = |path: &std::path::Path| {
+        Spec::Local(hikasa_core::LocalPath::new(path.to_path_buf()).unwrap())
+    };
+    let vfs = hikasa_vfs::LocalVfs::new(hikasa_vfs::LocalOptions::default());
+    let engines = engines(1 << 30);
+    let cmp = with_env(&vfs, &engines, &CancelToken::new(), |env| {
+        let model = FolderModel::new(spec(&l), spec(&r), FolderRules::default()).unwrap();
+        compare_into(&model, env).unwrap()
+    });
+    let read = cmp.read();
+    let scope = OpScope {
+        selection: selection(&read, &[("one.txt", L), ("two.txt", L)]),
+        include: all_shown(),
+        iu: false,
+        read_only: ReadOnlySides::default(),
+    };
+    let copy = FolderOp::Copy {
+        to: Side::Right,
+        overwrite: OverwritePolicy::Always,
+    };
+    let out = plan_op(
+        &read,
+        &vfs,
+        &scope,
+        &copy,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let one = out
+        .plan
+        .items
+        .iter()
+        .find(|i| i.target.canonical().ends_with("one.txt"))
+        .unwrap();
+    let error = one.error.as_ref().expect("one file under two names");
+    assert!(
+        error.message.contains("is the source itself"),
+        "{}",
+        error.message
+    );
+    let two = out
+        .plan
+        .items
+        .iter()
+        .find(|i| i.target.canonical().ends_with("two.txt"))
+        .unwrap();
+    assert!(two.error.is_none() && two.replaces, "{two:?}");
+}
+
 #[test]
 fn a6_15_rule2_a_raw_name_on_memory_goes_through_child() {
     let vfs = memory();

@@ -357,6 +357,25 @@ impl TreeRead<'_> {
         Some(spec)
     }
 
+    /// [`TreeRead::spec`] of `id` made from `parent`, the spec of its parent row on `side` (additive, M2 W9b review): one
+    /// join instead of the walk from the base, for the rows of one folder in turn. `parent` must be that spec.
+    pub fn spec_below(&self, parent: &Spec, id: NodeId, side: Side) -> Option<Spec> {
+        if !matches!(side, Side::Left | Side::Right) || id == NodeId::ROOT {
+            return self.spec(id, side);
+        }
+        let s = side_index(side);
+        let node = self.store.node(id)?;
+        let rec = node.sides.get(s)?;
+        if !rec.present() {
+            return None;
+        }
+        if rec.dir().is_some() {
+            return self.spec(id, side);
+        }
+        let opened = node.flags().contains(NodeFlags::archive_root(side));
+        join_name(parent.clone(), &self.store.raw_name(s, id.0, rec), opened)
+    }
+
     /// The name of a node's side as the OS has it, which [`EntryView::name`] may only approximate. `None` when the side is
     /// absent. Additive API (§1.6.10 rule 2: a name that is not UTF-8 survives an operation).
     pub fn raw_name(&self, id: NodeId, side: Side) -> Option<std::ffi::OsString> {

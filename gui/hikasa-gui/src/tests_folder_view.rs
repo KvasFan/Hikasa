@@ -174,6 +174,7 @@ fn entry<'a>(name: &'a str, attrs: Attrs) -> EntryView<'a> {
         crc32: Some(0x00ab_cdef),
         filtered: false,
         stat_skipped: false,
+        ident: 0,
         dir: None,
     }
 }

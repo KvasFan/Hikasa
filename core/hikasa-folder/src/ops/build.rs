@@ -106,6 +106,7 @@ pub(super) fn found_of_stat(entry: &Entry) -> Found {
         mtime: entry.mtime,
         row: None,
         filtered: false,
+        ident: entry.file_id.map_or(0, crate::model::store::ident_of),
     }
 }
 
@@ -124,6 +125,7 @@ pub(super) fn view_of_entry(entry: &Entry) -> EntryView<'_> {
         crc32: None,
         filtered: false,
         stat_skipped: false,
+        ident: entry.file_id.map_or(0, crate::model::store::ident_of),
         dir: None,
     }
 }
@@ -143,6 +145,8 @@ pub(super) struct Found {
     pub(super) row: Option<NodeId>,
     /// A filter hides it: what a plan does not touch without `--include-hidden`.
     pub(super) filtered: bool,
+    /// The fingerprint of its identity (`EntryView::ident`; 0: none given).
+    pub(super) ident: u64,
 }
 
 /// One direction of a copy or a move.
@@ -205,7 +209,14 @@ pub(super) struct Builder<'a, 'r> {
     pub(super) meta: Vec<ItemMeta>,
     pub(super) warnings: Vec<Warning>,
     warned: BTreeSet<String>,
+    /// Capabilities of archives, by the archive's canonical spec.
     caps: BTreeMap<String, Capabilities>,
+    /// Capabilities of every other spec, by its scheme (no key to make per item, G15).
+    scheme_caps: Vec<(&'static str, Capabilities)>,
+    /// The spec of the last parent row asked per side: the rows of one folder come in turn (G15).
+    parent_specs: [Option<(NodeId, Spec)>; 2],
+    /// The path of the last parent row asked for an item's path.
+    parent_path: Option<(NodeId, RelPath)>,
     ancestry: Vec<u8>,
     /// Folder rows with a folder item in the plan, and its depth.
     pub(super) depths: BTreeMap<NodeId, u32>,
@@ -235,6 +246,8 @@ pub(super) struct Builder<'a, 'r> {
     /// A sync: what stands there is replaced only when it is the row's own entry. Another row's entry is no target of this
     /// row's action (Update never removes), and a file a delete frees is not there any more.
     pub(super) own_only: bool,
+    /// The bases are not one folder by name ([`Builder::bases_differ`], asked once).
+    bases_differ: Option<bool>,
 }
 
 /// Plans `op`; see [`super::plan_op`].
@@ -352,6 +365,9 @@ impl<'a, 'r> Builder<'a, 'r> {
             warnings: Vec::new(),
             warned: BTreeSet::new(),
             caps: BTreeMap::new(),
+            scheme_caps: Vec::new(),
+            parent_specs: [None, None],
+            parent_path: None,
             ancestry: vec![0; len],
             depths: BTreeMap::new(),
             covered: vec![false; len],
@@ -365,6 +381,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             way: BTreeSet::new(),
             freed: Vec::new(),
             own_only: false,
+            bases_differ: None,
         }
     }
 
@@ -493,15 +510,41 @@ impl<'a, 'r> Builder<'a, 'r> {
     /// The capabilities at `spec`, memoized per archive and per base: what a side can do is asked once (rule 11). An unknown
     /// answer lets the row through, and execution says what it finds.
     pub(super) fn capabilities(&mut self, spec: &Spec) -> Capabilities {
-        let key = spec
-            .container()
-            .map_or_else(|| spec.scheme_name().to_owned(), Spec::canonical);
+        let Some(container) = spec.container() else {
+            let scheme = spec.scheme_name();
+            if let Some((_, found)) = self.scheme_caps.iter().find(|(s, _)| *s == scheme) {
+                return *found;
+            }
+            let found = self.vfs.capabilities(spec).unwrap_or(Capabilities::all());
+            self.scheme_caps.push((scheme, found));
+            return found;
+        };
+        let key = container.canonical();
         if let Some(found) = self.caps.get(&key) {
             return *found;
         }
         let found = self.vfs.capabilities(spec).unwrap_or(Capabilities::all());
         self.caps.insert(key, found);
         found
+    }
+
+    /// `read.spec(id, side)`, made from the spec of the row's parent, kept while the rows of one folder come (G15).
+    pub(super) fn spec_of(&mut self, id: NodeId, side: Side) -> Option<Spec> {
+        let read = self.read;
+        let k = match side {
+            Side::Left => 0,
+            Side::Right => 1,
+            Side::Center | Side::Output => return read.spec(id, side),
+        };
+        let Some(parent) = read.node(id).and_then(|view| view.parent) else {
+            return read.spec(id, side);
+        };
+        let slot = self.parent_specs.get_mut(k)?;
+        if slot.as_ref().is_none_or(|(at, _)| *at != parent) {
+            *slot = Some((parent, read.spec(parent, side)?));
+        }
+        let (_, spec) = slot.as_ref()?;
+        read.spec_below(spec, id, side)
     }
 
     /// True when `spec` lacks `bit`: the row is `skip capability`, and one `capability_missing` warning names the side.
@@ -549,14 +592,45 @@ impl<'a, 'r> Builder<'a, 'r> {
     }
 
     /// The meta of a row's item.
-    pub(super) fn meta_of(&self, id: NodeId, side: Option<Side>) -> ItemMeta {
+    pub(super) fn meta_of(&mut self, id: NodeId, side: Option<Side>) -> ItemMeta {
         ItemMeta {
             side,
             node: Some(id),
-            path: self.read.path(id).as_str().to_owned(),
+            path: self.path_text(id),
             conflicts: Conflicts::empty(),
             answer: None,
         }
+    }
+
+    /// `read.path(id)` as text, made from the path of the row's parent, kept while the rows of one folder come (G15).
+    fn path_text(&mut self, id: NodeId) -> String {
+        let read = self.read;
+        let whole = || read.path(id).as_str().to_owned();
+        let Some(view) = read.node(id) else {
+            return whole();
+        };
+        let Some(parent) = view.parent else {
+            return whole();
+        };
+        // A flat row's path holds its folder: as the model makes it.
+        let Some(entry) = view.left.or(view.right).filter(|e| e.dir.is_none()) else {
+            return whole();
+        };
+        if self
+            .parent_path
+            .as_ref()
+            .is_none_or(|(at, _)| *at != parent)
+        {
+            self.parent_path = Some((parent, read.path(parent)));
+        }
+        let Some((_, path)) = self.parent_path.as_ref() else {
+            return whole();
+        };
+        // A parent whose path is not one (a name `RelPath` refuses) makes none below it either, as `path` says.
+        if parent != NodeId::ROOT && path.is_root() {
+            return String::new();
+        }
+        path.join(entry.name).map(String::from).unwrap_or_default()
     }
 
     /// Marks everything below `id` as seen to.
@@ -665,6 +739,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             mtime: entry.mtime,
             row: Some(id),
             filtered: entry.filtered,
+            ident: entry.ident,
         })
     }
 
@@ -888,6 +963,7 @@ impl<'a, 'r> Builder<'a, 'r> {
             mtime: None,
             row: None,
             filtered: false,
+            ident: 0,
         })
     }
 
@@ -900,7 +976,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         view: &NodeView<'_>,
     ) -> Result<(Spec, Option<Found>), VfsError> {
         if let Some(entry) = view.side(tr.to)
-            && let Some(spec) = self.read.spec(id, tr.to)
+            && let Some(spec) = self.spec_of(id, tr.to)
         {
             let found = self.found_of(id, entry, &spec)?;
             return Ok((spec, Some(found)));
@@ -1056,6 +1132,44 @@ impl<'a, 'r> Builder<'a, 'r> {
         Ok(())
     }
 
+    /// [`Builder::same_file`] of a file a copy replaces, from what the model knows (W9b review, G15): two local files of
+    /// different identities are two files; where the back-end gives no identity at all, two names under bases that are
+    /// not one folder are two files (the identity check could not tell more). Anything else asks the disk as before;
+    /// execution checks the stamps of both.
+    fn same_file_known(
+        &mut self,
+        entry: &EntryView<'_>,
+        source: &Spec,
+        target: &Spec,
+        found: &Found,
+        moving: bool,
+    ) -> Result<(), VfsError> {
+        let known = !entry.followed
+            && !moving
+            && !entry.stat_skipped
+            && matches!((source, target), (Spec::Local(_), Spec::Local(_)))
+            && match (entry.ident, found.ident) {
+                (0, 0) => self.bases_differ(),
+                (0, _) | (_, 0) => false,
+                (a, b) => a != b,
+            };
+        if known {
+            return Ok(());
+        }
+        self.same_file(source, target, entry.followed, moving)
+    }
+
+    /// True when the two bases are not one folder by name (their `spec_key`s differ), asked once per plan.
+    fn bases_differ(&mut self) -> bool {
+        if let Some(differ) = self.bases_differ {
+            return differ;
+        }
+        let differ =
+            ops::spec_key(self.vfs, &self.bases.left) != ops::spec_key(self.vfs, &self.bases.right);
+        self.bases_differ = Some(differ);
+        differ
+    }
+
     /// One file or link onto its target: the overwrite policy from the model (rule 9), stamps (rule 10), conflicts.
     pub(super) fn place_file(
         &mut self,
@@ -1078,15 +1192,21 @@ impl<'a, 'r> Builder<'a, 'r> {
         } else {
             kind.entry_kind()
         };
-        let mut item = PlanItem::planned(action, kind, Some(source.clone()), target.clone(), depth);
+        // The item owns the source and the target from here (no copy of either, G15).
+        let mut item = PlanItem::planned(action, kind, Some(source), target, depth);
         item.follow_source = entry.followed;
-        let stamp = match self.source_stamp(entry, &source) {
-            Ok(stamp) => stamp,
-            Err(e) => {
+        let stamp = match item
+            .source
+            .as_ref()
+            .map(|source| self.source_stamp(entry, source))
+        {
+            Some(Ok(stamp)) => stamp,
+            Some(Err(e)) => {
                 item.error = Some(report(&e));
                 let meta = self.meta_of(id, side);
                 return self.push(item, meta);
             }
+            None => return,
         };
         if kind == EntryKind::File {
             item.size = stamp.size.or(Some(entry.size));
@@ -1095,63 +1215,61 @@ impl<'a, 'r> Builder<'a, 'r> {
             source: Some(stamp),
             target: None,
         };
-        let mut meta = self.meta_of(id, side);
+        let mut conflicts = Conflicts::empty();
         if let Some(found) = found {
             if found.filtered && !self.include.hidden {
                 item.action = Action::Skip;
                 item.skip = Some(SkipReason::Filtered);
+                let meta = self.meta_of(id, side);
                 return self.push(item, meta);
             }
             if found.kind == EntryKind::Dir {
                 item.error = Some(report(&VfsError::IsADirectory {
-                    spec: target.canonical(),
+                    spec: item.target.canonical(),
                 }));
+                let meta = self.meta_of(id, side);
                 return self.push(item, meta);
             }
-            let source_newer = self
-                .read
-                .node(id)
-                .is_some_and(|view| self.newer(&view, entry, &found, tr.from).0);
-            match self.policy_onto(tr, id, &found) {
+            // Both directions of the time rule at once: the policy reads one, the questions the other.
+            let (source_newer, target_newer) = self.read.node(id).map_or((false, false), |view| {
+                self.newer(&view, entry, &found, tr.from)
+            });
+            let skip = match self.policy_onto(tr, id, &found) {
                 OverwritePolicy::Fail => {
                     item.error = Some(report(&VfsError::AlreadyExists {
-                        spec: target.canonical(),
+                        spec: item.target.canonical(),
                     }));
+                    let meta = self.meta_of(id, side);
                     return self.push(item, meta);
                 }
-                OverwritePolicy::Skip => {
-                    return self.skip_row(
-                        id,
-                        kind,
-                        Some(source),
-                        target,
-                        depth,
-                        SkipReason::Exists,
-                        side,
-                    );
-                }
-                OverwritePolicy::Newer if !source_newer => {
-                    return self.skip_row(
-                        id,
-                        kind,
-                        Some(source),
-                        target,
-                        depth,
-                        SkipReason::NotNewer,
-                        side,
-                    );
-                }
-                OverwritePolicy::Newer | OverwritePolicy::Always => {}
+                OverwritePolicy::Skip => Some(SkipReason::Exists),
+                OverwritePolicy::Newer if !source_newer => Some(SkipReason::NotNewer),
+                OverwritePolicy::Newer | OverwritePolicy::Always => None,
+            };
+            if let Some(reason) = skip {
+                let PlanItem { source, target, .. } = item;
+                return self.skip_row(id, kind, source, target, depth, reason, side);
             }
-            if let Err(e) = self.same_file(&source, &target, entry.followed, tr.moving) {
+            let same = match item.source.as_ref() {
+                Some(source) => {
+                    self.same_file_known(entry, source, &item.target, &found, tr.moving)
+                }
+                None => Ok(()),
+            };
+            if let Err(e) = same {
                 item.error = Some(report(&e));
+                let meta = self.meta_of(id, side);
                 return self.push(item, meta);
             }
             item.replaces = true;
             expect.target = Some(found.stamp);
-            meta.conflicts = self.replacing(id, entry, &found, tr);
+            conflicts = Conflicts::of_attrs(&found.attrs);
+            conflicts.set(Conflicts::OVERWRITE_NEWER, target_newer);
+            conflicts.set(Conflicts::REPLACE_DURING_MOVE, tr.moving);
         }
         item.expect = Some(expect);
+        let mut meta = self.meta_of(id, side);
+        meta.conflicts = conflicts;
         let respelt = item
             .replaces
             .then(|| self.respelling(id, entry, &item.target, stamp, tr))
@@ -1353,7 +1471,7 @@ impl<'a, 'r> Builder<'a, 'r> {
         let Some(entry) = view.side(tr.from).copied() else {
             return Ok(());
         };
-        let Some(source) = read.spec(id, tr.from) else {
+        let Some(source) = self.spec_of(id, tr.from) else {
             return Ok(());
         };
         let parent = view.parent.unwrap_or(NodeId::ROOT);
@@ -1439,20 +1557,17 @@ impl<'a, 'r> Builder<'a, 'r> {
             (Spec::ArchiveMember { archive, .. }, true) => Some((**archive).clone()),
             _ => None,
         };
-        let leaves = file.clone().unwrap_or_else(|| source.clone());
+        let leaves = file.as_ref().unwrap_or(&source);
         let as_a_file = file.is_some() && (tr.moving || view.side(tr.to).is_none());
-        let written = if as_a_file {
-            outer_of(&target)
-        } else {
-            target.clone()
-        };
+        let outer = as_a_file.then(|| outer_of(&target));
+        let written = outer.as_ref().unwrap_or(&target);
         let need = if view.is_folder() && !as_a_file {
             (Capabilities::MKDIR, "mkdir")
         } else {
             (Capabilities::WRITE, "write")
         };
-        let gone = tr.moving && self.lacks(&leaves, Capabilities::REMOVE, "remove", Some(tr.from));
-        if gone || self.lacks(&written, need.0, need.1, side) {
+        let gone = tr.moving && self.lacks(leaves, Capabilities::REMOVE, "remove", Some(tr.from));
+        if gone || self.lacks(written, need.0, need.1, side) {
             let depth = self.child_depth(view.parent);
             self.skip_row(
                 id,
