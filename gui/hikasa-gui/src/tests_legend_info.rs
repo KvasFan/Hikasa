@@ -63,7 +63,7 @@ fn a9_8_the_legend_lists_every_glyph_and_colour_class_once() {
     let marks = all
         .iter()
         .flat_map(|s| &s.entries)
-        .filter(|e| matches!(e.swatch, Swatch::Mark(_)))
+        .filter(|e| matches!(e.swatch, Swatch::Mark(..)))
         .count();
     assert_eq!(
         marks,

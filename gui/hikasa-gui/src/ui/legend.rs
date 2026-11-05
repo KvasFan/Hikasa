@@ -2,12 +2,13 @@
 //! open while the tree is used. It paints `legend::sections()` with the tree's own glyph painter and the current
 //! palette, so it cannot disagree with the tree.
 
-use egui::{Align, Align2, Color32, Layout, RichText, ScrollArea, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align, Color32, Layout, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 
-use crate::folder::glyphs::{GlyphColour, IGNORED_BADGE};
+use crate::folder::glyphs::GlyphColour;
 use crate::legend::{LegendSection, Swatch};
-use crate::ui::folder::draw_glyph;
+use crate::ui::folder::{draw_centre, draw_glyph};
 use crate::ui::hint::Hint as _;
+use crate::ui::icons::{self, IconId};
 use crate::ui::theme::Palette;
 
 /// What the user did in the panel.
@@ -32,7 +33,7 @@ pub fn swatch_colour(swatch: Swatch, pal: &Palette) -> Color32 {
             GlyphColour::Unopened => pal.c_unopened,
             GlyphColour::Error => pal.error,
         },
-        Swatch::Mark(_) | Swatch::Ignored => pal.muted,
+        Swatch::Mark(..) | Swatch::Ignored => pal.muted,
         Swatch::Marked => pal.accent,
     }
 }
@@ -81,26 +82,20 @@ fn paint_swatch(ui: &Ui, rect: egui::Rect, swatch: Swatch, pal: &Palette) {
             painter.circle_filled(at, 4.5, colour);
         }
         Swatch::Glyph(glyph) => draw_glyph(painter, at, glyph, colour, pal),
-        Swatch::Mark(mark) => {
-            painter.text(
-                at,
-                Align2::CENTER_CENTER,
-                mark,
-                egui::FontId::proportional(13.0),
-                colour,
-            );
-        }
-        Swatch::Ignored => {
-            painter.text(
-                pos2(rect.right() - 2.0, rect.top() + 2.0),
-                Align2::RIGHT_TOP,
-                IGNORED_BADGE,
-                egui::FontId::proportional(10.0),
-                colour,
-            );
-        }
-        Swatch::Marked => {
-            painter.circle_stroke(at, SWATCH / 2.0 - 2.0, Stroke::new(1.5, colour));
-        }
+        Swatch::Mark(icon, mark) => draw_centre(
+            painter,
+            at,
+            icon,
+            mark,
+            &egui::FontId::proportional(13.0),
+            colour,
+        ),
+        Swatch::Ignored => icons::paint(
+            painter,
+            icons::square(pos2(rect.right() - 10.0, rect.top() + 2.0), 8.0),
+            IconId::Ignored,
+            colour,
+        ),
+        Swatch::Marked => icons::paint(painter, rect.shrink(1.0), IconId::Mark, colour),
     }
 }

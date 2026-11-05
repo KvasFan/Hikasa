@@ -144,7 +144,8 @@ pub fn newer_mark(side: Side) -> (&'static str, &'static str) {
     }
 }
 
-/// The badge of a row with an Ignored mark (FC-033), drawn at the centre's right edge.
+/// The Ignored badge as text (the Legend as text, tests); the tree and the Legend draw `IconId::Ignored` (FC-033).
+#[cfg(test)]
 pub const IGNORED_BADGE: &str = "i";
 
 /// The mark and title of a content result.

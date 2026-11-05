@@ -1515,7 +1515,15 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
-    row(C::Legend, S::Folder, None, None, G::Check, P::Always, NONE),
+    row(
+        C::Legend,
+        S::Folder,
+        Some(I::Legend),
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
     row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
     row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
     row(
@@ -1640,7 +1648,7 @@ pub const PRESENTATION: &[Row] = &[
     row(
         C::FindFilename,
         S::Folder,
-        None,
+        Some(I::Search),
         None,
         G::None,
         P::Ready,

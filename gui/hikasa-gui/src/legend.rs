@@ -5,7 +5,9 @@
 use hikasa_core::{ContentKind, Side};
 use hikasa_folder::{Category, ColourClass};
 
-use crate::folder::glyphs::{GLYPH_TABLE, GlyphView, content_mark, newer_mark, state_mark};
+use crate::folder::glyphs::{
+    CentreIcon, GLYPH_TABLE, GlyphView, content_mark, newer_mark, state_mark,
+};
 
 /// The help topic of the panel.
 pub const LEGEND_TOPIC: &str = "panel-legend";
@@ -17,8 +19,8 @@ pub enum Swatch {
     Glyph(GlyphView),
     /// The colour spot of a colour class (FC-031); the category tells the classes that share one apart.
     Class(ColourClass, Category),
-    /// A centre column mark (FC-032).
-    Mark(&'static str),
+    /// A centre column icon (FC-032) and the text mark it stands for.
+    Mark(CentreIcon, &'static str),
     /// The Ignored badge (FC-033).
     Ignored,
     /// The Space mark's ring (D-238).
@@ -99,7 +101,7 @@ pub fn sections() -> Vec<LegendSection> {
     for side in [Side::Left, Side::Right] {
         let (mark, title) = newer_mark(side);
         centre.push(LegendEntry {
-            swatch: Swatch::Mark(mark),
+            swatch: Swatch::Mark(CentreIcon::Newer(side), mark),
             text: title.to_owned(),
         });
     }
@@ -109,14 +111,14 @@ pub fn sections() -> Vec<LegendSection> {
         }
         let (mark, title) = state_mark(category);
         centre.push(LegendEntry {
-            swatch: Swatch::Mark(mark),
+            swatch: Swatch::Mark(CentreIcon::State(category), mark),
             text: title.to_owned(),
         });
     }
     for kind in ContentKind::ALL {
         let (mark, title) = content_mark(kind);
         centre.push(LegendEntry {
-            swatch: Swatch::Mark(mark),
+            swatch: Swatch::Mark(CentreIcon::Content(kind), mark),
             text: title.to_owned(),
         });
     }
@@ -155,7 +157,7 @@ pub fn text() -> String {
             let swatch = match entry.swatch {
                 Swatch::Glyph(g) => format!("{:?}", g.base),
                 Swatch::Class(c, _) => format!("{c:?}"),
-                Swatch::Mark(m) => m.to_owned(),
+                Swatch::Mark(_, m) => m.to_owned(),
                 Swatch::Ignored => crate::folder::glyphs::IGNORED_BADGE.to_owned(),
                 Swatch::Marked => "( )".to_owned(),
             };

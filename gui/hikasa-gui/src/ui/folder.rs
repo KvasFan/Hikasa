@@ -11,7 +11,7 @@ use hikasa_session::ipc::ViewId;
 
 use crate::commands::CommandId;
 use crate::folder::columns::{self, ColumnId};
-use crate::folder::glyphs::{Glyph, GlyphColour, GlyphView};
+use crate::folder::glyphs::{CentreIcon, Glyph, GlyphColour, GlyphView};
 use crate::folder::selection::{Hit, Mods, Press, SWIPE_THRESHOLD, Swipe};
 use crate::folder_view::{Cell, FolderStatus, FolderViewModel, ROW_HEIGHT, RowView};
 use crate::ui::hint::Hint as _;
@@ -607,27 +607,30 @@ pub fn show(
                 egui::StrokeKind::Inside,
             );
         }
+        let centre = pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0);
         if row.centre.marked {
-            clip.circle_stroke(
-                pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0),
-                rh / 2.0 - 2.0,
-                Stroke::new(1.5, pal.accent),
+            let ring = rh - 2.0;
+            icons::paint(
+                &clip,
+                icons::square(pos2(centre.x - ring / 2.0, centre.y - ring / 2.0), ring),
+                IconId::Mark,
+                pal.accent,
             );
         }
         if row.centre.ignored {
-            clip.text(
-                pos2(side_x[1] - 4.0, y + 4.0),
-                Align2::RIGHT_TOP,
-                crate::folder::glyphs::IGNORED_BADGE,
-                small.clone(),
+            icons::paint(
+                &clip,
+                icons::square(pos2(side_x[1] - 10.0, y + 2.0), 8.0),
+                IconId::Ignored,
                 pal.muted,
             );
         }
-        clip.text(
-            pos2(side_x[0] + side_w + MARK_W / 2.0, y + rh / 2.0),
-            Align2::CENTER_CENTER,
+        draw_centre(
+            &clip,
+            centre,
+            row.centre.icon,
             row.mark,
-            body_font.clone(),
+            &body_font,
             pal.muted,
         );
     }
@@ -714,40 +717,55 @@ pub(crate) fn draw_glyph(
         Glyph::Spot => {
             painter.circle_filled(at, 4.5, tint);
         }
-        Glyph::Folder | Glyph::FolderFilled => icons::paint(painter, rect, IconId::Folder, tint),
-        Glyph::FolderHollow => {
-            painter.rect_stroke(
-                rect.shrink(2.0),
-                CornerRadius::same(2),
-                Stroke::new(1.2, tint),
-                egui::StrokeKind::Inside,
-            );
-        }
+        Glyph::Folder => icons::paint(painter, rect, IconId::Folder, tint),
+        Glyph::FolderFilled => icons::paint(painter, rect, IconId::FolderFilled, tint),
+        Glyph::FolderHollow => icons::paint(painter, rect, IconId::FolderHollow, tint),
         Glyph::Archive => icons::paint(painter, rect, IconId::Zipper, tint),
     }
+    // The overlays (§1.9.5 inventory): the red X of a failed listing, the arrow of a link.
     if glyph.error {
-        let stroke = Stroke::new(1.6, pal.error);
-        painter.line_segment(
-            [
-                rect.left_top() + vec2(3.0, 3.0),
-                rect.right_bottom() - vec2(3.0, 3.0),
-            ],
-            stroke,
-        );
-        painter.line_segment(
-            [
-                rect.right_top() + vec2(-3.0, 3.0),
-                rect.left_bottom() + vec2(3.0, -3.0),
-            ],
-            stroke,
-        );
+        icons::paint(painter, rect, IconId::OverlayError, pal.error);
     }
     if glyph.link {
-        let stroke = Stroke::new(1.2, pal.f_text);
-        let base = rect.left_bottom() + vec2(1.0, -1.0);
-        painter.line_segment([base, base + vec2(5.0, -5.0)], stroke);
-        painter.line_segment([base + vec2(5.0, -5.0), base + vec2(1.5, -5.0)], stroke);
-        painter.line_segment([base + vec2(5.0, -5.0), base + vec2(5.0, -1.5)], stroke);
+        icons::paint(painter, rect, IconId::OverlayLink, pal.f_text);
+    }
+}
+
+/// The icon of a centre cell (FC-032): a content result or the newer side's arrow; a state shows its text mark.
+pub(crate) fn centre_icon(icon: CentreIcon) -> Option<IconId> {
+    use hikasa_core::ContentKind;
+    Some(match icon {
+        CentreIcon::Content(ContentKind::BinarySame) => IconId::ContentSame,
+        CentreIcon::Content(ContentKind::BinaryDifferent) => IconId::ContentDifferent,
+        CentreIcon::Content(ContentKind::RulesSame) => IconId::ContentRulesSame,
+        CentreIcon::Content(ContentKind::UnimportantOnly) => IconId::ContentUnimportant,
+        CentreIcon::Content(ContentKind::ImportantDifferences) => IconId::ContentImportant,
+        CentreIcon::Content(ContentKind::Error) => IconId::Error,
+        CentreIcon::Newer(hikasa_core::Side::Right) => IconId::ArrowLeft,
+        CentreIcon::Newer(_) => IconId::ArrowRight,
+        CentreIcon::State(_) => return None,
+    })
+}
+
+/// Paints a centre cell's icon, or its text mark, centred at `at`.
+pub(crate) fn draw_centre(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    icon: CentreIcon,
+    mark: &str,
+    font: &FontId,
+    colour: Color32,
+) {
+    match centre_icon(icon) {
+        Some(id) => icons::paint(
+            painter,
+            icons::square(pos2(at.x - 7.0, at.y - 7.0), 14.0),
+            id,
+            colour,
+        ),
+        None => {
+            painter.text(at, Align2::CENTER_CENTER, mark, font.clone(), colour);
+        }
     }
 }
 
@@ -919,7 +937,18 @@ fn path_edit(
             m.path_edit(k).cancel();
         }
     }
-    if button(ui, "…", "Browse") {
+    let browse = Rect::from_min_size(pos2(x, rect.top()), vec2(22.0, rect.height()));
+    let browse_clicked = ui
+        .put(browse, egui::Button::new("").small())
+        .hint("Browse")
+        .clicked();
+    icons::paint(
+        ui.painter(),
+        icons::square(pos2(browse.center().x - 7.0, browse.center().y - 7.0), 14.0),
+        IconId::Browse,
+        pal.fg,
+    );
+    if browse_clicked {
         run.push(Invocation::new(if k == 0 {
             CommandId::BrowseLeft
         } else {
