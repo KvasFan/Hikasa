@@ -25,12 +25,14 @@ pub enum Scope {
     Folder,
     /// Text Compare.
     Text,
+    /// Folder Sync (M2 W9b, D-247).
+    Sync,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 3] = [Scope::Home, Scope::Folder, Scope::Text];
+    pub const VIEWS: [Scope; 4] = [Scope::Home, Scope::Folder, Scope::Text, Scope::Sync];
 
     /// The view type's title (`<Type>` in a catalogue caption).
     pub fn type_title(self) -> &'static str {
@@ -39,6 +41,7 @@ impl Scope {
             Scope::Home => "Home",
             Scope::Folder => "Folder Compare",
             Scope::Text => "Text Compare",
+            Scope::Sync => "Folder Sync",
         }
     }
 
@@ -50,6 +53,7 @@ impl Scope {
             Scope::Home => Some("home"),
             Scope::Folder => Some("folder-compare"),
             Scope::Text => Some("text-compare"),
+            Scope::Sync => Some("folder-sync"),
         }
     }
 
@@ -229,6 +233,76 @@ command_ids! {
     FindFilenameNext,
     /// Folder (M2 W9a): the previous row whose name matches the last query.
     FindFilenamePrev,
+    /// Folder (M2 W9b): asks the side, then copies the selection there (FC-070).
+    CopyPrompt,
+    /// Folder (M2 W9b): copies the selection to the side opposite the pane (`CommandArg::Side`).
+    CopySide,
+    /// Folder (M2 W9b): moves the selection from left to right (FC-071).
+    MoveRight,
+    /// Folder (M2 W9b): moves the selection from right to left.
+    MoveLeft,
+    /// Folder (M2 W9b): asks the side, then moves the selection there.
+    MovePrompt,
+    /// Folder (M2 W9b): moves the selection to the side opposite the pane.
+    MoveSide,
+    /// Folder (M2 W9b): exchanges the selected items of both sides (Exchange).
+    MoveBoth,
+    /// Folder (M2 W9b): the Copy to Folder dialog (FC-072).
+    CopyTo,
+    /// Folder (M2 W9b): the Move to Folder dialog.
+    MoveTo,
+    /// Folder (M2 W9b): renames one row inline, several in the Rename dialog (FC-074).
+    Rename,
+    /// Folder (M2 W9b): the Touch dialog (FC-076).
+    Touch,
+    /// Folder (M2 W9b): the New Folder dialog (FC-077).
+    NewFolder,
+    /// Folder (M2 W9b): marks or unmarks the selection as Ignored (FC-033; check).
+    Ignored,
+    /// Folder and Sync (M2 W9b): the Exclude dialog (FC-052).
+    Exclude,
+    /// Folder (M2 W9b): the Compare Contents dialog (FC-029 b).
+    Compare,
+    /// Folder (M2 W9b): the Quick Compare dialog of the selected pairs.
+    QuickCompare,
+    /// Folder (M2 W9b): compares two items, or one and the mark, or one and a browsed one (FC-062).
+    CompareTo,
+    /// Folder and Sync (M2 W9b): the Open With submenu (`CommandArg::OpenWith`).
+    OpenWithList,
+    /// Folder and Sync (M2 W9b): opens each selected item in its associated application.
+    AssocApp,
+    /// Folder (M2 W9b): the Synchronize submenu (FC-078).
+    SyncList,
+    /// Folder (M2 W9b): the Synchronize preview of Update Right.
+    UpdateRight,
+    /// Folder (M2 W9b): Update Left.
+    UpdateLeft,
+    /// Folder (M2 W9b): Update Both.
+    UpdateBoth,
+    /// Folder (M2 W9b): Mirror to Right.
+    MirrorRight,
+    /// Folder (M2 W9b): Mirror to Left.
+    MirrorLeft,
+    /// Folder (M2 W9b): a new Folder Sync view of the same bases (FC-004).
+    SyncBaseView,
+    /// Sync (M2 W9b): a new Folder Compare view of the same bases.
+    CompareBaseView,
+    /// Sync (M2 W9b): runs the planned sync (Run Sync).
+    Run,
+    /// Sync (M2 W9b): the selected rows are left alone (an override, FS-004).
+    SyncLeave,
+    /// Sync (M2 W9b): the selected rows are copied right to left.
+    SyncCopyLeft,
+    /// Sync (M2 W9b): the selected rows are copied left to right.
+    SyncCopyRight,
+    /// Sync (M2 W9b): the selected rows are deleted on the left.
+    SyncDeleteLeft,
+    /// Sync (M2 W9b): the selected rows are deleted on the right.
+    SyncDeleteRight,
+    /// Sync (M2 W9b): the next conflict.
+    ConflictNext,
+    /// Sync (M2 W9b): the previous conflict.
+    ConflictPrev,
     /// Folder: next difference.
     DiffNext,
     /// Folder: previous difference.
@@ -411,6 +485,16 @@ pub struct Ctx {
     /// Folder (M2 W9a after review, §1.9.2 rule 4): no operation, refresh or plan of the view runs and no question of
     /// one waits (`Predicate::Idle`); the base commands re-root the view and wait for it.
     pub idle: bool,
+    /// Folder (M2 W9b): the comparison is flat (*Ignore Folder Structure*): no sync (`NotFlat`).
+    pub flat: bool,
+    /// Folder: two items are selected, or one and the Space mark (`TwoItems`, Compare To).
+    pub two_items: bool,
+    /// Sync (M2 W9b): a plan is ready and has an action (`PlanReady`, Run Sync).
+    pub plan_ready: bool,
+    /// Sync: a shown row is a conflict (`HasConflict`).
+    pub has_conflict: bool,
+    /// Folder: the selection is two folders (Open With ▸ *Folder Compare*).
+    pub two_folders: bool,
 }
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
@@ -427,6 +511,17 @@ pub const LIST_CHILDREN: &[(CommandId, &[CommandId])] = &[
             CommandId::UpOneLevelBoth,
         ],
     ),
+    (
+        CommandId::SyncList,
+        &[
+            CommandId::UpdateRight,
+            CommandId::UpdateLeft,
+            CommandId::UpdateBoth,
+            CommandId::MirrorRight,
+            CommandId::MirrorLeft,
+        ],
+    ),
+    (CommandId::OpenWithList, &[CommandId::AssocApp]),
     (
         CommandId::SelectNewerList,
         &[
@@ -523,6 +618,22 @@ pub enum Predicate {
     Idle,
     /// Folder: the view has a model and is idle (`Swap`).
     ReadyIdle,
+    /// Folder (M2 W9b, §1.9.19): at least one item is selected in a finished comparison, nothing runs.
+    Selection,
+    /// A selected item can be moved to this side: both sides writable, items on the other side.
+    Movable(Side),
+    /// A selection on both sides, both writable (Exchange).
+    BothWritable,
+    /// A writable side and a finished comparison, nothing running (New Folder: no selection needed).
+    AnyWritable,
+    /// A selection in a comparison with its folder structure (the Synchronize submenu).
+    NotFlat,
+    /// A finished comparison and nothing running (Sync Base Folders, Compare Base Folders).
+    Loaded,
+    /// Sync: a plan with an action is ready and nothing runs (Run Sync).
+    PlanReady,
+    /// Sync: a conflict is shown (Next/Previous Conflict).
+    HasConflict,
 }
 
 impl Predicate {
@@ -570,6 +681,27 @@ impl Predicate {
             Predicate::ParentsAvailable => ctx.parents_available,
             Predicate::Idle => ctx.idle,
             Predicate::ReadyIdle => ctx.ready && ctx.idle,
+            Predicate::Selection => ctx.row_selected,
+            Predicate::Movable(side) => match side_index(side) {
+                Some(k) => {
+                    ctx.row_selected && ctx.writable[k] && ctx.writable[1 - k] && ctx.row_on[1 - k]
+                }
+                None => false,
+            },
+            Predicate::BothWritable => {
+                ctx.row_selected
+                    && ctx.writable[0]
+                    && ctx.writable[1]
+                    && ctx.row_on[0]
+                    && ctx.row_on[1]
+            }
+            Predicate::AnyWritable => {
+                ctx.ready && ctx.idle && !ctx.busy && (ctx.writable[0] || ctx.writable[1])
+            }
+            Predicate::NotFlat => ctx.ready && ctx.idle && !ctx.busy && !ctx.flat,
+            Predicate::Loaded => ctx.ready && !ctx.busy,
+            Predicate::PlanReady => ctx.plan_ready && ctx.idle,
+            Predicate::HasConflict => ctx.has_conflict,
         }
     }
 }
@@ -1264,6 +1396,321 @@ pub const PRESENTATION: &[Row] = &[
         NONE,
     ),
     row(
+        C::CopyPrompt,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::CopySide,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::MoveRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Movable(Side::Right),
+        NONE,
+    ),
+    row(
+        C::MoveLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Movable(Side::Left),
+        NONE,
+    ),
+    row(
+        C::MovePrompt,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::MoveSide,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::MoveBoth,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::BothWritable,
+        NONE,
+    ),
+    row(
+        C::CopyTo,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::MoveTo,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::Rename,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::Touch,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::RowSelected,
+        NONE,
+    ),
+    row(
+        C::NewFolder,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::AnyWritable,
+        NONE,
+    ),
+    row(
+        C::Ignored,
+        S::Folder,
+        None,
+        None,
+        G::Check,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::Exclude,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::Compare,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::QuickCompare,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::CompareTo,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::OpenWithList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::AssocApp,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::SyncList,
+        S::Folder,
+        Some(I::FolderSync),
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::UpdateRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::UpdateLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::UpdateBoth,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::MirrorRight,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::MirrorLeft,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::NotFlat,
+        NONE,
+    ),
+    row(
+        C::SyncBaseView,
+        S::Folder,
+        Some(I::FolderSync),
+        None,
+        G::None,
+        P::Loaded,
+        NONE,
+    ),
+    row(
+        C::Run,
+        S::Sync,
+        Some(I::Run),
+        Some("Run"),
+        G::None,
+        P::PlanReady,
+        NONE,
+    ),
+    row(
+        C::CompareBaseView,
+        S::Sync,
+        Some(I::FolderCompare),
+        None,
+        G::None,
+        P::Loaded,
+        NONE,
+    ),
+    row(
+        C::SyncLeave,
+        S::Sync,
+        Some(I::SyncLeave),
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::SyncCopyLeft,
+        S::Sync,
+        Some(I::SyncCopyLeft),
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::SyncCopyRight,
+        S::Sync,
+        Some(I::SyncCopyRight),
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::SyncDeleteLeft,
+        S::Sync,
+        Some(I::SyncDeleteLeft),
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::SyncDeleteRight,
+        S::Sync,
+        Some(I::SyncDeleteRight),
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::ConflictNext,
+        S::Sync,
+        Some(I::NextDiff),
+        None,
+        G::None,
+        P::HasConflict,
+        NONE,
+    ),
+    row(
+        C::ConflictPrev,
+        S::Sync,
+        Some(I::PrevDiff),
+        None,
+        G::None,
+        P::HasConflict,
+        NONE,
+    ),
+    row(
         C::DiffNext,
         S::Folder,
         Some(I::NextDiff),
@@ -1946,11 +2393,22 @@ pub const PRESENTATION: &[Row] = &[
     ),
 ];
 
-/// The presentation row of `id` in `scope` (or the global row).
+/// The presentation row of `id` in `scope` (or the global row). A Folder Sync view shares the Folder Compare rows of
+/// the sections both views have (`folder-shared`, `session`): its own row wins, then the folder row; which entries it
+/// shows is still its own catalogue table's (M2 W9b).
 pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Row> {
     PRESENTATION
         .iter()
         .find(|r| r.id == id && r.scope == scope && scope != Scope::Global)
+        .or_else(|| {
+            (scope == Scope::Sync)
+                .then(|| {
+                    PRESENTATION
+                        .iter()
+                        .find(|r| r.id == id && r.scope == Scope::Folder)
+                })
+                .flatten()
+        })
         .or_else(|| {
             PRESENTATION
                 .iter()
@@ -1958,13 +2416,21 @@ pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Row> {
         })
 }
 
-/// The presentation rows of a view type: its own, then the global ones.
+/// The presentation rows of a view type: its own, then (a Folder Sync view) the folder rows it has no row of its own
+/// for, then the global ones.
 pub fn rows_for(scope: Scope) -> impl Iterator<Item = &'static Row> {
     let own = PRESENTATION
         .iter()
         .filter(move |r| r.scope == scope && scope != Scope::Global);
+    let shared = PRESENTATION.iter().filter(move |r| {
+        scope == Scope::Sync
+            && r.scope == Scope::Folder
+            && !PRESENTATION
+                .iter()
+                .any(|own| own.scope == Scope::Sync && own.id == r.id)
+    });
     let global = PRESENTATION.iter().filter(|r| r.scope == Scope::Global);
-    own.chain(global)
+    own.chain(shared).chain(global)
 }
 
 /// The effective command tables of the view types the GUI shows (D-109), built from `commands.toml`.
@@ -1973,6 +2439,7 @@ pub struct CommandTables {
     home: ViewCommands<'static>,
     folder: ViewCommands<'static>,
     text: ViewCommands<'static>,
+    sync: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -1995,6 +2462,7 @@ impl CommandTables {
             home: table(Scope::Home),
             folder: table(Scope::Folder),
             text: table(Scope::Text),
+            sync: table(Scope::Sync),
         }
     }
 
@@ -2004,6 +2472,7 @@ impl CommandTables {
             Scope::Global | Scope::Home => &self.home,
             Scope::Folder => &self.folder,
             Scope::Text => &self.text,
+            Scope::Sync => &self.sync,
         }
     }
 

@@ -42,8 +42,10 @@ use crate::folder::selection::{Hit, Mods, Press, Swipe, ViewSelection};
 use crate::job::Job;
 use crate::notify::NoticeKind;
 use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
+use crate::op_preview::PreviewList;
 use crate::path_edit::{PathEdit, PathKey, PathKeyOutcome};
 use crate::status::{JobStatus, LogNote, StatusItems};
+use hikasa_session::api::OpPreview;
 use hikasa_session::api::human::TimeZone;
 use hikasa_session::api::paths::CompletionDto;
 use hikasa_session::log::LogKind;
@@ -101,6 +103,10 @@ pub struct RowView {
     pub current: bool,
     /// Error details (tooltip).
     pub errors: String,
+    /// A Folder Sync view (M2 W9b, FS-001): the row's planned action, and a folder's summary of its subtree.
+    pub sync: Option<sync::RowAction>,
+    /// The summary of a folder row's subtree ("contains files that will be copied to the right (3)").
+    pub sync_summary: Option<String>,
 }
 
 /// What the tree renders.
@@ -209,6 +215,15 @@ pub enum FolderEvent {
     },
     /// Accept of the path edits (D-239): the window checks the specs and re-roots the view on them.
     Rebase([String; 2]),
+    /// A sync ended (M2 W9b): the log takes its entries (`sync_log_entries`), the window one notice.
+    SyncOutcome {
+        /// The command's caption.
+        caption: String,
+        /// What ran.
+        outcome: Box<hikasa_session::api::FolderSyncOutcome>,
+        /// How long it ran.
+        elapsed: Duration,
+    },
     /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
     Outcome {
         /// The command's caption.
@@ -238,6 +253,17 @@ pub struct OpenPair {
     pub view: ViewOptions,
     /// The row it compares.
     pub ticket: Option<ChildTicket>,
+}
+
+pub(crate) mod sync;
+pub(crate) mod verbs;
+
+/// What a plan made without a dialog plans again when its confirmation's *Include hidden items* is toggled.
+#[derive(Debug, Clone)]
+struct Replan {
+    op: OpRequest,
+    sent: Selection,
+    include_hidden: bool,
 }
 
 /// The model and its generation when a plan was made: a plan runs only on the model it was made from, unchanged.
@@ -283,7 +309,13 @@ enum Task {
         items: Selection,
         mark: Mark,
     },
-    /// `folder_op_plan` and `folder_confirmation` (both read the disk: a job, D-105).
+    /// A verb dialog is open (M2 W9b, D-245): it plans on its own; Start hands its plan to the view.
+    Dialog {
+        caption: String,
+        mark: Mark,
+        items: Selection,
+    },
+    /// `folder_op_plan`, `folder_op_preview` and `folder_confirmation` (they read the disk: a job, D-105).
     Planning {
         caption: String,
         view: ViewId,
@@ -292,13 +324,16 @@ enum Task {
         items: Selection,
         /// The row and its sides as the question names them.
         subject: String,
-        job: Job<(OpPlan, Confirmation)>,
+        /// What a toggle of *Include hidden items* plans again.
+        again: Box<Replan>,
+        job: Job<(OpPlan, OpPreview, Confirmation)>,
     },
-    /// The confirmation dialog is open.
+    /// The confirmation dialog is open; it holds the plan (D-244).
     Asking {
         caption: String,
-        plan: Box<OpPlan>,
         mark: Mark,
+        /// What a toggle of *Include hidden items* plans again (`None`: a verb dialog's plan).
+        again: Option<(Box<Replan>, Selection, String)>,
     },
     /// `folder_op_execute` (`JobKind::FolderOp`; Stop cancels it, D-115).
     Executing {
@@ -307,6 +342,21 @@ enum Task {
         refresh: Vec<NodeId>,
         began: Instant,
         job: Job<FolderOpOutcome>,
+    },
+    /// `folder_sync_execute` (M2 W9b: Run Sync, Synchronize ▸).
+    Syncing {
+        caption: String,
+        mark: Mark,
+        refresh: Vec<NodeId>,
+        began: Instant,
+        job: Job<hikasa_session::api::FolderSyncOutcome>,
+    },
+    /// Compare Contents (M2 W9b, FC-029 b): `folder_contents` writes its results into the model.
+    Contents {
+        caption: String,
+        show_results: bool,
+        began: Instant,
+        job: Job<ContentsDto>,
     },
     /// `folder_refresh` or `folder_open_archive`.
     Refreshing {
@@ -324,9 +374,11 @@ impl Task {
     fn job_status(&self) -> Option<(String, Option<hikasa_core::Phase>, Option<f32>)> {
         let (title, (phase, fraction)) = match self {
             Task::Planning { job, .. } => (job.title(), job.progress()),
+            Task::Contents { job, .. } => (job.title(), job.progress()),
+            Task::Syncing { job, .. } => (job.title(), job.progress()),
             Task::Executing { job, .. } => (job.title(), job.progress()),
             Task::Refreshing { job, .. } => (job.title(), job.progress()),
-            Task::Choosing { .. } | Task::Asking { .. } => return None,
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => return None,
         };
         Some((title.to_owned(), phase, fraction))
     }
@@ -334,18 +386,22 @@ impl Task {
     fn settling(&self) -> bool {
         match self {
             Task::Planning { job, .. } => job.settling(),
+            Task::Contents { job, .. } => job.settling(),
+            Task::Syncing { job, .. } => job.settling(),
             Task::Executing { job, .. } => job.settling(),
             Task::Refreshing { job, .. } => job.settling(),
-            Task::Choosing { .. } | Task::Asking { .. } => false,
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => false,
         }
     }
 
     fn cancel(&self) {
         match self {
             Task::Planning { job, .. } => job.cancel(),
+            Task::Contents { job, .. } => job.cancel(),
+            Task::Syncing { job, .. } => job.cancel(),
             Task::Executing { job, .. } => job.cancel(),
             Task::Refreshing { job, .. } => job.cancel(),
-            Task::Choosing { .. } | Task::Asking { .. } => {}
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => {}
         }
     }
 }
@@ -500,6 +556,20 @@ pub struct FolderViewModel {
     /// How many background rebuilds were swapped in (tests).
     #[cfg(test)]
     pub background_rebuilds: u64,
+    /// *Include hidden items* of the operations the view plans without a dialog (`include_hidden_by_default`, set by
+    /// the window; the dialogs carry their own).
+    include_hidden: bool,
+    /// The sync half of a Folder Sync view (M2 W9b, D-247).
+    sync: Option<Box<sync::SyncViewModel>>,
+    /// The view's sync options or rules changed since the window last asked (its session becomes dirty).
+    dirty_options: bool,
+    /// How long the last Compare Contents ran (`beep_after_long_operations`, D-256), taken by the window.
+    contents_elapsed: Option<Duration>,
+    /// The one-row Rename's inline edit (D-245).
+    inline_rename: Option<verbs::InlineRename>,
+    /// The plan the last execute job received, serialized (tests: A9.12's identity).
+    #[cfg(test)]
+    pub executed: Option<String>,
     /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
@@ -561,6 +631,10 @@ struct CtxMemo {
     bases: bool,
     other_base: bool,
     parents: bool,
+    /// Two items, or one and the mark (Compare To, Open With ▸ Text Compare).
+    two_items: bool,
+    /// Two folders (Open With ▸ Folder Compare).
+    two_folders: bool,
 }
 
 /// The cached availability of next/previous difference.
@@ -581,6 +655,19 @@ impl FolderViewModel {
         titles: [Option<String>; 2],
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> FolderViewModel {
+        FolderViewModel::create(service, request, display, expand_all, titles, wake, None)
+    }
+
+    /// A Folder Compare view, or with `sync` a Folder Sync view (`folder_sync_prepare`).
+    fn create(
+        service: &Service,
+        request: FolderCompareRequest,
+        display: DisplayOptions,
+        expand_all: bool,
+        titles: [Option<String>; 2],
+        wake: Arc<dyn Fn() + Send + Sync>,
+        sync: Option<Box<sync::SyncViewModel>>,
+    ) -> FolderViewModel {
         let names = [
             request.left.to_string_lossy().into_owned(),
             request.right.to_string_lossy().into_owned(),
@@ -589,7 +676,7 @@ impl FolderViewModel {
         let state = if names.iter().all(String::is_empty) {
             FolderState::Stopped { prepared: None }
         } else {
-            FolderViewModel::prepare(service, &request, &wake)
+            FolderViewModel::prepare(service, &request, sync.as_ref().map(|s| &s.options), &wake)
         };
         let paths = [
             PathEdit::new(Side::Left, &names[0]),
@@ -657,6 +744,13 @@ impl FolderViewModel {
             crc_jobs: 0,
             #[cfg(test)]
             background_rebuilds: 0,
+            include_hidden: false,
+            inline_rename: None,
+            sync,
+            dirty_options: false,
+            contents_elapsed: None,
+            #[cfg(test)]
+            executed: None,
             #[cfg(test)]
             gate: None,
             #[cfg(test)]
@@ -679,16 +773,21 @@ impl FolderViewModel {
     fn prepare(
         service: &Service,
         request: &FolderCompareRequest,
+        sync: Option<&hikasa_folder::sync::SyncOptions>,
         wake: &Arc<dyn Fn() + Send + Sync>,
     ) -> FolderState {
         let request = request.clone();
+        let sync = sync.cloned();
         FolderState::Preparing(Job::spawn(
             service,
             JobKind::FolderCompare,
             "prepare folder comparison".into(),
             wake,
             move |svc, job| {
-                let prepared = svc.folder_prepare_in(&request, job);
+                let prepared = match &sync {
+                    Some(options) => svc.folder_sync_prepare(&request, options, job),
+                    None => svc.folder_prepare_in(&request, job),
+                };
                 // Stop while preparing: no scan may start (the UI also drops this job's result).
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
@@ -1003,6 +1102,7 @@ impl FolderViewModel {
                 }
             }
         }
+        changed |= self.sync_poll(service);
         changed
     }
 
@@ -1682,7 +1782,8 @@ impl FolderViewModel {
         // The comparison runs again: a CRC that failed is asked again (D-237).
         self.crc_errors.clear();
         self.loaded = false;
-        self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
+        self.state =
+            FolderViewModel::prepare(service, &self.request, self.sync_options(), &self.wake);
         self.rows.clear();
         self.seen_generation = u64::MAX;
         self.started = Instant::now();
@@ -1981,8 +2082,8 @@ impl FolderViewModel {
     }
 
     /// Plans `op` on `sent` (the selection `items` given on, with the sides the verb acts on) in a job:
-    /// `folder_op_plan`, then `folder_confirmation`, which reads the options. Disable editing and `--nobackups` go with
-    /// the request, so the Service refuses what the window would not offer (D-184).
+    /// `folder_op_plan`, `folder_op_preview`, then `folder_confirmation`, which reads the options. Disable editing and
+    /// `--nobackups` go with the request, so the Service refuses what the window would not offer (D-184).
     #[allow(clippy::too_many_arguments)] // one call per command
     fn plan(
         &mut self,
@@ -1995,9 +2096,31 @@ impl FolderViewModel {
         mark: Mark,
         subject: String,
     ) {
-        let request = FolderOpRequest {
+        let again = Replan {
             op: OpRequest::Op(op),
-            select: select_request(sent, self.display),
+            sent,
+            include_hidden: self.include_hidden,
+        };
+        self.plan_request(service, view, caption, again, items, mark, subject);
+    }
+
+    /// [`FolderViewModel::plan`] of a request (any verb, *Include hidden items* as `again` says).
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn plan_request(
+        &mut self,
+        service: &Service,
+        view: ViewId,
+        caption: &str,
+        again: Replan,
+        items: Selection,
+        mark: Mark,
+        subject: String,
+    ) {
+        let mut select = select_request(again.sent.clone(), self.display);
+        select.include_hidden = Some(again.include_hidden);
+        let request = FolderOpRequest {
+            op: again.op.clone(),
+            select,
             read_only: self.write.read_only,
             overrides: self.write.overrides(),
         };
@@ -2016,8 +2139,9 @@ impl FolderViewModel {
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
                 }
+                let preview = svc.folder_op_preview(&plan);
                 let confirmation = svc.folder_confirmation(&plan, None);
-                Ok((plan, confirmation))
+                Ok((plan, preview, confirmation))
             },
         );
         self.task = Some(Task::Planning {
@@ -2026,21 +2150,29 @@ impl FolderViewModel {
             mark,
             items,
             subject,
+            again: Box::new(again),
             job,
         });
     }
 
-    /// The confirmation dialog closed: its answers, or `None` when it closed with a question open (a Cancel).
-    pub fn confirmed(&mut self, service: &Service, answers: Option<Confirmation>) {
-        let Some(Task::Asking {
-            caption,
-            plan,
-            mark,
-        }) = self.task.take()
-        else {
+    /// The confirmation dialog closed: its answers and the plan it showed, or `None` when it closed with a question
+    /// open (a Cancel).
+    pub fn confirmed(&mut self, service: &Service, answers: Option<(Confirmation, PreviewList)>) {
+        let Some(Task::Asking { caption, mark, .. }) = self.task.take() else {
             return;
         };
-        let finished = answers.map(|c| c.finish(*plan));
+        let answers = match answers {
+            Some((confirmation, list)) if list.sync_plan().is_some() => {
+                self.confirmed_sync(service, &caption, confirmation, list, mark);
+                return;
+            }
+            other => other,
+        };
+        if self.is_sync() {
+            // A sync's questions closed with one open: nothing runs, the plan is made again.
+            self.sync_replan();
+        }
+        let finished = answers.and_then(|(c, list)| list.into_op().map(|plan| c.finish(plan)));
         match finished {
             Some(Ok(plan)) => {
                 if mark.holds(self.prepared()) {
@@ -2079,6 +2211,10 @@ impl FolderViewModel {
 
     /// Runs a confirmed plan in a job (`JobKind::FolderOp`).
     fn execute_plan(&mut self, service: &Service, caption: &str, plan: OpPlan, mark: Mark) {
+        #[cfg(test)]
+        {
+            self.executed = Some(serde_json::to_string(&plan).expect("a plan serializes"));
+        }
         // The CRC job holds the model's refresh claim: it gives way (D-237).
         let crc = self.crc_yield();
         let refresh = plan.refresh.clone();
@@ -2152,6 +2288,8 @@ impl FolderViewModel {
     fn poll_task(&mut self, service: &Service) -> bool {
         let ready = match &self.task {
             Some(Task::Planning { job, .. }) => job.try_result().map(Ready::Plan),
+            Some(Task::Contents { job, .. }) => job.try_result().map(Ready::Contents),
+            Some(Task::Syncing { job, .. }) => job.try_result().map(Ready::Synced),
             Some(Task::Executing { job, .. }) => job.try_result().map(Ready::Outcome),
             Some(Task::Refreshing { job, .. }) => job.try_result().map(Ready::Refresh),
             _ => None,
@@ -2170,11 +2308,12 @@ impl FolderViewModel {
                     mark,
                     items,
                     subject,
+                    again,
                     ..
                 },
                 Ready::Plan(result),
             ) => match result {
-                Ok((plan, confirmation)) => {
+                Ok((plan, preview, confirmation)) => {
                     if !mark.holds(self.prepared()) {
                         self.refuse_changed(&caption);
                     } else if self.operable_items() != Some(&items) {
@@ -2189,12 +2328,19 @@ impl FolderViewModel {
                             }),
                         }
                     } else {
-                        let dialog =
-                            PlanConfirmDialog::new(view, &caption, subject, &plan, confirmation);
+                        let hidden = again.include_hidden;
+                        let dialog = PlanConfirmDialog::new(
+                            view,
+                            &caption,
+                            subject.clone(),
+                            PreviewList::op(plan, preview),
+                            confirmation,
+                            Some(hidden),
+                        );
                         self.task = Some(Task::Asking {
                             caption,
-                            plan: Box::new(plan),
                             mark,
+                            again: Some((again, items, subject)),
                         });
                         self.outbox.push(FolderEvent::Dialog(Box::new(dialog)));
                     }
@@ -2333,6 +2479,79 @@ impl FolderViewModel {
                             return true;
                         }
                     }
+                }
+                self.rebuild();
+            }
+            (
+                Task::Syncing {
+                    caption,
+                    mark,
+                    refresh,
+                    began,
+                    ..
+                },
+                Ready::Synced(result),
+            ) => {
+                let nodes = match result {
+                    Ok(outcome) => {
+                        let nodes = outcome.op.refresh_nodes.clone();
+                        self.sync_ran(&outcome);
+                        self.outbox.push(FolderEvent::SyncOutcome {
+                            caption,
+                            outcome: Box::new(outcome),
+                            elapsed: began.elapsed(),
+                        });
+                        nodes
+                    }
+                    Err(e) => {
+                        self.sync_replan();
+                        self.outbox.push(FolderEvent::Notice {
+                            kind: NoticeKind::Error,
+                            text: format!("{caption}: {e}"),
+                        });
+                        refresh
+                    }
+                };
+                if Arc::ptr_eq(
+                    &mark.model,
+                    self.prepared().map_or(&mark.model, |p| p.model()),
+                ) {
+                    self.refresh_rows(service, nodes, AfterRefresh::Operation);
+                }
+            }
+            (
+                Task::Contents {
+                    caption,
+                    show_results,
+                    began,
+                    ..
+                },
+                Ready::Contents(result),
+            ) => {
+                match result {
+                    Ok(dto) => {
+                        let lines = hikasa_session::api::human::folder_contents_lines(&dto);
+                        if let Some(last) = lines.last() {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Summary,
+                                text: format!("{caption}: {last}"),
+                            });
+                        }
+                        self.contents_elapsed = Some(began.elapsed());
+                        if show_results {
+                            self.outbox.push(FolderEvent::Dialog(Box::new(
+                                crate::content_dialogs::ContentsResultsDialog::new(dto),
+                            )));
+                        }
+                    }
+                    Err(ApiError::Cancelled) => self.notes.push(LogNote {
+                        kind: LogKind::Summary,
+                        text: format!("{caption}: stopped."),
+                    }),
+                    Err(e) => self.outbox.push(FolderEvent::Notice {
+                        kind: NoticeKind::Warning,
+                        text: format!("{caption}: {e}"),
+                    }),
                 }
                 self.rebuild();
             }
@@ -2603,6 +2822,10 @@ impl FolderViewModel {
         ctx.bases_selected = flags.bases;
         ctx.other_base_selected = flags.other_base;
         ctx.parents_available = flags.parents;
+        ctx.flat = self.flat();
+        ctx.two_items = flags.two_items;
+        ctx.two_folders = flags.two_folders;
+        self.sync_ctx_into(ctx);
     }
 
     /// The selection's context flags, computed once per change of the selection, the rows, the model or the task
@@ -2628,6 +2851,8 @@ impl FolderViewModel {
             bases: self.selected_bases().is_some(),
             other_base: self.selected_other_base().is_some(),
             parents: self.row_parents().is_some(),
+            two_items: self.selection.items.len() <= 3 && self.compare_to_pair().is_some(),
+            two_folders: self.selection.items.len() <= 3 && self.two_folders(),
         };
         self.ctx_memo.set(Some(memo));
         memo
@@ -2755,6 +2980,7 @@ impl FolderViewModel {
             CommandId::ShowLog => self.show_log,
             CommandId::Legend => self.show_legend,
             CommandId::DirFlatten => self.request.patch.flatten.unwrap_or_else(|| self.flat()),
+            CommandId::Ignored => self.ignored_checked(),
             _ => {
                 if let Some(preset) = preset_of(id) {
                     filter == preset
@@ -3039,6 +3265,9 @@ impl FolderViewModel {
     /// not start or load its bases is `LoadFailed`.
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
         self.poll(service);
+        if let Some(outcome) = self.sync_outcome() {
+            return outcome;
+        }
         match &self.state {
             FolderState::Failed { .. } => ViewOutcome::LoadFailed,
             _ => ViewOutcome::for_folder(
@@ -3267,9 +3496,7 @@ impl FolderViewModel {
 
     /// Applies the layout of the view type (D-108): `log_panel`, `log_height`.
     pub fn apply_layout(&mut self, layout: &State) {
-        let view = crate::commands::Scope::Folder
-            .view_name()
-            .unwrap_or_default();
+        let view = self.scope().view_name().unwrap_or_default();
         if let Some(on) = layout
             .layout_value(view, "log_panel")
             .and_then(LayoutValue::as_bool)
@@ -3400,14 +3627,34 @@ impl FolderViewModel {
 
     /// The request that opens the same comparison again (`TabDuplicate`, D-107), and the titles.
     pub fn duplicate(&self) -> (hikasa_session::api::ViewRequest, [Option<String>; 2]) {
-        (
-            hikasa_session::api::ViewRequest::Folder {
+        let request = match self.sync.as_deref() {
+            Some(sync) => hikasa_session::api::ViewRequest::Sync {
+                request: self.request.clone(),
+                options: sync.options.clone(),
+                allow_empty_source: sync.allow_empty_source,
+                display: self.display,
+            },
+            None => hikasa_session::api::ViewRequest::Folder {
                 request: self.request.clone(),
                 display: self.display,
                 expand_all: self.expand_all,
             },
-            self.titles.clone(),
-        )
+        };
+        (request, self.titles.clone())
+    }
+
+    /// The command scope of the view: Folder Compare, or Folder Sync (M2 W9b).
+    pub fn scope(&self) -> crate::commands::Scope {
+        if self.is_sync() {
+            crate::commands::Scope::Sync
+        } else {
+            crate::commands::Scope::Folder
+        }
+    }
+
+    /// The view's sync options changed since the last call (its session becomes dirty).
+    pub fn take_dirty_options(&mut self) -> bool {
+        std::mem::take(&mut self.dirty_options)
     }
 
     /// The display options (the session's `display`, D-120).
@@ -3536,10 +3783,18 @@ impl FolderViewModel {
                 crc_errors: &self.crc_errors,
             };
             if let Some(view) = row_view(&read, row, index, &input) {
+                let sync = self.sync_action(row.node);
+                let sync_summary = if view.folder && self.sync.is_some() {
+                    self.sync_folder_summary(row.node)
+                } else {
+                    None
+                };
                 out.rows.push(RowView {
                     selected: !self.selection.items.get(row.node).is_empty(),
                     sides: self.selection.items.get(row.node),
                     current: self.selection.current == Some(row.node),
+                    sync,
+                    sync_summary,
                     ..view
                 });
             }
@@ -3637,7 +3892,9 @@ pub fn child_outcome(result: ContentResult) -> ContentOutcome {
 
 /// A job's result, by task.
 enum Ready {
-    Plan(Result<(OpPlan, Confirmation), ApiError>),
+    Plan(Result<(OpPlan, OpPreview, Confirmation), ApiError>),
+    Contents(Result<ContentsDto, ApiError>),
+    Synced(Result<hikasa_session::api::FolderSyncOutcome, ApiError>),
     Outcome(Result<FolderOpOutcome, ApiError>),
     Refresh(Result<RefreshDto, ApiError>),
 }
@@ -3890,6 +4147,8 @@ fn row_view(
         sides: SideSet::empty(),
         current: false,
         errors,
+        sync: None,
+        sync_summary: None,
     })
 }
 

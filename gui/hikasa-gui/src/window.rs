@@ -73,6 +73,22 @@ pub enum CommandArg {
     Paths(Vec<PathBuf>),
     /// A folder view's column (`ColList`, M2 W9a).
     Column(crate::folder::columns::ColumnId),
+    /// A side: the pane a context menu was opened on (`CopySide`, `MoveSide`; M2 W9b).
+    Side(hikasa_core::Side),
+    /// An item of Open With ▸ (M2 W9b, D-245).
+    OpenWith(OpenWithItem),
+}
+
+/// An item of the Open With submenu (§1.9.13): a view of a kind that exists, or an application of `openwith.toml`
+/// (by its place in the file; `OpenTarget::App`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenWithItem {
+    /// A Text Compare view of the two selected items.
+    TextCompare,
+    /// A Folder Compare view of the two selected folders.
+    FolderCompare,
+    /// The application at this place of `openwith.toml`.
+    App(usize),
 }
 
 /// A tab's view.
@@ -90,7 +106,7 @@ impl ViewModel {
     pub fn scope(&self) -> Scope {
         match self {
             ViewModel::Home(_) => Scope::Home,
-            ViewModel::Folder(_) => Scope::Folder,
+            ViewModel::Folder(m) => m.scope(),
             ViewModel::Text(_) => Scope::Text,
         }
     }
@@ -115,10 +131,16 @@ pub struct PendingTab {
     pub starting: bool,
 }
 
+/// True for a view kind this window shows: Folder Compare, Text Compare and (M2 W9b, D-248) Folder Sync.
+pub fn served(kind: hikasa_session::ipc::ViewKind) -> bool {
+    kind.is_served_in_m1() || kind == hikasa_session::ipc::ViewKind::FolderSync
+}
+
 /// The command scope of a session type.
 pub fn scope_of(kind: SessionType) -> Scope {
     match kind {
         SessionType::FolderCompare => Scope::Folder,
+        SessionType::FolderSync => Scope::Sync,
         SessionType::TextCompare => Scope::Text,
         _ => Scope::Home,
     }

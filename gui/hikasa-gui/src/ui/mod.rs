@@ -27,6 +27,7 @@ pub mod script_dialog;
 pub mod scroll;
 pub mod session_dialog;
 pub mod status;
+pub mod sync_view;
 pub mod text;
 pub mod theme;
 pub mod wizards;
@@ -87,6 +88,8 @@ enum Action {
     MoveTab(usize, Option<WindowId>, Option<usize>, Option<[f32; 2]>),
     Drop(DropTarget, Vec<std::path::PathBuf>),
     Home(ui_home::HomeAction),
+    /// The inline Rename's Enter (M2 W9b, D-245).
+    CommitRename,
 }
 
 /// Where a window's parts were last drawn (tab drags, D-107).
@@ -320,6 +323,10 @@ impl HikasaApp {
             }
             Action::CloseHelp => {
                 self.core.close_help(window);
+                Vec::new()
+            }
+            Action::CommitRename => {
+                self.core.commit_inline_rename(window);
                 Vec::new()
             }
             Action::Dialog(DialogInput::Button(role)) => self.core.dialog_button(window, role),
@@ -619,6 +626,7 @@ impl HikasaApp {
             let checked = |id: CommandId| self.core.checked(window, id);
             let names = self.core.workspace_names();
             let columns = self.core.column_menu(window);
+            let apps = self.core.open_with_names();
             let mc = MenuContext {
                 tables: self.core.tables(),
                 scope,
@@ -626,6 +634,7 @@ impl HikasaApp {
                 checked: &checked,
                 workspaces: &names,
                 columns: &columns,
+                open_with: &apps,
             };
             menu_bar(&mc)
         };
@@ -774,6 +783,30 @@ impl HikasaApp {
                 });
         }
 
+        // The header of a Folder Sync view (FS-001): the preset, the plan's state, Run Sync.
+        if let Some(view) = active_view
+            && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
+            && m.is_sync()
+        {
+            let run_enabled = !dialog_open && state_run_enabled(&state);
+            let panel = egui::Panel::top(format!("hk-sync-{}", view.0))
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 4)),
+                )
+                .show(ui, |ui| sync_view::header(ui, m, run_enabled, &pal));
+            match panel.inner {
+                Some(sync_view::SyncHeaderAction::Run) => {
+                    invocations.push(Invocation::new(CommandId::Run));
+                }
+                Some(sync_view::SyncHeaderAction::Preset(preset)) => {
+                    self.core.sync_preset(view, preset);
+                }
+                None => {}
+            }
+        }
+
         // The Find Filename panel of a folder view (D-241): above the tree, not modal.
         if let Some(view) = active_view
             && !dialog_open
@@ -874,6 +907,7 @@ impl HikasaApp {
                                 checked: &none,
                                 workspaces: &[],
                                 columns: &[],
+                                open_with: &[],
                             })
                         };
                         let out = home::show(ui, view, home, &pal, &menu);
@@ -888,17 +922,19 @@ impl HikasaApp {
                         let s = m.status();
                         let columns = m.column_menu();
                         let none = |_: CommandId| None;
+                        let view_scope = m.scope();
                         let header_menu = crate::menus::header_menu(&MenuContext {
                             tables: &tables,
-                            scope: Scope::Folder,
+                            scope: view_scope,
                             ctx: dispatch_ctx,
                             checked: &none,
                             workspaces: &[],
                             columns: &columns,
+                            open_with: &[],
                         });
                         let st = self.folders.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
-                            tables.dispatch(Scope::Folder, &dispatch_ctx, key, FocusArea::ViewMain)
+                            tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
                         invocations.extend(folder::show(
                             ui,
@@ -912,6 +948,9 @@ impl HikasaApp {
                             keys,
                             &header_menu,
                         ));
+                        if std::mem::take(&mut st.commit_rename) {
+                            actions.push(Action::CommitRename);
+                        }
                     }
                     Some(ViewModel::Text(m)) => {
                         let s = m.status();
@@ -1055,6 +1094,7 @@ impl HikasaApp {
                         checked: &checked,
                         workspaces: &[],
                         columns: &[],
+                        open_with: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);
@@ -1308,3 +1348,8 @@ impl eframe::App for HikasaApp {
 mod tests;
 #[cfg(test)]
 mod tests_pointer;
+
+/// `Run`'s predicate in the window's context.
+fn state_run_enabled(ctx: &crate::commands::Ctx) -> bool {
+    crate::commands::Predicate::PlanReady.holds(ctx)
+}

@@ -48,6 +48,8 @@ pub struct InfoDialog {
     clipboard: Arc<dyn ClipboardProvider>,
     /// The answer of the last Copy.
     pub message: Option<String>,
+    /// A Folder Sync view's plan counts.
+    sync: Option<hikasa_folder::sync::SyncCounts>,
 }
 
 impl InfoDialog {
@@ -65,7 +67,14 @@ impl InfoDialog {
             partial,
             clipboard,
             message: None,
+            sync: None,
         }
+    }
+
+    /// A Folder Sync view's Info adds the counts of its plan (D-242, FS-005).
+    pub fn with_sync(mut self, counts: Option<hikasa_folder::sync::SyncCounts>) -> InfoDialog {
+        self.sync = counts;
+        self
     }
 
     /// The figures the dialog shows.
@@ -126,7 +135,7 @@ impl InfoDialog {
             label: "Ignored".to_owned(),
             values: vec![n(u64::from(s.ignored))],
         });
-        vec![
+        let mut sections = vec![
             InfoSection {
                 title: "Pairs".to_owned(),
                 heads: vec!["Files".to_owned(), "Folders".to_owned()],
@@ -142,7 +151,27 @@ impl InfoDialog {
                 heads: Vec::new(),
                 rows: content,
             },
-        ]
+        ];
+        if let Some(c) = &self.sync {
+            let row = |label: &str, v: u64| InfoRow {
+                label: label.to_owned(),
+                values: vec![n(v)],
+            };
+            sections.push(InfoSection {
+                title: "Sync plan".to_owned(),
+                heads: Vec::new(),
+                rows: vec![
+                    row("Copies to the right", c.copy_right),
+                    row("Copies to the left", c.copy_left),
+                    row("Deletes on the left", c.delete_left),
+                    row("Deletes on the right", c.delete_right),
+                    row("Left alone", c.leave),
+                    row("Conflicts", c.conflicts),
+                    row("Unresolved", c.unresolved),
+                ],
+            });
+        }
+        sections
     }
 
     /// The table as text (what Copy places): a title line, the note, then one line per row, the figures

@@ -1,6 +1,7 @@
 Session
   > New Session
     Folder Compare
+    Folder Sync
     Text Compare
   New Tab	Ctrl+T
   New Window

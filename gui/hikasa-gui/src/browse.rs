@@ -64,6 +64,10 @@ pub enum BrowseTarget {
     Specs(usize),
     /// A path key of the Options dialog (its dotted path).
     OptionKey(&'static str),
+    /// The target of a Copy/Move to Folder dialog of a view (M2 W9b).
+    OpTarget(ViewId),
+    /// The second item of Compare To (M2 W9b): the view whose selected item is the first.
+    CompareTo(ViewId),
 }
 
 /// The last name of a typed path (the SaveFile name offered).

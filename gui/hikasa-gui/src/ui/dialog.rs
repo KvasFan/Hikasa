@@ -177,6 +177,44 @@ pub fn show(
             op_dialogs::confirm(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<DeleteDialog>() {
             op_dialogs::delete(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::content_dialogs::ExcludeDialog>()
+        {
+            op_dialogs::exclude(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::content_dialogs::CompareContentsDialog>()
+        {
+            op_dialogs::compare_contents(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any()
+            .downcast_ref::<crate::content_dialogs::ContentsResultsDialog>()
+        {
+            fixed_body(ui, height, |ui| op_dialogs::contents_results(ui, d, pal));
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::content_dialogs::QuickCompareDialog>()
+        {
+            fixed_body(ui, height, |ui| op_dialogs::quick_compare(ui, d, pal));
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::folder_view::sync::SyncDialog>()
+        {
+            fixed_body(ui, height, |ui| op_dialogs::sync_dialog(ui, d, pal));
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::op_dialogs::OpDialog>()
+        {
+            if op_dialogs::op_dialog(ui, d, pal)
+                && let crate::op_dialogs::OpForm::CopyTo { target, .. } = d.form()
+            {
+                out.push(DialogInput::BrowseFor(
+                    crate::browse::BrowseMode::Folder,
+                    target.clone(),
+                    crate::browse::BrowseTarget::OpTarget(d.view()),
+                ));
+            }
         } else if let Some(d) = dialog.as_any().downcast_ref::<ScriptDialog>() {
             fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {

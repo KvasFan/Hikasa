@@ -299,6 +299,7 @@ fn a9_1_col_list_and_the_header_menu_toggle_the_columns() {
             checked: &checked,
             workspaces: &[],
             columns: &columns,
+            open_with: &[],
         };
         render_text(&[Menu {
             title: MenuTitle::View,
@@ -516,6 +517,8 @@ enum Expect {
     Job,
     /// The window's session combo takes the focus.
     Focus,
+    /// A notice appears (an application started without a launcher: the core message, M2 W9b).
+    Notice,
 }
 
 /// A9.10: one row per `implemented` entry of the `folder-compare`, `folder-shared`, `folder-sync` and `session`
@@ -532,6 +535,33 @@ const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
         (C::UpOneLevelBoth, P::None, E::Bases),
         (C::CopyRight, P::File, E::Dialog),
         (C::CopyLeft, P::File, E::Dialog),
+        // M2 W9b (§1.9.13): every verb.
+        (C::CopyPrompt, P::File, E::Dialog),
+        (C::CopySide, P::LeftFolder, E::Dialog),
+        (C::MoveRight, P::File, E::Dialog),
+        (C::MoveLeft, P::File, E::Dialog),
+        (C::MovePrompt, P::File, E::Dialog),
+        (C::MoveSide, P::LeftFolder, E::Dialog),
+        (C::MoveBoth, P::File, E::Dialog),
+        (C::CopyTo, P::File, E::Dialog),
+        (C::MoveTo, P::File, E::Dialog),
+        (C::Rename, P::File, E::Model),
+        (C::Touch, P::File, E::Dialog),
+        (C::NewFolder, P::None, E::Dialog),
+        (C::Ignored, P::File, E::Checked),
+        (C::Exclude, P::File, E::Dialog),
+        (C::Compare, P::File, E::Dialog),
+        (C::QuickCompare, P::File, E::Dialog),
+        (C::CompareTo, P::File, E::Tab),
+        (C::OpenWithList, P::File, E::Submenu),
+        (C::AssocApp, P::File, E::Notice),
+        (C::SyncList, P::None, E::Submenu),
+        (C::UpdateRight, P::None, E::Dialog),
+        (C::UpdateLeft, P::None, E::Dialog),
+        (C::UpdateBoth, P::None, E::Dialog),
+        (C::MirrorRight, P::None, E::Dialog),
+        (C::MirrorLeft, P::None, E::Dialog),
+        (C::SyncBaseView, P::None, E::Tab),
         (C::Delete, P::File, E::Dialog),
         (C::PermanentDelete, P::File, E::Dialog),
         (C::SelectAllFiles, P::None, E::Model),
@@ -639,6 +669,7 @@ fn fingerprint(app: &mut crate::tests::TestApp, view: ViewId) -> String {
             *m.display_options(),
             (m.show_log(), m.show_legend(), m.show_find()),
             m.busy(),
+            m.inline_rename().is_some(),
         )
     )
 }
@@ -794,6 +825,7 @@ fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
         let dialogs = crate::tests_folder_ops::dialogs(&app);
         let tabs = (app.tabs().len(), app.active(), app.tabs()[app.active()].id);
         let checked = app.checked(id);
+        let notices = crate::tests_folder_ops::notices(&app).len();
         let before = fingerprint(&mut app, view);
         let committed = {
             let m = folder_model(&mut app, view);
@@ -846,6 +878,10 @@ fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
                     "{id:?}: the focus"
                 );
             }
+            Expect::Notice => assert!(
+                crate::tests_folder_ops::notices(&app).len() > notices,
+                "{id:?}: a notice"
+            ),
             Expect::Submenu | Expect::Job => unreachable!(),
         }
     }

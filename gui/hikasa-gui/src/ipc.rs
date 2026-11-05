@@ -96,7 +96,7 @@ impl IpcHandler for GuiHandler {
                 options,
                 wait: _,
             } => {
-                if !kind.is_served_in_m1() {
+                if !crate::window::served(kind) {
                     return Response::error(
                         IpcErrorCode::UnsupportedView,
                         hikasa_session::ipc::unserved_view(kind),

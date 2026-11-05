@@ -1229,12 +1229,14 @@ fn the_replace_during_move_and_system_questions() {
     ] {
         for (reply, runs) in [(NO_TO_ALL, 0), (YES_TO_ALL, 2)] {
             let confirmation = world.service.folder_confirmation(&plan, None);
+            let preview = world.service.folder_op_preview(&plan);
             let mut d = PlanConfirmDialog::new(
                 ViewId(1),
                 "t",
                 "a, b: from the left to the right",
-                &plan,
+                crate::op_preview::PreviewList::op(plan.clone(), preview),
                 confirmation,
+                Some(false),
             );
             assert_eq!(d.kind(), Some(QuestionKind::Operation));
             d.on_button(ButtonRole::Yes, &service);
@@ -1249,10 +1251,9 @@ fn the_replace_during_move_and_system_questions() {
             assert_eq!(d.remaining(), 2);
             d.on_button(reply, &service);
             assert_eq!(d.question(), None, "the class is answered");
-            let finished = d
-                .take_confirmation()
-                .expect("answered")
-                .finish(plan.clone())
+            let (answers, list) = d.take_answered().expect("answered");
+            let finished = answers
+                .finish(list.into_op().expect("an operation"))
                 .expect("not declined");
             let running = finished
                 .plan

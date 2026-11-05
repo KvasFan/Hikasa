@@ -1072,6 +1072,7 @@ fn tree_opens() {
             checked: &none,
             workspaces: &[],
             columns: &[],
+            open_with: &[],
         }),
     }]);
     assert!(text.contains("Open") && text.contains("Delete"));
@@ -1278,10 +1279,11 @@ fn the_session_menu_lists_types_and_workspaces() {
         checked: &checked,
         workspaces: &names,
         columns: &[],
+        open_with: &[],
     };
     let text = render_text(&crate::menus::menu_bar(&mc));
     assert!(
-        text.contains("> New Session\n    Folder Compare\n    Text Compare\n"),
+        text.contains("> New Session\n    Folder Compare\n    Folder Sync\n    Text Compare\n"),
         "{text}"
     );
     assert!(

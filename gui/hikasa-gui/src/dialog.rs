@@ -77,6 +77,15 @@ pub enum Followup {
     SwitchPackage(PathBuf),
     /// The browse dialog's "Replace …?": Yes (SaveFile, D-240).
     BrowseReplace,
+    /// Compare Contents after its question (M2 W9b, `confirm_content_compare`).
+    Contents {
+        /// The view.
+        view: hikasa_session::ipc::ViewId,
+        /// The method.
+        method: hikasa_core::ContentMethod,
+        /// *Show results dialog*.
+        show_results: bool,
+    },
     /// The browse dialog closed (M2 W9a, D-240): its answer (a spec, and whether it is a folder) for `target`, and
     /// *Show hidden items* to remember.
     Browsed {

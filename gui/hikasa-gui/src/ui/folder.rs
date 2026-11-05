@@ -67,6 +67,8 @@ pub struct FolderUi {
     pub hscroll: f32,
     /// The spans of each side's columns this frame, as drawn (computed once a frame).
     pub spans: [Vec<(ColumnId, egui::Rangef)>; 2],
+    /// The inline Rename's Enter was pressed (the window commits it, M2 W9b).
+    pub commit_rename: bool,
 }
 
 /// A drag in the column header (D-234).
@@ -676,14 +678,74 @@ pub fn show(
                 pal.muted,
             );
         }
-        draw_centre(
-            &clip,
-            centre,
-            row.centre.icon,
-            row.mark,
-            &body_font,
-            pal.muted,
-        );
+        match (shown_action(row), &row.sync_summary) {
+            // A Folder Sync view (FS-001): the planned action; an override in the accent colour ("bold").
+            (Some(action), _) => {
+                let colour = if action.conflict {
+                    pal.warning
+                } else if action.overridden {
+                    pal.accent
+                } else {
+                    pal.fg
+                };
+                icons::paint(
+                    &clip,
+                    icons::square(pos2(centre.x - 7.0, centre.y - 7.0), 14.0),
+                    sync_icon(action),
+                    colour,
+                );
+            }
+            // A folder: a small aggregate icon when something below it acts.
+            (None, Some(_)) => icons::paint(
+                &clip,
+                icons::square(pos2(centre.x - 5.0, centre.y - 5.0), 10.0),
+                IconId::FolderSync,
+                pal.muted,
+            ),
+            (None, None) => draw_centre(
+                &clip,
+                centre,
+                row.centre.icon,
+                row.mark,
+                &body_font,
+                pal.muted,
+            ),
+        }
+    }
+    // The one-row Rename's inline edit (D-245): over the name cell of the first side it renames.
+    if let Some(edit) = m.inline_rename().cloned() {
+        let k = usize::from(!edit.sides.contains(hikasa_folder::select::SideSet::LEFT));
+        let found = window.rows.iter().find(|r| r.node == edit.node.0);
+        if let (Some(row), Some((_, span))) = (found, st.spans[k].first()) {
+            let y = tree.top() + (row.index as f32 - first as f32 - frac) * rh;
+            let left = (span.min + 4.0 + row.depth as f32 * INDENT + 30.0).max(side_x[k]);
+            let cell = Rect::from_min_max(
+                pos2(left, y + 1.0),
+                pos2((span.max - 2.0).min(side_x[k] + side_w), y + rh - 1.0),
+            );
+            if cell.width() > 20.0 && tree.contains(cell.center()) {
+                let mut text = edit.text.clone();
+                let field = ui.put(
+                    cell,
+                    egui::TextEdit::singleline(&mut text)
+                        .id(tree_id(view).with("rename"))
+                        .font(body_font.clone()),
+                );
+                if text != edit.text {
+                    m.set_inline_text(&text);
+                }
+                if !field.has_focus() && !field.lost_focus() {
+                    field.request_focus();
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    m.cancel_inline_rename();
+                } else if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    st.commit_rename = true;
+                } else if field.lost_focus() {
+                    m.cancel_inline_rename();
+                }
+            }
+        }
     }
     // The centre column's separators.
     for x in [side_x[0] + side_w, side_x[1]] {
@@ -711,10 +773,15 @@ pub fn show(
     if let Some((index, _)) = hovered_row
         && let Some(row) = window.rows.iter().find(|r| r.index as usize == index)
     {
+        let title = match (shown_action(row), &row.sync_summary) {
+            (Some(action), _) => sync_tip(action),
+            (None, Some(summary)) => summary.clone(),
+            (None, None) => row.mark_title.to_owned(),
+        };
         let tip = if row.errors.is_empty() {
-            row.mark_title.to_owned()
+            title
         } else {
-            format!("{}\n{}", row.mark_title, row.errors)
+            format!("{title}\n{}", row.errors)
         };
         response.hint_at_pointer(tip);
     }
@@ -792,6 +859,46 @@ pub(crate) fn draw_glyph(
     if glyph.link {
         icons::paint(painter, rect, IconId::OverlayLink, pal.f_text);
     }
+}
+
+/// The action a row shows: a folder left alone whose subtree acts shows its summary instead.
+fn shown_action(row: &crate::folder_view::RowView) -> Option<crate::folder_view::sync::RowAction> {
+    row.sync.filter(|a| {
+        !(row.sync_summary.is_some()
+            && a.action == hikasa_folder::sync::SyncAction::Leave
+            && !a.overridden
+            && !a.conflict)
+    })
+}
+
+/// The icon of a planned sync action (FS-001): a conflict, a row left, or the side written.
+pub(crate) fn sync_icon(action: crate::folder_view::sync::RowAction) -> IconId {
+    use hikasa_folder::sync::SyncAction;
+    if action.conflict {
+        return IconId::SyncConflict;
+    }
+    match action.action {
+        SyncAction::CopyRight => IconId::SyncCopyRight,
+        SyncAction::CopyLeft => IconId::SyncCopyLeft,
+        SyncAction::DeleteLeft => IconId::SyncDeleteLeft,
+        SyncAction::DeleteRight => IconId::SyncDeleteRight,
+        SyncAction::Leave => IconId::SyncLeave,
+    }
+}
+
+/// The tooltip of a planned action: what it does, why a row is left, "overridden", "conflict".
+fn sync_tip(action: crate::folder_view::sync::RowAction) -> String {
+    let mut tip = crate::folder_view::sync::action_text(action.action).to_owned();
+    if let Some(reason) = action.reason {
+        tip.push_str(&format!(" ({})", reason.as_str()));
+    }
+    if action.conflict {
+        tip.push_str(": a conflict, nothing says which side wins");
+    }
+    if action.overridden {
+        tip.push_str(" (overridden)");
+    }
+    tip
 }
 
 /// The icon of a centre cell (FC-032): a content result or the newer side's arrow; a state shows its text mark.

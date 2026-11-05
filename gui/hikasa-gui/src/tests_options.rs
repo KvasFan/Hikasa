@@ -719,6 +719,7 @@ fn the_commands_page_writes_commands_toml_and_the_window_follows() {
         checked: &checked,
         workspaces: &[],
         columns: &[],
+        open_with: &[],
     };
     golden("menus-home-options.txt", &render_text(&menu_bar(&mc)));
 }

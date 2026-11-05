@@ -1,6 +1,7 @@
 Session
   > New Session
     Folder Compare
+    Folder Sync
     Text Compare
   New Tab	Ctrl+T
   New Window
@@ -14,6 +15,7 @@ Session
     Left Side
     Right Side
     Both Sides
+  Sync Base Folders
   ---
   Swap Sides
   > Browse for Folder
@@ -47,10 +49,32 @@ Edit
   Invert Selection
   Full Refresh	Ctrl+F5
 Actions
+  Quick Compare (disabled)
+  Compare To...	F7 (disabled)
+  Compare Contents (disabled)
   Copy to Right	Ctrl+R (disabled)
   Copy to Left	Ctrl+L (disabled)
+  Copy to Side... (disabled)
+  Copy to Other Side (disabled)
+  Move to Right (disabled)
+  Move to Left (disabled)
+  Move to Side... (disabled)
+  Move to Other Side (disabled)
+  Exchange (disabled)
+  Copy to Folder... (disabled)
+  Move to Folder... (disabled)
   Delete	Del (disabled)
   Delete Permanently	Shift+Del (disabled)
+  Rename	F2 (disabled)
+  Touch... (disabled)
+  New Folder...	Ins
+  [ ] Ignored (disabled)
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
   ---
   Open Folder	Right (disabled)
   Close Folder	Left (disabled)
@@ -58,6 +82,11 @@ Actions
   Close Subfolders (disabled)
   Set as Base Folders (disabled)
   Set as Base on Other Side (disabled)
+  > Open With
+    Text Compare (disabled)
+    ---
+    Associated Application (disabled)
+  Exclude (disabled)
 Search
   Next Difference	Ctrl+N
   Previous Difference	Ctrl+P (disabled)

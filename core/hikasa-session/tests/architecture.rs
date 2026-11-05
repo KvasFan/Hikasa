@@ -2818,6 +2818,8 @@ const GUI_MODEL_FILES: &[&str] = &[
     "info_dialog.rs",
     "op_preview.rs",
     "sync_view.rs",
+    // M2 W9b: the content dialogs of the folder views; the verbs and the sync half are `folder_view/` (below).
+    "content_dialogs.rs",
     "folder_tabs.rs",
     "filters_edit.rs",
     "dnd.rs",
@@ -2848,7 +2850,42 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
         .collect();
     files.extend(rust_files(&src.join("options")));
     files.extend(rust_files(&src.join("folder")));
+    files.extend(rust_files(&src.join("folder_view")));
     files
+}
+
+/// The planners, executors, resolvers and line builders of core no GUI file names (§1.9.22, D-258: a dialog shows the
+/// preview core made, `OpPreview`/`SyncPreview`, and never builds, resolves, runs or prints a plan itself).
+const GUI_BANNED_PLANNERS: &[&str] = &[
+    "plan_op",
+    "plan_sync",
+    "execute_with",
+    "ops::execute",
+    "ops::dry_run",
+    "select::resolve",
+    "sync_folder_rules",
+    "item_line",
+    "sync_marker",
+];
+
+/// Check 7 (M2 W9b, D-258): a GUI source file that names a planner, an executor, the resolver or a line builder of
+/// core; `op_dialogs.rs` that counts a plan itself (`plan_counts`, W6d's, moved to `OpPreview::counts`).
+fn planner_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    let mut banned: Vec<&str> = GUI_BANNED_PLANNERS.to_vec();
+    if rel.ends_with("/op_dialogs.rs") {
+        banned.push("plan_counts");
+    }
+    for token in banned {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in the GUI (§1.9.22: plans, previews and their lines come from core)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
 }
 
 fn check_adapters(root: &Path) -> Vec<String> {
@@ -2856,6 +2893,11 @@ fn check_adapters(root: &Path) -> Vec<String> {
     for file in gui_model_files(root) {
         if let Ok(raw) = fs::read_to_string(&file) {
             violations.extend(toolkit_violations(&relative(root, &file), &raw));
+        }
+    }
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(planner_violations(&relative(root, &file), &raw));
         }
     }
     for top in ["cli", "gui"] {
@@ -4010,6 +4052,27 @@ fn check_6_follows_aliases_and_looks_into_every_serialised_type() {
         "an unserialised struct is fine: {joined}"
     );
     assert!(joined.contains("manual.rs"), "{joined}");
+}
+
+/// A9.12, A9.26 (D-258): each planner rule of check 7 finds a planted violation, and names in comments or longer
+/// identifiers are not violations.
+#[test]
+fn check_7_planner_rules_find_planted_violations() {
+    for token in GUI_BANNED_PLANNERS {
+        let planted = format!("fn f() {{ let _ = hikasa_folder::{token}(); }}\n");
+        assert_eq!(
+            planner_violations("gui/hikasa-gui/src/folder_view.rs", &planted).len(),
+            1,
+            "{token}"
+        );
+    }
+    let counts = "fn f(p: &OpPlan) -> Vec<String> { plan_counts(p) }\n";
+    assert_eq!(
+        planner_violations("gui/hikasa-gui/src/op_dialogs.rs", counts).len(),
+        1
+    );
+    let fine = "//! Never calls plan_op or item_line.\nfn replan_op() {}\nfn f(p: &OpPreview) { p.line(0); }\n";
+    assert!(planner_violations("gui/hikasa-gui/src/op_dialogs.rs", fine).is_empty());
 }
 
 #[test]

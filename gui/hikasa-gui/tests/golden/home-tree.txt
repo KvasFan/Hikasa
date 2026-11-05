@@ -1,5 +1,6 @@
 [-] New
   Folder Compare
+  Folder Sync
   Text Compare (customized)
 [-] archive
   old <text-compare> (locked)

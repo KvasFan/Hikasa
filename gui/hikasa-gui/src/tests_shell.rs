@@ -90,6 +90,7 @@ fn menus_text(app: &TestApp, w: WindowId) -> String {
         checked: &checked,
         workspaces: &[],
         columns: &columns,
+        open_with: &[],
     };
     render_text(&menu_bar(&mc))
 }
@@ -629,6 +630,7 @@ fn tab_context_menu_entries() {
         checked: &checked,
         workspaces: &[],
         columns: &[],
+        open_with: &[],
     };
     let text = render_text(&[crate::menus::Menu {
         title: crate::menus::MenuTitle::Session,

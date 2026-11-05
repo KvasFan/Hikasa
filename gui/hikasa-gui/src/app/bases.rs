@@ -459,6 +459,15 @@ impl AppCore {
                     d.path = spec;
                 }
             }
+            BrowseTarget::OpTarget(view) => {
+                if let Some(d) = self.window_mut(window).and_then(|w| {
+                    w.dialogs
+                        .find_mut_where::<crate::op_dialogs::OpDialog>(|d| d.view() == view)
+                }) {
+                    d.set_target(&spec);
+                }
+            }
+            BrowseTarget::CompareTo(view) => self.compare_to_browsed(window, view, spec),
         }
     }
 }

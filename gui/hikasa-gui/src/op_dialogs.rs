@@ -9,15 +9,27 @@
 //! leaves with a question still open (the window's close button) is a Cancel: nothing runs.
 
 use std::any::Any;
+use std::sync::Arc;
 
-use hikasa_core::Side;
-use hikasa_folder::ops::{Confirmation, OpPlan, OpVerb, QuestionKind, Recycle, Reply};
-use hikasa_folder::select::SideSet;
-use hikasa_session::Service;
+use hikasa_core::{JobKind, Side};
+use hikasa_folder::ops::{
+    Confirmation, FolderOp, OpPlan, OpVerb, PathStructure, QuestionKind, ReadOnlySides, Recycle,
+    RenameMask, Reply, TouchFrom,
+};
+use hikasa_folder::select::{Selection, SideSet};
+use hikasa_folder::{DisplayOptions, FolderModel};
+use hikasa_session::api::human::TimeZone;
+use hikasa_session::api::{
+    ExpandWords, FolderOpRequest, OpOverrides, OpRequest, SelectRequest, parse_mkdir_name,
+    parse_touch_time,
+};
 use hikasa_session::ipc::ViewId;
-use hikasa_vfs::ops::Action;
+use hikasa_session::{ApiError, Service};
+use hikasa_vfs::ops::OverwritePolicy;
 
 use crate::dialog::{ButtonRole, DialogButton, DialogModel, DialogStep, Followup};
+use crate::job::Job;
+use crate::op_preview::PreviewList;
 
 /// The role of *Yes to All*.
 pub const YES_TO_ALL: ButtonRole = ButtonRole::Other(1);
@@ -52,45 +64,6 @@ pub fn option_key(kind: QuestionKind, verb: OpVerb) -> Option<&'static str> {
     })
 }
 
-/// What a plan will do, one line per action, then what it leaves: the counts the dialog shows under its question.
-pub fn plan_counts(plan: &OpPlan) -> Vec<String> {
-    let mut per_action: Vec<(&'static str, u64, u64)> = Vec::new();
-    let (mut skipped, mut failed) = (0u64, 0u64);
-    for item in &plan.plan.items {
-        if item.error.is_some() {
-            failed += 1;
-        } else if item.skip.is_some() || item.action == Action::Skip {
-            skipped += 1;
-        } else {
-            let word = item.action.as_str();
-            match per_action.iter_mut().find(|(w, ..)| *w == word) {
-                Some(row) => {
-                    row.1 += 1;
-                    row.2 += item.size.unwrap_or(0);
-                }
-                None => per_action.push((word, 1, item.size.unwrap_or(0))),
-            }
-        }
-    }
-    let mut lines: Vec<String> = per_action
-        .iter()
-        .map(|(word, items, bytes)| {
-            if *bytes > 0 {
-                format!("{word}: {items} items, {bytes} bytes")
-            } else {
-                format!("{word}: {items} items")
-            }
-        })
-        .collect();
-    if skipped > 0 {
-        lines.push(format!("left as they are: {skipped} items"));
-    }
-    if failed > 0 {
-        lines.push(format!("cannot run: {failed} items"));
-    }
-    lines
-}
-
 /// The questions of one plan (§1.6.11): the row and the sides it acts on, the text of each
 /// [`hikasa_folder::ops::Question`], the plan's counts, and Yes, No, Yes to All, No to All, Cancel. Esc is Cancel; Enter
 /// is Yes for the operation question and No for an item's.
@@ -108,6 +81,13 @@ pub struct PlanConfirmDialog {
     /// `None` once taken.
     confirmation: Option<Confirmation>,
     counts: Vec<String>,
+    /// The plan and its preview (a folder view's operation, M2 W9b): the list the dialog shows, handed back unchanged
+    /// with the answers (D-244).
+    list: Option<Box<PreviewList>>,
+    /// *Include hidden items* (a verb without options, §1.9.12): `None` for a script's question.
+    include_hidden: Option<bool>,
+    /// The check box was toggled: the view plans again with this value (the dialog closes, nothing runs).
+    replan: Option<bool>,
     /// "Do not ask again" is ticked (the current question's key, when it has one).
     pub ticked: bool,
     /// The keys to set to `false` once the questions are answered.
@@ -118,26 +98,65 @@ pub struct PlanConfirmDialog {
 
 impl PlanConfirmDialog {
     /// The dialog of `confirmation`, which has a question; `title` is the command's caption, `subject` the row and the
-    /// sides it acts on.
+    /// sides it acts on; `list` the plan and its preview (the dialog's body, M2 W9b), whose counts it shows;
+    /// `include_hidden` the check box of a verb without options (`None`: not offered).
     pub fn new(
         view: ViewId,
         title: impl Into<String>,
         subject: impl Into<String>,
-        plan: &OpPlan,
+        list: PreviewList,
         confirmation: Confirmation,
+        include_hidden: Option<bool>,
     ) -> PlanConfirmDialog {
         PlanConfirmDialog {
             view,
             title: title.into(),
             subject: subject.into(),
-            verb: Some(plan.verb),
+            verb: list.op_plan().map(|p| p.verb),
             script: None,
             confirmation: Some(confirmation),
-            counts: plan_counts(plan),
+            counts: list.counts(),
+            list: Some(Box::new(list)),
+            include_hidden,
+            replan: None,
             ticked: false,
             keys: Vec::new(),
             cancelled: false,
         }
+    }
+
+    /// The preview list (`None`: a script's question).
+    pub fn list(&self) -> Option<&PreviewList> {
+        self.list.as_deref()
+    }
+
+    /// *Include hidden items*, when the dialog offers it.
+    pub fn include_hidden(&self) -> Option<bool> {
+        self.include_hidden
+    }
+
+    /// Toggles *Include hidden items*: the dialog closes and its view plans again (§1.9.12: toggling re-plans).
+    pub fn set_include_hidden(&mut self, on: bool) {
+        if self.include_hidden.is_some_and(|was| was != on) {
+            self.include_hidden = Some(on);
+            self.replan = Some(on);
+        }
+    }
+
+    /// The value to plan again with, once the check box was toggled.
+    pub fn replan(&self) -> Option<bool> {
+        self.replan
+    }
+
+    /// The answers and the plan they answer, once the dialog is done with them (`None` while a question is open, or
+    /// after a toggle that plans again): the plan is the previewed one, unchanged.
+    pub fn take_answered(&mut self) -> Option<(Confirmation, PreviewList)> {
+        if self.current().is_some() || self.replan.is_some() {
+            return None;
+        }
+        let confirmation = self.confirmation.take()?;
+        let list = self.list.take()?;
+        Some((confirmation, *list))
     }
 
     /// The questions of a script's command (M2 W8b, §1.8.14): stacked on the status window, its answers go back to the
@@ -157,6 +176,9 @@ impl PlanConfirmDialog {
             script: Some(script),
             confirmation: Some(confirmation),
             counts: Vec::new(),
+            list: None,
+            include_hidden: None,
+            replan: None,
             ticked: false,
             keys: Vec::new(),
             cancelled: false,
@@ -233,6 +255,21 @@ impl PlanConfirmDialog {
 impl DialogModel for PlanConfirmDialog {
     fn title(&self) -> String {
         self.title.clone()
+    }
+
+    fn size(&self) -> Option<(f32, f32)> {
+        self.list.as_ref().map(|_| (620.0, 360.0))
+    }
+
+    fn take_requests(&mut self) -> Vec<crate::dialog::DialogRequest> {
+        // A toggle of *Include hidden items* closes the dialog: its view plans again (once).
+        match self.replan {
+            Some(_) if !self.cancelled => {
+                self.cancelled = true;
+                vec![crate::dialog::DialogRequest::Close]
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn help_topic(&self) -> &'static str {
@@ -536,6 +573,680 @@ impl DialogModel for DeleteDialog {
             ButtonRole::Cancel => DialogStep::Close,
             _ => DialogStep::Stay,
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// ---- M2 W9b: the verb dialogs over a core preview (D-244, D-245) ---------------------------------------------------
+
+/// The help topics of the verb dialogs.
+pub const COPY_TO_TOPIC: &str = "dialog-copy-to-folder";
+/// Rename.
+pub const RENAME_TOPIC: &str = "dialog-rename";
+/// Touch.
+pub const TOUCH_TOPIC: &str = "dialog-touch";
+/// New Folder.
+pub const NEW_FOLDER_TOPIC: &str = "dialog-new-folder";
+
+/// The role of *Plan again* (a plan whose comparison changed, §1.9.12).
+pub const PLAN_AGAIN: ButtonRole = ButtonRole::Other(3);
+
+/// What a verb dialog plans on: the view's comparison when it opened, its selection and what the view may write.
+#[derive(Clone)]
+pub struct OpContext {
+    /// The view.
+    pub view: ViewId,
+    /// The command (*Plan again* runs it once more).
+    pub command: crate::commands::CommandId,
+    /// The command's caption (the title).
+    pub caption: String,
+    /// The comparison the plan reads.
+    pub model: Arc<FolderModel>,
+    /// Its generation when the dialog opened: a plan runs only on it unchanged.
+    pub generation: u64,
+    /// The selection (D-238; never the root).
+    pub selection: Selection,
+    /// The view's display (a plan acts on what is shown).
+    pub display: DisplayOptions,
+    /// The read-only sides (FC-003): their choices are disabled, and the Service refuses them again (D-184).
+    pub read_only: ReadOnlySides,
+    /// `--nobackups` and the like.
+    pub overrides: OpOverrides,
+    /// The selection has items on the left, on the right.
+    pub on: [bool; 2],
+    /// The zone of the Service's clock (Touch's local time).
+    pub zone: TimeZone,
+    /// `windows` rules for names (New Folder).
+    pub windows: bool,
+}
+
+impl std::fmt::Debug for OpContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpContext")
+            .field("view", &self.view)
+            .field("caption", &self.caption)
+            .field("rows", &self.selection.len())
+            .finish()
+    }
+}
+
+/// How Rename makes the names of several rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameMode {
+    /// *DOS compatible* (a mask).
+    Dos,
+    /// *Regular expressions* (old, new).
+    Regex,
+}
+
+/// The options of a verb dialog (§1.9.13's table).
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpForm {
+    /// *Copy to Folder* / *Move to Folder*.
+    CopyTo {
+        /// Move to Folder.
+        moving: bool,
+        /// The target folder as typed (an archive or a missing path is created, D-150).
+        target: String,
+        /// *Keep relative folder structure*, *Keep base folder structure*, *Don't keep folder structure*.
+        structure: PathStructure,
+        /// The sides whose items go.
+        sides: SideChoice,
+        /// What an existing target means.
+        overwrite: OverwritePolicy,
+    },
+    /// *Rename* of several rows.
+    Rename {
+        /// DOS mask or regular expressions.
+        mode: RenameMode,
+        /// The mask (prefilled with `base_mask` of the names).
+        dos: String,
+        /// The expression.
+        old: String,
+        /// What replaces it.
+        new: String,
+        /// The sides.
+        sides: SideChoice,
+    },
+    /// *Touch*.
+    Touch {
+        /// *Copy timestamps from other side* (else *Set to*).
+        from_other: bool,
+        /// The side the other side's times go to.
+        to: Side,
+        /// The date and time as typed (`YYYY-MM-DD HH:MM:SS`, the local zone).
+        text: String,
+        /// The sides *Set to* touches.
+        sides: SideChoice,
+    },
+    /// *New Folder*.
+    NewFolder {
+        /// The name.
+        name: String,
+        /// The sides.
+        sides: SideChoice,
+        /// The row it goes into, by its path (`""`: the base).
+        parent: String,
+    },
+}
+
+/// The plan of a verb dialog.
+enum PlanState {
+    /// Nothing planned yet (the next poll plans).
+    Idle,
+    /// A plan job and its generation (a newer one cancels it, its answer is dropped).
+    Planning(
+        Job<(OpPlan, hikasa_session::api::OpPreview, Confirmation)>,
+        u64,
+    ),
+    /// The plan, its preview and its questions.
+    Ready(Box<PreviewList>, Box<Confirmation>),
+    /// The options do not make a plan: the message replaces the preview, Start is off.
+    Failed(String),
+}
+
+/// A verb dialog (D-245): the options of [`OpForm`], *Include hidden items*, and the preview of the plan they make,
+/// planned again on every change; Start hands the previewed plan and its questions to the view unchanged.
+pub struct OpDialog {
+    ctx: OpContext,
+    form: OpForm,
+    include_hidden: bool,
+    plan: PlanState,
+    /// The options changed since the last plan job.
+    dirty: bool,
+    generation: u64,
+    /// The comparison changed under the dialog: Start is replaced by *Plan again*.
+    stale: bool,
+    started: Option<(PreviewList, Confirmation)>,
+    again: bool,
+    wake: Arc<dyn Fn() + Send + Sync>,
+    /// How many plan jobs started (tests: an option change re-plans, the older job is cancelled).
+    pub plans: u64,
+}
+
+impl std::fmt::Debug for OpDialog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpDialog")
+            .field("ctx", &self.ctx)
+            .field("form", &self.form)
+            .finish()
+    }
+}
+
+impl OpDialog {
+    /// The dialog of `form` on `ctx`; `include_hidden` is the check box's preset (`include_hidden_by_default`).
+    pub fn new(
+        ctx: OpContext,
+        form: OpForm,
+        include_hidden: bool,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> OpDialog {
+        OpDialog {
+            ctx,
+            form,
+            include_hidden,
+            plan: PlanState::Idle,
+            dirty: true,
+            generation: 0,
+            stale: false,
+            started: None,
+            again: false,
+            wake,
+            plans: 0,
+        }
+    }
+
+    /// The view.
+    pub fn view(&self) -> ViewId {
+        self.ctx.view
+    }
+
+    /// The context it plans on.
+    pub fn context(&self) -> &OpContext {
+        &self.ctx
+    }
+
+    /// The options.
+    pub fn form(&self) -> &OpForm {
+        &self.form
+    }
+
+    /// Changes the options; the next poll plans again (the running job is cancelled).
+    pub fn edit(&mut self, change: impl FnOnce(&mut OpForm)) {
+        let before = self.form.clone();
+        change(&mut self.form);
+        if self.form != before {
+            self.dirty = true;
+        }
+    }
+
+    /// *Include hidden items*.
+    pub fn include_hidden(&self) -> bool {
+        self.include_hidden
+    }
+
+    /// Toggles *Include hidden items* (re-plans).
+    pub fn set_include_hidden(&mut self, on: bool) {
+        if self.include_hidden != on {
+            self.include_hidden = on;
+            self.dirty = true;
+        }
+    }
+
+    /// True when `side` may be written (Disable editing, FC-003).
+    pub fn writable(&self, side: Side) -> bool {
+        !self.ctx.read_only.get(side)
+    }
+
+    /// True when the side choice can be picked: the selection has items there and, for a verb that writes the
+    /// selected items (Rename, Touch, New Folder, Move to Folder), the side is writable.
+    pub fn side_enabled(&self, choice: SideChoice) -> bool {
+        let writes_items = !matches!(self.form, OpForm::CopyTo { moving: false, .. });
+        let new_folder = matches!(self.form, OpForm::NewFolder { .. });
+        let ok = |k: usize, side: Side| {
+            (new_folder || self.ctx.on[k]) && (!writes_items || self.writable(side))
+        };
+        match choice {
+            SideChoice::Left => ok(0, Side::Left),
+            SideChoice::Right => ok(1, Side::Right),
+            SideChoice::Both => ok(0, Side::Left) && ok(1, Side::Right),
+        }
+    }
+
+    /// The tooltip of a disabled side choice that would write a read-only side.
+    pub fn read_only_tip(side: Side) -> String {
+        format!("Disable editing is on for the {} side", side.as_str())
+    }
+
+    /// The preview list, once planned.
+    pub fn list(&self) -> Option<&PreviewList> {
+        match &self.plan {
+            PlanState::Ready(list, _) => Some(list),
+            _ => None,
+        }
+    }
+
+    /// "Planning…" while the plan job runs.
+    pub fn planning(&self) -> bool {
+        self.dirty || matches!(self.plan, PlanState::Planning(..) | PlanState::Idle)
+    }
+
+    /// The message that replaces the preview (a refused plan, an invalid option, a changed comparison).
+    pub fn message(&self) -> Option<String> {
+        if self.stale {
+            return Some(format!(
+                "{}: the comparison changed while the operation waited; nothing was written. Plan again.",
+                self.ctx.caption
+            ));
+        }
+        match &self.plan {
+            PlanState::Failed(message) => Some(message.clone()),
+            _ => None,
+        }
+    }
+
+    /// The plan, its preview and its questions after Start (taken by the view).
+    pub fn take_started(&mut self) -> Option<(PreviewList, Confirmation)> {
+        self.started.take()
+    }
+
+    /// True when *Plan again* was pressed (the window runs the command again).
+    pub fn plan_again(&self) -> bool {
+        self.again
+    }
+
+    /// The browse dialog's answer for the target (Copy/Move to Folder).
+    pub fn set_target(&mut self, spec: &str) {
+        self.edit(|form| {
+            if let OpForm::CopyTo { target, .. } = form {
+                *target = spec.to_owned();
+            }
+        });
+    }
+
+    /// The choices to remember in `state.dialogs."<id>"` (§1.9.13's last column): `(dialog, key, value)`.
+    pub fn remembered(&self) -> Vec<(&'static str, &'static str, String)> {
+        match &self.form {
+            OpForm::CopyTo {
+                structure,
+                overwrite,
+                ..
+            } => vec![
+                (
+                    COPY_TO_DIALOG,
+                    structure_key(),
+                    structure.as_str().to_owned(),
+                ),
+                (
+                    COPY_TO_DIALOG,
+                    overwrite_key(),
+                    overwrite.as_str().to_owned(),
+                ),
+            ],
+            OpForm::Rename {
+                mode,
+                dos,
+                old,
+                new,
+                ..
+            } => vec![
+                (RENAME_DIALOG, "mode", mode_word(*mode).to_owned()),
+                (RENAME_DIALOG, "dos", dos.clone()),
+                (RENAME_DIALOG, "old", old.clone()),
+                (RENAME_DIALOG, "new", new.clone()),
+            ],
+            OpForm::Touch {
+                from_other, text, ..
+            } => {
+                let mut out = vec![(
+                    TOUCH_DIALOG,
+                    "mode",
+                    if *from_other { OTHER_SIDE } else { SET_TO }.to_owned(),
+                )];
+                if !*from_other {
+                    out.push((TOUCH_DIALOG, "last", text.clone()));
+                }
+                out
+            }
+            OpForm::NewFolder { sides, .. } => {
+                vec![(NEW_FOLDER_DIALOG, "sides", side_word(*sides).to_owned())]
+            }
+        }
+    }
+
+    /// The request of the options, or the message of an option that makes none.
+    fn request(&self) -> Result<FolderOpRequest, String> {
+        let op = match &self.form {
+            OpForm::CopyTo {
+                moving,
+                target,
+                structure,
+                sides,
+                overwrite,
+            } => {
+                if target.trim().is_empty() {
+                    return Err("Choose the folder the items go to.".to_owned());
+                }
+                let target = std::ffi::OsString::from(target.trim());
+                if *moving {
+                    OpRequest::MoveTo {
+                        sides: sides.sides(),
+                        target,
+                        structure: *structure,
+                        overwrite: *overwrite,
+                    }
+                } else {
+                    OpRequest::CopyTo {
+                        sides: sides.sides(),
+                        target,
+                        structure: *structure,
+                        overwrite: *overwrite,
+                    }
+                }
+            }
+            OpForm::Rename {
+                mode,
+                dos,
+                old,
+                new,
+                sides,
+            } => {
+                let mask = match mode {
+                    RenameMode::Dos if dos.is_empty() => {
+                        return Err("Type the mask of the new names.".to_owned());
+                    }
+                    RenameMode::Dos => RenameMask::Dos(dos.clone()),
+                    RenameMode::Regex => RenameMask::Regex {
+                        old: old.clone(),
+                        new: new.clone(),
+                    },
+                };
+                OpRequest::Op(FolderOp::Rename {
+                    sides: sides.sides(),
+                    mask,
+                })
+            }
+            OpForm::Touch {
+                from_other,
+                to,
+                text,
+                sides,
+            } => {
+                if *from_other {
+                    OpRequest::Op(FolderOp::Touch {
+                        sides: SideSet::of(*to),
+                        from: TouchFrom::OtherSide { to: *to },
+                    })
+                } else {
+                    let at = parse_touch_time(text, &self.ctx.zone).map_err(|e| e.to_string())?;
+                    OpRequest::Op(FolderOp::Touch {
+                        sides: sides.sides(),
+                        from: TouchFrom::At(at),
+                    })
+                }
+            }
+            OpForm::NewFolder {
+                name,
+                sides,
+                parent,
+            } => {
+                let (name, folder) =
+                    parse_mkdir_name(name, self.ctx.windows).map_err(|e| e.to_string())?;
+                OpRequest::MkdirIn {
+                    sides: sides.sides(),
+                    parent: parent.clone(),
+                    name,
+                    folder,
+                }
+            }
+        };
+        let mut select = select_request_of(&self.ctx, self.include_hidden);
+        if matches!(self.form, OpForm::NewFolder { .. }) {
+            // New Folder plans no selected item: its parent is named by path.
+            select.selection = None;
+        }
+        Ok(FolderOpRequest {
+            op,
+            select,
+            read_only: self.ctx.read_only,
+            overrides: self.ctx.overrides,
+        })
+    }
+
+    /// Starts a plan job for the options (the running one is cancelled).
+    fn replan(&mut self, svc: &Service) {
+        self.dirty = false;
+        if let PlanState::Planning(job, _) = &self.plan {
+            job.cancel();
+        }
+        let request = match self.request() {
+            Ok(request) => request,
+            Err(message) => {
+                self.plan = PlanState::Failed(message);
+                return;
+            }
+        };
+        self.generation += 1;
+        self.plans += 1;
+        let model = Arc::clone(&self.ctx.model);
+        let job = Job::spawn(
+            svc,
+            JobKind::FolderOp,
+            format!("plan: {}", self.ctx.caption),
+            &self.wake,
+            move |svc, job| {
+                let plan = svc.folder_op_plan(&model, &request, job)?;
+                if job.cancel.is_cancelled() {
+                    return Err(ApiError::Cancelled);
+                }
+                let preview = svc.folder_op_preview(&plan);
+                let confirmation = svc.folder_confirmation(&plan, None);
+                Ok((plan, preview, confirmation))
+            },
+        );
+        self.plan = PlanState::Planning(job, self.generation);
+    }
+
+    fn start_enabled(&self) -> bool {
+        !self.stale && !self.dirty && self.list().is_some_and(PreviewList::acts)
+    }
+}
+
+/// The keys of Copy/Move to Folder's remembered choices (`state.dialogs."copy-to-folder"`).
+pub fn structure_key() -> &'static str {
+    "structure"
+}
+
+/// The key of the remembered overwrite choice.
+pub fn overwrite_key() -> &'static str {
+    "overwrite"
+}
+
+/// The `state.dialogs` ids of the verb dialogs (§1.9.13).
+pub const COPY_TO_DIALOG: &str = "copy-to-folder";
+/// Rename.
+pub const RENAME_DIALOG: &str = "rename";
+/// Touch.
+pub const TOUCH_DIALOG: &str = "touch";
+/// New Folder.
+pub const NEW_FOLDER_DIALOG: &str = "new-folder";
+/// Touch's remembered mode words.
+const OTHER_SIDE: &str = "other-side";
+const SET_TO: &str = "set-to";
+
+fn mode_word(mode: RenameMode) -> &'static str {
+    match mode {
+        RenameMode::Dos => "mask",
+        RenameMode::Regex => "regex",
+    }
+}
+
+/// The remembered Rename mode (the dialog's own word, not a CLI word).
+pub fn rename_mode_of(word: Option<&str>) -> RenameMode {
+    if word == Some(mode_word(RenameMode::Regex)) {
+        RenameMode::Regex
+    } else {
+        RenameMode::Dos
+    }
+}
+
+/// The remembered Touch mode: true for *Copy timestamps from other side*.
+pub fn touch_from_other_of(word: Option<&str>) -> bool {
+    word == Some(OTHER_SIDE)
+}
+
+fn side_word(choice: SideChoice) -> &'static str {
+    match choice {
+        SideChoice::Left => Side::Left.as_str(),
+        SideChoice::Right => Side::Right.as_str(),
+        SideChoice::Both => "both",
+    }
+}
+
+/// The remembered sides of New Folder.
+pub fn side_choice_of(word: Option<&str>) -> Option<SideChoice> {
+    SideChoice::ALL
+        .into_iter()
+        .find(|c| Some(side_word(*c)) == word)
+}
+
+/// The request of a plan on the selection of `ctx` (D-238): the selection explicit, the view's display, the dialog's
+/// *Include hidden items*.
+pub fn select_request_of(ctx: &OpContext, include_hidden: bool) -> SelectRequest {
+    SelectRequest {
+        selection: Some(ctx.selection.clone()),
+        display: Some(ctx.display),
+        expand: ExpandWords::None,
+        include_hidden: Some(include_hidden),
+        iu: ctx.display.ignore_unimportant,
+        ..SelectRequest::default()
+    }
+}
+
+impl DialogModel for OpDialog {
+    fn title(&self) -> String {
+        self.ctx
+            .caption
+            .trim_end_matches("...")
+            .trim_end_matches('…')
+            .to_owned()
+    }
+
+    fn help_topic(&self) -> &'static str {
+        match self.form {
+            OpForm::CopyTo { .. } => COPY_TO_TOPIC,
+            OpForm::Rename { .. } => RENAME_TOPIC,
+            OpForm::Touch { .. } => TOUCH_TOPIC,
+            OpForm::NewFolder { .. } => NEW_FOLDER_TOPIC,
+        }
+    }
+
+    fn size(&self) -> Option<(f32, f32)> {
+        Some((640.0, 420.0))
+    }
+
+    fn buttons(&self) -> Vec<DialogButton> {
+        let mut buttons = Vec::new();
+        if self.stale {
+            buttons.push(DialogButton {
+                label: "Plan again".to_owned(),
+                role: PLAN_AGAIN,
+                enabled: true,
+                default: true,
+            });
+        } else {
+            buttons.push(DialogButton {
+                label: "Start".to_owned(),
+                role: ButtonRole::Ok,
+                enabled: self.start_enabled(),
+                default: true,
+            });
+        }
+        buttons.push(DialogButton {
+            label: "Cancel".to_owned(),
+            role: ButtonRole::Cancel,
+            enabled: true,
+            default: false,
+        });
+        buttons
+    }
+
+    fn on_button(&mut self, role: ButtonRole, _svc: &Service) -> DialogStep {
+        match role {
+            ButtonRole::Ok => {
+                if self.ctx.model.generation() != self.ctx.generation {
+                    self.stale = true;
+                    return DialogStep::Stay;
+                }
+                if !self.start_enabled() {
+                    return DialogStep::Stay;
+                }
+                match std::mem::replace(&mut self.plan, PlanState::Idle) {
+                    PlanState::Ready(list, confirmation) => {
+                        self.started = Some((*list, *confirmation));
+                        DialogStep::Close
+                    }
+                    other => {
+                        self.plan = other;
+                        DialogStep::Stay
+                    }
+                }
+            }
+            PLAN_AGAIN => {
+                self.again = true;
+                DialogStep::Close
+            }
+            ButtonRole::Cancel => {
+                if let PlanState::Planning(job, _) = &self.plan {
+                    job.cancel();
+                }
+                DialogStep::Close
+            }
+            _ => DialogStep::Stay,
+        }
+    }
+
+    fn poll(&mut self, svc: &Service) -> bool {
+        if self.stale {
+            return false;
+        }
+        if self.ctx.model.generation() != self.ctx.generation {
+            self.stale = true;
+            return true;
+        }
+        if self.dirty {
+            self.replan(svc);
+            return true;
+        }
+        let PlanState::Planning(job, generation) = &self.plan else {
+            return false;
+        };
+        let Some(result) = job.try_result() else {
+            return false;
+        };
+        if *generation != self.generation {
+            return false;
+        }
+        self.plan = match result {
+            Ok((plan, preview, confirmation)) => PlanState::Ready(
+                Box::new(PreviewList::op(plan, preview)),
+                Box::new(confirmation),
+            ),
+            Err(ApiError::Cancelled) => PlanState::Idle,
+            Err(e) => PlanState::Failed(e.to_string()),
+        };
+        true
+    }
+
+    fn busy(&self) -> bool {
+        matches!(self.plan, PlanState::Planning(..))
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -18,8 +18,9 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 2] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 3] = [
     (SessionType::FolderCompare, "Folder Compare"),
+    (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
 ];
 
@@ -135,6 +136,8 @@ pub struct MenuContext<'a> {
     pub workspaces: &'a [String],
     /// The columns a folder view offers and whether each shows (`ColList`, the header menu; D-234).
     pub columns: &'a [(ColumnId, bool)],
+    /// The applications of `openwith.toml`, by description (Open With ▸, M2 W9b).
+    pub open_with: &'a [String],
 }
 
 impl MenuContext<'_> {
@@ -211,6 +214,10 @@ impl MenuContext<'_> {
                     items,
                 }
             }
+            CommandId::OpenWithList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: open_with_items(self),
+            },
             CommandId::ColList => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: column_items(self),
@@ -239,6 +246,49 @@ impl MenuContext<'_> {
             .filter(|(_, id)| !crate::commands::in_a_list(*id))
             .collect()
     }
+}
+
+/// The items of Open With ▸ (§1.9.13): *Text Compare* (and *Folder Compare* for two folders), each application of
+/// `openwith.toml`, then the associated application. Views of later waves are not listed until they exist.
+pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    use crate::window::OpenWithItem;
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::OpenWithList)
+            .is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    let item = |what: OpenWithItem, caption: String, on: bool| MenuItem::Command {
+        invocation: Invocation::with(CommandId::OpenWithList, CommandArg::OpenWith(what)),
+        caption,
+        shortcut: None,
+        check: Check::None,
+        enabled: enabled && on,
+        description: ctx
+            .tables
+            .description(ctx.scope, CommandId::OpenWithList)
+            .to_owned(),
+    };
+    let mut items = vec![item(
+        OpenWithItem::TextCompare,
+        Scope::Text.type_title().to_owned(),
+        ctx.ctx.two_items,
+    )];
+    if ctx.ctx.two_folders {
+        items.push(item(
+            OpenWithItem::FolderCompare,
+            Scope::Folder.type_title().to_owned(),
+            true,
+        ));
+    }
+    if !ctx.open_with.is_empty() {
+        items.push(MenuItem::Separator);
+        for (index, name) in ctx.open_with.iter().enumerate() {
+            items.push(item(OpenWithItem::App(index), name.clone(), true));
+        }
+    }
+    if crate::commands::shown(ctx.tables, ctx.scope, CommandId::AssocApp) {
+        items.push(MenuItem::Separator);
+        items.push(ctx.item(CommandId::AssocApp, None));
+    }
+    items
 }
 
 /// The column check items of a folder view (`ColList`'s submenu and the header's context menu, `Area::FolderHeader`;

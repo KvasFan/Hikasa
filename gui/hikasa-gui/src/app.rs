@@ -51,12 +51,16 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod bases;
 mod flow;
+mod ops;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
 pub use flow::OpenHow;
 pub use flow::{Catalog, OpenedSession, PanelAction, load_named};
 use flow::{CloseFlow, StoreDone, StoreKind, StoreWork, Then};
+
+/// D-256's threshold: an operation, a sync or a content compare that ran this long beeps at its end.
+pub const LONG_OPERATION: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Messages to the UI thread.
 #[derive(Debug)]
@@ -168,6 +172,9 @@ enum CoreJob {
     /// The check of a folder view's new base folders (D-239): its view and the specs.
     /// The check of new bases for a view, with the view's rebase generation it answers (a newer one drops it).
     Rebase(ViewId, u64, [String; 2], Job<bases::BaseCheck>),
+    /// An application started for a view's items (M2 W9b: Open With, the associated application): its caption and the
+    /// rows whose folders are refreshed once it ended (`refresh_when_finished`).
+    Launch(ViewId, String, Option<Vec<hikasa_folder::NodeId>>, Job<()>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -202,6 +209,7 @@ impl CoreJob {
             CoreJob::Drop(_, j) => j.settling(),
             CoreJob::Store(j, ..) => j.settling(),
             CoreJob::Rebase(_, _, _, j) => j.settling(),
+            CoreJob::Launch(_, _, _, j) => j.settling(),
         }
     }
 }
@@ -990,7 +998,8 @@ impl AppCore {
             let mut state = self.state.clone();
             let name = match &request {
                 ViewRequest::Text { .. } => Scope::Text,
-                ViewRequest::Folder { .. } | ViewRequest::Sync { .. } => Scope::Folder,
+                ViewRequest::Folder { .. } => Scope::Folder,
+                ViewRequest::Sync { .. } => Scope::Sync,
             }
             .view_name()
             .unwrap_or_default();
@@ -1024,16 +1033,19 @@ impl AppCore {
                 m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
             }
-            // A Folder Sync view is W9's: a GUI answers `unsupported_view` before a sync request is built (D-190), so none
-            // arrives here; were one to, the window shows the comparison of its bases, which writes nothing.
+            // A Folder Sync view (M2 W9b, D-247): the folder tree with its sync half.
             ViewRequest::Sync {
-                request, display, ..
+                request,
+                options,
+                allow_empty_source,
+                display,
             } => {
-                let mut m = FolderViewModel::new(
+                let mut m = FolderViewModel::new_sync(
                     &self.service,
                     request,
+                    options,
+                    allow_empty_source,
                     display,
-                    false,
                     titles,
                     self.wake(),
                 );
@@ -1268,6 +1280,7 @@ impl AppCore {
         let mut notes: Vec<(WindowId, ViewId, bool, String, Vec<LogNote>)> = Vec::new();
         let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
         let mut loaded_mru: Vec<(MruList, String)> = Vec::new();
+        let mut dirty_views: Vec<ViewId> = Vec::new();
         for w in &mut self.windows {
             let active = w.active;
             for (index, tab) in w.tabs.iter_mut().enumerate() {
@@ -1294,6 +1307,9 @@ impl AppCore {
                     }
                     Some(ViewModel::Folder(m)) => {
                         m.poll(&service);
+                        if m.take_dirty_options() {
+                            dirty_views.push(id);
+                        }
                         // Pushed once the new model's comparison was prepared on its bases.
                         if let Some((true, waiting)) = self.mru_after_load.get_mut(&id)
                             && m.prepared().is_some()
@@ -1348,6 +1364,11 @@ impl AppCore {
                     self.push_notice(window, notice);
                 }
                 self.log_entry(note.kind, &caption, note.text);
+            }
+        }
+        for view in dirty_views {
+            if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                vs.dirty = true;
             }
         }
         for (window, view, caption, list) in events {
@@ -1405,7 +1426,22 @@ impl AppCore {
                     caption,
                     outcome,
                     elapsed,
-                } => self.op_outcome(window, view, None, source, &caption, &outcome, elapsed),
+                } => {
+                    self.op_outcome(window, view, None, source, &caption, &outcome, elapsed);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
+                FolderEvent::SyncOutcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => {
+                    self.sync_outcome(window, view, None, source, &caption, &outcome, elapsed);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
                 FolderEvent::Rebase(specs) => self.rebase(view, specs, None),
             }
         }
@@ -1461,6 +1497,63 @@ impl AppCore {
         self.push_notice(window, notice);
     }
 
+    /// D-256: an operation, a sync or a content compare that ran this long beeps at its end (`beep_after_long_operations`).
+    pub(crate) fn beeps_after(&self, elapsed: std::time::Duration) -> bool {
+        elapsed >= LONG_OPERATION
+            && self
+                .options()
+                .tweaks
+                .file_operations
+                .beep_after_long_operations
+    }
+
+    /// A sync's outcome (M2 W9b): its entries in the log (`sync_log_entries`, D-188) and one notice, as an operation's.
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn sync_outcome(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        ended: Option<&str>,
+        source: &str,
+        caption: &str,
+        outcome: &hikasa_session::api::FolderSyncOutcome,
+        elapsed: std::time::Duration,
+    ) {
+        let time = self.service.clock().now();
+        let filter = self.log.filter();
+        let entries =
+            hikasa_session::log::sync_log_entries(outcome, &time, source, Some(elapsed), &filter);
+        for entry in entries {
+            self.log.push(entry);
+        }
+        let summary = hikasa_session::api::folder_ops::summary_text(
+            outcome.op.verb,
+            false,
+            &outcome.op.report.summary,
+            None,
+        );
+        let counts = hikasa_session::api::folder_ops::sync_counts_text(&outcome.counts);
+        let what = match ended {
+            None => caption.to_owned(),
+            Some(why) => format!("{caption} in {source} ({why})"),
+        };
+        let text = if outcome.op.report.cancelled {
+            format!("{what}: stopped; {summary}; {counts}.")
+        } else {
+            format!("{what}: {summary}; {counts}.")
+        };
+        let key = format!("op:{}", view.0);
+        let notice = if outcome.ok() {
+            Notice::new(key, NoticeKind::Info, text)
+        } else if ended.is_none() {
+            Notice::new(key, NoticeKind::Warning, text)
+                .with_actions(vec![NoticeAction::ShowLog(view)])
+        } else {
+            Notice::new(key, NoticeKind::Warning, text)
+        };
+        self.push_notice(window, notice);
+    }
+
     /// A folder view ends while it may still write (§1.6.25 W6d after review): what it did not hand over yet is
     /// reported now (an outcome, a notice; a dialog is dropped: its view is gone), and its running operation, cancelled,
     /// is kept until it ends, so its outcome reaches the log too.
@@ -1490,6 +1583,13 @@ impl AppCore {
                     outcome,
                     elapsed,
                 } => self.op_outcome(window, view, Some(why), source, &caption, &outcome, elapsed),
+                FolderEvent::SyncOutcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => {
+                    self.sync_outcome(window, view, Some(why), source, &caption, &outcome, elapsed)
+                }
             }
         }
         for note in m.take_notes() {
@@ -1848,6 +1948,40 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::CopyPrompt
+            | CommandId::CopySide
+            | CommandId::MoveRight
+            | CommandId::MoveLeft
+            | CommandId::MovePrompt
+            | CommandId::MoveSide
+            | CommandId::MoveBoth
+            | CommandId::CopyTo
+            | CommandId::MoveTo
+            | CommandId::Rename
+            | CommandId::Touch
+            | CommandId::NewFolder => self.start_verb(window, &inv),
+            CommandId::Ignored
+            | CommandId::Exclude
+            | CommandId::Compare
+            | CommandId::QuickCompare
+            | CommandId::CompareTo
+            | CommandId::OpenWithList
+            | CommandId::AssocApp => self.content_verb(window, &inv),
+            CommandId::UpdateRight
+            | CommandId::UpdateLeft
+            | CommandId::UpdateBoth
+            | CommandId::MirrorRight
+            | CommandId::MirrorLeft
+            | CommandId::Run
+            | CommandId::SyncLeave
+            | CommandId::SyncCopyLeft
+            | CommandId::SyncCopyRight
+            | CommandId::SyncDeleteLeft
+            | CommandId::SyncDeleteRight
+            | CommandId::ConflictNext
+            | CommandId::ConflictPrev
+            | CommandId::SyncBaseView
+            | CommandId::CompareBaseView => self.sync_command(window, &inv),
             CommandId::UpOneLevelLeft
             | CommandId::UpOneLevelRight
             | CommandId::UpOneLevelBoth
@@ -1864,16 +1998,17 @@ impl AppCore {
             CommandId::Info => {
                 let scope = self.scope(window);
                 let stats = match self.active_tab(window).and_then(Tab::model) {
-                    Some(ViewModel::Folder(m)) => m.info_stats(),
+                    Some(ViewModel::Folder(m)) => m.info_stats().map(|s| (s, m.sync_counts())),
                     _ => None,
                 };
-                if let Some((stats, partial)) = stats {
+                if let Some(((stats, partial), sync)) = stats {
                     let dialog = crate::info_dialog::InfoDialog::new(
                         scope.type_title(),
                         stats,
                         partial,
                         Arc::clone(&self.script_clipboard),
-                    );
+                    )
+                    .with_sync(sync);
                     if let Some(w) = self.window_mut(window) {
                         w.dialogs.push(Box::new(dialog));
                     }
@@ -1947,11 +2082,12 @@ impl AppCore {
     /// plans in a job, or asks the sides of a delete first.
     fn start_operation(&mut self, window: WindowId, id: CommandId) {
         let service = self.service.clone();
-        let caption = self.tables.caption(Scope::Folder, id);
+        let caption = self.tables.caption(self.scope(window), id);
         let require_side = self
             .options()
             .file_operations
             .require_side_selection_in_delete;
+        let include_hidden = self.options().file_operations.include_hidden_by_default;
         let dialog = {
             let Some(tab) = self.active_tab_mut(window) else {
                 return;
@@ -1959,6 +2095,7 @@ impl AppCore {
             let view = tab.id;
             match tab.model_mut() {
                 Some(ViewModel::Folder(m)) => {
+                    m.set_include_hidden(include_hidden);
                     m.start_operation(&service, view, id, &caption, require_side)
                 }
                 _ => None,
@@ -2868,10 +3005,40 @@ impl AppCore {
             };
         }
         if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
-            let (view, answers) = (d.view, d.take_confirmation());
+            let (view, replan, answers) = (d.view, d.replan(), d.take_answered());
             let service = self.service.clone();
             if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
-                m.confirmed(&service, answers);
+                match replan {
+                    Some(hidden) => m.replan(&service, view, hidden),
+                    None => m.confirmed(&service, answers),
+                }
+            }
+            return Vec::new();
+        }
+        if self.content_dialog_closed(&mut closed) || self.sync_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::op_dialogs::OpDialog>()
+        {
+            let (view, again, started) = (d.view(), d.plan_again(), d.take_started());
+            let remembered = if started.is_some() {
+                d.remembered()
+            } else {
+                Vec::new()
+            };
+            let command = d.context().command;
+            let service = self.service.clone();
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                m.op_dialog_closed(&service, view, started);
+            }
+            for (dialog, key, value) in remembered {
+                self.state.set_dialog_text(dialog, key, &value);
+                self.update_state(move |s| s.set_dialog_text(dialog, key, &value));
+            }
+            if again && let Some(window) = self.window_of(view) {
+                return self.execute(window, Invocation::new(command));
             }
             return Vec::new();
         }
@@ -2997,6 +3164,14 @@ impl AppCore {
             Followup::CloseWindow => self.close_window_confirmed(window),
             Followup::Exit => self.exit_confirmed(),
             Followup::Session(action) => self.session_action(window, action),
+            Followup::Contents {
+                view,
+                method,
+                show_results,
+            } => {
+                self.start_contents(view, method, show_results);
+                Vec::new()
+            }
             Followup::BrowseReplace => {
                 let service = self.service.clone();
                 let step = match self
@@ -3547,6 +3722,10 @@ impl AppCore {
                         Some(result) => self.rebase_checked(view, specs, result),
                     }
                 }
+                CoreJob::Launch(view, caption, refresh, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Launch(view, caption, refresh, j)),
+                    Some(result) => self.launched(view, &caption, refresh, result),
+                },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {
