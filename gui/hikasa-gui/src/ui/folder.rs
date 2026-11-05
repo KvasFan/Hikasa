@@ -224,6 +224,9 @@ pub fn show(
         ));
         let y = header.center().y;
         for &(column, cx) in &side_spans[k] {
+            if cx.max <= x || cx.min >= right {
+                continue;
+            }
             let arrow = match sort {
                 Some(key) if key.column == column && key.side == side => {
                     if key.descending {
@@ -869,6 +872,10 @@ fn draw_side(
     );
     let ext_shown = spans.iter().any(|(c, _)| *c == ColumnId::Ext);
     for (column, span) in spans {
+        // A column scrolled out of the side is not laid out (G15 tree: every column shown).
+        if span.max <= rect.left() || span.min >= rect.right() {
+            continue;
+        }
         let text = cell.text(*column, ext_shown);
         if *column == ColumnId::Name {
             let name_rect = Rect::from_min_max(

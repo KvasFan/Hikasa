@@ -479,7 +479,12 @@ fn result_matches(
         let present = [node.sides[0].present(), node.sides[1].present()];
         let folder = node.is_folder();
         let scan = node.scan();
-        let category = store.category_of(node, iu);
+        // A file's category; `all` reads none.
+        let category = if folder || state == SelState::All {
+            Category::Same
+        } else {
+            store.category_of(node, iu)
+        };
         let mut sides = SideSet::empty();
         for side in [Side::Left, Side::Right] {
             let k = usize::from(side == Side::Right);
@@ -669,18 +674,36 @@ fn file_bytes(rec: &crate::model::store::SideRec) -> u64 {
     }
 }
 
-/// The bytes on side `k` of the files below folder `id` that `display` shows, every folder open.
+/// The bytes on side `k` of the files below folder `id` that `display` shows, every folder open. A folder whose
+/// files the display all shows (its counters say so) adds its totals at once; only the others are walked.
 fn shown_bytes(
     store: &crate::model::store::Store,
     id: NodeId,
     display: &DisplayOptions,
     k: usize,
 ) -> u64 {
+    let Some(top) = store.node(id) else {
+        return 0;
+    };
+    let toggles = display.filter.toggles();
+    let iu = display.ignore_unimportant;
+    // Every file below shown: no filtered one, and each category there accepted.
+    let all_shown = |node: &crate::model::store::Node| {
+        let below = store.aggregates(node);
+        let files = &below.get(iu).files;
+        Category::ALL
+            .iter()
+            .all(|&c| files.get(c) == 0 || (c != Category::Filtered && toggles.accepts(c)))
+    };
+    let totals = |node: &crate::model::store::Node| {
+        let t = store.totals(node);
+        if k == 0 { t.left.bytes } else { t.right.bytes }
+    };
+    if all_shown(top) {
+        return totals(top);
+    }
     let mut bytes = 0u64;
-    let mut stack: Vec<u32> = store
-        .node(id)
-        .map(|n| n.children().collect())
-        .unwrap_or_default();
+    let mut stack: Vec<u32> = top.children().collect();
     while let Some(child) = stack.pop() {
         let Some(node) = store.node(NodeId(child)) else {
             continue;
@@ -689,7 +712,11 @@ fn shown_bytes(
             continue;
         }
         if node.is_folder() {
-            stack.extend(node.children());
+            if all_shown(node) {
+                bytes = bytes.saturating_add(totals(node));
+            } else {
+                stack.extend(node.children());
+            }
         } else {
             bytes = bytes.saturating_add(file_bytes(&node.sides[k]));
         }
