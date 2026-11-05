@@ -540,3 +540,44 @@ fn a_cache_kept_while_the_comparison_runs_sorts_as_a_fresh_one() {
         probe.failures.lock().unwrap()
     );
 }
+
+/// M2 W9a after review (G15 tree): a change after the comparison ended that keeps a folder's counters and children (two
+/// files trading their sizes, refreshed in place) sorts the folder again.
+#[test]
+fn a_refresh_that_keeps_the_sums_sorts_again() {
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    vfs.insert_dir(&host("/r"), meta(Some(1), None, None))
+        .unwrap();
+    vfs.insert_file(&host("/l/d/a"), b"x".as_slice(), meta(Some(10), None, None))
+        .unwrap();
+    vfs.insert_file(
+        &host("/l/d/b"),
+        b"yy".as_slice(),
+        meta(Some(10), None, None),
+    )
+    .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let sort = key(SortColumn::Size, Side::Left, false);
+    let mut cache = SortCache::default();
+    let (fresh, kept) = both(&cmp.read(), &all(), &|_| true, &sort, &mut cache);
+    assert_eq!(fresh, kept);
+    // The sizes trade places: the folder's totals and categories stay.
+    vfs.insert_file(
+        &host("/l/d/a"),
+        b"xx".as_slice(),
+        meta(Some(10), None, None),
+    )
+    .unwrap();
+    vfs.insert_file(&host("/l/d/b"), b"y".as_slice(), meta(Some(10), None, None))
+        .unwrap();
+    let d = cmp
+        .read()
+        .node_at(&hikasa_core::RelPath::parse("d").unwrap())
+        .unwrap();
+    let engines = common::engines(1 << 30);
+    common::with_env(&vfs, &engines, &hikasa_core::CancelToken::new(), |env| {
+        hikasa_folder::refresh_into(cmp.model(), &[d], env).unwrap()
+    });
+    let (fresh, kept) = both(&cmp.read(), &all(), &|_| true, &sort, &mut cache);
+    assert_eq!(fresh, kept);
+}

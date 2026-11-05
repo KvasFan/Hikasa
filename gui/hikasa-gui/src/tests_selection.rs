@@ -271,3 +271,22 @@ fn p_random_gestures_keep_the_selection_shown_and_present() {
         }
     }
 }
+
+/// Mutation E: the Space mark leaves with its side: a shown row that no longer has the marked side drops the mark,
+/// one that still has it keeps it.
+#[test]
+fn the_mark_leaves_with_its_side() {
+    let rows = vec![VisibleRow {
+        node: NodeId(1),
+        depth: 0,
+    }];
+    let mut sel = ViewSelection::new();
+    sel.mark = Some((NodeId(1), Side::Left));
+    sel.current = Some(NodeId(1));
+    sel.retain_shown(&rows, &|_| SideSet::RIGHT);
+    assert_eq!(sel.mark, None, "the left item is gone");
+    assert_eq!(sel.current, Some(NodeId(1)), "the row stays");
+    sel.mark = Some((NodeId(1), Side::Right));
+    sel.retain_shown(&rows, &|_| SideSet::RIGHT);
+    assert_eq!(sel.mark, Some((NodeId(1), Side::Right)));
+}
