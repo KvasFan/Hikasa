@@ -120,6 +120,15 @@ fn open_pair(
     })
 }
 
+/// Exclude: `new` joins `list`, each mask once (a mask already there, or twice in `new`, is not added again).
+pub(crate) fn add_masks(list: &mut Vec<String>, new: &[String]) {
+    for mask in new {
+        if !list.contains(mask) {
+            list.push(mask.clone());
+        }
+    }
+}
+
 /// More selected items than this ask before Open With or the associated application starts them (review F5).
 pub const LAUNCH_ASK: usize = 10;
 
@@ -474,16 +483,8 @@ impl AppCore {
                         _ => return Ok(()),
                     };
                     let names = &mut rules.filters.names;
-                    for (list, new) in [
-                        (&mut names.exclude_files, &files),
-                        (&mut names.exclude_folders, &folders),
-                    ] {
-                        for mask in new {
-                            if !list.contains(mask) {
-                                list.push(mask.clone());
-                            }
-                        }
-                    }
+                    add_masks(&mut names.exclude_files, &files);
+                    add_masks(&mut names.exclude_folders, &folders);
                     Ok(())
                 });
             }

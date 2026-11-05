@@ -401,6 +401,7 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     let ViewRequest::Sync {
         options,
         allow_empty_source,
+        display,
         ..
     } = service
         .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
@@ -408,6 +409,11 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     else {
         panic!("not a sync request");
     };
+    // A Folder Sync view shows every row unless the request names a display (§1.9.15; R20).
+    assert_eq!(
+        display,
+        hikasa_session::api::resolve_folder_display(Some("all"), None, false, false).unwrap()
+    );
     assert_eq!(options.preset, SyncPreset::MirrorLeft);
     assert_eq!(options.orphans, OrphanReading::Deleted);
     assert!(options.create_empty && allow_empty_source);

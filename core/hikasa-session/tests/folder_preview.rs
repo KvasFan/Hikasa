@@ -517,6 +517,24 @@ fn touch_times_in_the_local_zone_and_rfc_3339() {
         let gap = at("2026-03-29 02:30:00", &berlin).unwrap();
         assert_eq!(gap, at("2026-03-29T01:30:00Z", &utc).unwrap());
     }
+    // The same rules in a zone given as a POSIX rule (no time zone database needed), and the fold (R16): 02:30 on
+    // 2026-10-25 happens twice in Central Europe; the earlier one is taken (CEST, 00:30 UTC), jiff's *compatible*.
+    let cet = hikasa_session::api::human::TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").unwrap();
+    assert_eq!(
+        at("2026-03-29 02:30:00", &cet).unwrap(),
+        at("2026-03-29T01:30:00Z", &utc).unwrap(),
+        "a gap: after it"
+    );
+    assert_eq!(
+        at("2026-10-25 02:30:00", &cet).unwrap(),
+        at("2026-10-25T00:30:00Z", &utc).unwrap(),
+        "a fold: the earlier"
+    );
+    assert_eq!(
+        at("2026-10-25 03:30:00", &cet).unwrap(),
+        at("2026-10-25T02:30:00Z", &utc).unwrap(),
+        "after the fold"
+    );
     for bad in ["", "yesterday", "2026-13-01 00:00:00", "2026-01-01 25:00"] {
         let error = parse_touch_time(bad, &utc).unwrap_err();
         assert!(error.to_string().contains("YYYY-MM-DD HH:MM:SS"), "{error}");
@@ -562,4 +580,88 @@ fn a_folder_emptied_entirely_and_a_conflict_are_previewed_as_the_dry_run() {
             );
         }
     }
+}
+
+/// R18: a count line shows its bytes from one byte on.
+#[test]
+fn a_count_line_shows_its_bytes_from_one_byte() {
+    use hikasa_session::api::PreviewCount;
+    let line = |bytes| {
+        PreviewCount {
+            kind: CountKind::Action("copy"),
+            items: 1,
+            bytes,
+        }
+        .text()
+    };
+    assert_eq!(line(0), "copy: 1 items");
+    assert_eq!(line(1), "copy: 1 items, 1 bytes");
+    assert_eq!(line(2), "copy: 1 items, 2 bytes");
+}
+
+/// R17: a row the comparison could not tell is marked unresolved in the sync preview (a folder pair not scanned:
+/// *auto scan subfolders* off in a Folder Compare, as Synchronize ▸ plans on the view's model as it stands).
+#[test]
+fn an_unresolved_row_is_marked_in_the_sync_preview() {
+    use hikasa_session::api::SyncLine;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "l/a.txt", b"left");
+    write(root, "r/a.txt", b"right side");
+    write(root, "l/sub/c.txt", b"one");
+    write(root, "r/sub/c.txt", b"two!");
+    let service = service(root);
+    let request = FolderCompareRequest {
+        left: os(&root.join("l")),
+        right: os(&root.join("r")),
+        patch: hikasa_folder::FolderRulesPatch {
+            auto_scan_subfolders: Some(false),
+            ..Default::default()
+        },
+        ..FolderCompareRequest::default()
+    };
+    let control = job(&service, JobKind::FolderCompare);
+    let prepared = service.folder_prepare_in(&request, &control).unwrap();
+    service
+        .folder_run(&prepared, &control, &NullObserver)
+        .unwrap();
+    let options = SyncOptions {
+        preset: SyncPreset::UpdateRight,
+        ..SyncOptions::default()
+    };
+    let sync = FolderSyncRequest {
+        options,
+        ..FolderSyncRequest::default()
+    };
+    let control = job(&service, JobKind::FolderSync);
+    let plan = service
+        .folder_sync_plan(prepared.model(), &sync, &control)
+        .unwrap();
+    assert!(plan.counts.unresolved > 0, "{:?}", plan.counts);
+    let preview = service.folder_sync_preview(&plan);
+    let read = prepared.model().read();
+    let marked: Vec<String> = (0..preview.len())
+        .filter(|&i| {
+            matches!(
+                preview.kind(&plan, i),
+                Some(SyncLine::Row {
+                    unresolved: true,
+                    ..
+                })
+            )
+        })
+        .map(|i| preview.line(&plan, &read, i))
+        .collect();
+    assert!(!marked.is_empty(), "the unresolved rows are marked");
+    assert!(marked.iter().all(|l| l.contains("sub")), "{marked:?}");
+    let resolved = (0..preview.len()).any(|i| {
+        matches!(
+            preview.kind(&plan, i),
+            Some(SyncLine::Row {
+                unresolved: false,
+                ..
+            })
+        )
+    });
+    assert!(resolved, "a.txt is not unresolved");
 }

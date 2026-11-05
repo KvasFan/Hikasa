@@ -578,7 +578,9 @@ fn a9_13_touch_sets_the_local_time_or_copies_the_other_side() {
     });
     planned(&world, &mut app);
     start_and_confirm(&world, &mut app);
-    assert_eq!(mtime(&world, "r", "d/x.txt"), mtime(&world, "l", "d/x.txt"));
+    // The right side takes the left's time (2,000 s), the left keeps it: the direction is pinned (R25).
+    assert_eq!(mtime(&world, "r", "d/x.txt"), 2_000);
+    assert_eq!(mtime(&world, "l", "d/x.txt"), 2_000);
     let _ = TouchFrom::OtherSide { to: Side::Right };
 }
 
@@ -1012,6 +1014,232 @@ fn a9_13_open_with_views_applications_and_the_associated_one() {
         "{:?}",
         launcher.calls()
     );
+}
+
+// ---- After the W9b review: the review's surviving mutations (R01, R02, R03, R04, R06, R10, R11, R12, R22) ----------
+
+/// R01: an option changed since the shown plan turns Start off until the new plan: Start then does nothing.
+#[test]
+fn start_waits_for_the_plan_of_the_changed_options() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(&mut app, view, &["only-left.txt"]);
+    app.execute(CommandId::CopyTo);
+    op_dialog(&mut app).set_target(&world.path("work/out").to_string_lossy());
+    planned(&world, &mut app);
+    assert!(
+        op_dialog(&mut app)
+            .buttons()
+            .iter()
+            .any(|b| b.role == ButtonRole::Ok && b.enabled)
+    );
+    op_dialog(&mut app).set_target(&world.path("work/other").to_string_lossy());
+    assert!(
+        !op_dialog(&mut app)
+            .buttons()
+            .iter()
+            .any(|b| b.role == ButtonRole::Ok && b.enabled),
+        "Start is off while the plan of the new target is not made"
+    );
+    let w = app.win();
+    app.0.dialog_button(w, ButtonRole::Ok);
+    assert!(find::<OpDialog>(&mut app).is_some(), "nothing started");
+    assert!(op_dialog(&mut app).take_started().is_none());
+    planned(&world, &mut app);
+    start_and_confirm(&world, &mut app);
+    assert!(
+        world.path("work/other/only-left.txt").is_file(),
+        "the new target's plan ran"
+    );
+    assert!(!world.path("work/out").exists());
+}
+
+/// R02, R22: Start pressed after the comparison changed and before the dialog noticed (no poll in between) runs
+/// nothing: the dialog turns to *Plan again* (R22); a plan handed over all the same is refused by the view (R02).
+#[test]
+fn a_changed_comparison_is_refused_by_the_dialog_and_by_the_view() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let before = trees(&world);
+    select_all_of(&mut app, view, &["only-left.txt"]);
+    app.execute(CommandId::CopyTo);
+    op_dialog(&mut app).set_target(&world.path("work/out").to_string_lossy());
+    planned(&world, &mut app);
+    let refresh = |world: &World, app: &mut TestApp| {
+        let model = Arc::clone(folder_model(app, view).prepared().expect("p").model());
+        let root = hikasa_folder::NodeId::ROOT;
+        world
+            .service
+            .spawn(JobKind::FolderRefresh, "refresh".into(), move |svc, job| {
+                svc.folder_refresh(&model, &[root], job, &hikasa_folder::NullObserver)
+            })
+            .wait()
+            .expect("refresh");
+    };
+    refresh(&world, &mut app);
+    let w = app.win();
+    app.0.dialog_button(w, ButtonRole::Ok);
+    let d = op_dialog(&mut app);
+    assert!(
+        d.message().is_some_and(|m| m.contains("Plan again")),
+        "{:?}",
+        d.message()
+    );
+    assert!(d.take_started().is_none());
+    press(&world, &mut app, ButtonRole::Cancel);
+    // The view's own check: a plan handed over after the comparison changed is refused with a warning (the dialog's
+    // Start called here, so the window does not hand the plan over at once).
+    world.settle(&mut app);
+    select_all_of(&mut app, view, &["only-left.txt"]);
+    app.execute(CommandId::CopyTo);
+    op_dialog(&mut app).set_target(&world.path("work/out").to_string_lossy());
+    planned(&world, &mut app);
+    let service = world.service.clone();
+    let step = op_dialog(&mut app).on_button(ButtonRole::Ok, &service);
+    assert!(matches!(step, crate::dialog::DialogStep::Close));
+    let started = op_dialog(&mut app).take_started();
+    assert!(started.is_some(), "Start handed the plan over");
+    refresh(&world, &mut app);
+    folder_model(&mut app, view).op_dialog_closed(&service, view, started);
+    world.settle(&mut app);
+    assert!(
+        notices(&app).iter().any(|(_, t, _)| t.contains("changed")),
+        "{:?}",
+        notices(&app)
+    );
+    assert_eq!(trees(&world), before);
+    assert!(!world.path("work/out").exists(), "nothing was written");
+}
+
+/// R03: the selection changed while a verb dialog was open: Start writes nothing and says why.
+#[test]
+fn a_selection_moved_under_a_verb_dialog_writes_nothing() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(&mut app, view, &["only-left.txt"]);
+    app.execute(CommandId::CopyTo);
+    op_dialog(&mut app).set_target(&world.path("work/out").to_string_lossy());
+    planned(&world, &mut app);
+    select_all_of(&mut app, view, &["a.txt"]);
+    start_and_confirm(&world, &mut app);
+    assert!(
+        notices(&app)
+            .iter()
+            .any(|(_, t, _)| t.contains("selection changed")),
+        "{:?}",
+        notices(&app)
+    );
+    assert!(!world.path("work/out").exists(), "nothing was written");
+}
+
+/// R04: …to Side… offers only a side that can take the items: a move needs its source writable too.
+#[test]
+fn the_side_prompt_offers_only_writable_moves() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let mut policy = crate::folder_view::WritePolicy::default();
+    policy.read_only.left = true;
+    folder_model(&mut app, view).set_write_policy(policy);
+    select_all_of(&mut app, view, &["a.txt"]);
+    let labels = |app: &mut TestApp| -> Option<Vec<String>> {
+        find::<Prompt>(app).map(|p| p.buttons.iter().map(|(_, l)| l.clone()).collect())
+    };
+    // Copy: only to the right (the left is read-only).
+    app.execute(CommandId::CopyPrompt);
+    assert_eq!(
+        labels(&mut app),
+        Some(vec!["Right".to_owned(), "Cancel".to_owned()])
+    );
+    press(&world, &mut app, ButtonRole::Cancel);
+    // Move: to the right would delete on the read-only left: nothing to offer.
+    app.execute(CommandId::MovePrompt);
+    assert_eq!(labels(&mut app), None, "no side can take a move");
+}
+
+/// R06: the inline Rename committed with the name unchanged does nothing: no plan, no question, no entry.
+#[test]
+fn an_unchanged_inline_name_does_nothing() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select(&mut app, view, "a.txt");
+    app.execute(CommandId::Rename);
+    let entries = app.0.log().entries().count();
+    let w = app.win();
+    app.0.commit_inline_rename(w);
+    assert!(app.jobs(w).is_empty(), "no plan job");
+    world.settle(&mut app);
+    assert!(find::<PlanConfirmDialog>(&mut app).is_none());
+    assert_eq!(app.0.log().entries().count(), entries, "nothing logged");
+    assert!(notices(&app).is_empty(), "{:?}", notices(&app));
+}
+
+/// R10: Synchronize ▸ takes the `folder-sync` defaults' recycle bin (and its fallback).
+#[test]
+fn synchronize_takes_the_folder_sync_defaults_recycle_bin() {
+    let world = World::new();
+    fixture(&world);
+    let mut defaults = world
+        .service
+        .session_defaults(hikasa_session::sessions::SessionType::FolderSync)
+        .expect("defaults");
+    let hikasa_session::sessions::SessionRules::Sync(rules) = &mut defaults.rules else {
+        panic!("folder-sync rules");
+    };
+    let factory = rules.sync.recycle;
+    rules.sync.recycle = !factory;
+    rules.sync.recycle_fallback = true;
+    world
+        .service
+        .session_save_defaults(&defaults)
+        .expect("save");
+    let mut app = world.app(None);
+    let _view = open(&world, &mut app);
+    app.execute(CommandId::MirrorRight);
+    world.settle(&mut app);
+    let d = find::<crate::folder_view::sync::SyncDialog>(&mut app).expect("Synchronize");
+    assert_eq!(d.options.recycle, !factory, "the defaults' bin");
+    assert!(d.options.recycle_fallback);
+}
+
+/// R11: Exclude adds each mask once, whatever the rules already hold.
+#[test]
+fn exclude_adds_each_mask_once() {
+    let mut list = vec!["*.log".to_owned()];
+    let new = ["*.log", "a.txt", "a.txt", "b\\"].map(str::to_owned);
+    crate::app::ops::add_masks(&mut list, &new);
+    assert_eq!(list, ["*.log", "a.txt", "b\\"]);
+}
+
+/// R12: a verb dialog opens with the sides the selection has items on: both, or the one side.
+#[test]
+fn a_verb_dialog_presets_the_sides_of_the_selection() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    for (paths, want) in [
+        (&["a.txt"][..], SideChoice::Both),
+        (&["only-left.txt"][..], SideChoice::Left),
+        (&["only-right.txt"][..], SideChoice::Right),
+    ] {
+        select_all_of(&mut app, view, paths);
+        app.execute(CommandId::CopyTo);
+        let OpForm::CopyTo { sides, .. } = op_dialog(&mut app).form().clone() else {
+            panic!("Copy to Folder");
+        };
+        assert_eq!(sides, want, "{paths:?}");
+        press(&world, &mut app, ButtonRole::Cancel);
+    }
 }
 
 // ---- After the W9b review: Copy to Folder's relative target (F13) -----------------------------------------------------
