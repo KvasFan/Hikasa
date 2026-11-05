@@ -6,14 +6,16 @@ use std::sync::Arc;
 use hikasa_core::ExitCode;
 use hikasa_folder::sync::{SyncOptions, SyncPreset};
 use hikasa_session::api::ViewOutcome;
-use hikasa_session::ipc::ViewId;
+use hikasa_session::ipc::{CloseReason, ViewId};
 
 use crate::commands::CommandId;
+use crate::dialog::ButtonRole;
 use crate::folder_view::Gate;
+use crate::notify::NoticeKind;
 use crate::op_dialogs::{PlanConfirmDialog, YES_TO_ALL};
 use crate::tests::{TestApp, World, folder_model};
-use crate::tests_folder_ops::{gate, set_gate};
-use crate::tests_sync_view::{confirm_all, find, fixture, open_sync, ticks};
+use crate::tests_folder_ops::{gate, notices, poll_until, set_gate};
+use crate::tests_sync_view::{cli_twin, confirm_all, find, fixture, open_sync, ticks, tree, trees};
 
 fn mirror_right() -> SyncOptions {
     SyncOptions {
@@ -143,4 +145,255 @@ fn a9_17_a_sync_view_that_cannot_load_is_load_failed() {
     let (result, code) = got.close(hikasa_session::ipc::CloseReason::User, false);
     assert_eq!(code, ExitCode::UnknownError);
     assert_eq!(result.reason, "load_failed", "{result:?}");
+}
+
+// ---- F1: a sync whose view ends is cancelled, waited for and logged (W6d's finding 4 for a sync) ---------------------
+
+fn sync_notices(app: &TestApp) -> Vec<(NoticeKind, String)> {
+    notices(app)
+        .into_iter()
+        .filter(|(_, t, _)| t.starts_with("Run Sync"))
+        .map(|(k, t, _)| (k, t))
+        .collect()
+}
+
+fn names(world: &World, side: &str) -> Vec<String> {
+    let mut names: Vec<String> = tree(world, side).into_keys().collect();
+    names.sort();
+    names
+}
+
+/// Closing the tab while its sync runs: the sync is cancelled, ends, and its outcome reaches the log with one notice
+/// naming the closed tab (the job waits at a gate until after the tab closed); nothing was written.
+#[test]
+fn closing_the_tab_while_a_sync_runs_logs_its_outcome() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    let before = trees(&world);
+    let g = run_held(&world, &mut app, view);
+    let entries = app.0.log().entries().count();
+    let index = app.tabs().iter().position(|t| t.id == view).expect("tab");
+    app.close_tab(index, CloseReason::User);
+    assert!(app.tab(view).is_none());
+    assert!(sync_notices(&app).is_empty(), "not ended yet");
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| {
+        a.window(a.focused()).is_some_and(|w| {
+            w.notices
+                .all()
+                .iter()
+                .any(|n| n.text.starts_with("Run Sync"))
+        })
+    });
+    let notes = sync_notices(&app);
+    assert_eq!(notes.len(), 1, "one notice: {notes:?}");
+    assert_eq!(notes[0].0, NoticeKind::Warning);
+    assert!(
+        notes[0]
+            .1
+            .starts_with("Run Sync in l ⇄ r (closed): stopped;"),
+        "{}",
+        notes[0].1
+    );
+    let logged: Vec<String> = app
+        .0
+        .log()
+        .entries()
+        .skip(entries)
+        .filter(|e| e.source == "l ⇄ r")
+        .map(|e| e.text.clone())
+        .collect();
+    assert!(!logged.is_empty(), "the sync's entries are logged");
+    assert_eq!(trees(&world), before, "cancelled before its first item");
+}
+
+/// A sync that ended but whose outcome the window has not taken yet when the tab closes is reported all the same.
+#[test]
+fn a_sync_outcome_not_taken_yet_when_the_tab_closes_is_reported() {
+    let (world, twin) = (World::new(), World::new());
+    fixture(&world);
+    fixture(&twin);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    let g = run_held(&world, &mut app, view);
+    for _ in world.mailbox.drain() {}
+    set_gate(&g, true);
+    for _ in 0..60_000 {
+        if !world.mailbox.is_empty() && !folder_model(&mut app, view).settling() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(!world.mailbox.is_empty(), "the sync ended");
+    assert!(sync_notices(&app).is_empty(), "not taken yet");
+    let index = app.tabs().iter().position(|t| t.id == view).expect("tab");
+    app.close_tab(index, CloseReason::User);
+    let notes = sync_notices(&app);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].1.starts_with("Run Sync in l ⇄ r (closed): ") && !notes[0].1.contains("stopped"),
+        "{}",
+        notes[0].1
+    );
+    assert_eq!(cli_twin(&twin, mirror_right(), None), ExitCode::Success);
+    assert_eq!(trees(&world), trees(&twin), "the whole sync ran");
+}
+
+/// Session ▸ Settings… ▸ OK while a sync runs replaces the view's model: the sync is cancelled, logged, and its exit
+/// code becomes the view's last Run.
+#[test]
+fn settings_ok_while_a_sync_runs_logs_its_outcome() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    let g = run_held(&world, &mut app, view);
+    let w = app.win();
+    app.0.execute(w, CommandId::SessionEdit);
+    poll_until(&world, &mut app, |a| {
+        a.window(a.focused())
+            .and_then(|w| w.dialogs.top())
+            .is_some_and(|d| d.title() == "Session Settings")
+    });
+    app.0.dialog_button(w, ButtonRole::Ok);
+    poll_until(&world, &mut app, |a| {
+        !a.jobs(w).iter().any(|j| j.title == "Run Sync")
+    });
+    assert!(sync_notices(&app).is_empty());
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| {
+        a.window(a.focused()).is_some_and(|w| {
+            w.notices
+                .all()
+                .iter()
+                .any(|n| n.text.starts_with("Run Sync"))
+        })
+    });
+    world.settle(&mut app);
+    let notes = sync_notices(&app);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0]
+            .1
+            .starts_with("Run Sync in l ⇄ r (settings applied): stopped;"),
+        "{}",
+        notes[0].1
+    );
+    assert!(app.tab(view).is_some(), "the view stays");
+    assert_eq!(
+        folder_model(&mut app, view).sync().and_then(|s| s.last_run),
+        Some(ExitCode::UnknownError),
+        "the stopped sync is the view's last Run"
+    );
+}
+
+/// Quit while a sync runs waits for it (bounded) and logs it; its current item ends first: nothing is left behind (the
+/// gate opens only once the shutdown waits).
+#[test]
+fn quit_waits_for_a_running_sync_and_logs_it() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    let right = names(&world, "r");
+    let g = run_held(&world, &mut app, view);
+    let entries = app.0.log().entries().count();
+    let opener = Arc::clone(&g);
+    app.0.before_wait = Some(Box::new(move || set_gate(&opener, true)));
+    app.0.shutdown();
+    assert!(app.0.before_wait.is_none(), "the shutdown waited");
+    let logged: Vec<String> = app
+        .0
+        .log()
+        .entries()
+        .skip(entries)
+        .filter(|e| e.source == "l ⇄ r")
+        .map(|e| e.text.clone())
+        .collect();
+    assert!(
+        logged
+            .iter()
+            .any(|t| t.starts_with("synchronized 0 of 5 items") && t.contains("5 not run")),
+        "the sync's entries: {logged:?}"
+    );
+    assert_eq!(names(&world, "r"), right, "nothing left behind");
+}
+
+/// A waited Folder Sync view closed while its sync runs answers its waiter when the sync ended, with the sync's own
+/// exit code (stopped: 100), not the code of the Run before it or of no Run (0).
+#[test]
+fn a_waited_sync_view_closed_while_its_sync_runs_exits_with_the_sync_s_code() {
+    use hikasa_session::ipc::{
+        Endpoint, IpcClient, IpcServer, OpenOptions, Request, Response, ViewKind,
+    };
+    let world = World::new();
+    fixture(&world);
+    let endpoint: Endpoint = world.service.endpoint().expect("endpoint");
+    let server = IpcServer::bind(&endpoint).expect("bind");
+    let handler = crate::ipc::GuiHandler::new(
+        world.service.clone(),
+        Arc::clone(&world.shared),
+        world.mailbox.clone(),
+    );
+    let handle = server.spawn(Arc::new(handler)).expect("spawn");
+    let mut app = world.app(Some(handle));
+    let timeout = std::time::Duration::from_secs(10);
+    let specs = vec![
+        world.path("work/l").display().to_string(),
+        world.path("work/r").display().to_string(),
+    ];
+    let wait_endpoint = endpoint.clone();
+    let waiting = std::thread::spawn(move || {
+        let mut client = IpcClient::connect(&wait_endpoint, "test", timeout).expect("connect");
+        let (id, response) = client
+            .request(Request::OpenView {
+                kind: ViewKind::FolderSync,
+                specs,
+                options: OpenOptions::default(),
+                wait: true,
+            })
+            .expect("open");
+        let Response::ViewOpened { view } = response else {
+            panic!("{response:?}");
+        };
+        (view, client.wait_view_closed(id).expect("closed"))
+    });
+    let began = std::time::Instant::now();
+    while world.shared.is_empty() {
+        assert!(began.elapsed() < timeout);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    world.settle(&mut app);
+    ticks(&world, &mut app);
+    let view = app.active_tab().expect("tab").id;
+    assert!(world.shared.is_waited(view));
+    assert!(
+        folder_model(&mut app, view)
+            .sync()
+            .is_some_and(|s| s.plan_ready()),
+        "the default preset acts on the fixture"
+    );
+    let g = run_held(&world, &mut app, view);
+    let index = app.tabs().iter().position(|t| t.id == view).expect("tab");
+    app.close_tab(index, CloseReason::User);
+    assert!(!world.shared.contains(view), "the view left the list");
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| {
+        a.window(a.focused()).is_some_and(|w| {
+            w.notices
+                .all()
+                .iter()
+                .any(|n| n.text.starts_with("Run Sync"))
+        })
+    });
+    let (opened, (closed, result, code)) = waiting.join().expect("waiter thread");
+    assert_eq!((opened, closed), (view, view));
+    assert_eq!(
+        code,
+        ExitCode::UnknownError.code(),
+        "the stopped sync's code"
+    );
+    assert_eq!(result.close_reason(), Some(CloseReason::User));
 }

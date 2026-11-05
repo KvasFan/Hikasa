@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hikasa_core::{JobKind, Warning};
+use hikasa_core::{ExitCode, JobKind, Warning};
 use hikasa_session::api::{ViewOutcome, ViewRequest};
 use hikasa_session::ipc::{CloseReason, OpenOptions, ServerHandle, ViewId, ViewInfo, ViewKind};
 use hikasa_session::log::{LogBook, LogEntry, LogFilter, LogKind};
@@ -326,6 +326,18 @@ struct OrphanOp {
     why: &'static str,
     /// The job, cancelled.
     op: crate::folder_view::RunningOp,
+    /// A Folder Sync view's waiter whose close waits for the sync (the waited exit code is the sync's own, D-248).
+    close: Option<DeferredClose>,
+}
+
+/// The close of a waited Folder Sync view whose sync still ran when it ended (review F1).
+struct DeferredClose {
+    /// Why the view closed.
+    reason: CloseReason,
+    /// The comparison had completed.
+    complete: bool,
+    /// The waiter of `gui open --wait` (`None`: nobody waits, the view is only unregistered).
+    waiter: Option<hikasa_session::ipc::ViewWaiter>,
 }
 
 /// The theme preview of the Options dialog (D-130).
@@ -1568,7 +1580,7 @@ impl AppCore {
         source: &str,
         why: &'static str,
         m: &mut FolderViewModel,
-    ) {
+    ) -> bool {
         let retired = m.retire();
         let window = self.window_of(view).unwrap_or_else(|| self.focused());
         for event in retired.events {
@@ -1600,14 +1612,18 @@ impl AppCore {
         for note in m.take_notes() {
             self.log_entry(note.kind, source, note.text);
         }
-        if let Some(op) = retired.running {
-            self.orphans.push(OrphanOp {
-                view,
-                source: source.to_owned(),
-                why,
-                op,
-            });
-        }
+        let Some(op) = retired.running else {
+            return false;
+        };
+        let sync = op.job.is_sync();
+        self.orphans.push(OrphanOp {
+            view,
+            source: source.to_owned(),
+            why,
+            op,
+            close: None,
+        });
+        sync
     }
 
     /// The orphaned operations that ended: their outcomes go to the log, each with one notice. True while some run.
@@ -1621,25 +1637,66 @@ impl AppCore {
             let orphan = self.orphans.remove(i);
             let window = self.focused();
             let caption = &orphan.op.caption;
-            match result {
-                Ok(outcome) => self.op_outcome(
-                    window,
-                    orphan.view,
-                    Some(orphan.why),
-                    &orphan.source,
-                    caption,
-                    &outcome,
-                    orphan.op.began.elapsed(),
-                ),
+            let code = match result {
+                Ok(crate::folder_view::RunningEnd::Op(outcome)) => {
+                    self.op_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        orphan.op.began.elapsed(),
+                    );
+                    outcome.exit_code()
+                }
+                Ok(crate::folder_view::RunningEnd::Sync(outcome)) => {
+                    self.sync_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        orphan.op.began.elapsed(),
+                    );
+                    outcome.exit_code()
+                }
                 Err(e) => {
                     let text = format!("{caption} in {} ({}): {e}", orphan.source, orphan.why);
                     let notice =
                         Notice::new(format!("op:{}", orphan.view.0), NoticeKind::Error, text);
                     self.notify(window, notice, &orphan.source, LogKind::Error);
+                    ExitCode::UnknownError
                 }
+            };
+            if orphan.op.job.is_sync() {
+                self.sync_orphan_ended(orphan.view, orphan.close, code);
             }
         }
         !self.orphans.is_empty()
+    }
+
+    /// A sync whose view ended has ended with `code` (D-248): a waited view closes now with it; a view that lives on
+    /// (Session Settings' OK replaced its model) takes it as its last Run.
+    fn sync_orphan_ended(&mut self, view: ViewId, close: Option<DeferredClose>, code: ExitCode) {
+        match close {
+            Some(close) => {
+                let outcome = ViewOutcome::Sync {
+                    last_run: Some(code),
+                    complete: close.complete,
+                };
+                let (result, code) = outcome.close(close.reason, false);
+                if let Some(waiter) = close.waiter {
+                    waiter.view_closed(view, result, code);
+                }
+            }
+            None => {
+                if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    m.set_last_run(code);
+                }
+            }
+        }
     }
 
     /// Waits (at most `limit`) for the orphaned operations and the stopped scripts' runs to end, so none is cut off
@@ -1665,13 +1722,16 @@ impl AppCore {
             }
             if began.elapsed() >= limit {
                 let mut errors = Vec::new();
-                for orphan in &self.orphans {
+                for orphan in std::mem::take(&mut self.orphans) {
                     let text = format!(
                         "{} in {} was still running at exit: it may have stopped mid-item.",
                         orphan.op.caption, orphan.source
                     );
                     tracing::error!(target: "hikasa::gui", "{text}");
                     errors.push((orphan.source.clone(), text));
+                    if orphan.op.job.is_sync() {
+                        self.sync_orphan_ended(orphan.view, orphan.close, ExitCode::UnknownError);
+                    }
                 }
                 for (name, _) in &self.script_runs {
                     // The server's shutdown then answers a waiting client with `ScriptFinished{100}` and no counts.
@@ -2404,10 +2464,11 @@ impl AppCore {
             self.shared.close(id, result, code);
         }
         let source = tab.caption();
+        let mut syncing = false;
         let outcome = match tab.model_mut() {
             Some(ViewModel::Folder(m)) => {
                 let outcome = m.outcome(&service);
-                self.retire_folder(id, &source, "closed", m);
+                syncing = self.retire_folder(id, &source, "closed", m);
                 Some(outcome)
             }
             Some(ViewModel::Text(m)) => {
@@ -2420,9 +2481,24 @@ impl AppCore {
         for spec in self.tracked.remove(&id).unwrap_or_default() {
             self.send_watch(WatchCmd::Untrack(spec));
         }
-        if let Some(outcome) = outcome {
-            let (result, code) = outcome.close(reason, false);
-            self.shared.close(id, result, code);
+        match outcome {
+            // A sync still writing (cancelled, it ends after its current item): the view leaves the list now, its
+            // waiter is answered with the sync's own exit code when it ends (D-248, review F1).
+            Some(ViewOutcome::Sync { complete, .. }) if syncing => {
+                let waiter = self.shared.take(id);
+                if let Some(orphan) = self.orphans.iter_mut().rev().find(|o| o.view == id) {
+                    orphan.close = Some(DeferredClose {
+                        reason,
+                        complete,
+                        waiter: waiter.flatten(),
+                    });
+                }
+            }
+            Some(outcome) => {
+                let (result, code) = outcome.close(reason, false);
+                self.shared.close(id, result, code);
+            }
+            None => {}
         }
         // The notices about the view go with it.
         for w in &mut self.windows {

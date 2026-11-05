@@ -426,15 +426,51 @@ struct Restore {
     moves: u64,
 }
 
-/// An operation's job that outlives its view (the tab closed, the view was replaced, the window quits): cancelled, it
-/// ends after its current item, and the window reports what it did (§1.6.25 W6d after review).
+/// An operation's or a sync's job that outlives its view (the tab closed, the view was replaced, the window quits):
+/// cancelled, it ends after its current item, and the window reports what it did (§1.6.25 W6d after review; a sync
+/// since the W9b review).
 pub struct RunningOp {
     /// The command's caption.
     pub caption: String,
     /// When it started.
     pub began: Instant,
     /// The job.
-    pub job: Job<FolderOpOutcome>,
+    pub job: RunningJob,
+}
+
+/// The job of a [`RunningOp`]: an operation's or a sync's.
+pub enum RunningJob {
+    /// `folder_op_execute`.
+    Op(Job<FolderOpOutcome>),
+    /// `folder_sync_execute` (Run Sync, Synchronize ▸).
+    Sync(Job<hikasa_session::api::FolderSyncOutcome>),
+}
+
+/// What a [`RunningJob`] ended with.
+pub enum RunningEnd {
+    /// An operation's outcome.
+    Op(Box<FolderOpOutcome>),
+    /// A sync's outcome.
+    Sync(Box<hikasa_session::api::FolderSyncOutcome>),
+}
+
+impl RunningJob {
+    /// The outcome once the job ended.
+    pub fn try_result(&self) -> Option<Result<RunningEnd, ApiError>> {
+        match self {
+            RunningJob::Op(job) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Op(Box::new(o)))),
+            RunningJob::Sync(job) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Sync(Box::new(o)))),
+        }
+    }
+
+    /// True for a sync.
+    pub fn is_sync(&self) -> bool {
+        matches!(self, RunningJob::Sync(_))
+    }
 }
 
 /// What a view hands over when it ends: the events not taken yet (an outcome among them) and its running operation.
@@ -945,7 +981,20 @@ impl FolderViewModel {
                 Some(RunningOp {
                     caption,
                     began,
-                    job,
+                    job: RunningJob::Op(job),
+                })
+            }
+            Some(Task::Syncing {
+                caption,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job: RunningJob::Sync(job),
                 })
             }
             Some(task) => {

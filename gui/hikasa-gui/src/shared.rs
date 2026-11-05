@@ -141,6 +141,12 @@ impl Shared {
         }
     }
 
+    /// Removes a view without answering its waiter yet: the waiter comes back (`None`: the view was not registered;
+    /// `Some(None)`: nobody waits). A Folder Sync view whose sync still runs is answered when the sync ends.
+    pub fn take(&self, view: ViewId) -> Option<Option<ViewWaiter>> {
+        self.views.lock().remove(&view).map(|slot| slot.waiter)
+    }
+
     /// True when a waiter waits for `view`.
     #[cfg(test)]
     pub fn is_waited(&self, view: ViewId) -> bool {

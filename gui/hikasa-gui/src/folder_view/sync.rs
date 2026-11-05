@@ -590,6 +590,13 @@ impl FolderViewModel {
         self.sync_replan();
     }
 
+    /// A sync that outlived its model (Session Settings' OK replaced it) ended with `code`: the view's last Run.
+    pub(crate) fn set_last_run(&mut self, code: ExitCode) {
+        if let Some(sync) = self.sync.as_deref_mut() {
+            sync.last_run = Some(code);
+        }
+    }
+
     /// The waited outcome of a Folder Sync view (D-248).
     pub(super) fn sync_outcome(&self) -> Option<hikasa_session::api::ViewOutcome> {
         let sync = self.sync.as_deref()?;
