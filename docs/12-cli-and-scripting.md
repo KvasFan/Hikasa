@@ -64,7 +64,10 @@ on the core crates; the GUI is reached through the `gui` subcommand.
   the GUI instead of printing it (e.g. `hikasa text compare a b --gui`). *M2 W6c (D-190):* `folder sync --gui [--wait]
   [--no-launch]` checks its words here, then sends `OpenView { kind: folder_sync }` with the sync in
   `OpenOptions::sync`; until the Folder Sync view (W9) the GUI answers `unsupported_view`, "this window cannot show a Folder
-  Sync view yet", and the command exits 100.
+  Sync view yet", and the command exits 100. *M2 W9b (D-248, replaces that answer):* the GUI opens the Folder Sync view
+  (the words apply over the `folder-sync` defaults' options); `--wait` exits with the view's code: its last Run's (0, or
+  100 when an item failed, did not run or the sync was stopped), else 0 when the comparison completed and 100 when it did
+  not. `gui list` names the kind `folder_sync`.
 - *M1 notes (D-22, D-49, D-50):* `gui ping|list|close|quit` never start the GUI; when
   none is running they exit 100 ("not running"). Only `gui open` and `--gui` start it.
   `gui open -` spools standard input to `<cache>/stdin/<n>/<name>` (the name from
@@ -154,7 +157,7 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
 | `--closescript` | Close the script status window when finished (overrides option). *M2 W8b:* applies to an `@script` (after any run, whatever its exit code); no longer `switch_ignored` (without a script it warns that it applies to a script only). |
 | `--silent` | No windows, no task-bar entry; packages import everything; scripts log errors instead of showing dialogs. *M2 W8b:* an `@script` with `--silent` runs headless, never through a GUI; no longer `switch_ignored`. |
 | `--edit` | Open a Text Edit view. |
-| `--sync` | Open a Folder Sync view for the two folders. *M2 W6c (D-190):* parsed (with `--fv` the last wins); the view is W9's, so the GUI answers `unsupported_view` until then. |
+| `--sync` | Open a Folder Sync view for the two folders. *M2 W6c (D-190):* parsed (with `--fv` the last wins); the view is W9's, so the GUI answers `unsupported_view` until then. *M2 W9b (D-248):* the view opens; a waited one exits with its last Run's code (see CLI-G03). |
 | `--expandall` | Expand all subfolders in the initial folder comparison. |
 | `--filters=<masks>` | Name filter for the initial folder comparison. |
 | `--fv=<type>`, `--fileviewer=<type>` | Force the view type: `Text Compare`, `Text Merge`, `Table Compare`, `Hex Compare`, `Media Compare`, `Picture Compare`, `Registry Compare`, `Version Compare`, `Folder Compare`, `Folder Merge`, `Folder Sync`, `Text Edit`, `Text Patch`. |

@@ -44,7 +44,11 @@
   key ending in `_left`/`_right`. *M2 W9a (D-243):* the window's Swap Sides (folder and text views) applies that to
   the view's session and runs it again (origin kept, dirty); Clear Session (folder views) shows the type's defaults
   with empty base fields and runs once both are accepted; a text view's Clear Session is W11's, a sync session's Swap
-  (with `SyncOptions::swapped`) comes with the Folder Sync view (W9b).
+  (with `SyncOptions::swapped`) comes with the Folder Sync view (W9b). *M2 W9b (D-243):* `Session::swap_sides` of a
+  folder-sync session also mirrors its `[rules.sync]` (`SyncOptions::swapped`: Update Right ↔ Update Left, Mirror to
+  Right ↔ Mirror to Left, the matrix's situations and actions, every override's action), so the same folders get the same
+  actions; the Folder Sync view's Swap Sides uses it. A folder-sync session opens as a Folder Sync view with its folder
+  rules and `[rules.sync]`; the view's preset, options and overrides make it changed until it is saved.
 - **Auto-save (SES-002, D-83).** One file per open view: the first save creates
   `_autosaved/<YYYYMMDD-HHMMSS>-<n>.toml` (local time, `n` the first free counter), later saves of the view
   overwrite it; `saved_at` is RFC 3339 with the local offset. Groups (Today, Yesterday, 2–6 days ago, More than

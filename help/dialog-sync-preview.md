@@ -6,8 +6,8 @@ as it stands (nothing is read again: a folder the view did not read stays as it 
 
 - **Just selection**: only the selected rows (on when something is selected).
 - **Delete to recycle bin if possible**, **If the recycle bin fails, delete permanently**.
-- **Confirmations**: Prompt, Yes to All, No to All (preset from `[file_operations] sync_confirmations`); the sync's own
-  question is always asked.
+- **Confirmations**: Prompt, Yes to All, No to All (preset from `[file_operations] sync_confirmations`). Prompt asks the
+  sync's question with its counts, then each item's; Yes to All and No to All answer them all (Run is then the go-ahead).
 - **Include hidden items**: off, a sync leaves what a filter hides.
 
 The other options (orphans, empty folders, archives) are the Folder Sync defaults'. Each change plans again; the dialog

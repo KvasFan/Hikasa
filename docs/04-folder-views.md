@@ -155,7 +155,11 @@ Tests that require reading files:
 - **FC-028** (P1): Compare versions (executable version info).
 - **FC-029** (P0): Content comparisons run (a) on load when rules ask for them,
   (b) on explicit **Compare Contents** (dialog: CRC / Binary / Rules-based, "Show
-  results dialog" summary), (c) when a child file session loads a pair.
+  results dialog" summary), (c) when a child file session loads a pair. *M2 W9b (D-245):* (b) in the window: the dialog
+  counts the selected file pairs (those below a selected folder too) in a job, `confirm_content_compare` asks first with
+  the count and the bytes, `folder_contents(Compare)` writes the results into the model, and the results dialog lists
+  `ContentsDto`'s counts and items (virtualized). **Quick Compare** lists `Service::quick`'s result per selected pair
+  (≤ 1,000).
 
 **Criteria (binding interpretation; decisions D-25, D-28, D-34, D-48, D-52).**
 
@@ -212,7 +216,9 @@ Tests that require reading files:
   `expanded_on_load` names when a comparison ends, and Expand on a folder not scanned refreshes it first (after an
   operation or refresh of the view that runs).
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
-  (persisted in the session).
+  (persisted in the session). *M2 W9b (D-245):* Actions ▸ Ignored (a check: the current row's mark) sets or clears the
+  marks of the selection with `folder_set_ignored`; the list it returns replaces the view's `rules.ignored` (the session
+  is changed) and nothing runs again.
 
 **States, folder states and colours (binding interpretation; decision D-55).**
 
@@ -276,6 +282,8 @@ folders and bytes of each side, and the content-test results.
   files of that type (`-*.ext`), adding to the session's exclude lists. *M2 W6b:* `select::exclude_masks` writes anchored
   masks (`a\\b.txt`, `.\\b.txt` in the base, `a\\b\\` for a folder) with every name escaped so it matches that name and no
   other; `folder op exclude --session` rewrites `[rules]`, and the comparison re-runs: rules are immutable in a model.
+  *M2 W9b (D-245):* the window's Exclude dialog shows `folder_exclude_masks` of *Selected items* or *All files of these
+  types* before OK; OK adds them to the view's session (each once) and the view re-runs through its reopen path.
 
 **Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
 is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
@@ -479,7 +487,15 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is
   not on, or read-only, is greyed; a row on one writable side has it preset, a pair none, also with one side
   read-only (neither Both nor one side of a pair is a default), and the option presets nothing; *If the recycle bin fails, delete permanently* is off; Delete Permanently has the bin off and
-  greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9.
+  greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9. *M2 W9b (D-244,
+  D-245):* every verb of this section is in the window (Attributes… stays P1): those without options (Copy/Move to
+  Right/Left, the side prompts, Copy/Move to Other Side, Exchange, Delete after its dialog, the inline Rename) plan at once
+  and show the plan's lines in their confirmation, with *Include hidden items*; those with options (Copy/Move to Folder,
+  Rename of several rows, Touch, New Folder) open a dialog that plans on every change. Each list line is
+  `OpPreview::line`, the line of `folder op … --dry-run`; Start hands that plan, after `Confirmation::finish` only, to the
+  execute job. A plan whose comparison changed meanwhile is refused (*Plan again*); one operation per view at a time;
+  read-only sides are disabled (tooltip) and refused again by the Service. `beep_after_long_operations` beeps after an
+  operation, a sync or a content compare of 10 s or more (D-256).
 - **FC-074** (P0): **Rename** (F2): single item inline; multi-item with *DOS
   compatible* mask (`abc?.bak` from computed base mask) or *Regular expressions*
   (old mask / new mask with `$1` groups).
@@ -498,7 +514,11 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
 - **FC-078** (P0): **Synchronize ▸ Update Right / Update Left / Update Both / Mirror
   to Right / Mirror to Left** on the current selection (or all when nothing is selected)
   with a preview dialog listing planned copies/deletes; "Just selection"; recycle bin
-  option; per-item confirmation mode Prompt / Yes to All / No to All.
+  option; per-item confirmation mode Prompt / Yes to All / No to All. *M2 W9b (D-246):* the preview plans on the view's
+  model as it stands (no re-scan: a folder not scanned stays unresolved) with the preset and the `folder-sync` defaults'
+  orphans, empty-folder and archive options; *Just selection* is preset when something is selected; each change plans
+  again; the lines are `SyncPreview::line`, those of `folder sync … --dry-run`; an empty source or deletes on an unfinished
+  comparison show the core message with Run off; a flat view has the submenu off.
 - **FC-079** (P1): **File Compare Report…** for selected pairs (`13-reports.md`).
 - **FC-080** (P0): Drag & drop: from the OS into a pane (sets base folder or copies
   into the dropped folder, with a prompt), between panes (copy/move), onto the Home
@@ -538,6 +558,11 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   `hikasa_folder::sync`: `plan_sync` gives a row per item (its situation, action and why it is left) and one batch plan made
   by the builder of the folder operations, so a sync has every check a copy and a delete have. `SyncPlan::folder` gives the
   folder summaries in O(1). The view is W9; `hikasa folder sync` is the headless form (`12-cli-and-scripting.md` §4).
+  *M2 W9b (D-247):* the Folder Sync view is the Folder Compare tree with its sync half: the header's Operations preset,
+  the plan's state and Run Sync; the centre column shows each row's planned action (an override in the accent colour, a
+  conflict marked, a folder's summary as its tooltip with a small mark). It is prepared with `folder_sync_prepare`, planned
+  after the comparison, every refresh and every change of the preset, an option or an override; *Sync within archives*
+  runs the comparison again. Rules and Filters buttons (and the Sync tab) are W9c.
 - **FS-002** (P0): Custom operation matrix (Rules ▸ Sync tab): action for each
   situation — file newer on left / newer on right / added on left / added on right /
   deleted on left / deleted on right / files different / files same — each from the
@@ -567,8 +592,14 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   plan. Search ▸ Next/Previous Conflict. *M2 W6c:* overrides are kept per path below the
   bases (`[rules.sync.overrides]`, `--override <PATH>=<ACTION>`); a folder covers its subtree and the longest path wins, as
   for Ignored marks. An override a row cannot take is dropped with a `switch_ignored` warning, and so is one that names no
-  row; the base itself (an empty path, `.`, `..`) is refused.
-- **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with
+  row; the base itself (an empty path, `.`, `..`) is refused. *M2 W9b (D-247):* the override commands write
+  `options.overrides[<row path>]` for each selected row and re-plan; an override the plan did not take
+  (`SyncPlan::ignored_overrides`) is removed again with its warning as a notice; Next/Previous Conflict (Ctrl+N/P) walk the
+  shown conflicts.
+- **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with *M2 W9b (D-247, D-248): Run Sync
+  asks the plan's questions in the `sync_confirmations` mode (the operation question names the counts), runs
+  `folder_sync_execute`, logs `sync_log_entries`, refreshes and plans again; Info adds the plan's counts; a waited view
+  exits with the last Run's code, else 0 for a completed comparison and 100 otherwise;*
   options *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if
   possible*, *Expand subfolders when loading*. Suppress Filters shows items the sync
   will not touch. **Folder Sync Info** shows statistics. *M2 W6c (D-182):* a sync compares with every folder

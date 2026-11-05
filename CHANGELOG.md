@@ -39,6 +39,36 @@
 - Core: `hikasa_folder::view` (the sort), `SyncOptions::swapped`, `api::paths` (`path_completions`, `browse_places`,
   `archive_format_of`), `vfs_op_plan`/`vfs_op_execute`, `human::local_time_text`.
 
+### Added (W9 part b: operations and sync)
+- **Every file operation of the Actions menu**, on the selection: Move to Right and Left, Copy and Move to Side…
+  (which ask the side), Copy and Move to Other Side, Exchange, Copy and Move to Folder…, Rename (inline for one row, a
+  DOS mask or regular expressions for more), Touch…, New Folder… (Ins). Each shows its plan before it runs, line by line
+  as `hikasa folder op … --dry-run` prints it, with the counts, the warnings and the backups; a dialog plans again on every
+  change of its options; *Include hidden items* everywhere; the plan that runs is the plan shown. Read-only sides are
+  off, with a tooltip. The dialogs remember their last choices.
+- **Ignored** (the selection's marks, kept in the session, nothing runs again), **Exclude** (the masks shown, then the
+  view runs again), **Compare Contents** (CRC, Binary or Rules-based, a question with the pairs and bytes when
+  `confirm_content_compare` is on, a results dialog), **Quick Compare** (one result per pair, Open), **Compare To…**
+  (F7: two items, one and the Space mark, or one and an item you browse to), **Open With** ▸ (a Text Compare view, a
+  Folder Compare view of two folders, the Open With applications, the associated application).
+- **Synchronize** ▸ Update Right, Update Left, Update Both, Mirror to Right, Mirror to Left: a preview of the sync on the
+  view as it stands (*Just selection*, the recycle bin, the confirmation mode), then Run.
+- **The Folder Sync view**: the Operations preset, the plan's counts and Run Sync above the tree, the planned action of
+  each row in the centre column (overrides and conflicts marked, a folder's summary as its tooltip), the overrides (Leave
+  Alone, Copy Left to Right, Copy Right to Left, Delete Left, Delete Right), Next/Previous Conflict, Info with the plan's
+  counts, Swap Sides mirroring the options, Sync Base Folders and Compare Base Folders. It opens from Home, New Session,
+  a folder-sync session or workspace, `hikasa gui open … --sync` and `hikasa folder sync … --gui`; with `--wait` the
+  command exits with the code of the view's last Run.
+- `beep_after_long_operations`: an operation, a sync or a content compare of 10 s or more beeps at its end.
+- Help topics `view-folder-sync`, `dialog-copy-to-folder`, `dialog-rename`, `dialog-touch`, `dialog-new-folder`,
+  `dialog-exclude`, `dialog-compare-contents`, `dialog-quick-compare`, `dialog-sync-preview`.
+- Core: `Service::folder_op_preview` and `folder_sync_preview` (`OpPreview`, `SyncPreview`: the dry run's lines over a
+  borrowed plan, at most 16 bytes an item), `api::vocab::parse_touch_time`, `ViewOutcome::Sync`,
+  `ViewKind::is_served`, `SyncPlan::ignored_overrides`; `Session::swap_sides` mirrors a folder-sync session's options.
+
+### Changed (W9b)
+- `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.
+
 ### Changed (W9a)
 - The Modified column shows local times (the zone of the clock), no longer UTC.
 - Copy to Right, Copy to Left, Delete and Delete Permanently act on the whole selection.

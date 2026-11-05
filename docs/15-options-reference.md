@@ -194,10 +194,10 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-008 | P0 | `[backups] back_up_before_save` | bool | true |
 | OPT-008 | P0 | `[backups] naming` | enum `name_tilde` (`abc.txt~`), `stem_tilde` (`abc~.txt`), `name_bak` (`abc.txt.bak`), `tilde_name` (`~abc.txt`), `stem_bak` (`abc.bak`), `stem_bak_ext` (`abc.bak.txt`), `folder` (`<folder>/<path below the base>/abc.txt`: the path is kept, so `a/x.txt` and `b/x.txt` keep their own) | `name_bak` |
 | OPT-008 | P0 | `[backups] folder` | path (used by `naming = "folder"`; created on demand) | `""` |
-| OPT-009 | P0 | `[file_operations] confirm_copy`, `confirm_move`, `confirm_read_only`, `confirm_system`, `confirm_overwrite_newer`, `confirm_replace_during_move`, `confirm_delete`, `confirm_merge` | bool | true |
-| OPT-009 | P0 | `[file_operations] confirm_content_compare`, `require_side_selection_in_delete` | bool | false |
-| OPT-009 | P0 | `[file_operations] sync_confirmations` | enum `prompt`, `yes_to_all`, `no_to_all` | `prompt` |
-| OPT-009 | P0 | `[file_operations] include_hidden_by_default` | bool (operations honour the filters unless a dialog or `--include-hidden` says otherwise, D-176; a sync never reads it, only its own `--include-hidden`) | false |
+| OPT-009 | P0 | `[file_operations] confirm_copy`, `confirm_move`, `confirm_read_only`, `confirm_system`, `confirm_overwrite_newer`, `confirm_replace_during_move`, `confirm_delete`, `confirm_merge` | bool (*M2 W9b:* asked in the confirmation after the plan of every verb of the folder views: copy and copy to folder, move, exchange and move to folder, delete; per item read-only, system, newer, replace during move) | true |
+| OPT-009 | P0 | `[file_operations] confirm_content_compare`, `require_side_selection_in_delete` | bool (*M2 W9b:* Compare Contents asks with the number of file pairs and their bytes) | false |
+| OPT-009 | P0 | `[file_operations] sync_confirmations` | enum `prompt`, `yes_to_all`, `no_to_all` (*M2 W9b:* the mode of Run Sync and the preset of the Synchronize preview) | `prompt` |
+| OPT-009 | P0 | `[file_operations] include_hidden_by_default` | bool (operations honour the filters unless a dialog or `--include-hidden` says otherwise, D-176; a sync never reads it, only its own `--include-hidden`; *M2 W9b:* the preset of *Include hidden items* in every operation dialog and in the confirmation of a verb without options; the Synchronize preview starts it off) | false |
 | OPT-009 | P0 | `[file_operations] preserve_created` | bool (FC-070: copies keep the creation date too) | false |
 | OPT-010 | P0 | archive type masks | `archives.toml` (below) | |
 | OPT-011 | P0 | toolbars, shortcuts, menus | `commands.toml` (below) | |
@@ -209,7 +209,7 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-014 | P0 | `[tweaks.editor_display] column_line_at` | int 0..1000 (0 = off) | 0 |
 | OPT-014 | P0 | `[tweaks.editor_display] dim_inactive_pane_percent` | int 0..90 | 0 |
 | OPT-014 | P1 | `[tweaks.editor_display] different_font_for_merge_inputs` | bool | false |
-| OPT-015 | P0 | `[tweaks.file_operations] beep_after_long_operations` | bool | false |
+| OPT-015 | P0 | `[tweaks.file_operations] beep_after_long_operations` | bool (*M2 W9b, D-256:* an operation, a sync or a content compare of the window that ran 10 s or more beeps at its end) | false |
 | OPT-015 | P0 | `[tweaks.file_operations] remove_read_only_flag_from_read_only_media`, `check_for_files_changed_on_disk`, `automatically_reload` | bool | true |
 | OPT-015 | P1 | `[tweaks.file_operations] use_ipv6` | bool | true |
 | OPT-015 | P0 | `[tweaks.file_operations] comparison_priority` | enum `normal`, `below_normal`, `idle` | `normal` |

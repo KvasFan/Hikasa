@@ -329,6 +329,26 @@ Compare To come with W9b. Browse Using Profile stays P1. **Folder Compare Info**
 `dialog-folder-info`): the comparison's statistics read when it opens — pairs per category, per side files, folders
 and bytes, the content results, Ignored — partial while scanning, with Copy (the table as text on the clipboard).
 
+*M2 W9b (D-244…D-247):* the operation dialogs render core plans (`op_dialogs.rs`, `op_preview.rs`, toolkit-free).
+**Copy/Move to Folder** (`dialog-copy-to-folder`: target with Browse…, structure, sides, overwrite), **Rename** of several
+rows (`dialog-rename`: *DOS compatible* mask prefilled by `base_mask`, or *Regular expressions*; one row is renamed
+inline in its name cell), **Touch** (`dialog-touch`: copy from the other side, or a local date and time parsed by core)
+and **New Folder** (`dialog-new-folder`: name, sides) plan on every option change and show "Planning…", then the counts
+and the preview list: one line per item as `folder op … --dry-run` prints it (virtualized; failed items in the error
+colour, skipped ones muted, an item with a question highlighted), the warnings and the archives' backups;
+*Include hidden items* in each; read-only sides disabled with "Disable editing is on for the <side> side"; Start, or
+*Plan again* when the comparison changed. The **confirmation** (`dialog-confirm`) of a verb without options shows the
+same list, with *Include hidden items* (toggling plans again), and hands back the plan it showed. **Exclude**
+(`dialog-exclude`: *Selected items* or *All files of these types*, the masks shown), **Compare Contents**
+(`dialog-compare-contents`: method, *Show results dialog*, the pairs counted) and its **results**, **Quick Compare**
+(`dialog-quick-compare`: one result per pair, ≤ 1,000, Open) are `content_dialogs.rs`. The **Synchronize** preview
+(`dialog-sync-preview`: *Just selection*, the bin, the confirmation mode, *Include hidden items*) lists the sync's rows
+and items as `folder sync … --dry-run` prints them. The **Folder Sync view** (`view-folder-sync`) has a header (the
+Operations preset, the plan's state, Run Sync), the planned action in the centre column, Info's plan counts, and the
+Legend's action icons. Remembered choices: `state.dialogs."copy-to-folder"` (`structure`, `overwrite`), `"rename"`
+(`mode`, `dos`, `old`, `new`), `"touch"` (`mode`, `last`), `"new-folder"` (`sides`), `"exclude"` (`what`),
+`"compare-contents"` (`method`, `show_results`), `"quick-compare"` (`method`).
+
 ## 5. Optional helpers
 
 - **UI-040** (P2): **Clipboard history helper**: a tray application that records text

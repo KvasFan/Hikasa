@@ -8595,7 +8595,105 @@ Mutations (each failed the tests named, then was reverted):
 | G15: counts take a folder's totals with rows hidden | `select` `a9_4_selection_counts_each_byte_once` |
 | G15: `retain_shown` skips with a selection | `tests_selection::rows_no_longer_shown_leave_the_selection`, `p_random_gestures_…`, `fixes::the_mark_goes_with_its_side` |
 
-**W9b.** *(empty until W9b)*
+**W9b.** Interpretations and extensions of §1.9.12–§1.9.15 (one implementer):
+
+1. `OpPreview` keeps per item only the dry run's status and reason (`PreviewItem`, 2 bytes), the summary, the counts,
+   the warnings and the backups; `line(plan, i)` builds the item's DTO with the one builder the executed and dry-run
+   items use (`folder_ops::item_dto_of`, new) and prints it with `item_line`; `line(plan, len())` is the summary line.
+   The counts are W6d's lines in core (`PreviewCount { kind: Action(word) | Skipped | Failed, items, bytes }` and
+   `text()`); their items add up to the dry run's `planned`. The dry run's warnings are the plan's, the batch's and the
+   shadowed members' notes: `hikasa_vfs::ops::shadow_drop_warnings` (new) borrows the plan, `note_shadow_drops` is now
+   its `&mut` wrapper. Measured: 2 bytes an item (100,000 items, counting allocator).
+2. `SyncPreview` keeps the indices of the rows the human output shows (4 bytes a row), the batch's `OpPreview`, the
+   counts and the number of emptied folders. A row's line needs its path, which `SyncPlan::rows` holds only as a node:
+   `folder_sync_preview(&plan)` keeps the contract's signature and `SyncPreview::line(plan, read, i)` takes the
+   comparison's `TreeRead`; `kind(plan, i)` tells a row (conflict, unresolved, overridden), an emptied folder, an item,
+   the summary and the counts apart for the colours.
+3. `api::vocab::parse_touch_time(text, zone)` takes the zone (the Service's clock's, `human::TimeZone`): RFC 3339 first
+   (the CLI's `--time`), else `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DD HH:MM`, `YYYY-MM-DD` local; a
+   local time a DST change skips is taken after the gap, a repeated one is the earlier (jiff's *compatible*).
+4. `ViewKind::is_served` (new: M1's kinds and `folder_sync`) replaces `is_served_in_m1` in the IPC server, `check_open`,
+   session views and the GUI; `unserved_view` names the kind for every other one. A folder-sync session opens as
+   `ViewRequest::Sync` with its folder rules and `[rules.sync]`; the words of `--sync` and `folder sync --gui` apply over
+   the `folder-sync` defaults' options (a view opened without a preset syncs as a new Folder Sync session would).
+   `ViewOutcome::Sync`'s result carries no verdict.
+5. The sync half is held by the folder view model (`FolderViewModel::sync: Option<Box<SyncViewModel>>`) instead of a
+   `SyncViewModel` that wraps the tree: every tree path (columns, selection, Find, Legend, the verbs, path edits, the
+   base commands, sessions and workspaces) serves both view types without delegation, and `ViewModel::scope` says
+   `Scope::Sync` for a model with a sync half. Check 2 bans `#[path]` in `src/`, so the child modules of
+   `folder_view.rs` are `folder_view/verbs.rs` (the verbs) and `folder_view/sync.rs` (§1.9.15's `sync_view.rs`); check 7's
+   model list takes the `folder_view/` directory and `content_dialogs.rs` (Exclude, Compare Contents and its results,
+   Quick Compare). `lookup(Scope::Sync, id)` falls back to the Folder Compare row of an entry both views share
+   (`folder-shared`, `session`); only the `folder-sync` entries have rows of their own.
+6. `PlanConfirmDialog` owns the plan and its preview (`PreviewList`) and hands them back with its answers
+   (`take_answered`): the view keeps no copy of a plan while its questions are asked. For a verb without options the
+   confirmation is the preview dialog (the list, *Include hidden items*); toggling the check box closes it and the view
+   plans the same request again with the new value (a new confirmation follows). A verb dialog's Start hands its plan and
+   questions to the view the same way; a plan without a question runs at once (W6d).
+7. A verb dialog (`OpDialog`) plans at its next poll after an option change, so changes made before one poll make one
+   job; an older job is cancelled and its answer dropped by a generation. A comparison changed under the dialog
+   replaces Start by *Plan again*, which runs the command again on the current selection with the remembered choices.
+   The choices are written to `state.dialogs` only on Start. Touch's mode words are the dialog's own (`other-side`,
+   `set-to`), Rename's `mask` and `regex`; the structure and overwrite words are core's (`PathStructure::as_str`, new).
+8. `CopyPrompt`/`MovePrompt` ask with a button per side that can take the items (writable, the other side has selected
+   items, and for a move the source side writable too); the answer runs `CopySide`/`MoveSide` with the opposite pane as
+   `CommandArg::Side` (new). Without a pane, `CopySide`/`MoveSide` take the focus side when one side alone is focused.
+9. Rename of one row edits the name cell of the first selected writable side in place; Enter plans
+   `RenameMask::Name` on the selected writable sides, Esc or a click elsewhere cancels, an empty or unchanged name does
+   nothing; a taken name fails the item (core). More rows open the dialog, prefilled with `base_mask` of the names.
+10. New Folder needs no selection (`Predicate::AnyWritable`): it goes into the current row's folder (a folder row, a
+    file's parent, else the base) on the focus side when one side alone is focused, else on the remembered sides, else
+    on both writable sides.
+11. `Ignored` is a check of the current row's mark; it sets (or clears) the marks of every selected row; the list
+    `folder_set_ignored` returns becomes the view's `rules.ignored` patch and the tab's session is changed.
+12. Exclude reads its masks in a job (`folder_exclude_masks`) and on OK adds them to the view's session through the
+    reopen path (a folder-sync session's folder rules too). Compare Contents counts the file pairs it reads in a job
+    (`folder_selection` and the subtree of each selected folder) for its question; its method defaults to the
+    remembered one, else the session's content method (none: Binary); the view's `Task::Contents` holds the refresh claim
+    as an operation does, and its counts line goes to the log. Quick Compare runs `Service::quick` on the selected file
+    pairs' canonical specs in one job.
+13. Compare To and Open With ▸ *Text Compare*/*Folder Compare* open through `home::resolve` (`infer_view_kind`, the kind
+    forced) in the view's window. Open With's items are `CommandArg::OpenWith(OpenWithItem)` (new, GUI: `TextCompare`,
+    `FolderCompare`, `App(index)`), since core's `OpenTarget` has no view kinds; `AssocApp` is the submenu's last item
+    (`LIST_CHILDREN`) and stays a command. Applications run in a window job (`CoreJob::Launch`); one with
+    `refresh_when_finished` refreshes the selected rows' parents when it ends; a launch error is a warning notice.
+14. The Synchronize preview's options start from the `folder-sync` defaults (`orphans`, `create_empty`,
+    `within_archives`, `recycle`, `recycle_fallback`) with the command's preset; Run is off while nothing acts; its
+    questions use the dialog's mode: Prompt asks the operation question with the counts (§1.9.14), Yes and No to All
+    answer every question as core's `Confirmation` does in those modes (pressing Run is then the go-ahead).
+15. The Folder Sync view plans for a (model, generation) key: the plan follows the comparison's end, every refresh and
+    re-run by the key alone, and every change of the preset, an option or an override by a due flag; the plan job does
+    not make the view busy (its commands stay available) but the window polls on while one is due. `RowView` gains the
+    row's action and a folder's summary, read per rendered row from `SyncPlan::rows` by node (an index map) and
+    `SyncPlan::folder`; a folder left alone whose rows below act shows its summary and a small mark. An override the plan
+    did not take is named by the new `SyncPlan::ignored_overrides` (additive core field: the paths of dropped and unused
+    overrides, each with its `switch_ignored` warning) and removed, its warning the notice. Run moves the plan into the
+    confirmation; a cancel or an error plans again; *Sync within archives* re-runs the comparison.
+16. The waited outcome is complete when the comparison is not running and `view_verdict` is not `Incomplete`; a Run's
+    code is `FolderSyncOutcome::exit_code`.
+17. D-256's threshold is the constant `LONG_OPERATION` (10 s) against the time from the execute job's start to its
+    outcome; an operation's, a sync's and a content compare's outcome effect is `Effect::Beep` of its window.
+18. Check 7's planner rule reads every Rust file under `gui/` (tests too); `op_dialogs.rs` names no `plan_counts`.
+
+Mutations (each failed the tests named, then was reverted):
+
+| Mutation | Caught by |
+|---|---|
+| a preview item without its skip reason (`reason: None` always) | `folder_preview` `p_op_preview_is_the_dry_run` (seed `cc 848d415e…`) |
+| the sync preview shows `same` rows (the row filter always true) | `p_sync_preview_is_the_dry_run` |
+| a sync row's line without its reason | `p_sync_preview_is_the_dry_run` |
+| the preview keeps a copy of the plan | `the_preview_keeps_at_most_16_bytes_an_item` |
+| no emptied folders in the sync preview | `a_folder_emptied_entirely_and_a_conflict_are_previewed_as_the_dry_run` (the property's random trees never empty a folder: the fixed case was added) |
+| the executed plan's items reordered | `tests_op_dialogs::a9_12_the_executed_plan_is_the_previewed_plan`, `a9_13_copy_and_move_to_folder_equal_the_cli` |
+| a preview list line taken one item later | `a9_12_the_executed_plan_is_the_previewed_plan` |
+| Copy to Folder's structure ignored (always relative) | `a9_13_copy_and_move_to_folder_equal_the_cli` (after the test selected one row inside a folder: two rows of different folders have no common structure, so relative and base agreed) |
+| Ignored sets what the current row already has | `a9_13_ignored_updates_the_rules_without_a_rerun` |
+| Exclude's masks always of the selected items | `a9_13_exclude_reruns_with_the_masks_of_the_cli` |
+| an override written under a wrong path (`<path>/`) | `tests_sync_view::a9_16_presets_overrides_and_conflicts`, `a9_16_run_sync_equals_the_cli_and_sets_the_outcome` |
+| Synchronize ignores *Just selection* | `a9_15_each_synchronize_command_equals_the_cli` |
+| the view plans without its overrides | `p_the_view_plan_is_folder_sync_plan`, `a9_16_presets_overrides_and_conflicts`, `a9_16_run_sync_…` |
+| an override the plan did not take is kept | `a9_16_presets_overrides_and_conflicts` |
+
 
 **W9c.** *(empty until W9c)*
 
