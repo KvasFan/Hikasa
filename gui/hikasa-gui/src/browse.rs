@@ -9,9 +9,7 @@ use std::ffi::OsStr;
 
 use hikasa_core::JobKind;
 use hikasa_core::spec::Spec;
-use hikasa_session::api::paths::{
-    BrowseListing, INPUT_SPEC_REFUSED, PlaceDto, PlaceKind, browse_child,
-};
+use hikasa_session::api::paths::{BrowseListing, PlaceDto, PlaceKind, browse_child};
 use hikasa_session::ipc::ViewId;
 use hikasa_session::{Platform, Service};
 use hikasa_vfs::EntryKind;
@@ -97,6 +95,9 @@ pub struct BrowseEntry {
     /// name it back).
     pub lossy: bool,
 }
+
+/// What OK answers while a folder is being listed.
+pub const WAIT_LISTING: &str = "Wait for the listing to end.";
 
 /// The tooltip and message of an entry whose name is not valid Unicode.
 pub const LOSSY_NAME: &str = "This name is not valid Unicode: it cannot be picked here.";
@@ -287,9 +288,10 @@ impl BrowseDialog {
     /// folder are not known yet: a SaveFile name could replace one).
     fn ok(&mut self) -> DialogStep {
         self.error = None;
-        if self.listing() || self.folder.is_none() {
+        // The folder is known once its listing arrived (`go` forgets the previous one).
+        if self.folder.is_none() {
             self.error = Some(if self.listing() {
-                "Wait for the listing to end.".to_owned()
+                WAIT_LISTING.to_owned()
             } else {
                 "This folder cannot be listed.".to_owned()
             });
@@ -440,11 +442,6 @@ impl DialogModel for BrowseDialog {
             changed = true;
         }
         if let Some(location) = self.pending.take() {
-            // `-` and `clipboard://` read standard input or the clipboard: never from the dialog.
-            if svc.reads_input(OsStr::new(&location)) {
-                self.error = Some(INPUT_SPEC_REFUSED.to_owned());
-                return true;
-            }
             let wake = std::sync::Arc::clone(&self.wake);
             self.listing = Some(Job::spawn(
                 svc,

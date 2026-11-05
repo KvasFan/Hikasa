@@ -336,11 +336,18 @@ fn a9_6_home_current_and_the_bases_before_the_recent() {
 fn a9_6_the_filter_ignores_case() {
     let world = World::new();
     let (mut app, _view) = opened(&world);
+    put(&world, "l", "MiXed.TXT", "m\n", 1_000);
     app.execute(CommandId::BrowseLeft);
     listed(&world, &mut app);
     let d = browse(&mut app);
     d.filter = "Z.ZI".into();
     assert_eq!(names(d), ["z.zip"]);
+    d.filter = "mixed.t".into();
+    assert_eq!(
+        names(d),
+        ["MiXed.TXT"],
+        "an upper-case name, a lower-case filter"
+    );
 }
 
 /// Review finding 9: `-` and `clipboard://` typed as the location are refused with a message; nothing is listed
@@ -419,8 +426,13 @@ fn a9_6_save_file_replace_follows_the_name_and_the_listing() {
     assert!(d.entries.is_empty(), "the old entries went");
     assert!(!d.buttons()[0].enabled, "OK waits for the listing");
     d.name = "a.txt".into();
-    press(&world, &mut app, ButtonRole::Ok);
+    // OK before the listing was polled in: refused with its message (the dialog polls it in afterwards).
+    app.0.dialog_button(w, ButtonRole::Ok);
     assert_eq!(top_title(&app).as_deref(), Some("Save As"));
+    assert_eq!(
+        browse(&mut app).error.as_deref(),
+        Some(crate::browse::WAIT_LISTING)
+    );
     listed(&world, &mut app);
     press(&world, &mut app, ButtonRole::Ok);
     // `sub` holds only `b.txt`: a new name there answers.

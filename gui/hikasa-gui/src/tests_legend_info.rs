@@ -265,3 +265,17 @@ fn a9_8_info_while_scanning_says_partial() {
     set_gate(&g, true);
     world.settle(&mut app);
 }
+
+/// The catalogue's `<type>` in Info's description is the view's type where it is shown (a hint), as `<Type>` in its
+/// caption (M2 W9a after review).
+#[test]
+fn info_s_description_names_the_view_type() {
+    let tables = crate::commands::CommandTables::default();
+    let text = tables.description(crate::commands::Scope::Folder, CommandId::Info);
+    assert_eq!(text, "Displays folder compare statistics.");
+    assert!(!text.contains('<'));
+    assert_eq!(
+        tables.caption(crate::commands::Scope::Folder, CommandId::Info),
+        "Folder Compare Info"
+    );
+}

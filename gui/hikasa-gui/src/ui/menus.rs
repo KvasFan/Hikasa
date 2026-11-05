@@ -176,7 +176,7 @@ impl ToolbarCtx<'_> {
         hint_text(
             &self.tables.caption(self.scope, id),
             self.tables.shortcut(self.scope, id),
-            self.tables.description(self.scope, id),
+            &self.tables.description(self.scope, id),
             self.timing.show_shortcut,
         )
     }

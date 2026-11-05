@@ -2017,9 +2017,15 @@ impl CommandTables {
             .to_owned()
     }
 
-    /// The description (hint) of `id`.
-    pub fn description(&self, scope: Scope, id: CommandId) -> &'static str {
-        self.entry(scope, id).map_or("", |e| e.description)
+    /// The description (hint) of `id`; a catalogue description's `<type>` is the view's type (`Info`: "Displays
+    /// folder compare statistics."), as a caption's `<Type>`.
+    pub fn description(&self, scope: Scope, id: CommandId) -> String {
+        let text = self.entry(scope, id).map_or("", |e| e.description);
+        if text.contains("<type>") {
+            text.replace("<type>", &scope.type_title().to_lowercase())
+        } else {
+            text.to_owned()
+        }
     }
 
     /// The first effective shortcut of `id` (menus show it; hints with `show_shortcut_in_hints`).
@@ -2544,11 +2550,11 @@ mod tests {
             tables.description(Scope::Text, CommandId::Reload),
         );
         assert_eq!(
-            hint_text(&caption, shortcut, description, true),
+            hint_text(&caption, shortcut, &description, true),
             format!("Reload Files (F5)\n{description}")
         );
         assert_eq!(
-            hint_text(&caption, shortcut, description, false),
+            hint_text(&caption, shortcut, &description, false),
             format!("Reload Files\n{description}")
         );
         assert_eq!(hint_text("X", None, "", true), "X");

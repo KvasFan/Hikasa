@@ -638,14 +638,16 @@ fn settle_all(world: &World, app: &mut crate::tests::TestApp) {
     }
 }
 
+/// Prepares the fixture for `id`; a scan held at its gate comes back (the test opens it once the command ran).
 fn prepare(
     world: &World,
     app: &mut crate::tests::TestApp,
     view: ViewId,
     id: CommandId,
     prep: Prep,
-) {
+) -> Option<crate::folder_view::Gate> {
     use crate::tests_folder_ops::select;
+    let mut held = None;
     match prep {
         Prep::None => {}
         Prep::File => {
@@ -706,10 +708,7 @@ fn prepare(
             app.execute(CommandId::FullRefresh);
             crate::tests_folder_ops::poll_until(world, app, |a| folder_model(a, view).scanning());
             // The gate opens once Stop has been asked for (the scan then ends as stopped).
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                crate::tests_folder_ops::set_gate(&g, true);
-            });
+            held = Some(g);
         }
         Prep::Named => {
             app.execute(CommandId::SessionSaveAs);
@@ -728,6 +727,7 @@ fn prepare(
             settle_all(world, app);
         }
     }
+    held
 }
 
 #[test]
@@ -769,7 +769,7 @@ fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
     for &(id, prep, expect) in FOLDER_COMMANDS {
         let world = World::new();
         let (mut app, view) = parity_fixture(&world);
-        prepare(&world, &mut app, view, id, prep);
+        let held = prepare(&world, &mut app, view, id, prep);
         if expect == Expect::Submenu {
             assert!(!list_children(id).is_empty(), "{id:?}: a submenu");
             continue;
@@ -796,6 +796,9 @@ fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
             Invocation::new(id)
         };
         app.0.execute(w, invocation);
+        if let Some(g) = &held {
+            crate::tests_folder_ops::set_gate(g, true);
+        }
         if expect == Expect::Job {
             assert!(folder_model(&mut app, view).busy(), "{id:?}: a job runs");
             settle_all(&world, &mut app);
