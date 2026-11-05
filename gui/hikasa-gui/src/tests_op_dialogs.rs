@@ -339,7 +339,8 @@ fn a9_13_copy_and_move_to_folder_equal_the_cli() {
         fixture(&twin);
         let mut app = gui.app(None);
         let view = open(&gui, &mut app);
-        select_all_of(&mut app, view, &["d/x.txt", "only-left.txt"]);
+        // One row in a folder: *Keep relative folder structure* would drop `d`, *base* keeps it.
+        select_all_of(&mut app, view, &["d/x.txt"]);
         app.execute(if moving {
             CommandId::MoveTo
         } else {
@@ -377,7 +378,7 @@ fn a9_13_copy_and_move_to_folder_equal_the_cli() {
             }
         };
         let both = SideSet::LEFT | SideSet::RIGHT;
-        cli_twin(&twin, op, &[("d/x.txt", both), ("only-left.txt", both)]);
+        cli_twin(&twin, op, &[("d/x.txt", both)]);
         assert_eq!(trees(&gui), trees(&twin), "moving {moving}");
         assert_eq!(tree(&gui, "out"), tree(&twin, "out"), "moving {moving}");
         assert_eq!(
