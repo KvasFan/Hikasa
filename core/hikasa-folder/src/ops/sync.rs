@@ -135,7 +135,7 @@ pub(crate) fn plan(
     planner.prepare(include)?;
     let (counts, folders) = planner.decide(ctl)?;
     let emptied = planner.refuse(&counts)?;
-    planner.unused_overrides();
+    let unused_overrides = planner.unused_overrides();
     if counts.unresolved > 0 {
         planner.warnings.push(Warning {
             code: WarningCode::SyncIncomplete,
@@ -147,7 +147,13 @@ pub(crate) fn plan(
         });
     }
     let matrix = planner.matrix;
-    let ignored_overrides = planner.dropped.iter().cloned().collect();
+    // Dropped: a row could not take it and none took it (an override of a folder some rows take stays).
+    let dropped_overrides = planner
+        .dropped
+        .iter()
+        .filter(|path| !planner.used.contains(*path))
+        .cloned()
+        .collect();
     let (op, rows, warnings) = planner.build(ctl)?;
     Ok(SyncPlan {
         rows,
@@ -159,7 +165,8 @@ pub(crate) fn plan(
         orphans: options.orphans,
         folders,
         emptied,
-        ignored_overrides,
+        dropped_overrides,
+        unused_overrides,
     })
 }
 
@@ -740,10 +747,10 @@ impl<'a, 'r> Planner<'a, 'r> {
         Ok(emptied)
     }
 
-    /// One `switch_ignored` for an override that named no row.
-    fn unused_overrides(&mut self) {
+    /// One `switch_ignored` for an override that named no row; returns their paths.
+    fn unused_overrides(&mut self) -> Vec<String> {
         let Some(overrides) = &self.overrides else {
-            return;
+            return Vec::new();
         };
         let mut unused = Vec::new();
         for (path, _) in overrides.keys.values() {
@@ -756,7 +763,7 @@ impl<'a, 'r> Planner<'a, 'r> {
                 unused.push(path.clone());
             }
         }
-        self.dropped.extend(unused);
+        unused
     }
 
     /// The rows of `action`, in pre-order, as the builder takes them.
