@@ -825,7 +825,7 @@ impl AppCore {
                 .flat_map(|w| &w.tabs)
                 .any(|t| match t.model() {
                     Some(ViewModel::Home(m)) => m.resolving(),
-                    Some(ViewModel::Folder(m)) => m.busy(),
+                    Some(ViewModel::Folder(m)) => m.busy() || m.sync_pending(),
                     Some(ViewModel::Text(m)) => m.busy(),
                     None => false,
                 })

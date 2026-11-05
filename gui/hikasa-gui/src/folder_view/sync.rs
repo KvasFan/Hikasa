@@ -327,6 +327,17 @@ impl FolderViewModel {
         true
     }
 
+    /// True while a Folder Sync view's plan is being made or is due (the window polls on until it is shown).
+    pub fn sync_pending(&self) -> bool {
+        self.sync.as_deref().is_some_and(|s| {
+            s.planning()
+                || (s.planned_for.is_none()
+                    && !matches!(s.plan, PlanState::Failed(_))
+                    && self.prepared().is_some()
+                    && !self.scanning())
+        })
+    }
+
     /// The planned action of `node` (`None`: no plan, or no row there).
     pub fn sync_action(&self, node: NodeId) -> Option<RowAction> {
         let sync = self.sync.as_deref()?;
@@ -411,7 +422,8 @@ impl FolderViewModel {
         if len == 0 {
             return false;
         }
-        let from = self.selected_index;
+        // Without a current row the walk starts at either end.
+        let from = self.selection.current.and(self.selected_index);
         let order: Vec<usize> = if forward {
             let start = from.map_or(0, |i| i + 1);
             (start..len).collect()

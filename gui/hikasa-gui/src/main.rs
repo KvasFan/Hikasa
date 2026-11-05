@@ -99,6 +99,8 @@ mod tests_selection;
 mod tests_sessions;
 #[cfg(test)]
 mod tests_shell;
+#[cfg(test)]
+mod tests_sync_view;
 
 use std::ffi::OsString;
 use std::io::Read;
