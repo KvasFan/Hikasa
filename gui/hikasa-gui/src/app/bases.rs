@@ -376,7 +376,7 @@ impl AppCore {
 
     /// The browse dialog closed: its answer goes to its target (a path edit commits it as if typed and accepted);
     /// a confirmed folder enters `mru.folders`, a file `mru.files`; *Show hidden items* is remembered.
-    pub(super) fn browsed(
+    pub(crate) fn browsed(
         &mut self,
         window: WindowId,
         target: BrowseTarget,

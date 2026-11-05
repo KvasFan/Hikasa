@@ -404,7 +404,7 @@ impl FolderViewModel {
     }
 
     /// New Folder (FC-076): in the current row's folder (a folder row itself, a file's parent, else the base), on the
-    /// focus side when one is focused, else the remembered sides.
+    /// focus side when one side is focused, else the remembered sides, else both writable sides.
     fn start_new_folder(
         &mut self,
         service: &Service,
@@ -453,10 +453,10 @@ impl FolderViewModel {
                     SideChoice::Right => writable[1],
                     SideChoice::Both => writable[0] && writable[1],
                 })
-                .unwrap_or(if writable[0] {
-                    SideChoice::Left
-                } else {
-                    SideChoice::Right
+                .unwrap_or(match writable {
+                    [true, true] => SideChoice::Both,
+                    [true, false] => SideChoice::Left,
+                    _ => SideChoice::Right,
                 })
         };
         let items = Selection::default();
@@ -606,12 +606,6 @@ impl FolderViewModel {
             .iter()
             .filter_map(|(node, _)| self.name_of(node))
             .collect()
-    }
-
-    /// True while a verb dialog is open (a test reads it).
-    #[cfg(test)]
-    pub fn dialog_open(&self) -> bool {
-        matches!(self.task, Some(Task::Dialog { .. }))
     }
 }
 

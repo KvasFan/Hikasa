@@ -200,17 +200,23 @@ pub struct PairCount {
     pub bytes: u64,
 }
 
-/// The file pairs of a resolved selection (the rows core resolved; each a file on both sides).
+/// The file pairs of a resolved selection (the rows core resolved, and the rows below each selected folder; each a
+/// file on both sides, counted once).
 pub fn pair_count(model: &FolderModel, rows: &Selection) -> PairCount {
     let read = model.read();
     let mut count = PairCount::default();
-    for (node, _) in rows.iter() {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<NodeId> = rows.iter().map(|(node, _)| node).collect();
+    while let Some(node) = stack.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
         let Some(view) = read.node(node) else {
             continue;
         };
-        if let (Some(left), Some(right)) = (&view.left, &view.right)
-            && !view.is_folder()
-        {
+        if view.is_folder() {
+            stack.extend(read.children(node));
+        } else if let (Some(left), Some(right)) = (&view.left, &view.right) {
             count.pairs += 1;
             count.bytes += left.size + right.size;
         }

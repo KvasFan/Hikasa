@@ -1895,6 +1895,12 @@ impl FolderViewModel {
     // ---- operations (M2 W6d, §1.6.20) ------------------------------------------------------------------------------
 
     /// What the window takes since the last call: dialogs, notices, outcomes.
+    /// Puts an event in the outbox (tests: an outcome with an injected duration, D-256).
+    #[cfg(test)]
+    pub fn push_event(&mut self, event: FolderEvent) {
+        self.outbox.push(event);
+    }
+
     pub fn take_events(&mut self) -> Vec<FolderEvent> {
         std::mem::take(&mut self.outbox)
     }
