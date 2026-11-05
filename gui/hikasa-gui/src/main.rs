@@ -217,6 +217,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "select" => Some(BenchKind::Select),
         Some(v) if v == "completion" => Some(BenchKind::Completion),
         Some(v) if v == "browse" => Some(BenchKind::Browse),
+        Some(v) if v == "preview" => Some(BenchKind::Preview),
+        Some(v) if v == "sync_view" => Some(BenchKind::SyncView),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

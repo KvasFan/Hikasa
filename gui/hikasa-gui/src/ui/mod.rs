@@ -1263,6 +1263,7 @@ impl HikasaApp {
         if let Some(b) = self.bench.as_mut() {
             b.drive_options(&mut self.core);
             b.drive_w9a(&mut self.core);
+            b.drive_w9b(&mut self.core);
             b.drive(&self.core, &mut self.texts, &mut self.folders);
             ctx.request_repaint();
         }

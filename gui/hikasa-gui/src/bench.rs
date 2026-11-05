@@ -39,6 +39,12 @@ pub enum BenchKind {
     Completion,
     /// G15 browse: the browse dialog on the left base (100,000 entries), then 600 frames of scrolling.
     Browse,
+    /// G15 preview (M2 W9b): `Folder`'s tree, then Select All on the left and Copy to Right; the preview's first frame,
+    /// then 600 frames of scrolling its list.
+    Preview,
+    /// G15 sync (M2 W9b): a Folder Sync view of the tree with Mirror to Right: the plan after the comparison, an
+    /// override of one row, then 600 frames of scrolling the tree.
+    SyncView,
 }
 
 impl BenchKind {
@@ -50,6 +56,9 @@ impl BenchKind {
         )
     }
 }
+
+/// `preview`, `sync_view`: frames of scrolling.
+const W9B_SCROLL_FRAMES: u32 = 600;
 
 /// `select`: frames of Shift+Down after the three commands.
 const SELECT_DOWN_FRAMES: u32 = 300;
@@ -204,6 +213,10 @@ pub struct BenchState {
     /// listed.
     w9a_mark: Option<Instant>,
     w9a_done_ms: Option<f64>,
+    /// `sync_view`: the plan's time after the comparison ended, the override's re-plan, and the tree scrolls.
+    w9b_plan_ms: Option<f64>,
+    w9b_override_ms: Option<f64>,
+    w9b_scrolling: bool,
 }
 
 impl BenchState {
@@ -242,6 +255,137 @@ impl BenchState {
             w9a_works: Vec::new(),
             w9a_mark: None,
             w9a_done_ms: None,
+            w9b_plan_ms: None,
+            w9b_override_ms: None,
+            w9b_scrolling: false,
+        }
+    }
+
+    /// The W9b G15 scripts (D-257): `preview` and `sync_view`, run on the window's core before the frame is drawn.
+    pub fn drive_w9b(&mut self, core: &mut AppCore) {
+        use crate::commands::CommandId;
+        if !matches!(self.kind, BenchKind::Preview | BenchKind::SyncView) {
+            return;
+        }
+        let Some(view) = self.view else {
+            return;
+        };
+        let root = core.root();
+        if self.kind == BenchKind::SyncView && self.w9a_frame == 0 {
+            // Mirror to Right before the comparison ends: its first plan is the one measured.
+            core.sync_preset(view, hikasa_folder::sync::SyncPreset::MirrorRight);
+        }
+        let busy = core
+            .tab(view)
+            .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
+        if busy && self.scan_done.is_none() {
+            self.w9a_frame = 1;
+            return;
+        }
+        if self.scan_done.is_none() {
+            self.scan_done = Some(Instant::now());
+        }
+        self.w9a_frame += 1;
+        match self.kind {
+            BenchKind::Preview => {
+                let k = self.w9a_frame.saturating_sub(W9A_IDLE_FRAMES);
+                if self.w9a_frame <= W9A_IDLE_FRAMES {
+                    return;
+                }
+                if k == 1 {
+                    // The view's memory before the preview opens (PSS while open ≤ the view's + 96 MiB).
+                    self.settled_memory = memory();
+                    if let Some(m) = folder_of(core, view) {
+                        m.select_all();
+                        m.restrict(hikasa_core::Side::Left);
+                    }
+                    self.w9a_label = Some("command");
+                    core.execute(root, CommandId::CopyRight);
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                let Some(d) = core
+                    .window_mut(root)
+                    .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::PlanConfirmDialog>())
+                else {
+                    self.w9a_label = Some("planning");
+                    if k > 60_000 {
+                        self.script = Script::Done;
+                    }
+                    return;
+                };
+                if self.w9a_done_ms.is_none() {
+                    self.w9a_done_ms = self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                    self.w9a_label = Some("first_preview_frame");
+                    self.tail = 0;
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= W9B_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    d.bench_scroll = Some(self.tail as f32 * BROWSE_SCROLL_STEP);
+                } else if self.tail > W9B_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                    self.script = Script::Done;
+                }
+            }
+            BenchKind::SyncView => {
+                let planned = match core.tab(view).and_then(|t| t.model()) {
+                    Some(ViewModel::Folder(m)) => m
+                        .sync()
+                        .is_some_and(|s| s.plan().is_some() && !s.planning()),
+                    _ => false,
+                };
+                if self.w9b_plan_ms.is_none() {
+                    if planned {
+                        self.w9b_plan_ms =
+                            self.scan_done.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                    } else {
+                        self.w9a_label = Some("planning");
+                    }
+                    return;
+                }
+                if self.w9a_mark.is_none() {
+                    // An override of one row: a row the plan copies when one is shown, else the first row.
+                    if let Some(m) = folder_of(core, view) {
+                        let row = m
+                            .window()
+                            .rows
+                            .iter()
+                            .find(|r| {
+                                r.sync.is_some_and(|a| {
+                                    a.action == hikasa_folder::sync::SyncAction::CopyRight
+                                })
+                            })
+                            .map_or(0, |r| r.index as usize);
+                        m.select(row);
+                    }
+                    self.w9a_label = Some("override");
+                    core.execute(root, CommandId::SyncLeave);
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                if self.w9b_override_ms.is_none() {
+                    if planned {
+                        self.w9b_override_ms =
+                            self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                        self.tail = 0;
+                    } else {
+                        self.w9a_label = Some("replanning");
+                    }
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= W9B_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    self.w9b_scrolling = true;
+                } else {
+                    self.w9b_scrolling = false;
+                    if self.tail > W9B_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                        self.script = Script::Done;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -534,7 +678,14 @@ impl BenchState {
                 }
             }
             BenchKind::Options => {}
-            BenchKind::Completion | BenchKind::Browse => {}
+            BenchKind::Completion | BenchKind::Browse | BenchKind::Preview => {}
+            BenchKind::SyncView => {
+                if self.w9b_scrolling
+                    && let Some(st) = folders.get_mut(&view)
+                {
+                    st.top = (st.top + FOLDER_ROWS_PER_FRAME).min(st.max_top());
+                }
+            }
             BenchKind::Select if self.scan_done.is_some() => {}
             BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select => {
                 let busy = core
@@ -759,6 +910,8 @@ impl BenchState {
                 BenchKind::Select => "select",
                 BenchKind::Completion => "completion",
                 BenchKind::Browse => "browse",
+                BenchKind::Preview => "preview",
+                BenchKind::SyncView => "sync_view",
             },
             "windows": core.windows().len(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
@@ -799,7 +952,13 @@ impl BenchState {
                 BenchKind::Options => {
                     obj.insert("pages".into(), json!(crate::options::pages::PAGES.len()));
                 }
-                BenchKind::Completion | BenchKind::Browse | BenchKind::Select => {
+                BenchKind::Completion
+                | BenchKind::Browse
+                | BenchKind::Select
+                | BenchKind::Preview
+                | BenchKind::SyncView => {
+                    obj.insert("plan_ms".into(), json!(self.w9b_plan_ms.map(round)));
+                    obj.insert("override_ms".into(), json!(self.w9b_override_ms.map(round)));
                     let mut labels: Vec<&str> = self.w9a_works.iter().map(|(l, _)| *l).collect();
                     labels.dedup();
                     let mut actions = serde_json::Map::new();

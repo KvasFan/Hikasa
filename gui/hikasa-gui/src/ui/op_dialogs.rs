@@ -42,9 +42,10 @@ pub fn confirm(ui: &mut Ui, dialog: &mut PlanConfirmDialog, pal: &Palette) {
             dialog.set_include_hidden(hidden);
         }
     }
+    let scroll = dialog.bench_scroll();
     if let Some(list) = dialog.list() {
         ui.add_space(6.0);
-        preview(ui, list, pal, 180.0);
+        preview_at(ui, list, pal, 180.0, scroll);
     }
 }
 
@@ -52,27 +53,35 @@ pub fn confirm(ui: &mut Ui, dialog: &mut PlanConfirmDialog, pal: &Palette) {
 /// asked for), failed items in the error colour, skipped ones muted, conflicts highlighted; then the warnings and the
 /// archives' backups.
 pub fn preview(ui: &mut Ui, list: &PreviewList, pal: &Palette, height: f32) {
+    preview_at(ui, list, pal, height, None);
+}
+
+/// [`preview`] scrolled to `offset` (the G15 preview bench).
+fn preview_at(ui: &mut Ui, list: &PreviewList, pal: &Palette, height: f32, offset: Option<f32>) {
     egui::Frame::NONE
         .stroke(egui::Stroke::new(1.0, pal.border))
         .inner_margin(4.0)
         .show(ui, |ui| {
-            egui::ScrollArea::both()
+            let mut area = egui::ScrollArea::both()
                 .id_salt("hk-op-preview")
                 .max_height(height)
-                .auto_shrink([false, true])
-                .show_rows(ui, LINE, list.len(), |ui, range| {
-                    for line in list.lines(range) {
-                        let text = RichText::new(line.text).monospace();
-                        let text = match line.tone {
-                            Tone::Normal => text.color(pal.fg),
-                            Tone::Muted => text.color(pal.muted),
-                            Tone::Error => text.color(pal.error),
-                            Tone::Conflict => text.color(pal.warning),
-                            Tone::Summary => text.color(pal.fg).strong(),
-                        };
-                        ui.add(egui::Label::new(text).extend());
-                    }
-                });
+                .auto_shrink([false, true]);
+            if let Some(offset) = offset {
+                area = area.vertical_scroll_offset(offset);
+            }
+            area.show_rows(ui, LINE, list.len(), |ui, range| {
+                for line in list.lines(range) {
+                    let text = RichText::new(line.text).monospace();
+                    let text = match line.tone {
+                        Tone::Normal => text.color(pal.fg),
+                        Tone::Muted => text.color(pal.muted),
+                        Tone::Error => text.color(pal.error),
+                        Tone::Conflict => text.color(pal.warning),
+                        Tone::Summary => text.color(pal.fg).strong(),
+                    };
+                    ui.add(egui::Label::new(text).extend());
+                }
+            });
         });
     for warning in list.warnings() {
         ui.label(RichText::new(warning).color(pal.warning));

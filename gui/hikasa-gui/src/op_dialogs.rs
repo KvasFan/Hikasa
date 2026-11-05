@@ -88,6 +88,8 @@ pub struct PlanConfirmDialog {
     include_hidden: Option<bool>,
     /// The check box was toggled: the view plans again with this value (the dialog closes, nothing runs).
     replan: Option<bool>,
+    /// The G15 preview bench scrolls the list here (points).
+    pub bench_scroll: Option<f32>,
     /// "Do not ask again" is ticked (the current question's key, when it has one).
     pub ticked: bool,
     /// The keys to set to `false` once the questions are answered.
@@ -119,6 +121,7 @@ impl PlanConfirmDialog {
             list: Some(Box::new(list)),
             include_hidden,
             replan: None,
+            bench_scroll: None,
             ticked: false,
             keys: Vec::new(),
             cancelled: false,
@@ -141,6 +144,11 @@ impl PlanConfirmDialog {
             self.include_hidden = Some(on);
             self.replan = Some(on);
         }
+    }
+
+    /// The list scrolled to this offset (the G15 preview bench, D-257).
+    pub fn bench_scroll(&self) -> Option<f32> {
+        self.bench_scroll
     }
 
     /// The value to plan again with, once the check box was toggled.
@@ -179,6 +187,7 @@ impl PlanConfirmDialog {
             list: None,
             include_hidden: None,
             replan: None,
+            bench_scroll: None,
             ticked: false,
             keys: Vec::new(),
             cancelled: false,

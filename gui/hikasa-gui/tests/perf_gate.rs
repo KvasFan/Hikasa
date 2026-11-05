@@ -713,3 +713,57 @@ fn browse() {
     );
     assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
 }
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn preview() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench("preview", dir.path(), &l, &r);
+    let first = f(&doc["done_ms"]);
+    let view = f(&doc["memory_settled"]["total_pss_mib"]);
+    let open = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "G15 preview (load {}): the preview's first frame {first} ms after Copy to Right; PSS {view} MiB before, {open} \
+         MiB while open (+{} MiB)",
+        load(),
+        open - view
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: first frame < 1 s {}, scrolling frame work max < 16.7 ms {}, PSS while open ≤ view + 96 MiB {}",
+        first < 1000.0,
+        scroll_max < 1000.0 / 60.0,
+        open - view <= 96.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn sync_view() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench_args(
+        "sync_view",
+        dir.path(),
+        &[l.as_os_str(), r.as_os_str(), std::ffi::OsStr::new("--sync")],
+        &[],
+    );
+    let plan = f(&doc["plan_ms"]);
+    let replan = f(&doc["override_ms"]);
+    eprintln!(
+        "G15 sync (load {}): plan shown {plan} ms after the comparison ended; an override re-planned and repainted in \
+         {replan} ms; PSS {} MiB",
+        load(),
+        doc["memory"]["total_pss_mib"]
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: plan ≤ 0.5 s {}, override ≤ 0.5 s {}, scrolling frame work max < 16.7 ms {}",
+        plan <= 500.0,
+        replan <= 500.0,
+        scroll_max < 1000.0 / 60.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
