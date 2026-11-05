@@ -215,6 +215,8 @@ pub struct BenchState {
     w9a_done_ms: Option<f64>,
     /// `sync_view`: the plan's time after the comparison ended, the override's re-plan, and the tree scrolls.
     w9b_plan_ms: Option<f64>,
+    /// `preview`: the plan job's own time (`FolderViewModel::plan_job_time`).
+    w9b_plan_job_ms: Option<f64>,
     w9b_override_ms: Option<f64>,
     w9b_scrolling: bool,
     /// `preview`: the lines of the preview list (the items and the summary).
@@ -258,6 +260,7 @@ impl BenchState {
             w9a_mark: None,
             w9a_done_ms: None,
             w9b_plan_ms: None,
+            w9b_plan_job_ms: None,
             w9b_override_ms: None,
             w9b_scrolling: false,
             w9b_lines: None,
@@ -323,6 +326,9 @@ impl BenchState {
                 };
                 if self.w9a_done_ms.is_none() {
                     self.w9b_lines = d.list().map(crate::op_preview::PreviewList::len);
+                    self.w9b_plan_job_ms = folder_of(core, view)
+                        .and_then(|m| m.plan_job_time)
+                        .map(|t| t.as_secs_f64() * 1000.0);
                     self.w9a_done_ms = self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
                     self.w9a_label = Some("first_preview_frame");
                     self.tail = 0;
@@ -968,6 +974,7 @@ impl BenchState {
                     obj.insert("plan_ms".into(), json!(self.w9b_plan_ms.map(round)));
                     obj.insert("override_ms".into(), json!(self.w9b_override_ms.map(round)));
                     obj.insert("preview_lines".into(), json!(self.w9b_lines));
+                    obj.insert("plan_job_ms".into(), json!(self.w9b_plan_job_ms.map(round)));
                     let mut labels: Vec<&str> = self.w9a_works.iter().map(|(l, _)| *l).collect();
                     labels.dedup();
                     let mut actions = serde_json::Map::new();

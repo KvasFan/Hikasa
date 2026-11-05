@@ -331,7 +331,7 @@ enum Task {
         subject: String,
         /// What a toggle of *Include hidden items* plans again.
         again: Box<Replan>,
-        job: Job<(OpPlan, OpPreview, Confirmation)>,
+        job: Job<(OpPlan, OpPreview, Confirmation, Duration)>,
     },
     /// The confirmation dialog is open; it holds the plan (D-244).
     Asking {
@@ -602,6 +602,9 @@ pub struct FolderViewModel {
     include_hidden: bool,
     /// The sync half of a Folder Sync view (M2 W9b, D-247).
     sync: Option<Box<sync::SyncViewModel>>,
+    /// How long the last plan job of an operation took on its thread (`folder_op_plan`, `folder_op_preview`,
+    /// `folder_confirmation`): the G15 preview bench reports it apart from the first frame (W9b review).
+    pub plan_job_time: Option<Duration>,
     /// Counts the models this view prepared: with the model's generation, the key a sync plan is made for (review F7:
     /// no pointer address, which a new model may reuse).
     model_serial: u64,
@@ -796,6 +799,7 @@ impl FolderViewModel {
             inline_rename: None,
             sync,
             model_serial: 0,
+            plan_job_time: None,
             dirty_options: false,
             #[cfg(test)]
             fake_elapsed: None,
@@ -2216,13 +2220,14 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                let began = Instant::now();
                 let plan = svc.folder_op_plan(&model, &request, job)?;
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
                 }
                 let preview = svc.folder_op_preview(&plan);
                 let confirmation = svc.folder_confirmation(&plan, None);
-                Ok((plan, preview, confirmation))
+                Ok((plan, preview, confirmation, began.elapsed()))
             },
         );
         self.task = Some(Task::Planning {
@@ -2394,7 +2399,8 @@ impl FolderViewModel {
                 },
                 Ready::Plan(result),
             ) => match result {
-                Ok((plan, preview, confirmation)) => {
+                Ok((plan, preview, confirmation, took)) => {
+                    self.plan_job_time = Some(took);
                     if !mark.holds(self.prepared()) {
                         self.refuse_changed(&caption);
                     } else if self.operable_items() != Some(&items) {
@@ -3976,7 +3982,7 @@ pub fn child_outcome(result: ContentResult) -> ContentOutcome {
 
 /// A job's result, by task.
 enum Ready {
-    Plan(Result<(OpPlan, OpPreview, Confirmation), ApiError>),
+    Plan(Result<(OpPlan, OpPreview, Confirmation, Duration), ApiError>),
     Contents(Result<ContentsDto, ApiError>),
     Synced(Result<hikasa_session::api::FolderSyncOutcome, ApiError>),
     Outcome(Result<FolderOpOutcome, ApiError>),

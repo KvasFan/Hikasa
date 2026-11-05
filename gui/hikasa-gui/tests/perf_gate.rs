@@ -724,10 +724,11 @@ fn preview() {
     let view = f(&doc["memory_settled"]["total_pss_mib"]);
     let open = f(&doc["memory"]["total_pss_mib"]);
     eprintln!(
-        "G15 preview (load {}): {} lines; the preview's first frame {first} ms after Copy to Right; PSS {view} MiB \
-         before, {open} MiB while open (+{} MiB)",
+        "G15 preview (load {}): {} lines; the preview's first frame {first} ms after Copy to Right (the plan job {} ms \
+         of it); PSS {view} MiB before, {open} MiB while open (+{} MiB)",
         load(),
         doc["preview_lines"],
+        doc["plan_job_ms"],
         open - view
     );
     let (_, scroll_max) = action(&doc, "scrolling");
