@@ -1332,3 +1332,92 @@ fn a9_1_header_drags_move_and_resize_a_double_click_fits() {
         "two-digit sizes fit in the minimum"
     );
 }
+
+/// §1.9.3 (review finding 8): with every column shown a side is wider than its half: Name keeps its 80 points, the
+/// sides scroll horizontally together (clamped to the content), and the header moves with them.
+#[test]
+fn a9_1_a_side_wider_than_its_half_scrolls_both_sides_together() {
+    use crate::folder::columns::{ColumnId, min_width, title};
+    let world = World::new();
+    world.write("l/a.txt", "1");
+    world.write("r/a.txt", "2");
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let spans = |s: &Screen| s.app.folders[&view].spans.clone();
+    // Few columns: nothing scrolls, the fixed columns end at the side's right edge.
+    let narrow = spans(&s);
+    assert!(narrow[0][0].1.span() >= min_width(ColumnId::Name));
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 500.0;
+    s.settle();
+    assert_eq!(s.app.folders[&view].hscroll, 0.0, "nothing to scroll");
+    // Every column: Name at its minimum, the content wider than the side.
+    crate::tests::folder_model(&mut s.app.core, view).change_columns(|c| {
+        for id in ColumnId::ALL {
+            if !c.is_visible(id) && id != ColumnId::Path {
+                c.toggle(id);
+            }
+        }
+    });
+    s.settle();
+    let wide = spans(&s);
+    let side_w = narrow[0].last().expect("a column").1.max - narrow[0][0].1.min;
+    let content = wide[0].last().expect("a column").1.max - wide[0][0].1.min;
+    assert!(content > side_w, "{content} > {side_w}");
+    assert!(
+        (wide[0][0].1.span() - min_width(ColumnId::Name)).abs() < 0.5,
+        "Name keeps its minimum"
+    );
+    let name_headers = |s: &mut Screen| -> Vec<f32> {
+        let mut xs: Vec<f32> = s
+            .drawn()
+            .into_iter()
+            .filter(|d| d.text == title(ColumnId::Name))
+            .map(|d| d.rect.left())
+            .collect();
+        xs.sort_by(f32::total_cmp);
+        xs
+    };
+    let before = name_headers(&mut s);
+    assert_eq!(before.len(), 2);
+    // Scrolled by 40 points: both sides' columns and headers move 40 points left.
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 40.0;
+    s.settle();
+    let scrolled = spans(&s);
+    for k in 0..2 {
+        assert!(
+            (scrolled[k][0].1.min - (wide[k][0].1.min - 40.0)).abs() < 0.01,
+            "side {k}"
+        );
+    }
+    let after = name_headers(&mut s);
+    // A header partly scrolled out is clipped, not moved: compare the right side's, which starts inside.
+    assert!(
+        (after[1] - (before[1] - 40.0)).abs() < 0.5,
+        "{before:?} → {after:?}"
+    );
+    // Past the end: clamped so the last column ends at the side's right edge.
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 1.0e6;
+    s.settle();
+    let end = spans(&s);
+    let hscroll = s.app.folders[&view].hscroll;
+    assert!((hscroll - (content - side_w)).abs() < 0.5, "{hscroll}");
+    assert!(
+        (end[0].last().expect("a column").1.max - narrow[0].last().expect("a column").1.max).abs()
+            < 0.5
+    );
+}

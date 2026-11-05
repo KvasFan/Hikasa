@@ -63,6 +63,10 @@ pub struct FolderUi {
     header_drag: Option<HeaderDrag>,
     /// The widest text of each column in the rows drawn last frame (a double-click on a separator fits to it).
     widest: std::collections::BTreeMap<ColumnId, f32>,
+    /// How far both sides are scrolled horizontally (points; D-234: a side wider than its half scrolls).
+    pub hscroll: f32,
+    /// The spans of each side's columns this frame, as drawn (computed once a frame).
+    pub spans: [Vec<(ColumnId, egui::Rangef)>; 2],
 }
 
 /// A drag in the column header (D-234).
@@ -200,6 +204,12 @@ pub fn show(
     // The header: the shown columns of each side (D-234), the sort arrow on the sorted side only (D-235).
     let shown = m.shown_columns();
     let sort = m.columns().sort;
+    // The columns' spans, once a frame: Name keeps its minimum; a side wider than its half scrolls, both together.
+    let (relative, content_w) = content_spans(m, &shown, side_w, columns);
+    let max_hscroll = (content_w - side_w).max(0.0);
+    st.hscroll = st.hscroll.clamp(0.0, max_hscroll);
+    let side_spans = [0, 1].map(|k| placed(&relative, side_x[k] - st.hscroll));
+    st.spans.clone_from(&side_spans);
     let mut header_hits: Vec<(Rect, ColumnId, hikasa_core::Side)> = Vec::new();
     for (k, x) in side_x.into_iter().enumerate() {
         let side = if k == 0 {
@@ -213,7 +223,7 @@ pub fn show(
             pos2(right, header.bottom()),
         ));
         let y = header.center().y;
-        for (column, cx) in column_spans(m, &shown, x, right, columns) {
+        for &(column, cx) in &side_spans[k] {
             let arrow = match sort {
                 Some(key) if key.column == column && key.side == side => {
                     if key.descending {
@@ -249,8 +259,6 @@ pub fn show(
         Sense::click_and_drag(),
     );
     // The spans of the side under the pointer (both sides have the same ones, D-234).
-    let side_spans =
-        [0, 1].map(|k| column_spans(m, &shown, side_x[k], side_x[k] + side_w, columns));
     let spans_at = |x: f32| side_spans[usize::from(x >= side_x[1])].clone();
     let mut separator_hover = false;
     if let Some(at) = header_response.hover_pos()
@@ -317,7 +325,13 @@ pub fn show(
         body_top = strip.bottom();
     }
     let body = Rect::from_min_max(pos2(full.left(), body_top), full.max);
-    let tree = Rect::from_min_max(body.min, pos2(content_right, body.bottom()));
+    // The horizontal bar under the rows, while the sides are wider than their halves.
+    let tree_bottom = if max_hscroll > 0.0 {
+        body.bottom() - BAR_W
+    } else {
+        body.bottom()
+    };
+    let tree = Rect::from_min_max(body.min, pos2(content_right, tree_bottom));
     painter.rect_filled(body, CornerRadius::ZERO, pal.f_bg);
 
     let rh = ROW_HEIGHT as f32;
@@ -334,7 +348,30 @@ pub fn show(
         let delta = ui.input(|i| i.smooth_scroll_delta());
         if delta.y != 0.0 {
             st.top -= f64::from(delta.y / rh);
+        }
+        // Horizontal wheel (Shift+wheel): both sides together.
+        if delta.x != 0.0 {
+            st.hscroll = (st.hscroll - delta.x).clamp(0.0, max_hscroll);
+        }
+        if delta != Vec2::ZERO {
             ui.ctx().input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
+        }
+    }
+    if max_hscroll > 0.0 {
+        let hbar = Rect::from_min_max(
+            pos2(body.left(), tree_bottom),
+            pos2(content_right, body.bottom()),
+        );
+        if let Some(left) = scroll::horizontal(
+            ui,
+            id.with("hbar"),
+            hbar,
+            content_w,
+            side_w,
+            st.hscroll,
+            pal,
+        ) {
+            st.hscroll = left;
         }
     }
 
@@ -534,8 +571,9 @@ pub fn show(
             let row = window.rows.iter().find(|r| r.index as usize == index);
             let on_triangle = row.is_some_and(|r| {
                 r.folder
-                    && side_x.iter().any(|&sx| {
-                        let tx = sx + 4.0 + r.depth as f32 * INDENT;
+                    && side_spans.iter().any(|spans| {
+                        let name = spans.first().map_or(0.0, |(_, span)| span.min);
+                        let tx = name + 4.0 + r.depth as f32 * INDENT;
                         x >= tx - 2.0 && x <= tx + 16.0
                     })
             });
@@ -593,8 +631,18 @@ pub fn show(
             if row.sides.contains(on) {
                 clip.rect_filled(side, CornerRadius::ZERO, pal.select);
             }
-            let spans = column_spans(m, &shown, side.left(), side.right(), columns);
-            for (column, w) in draw_side(&clip, side, row, cell, &spans, &body_font, &small, pal) {
+            // Each side clipped to its half: a scrolled side never paints over the centre column.
+            let side_clip = clip.with_clip_rect(side.intersect(tree));
+            for (column, w) in draw_side(
+                &side_clip,
+                side,
+                row,
+                cell,
+                &side_spans[k],
+                &body_font,
+                &small,
+                pal,
+            ) {
                 let widest = st.widest.entry(column).or_insert(0.0);
                 *widest = widest.max(w);
             }
@@ -670,31 +718,43 @@ pub fn show(
     run
 }
 
-/// The horizontal span of each shown column of a side from `left` to `right` (D-234): the fixed-width columns from
-/// the right edge, Name the rest. Both sides get the same spans.
-fn column_spans(
+/// The span of each shown column of a side, from its content's left edge (D-234): Name first, as wide as the side
+/// leaves it and at least its minimum, then the fixed columns at their widths; and the content's width. A content wider
+/// than the side scrolls (both sides together). Computed once a frame.
+fn content_spans(
     m: &FolderViewModel,
     shown: &[ColumnId],
-    left: f32,
-    right: f32,
+    side_w: f32,
     fixed: Vec2,
-) -> Vec<(ColumnId, egui::Rangef)> {
+) -> (Vec<(ColumnId, egui::Rangef)>, f32) {
     let layout = m.columns();
     let width = |c: ColumnId| match c {
         ColumnId::Size => layout.width(c).max(fixed.x),
         ColumnId::Modified => layout.width(c).max(fixed.y),
         other => layout.width(other),
     };
-    let mut spans = Vec::new();
-    let mut x = right;
-    for &c in shown.iter().rev().filter(|c| **c != ColumnId::Name) {
+    let others: f32 = shown
+        .iter()
+        .filter(|c| **c != ColumnId::Name)
+        .map(|&c| width(c))
+        .sum();
+    let name = (side_w - others).max(columns::min_width(ColumnId::Name));
+    let mut spans = vec![(ColumnId::Name, egui::Rangef::new(0.0, name))];
+    let mut x = name;
+    for &c in shown.iter().filter(|c| **c != ColumnId::Name) {
         let w = width(c);
-        spans.push((c, egui::Rangef::new((x - w).max(left), x)));
-        x -= w;
+        spans.push((c, egui::Rangef::new(x, x + w)));
+        x += w;
     }
-    spans.push((ColumnId::Name, egui::Rangef::new(left, x.max(left))));
-    spans.reverse();
+    (spans, x)
+}
+
+/// `spans` moved to start at `left` (a side's left edge less the horizontal scroll).
+fn placed(spans: &[(ColumnId, egui::Rangef)], left: f32) -> Vec<(ColumnId, egui::Rangef)> {
     spans
+        .iter()
+        .map(|&(c, r)| (c, egui::Rangef::new(r.min + left, r.max + left)))
+        .collect()
 }
 
 /// The glyph of a name cell (D-236): the colour spot, a folder (filled, hollow, unopened), the zipper; the red X and
@@ -788,7 +848,9 @@ fn draw_side(
         return widths;
     };
     let y = rect.center().y;
-    let indent = rect.left() + 4.0 + row.depth as f32 * INDENT;
+    // The Name column's left edge (it scrolls with the side).
+    let name_left = spans.first().map_or(rect.left(), |(_, span)| span.min);
+    let indent = name_left + 4.0 + row.depth as f32 * INDENT;
     if row.folder {
         triangle(painter, pos2(indent + 7.0, y), 8.0, row.open, pal.muted);
     }
