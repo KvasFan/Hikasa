@@ -16,7 +16,11 @@ replaces free-form actions with a planned operation per item.
   Profile"); Enter accepts. Typing a non-existent folder offers to create it. *M2 W9a (D-239):* the window's fields
   above the panes: completion 150 ms after the last key (`path_completions`, at most 200 items, folders and archives
   first), the recent bases of each side (`mru.left`/`.right`, pushed only for a base that loads), Accept/Cancel, a
-  missing folder created after a question, Browse… (the in-house dialog, D-240, which also reads archives).
+  missing folder created after a question, Browse… (the in-house dialog, D-240, which also reads archives). *After the
+  W9a review:* `-` and `clipboard://` are refused in the fields and the browse dialog (a window never reads standard
+  input or the clipboard for them); a name that is not valid Unicode is shown, marked, and not pickable; the question
+  names the folder absolute; a newer Accept supersedes an older check; the fields and the base commands wait while an
+  operation of the view runs.
 - **FC-003** (P0): "Disable editing" per session makes every file operation and
   child-session editing read-only. *M2 W6b (D-184):* per side (`specs.read_only_left`, `read_only_right`, `--read-only`), and
   enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
@@ -438,8 +442,9 @@ Orphans = every atom except the two orphan atoms; …).
 - **FC-064** (P0): Status bar: counts of selected items per side, total sizes, and the
   comparison state summary; **Folder Compare Info** (Ctrl+I) dialog shows statistics
   (files/folders per state). *M2 W9a (D-238, D-242):* the status bar counts the selection per side (`Selected: L n
-  (bytes) · R n (bytes)`, once per change); Session ▸ Folder Compare Info (Ctrl+I) shows `TreeRead::stats` with Copy,
-  partial while the comparison runs.
+  (bytes) · R n (bytes)`, once per change; each item and each byte once, a folder with the bytes of its shown rows:
+  `select::selection_counts`); Session ▸ Folder Compare Info (Ctrl+I) shows `TreeRead::stats` with Copy, partial while
+  the comparison runs.
 
 ## 8. File operations (Actions menu)
 

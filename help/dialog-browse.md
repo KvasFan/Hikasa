@@ -20,7 +20,9 @@ two base folders, then the folders you picked recently.
   its own mark and opens as a folder on a double-click, so a member can be picked.
 - Items whose names start with `.` are hidden unless **Show hidden items** is on (remembered for the next time).
 - **Filter** narrows the list to the names that contain its text, ignoring case.
-- A folder that cannot be read shows why in the list.
+- A folder that cannot be read shows why in the list. `-` and `clipboard://` (standard input, the clipboard) are not
+  folders the dialog browses.
+- A name that is not valid Unicode is listed with *(not valid Unicode)* and cannot be picked.
 
 ## OK
 
@@ -28,7 +30,7 @@ two base folders, then the folders you picked recently.
   takes it as if typed and accepted: the view compares again.
 - Picking a **file**: OK or a double-click takes the selected file.
 - **Save As**: type a name (or click a file to take its name); OK takes the name in the folder shown. A file that exists
-  asks *Replace …?* first.
+  asks *Replace …?* first (names compare without case on Windows and macOS). OK waits until the folder is listed.
 
 Cancel or Esc picks nothing. Every folder picked is remembered among the recent folders (`[mru] folders`), every file
 among the recent files (`[mru] files`).

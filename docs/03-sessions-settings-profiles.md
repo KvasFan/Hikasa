@@ -333,7 +333,7 @@ log_height = 160.0                       # points
 toolbar = true
 columns = ["name", "size", "modified"]   # M2 W9a (D-234): the shown columns in order (Name first)
 widths = { size = 90.0 }                 # only the columns whose width was dragged; clamped to 2,000
-sort = "size"                            # absent: the tree order
+sort = "size"                            # "" (or absent): the tree order; always written with the two below
 sort_side = "left"                       # left, right
 sort_descending = false
 legend = false                           # View ▸ Legend (D-242)

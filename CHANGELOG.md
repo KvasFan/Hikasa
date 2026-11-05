@@ -6,21 +6,24 @@
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
   the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,
   `widths`, `sort`, `sort_side`, `sort_descending`) and in a session's `[view]`. A header click sorts by that column on
-  that side, a second click the other way, a third back to the tree order; folders stay first and only siblings move.
+  that side, a second click the other way, a third back to the tree order (remembered too); folders stay first and only
+  siblings move. A side wider than its half scrolls horizontally, both sides together; Name keeps at least 80 points.
 - **Glyphs.** A hollow folder for one not scanned (while comparing, after a stop, an orphan folder left unscanned), a
   filled one in the new scheme colour `[folder] unopened_folder` for a folder not opened because subfolders are not
   scanned automatically, a red X where a listing failed, an arrow on links, the zipper on archives; the centre column
   shows a content result, the newer side's arrow or the state, an Ignored badge and the Space mark.
 - **Selection.** Many rows on either side: click a side or the centre, Ctrl and Shift, a swipe down a side (both sides
   once it crosses the centre), Shift+arrows, Ctrl+Space, Space marks an item, Shift+Left/Right keep one side; the
-  status bar counts the selected items and bytes per side. Edit ▸ Select All Files, Select Newer and Select Orphans
+  status bar counts the selected items and bytes per side (each byte once; a folder with its shown rows). Edit ▸ Select All Files, Select Newer and Select Orphans
   (left, right, both) and Invert Selection select what the same `--select` words select; Search ▸ Next/Previous Item on
   This Side skip over the gaps of the focused side; View ▸ Ignore Folder Structure.
 - **View ▸ Columns** and the header's context menu show or hide each column; drag a header to move it, a separator to
   resize it, double-click a separator to fit it. With the CRC column shown, the CRCs of the rows on screen are computed
   once the list has been still for 200 ms.
 - **Base folder fields** above the panes: completion while typing (folders and archives first), the recent folders of
-  each side, Accept and Cancel, a missing folder created after a question, a **Browse…** button.
+  each side, Accept and Cancel, a missing folder created after a question naming it in full, a **Browse…** button.
+  `-` and `clipboard://` are refused there and in the browse dialog (a window never reads standard input or the
+  clipboard for them); names that are not valid Unicode are shown, marked, and cannot be picked.
 - **The browse dialog**, Hikasa's own: places (home, the current folder, `/` or the drives, the view's bases, the recent
   folders), Up (also out of an archive), folders first, archives opened as folders, *Show hidden items*, a filter;
   folder, file and Save As modes. It serves the base fields (Session ▸ Browse for Folder), the Home panel, Session
@@ -31,7 +34,7 @@
   **Session ▸ Folder Compare Info** (Ctrl+I): the comparison's statistics, with Copy.
 - **Base commands**: Session ▸ Up One Level (Left Side, Right Side, the new Both Sides), Actions ▸ Set as Base Folders
   and Set as Base on Other Side, Session ▸ Compare Parent Folders (also in the Text Compare view), Swap Sides (folder
-  and text views) and Clear Session.
+  and text views) and Clear Session. They, and an Accept of new bases, wait while an operation of the view runs.
 - Help topics `dialog-browse`, `dialog-folder-info`, `panel-legend`, `panel-find-filename`.
 - Core: `hikasa_folder::view` (the sort), `SyncOptions::swapped`, `api::paths` (`path_completions`, `browse_places`,
   `archive_format_of`), `vfs_op_plan`/`vfs_op_execute`, `human::local_time_text`.

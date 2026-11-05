@@ -8426,6 +8426,76 @@ commit):
 22. `path_completions` lists the typed folder part without its trailing separators (a root keeps its own): under wine,
     `…\a.zip\` was refused as not a folder, while `…\a.zip` lists the archive's members on every platform.
 
+*After the W9a review* (one fixer; the findings, then the mutations that survived):
+
+23. CRC on demand never runs beside a task of the view: no job starts while an operation, a refresh or a plan runs or
+    one of their dialogs waits (a Delete dialog, a confirmation), or while the comparison runs; an operation that starts
+    cancels the running job (stale as in note 13), and so does the view's end (`retire`). A CRC found is a cached value:
+    core's `set_crc` bumps the new `FolderModel::cache_generation`, not `generation`, so a plan made before still holds
+    (a CRC changes no category, count or plan); the rows are rebuilt for it only under a sort on CRC, at most once per
+    rebuild interval. A side whose CRC failed is asked again after a full re-run and after an operation's row refresh.
+24. `Ctx::idle` is "no task" (an operation's plan or execution, a refresh, a Delete dialog or a confirmation open);
+    `Predicate::Idle` (Clear Session) and `Predicate::ReadyIdle` (Swap Sides) are new, and `BaseParent`,
+    `BasesSelected`, `OtherBaseSelected` hold only while idle. An Accept or a browse answer that would re-root a busy
+    view, a base check that ends after an operation started, and a re-root's reopen that arrives during one are refused
+    with "Wait for the current operation to end." (`StoreDone::Reopen { rebase }`); the operation runs on. Session
+    Settings' OK keeps §1.6.25 W6d note 4 (it replaces the model and reports the cancelled operation). Compare Parent
+    Folders opens another view and is not gated.
+25. Status counts (`hikasa_folder::select::selection_counts`, core): each selected item counts once per side, and each
+    byte once: an item inside a folder selected on the same side adds no bytes; a folder adds the bytes of the regular
+    files below it that the display shows, every folder open (what an operation on it reads), so rows the display
+    filter hides count nothing (§1.9.7's "its shown rows' bytes"; `TreeRead::totals` would count them). The memo's key
+    is (selection moves, rows revision): a rebuild that drops rows from the selection counts again.
+26. `Selection` keeps its sides densely by node id (`Vec<SideSet>`, the first selected index, the count): O(1) `get`
+    and `insert`, `restrict` and `invert` in place; it serialises as the map node → sides it was. `SelectScope::rows`
+    (new, `None` everywhere else) gives core the rows the scope shows, in any order (the view's sorted rows), so an Edit
+    command does not list them again; `select` and `select_all_files` read the raw nodes.
+27. The layout's sort keys are always written: the tree order is `sort = ""` with `sort_side = "left"` and
+    `sort_descending = false` (an absent `sort` still reads as the tree order). D-108 overlays key by key, so going
+    back to the tree order replaces a remembered sort, and a session's tree order wins over the view type's sort.
+    `columns` and `widths` keep their good entries (`State::layout_value_kept`, `LayoutValue::of_toml_kept`): an entry
+    that is not a word or a number, an unknown or repeated id and a sort on a column not in `columns` (Path counts while
+    listed) are dropped with one `invalid_config_value` warning that names them.
+28. Nothing of the window parses, stats or lists a typed spec on its thread: the browse dialog's job is the new
+    `Service::browse_list` (`vfs_ls`, the folder's resolved spec and its parent's); a child's spec is the pure
+    `paths::browse_child`, Up takes the listed parent, OK waits for the listing ("Wait for the listing to end.", the
+    previous folder's entries go at once); the text view's Compare Parent Folders parses its specs in a job. The pure
+    `Service::reads_input` tells `-` and `clipboard://` apart: `browse_list`, `path_completions` (the text and its folder
+    part) and the base check refuse them with `INPUT_SPEC_REFUSED`, so a field never reads standard input or the
+    clipboard. SaveFile's "Replace `<name>`?" compares names by the platform's rule (case-folded on Windows and macOS)
+    and is confirmed per name (`replace_asked: Option<String>`).
+29. A name that is not valid Unicode is listed with its replacement characters, "(not valid Unicode)" and a tooltip,
+    and is never taken: `Completion::lossy` (new field) has no `text`; `BrowseEntry::lossy` has no child spec, and OK,
+    a double-click, Tab and Enter on it answer the message instead.
+30. Path edits: `PathEdit::handles` decides which keys the field consumes (Tab only with an item highlighted, so Tab
+    moves the focus otherwise); a key since the running completion was asked cancels it at the next frame. A new base
+    enters `mru.left`/`.right` once the re-rooted view's new model was prepared on it (`mru_after_load`, armed by the
+    reopen): a refused or failed re-root leaves the lists as they were. A check that fails as a whole shows under the
+    first field that changed. "Create Folder" names the absolute folder (the typed text parsed with the service's
+    context: a relative text is its current folder's), and that spec is the one created.
+31. Each base check carries its view's rebase generation: a newer Accept cancels the older check and drops its answer
+    (no re-root, no recent entry, no question).
+32. The §1.9.5 inventory is drawn on the 16 × 16 grid and painted by the tree and the Legend: the hollow, filled and
+    plain folders, the error and link overlays, the five content results (a failed content test: `Error`), the newer
+    arrows, the Ignored badge, the Space ring, the path edits' Browse button; a category's state keeps its M1 text mark
+    (the inventory has none). The Sync icons and Run wait for W9b. `Legend` and `FindFilename` have rows with icons
+    (`Legend`, `Search`) so the toolbar's show-all and customisation can show them.
+33. The columns are laid out from the side's content edge: Name takes what the side leaves, at least its 80 points, the
+    fixed columns follow; a content wider than the side scrolls with a horizontal bar under the rows or the horizontal
+    wheel, both sides and the header together, each side clipped to its half. The spans are computed once a frame.
+34. G15: `hikasa_folder::view::SortCache` keeps each folder's sorted visible children with a stamp (its children range,
+    categories and totals, which every change below it moves) while the comparison runs; a rebuild sorts again only the
+    folders whose stamp moved; once the comparison ended any change of the model sorts all again (a refresh may move
+    values and keep the sums), as a CRC found under a sort on CRC does. The keys are read from the store (no `NodeView`
+    per child). The window computes its command context once a frame (`AppCore::enabled_in` for the toolbar); the view
+    memoises its selection flags by (moves, rows revision, generation, task state) without a copy of the selection;
+    `selected_folders` stops at its third item; `retain_shown` does nothing without a selection. The bench runs Select
+    All as §1.9.21 says (`FolderViewModel::select_all`: every shown row, every present side — the command itself is
+    W9c's, D-252) and Select All Files as an extra figure.
+35. The catalogue's `<type>` in a description is the view's type where it is shown (`Info`: "Displays folder compare
+    statistics."), as `<Type>` in a caption. Clear Session on a view without bases and comparison does nothing. The
+    `FOLDER_COMMANDS` test's Stop row opens its scan gate once Stop ran (no sleep).
+
 Mutations (each failed the tests named, then was reverted):
 
 | Mutation | Caught by |
@@ -8463,6 +8533,61 @@ Mutations (each failed the tests named, then was reverted):
 | a `FOLDER_COMMANDS` row dropped | `tests_folder_commands::a9_10_every_implemented_folder_entry_has_a_row_and_its_effect` |
 | `Legend` does nothing | `a9_10_every_implemented_folder_entry_…` |
 | `Swap` does nothing | `a9_10_every_implemented_folder_entry_…` |
+| *After the review* (the review's survivors by its letters; `fixes` is `tests_folder_view_fixes`) | |
+| E: the Space mark kept on a side the row no longer has | `tests_selection::the_mark_leaves_with_its_side` (the view's own test, `fixes::the_mark_goes_with_its_side`, passed: there the refresh renumbers the row) |
+| J: CRC asked for folder rows | `fixes::crc_asks_for_file_rows_only_at_most_256` |
+| K: hiding the CRC column does not cancel the running job | `fixes::hiding_the_crc_column_cancels_the_running_job` |
+| L: a CRC job while the comparison runs | `fixes::no_crc_job_while_the_comparison_runs` |
+| M: no 256-row CRC batch | `fixes::crc_asks_for_file_rows_only_at_most_256` |
+| O: Esc with the completion list open cancels the text | `tests_paths::esc_tab_and_a_lossy_item` |
+| P: `truncated` off by one (`>=`) | `path_completion` `completions_on_disk_home_and_archives` |
+| Q: lossy names offered with a text | `path_completion` `a_lossy_name_is_listed_marked_without_text` |
+| V: the created side not checked again | equivalent: "Create Folder" is asked only for a side that changed, so the side is in the changed list anyway |
+| X: the browse filter case-sensitive | `tests_browse::a9_6_the_filter_ignores_case` |
+| Y: the bases listed after the recent places | `tests_browse::a9_6_home_current_and_the_bases_before_the_recent` |
+| AD: `(r)` from the owner's write bit alone | `tests_folder_view::the_cells_of_every_column` |
+| AF: the counts' memo ignores the rows | `fixes::counts_follow_the_shown_rows` |
+| AI: Clear Session not marked dirty | `tests_bases::a9_9_clear_session_gives_an_empty_view_that_runs_after_accept` |
+| AJ: a repeated column id kept | `fixes::bad_layout_entries_are_dropped_one_by_one_with_a_warning` |
+| AK: a CRC error recorded on the other side | `fixes::a_crc_error_is_on_its_side_and_asked_again_after_a_re_run` |
+| a CRC job beside a question (no task check) | `fixes::crc_waits_for_a_question_and_never_refuses_its_plan` |
+| a CRC found bumps the generation a plan checks (`mutate` for `set_crc`) | `fixes::crc_waits_for_a_question_and_never_refuses_its_plan` |
+| an operation that starts keeps the CRC job | `fixes::an_operation_cancels_the_running_crc_job` |
+| `retire` keeps the CRC job | `fixes::retire_cancels_the_crc_job` |
+| CRC errors kept across a re-run | `fixes::a_crc_error_is_on_its_side_and_asked_again_after_a_re_run` |
+| Up One Level without the idle check | `fixes::the_base_commands_wait_for_a_running_operation`, `tests_bases::a9_9_up_one_level_per_side_and_both` |
+| Swap on `Ready`, Clear Session on `Always` | `fixes::the_base_commands_wait_for_a_running_operation` |
+| `rebase` without `refuse_busy` | `fixes::the_base_commands_wait_for_a_running_operation` |
+| a check's answer taken during an operation | `fixes::a_base_check_that_ends_during_an_operation_is_refused` |
+| a re-root's reopen taken during an operation | `fixes::a_reopen_that_ends_during_an_operation_is_refused` |
+| counts: a file inside a selected folder adds its bytes | `select` `a9_4_selection_counts_each_byte_once` |
+| counts: hidden rows' bytes counted | `a9_4_selection_counts_each_byte_once` |
+| `Selection::insert` does not lower its first index | `select` `a9_4_selection_is_the_map` and four `a6_14_*` |
+| `Selection::remove` without `trim` | equivalent: `trim` keeps the vector short and the first index exact; `get`, `iter`, `len` are the same |
+| the tree order written without sort keys | `fixes::the_tree_order_is_remembered_and_a_session_s_wins`, `tests_shell::layout_is_written_on_close_…` |
+| a sort on a column not shown kept | `fixes::bad_layout_entries_…` |
+| a bad `columns` entry dropped silently | `fixes::bad_layout_entries_…` |
+| completions read `-` (no refusal) | `path_completion` `input_specs_are_refused` |
+| `browse_list` reads `-` | `input_specs_are_refused` |
+| the base check reads `-` | `tests_paths::a_typed_input_spec_is_refused_under_its_field` |
+| SaveFile names compared against the platform's rule | `tests_browse::a9_6_save_file_replace_follows_the_name_and_the_listing` |
+| "Replace?" confirmed for any name | `tests_browse::a9_6_file_mode_for_run_script_and_save_file_for_export` |
+| `go` keeps the old entries | `a9_6_input_specs_are_refused`, `a9_6_save_file_replace_…` |
+| OK while listing says the folder cannot be listed | `a9_6_save_file_replace_…` |
+| a lossy entry has a child spec | `tests_browse::a9_6_a_lossy_name_is_shown_but_never_picked` |
+| a lossy completion is taken | `tests_paths::esc_tab_and_a_lossy_item` |
+| Tab taken with nothing highlighted | `esc_tab_and_a_lossy_item` |
+| a key does not cancel the running completion | `tests_paths::a_key_cancels_the_running_completion` |
+| the MRU pushed when the check passes | `tests_paths::the_mru_waits_for_the_base_to_load` |
+| an older check's answer taken | `tests_paths::a_newer_accept_drops_the_older_check` |
+| Clear Session on an empty view runs | `tests_bases::a9_9_clear_session_…` |
+| the created spec left as typed (relative) | equivalent: core resolves a relative spec against the service's current folder for `mkdir` and for the reopen alike; the question shows it absolute (`a_relative_missing_folder_is_named_and_created_absolute`) |
+| G15: the sort cache always taken (no stamp) | `view_sort` `a_cache_kept_while_the_comparison_runs_sorts_as_a_fresh_one` |
+| G15: no full re-sort after the comparison ended | `view_sort` `a_refresh_that_keeps_the_sums_sorts_again` |
+| G15: the context memo ignores the selection's moves | `tests_bases::a9_9_set_as_base_folders_…`, `tests_folder_ops::a6_33_predicates_follow_the_row_and_its_sides` and three more |
+| G15: a background rebuild's rows taken whatever the open folders | equivalent today: every change of the open folders rebuilds on the window's thread first, which waits for the job and drops its rows; the check guards later paths |
+| G15: counts take a folder's totals with rows hidden | `select` `a9_4_selection_counts_each_byte_once` |
+| G15: `retain_shown` skips with a selection | `tests_selection::rows_no_longer_shown_leave_the_selection`, `p_random_gestures_…`, `fixes::the_mark_goes_with_its_side` |
 
 **W9b.** *(empty until W9b)*
 

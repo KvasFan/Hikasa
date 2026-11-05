@@ -13,14 +13,20 @@ compared recently on that side.
 Enter, or the ✓ button, accepts both fields: the view compares the new folders (a named session becomes modified).
 Esc with the list closed, or ✕, puts the folder back. A folder that does not exist asks whether to create it; No
 keeps your text with the message under the field. A file where a folder is needed, or a path that cannot be read,
-shows its message there and nothing runs. Only a folder that could be opened enters the recent list.
+shows its message there and nothing runs. Only a folder that could be opened enters the recent list. `-` (standard
+input) and `clipboard://` cannot be typed here: give them on the command line. A name that is not valid Unicode is
+listed, marked, and cannot be taken into the field.
 
 Session ▸ **Up One Level** ▸ Left Side, Right Side, Both Sides compares the parent folders instead (out of an archive,
 the folder holding it). Actions ▸ **Set as Base Folders** compares the selected folder row (or one folder selected on
 each side); **Set as Base on Other Side** makes the folder selected on one side the other side's base. Session ▸
 **Swap Sides** exchanges the left and the right (with their read-only setting) and compares again; **Compare Parent
 Folders** opens a new view of the folders holding the selected row; **Clear Session** (Shift+Ctrl+C) empties both
-fields: type or browse two folders and accept to compare.
+fields: type or browse two folders and accept to compare. While an operation of the view runs, these commands are off
+and an accepted field says *Wait for the current operation to end.*
+
+When the shown columns are wider than a side, the sides scroll sideways together: the bar under the rows, or the
+horizontal wheel (Shift and the wheel). Name keeps at least 80 points.
 
 ## Navigating
 
