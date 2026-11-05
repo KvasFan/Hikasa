@@ -64,6 +64,19 @@ pub fn header(
                 RichText::new(preview.counts_line().trim_start_matches("# ")).color(pal.muted),
             );
         }
+        let unused = sync.unused_overrides();
+        if !unused.is_empty() {
+            let text = if unused.len() == 1 {
+                "1 override names no row".to_owned()
+            } else {
+                format!("{} overrides name no row", unused.len())
+            };
+            ui.label(RichText::new(text).color(pal.warning))
+                .on_hover_text(format!(
+                    "Kept, not used by this comparison:\n{}",
+                    unused.join("\n")
+                ));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(run_enabled, egui::Button::new("Run Sync"))

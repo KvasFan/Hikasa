@@ -528,23 +528,25 @@ impl AppCore {
         }
     }
 
-    /// The Synchronize preview left the stack: Run hands its plan to the view. True when `closed` was it.
+    /// The Synchronize preview left the stack: Run hands its plan to the view, *Plan again* runs the command again.
+    /// `None` when `closed` was not it.
     pub(super) fn sync_dialog_closed(
         &mut self,
         closed: &mut Box<dyn crate::dialog::DialogModel>,
-    ) -> bool {
-        let Some(d) = closed
+    ) -> Option<Vec<crate::app::Effect>> {
+        let d = closed
             .as_any_mut()
-            .downcast_mut::<crate::folder_view::sync::SyncDialog>()
-        else {
-            return false;
-        };
-        let (view, started) = (d.view, d.take_started());
+            .downcast_mut::<crate::folder_view::sync::SyncDialog>()?;
+        let (view, started, again, command) = (d.view, d.take_started(), d.plan_again(), d.command);
         let service = self.service.clone();
         if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
             m.sync_dialog_closed(&service, view, started);
         }
-        true
+        // *Plan again* (review F11): the command runs once more on the comparison as it stands now.
+        if again && let Some(window) = self.window_of(view) {
+            return Some(self.execute(window, crate::window::Invocation::new(command)));
+        }
+        Some(Vec::new())
     }
 }
 

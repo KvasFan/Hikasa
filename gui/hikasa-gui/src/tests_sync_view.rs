@@ -84,6 +84,21 @@ pub(crate) fn ticks(world: &World, app: &mut TestApp) {
 
 /// Opens a Folder Sync view of `work/l` and `work/r` with `options`.
 pub(crate) fn open_sync(world: &World, app: &mut AppCore, options: SyncOptions) -> ViewId {
+    open_sync_with(
+        world,
+        app,
+        options,
+        hikasa_folder::FolderRulesPatch::default(),
+    )
+}
+
+/// [`open_sync`] with a patch of the folder rules.
+pub(crate) fn open_sync_with(
+    world: &World,
+    app: &mut AppCore,
+    options: SyncOptions,
+    patch: hikasa_folder::FolderRulesPatch,
+) -> ViewId {
     for side in ["work/l", "work/r"] {
         std::fs::create_dir_all(world.path(side)).expect("mkdir");
     }
@@ -92,6 +107,7 @@ pub(crate) fn open_sync(world: &World, app: &mut AppCore, options: SyncOptions) 
         request: FolderCompareRequest {
             left: left.clone().into_os_string(),
             right: right.clone().into_os_string(),
+            patch,
             ..FolderCompareRequest::default()
         },
         options,

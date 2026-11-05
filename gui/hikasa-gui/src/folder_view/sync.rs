@@ -53,14 +53,25 @@ pub struct RowAction {
     pub reason: Option<LeaveReason>,
 }
 
+/// What a plan job of the view answers (review F6): the plan, its preview, its questions and whether the comparison it
+/// read was whole, all made on the job's thread.
+struct Planned {
+    plan: SyncPlan,
+    preview: SyncPreview,
+    confirmation: Confirmation,
+    /// Every row was compared and shown: the comparison is complete, no folder is unscanned, no row unresolved and
+    /// none left because a filter hides a side. Only then is an override that no row took removed (review F2).
+    whole: bool,
+}
+
 /// The plan of the view.
 enum PlanState {
-    /// Nothing planned (the comparison runs, or failed).
+    /// Nothing planned (the comparison runs, or failed, or an option changed).
     None,
     /// A plan job for this model generation (a newer one cancels it, its answer is dropped).
-    Planning(Job<(SyncPlan, SyncPreview)>, u64),
-    /// The plan and its preview.
-    Ready(Box<SyncPlan>, Box<SyncPreview>),
+    Planning(Job<Planned>, u64),
+    /// The plan, its preview and its questions.
+    Ready(Box<Planned>),
     /// The plan was refused (`EmptySource`, an incomplete comparison with deletes, an invalid matrix): the core
     /// message, Run disabled.
     Failed(String),
@@ -76,8 +87,8 @@ pub struct SyncViewModel {
     pub allow_empty_source: bool,
     plan: PlanState,
     generation: u64,
-    /// The (model, generation) the plan was asked for: a change of either plans again.
-    planned_for: Option<(usize, u64)>,
+    /// The (model serial, generation) the plan was asked for: a change of either plans again.
+    planned_for: Option<(u64, u64)>,
     /// An option or override changed: plan again at the next poll.
     due: bool,
     /// The exit code of the last Run (D-248).
@@ -86,6 +97,10 @@ pub struct SyncViewModel {
     index: HashMap<NodeId, u32>,
     /// How many plan jobs started (tests).
     pub plans: u64,
+    /// The overrides the last plan found no row for (kept; the header warns).
+    unused: Vec<String>,
+    /// The unused overrides a notice already named (one notice each per view).
+    warned: std::collections::BTreeSet<String>,
 }
 
 impl SyncViewModel {
@@ -100,13 +115,21 @@ impl SyncViewModel {
             last_run: None,
             index: HashMap::new(),
             plans: 0,
+            unused: Vec::new(),
+            warned: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// The overrides that name no row of the comparison the plan was made from: kept (the file may come, its folder
+    /// was not scanned, a filter leaves it out), shown as a warning (review F2).
+    pub fn unused_overrides(&self) -> &[String] {
+        &self.unused
     }
 
     /// The plan, when ready.
     pub fn plan(&self) -> Option<&SyncPlan> {
         match &self.plan {
-            PlanState::Ready(plan, _) => Some(plan),
+            PlanState::Ready(ready) => Some(&ready.plan),
             _ => None,
         }
     }
@@ -114,7 +137,7 @@ impl SyncViewModel {
     /// The preview of the plan, when ready.
     pub fn preview(&self) -> Option<&SyncPreview> {
         match &self.plan {
-            PlanState::Ready(_, preview) => Some(preview),
+            PlanState::Ready(ready) => Some(&ready.preview),
             _ => None,
         }
     }
@@ -132,9 +155,9 @@ impl SyncViewModel {
         }
     }
 
-    /// True when Run Sync has something to do.
+    /// True when Run Sync has something to do: a plan of the current options (none due) that acts.
     pub fn plan_ready(&self) -> bool {
-        self.preview().is_some_and(SyncPreview::acts)
+        !self.due && self.preview().is_some_and(SyncPreview::acts)
     }
 }
 
@@ -239,10 +262,11 @@ impl FolderViewModel {
     /// Plans when the comparison ended or changed, or an option changed; takes a finished plan job. True when the
     /// view changed.
     pub(super) fn sync_poll(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        let current = self.sync_key();
         let Some(sync) = self.sync.as_deref_mut() else {
             return false;
         };
-        let mut changed = false;
         if let PlanState::Planning(job, generation) = &sync.plan
             && let Some(result) = job.try_result()
         {
@@ -251,30 +275,42 @@ impl FolderViewModel {
                 changed = true;
                 sync.index.clear();
                 sync.plan = match result {
-                    Ok((plan, preview)) => {
-                        for (i, row) in plan.rows.iter().enumerate() {
+                    Ok(ready) => {
+                        for (i, row) in ready.plan.rows.iter().enumerate() {
                             sync.index.insert(row.node, i as u32);
                         }
-                        // An override the plan did not take goes (FS-004): its warning is the notice.
-                        let mut dropped = Vec::new();
-                        for path in &plan.ignored_overrides {
-                            if sync.options.overrides.remove(path).is_some() {
-                                dropped.push(path.clone());
+                        // An override a row cannot take and none took goes (FS-004, §1.9.15), its warning the
+                        // notice: only from a whole comparison that still stands (every row compared and shown). One
+                        // that names no row stays (the file may come, its folder may be scanned later, a filter
+                        // leaves it out): one notice per path, and the header's warning.
+                        let plan = &ready.plan;
+                        let mut named = Vec::new();
+                        if ready.whole && current.is_some() && current == sync.planned_for {
+                            for path in &plan.dropped_overrides {
+                                if sync.options.overrides.remove(path).is_some() {
+                                    named.push(format!("override {path}="));
+                                }
                             }
                         }
+                        if !named.is_empty() {
+                            self.dirty_options = true;
+                        }
+                        for path in &plan.unused_overrides {
+                            if sync.warned.insert(path.clone()) {
+                                named.push(format!("override {path}:"));
+                            }
+                        }
+                        sync.unused.clone_from(&plan.unused_overrides);
                         for warning in plan.warnings.iter().filter(|w| {
                             w.code == hikasa_core::WarningCode::SwitchIgnored
-                                && dropped.iter().any(|p| w.message.contains(p.as_str()))
+                                && named.iter().any(|p| w.message.starts_with(p.as_str()))
                         }) {
                             self.outbox.push(FolderEvent::Notice {
                                 kind: NoticeKind::Warning,
                                 text: warning.message.clone(),
                             });
                         }
-                        if !dropped.is_empty() {
-                            self.dirty_options = true;
-                        }
-                        PlanState::Ready(Box::new(plan), Box::new(preview))
+                        PlanState::Ready(Box::new(ready))
                     }
                     Err(ApiError::Cancelled) => PlanState::None,
                     Err(e) => PlanState::Failed(e.to_string()),
@@ -284,11 +320,10 @@ impl FolderViewModel {
         if self.scanning() || self.task.is_some() {
             return changed;
         }
-        let Some(prepared) = self.prepared() else {
+        let (Some(key), Some(prepared)) = (current, self.prepared()) else {
             return changed;
         };
         let model = Arc::clone(prepared.model());
-        let key = (Arc::as_ptr(&model) as usize, model.generation());
         let Some(sync) = self.sync.as_deref_mut() else {
             return changed;
         };
@@ -320,11 +355,34 @@ impl FolderViewModel {
             move |svc, job| {
                 let plan = svc.folder_sync_plan(&model, &request, job)?;
                 let preview = svc.folder_sync_preview(&plan);
-                Ok((plan, preview))
+                let confirmation = svc.folder_confirmation(&plan.op, None);
+                let whole = whole_comparison(&model, &plan);
+                Ok(Planned {
+                    plan,
+                    preview,
+                    confirmation,
+                    whole,
+                })
             },
         );
         sync.plan = PlanState::Planning(job, sync.generation);
         true
+    }
+
+    /// The key a plan is made for: the model's serial in this view and its generation (`None` without a model).
+    fn sync_key(&self) -> Option<(u64, u64)> {
+        self.prepared()
+            .map(|p| (self.model_serial, p.model().generation()))
+    }
+
+    /// The ready plan while it is the plan of the comparison shown: none while the comparison runs or once a refresh
+    /// changed it (its rows and counts would name the old one, review F12).
+    fn current_plan(&self) -> Option<&SyncPlan> {
+        let sync = self.sync.as_deref()?;
+        if self.scanning() || sync.planned_for.is_none() || sync.planned_for != self.sync_key() {
+            return None;
+        }
+        sync.plan()
     }
 
     /// True while a Folder Sync view's plan is being made or is due (the window polls on until it is shown).
@@ -341,7 +399,7 @@ impl FolderViewModel {
     /// The planned action of `node` (`None`: no plan, or no row there).
     pub fn sync_action(&self, node: NodeId) -> Option<RowAction> {
         let sync = self.sync.as_deref()?;
-        let plan = sync.plan()?;
+        let plan = self.current_plan()?;
         let row = plan.rows.get(*sync.index.get(&node)? as usize)?;
         Some(RowAction {
             action: row.action,
@@ -353,13 +411,13 @@ impl FolderViewModel {
 
     /// The summary of a folder row's subtree (its tooltip, FS-001).
     pub fn sync_folder_summary(&self, node: NodeId) -> Option<String> {
-        let plan = self.sync.as_deref()?.plan()?;
+        let plan = self.current_plan()?;
         summary_text(&plan.folder(node))
     }
 
     /// The counts of the plan (Info adds them, D-242).
     pub fn sync_counts(&self) -> Option<SyncCounts> {
-        self.sync.as_deref()?.plan().map(|p| p.counts)
+        self.current_plan().map(|p| p.counts)
     }
 
     /// Changes the sync options (the header's preset, the Sync tab): the plan is made again; a change of *Sync within
@@ -375,6 +433,11 @@ impl FolderViewModel {
         }
         self.dirty_options = true;
         let rerun = sync.options.within_archives != before.within_archives;
+        // The plan of the old options goes at once: Run Sync waits for the new one (review F7).
+        if matches!(sync.plan, PlanState::Ready(_)) {
+            sync.plan = PlanState::None;
+            sync.index.clear();
+        }
         sync.due = true;
         if rerun {
             self.refresh(service);
@@ -447,8 +510,11 @@ impl FolderViewModel {
         let Some(sync) = self.sync.as_deref() else {
             return;
         };
-        ctx.plan_ready = self.task.is_none() && !self.busy() && sync.plan_ready();
-        ctx.has_conflict = sync.plan().is_some_and(|p| p.counts.conflicts > 0);
+        ctx.plan_ready = self.task.is_none()
+            && !self.busy()
+            && sync.plan_ready()
+            && self.current_plan().is_some();
+        ctx.has_conflict = self.current_plan().is_some_and(|p| p.counts.conflicts > 0);
     }
 
     /// Run Sync (FS-005): the plan's questions in the mode of `sync_confirmations` (the operation question with the
@@ -461,18 +527,25 @@ impl FolderViewModel {
         let Some(mark) = self.prepared().map(Mark::of) else {
             return false;
         };
+        if self.current_plan().is_none() {
+            return false;
+        }
         let Some(sync) = self.sync.as_deref_mut() else {
             return false;
         };
         if !sync.plan_ready() {
             return false;
         }
-        let PlanState::Ready(plan, preview) = std::mem::replace(&mut sync.plan, PlanState::Taken)
-        else {
+        let PlanState::Ready(ready) = std::mem::replace(&mut sync.plan, PlanState::Taken) else {
             return false;
         };
-        let confirmation = service.folder_confirmation(&plan.op, None);
-        let list = PreviewList::sync(*plan, *preview, Arc::clone(&mark.model));
+        let Planned {
+            plan,
+            preview,
+            confirmation,
+            ..
+        } = *ready;
+        let list = PreviewList::sync(plan, preview, Arc::clone(&mark.model));
         self.sync_confirm(service, view, caption, list, confirmation, mark);
         true
     }
@@ -638,6 +711,7 @@ impl FolderViewModel {
         };
         let dialog = SyncDialog {
             view,
+            command,
             caption: caption.to_owned(),
             model: Arc::clone(&mark.model),
             generation: mark.generation,
@@ -653,6 +727,8 @@ impl FolderViewModel {
             dirty: true,
             job_generation: 0,
             started: None,
+            stale: false,
+            again: false,
             wake: Arc::clone(&self.wake),
             plans: 0,
         };
@@ -672,24 +748,40 @@ impl FolderViewModel {
         &mut self,
         service: &Service,
         view: ViewId,
-        started: Option<(PreviewList, ConfirmMode)>,
+        started: Option<(PreviewList, Confirmation)>,
     ) {
         let Some(Task::Dialog { caption, mark, .. }) = self.task.take() else {
             return;
         };
-        let Some((list, mode)) = started else {
+        let Some((list, confirmation)) = started else {
             return;
         };
         if !mark.holds(self.prepared()) {
             self.refuse_changed(&caption);
             return;
         }
-        let Some(plan) = list.op_plan() else {
-            return;
-        };
-        let confirmation = service.folder_confirmation(plan, Some(mode));
         self.sync_confirm(service, view, &caption, list, confirmation, mark);
     }
+}
+
+/// True when every row of `model` was compared and shown, so an override no row of `plan` took is one no row can take
+/// (review F2): the comparison completed, no folder is unscanned (an orphan folder, *auto scan subfolders* off), no row
+/// is unresolved, none is left because a filter hides a side.
+fn whole_comparison(model: &FolderModel, plan: &SyncPlan) -> bool {
+    if plan.counts.unresolved > 0
+        || plan
+            .rows
+            .iter()
+            .any(|r| r.reason == Some(LeaveReason::Filtered))
+    {
+        return false;
+    }
+    let read = model.read();
+    read.is_complete()
+        && read.preorder().all(|(id, _)| {
+            read.node(id)
+                .is_none_or(|n| !(n.is_folder() && n.scan == hikasa_folder::ScanStatus::NotScanned))
+        })
 }
 
 /// A stand-in while a sync's batch is answered.
@@ -714,8 +806,8 @@ fn empty_op(op: &hikasa_folder::ops::OpPlan) -> hikasa_folder::ops::OpPlan {
 
 enum DialogPlan {
     Idle,
-    Planning(Job<(SyncPlan, SyncPreview)>, u64),
-    Ready(Box<PreviewList>),
+    Planning(Job<(SyncPlan, SyncPreview, Confirmation)>, u64),
+    Ready(Box<PreviewList>, Box<Confirmation>),
     Failed(String),
 }
 
@@ -724,6 +816,8 @@ enum DialogPlan {
 pub struct SyncDialog {
     /// The view.
     pub view: ViewId,
+    /// The command (*Plan again* runs it once more).
+    pub command: CommandId,
     caption: String,
     model: Arc<FolderModel>,
     generation: u64,
@@ -742,7 +836,11 @@ pub struct SyncDialog {
     plan: DialogPlan,
     dirty: bool,
     job_generation: u64,
-    started: Option<(PreviewList, ConfirmMode)>,
+    started: Option<(PreviewList, Confirmation)>,
+    /// The comparison changed under the dialog: Run is replaced by *Plan again* (§1.9.12, review F11).
+    stale: bool,
+    /// *Plan again* was pressed (the window runs the command again).
+    again: bool,
     wake: Wake,
     /// How many plan jobs started (tests).
     pub plans: u64,
@@ -780,17 +878,29 @@ impl SyncDialog {
     /// The preview, once planned.
     pub fn list(&self) -> Option<&PreviewList> {
         match &self.plan {
-            DialogPlan::Ready(list) => Some(list),
+            DialogPlan::Ready(list, _) => Some(list),
             _ => None,
         }
     }
 
-    /// The core message of a refused plan (`EmptySource`, an incomplete comparison with deletes).
-    pub fn message(&self) -> Option<&str> {
+    /// The message that replaces the preview: the core's for a refused plan (`EmptySource`, an incomplete comparison
+    /// with deletes), or the comparison changed under the dialog.
+    pub fn message(&self) -> Option<String> {
+        if self.stale {
+            return Some(format!(
+                "{}: the comparison changed while the sync waited; nothing was written. Plan again.",
+                self.caption.trim_end_matches("...")
+            ));
+        }
         match &self.plan {
-            DialogPlan::Failed(message) => Some(message),
+            DialogPlan::Failed(message) => Some(message.clone()),
             _ => None,
         }
+    }
+
+    /// True when *Plan again* was pressed.
+    pub fn plan_again(&self) -> bool {
+        self.again
     }
 
     /// "Planning…".
@@ -798,8 +908,8 @@ impl SyncDialog {
         self.dirty || matches!(self.plan, DialogPlan::Planning(..) | DialogPlan::Idle)
     }
 
-    /// The plan and mode after Run (taken by the view).
-    pub fn take_started(&mut self) -> Option<(PreviewList, ConfirmMode)> {
+    /// The plan and its questions after Run (taken by the view).
+    pub fn take_started(&mut self) -> Option<(PreviewList, Confirmation)> {
         self.started.take()
     }
 
@@ -823,7 +933,7 @@ impl SyncDialog {
     }
 
     fn run_enabled(&self) -> bool {
-        !self.dirty && self.list().is_some_and(PreviewList::acts)
+        !self.stale && !self.dirty && self.list().is_some_and(PreviewList::acts)
     }
 }
 
@@ -842,11 +952,20 @@ impl DialogModel for SyncDialog {
 
     fn buttons(&self) -> Vec<DialogButton> {
         vec![
-            DialogButton {
-                label: "Run".to_owned(),
-                role: ButtonRole::Ok,
-                enabled: self.run_enabled(),
-                default: true,
+            if self.stale {
+                DialogButton {
+                    label: "Plan again".to_owned(),
+                    role: crate::op_dialogs::PLAN_AGAIN,
+                    enabled: true,
+                    default: true,
+                }
+            } else {
+                DialogButton {
+                    label: "Run".to_owned(),
+                    role: ButtonRole::Ok,
+                    enabled: self.run_enabled(),
+                    default: true,
+                }
             },
             DialogButton {
                 label: "Cancel".to_owned(),
@@ -860,12 +979,16 @@ impl DialogModel for SyncDialog {
     fn on_button(&mut self, role: ButtonRole, _svc: &Service) -> DialogStep {
         match role {
             ButtonRole::Ok => {
-                if !self.run_enabled() || self.model.generation() != self.generation {
+                if self.model.generation() != self.generation {
+                    self.stale = true;
+                    return DialogStep::Stay;
+                }
+                if !self.run_enabled() {
                     return DialogStep::Stay;
                 }
                 match std::mem::replace(&mut self.plan, DialogPlan::Idle) {
-                    DialogPlan::Ready(list) => {
-                        self.started = Some((*list, self.mode));
+                    DialogPlan::Ready(list, confirmation) => {
+                        self.started = Some((*list, *confirmation));
                         DialogStep::Close
                     }
                     other => {
@@ -873,6 +996,10 @@ impl DialogModel for SyncDialog {
                         DialogStep::Stay
                     }
                 }
+            }
+            crate::op_dialogs::PLAN_AGAIN => {
+                self.again = true;
+                DialogStep::Close
             }
             ButtonRole::Cancel => {
                 if let DialogPlan::Planning(job, _) = &self.plan {
@@ -885,6 +1012,16 @@ impl DialogModel for SyncDialog {
     }
 
     fn poll(&mut self, svc: &Service) -> bool {
+        if self.stale {
+            return false;
+        }
+        if self.model.generation() != self.generation {
+            self.stale = true;
+            if let DialogPlan::Planning(job, _) = &self.plan {
+                job.cancel();
+            }
+            return true;
+        }
         if self.dirty {
             self.dirty = false;
             if let DialogPlan::Planning(job, _) = &self.plan {
@@ -892,7 +1029,7 @@ impl DialogModel for SyncDialog {
             }
             self.job_generation += 1;
             self.plans += 1;
-            let (model, request) = (Arc::clone(&self.model), self.request());
+            let (model, request, mode) = (Arc::clone(&self.model), self.request(), self.mode);
             let job = Job::spawn(
                 svc,
                 JobKind::FolderSync,
@@ -901,7 +1038,9 @@ impl DialogModel for SyncDialog {
                 move |svc, job| {
                     let plan = svc.folder_sync_plan(&model, &request, job)?;
                     let preview = svc.folder_sync_preview(&plan);
-                    Ok((plan, preview))
+                    // The questions in the dialog's mode, on this thread (review F6); a change of mode plans again.
+                    let confirmation = svc.folder_confirmation(&plan.op, Some(mode));
+                    Ok((plan, preview, confirmation))
                 },
             );
             self.plan = DialogPlan::Planning(job, self.job_generation);
@@ -917,11 +1056,10 @@ impl DialogModel for SyncDialog {
             return false;
         }
         self.plan = match result {
-            Ok((plan, preview)) => DialogPlan::Ready(Box::new(PreviewList::sync(
-                plan,
-                preview,
-                Arc::clone(&self.model),
-            ))),
+            Ok((plan, preview, confirmation)) => DialogPlan::Ready(
+                Box::new(PreviewList::sync(plan, preview, Arc::clone(&self.model))),
+                Box::new(confirmation),
+            ),
             Err(ApiError::Cancelled) => DialogPlan::Idle,
             Err(e) => DialogPlan::Failed(e.to_string()),
         };

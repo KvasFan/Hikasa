@@ -602,6 +602,9 @@ pub struct FolderViewModel {
     include_hidden: bool,
     /// The sync half of a Folder Sync view (M2 W9b, D-247).
     sync: Option<Box<sync::SyncViewModel>>,
+    /// Counts the models this view prepared: with the model's generation, the key a sync plan is made for (review F7:
+    /// no pointer address, which a new model may reuse).
+    model_serial: u64,
     /// The view's sync options or rules changed since the window last asked (its session becomes dirty).
     dirty_options: bool,
     /// Tests: the next sync's execute job fails as a whole (its job's error, A9.17).
@@ -792,6 +795,7 @@ impl FolderViewModel {
             include_hidden: false,
             inline_rename: None,
             sync,
+            model_serial: 0,
             dirty_options: false,
             #[cfg(test)]
             fake_elapsed: None,
@@ -884,6 +888,7 @@ impl FolderViewModel {
         self.display.ignore_unimportant |= prepared.ignore_unimportant();
         // A new model: no order of the old one is kept.
         self.sort_cache.clear();
+        self.model_serial += 1;
         self.state = FolderState::Running { prepared, job };
     }
 

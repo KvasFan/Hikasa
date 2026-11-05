@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use hikasa_core::ExitCode;
-use hikasa_folder::sync::{SyncOptions, SyncPreset};
+use hikasa_folder::sync::{SyncAction, SyncOptions, SyncPreset};
 use hikasa_session::api::ViewOutcome;
 use hikasa_session::ipc::{CloseReason, ViewId};
 
@@ -15,7 +15,9 @@ use crate::notify::NoticeKind;
 use crate::op_dialogs::{PlanConfirmDialog, YES_TO_ALL};
 use crate::tests::{TestApp, World, folder_model};
 use crate::tests_folder_ops::{gate, notices, poll_until, set_gate};
-use crate::tests_sync_view::{cli_twin, confirm_all, find, fixture, open_sync, ticks, tree, trees};
+use crate::tests_sync_view::{
+    cli_twin, confirm_all, find, fixture, open_sync, open_sync_with, ticks, tree, trees,
+};
 
 fn mirror_right() -> SyncOptions {
     SyncOptions {
@@ -396,4 +398,274 @@ fn a_waited_sync_view_closed_while_its_sync_runs_exits_with_the_sync_s_code() {
         "the stopped sync's code"
     );
     assert_eq!(result.close_reason(), Some(CloseReason::User));
+}
+
+// ---- F2: only overrides a row cannot take are removed, once the comparison is complete -----------------------------
+
+fn overrides(app: &mut TestApp, view: ViewId) -> Vec<(String, SyncAction)> {
+    folder_model(app, view)
+        .sync()
+        .expect("sync")
+        .options
+        .overrides
+        .iter()
+        .map(|(p, a)| (p.clone(), *a))
+        .collect()
+}
+
+fn dirty(app: &TestApp, view: ViewId) -> bool {
+    app.0.view_session(view).is_some_and(|s| s.dirty)
+}
+
+/// An override whose row is absent from this comparison (a file not there yet) is kept, the session stays clean, its
+/// warning is one notice and the header's list; an edit that plans again names it no more (the reviewer's probe).
+#[test]
+fn an_override_of_an_absent_row_is_kept_with_a_warning() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let mut options = mirror_right();
+    options
+        .overrides
+        .insert("later/keep.txt".into(), SyncAction::Leave);
+    let view = open_sync(&world, &mut app, options);
+    ticks(&world, &mut app);
+    assert_eq!(
+        overrides(&mut app, view),
+        [("later/keep.txt".to_owned(), SyncAction::Leave)]
+    );
+    assert!(!dirty(&app, view), "nothing changed");
+    let warned = |app: &TestApp| {
+        notices(app)
+            .iter()
+            .filter(|(k, t, _)| *k == NoticeKind::Warning && t.contains("later/keep.txt"))
+            .count()
+    };
+    assert_eq!(warned(&app), 1);
+    assert_eq!(
+        folder_model(&mut app, view)
+            .sync()
+            .expect("sync")
+            .unused_overrides(),
+        ["later/keep.txt"]
+    );
+    // Another plan (a preset change) keeps it and names it no more.
+    let service = world.service.clone();
+    folder_model(&mut app, view).set_sync_preset(&service, SyncPreset::UpdateRight);
+    ticks(&world, &mut app);
+    assert_eq!(warned(&app), 1, "one notice per path");
+    assert!(
+        overrides(&mut app, view)
+            .iter()
+            .any(|(p, _)| p == "later/keep.txt")
+    );
+    // The file comes: the override is used and leaves the header's list.
+    crate::tests_folder_ops::put(&world, "l", "later/keep.txt", "keep\n", 1_000);
+    app.execute(CommandId::FullRefresh);
+    ticks(&world, &mut app);
+    let m = folder_model(&mut app, view);
+    assert!(m.sync().expect("sync").unused_overrides().is_empty());
+    let node = crate::tests_folder_ops::node_of(&mut app, view, "later/keep.txt").expect("row");
+    let action = folder_model(&mut app, view)
+        .sync_action(node)
+        .expect("planned");
+    assert_eq!(
+        (action.action, action.overridden),
+        (SyncAction::Leave, true)
+    );
+}
+
+/// An override a row cannot take is kept while the comparison is not whole (here a size filter hides a side of a row),
+/// and removed with its notice once a whole comparison planned it. (A Folder Sync view scans every folder; the
+/// orphan folders a Folder Compare view leaves unscanned reach a sync only through Synchronize ▸, which removes nothing.)
+#[test]
+fn a_dropped_override_waits_for_a_whole_comparison() {
+    use crate::tests_folder_ops::put;
+    let world = World::new();
+    put(&world, "l", "tiny.txt", "ab\n", 1_000);
+    put(&world, "r", "tiny.txt", "a longer text\n", 1_000);
+    put(&world, "l", "big-left.txt", "0123456789\n", 1_000);
+    let mut app = world.app(None);
+    let mut options = SyncOptions {
+        preset: SyncPreset::UpdateRight,
+        ..SyncOptions::default()
+    };
+    // Left only: no right side to copy from.
+    options
+        .overrides
+        .insert("big-left.txt".into(), SyncAction::CopyLeft);
+    let patch = hikasa_folder::FolderRulesPatch {
+        size_filter: Some(hikasa_folder::Change::Set(hikasa_folder::SizeFilter {
+            cmp: hikasa_folder::Cmp::Greater,
+            bytes: 5,
+        })),
+        ..Default::default()
+    };
+    let view = open_sync_with(&world, &mut app, options, patch);
+    ticks(&world, &mut app);
+    let plan = folder_model(&mut app, view)
+        .sync()
+        .and_then(|s| s.plan().cloned())
+        .expect("a plan");
+    assert!(
+        plan.rows
+            .iter()
+            .any(|r| r.reason == Some(hikasa_folder::sync::LeaveReason::Filtered)),
+        "a side is hidden"
+    );
+    assert_eq!(plan.dropped_overrides, ["big-left.txt"]);
+    assert_eq!(
+        overrides(&mut app, view),
+        [("big-left.txt".to_owned(), SyncAction::CopyLeft)],
+        "kept while a filter hides a side"
+    );
+    assert!(!dirty(&app, view));
+    // The hidden side grows past the filter: the comparison is whole, the override goes, with its notice.
+    put(&world, "l", "tiny.txt", "now long enough\n", 1_000);
+    app.execute(CommandId::FullRefresh);
+    ticks(&world, &mut app);
+    assert!(overrides(&mut app, view).is_empty(), "removed");
+    assert!(dirty(&app, view));
+    assert!(
+        notices(&app)
+            .iter()
+            .any(|(k, t, _)| *k == NoticeKind::Warning && t.starts_with("override big-left.txt=")),
+        "{:?}",
+        notices(&app)
+    );
+}
+
+// ---- F7, F12: the plan Run Sync runs and the actions shown are those of the current options and comparison ----------
+
+/// After a change of the preset, Run Sync waits for the new plan: the old one is gone at once (no Run of the previous
+/// options in the same frame or from a script), and the Run that follows writes what the new preset writes.
+#[test]
+fn run_sync_waits_for_the_plan_of_the_new_options() {
+    let (world, twin) = (World::new(), World::new());
+    fixture(&world);
+    fixture(&twin);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    assert!(app.enabled(CommandId::Run));
+    let service = world.service.clone();
+    assert!(folder_model(&mut app, view).set_sync_preset(&service, SyncPreset::UpdateRight));
+    assert!(!app.enabled(CommandId::Run), "the old plan is gone");
+    assert!(
+        folder_model(&mut app, view)
+            .sync()
+            .expect("sync")
+            .plan()
+            .is_none()
+    );
+    assert!(
+        !folder_model(&mut app, view).run_sync(&service, view, "Run Sync"),
+        "nothing to run before the new plan"
+    );
+    assert!(find::<PlanConfirmDialog>(&mut app).is_none());
+    ticks(&world, &mut app);
+    assert!(app.enabled(CommandId::Run));
+    app.execute(CommandId::Run);
+    ticks(&world, &mut app);
+    confirm_all(&world, &mut app);
+    let options = SyncOptions {
+        preset: SyncPreset::UpdateRight,
+        ..SyncOptions::default()
+    };
+    assert_eq!(cli_twin(&twin, options, None), ExitCode::Success);
+    assert_eq!(trees(&world), trees(&twin), "Update Right, not Mirror");
+}
+
+/// While the comparison runs again, and once a refresh changed it, the rows show no action of the old plan and Info no
+/// counts of it; the plan of the new comparison brings them back.
+#[test]
+fn the_old_plan_is_not_shown_on_a_changed_comparison() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open_sync(&world, &mut app, mirror_right());
+    let a = crate::tests_folder_ops::node_of(&mut app, view, "a.txt").expect("row");
+    assert!(folder_model(&mut app, view).sync_action(a).is_some());
+    assert!(folder_model(&mut app, view).sync_counts().is_some());
+    // A refresh of the rows changes the model's generation: the plan no longer describes it.
+    let model = Arc::clone(folder_model(&mut app, view).prepared().expect("p").model());
+    let root = hikasa_folder::NodeId::ROOT;
+    world
+        .service
+        .spawn(
+            hikasa_core::JobKind::FolderRefresh,
+            "refresh".into(),
+            move |svc, job| svc.folder_refresh(&model, &[root], job, &hikasa_folder::NullObserver),
+        )
+        .wait()
+        .expect("refresh");
+    assert!(
+        folder_model(&mut app, view).sync_action(a).is_none(),
+        "stale"
+    );
+    assert!(
+        folder_model(&mut app, view).sync_counts().is_none(),
+        "stale"
+    );
+    ticks(&world, &mut app);
+    let a = crate::tests_folder_ops::node_of(&mut app, view, "a.txt").expect("row");
+    assert!(
+        folder_model(&mut app, view).sync_action(a).is_some(),
+        "planned again"
+    );
+    // A full re-run held at its scan gate: nothing of the old plan while it compares.
+    let g = gate(false);
+    folder_model(&mut app, view).scan_gate = Some(Arc::clone(&g));
+    app.execute(CommandId::FullRefresh);
+    poll_until(&world, &mut app, |a| folder_model(a, view).scanning());
+    assert!(folder_model(&mut app, view).sync_action(a).is_none());
+    assert!(folder_model(&mut app, view).sync_counts().is_none());
+    assert!(!app.enabled(CommandId::Run));
+    set_gate(&g, true);
+    ticks(&world, &mut app);
+    let a = crate::tests_folder_ops::node_of(&mut app, view, "a.txt").expect("row");
+    assert!(folder_model(&mut app, view).sync_action(a).is_some());
+    assert!(folder_model(&mut app, view).sync_counts().is_some());
+}
+
+// ---- F11: the Synchronize preview after the comparison changed ------------------------------------------------------
+
+/// Run after the comparison changed under the Synchronize preview runs nothing: the dialog says so and offers *Plan
+/// again*, which opens the preview once more on the comparison as it stands.
+#[test]
+fn the_synchronize_preview_offers_plan_again_after_a_change() {
+    use crate::dialog::DialogModel;
+    use crate::folder_view::sync::SyncDialog;
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = crate::tests_folder_ops::open(&world, &mut app);
+    let before = trees(&world);
+    app.execute(CommandId::MirrorRight);
+    ticks(&world, &mut app);
+    assert!(find::<SyncDialog>(&mut app).is_some_and(|d| d.list().is_some()));
+    let model = Arc::clone(folder_model(&mut app, view).prepared().expect("p").model());
+    let root = hikasa_folder::NodeId::ROOT;
+    world
+        .service
+        .spawn(
+            hikasa_core::JobKind::FolderRefresh,
+            "refresh".into(),
+            move |svc, job| svc.folder_refresh(&model, &[root], job, &hikasa_folder::NullObserver),
+        )
+        .wait()
+        .expect("refresh");
+    crate::tests_folder_ops::press(&world, &mut app, ButtonRole::Ok);
+    let d = find::<SyncDialog>(&mut app).expect("still open");
+    assert!(
+        d.message().is_some_and(|m| m.contains("Plan again")),
+        "{:?}",
+        d.message()
+    );
+    assert!(d.buttons().iter().any(|b| b.label == "Plan again"));
+    assert!(!d.buttons().iter().any(|b| b.role == ButtonRole::Ok));
+    crate::tests_folder_ops::press(&world, &mut app, crate::op_dialogs::PLAN_AGAIN);
+    ticks(&world, &mut app);
+    let d = find::<SyncDialog>(&mut app).expect("the command ran again");
+    assert!(d.message().is_none() && d.list().is_some());
+    assert_eq!(trees(&world), before, "nothing was written");
 }

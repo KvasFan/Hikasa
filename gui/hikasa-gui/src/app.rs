@@ -3096,8 +3096,11 @@ impl AppCore {
             }
             return Vec::new();
         }
-        if self.content_dialog_closed(&mut closed) || self.sync_dialog_closed(&mut closed) {
+        if self.content_dialog_closed(&mut closed) {
             return Vec::new();
+        }
+        if let Some(effects) = self.sync_dialog_closed(&mut closed) {
+            return effects;
         }
         if let Some(d) = closed
             .as_any_mut()
