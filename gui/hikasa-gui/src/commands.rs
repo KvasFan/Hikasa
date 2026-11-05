@@ -408,6 +408,9 @@ pub struct Ctx {
     pub other_base_selected: bool,
     /// Folder: one row is selected (`CompareParents`); a text view: always.
     pub parents_available: bool,
+    /// Folder (M2 W9a after review, §1.9.2 rule 4): no operation, refresh or plan of the view runs and no question of
+    /// one waits (`Predicate::Idle`); the base commands re-root the view and wait for it.
+    pub idle: bool,
 }
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
@@ -516,6 +519,10 @@ pub enum Predicate {
     OtherBaseSelected,
     /// `CompareParents` can run.
     ParentsAvailable,
+    /// Folder (§1.9.19): no operation, refresh or plan of the view runs (the base commands, Clear Session).
+    Idle,
+    /// Folder: the view has a model and is idle (`Swap`).
+    ReadyIdle,
 }
 
 impl Predicate {
@@ -550,13 +557,19 @@ impl Predicate {
             Predicate::TreeDeletable => ctx.tree_named || ctx.tree_auto || ctx.tree_folder,
             Predicate::TreeRenamable => ctx.tree_named || ctx.tree_folder,
             Predicate::TreeEditable => ctx.tree_named || ctx.tree_new,
-            Predicate::BaseParent(side) => match side_index(side) {
-                Some(k) => ctx.base_parent[k],
-                None => ctx.base_parent[0] && ctx.base_parent[1],
-            },
-            Predicate::BasesSelected => ctx.bases_selected,
-            Predicate::OtherBaseSelected => ctx.other_base_selected,
+            // The base commands re-root the view: never while an operation of it runs (§1.9.2 rule 4).
+            Predicate::BaseParent(side) => {
+                ctx.idle
+                    && match side_index(side) {
+                        Some(k) => ctx.base_parent[k],
+                        None => ctx.base_parent[0] && ctx.base_parent[1],
+                    }
+            }
+            Predicate::BasesSelected => ctx.idle && ctx.bases_selected,
+            Predicate::OtherBaseSelected => ctx.idle && ctx.other_base_selected,
             Predicate::ParentsAvailable => ctx.parents_available,
+            Predicate::Idle => ctx.idle,
+            Predicate::ReadyIdle => ctx.ready && ctx.idle,
         }
     }
 }
@@ -1577,7 +1590,7 @@ pub const PRESENTATION: &[Row] = &[
         P::ParentsAvailable,
         NONE,
     ),
-    row(C::Swap, S::Folder, None, None, G::None, P::Ready, NONE),
+    row(C::Swap, S::Folder, None, None, G::None, P::ReadyIdle, NONE),
     row(C::Swap, S::Text, None, None, G::None, P::Always, NONE),
     row(
         C::SessionClear,
@@ -1585,7 +1598,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::Always,
+        P::Idle,
         NONE,
     ),
     row(

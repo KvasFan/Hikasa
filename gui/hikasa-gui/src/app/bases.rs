@@ -35,6 +35,9 @@ pub enum BaseCheck {
     Bad(usize, String),
 }
 
+/// What a re-root of a view with an operation under way answers (§1.9.2 rule 4).
+pub const WAIT: &str = "Wait for the current operation to end.";
+
 /// The help topic of the questions.
 const TOPIC: &str = "view-folder-compare";
 
@@ -84,6 +87,9 @@ impl AppCore {
     /// Re-roots folder view `view` on `specs` once they are checked (`create`: the folder of that side is created
     /// first, after the user said Yes).
     pub(super) fn rebase(&mut self, view: ViewId, specs: [String; 2], create: Option<usize>) {
+        if self.refuse_busy(view) {
+            return;
+        }
         let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) else {
             return;
         };
@@ -117,6 +123,10 @@ impl AppCore {
     ) {
         match result {
             Ok(BaseCheck::Ready) => {
+                // An operation that started while the check ran keeps the view (§1.9.2 rule 4).
+                if self.refuse_busy(view) {
+                    return;
+                }
                 let old = match self.tab_mut(view).and_then(|t| t.model_mut()) {
                     Some(ViewModel::Folder(m)) => [
                         m.path_edit(0).committed.clone(),
@@ -168,6 +178,28 @@ impl AppCore {
             Ok(BaseCheck::Bad(k, message)) => self.base_error(view, k, message),
             Err(e) => self.base_error(view, 0, e.to_string()),
         }
+    }
+
+    /// True (with the notice "Wait for the current operation to end.") when folder view `view` has an operation, a
+    /// refresh or a plan under way or a question of one open: nothing re-roots or reopens it then, so a running
+    /// operation is never cancelled by a new base (§1.9.2 rule 4).
+    pub(super) fn refuse_busy(&mut self, view: ViewId) -> bool {
+        let busy = matches!(
+            self.tab(view).and_then(|t| t.model()),
+            Some(ViewModel::Folder(m)) if !m.idle()
+        );
+        if busy {
+            let window = self.window_of(view).unwrap_or_else(|| self.focused());
+            self.push_notice(
+                window,
+                crate::notify::Notice::new(
+                    format!("busy:{}", view.0),
+                    crate::notify::NoticeKind::Warning,
+                    WAIT.to_owned(),
+                ),
+            );
+        }
+        busy
     }
 
     /// The message under path edit `side` of `view`.

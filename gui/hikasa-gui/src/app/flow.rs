@@ -2585,6 +2585,13 @@ impl AppCore {
         if self.tab(view).is_none() {
             return;
         }
+        // A view whose operation runs is never replaced: the operation would be cancelled (§1.9.2 rule 4).
+        if self.refuse_busy(view) {
+            if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                vs.settings_pending = false;
+            }
+            return;
+        }
         let mut request = opened.request;
         match &mut request {
             ViewRequest::Text { view, .. } => apply_text_display(&session.display, view),

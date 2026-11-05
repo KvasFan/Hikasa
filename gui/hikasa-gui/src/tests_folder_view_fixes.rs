@@ -391,3 +391,128 @@ fn crc_results_rebuild_the_rows_only_for_a_sort_on_crc() {
     let (left, _) = crc_cells(m, 0);
     assert!(hex(&left), "{left:?}");
 }
+
+// ---- 2: the base commands wait for a running operation ------------------------------------------------------------
+
+fn committed(app: &mut TestApp, view: ViewId) -> [String; 2] {
+    let m = folder_model(app, view);
+    [
+        m.path_edit(0).committed.clone(),
+        m.path_edit(1).committed.clone(),
+    ]
+}
+
+/// The notice of a re-root while an operation runs.
+const WAIT: &str = "Wait for the current operation to end.";
+
+fn waits(app: &TestApp) -> bool {
+    notices(app).iter().any(|(_, text, _)| text == WAIT)
+}
+
+/// Review finding 2: while an operation's plan or execution runs, the base commands are off, and an Accept of new
+/// bases is refused with "Wait for the current operation to end." (the operation is not cancelled).
+#[test]
+fn the_base_commands_wait_for_a_running_operation() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "left\n", 1_000);
+    put(&world, "r", "b.txt", "b\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let before = committed(&mut app, view);
+    assert!(app.enabled(CommandId::UpOneLevelBoth) && app.enabled(CommandId::Swap));
+    let g = gate(false);
+    folder_model(&mut app, view).gate = Some(Arc::clone(&g));
+    select(&mut app, view, "a.txt");
+    app.execute(CommandId::CopyRight);
+    assert!(folder_model(&mut app, view).busy(), "the plan runs");
+    for id in [
+        CommandId::UpOneLevelLeft,
+        CommandId::UpOneLevelRight,
+        CommandId::UpOneLevelBoth,
+        CommandId::Swap,
+        CommandId::SessionClear,
+    ] {
+        assert!(!app.enabled(id), "{id:?} while an operation runs");
+    }
+    // An Accept of a new base (as typed, or a browse answer).
+    let up = world.path("work").to_string_lossy().into_owned();
+    let m = folder_model(&mut app, view);
+    m.path_edit(0).set_text(&up);
+    m.accept_paths();
+    for _ in 0..5 {
+        app.0.handle(crate::app::UiMsg::Tick);
+    }
+    assert!(waits(&app), "{:?}", notices(&app));
+    assert_eq!(committed(&mut app, view), before, "not re-rooted");
+    assert!(
+        folder_model(&mut app, view).busy(),
+        "the plan was not cancelled"
+    );
+    set_gate(&g, true);
+    world.settle(&mut app);
+    press(&world, &mut app, ButtonRole::Yes);
+    world.settle(&mut app);
+    assert_eq!(
+        read(&world, "r", "a.txt").as_deref(),
+        Some("left\n"),
+        "the copy ran"
+    );
+    assert!(app.enabled(CommandId::UpOneLevelBoth), "idle again");
+}
+
+/// A check of new bases that ends after an operation started does not re-root the view.
+#[test]
+fn a_base_check_that_ends_during_an_operation_is_refused() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "left\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let before = committed(&mut app, view);
+    let up = world.path("work").to_string_lossy().into_owned();
+    let m = folder_model(&mut app, view);
+    m.path_edit(0).set_text(&up);
+    m.accept_paths();
+    // This poll takes the Accept and starts the check; its answer is read at a later poll.
+    app.0.handle(crate::app::UiMsg::Tick);
+    let g = gate(false);
+    folder_model(&mut app, view).gate = Some(Arc::clone(&g));
+    select(&mut app, view, "a.txt");
+    app.execute(CommandId::CopyRight);
+    poll_until(&world, &mut app, waits_core);
+    assert_eq!(committed(&mut app, view), before, "not re-rooted");
+    assert!(
+        app.state()
+            .mru(hikasa_session::settings::state::MruList::Left)
+            .is_empty(),
+        "nothing loaded"
+    );
+    set_gate(&g, true);
+    world.settle(&mut app);
+}
+
+fn waits_core(app: &mut crate::app::AppCore) -> bool {
+    let w = app.focused();
+    app.window(w)
+        .is_some_and(|w| w.notices.all().iter().any(|n| n.text == WAIT))
+}
+
+/// A reopen (Swap Sides' store job) that ends during an operation does not replace the view: its operation runs on.
+#[test]
+fn a_reopen_that_ends_during_an_operation_is_refused() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "left\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let before = committed(&mut app, view);
+    app.execute(CommandId::Swap);
+    let g = gate(false);
+    folder_model(&mut app, view).gate = Some(Arc::clone(&g));
+    select(&mut app, view, "a.txt");
+    app.execute(CommandId::CopyRight);
+    poll_until(&world, &mut app, waits_core);
+    assert_eq!(committed(&mut app, view), before, "not swapped");
+    assert!(folder_model(&mut app, view).busy(), "the plan runs on");
+    set_gate(&g, true);
+    world.settle(&mut app);
+    assert_eq!(dialogs(&app), 1, "its question");
+}

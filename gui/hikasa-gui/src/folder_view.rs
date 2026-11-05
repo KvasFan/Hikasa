@@ -748,6 +748,12 @@ impl FolderViewModel {
         self.scanning() || self.task.as_ref().is_some_and(|t| t.job_status().is_some())
     }
 
+    /// True while no operation, refresh or plan of the view runs and no question of one waits (`Predicate::Idle`):
+    /// the view may be re-rooted (§1.9.2 rule 4).
+    pub fn idle(&self) -> bool {
+        self.task.is_none()
+    }
+
     /// Stops the comparison (the model stays consistent, unscanned folders stay unknown, §5.3). Stopped while
     /// preparing, the view is stopped at once and no scan starts (§1.10, §3.7 Stop). An operation's job is cancelled
     /// (D-115): what ran stays, what did not is reported, and the rows are refreshed.
@@ -2387,6 +2393,7 @@ impl FolderViewModel {
     /// Fills the command context of this view.
     pub fn ctx_into(&self, ctx: &mut Ctx) {
         ctx.busy = self.busy();
+        ctx.idle = self.idle();
         ctx.ready = self.prepared().is_some();
         ctx.writable = [
             self.write.writable(Side::Left),

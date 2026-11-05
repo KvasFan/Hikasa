@@ -83,6 +83,7 @@ fn a9_9_up_one_level_per_side_and_both() {
     // A root has no parent: the command is off.
     let ctx = Ctx {
         base_parent: [false, true],
+        idle: true,
         ..Ctx::default()
     };
     assert!(!Predicate::BaseParent(Side::Left).holds(&ctx));
@@ -91,6 +92,9 @@ fn a9_9_up_one_level_per_side_and_both() {
         !Predicate::BaseParent(Side::Center).holds(&ctx),
         "both need a parent"
     );
+    // An operation under way: off (§1.9.2 rule 4).
+    let busy = Ctx { idle: false, ..ctx };
+    assert!(!Predicate::BaseParent(Side::Right).holds(&busy));
 }
 
 #[test]
