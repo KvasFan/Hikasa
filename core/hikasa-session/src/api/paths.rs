@@ -192,7 +192,16 @@ impl Service {
             let style = self.env().platform.path_style();
             let typed = typed.to_string_lossy();
             let (base, prefix) = split_typed(&typed, style);
-            let folder_text = if base.is_empty() { "." } else { base };
+            // The folder part without its trailing separators (a root keeps its own): an archive's root is listed by its
+            // file's name, and on Windows a file's path with a trailing `\` is not a folder.
+            let trimmed = base.trim_end_matches(|c| is_separator(c, style));
+            let keeps =
+                trimmed.is_empty() || (style == PathStyle::Windows && trimmed.ends_with(':'));
+            let folder_text = match (base.is_empty(), keeps) {
+                (true, _) => ".",
+                (false, true) => base,
+                (false, false) => trimmed,
+            };
             let spec = self.parse_spec_in(OsStr::new(folder_text), SpecUse::Folder, &job.cancel)?;
             let vfs = self.vfs();
             let case_sensitive = vfs

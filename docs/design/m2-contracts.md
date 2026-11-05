@@ -8423,6 +8423,8 @@ commit):
     8 ms) and **select not met** (Select All Files 65 ms, Invert Selection 112 ms, Shift+Left 42 ms over 111,150 rows;
     Shift+Down p95 1.4 ms met). Reported as found, thresholds unchanged; the remedies (an incremental sorted rebuild,
     a range-based selection or the whole-tree commands in a job) wait for the maintainer's decision.
+22. `path_completions` lists the typed folder part without its trailing separators (a root keeps its own): under wine,
+    `…\a.zip\` was refused as not a folder, while `…\a.zip` lists the archive's members on every platform.
 
 Mutations (each failed the tests named, then was reverted):
 
