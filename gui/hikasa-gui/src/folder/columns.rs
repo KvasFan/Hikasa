@@ -62,6 +62,10 @@ pub const DEFAULT_COLUMNS: [ColumnId; 4] = [
     ColumnId::Path,
 ];
 
+/// A layout key's value with the good entries of a list or a table kept, and the others named
+/// (`State::layout_value_kept`).
+pub type KeptValue<'a> = dyn Fn(&str) -> Option<(LayoutValue, Vec<String>)> + 'a;
+
 /// The columns, their order and widths, and the sort (D-234, D-235).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnLayout {
@@ -98,9 +102,7 @@ impl ColumnLayout {
     /// dropped and the rest kept; a width is clamped; a sort on a column that is not shown, or a bad sort word,
     /// leaves the tree order (`sort = ""` is the tree order written explicitly). The text of one
     /// `invalid_config_value` warning comes back when anything was dropped.
-    pub fn from_kept(
-        value: &dyn Fn(&str) -> Option<(LayoutValue, Vec<String>)>,
-    ) -> (ColumnLayout, Option<String>) {
+    pub fn from_kept(value: &KeptValue<'_>) -> (ColumnLayout, Option<String>) {
         let mut layout = ColumnLayout::default();
         let mut dropped: Vec<String> = Vec::new();
         if let Some((words, bad)) = value("columns") {

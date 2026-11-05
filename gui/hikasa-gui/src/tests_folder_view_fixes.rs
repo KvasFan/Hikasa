@@ -723,8 +723,10 @@ fn a9_1_a_session_s_columns_win_over_the_layout() {
     let mut session = Session::builtin(SessionType::FolderCompare);
     session.specs.left = world.path("work/l").to_string_lossy().into_owned();
     session.specs.right = world.path("work/r").to_string_lossy().into_owned();
-    let mut mine = ColumnLayout::default();
-    mine.visible = vec![ColumnId::Name, ColumnId::Ext];
+    let mine = ColumnLayout {
+        visible: vec![ColumnId::Name, ColumnId::Ext],
+        ..ColumnLayout::default()
+    };
     for (key, value) in mine.to_layout() {
         session.view.insert(key.to_owned(), value.to_toml());
     }

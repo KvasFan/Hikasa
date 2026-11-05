@@ -235,10 +235,10 @@ impl Service {
         if self.reads_input(location) {
             return Err(ApiError::InvalidArgument(INPUT_SPEC_REFUSED.to_owned()));
         }
-        let listing = self.vfs_ls(location, hikasa_vfs::FollowLinks::Yes, job)?;
-        let folder = run_guarded(|| {
-            self.parse_spec_in(OsStr::new(&listing.spec), SpecUse::Folder, &job.cancel)
-        })?;
+        // Parsed once: the listing and the parent come from the same resolved spec (its canonical text does not
+        // always parse back to it, e.g. an archive root under a Windows `\\?\` path).
+        let folder = run_guarded(|| self.parse_spec_in(location, SpecUse::Folder, &job.cancel))?;
+        let listing = run_guarded(|| self.ls_dto(&folder, hikasa_vfs::FollowLinks::Yes, job))?;
         let parent = folder.parent().map(|p| p.canonical());
         Ok(BrowseListing {
             listing,

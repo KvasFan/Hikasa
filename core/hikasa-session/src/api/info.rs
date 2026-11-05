@@ -250,13 +250,25 @@ impl Service {
         run_guarded(|| {
             // `vfs ls a.zip` lists the members (§1.5.13).
             let spec = self.parse_spec_in(spec, SpecUse::Folder, &job.cancel)?;
+            self.ls_dto(&spec, follow, job)
+        })
+    }
+
+    /// The `vfs ls` listing of the resolved folder `spec` (the browse dialog keeps the spec itself, M2 W9a).
+    pub(crate) fn ls_dto(
+        &self,
+        spec: &hikasa_core::Spec,
+        follow: FollowLinks,
+        job: &JobControl,
+    ) -> Result<VfsListDto, ApiError> {
+        {
             let options = ListOptions {
                 follow,
                 prefilter: None,
             };
             let mut listing = self
                 .vfs()
-                .list(&spec, &options, &job.cancel)
+                .list(spec, &options, &job.cancel)
                 .map_err(ApiError::from_vfs)?;
             listing.sort_by_name();
             Ok(VfsListDto {
@@ -271,7 +283,7 @@ impl Service {
                     })
                     .collect(),
             })
-        })
+        }
     }
 
     /// `vfs stat`.
