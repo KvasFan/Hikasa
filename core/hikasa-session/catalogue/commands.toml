@@ -347,7 +347,7 @@ id = "SyncBaseView"
 menu = "Session"
 caption = "Sync Base Folders"
 description = "Synchronizes base folders in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CompareToOutputList"
@@ -382,7 +382,7 @@ id = "QuickCompare"
 menu = "Actions"
 caption = "Quick Compare"
 description = "Quick compare selected files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CompareTo"
@@ -390,7 +390,7 @@ menu = "Actions"
 caption = "Compare To..."
 shortcut = "F7"
 description = "Marks item for comparing in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "AlignWith"
@@ -404,7 +404,7 @@ id = "Compare"
 menu = "Actions"
 caption = "Compare Contents"
 description = "Determines overall comparison state for selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Merge"
@@ -434,13 +434,14 @@ id = "CopyPrompt"
 menu = "Actions"
 caption = "Copy to Side..."
 description = "Prompts which side to copy selected items to."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopySide"
 menu = "Actions"
+caption = "Copy to Other Side"
 description = "Copies selected items to other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyToOutput"
@@ -454,48 +455,49 @@ id = "MoveRight"
 menu = "Actions"
 caption = "Move to Right"
 description = "Moves selected items from left to right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MoveLeft"
 menu = "Actions"
 caption = "Move to Left"
 description = "Moves selected items from right to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MovePrompt"
 menu = "Actions"
 caption = "Move to Side..."
 description = "Prompts which side to move selected items to."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MoveSide"
 menu = "Actions"
+caption = "Move to Other Side"
 description = "Moves selected items to other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MoveBoth"
 menu = "Actions"
 caption = "Exchange"
 description = "Moves selected items to other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyTo"
 menu = "Actions"
 caption = "Copy to Folder..."
 description = "Copies selected items to another folder."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MoveTo"
 menu = "Actions"
 caption = "Move to Folder..."
 description = "Moves selected items to another folder."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Delete"
@@ -519,7 +521,7 @@ menu = "Actions"
 caption = "Rename"
 shortcut = "F2"
 description = "Renames selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Attributes"
@@ -533,7 +535,7 @@ id = "Touch"
 menu = "Actions"
 caption = "Touch..."
 description = "Sets timestamps of selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "NewFolder"
@@ -541,14 +543,14 @@ menu = "Actions"
 caption = "New Folder..."
 shortcut = "Ins"
 description = "Creates a new folder."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Ignored"
 menu = "Actions"
 caption = "Ignored"
 description = "Ignores or unignores differences in selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FileReport"
@@ -562,28 +564,28 @@ id = "SyncList"
 menu = "Actions"
 caption = "Synchronize"
 description = "Synchronizes by picked method."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "UpdateRight"
 menu = "Actions"
 caption = "Update Right..."
 description = "Synchronizes by copying newer and orphan items from left to right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "UpdateLeft"
 menu = "Actions"
 caption = "Update Left..."
 description = "Synchronizes by copying newer and orphan items from right to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "UpdateBoth"
 menu = "Actions"
 caption = "Update Both..."
 description = "Synchronizes by copying newer and orphan items from left to right and from right to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MirrorRight"
@@ -591,7 +593,7 @@ menu = "Actions"
 caption = "Mirror to Right..."
 shortcut = "Shift+Ctrl+R"
 description = "Synchronizes by replacing all different items on right, deleting any orphan items on right, and copying any left orphan items to right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MirrorLeft"
@@ -599,7 +601,7 @@ menu = "Actions"
 caption = "Mirror to Left..."
 shortcut = "Shift+Ctrl+L"
 description = "Synchronizes by replacing all different items on left, deleting any orphan items on left, and copying any right orphan items to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectAllFiles"
@@ -1076,21 +1078,21 @@ id = "OpenWithList"
 menu = "Actions"
 caption = "Open With"
 description = "Opens selected items in new view of picked type."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "AssocApp"
 menu = "Actions"
 caption = "Associated Application"
 description = "Opens selected items with associated application."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Exclude"
 menu = "Actions"
 caption = "Exclude"
 description = "Filters selected items to remove them from comparison."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyFilenames"
@@ -1231,50 +1233,52 @@ help = "view-folder-compare"
 [[section.command]]
 id = "Run"
 menu = "Session"
+caption = "Run Sync"
 description = "Performs all sync operations."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "CompareBaseView"
 menu = "Session"
 caption = "Compare Base Folders"
 description = "Compares base folders in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SyncLeave"
 menu = "Actions"
 caption = "Leave Alone"
 description = "Changes sync operation to leave alone."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SyncCopyLeft"
 menu = "Actions"
 caption = "Copy Right to Left"
 description = "Changes sync operation to copy right to left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SyncCopyRight"
 menu = "Actions"
 caption = "Copy Left to Right"
 description = "Changes sync operation to copy left to right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SyncDeleteLeft"
 menu = "Actions"
 caption = "Delete Left"
 description = "Changes sync operation to delete left."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SyncDeleteRight"
 menu = "Actions"
 caption = "Delete Right"
 description = "Changes sync operation to delete right."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ConflictNext"
@@ -1282,7 +1286,7 @@ menu = "Search"
 caption = "Next Conflict"
 shortcut = "Ctrl+N"
 description = "Positions at next conflict."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ConflictPrev"
@@ -1290,7 +1294,7 @@ menu = "Search"
 caption = "Previous Conflict"
 shortcut = "Ctrl+P"
 description = "Positions at previous conflict."
-status = "planned"
+status = "implemented"
 
 [[section]]
 key = "file-shared"

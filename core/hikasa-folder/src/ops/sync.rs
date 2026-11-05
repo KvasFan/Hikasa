@@ -147,6 +147,7 @@ pub(crate) fn plan(
         });
     }
     let matrix = planner.matrix;
+    let ignored_overrides = planner.dropped.iter().cloned().collect();
     let (op, rows, warnings) = planner.build(ctl)?;
     Ok(SyncPlan {
         rows,
@@ -158,6 +159,7 @@ pub(crate) fn plan(
         orphans: options.orphans,
         folders,
         emptied,
+        ignored_overrides,
     })
 }
 
@@ -743,6 +745,7 @@ impl<'a, 'r> Planner<'a, 'r> {
         let Some(overrides) = &self.overrides else {
             return;
         };
+        let mut unused = Vec::new();
         for (path, _) in overrides.keys.values() {
             if !self.used.contains(path) && !self.dropped.contains(path) {
                 self.warnings.push(Warning {
@@ -750,8 +753,10 @@ impl<'a, 'r> Planner<'a, 'r> {
                     message: format!("override {path}: no row of this comparison is there"),
                     spec: None,
                 });
+                unused.push(path.clone());
             }
         }
+        self.dropped.extend(unused);
     }
 
     /// The rows of `action`, in pre-order, as the builder takes them.

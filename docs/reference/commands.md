@@ -58,42 +58,42 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `UpOneLevelBoth` | Session | Both Sides |  | Changes both base folders to their parent folders. | implemented |
 | `UpOneLevelOutput` | Session | Output Side |  | Changes output base folder to its parent folder. | planned |
 | `MergeBaseView` | Session | Merge Base Folders |  | Merges base folders in new view. | planned |
-| `SyncBaseView` | Session | Sync Base Folders |  | Synchronizes base folders in new view. | planned |
+| `SyncBaseView` | Session | Sync Base Folders |  | Synchronizes base folders in new view. | implemented |
 | `CompareToOutputList` | Session | Compare to Output |  | Compares picked side and output in new view. | planned |
 | `CompareLeftToOutput` | Session | Left Side |  | Compares left and output in new view. | planned |
 | `CompareCenterToOutput` | Session | Center Side |  | Compares center and output in new view. | planned |
 | `CompareRightToOutput` | Session | Right Side |  | Compares right and output in new view. | planned |
-| `QuickCompare` | Actions | Quick Compare |  | Quick compare selected files. | planned |
-| `CompareTo` | Actions | Compare To... | F7 | Marks item for comparing in new view. | planned |
+| `QuickCompare` | Actions | Quick Compare |  | Quick compare selected files. | implemented |
+| `CompareTo` | Actions | Compare To... | F7 | Marks item for comparing in new view. | implemented |
 | `AlignWith` | Actions |  | F6 | Marks item for manual realignment. | planned |
-| `Compare` | Actions | Compare Contents |  | Determines overall comparison state for selected items. | planned |
+| `Compare` | Actions | Compare Contents |  | Determines overall comparison state for selected items. | implemented |
 | `Merge` | Actions | Merge... |  | Performs automated merge of selected items. | planned |
 | `CopyRight` | Actions | Copy to Right | Ctrl+R | Copies selected items from left to right. | implemented |
 | `CopyLeft` | Actions | Copy to Left | Ctrl+L | Copies selected items from right to left. | implemented |
-| `CopyPrompt` | Actions | Copy to Side... |  | Prompts which side to copy selected items to. | planned |
-| `CopySide` | Actions |  |  | Copies selected items to other side. | planned |
+| `CopyPrompt` | Actions | Copy to Side... |  | Prompts which side to copy selected items to. | implemented |
+| `CopySide` | Actions | Copy to Other Side |  | Copies selected items to other side. | implemented |
 | `CopyToOutput` | Actions | Copy to Output... |  | Copies selected items to output folder. | planned |
-| `MoveRight` | Actions | Move to Right |  | Moves selected items from left to right. | planned |
-| `MoveLeft` | Actions | Move to Left |  | Moves selected items from right to left. | planned |
-| `MovePrompt` | Actions | Move to Side... |  | Prompts which side to move selected items to. | planned |
-| `MoveSide` | Actions |  |  | Moves selected items to other side. | planned |
-| `MoveBoth` | Actions | Exchange |  | Moves selected items to other side. | planned |
-| `CopyTo` | Actions | Copy to Folder... |  | Copies selected items to another folder. | planned |
-| `MoveTo` | Actions | Move to Folder... |  | Moves selected items to another folder. | planned |
+| `MoveRight` | Actions | Move to Right |  | Moves selected items from left to right. | implemented |
+| `MoveLeft` | Actions | Move to Left |  | Moves selected items from right to left. | implemented |
+| `MovePrompt` | Actions | Move to Side... |  | Prompts which side to move selected items to. | implemented |
+| `MoveSide` | Actions | Move to Other Side |  | Moves selected items to other side. | implemented |
+| `MoveBoth` | Actions | Exchange |  | Moves selected items to other side. | implemented |
+| `CopyTo` | Actions | Copy to Folder... |  | Copies selected items to another folder. | implemented |
+| `MoveTo` | Actions | Move to Folder... |  | Moves selected items to another folder. | implemented |
 | `Delete` | Actions | Delete | Del | Deletes selected items. | implemented |
 | `PermanentDelete` | Actions | Delete Permanently | Shift+Del | Deletes selected items without moving them to the recycle bin. | implemented |
-| `Rename` | Actions | Rename | F2 | Renames selected items. | planned |
+| `Rename` | Actions | Rename | F2 | Renames selected items. | implemented |
 | `Attributes` | Actions | Attributes... |  | Sets the DOS attributes of selected files. | planned |
-| `Touch` | Actions | Touch... |  | Sets timestamps of selected items. | planned |
-| `NewFolder` | Actions | New Folder... | Ins | Creates a new folder. | planned |
-| `Ignored` | Actions | Ignored |  | Ignores or unignores differences in selected items. | planned |
+| `Touch` | Actions | Touch... |  | Sets timestamps of selected items. | implemented |
+| `NewFolder` | Actions | New Folder... | Ins | Creates a new folder. | implemented |
+| `Ignored` | Actions | Ignored |  | Ignores or unignores differences in selected items. | implemented |
 | `FileReport` | Actions | File Compare Report... |  | Produces file comparison report. | planned |
-| `SyncList` | Actions | Synchronize |  | Synchronizes by picked method. | planned |
-| `UpdateRight` | Actions | Update Right... |  | Synchronizes by copying newer and orphan items from left to right. | planned |
-| `UpdateLeft` | Actions | Update Left... |  | Synchronizes by copying newer and orphan items from right to left. | planned |
-| `UpdateBoth` | Actions | Update Both... |  | Synchronizes by copying newer and orphan items from left to right and from right to left. | planned |
-| `MirrorRight` | Actions | Mirror to Right... | Shift+Ctrl+R | Synchronizes by replacing all different items on right, deleting any orphan items on right, and copying any left orphan items to right. | planned |
-| `MirrorLeft` | Actions | Mirror to Left... | Shift+Ctrl+L | Synchronizes by replacing all different items on left, deleting any orphan items on left, and copying any right orphan items to left. | planned |
+| `SyncList` | Actions | Synchronize |  | Synchronizes by picked method. | implemented |
+| `UpdateRight` | Actions | Update Right... |  | Synchronizes by copying newer and orphan items from left to right. | implemented |
+| `UpdateLeft` | Actions | Update Left... |  | Synchronizes by copying newer and orphan items from right to left. | implemented |
+| `UpdateBoth` | Actions | Update Both... |  | Synchronizes by copying newer and orphan items from left to right and from right to left. | implemented |
+| `MirrorRight` | Actions | Mirror to Right... | Shift+Ctrl+R | Synchronizes by replacing all different items on right, deleting any orphan items on right, and copying any left orphan items to right. | implemented |
+| `MirrorLeft` | Actions | Mirror to Left... | Shift+Ctrl+L | Synchronizes by replacing all different items on left, deleting any orphan items on left, and copying any right orphan items to left. | implemented |
 | `SelectAllFiles` | Edit | Select All Files | Shift+Ctrl+A | Selects all visible files. | implemented |
 | `SelectNewerList` | Edit | Select Newer |  | Selects all newer files on picked sides. | implemented |
 | `SelectNewerLeft` | Edit | Left Side |  | Selects all newer files on the left. | implemented |
@@ -166,9 +166,9 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `SetAsBaseFolders` | Actions | Set as Base Folders |  | Sets selected folders as base folders. | implemented |
 | `SetAsOtherBaseFolder` | Actions | Set as Base on Other Side |  | Sets selected folder as base folder on other side. | implemented |
 | `Open` | Actions |  | Enter | Opens selected items in new view. | implemented |
-| `OpenWithList` | Actions | Open With |  | Opens selected items in new view of picked type. | planned |
-| `AssocApp` | Actions | Associated Application |  | Opens selected items with associated application. | planned |
-| `Exclude` | Actions | Exclude |  | Filters selected items to remove them from comparison. | planned |
+| `OpenWithList` | Actions | Open With |  | Opens selected items in new view of picked type. | implemented |
+| `AssocApp` | Actions | Associated Application |  | Opens selected items with associated application. | implemented |
+| `Exclude` | Actions | Exclude |  | Filters selected items to remove them from comparison. | implemented |
 | `CopyFilenames` | Actions | Copy Filename |  | Copies selected items' paths to Clipboard. | planned |
 | `RefreshSelection` | Actions | Refresh Selection | Shift+F5 | Refreshes selected items. | planned |
 | `ExplorerList` | Actions | File Manager |  | Shows file manager context menu for selected items. | planned |
@@ -195,15 +195,15 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `Run` | Session |  |  | Performs all sync operations. | planned |
-| `CompareBaseView` | Session | Compare Base Folders |  | Compares base folders in new view. | planned |
-| `SyncLeave` | Actions | Leave Alone |  | Changes sync operation to leave alone. | planned |
-| `SyncCopyLeft` | Actions | Copy Right to Left |  | Changes sync operation to copy right to left. | planned |
-| `SyncCopyRight` | Actions | Copy Left to Right |  | Changes sync operation to copy left to right. | planned |
-| `SyncDeleteLeft` | Actions | Delete Left |  | Changes sync operation to delete left. | planned |
-| `SyncDeleteRight` | Actions | Delete Right |  | Changes sync operation to delete right. | planned |
-| `ConflictNext` | Search | Next Conflict | Ctrl+N | Positions at next conflict. | planned |
-| `ConflictPrev` | Search | Previous Conflict | Ctrl+P | Positions at previous conflict. | planned |
+| `Run` | Session | Run Sync |  | Performs all sync operations. | implemented |
+| `CompareBaseView` | Session | Compare Base Folders |  | Compares base folders in new view. | implemented |
+| `SyncLeave` | Actions | Leave Alone |  | Changes sync operation to leave alone. | implemented |
+| `SyncCopyLeft` | Actions | Copy Right to Left |  | Changes sync operation to copy right to left. | implemented |
+| `SyncCopyRight` | Actions | Copy Left to Right |  | Changes sync operation to copy left to right. | implemented |
+| `SyncDeleteLeft` | Actions | Delete Left |  | Changes sync operation to delete left. | implemented |
+| `SyncDeleteRight` | Actions | Delete Right |  | Changes sync operation to delete right. | implemented |
+| `ConflictNext` | Search | Next Conflict | Ctrl+N | Positions at next conflict. | implemented |
+| `ConflictPrev` | Search | Previous Conflict | Ctrl+P | Positions at previous conflict. | implemented |
 
 ## File views — shared
 

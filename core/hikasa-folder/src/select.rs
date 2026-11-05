@@ -725,7 +725,7 @@ fn shown_bytes(
 }
 
 /// The items of a selection in tree order: `(row, side)`, left first on one row.
-fn items_in_order(read: &TreeRead<'_>, sel: &Selection) -> Vec<(NodeId, Side)> {
+pub fn items_in_order(read: &TreeRead<'_>, sel: &Selection) -> Vec<(NodeId, Side)> {
     let mut found = Vec::new();
     let mut left = sel.len();
     for (id, _) in read.preorder() {
@@ -1192,6 +1192,16 @@ pub enum ExcludeWhat {
     Items,
     /// Every item of the selected files' extensions.
     Type,
+}
+
+impl ExcludeWhat {
+    /// The word of `--what` (`items`, `type`; M2 W9b: the Exclude dialog remembers it).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ExcludeWhat::Items => "items",
+            ExcludeWhat::Type => "type",
+        }
+    }
 }
 
 /// One character as a set of its own.

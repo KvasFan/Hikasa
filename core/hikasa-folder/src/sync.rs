@@ -713,6 +713,10 @@ pub struct SyncPlan {
     /// filters are applied while the plan deletes files below its counterpart: a nested mount that failed looks like this.
     /// Outermost first, in tree order; a dry run, the question and the JSON show them.
     pub emptied: Vec<(NodeId, hikasa_core::Side)>,
+    /// The overrides the plan did not take (additive, M2 W9b): one a row cannot take, or one that names no row, by
+    /// the path written in `SyncOptions::overrides`; each also has its `switch_ignored` warning. The Folder Sync view
+    /// removes them from its options (FS-004).
+    pub ignored_overrides: Vec<String>,
 }
 
 impl SyncPlan {
