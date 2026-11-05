@@ -56,7 +56,8 @@ Select one row or more, then, from the Actions menu:
 - **Compare Contents** ([dialog](topic:dialog-compare-contents)), **Quick Compare** ([dialog](topic:dialog-quick-compare)),
   **Compare To…** (F7: two selected items, one and the item marked with Space, or one and an item you browse to),
   **Open With** ▸ (a Text Compare view, a Folder Compare view of two folders, an application of the Open With page of
-  [Options](topic:dialog-options), the associated application).
+  [Options](topic:dialog-options), the associated application). More than ten items ask first; the first item that cannot
+  be opened stops the rest.
 - **Synchronize** ▸ Update Right, Update Left, Update Both, Mirror to Right, Mirror to Left: the
   [sync preview](topic:dialog-sync-preview). Session ▸ **Sync Base Folders** opens a [Folder Sync view](topic:view-folder-sync).
 

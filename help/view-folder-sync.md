@@ -30,7 +30,9 @@ be copied to the right (3), deleted on the left (1)"). The [Legend](topic:panel-
 
 Actions ▸ **Leave Alone**, **Copy Left to Right**, **Copy Right to Left**, **Delete Left**, **Delete Right** set the
 action of each selected row; an override of a folder covers what lies below it. The plan is made again. An override a
-row cannot take (a left orphan has nothing to copy to the left) is removed again with a notice. The overrides are part
+row cannot take (a left orphan has nothing to copy to the left) is removed again with a notice once the comparison is
+complete; one that names no row of the comparison (a file not there yet, a folder not scanned, a row a filter hides) is
+kept, with one notice and a warning above the tree. The overrides are part
 of the session (`[rules.sync.overrides]`): the session is changed until it is saved. Search ▸ **Next Conflict**
 (Ctrl+N) and **Previous Conflict** (Ctrl+P) walk the conflicts.
 

@@ -443,7 +443,11 @@ Orphans = every atom except the two orphan atoms; …).
   opening a view. **Compare To** (F7) compares two arbitrary items in a new view. *M2 W6b (D-186):* `folder op open-with`
   expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
   `select::open_pair` says what a command compares. *M2 W9a:* Open acts on the selection's pair or the Space-marked item
-  and the selected one (D-238).
+  and the selected one (D-238). *M2 W9b review:* Compare To, Quick Compare and Open With ▸ Text/Folder Compare take the
+  items' specs as they are (a name that is not valid Unicode included); Open With an application and the associated
+  application ask first above ten items, run as a job of the view (Stop ends it before the next item) and stop at the
+  first item that cannot be opened, with an error notice naming it; folders open with the system handler as files do;
+  `refresh_when_finished` refreshes the rows' folders by path once the application ended.
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
   copies the selected paths. *M2 W9a:* unchanged; the pane context menus and file-manager entries are W9c's.
@@ -481,7 +485,10 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   structure), *Keep base folder structure*, *Don't keep folder structure*. *M2 W7 (D-194):* with a kept structure,
   a folder pair whose names differ (case under case-insensitive alignment, NFC/NFD) is one folder at the target, whichever
   sides are written: the one the target holds by the left's name, else by the right's, else a new one named as the first
-  side written spells it (left before right); what lies below the pair, on either side, goes into it.
+  side written spells it (left before right); what lies below the pair, on either side, goes into it. *M2 W9b review:*
+  a relative target typed in the window is read in the source side's base folder (the focused side's, else the side with
+  the items), never the program's current folder; the dialog shows the folder it resolves to before Start, and the
+  recent folders keep it in full.
 - **FC-073** (P0): **Delete** (Del): sides selector (Left/Right/Both; option
   "Require explicit side selection"), *Use recycle bin if possible* (local drives
   only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is
@@ -593,9 +600,11 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   bases (`[rules.sync.overrides]`, `--override <PATH>=<ACTION>`); a folder covers its subtree and the longest path wins, as
   for Ignored marks. An override a row cannot take is dropped with a `switch_ignored` warning, and so is one that names no
   row; the base itself (an empty path, `.`, `..`) is refused. *M2 W9b (D-247):* the override commands write
-  `options.overrides[<row path>]` for each selected row and re-plan; an override the plan did not take
-  (`SyncPlan::ignored_overrides`) is removed again with its warning as a notice; Next/Previous Conflict (Ctrl+N/P) walk the
-  shown conflicts.
+  `options.overrides[<row path>]` for each selected row and re-plan; an override a row cannot take and no row took
+  (`SyncPlan::dropped_overrides`) is removed again with its warning as a notice, once the comparison is complete (no
+  unscanned folder, no unresolved row, no side a filter hides); one that names no row (`unused_overrides`: a file not
+  there yet, a folder not scanned, a filter) is kept, with one notice and a warning in the header; Next/Previous
+  Conflict (Ctrl+N/P) walk the shown conflicts.
 - **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with *M2 W9b (D-247, D-248): Run Sync
   asks the plan's questions in the `sync_confirmations` mode (the operation question names the counts), runs
   `folder_sync_execute`, logs `sync_log_entries`, refreshes and plans again; Info adds the plan's counts; a waited view

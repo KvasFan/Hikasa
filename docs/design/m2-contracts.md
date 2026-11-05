@@ -8047,7 +8047,8 @@ no second copy of a 100,000-item plan is kept (G15 bound, §1.9.21).
 | `OpenWithList` ▸ | submenu: *Text Compare* (and *Folder Compare* for two folders), then each `openwith.toml` application, then `AssocApp` | a view: `open_view_request` with the kind forced; an application: `open_with_commands` + `open_with_run` (`wait_for_previous`; `refresh_when_finished` refreshes the rows' parents when the job ends); `AssocApp`: `open_associated` per selected item | — |
 
 `OpenWithList`'s items are `CommandArg::OpenWith(OpenTarget)`; view types of later waves are not listed until their
-views exist. Launch errors are warning notices with the core message.
+views exist. Launch errors are warning notices with the core message (after the W9b review an error notice that names the
+item, the launches stopping there, note 24).
 
 #### 1.9.14 Synchronize from Folder Compare (FC-078; D-246)
 
@@ -8666,8 +8667,9 @@ Mutations (each failed the tests named, then was reverted):
     not make the view busy (its commands stay available) but the window polls on while one is due. `RowView` gains the
     row's action and a folder's summary, read per rendered row from `SyncPlan::rows` by node (an index map) and
     `SyncPlan::folder`; a folder left alone whose rows below act shows its summary and a small mark. An override the plan
-    did not take is named by the new `SyncPlan::ignored_overrides` (additive core field: the paths of dropped and unused
-    overrides, each with its `switch_ignored` warning) and removed, its warning the notice. Run moves the plan into the
+    cannot take and no row took is named by `SyncPlan::dropped_overrides` and removed, its warning the notice; one that
+    names no row (`SyncPlan::unused_overrides`) is kept (both additive core fields, each path with its `switch_ignored`
+    warning; corrected after the review, note 21: the first version removed both, beyond §1.9.15). Run moves the plan into the
     confirmation; a cancel or an error plans again; *Sync within archives* re-runs the comparison.
 16. The waited outcome is complete when the comparison is not running and `view_verdict` is not `Incomplete`; a Run's
     code is `FolderSyncOutcome::exit_code`.
@@ -8682,6 +8684,71 @@ Mutations (each failed the tests named, then was reverted):
     reported as found, the threshold unchanged. The W9a rows measured again: select, completion, browse met; tree max
     met and p95 not (9.28 ms), as after W9a. A Folder Sync view shows every row unless its request names a display (its
     catalogue section has no display-filter commands, §1.9.15).
+
+*After the W9b review* (one fixer; the findings F1–F14 by the review's numbers, then the mutations that survived):
+
+20. A sync whose view ends goes on as an operation does (§1.6.25 W6d after review): `RunningOp` carries either job
+    (`RunningJob::{Op, Sync}`), `retire` keeps a running sync cancelled, it ends after its current item (no temporary
+    file left), its outcome reaches the log through `sync_log_entries` with one notice naming the tab and how it ended,
+    and Quit waits for it as for an operation. A waited Folder Sync view closed while its sync runs leaves `gui list` at
+    once, but its waiter is answered when the sync ends, with the sync's own exit code (`Shared::take` keeps the waiter
+    with the orphan; a sync still running at the end of the exit wait answers 100). After Session Settings' OK the view
+    lives on: the ended sync's code becomes its last Run.
+21. Overrides a plan does not use (§1.9.15, FS-004): core names them apart. `dropped_overrides`: a row could not take
+    it and no row took it (a folder's override that some row below takes is used); `unused_overrides`: it names no row
+    of this comparison. The view removes only dropped ones (with their `switch_ignored` warning as the notice, the
+    session changed) and only from a *whole* comparison that still stands: complete (not stopped), no folder not
+    scanned, no row unresolved and none left because a filter hides a side (the plan job reports it), the plan's
+    (model serial, generation) the view's. Unused ones stay in the options: one notice per path and view, and the
+    header's "n overrides name no row" with the paths as tooltip. A Folder Sync view scans every folder (`sync_folder_rules`),
+    so its incomplete cases are a stop, a failed listing and a filter; Synchronize ▸ removes nothing.
+22. The plan job of a Folder Sync view also makes the questions (`folder_confirmation`, which reads `options.toml`) and
+    tells whether the comparison is whole: Run hands the job's `Confirmation` over and nothing reads a file or walks
+    the items on the window's thread (the Synchronize preview's job makes its questions in the dialog's mode, a change of
+    mode plans again). Run needs a plan of the current options: an edit of the options drops the ready plan at once
+    (`plan_ready` also requires no plan due). Plans are keyed on (the view's model serial, the model's generation),
+    the serial counting the models the view prepared, never an address. While the comparison runs and once the model
+    changed under the ready plan, the rows show no action of it and Info none of its counts (`current_plan`).
+23. The Synchronize preview's Run after the comparison changed shows "… the comparison changed while the sync waited;
+    nothing was written. Plan again." and replaces Run by *Plan again*, which runs the Synchronize command again, as an
+    operation dialog does (§1.9.12); its poll notices the change too.
+24. Open With an application and the associated application (FC-062): more than ten items (`LAUNCH_ASK`) ask "Open n
+    items with <application>?" first; the launch is a job of the view (the job indicator lists it, its Stop cancels
+    it); the programs start one after the other, the cancel checked before each, and the first that cannot start stops
+    the rest with an *error* notice naming it ("…; the n items after it were not opened"). In core, `AppLauncher::start`
+    (additive, default: `run`) starts a program and returns what waits for its end; `open_with_run` without
+    `wait_for_previous` starts each in turn and waits for them on threads of their own. Folders open with the system
+    handler as files do (`open_associated`).
+25. Compare To, Quick Compare and Open With ▸ *Text Compare*/*Folder Compare* pass the items' `Spec`s: Quick Compare's
+    requests take `spec_os_string`, and a view of two items is built in-process (`infer_view_kind`, then
+    `open_view_request` with the specs' exact OS strings in place of their text), since the IPC-shaped `resolve_open`
+    refuses a path that is not valid UTF-8. The registry and the tab keep the specs' text (lossy, for display). A9.30's
+    test makes the names with a byte that is not UTF-8 (Unix) or an unpaired surrogate (Windows) and does not run on
+    macOS, where APFS cannot hold such a name. Compare To's browsed second item is parsed by the Service in the job.
+26. `refresh_when_finished` keeps the paths of the rows' folders (`selected_parent_paths`) and finds them in the model
+    as it is when the application ends (a folder gone is skipped).
+27. A relative Copy/Move to Folder target is read with the source side's base folder as the current folder (the focus
+    side, else the side that has the items, else the left; `~` the home folder); a base that is not a local folder asks
+    for an absolute one. The dialog shows "Into <folder>" (or the message) under the field; Start sends the resolved
+    spec, and `mru.folders` keeps it in full.
+28. Compare Contents' end is a `FolderEvent::Ended { elapsed }` the window beeps for (D-256); a Run whose job fails
+    sets the waited code to 100 (A9.17); a view whose bases cannot be loaded is `load_failed` before any sync outcome
+    (D-23).
+29. Exclude adds each mask once through `app::ops::add_masks` (unit-tested: the dialog cannot select a row a mask
+    already hides). The behaviours the other surviving mutations exposed were already right; each now has a test
+    (table below).
+30. G15 preview, core: a side entry keeps a fingerprint of its identity (`EntryView::ident`, from `FileId`: device and
+    inode where std gives them, MemoryVfs's; 0 when none; `SideRec` 72 bytes, a node 176, within M1's 256 bytes a node).
+    A copy that replaces a local file decides "the same file" from the model: different fingerprints are two files; no
+    identity on either side (Windows' local disks, where the identity check never applied) with bases that differ by
+    `spec_key` are two files; equal fingerprints, one unknown, a followed or name-only source, a move, or a member of an
+    archive ask the disk as before (`same_file`). Execution checks both stamps as before. The planner makes a row's specs
+    and its item's path from its parent row's, kept while one folder's rows come (`TreeRead::spec_below`, additive),
+    caches the capabilities of non-archive specs by scheme without a key string, moves the specs into the item and reads
+    the time rule once per item. On the G15 tree `folder_op_plan` went from 0.77–0.86 s to 0.30–0.32 s (load 6–29); the
+    plan is the same (compared on that tree without the row ids, which a parallel scan numbers as they come; the plan
+    goldens and properties unchanged). `tests/perf_plan.rs` (ignored) measures it; the preview bench reports the plan
+    job's own time (`plan_job_ms`). No parallel planning was needed.
 
 Mutations (each failed the tests named, then was reverted):
 
@@ -8701,6 +8768,42 @@ Mutations (each failed the tests named, then was reverted):
 | Synchronize ignores *Just selection* | `a9_15_each_synchronize_command_equals_the_cli` |
 | the view plans without its overrides | `p_the_view_plan_is_folder_sync_plan`, `a9_16_presets_overrides_and_conflicts`, `a9_16_run_sync_…` |
 | an override the plan did not take is kept | `a9_16_presets_overrides_and_conflicts` |
+| *After the review* (`fixes` is `tests_sync_view_fixes`, `ops` `tests_op_dialogs`) | |
+| F1: `retire` drops a running sync | `fixes::closing_the_tab_while_a_sync_runs_logs_its_outcome`, `…quit_waits_for_a_running_sync_and_logs_it`, `…settings_ok_while_a_sync_runs_logs_its_outcome`, `…a_waited_sync_view_closed_while_its_sync_runs_exits_with_the_sync_s_code` |
+| F1: the waited close not deferred | `fixes::a_waited_sync_view_closed_while_its_sync_runs_exits_with_the_sync_s_code` |
+| F1: the ended sync's code not given to a view that lives on | `fixes::settings_ok_while_a_sync_runs_logs_its_outcome` |
+| F2: dropped overrides removed from a comparison that is not whole | `fixes::a_dropped_override_waits_for_a_whole_comparison` |
+| F2: core counts a folder override some row took as dropped | `sync_plan` `a6_27_rule5_overrides_a_path_a_folder_and_one_that_cannot_apply` |
+| F2: unused overrides removed too | `fixes::an_override_of_an_absent_row_is_kept_with_a_warning` (the review's probe) |
+| F3: Compare Contents' end never beeps | `ops::compare_contents_beeps_after_a_long_run` |
+| F4: a failed Run leaves the code | `fixes::a9_17_a_failed_or_stopped_run_exits_100` |
+| F5: no question above ten items | `ops::assoc_app_opens_every_item_and_asks_above_ten` |
+| F5: no cancel check between launches | `ops::a_stopped_launch_starts_nothing_more` |
+| F5: launches go on after a failed start (core) | `folder_ops` `the_first_program_that_cannot_start_stops_the_rest` |
+| F7: `edit_sync` keeps the ready plan | `fixes::run_sync_waits_for_the_plan_of_the_new_options` |
+| F7: `plan_ready` without "no plan due" | equivalent: `edit_sync` drops the ready plan, so a plan is never due beside a ready one; `run_sync_waits_…` tests that layer |
+| F8: the sync outcome before the load failure | `fixes::a9_17_a_sync_view_that_cannot_load_is_load_failed` |
+| F9: a Text Compare view of a pair gets the specs' text | `ops::a9_30_names_that_are_not_unicode_reach_the_views_and_quick_compare` |
+| F11: Run after a change without the stale check | `fixes::the_synchronize_preview_offers_plan_again_after_a_change` |
+| F12: the old plan's actions while comparing or after a refresh | `fixes::the_old_plan_is_not_shown_on_a_changed_comparison` |
+| F13: a relative target read in the program's folder | `ops::a_relative_copy_to_target_is_the_source_base_s` |
+| R01: Start ignores a pending re-plan | `ops::start_waits_for_the_plan_of_the_changed_options` |
+| R02: `op_dialog_closed` without `mark.holds` | `ops::a_changed_comparison_is_refused_by_the_dialog_and_by_the_view` |
+| R03: `op_dialog_closed` without the selection check | `ops::a_selection_moved_under_a_verb_dialog_writes_nothing` |
+| R04: …to Side… offers a move from a read-only side | `ops::the_side_prompt_offers_only_writable_moves` |
+| R06: an unchanged inline name commits | `ops::an_unchanged_inline_name_does_nothing` |
+| R10: Synchronize without the defaults' bin | `ops::synchronize_takes_the_folder_sync_defaults_recycle_bin` |
+| R11: Exclude adds a mask twice | `ops::exclude_adds_each_mask_once` |
+| R12: both sides preset as Left | `ops::a_verb_dialog_presets_the_sides_of_the_selection` |
+| R14: the associated application opens the first item only | `ops::assoc_app_opens_every_item_and_asks_above_ten`, `ops::the_first_launch_failure_stops_the_rest` |
+| R15: `refresh_when_finished` never refreshes | `ops::refresh_when_finished_refreshes_the_folders_by_path` |
+| R16: the DST fold taken later (`.later()`) | `folder_preview` `touch_times_in_the_local_zone_and_rfc_3339` (a POSIX zone, no database) |
+| R17: no row marked unresolved | `folder_preview` `an_unresolved_row_is_marked_in_the_sync_preview` |
+| R18: a count's bytes from two bytes on | `folder_preview` `a_count_line_shows_its_bytes_from_one_byte` |
+| R20: a Folder Sync request without `all` | `folder_sync` `a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides` |
+| R22: OpDialog's Start without the generation check | `ops::a_changed_comparison_is_refused_by_the_dialog_and_by_the_view` (Start before any poll) |
+| R24: a Run always records success | `fixes::a9_17_a_failed_or_stopped_run_exits_100` |
+| R25: Touch from the other side reversed | `ops::a9_13_touch_sets_the_local_time_or_copies_the_other_side` (the times pinned) |
 
 
 **W9c.** *(empty until W9c)*

@@ -64,10 +64,27 @@
   `dialog-exclude`, `dialog-compare-contents`, `dialog-quick-compare`, `dialog-sync-preview`.
 - Core: `Service::folder_op_preview` and `folder_sync_preview` (`OpPreview`, `SyncPreview`: the dry run's lines over a
   borrowed plan, at most 16 bytes an item), `api::vocab::parse_touch_time`, `ViewOutcome::Sync`,
-  `ViewKind::is_served`, `SyncPlan::ignored_overrides`; `Session::swap_sides` mirrors a folder-sync session's options.
+  `ViewKind::is_served`, `SyncPlan::dropped_overrides` and `unused_overrides`; `Session::swap_sides` mirrors a
+  folder-sync session's options; `AppLauncher::start`; `TreeRead::spec_below`; `EntryView::ident`.
 
 ### Changed (W9b)
 - `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.
+
+### Fixed (W9b review)
+- A sync whose view ends (the tab closed, Session Settings applied, Quit) ends its current item, is logged with one
+  notice, and Quit waits for it; a waited Folder Sync view closed meanwhile exits with that sync's code. A Run that fails
+  exits 100; a Folder Sync view that cannot load its folders is `load_failed`.
+- An override that names no row of the comparison (a file not there yet, a folder not scanned, a filter) is kept, with a
+  warning; only one that no row can take is removed, and only from a complete comparison.
+- Run Sync never runs the plan of options changed a moment before; the rows and Info show no plan of an older
+  comparison; the Synchronize preview offers *Plan again* when the comparison changed under it.
+- Open With and the associated application ask before they open more than ten items, can be stopped, and stop at the
+  first item that cannot be opened (an error notice names it). Compare To, Quick Compare and Open With ▸ Text/Folder
+  Compare keep names that are not valid Unicode. `refresh_when_finished` refreshes the right folders after a re-run.
+- A relative Copy/Move to Folder target is the source side's base folder's, shown in full before Start.
+- Compare Contents beeps after a long run (`beep_after_long_operations`).
+- Faster plans of large operations: the plan compares the file identities the scan recorded instead of reading each
+  file's metadata again (the G15 preview's plan of 100,000 replacing copies: 0.8 s → 0.3 s).
 
 ### Changed (W9a)
 - The Modified column shows local times (the zone of the clock), no longer UTC.

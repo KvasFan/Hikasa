@@ -4,7 +4,8 @@ Actions ▸ **Copy to Folder…** and **Move to Folder…** in the [Folder Compa
 move) the selected items to a folder outside the comparison.
 
 - **Target folder**: typed, picked from the recent folders, or chosen with **Browse…** ([Browse](topic:dialog-browse)).
-  A folder that does not exist is created; an archive name is created as an archive.
+  A folder that does not exist is created; an archive name is created as an archive. A relative path is read in the base
+  folder of the side the items come from (the focused side); the dialog shows the folder it resolves to before Start.
 - **Keep relative folder structure**: the folders the selected items share are left out (two files in `docs/a` go to
   `<target>/`). **Keep base folder structure**: the whole path below the base (`<target>/docs/a/…`). **Don't keep folder
   structure**: every file directly in the target.
