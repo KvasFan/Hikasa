@@ -391,3 +391,38 @@ fn the_mru_waits_for_the_base_to_load() {
     set_gate(&g, true);
     world.settle(&mut app);
 }
+
+/// Review finding 10: a newer Accept supersedes an older check still running: the older answer is dropped (no
+/// re-root, no recent entry, no "Create Folder?").
+#[test]
+fn a_newer_accept_drops_the_older_check() {
+    use crate::tests_folder_ops::{gate, poll_until, set_gate};
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    put(&world, "other", "b.txt", "b\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let g = gate(false);
+    app.0.rebase_gate = Some(std::sync::Arc::clone(&g));
+    // A: a folder that does not exist (its answer would ask to create it); B: one that does.
+    let missing = world.path("work/missing").to_string_lossy().into_owned();
+    let other = world.path("work/other").to_string_lossy().into_owned();
+    folder_model(&mut app, view).path_edit(0).text = missing;
+    folder_model(&mut app, view).accept_paths();
+    app.0.handle(crate::app::UiMsg::Tick);
+    folder_model(&mut app, view).path_edit(0).text = other.clone();
+    folder_model(&mut app, view).accept_paths();
+    app.0.handle(crate::app::UiMsg::Tick);
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| {
+        let m = crate::tests::folder_model(a, view);
+        m.path_edit(0).committed == other && m.prepared().is_some()
+    });
+    world.settle(&mut app);
+    assert!(
+        top_title(&app).is_none(),
+        "no question for the older Accept"
+    );
+    assert_eq!(app.0.state().mru(MruList::Left), [other]);
+    assert!(!world.path("work/missing").exists());
+}

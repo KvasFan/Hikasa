@@ -166,7 +166,8 @@ enum CoreJob {
     /// A store job (`flow`): session and workspace files, one at a time.
     Store(Job<StoreDone>, Option<ViewId>, StoreKind),
     /// The check of a folder view's new base folders (D-239): its view and the specs.
-    Rebase(ViewId, [String; 2], Job<bases::BaseCheck>),
+    /// The check of new bases for a view, with the view's rebase generation it answers (a newer one drops it).
+    Rebase(ViewId, u64, [String; 2], Job<bases::BaseCheck>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -200,7 +201,7 @@ impl CoreJob {
             CoreJob::Log(_, j) => j.settling(),
             CoreJob::Drop(_, j) => j.settling(),
             CoreJob::Store(j, ..) => j.settling(),
-            CoreJob::Rebase(_, _, j) => j.settling(),
+            CoreJob::Rebase(_, _, _, j) => j.settling(),
         }
     }
 }
@@ -282,6 +283,11 @@ pub struct AppCore {
     /// The new bases of a re-rooted folder view, pushed to `mru.left` / `.right` once the view runs on them (D-239:
     /// a base that loads; M2 W9a after review): armed when the view took its new model.
     pub(crate) mru_after_load: std::collections::HashMap<ViewId, (bool, Vec<(MruList, String)>)>,
+    /// The generation of each view's newest base check (an Accept): an older check's answer is dropped.
+    rebase_generation: std::collections::HashMap<ViewId, u64>,
+    /// Tests hold the base checks here (a check in flight).
+    #[cfg(test)]
+    pub(crate) rebase_gate: Option<crate::folder_view::Gate>,
     /// The theme of the Options dialog's working copies while it differs from the files (D-130).
     preview: Option<Preview>,
     /// FC-029(c): each child Text Compare view whose result its folder view waits for, with that view.
@@ -407,6 +413,9 @@ impl AppCore {
             startup: None,
             views_built: 0,
             mru_after_load: std::collections::HashMap::new(),
+            rebase_generation: std::collections::HashMap::new(),
+            #[cfg(test)]
+            rebase_gate: None,
             preview: None,
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
@@ -3518,10 +3527,22 @@ impl AppCore {
                         effects.extend(self.store_finished(result, view, kind));
                     }
                 },
-                CoreJob::Rebase(view, specs, j) => match j.try_result() {
-                    None => pending.push(CoreJob::Rebase(view, specs, j)),
-                    Some(result) => self.rebase_checked(view, specs, result),
-                },
+                CoreJob::Rebase(view, generation, specs, j) => {
+                    // A newer Accept of the view supersedes this check: cancelled, its answer dropped (no re-root, no
+                    // recent entry, no question).
+                    let current = self.rebase_generation.get(&view) == Some(&generation);
+                    if !current {
+                        j.cancel();
+                    }
+                    match j.try_result() {
+                        None if current => {
+                            pending.push(CoreJob::Rebase(view, generation, specs, j))
+                        }
+                        None => {}
+                        Some(_) if !current => {}
+                        Some(result) => self.rebase_checked(view, specs, result),
+                    }
+                }
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {

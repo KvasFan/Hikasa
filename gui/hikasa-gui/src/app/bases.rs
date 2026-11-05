@@ -111,14 +111,33 @@ impl AppCore {
             return;
         }
         let job_specs = specs.clone();
+        // A newer Accept supersedes a check still running (§1.9.2 rule 3).
+        let generation = {
+            let g = self.rebase_generation.entry(view).or_insert(0);
+            *g += 1;
+            *g
+        };
+        #[cfg(test)]
+        let gate = self.rebase_gate.clone();
         let job = Job::spawn(
             &self.service,
             JobKind::VfsRead,
             "check the base folders".into(),
             &self.wake(),
-            move |svc, job| check(svc, &job_specs, &changed, create, job),
+            move |svc, job| {
+                #[cfg(test)]
+                if let Some(gate) = &gate {
+                    let (open, turn) = &**gate;
+                    let mut open = open.lock().expect("gate");
+                    while !*open {
+                        open = turn.wait(open).expect("gate");
+                    }
+                }
+                check(svc, &job_specs, &changed, create, job)
+            },
         );
-        self.jobs.push(CoreJob::Rebase(view, specs, job));
+        self.jobs
+            .push(CoreJob::Rebase(view, generation, specs, job));
     }
 
     /// The check of [`AppCore::rebase`] ended.
