@@ -77,6 +77,8 @@ pub enum Followup {
     SwitchPackage(PathBuf),
     /// The browse dialog's "Replace …?": Yes (SaveFile, D-240).
     BrowseReplace,
+    /// Open With or the associated application after its question (W9b review F5: more than ten items).
+    Launch(Box<crate::app::ops::Launch>),
     /// Compare Contents after its question (M2 W9b, `confirm_content_compare`).
     Contents {
         /// The view.

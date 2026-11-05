@@ -51,7 +51,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod bases;
 mod flow;
-mod ops;
+pub(crate) mod ops;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
@@ -174,7 +174,7 @@ enum CoreJob {
     Rebase(ViewId, u64, [String; 2], Job<bases::BaseCheck>),
     /// An application started for a view's items (M2 W9b: Open With, the associated application): its caption and the
     /// rows whose folders are refreshed once it ended (`refresh_when_finished`).
-    Launch(ViewId, String, Option<Vec<hikasa_folder::NodeId>>, Job<()>),
+    Launch(ViewId, String, Option<Vec<String>>, Job<()>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -3251,6 +3251,10 @@ impl AppCore {
             Followup::CloseWindow => self.close_window_confirmed(window),
             Followup::Exit => self.exit_confirmed(),
             Followup::Session(action) => self.session_action(window, action),
+            Followup::Launch(launch) => {
+                self.launch(*launch);
+                Vec::new()
+            }
             Followup::Contents {
                 view,
                 method,
@@ -4129,18 +4133,41 @@ impl AppCore {
         let Some(w) = self.window(window) else {
             return Vec::new();
         };
-        w.tabs
+        let mut out: Vec<JobStatus> = w
+            .tabs
             .iter()
             .flat_map(|t| match t.model() {
                 Some(ViewModel::Folder(m)) => m.jobs(t.id),
                 Some(ViewModel::Text(m)) => m.jobs(t.id),
                 _ => Vec::new(),
             })
-            .collect()
+            .collect();
+        // Open With and the associated application start their items in a job of the view: Stop ends it (review F5).
+        for job in &self.jobs {
+            if let CoreJob::Launch(view, _, _, j) = job
+                && w.index_of(*view).is_some()
+            {
+                let (phase, fraction) = j.progress();
+                out.push(JobStatus {
+                    view: *view,
+                    title: j.title().to_owned(),
+                    phase,
+                    fraction,
+                });
+            }
+        }
+        out
     }
 
     /// Cancels the jobs of one view (a row of the job indicator).
     pub fn cancel_jobs(&mut self, view: ViewId) {
+        for job in &self.jobs {
+            if let CoreJob::Launch(v, _, _, j) = job
+                && *v == view
+            {
+                j.cancel();
+            }
+        }
         if let Some(tab) = self.tab_mut(view) {
             match tab.model_mut() {
                 Some(ViewModel::Folder(m)) => m.cancel(),

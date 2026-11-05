@@ -1014,6 +1014,393 @@ fn a9_13_open_with_views_applications_and_the_associated_one() {
     );
 }
 
+// ---- After the W9b review: launches (F5, F10, R14, R15) -------------------------------------------------------------
+
+/// A launcher that records its calls (a [`RecordingLauncher`]) and holds each at a gate first.
+struct GatedLauncher {
+    inner: RecordingLauncher,
+    gate: crate::folder_view::Gate,
+    /// Calls that reached the gate.
+    arrived: std::sync::atomic::AtomicUsize,
+}
+
+impl GatedLauncher {
+    fn new(gate: &crate::folder_view::Gate) -> GatedLauncher {
+        GatedLauncher {
+            inner: RecordingLauncher::default(),
+            gate: Arc::clone(gate),
+            arrived: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn wait(&self) {
+        self.arrived
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (open, turn) = &*self.gate;
+        let mut open = open.lock().expect("gate");
+        while !*open {
+            open = turn.wait(open).expect("gate");
+        }
+    }
+}
+
+impl hikasa_session::launcher::AppLauncher for GatedLauncher {
+    fn run(
+        &self,
+        command: &hikasa_session::launcher::OpenCommand,
+    ) -> Result<i32, hikasa_session::ApiError> {
+        self.wait();
+        self.inner.run(command)
+    }
+
+    fn open_associated(&self, path: &std::path::Path) -> Result<(), hikasa_session::ApiError> {
+        self.wait();
+        self.inner.open_associated(path)
+    }
+}
+
+const VIEWER: &str = "schema_version = 1\n[[app]]\ndescription = \"Viewer\"\ncommand = \"viewer %F\"\nrefresh_when_finished = true\n";
+
+fn world_with(launcher: Arc<dyn hikasa_session::launcher::AppLauncher>) -> World {
+    let world = World::with_init(move |init| init.launcher = launcher);
+    std::fs::create_dir_all(world.path("config")).expect("mkdir");
+    std::fs::write(world.path("config/openwith.toml"), VIEWER).expect("write");
+    world
+}
+
+fn associated(calls: &[Recorded]) -> Vec<String> {
+    calls
+        .iter()
+        .filter_map(|c| match c {
+            Recorded::Associated(p) => Some(p.to_string_lossy().replace('\\', "/")),
+            Recorded::Run(_) => None,
+        })
+        .collect()
+}
+
+/// `refresh_when_finished` refreshes the rows' folders by path when the application ends, in the model as it is then:
+/// a re-run while the application ran renumbered the rows (review F10, R15).
+#[test]
+fn refresh_when_finished_refreshes_the_folders_by_path() {
+    let g = gate(false);
+    let launcher = Arc::new(GatedLauncher::new(&g));
+    let world = world_with(launcher.clone());
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(&mut app, view, &["d/x.txt"]);
+    let d_before = crate::tests_folder_ops::node_of(&mut app, view, "d").expect("d");
+    let w = app.win();
+    app.0.execute(
+        w,
+        Invocation::with(
+            CommandId::OpenWithList,
+            CommandArg::OpenWith(OpenWithItem::App(0)),
+        ),
+    );
+    // While the application runs, the comparison runs again with more rows before `d`: the ids move.
+    for i in 0..5 {
+        put(&world, "l", &format!("c/{i}.txt"), "c\n", 1_000);
+    }
+    app.execute(CommandId::FullRefresh);
+    poll_until(&world, &mut app, |a| {
+        let m = folder_model(a, view);
+        !m.scanning() && m.prepared().is_some_and(|p| p.model().read().len() >= 12)
+    });
+    let d_after = crate::tests_folder_ops::node_of(&mut app, view, "d").expect("d");
+    assert_ne!(d_before, d_after, "the re-run moved the ids");
+    put(&world, "l", "d/new.txt", "new\n", 1_000);
+    assert!(crate::tests_folder_ops::node_of(&mut app, view, "d/new.txt").is_none());
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| {
+        crate::tests_folder_ops::node_of(a, view, "d/new.txt").is_some()
+    });
+    assert_eq!(launcher.inner.calls().len(), 2, "d/x.txt on both sides");
+}
+
+/// The associated application opens every selected item, folders as files, in tree order (R14); more than ten items
+/// ask first with the count, No starts nothing (review F5).
+#[test]
+fn assoc_app_opens_every_item_and_asks_above_ten() {
+    let launcher = Arc::new(RecordingLauncher::default());
+    let world = world_with(launcher.clone());
+    fixture(&world);
+    for i in 0..9 {
+        put(&world, "l", &format!("many/f{i}.txt"), "m\n", 1_000);
+    }
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(&mut app, view, &["a.txt", "d", "only-left.txt"]);
+    app.execute(CommandId::AssocApp);
+    world.settle(&mut app);
+    let got = associated(&launcher.calls());
+    assert_eq!(
+        got.len(),
+        5,
+        "a.txt and d on both sides, only-left.txt: {got:?}"
+    );
+    for end in ["l/a.txt", "r/a.txt", "l/d", "r/d", "l/only-left.txt"] {
+        assert!(got.iter().any(|p| p.ends_with(end)), "{end}: {got:?}");
+    }
+    // Eleven items: the question names the count; No starts nothing, Yes starts all.
+    let mut paths: Vec<String> = (0..9).map(|i| format!("many/f{i}.txt")).collect();
+    paths.extend(["a.txt".to_owned()]);
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    select_all_of(&mut app, view, &refs);
+    for (role, more) in [(ButtonRole::Cancel, 0), (ButtonRole::Yes, 11)] {
+        let before = associated(&launcher.calls()).len();
+        app.execute(CommandId::AssocApp);
+        world.settle(&mut app);
+        let prompt = find::<Prompt>(&mut app).expect("the question");
+        assert!(
+            prompt.message.contains("Open 11 items"),
+            "{}",
+            prompt.message
+        );
+        press(&world, &mut app, role);
+        world.settle(&mut app);
+        assert_eq!(
+            associated(&launcher.calls()).len(),
+            before + more,
+            "{role:?}"
+        );
+    }
+    // Open With an application asks the same way.
+    let before = launcher.calls().len();
+    let w = app.win();
+    app.0.execute(
+        w,
+        Invocation::with(
+            CommandId::OpenWithList,
+            CommandArg::OpenWith(OpenWithItem::App(0)),
+        ),
+    );
+    world.settle(&mut app);
+    let prompt = find::<Prompt>(&mut app).expect("the question");
+    assert!(
+        prompt.message.contains("Open 11 items with Viewer"),
+        "{}",
+        prompt.message
+    );
+    press(&world, &mut app, ButtonRole::Cancel);
+    world.settle(&mut app);
+    assert_eq!(launcher.calls().len(), before);
+}
+
+/// The first item that cannot start stops the rest, with an error notice that names it (review F5).
+#[test]
+fn the_first_launch_failure_stops_the_rest() {
+    let launcher = Arc::new(RecordingLauncher::with_answers(vec![
+        Some(0),
+        Some(0),
+        None,
+    ]));
+    let world = world_with(launcher.clone());
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(
+        &mut app,
+        view,
+        &["a.txt", "only-left.txt", "only-right.txt"],
+    );
+    app.execute(CommandId::AssocApp);
+    world.settle(&mut app);
+    let got = associated(&launcher.calls());
+    assert_eq!(
+        got.len(),
+        3,
+        "a.txt's two sides, then only-left.txt fails: {got:?}"
+    );
+    let errors: Vec<String> = notices(&app)
+        .into_iter()
+        .filter(|(k, _, _)| *k == crate::notify::NoticeKind::Error)
+        .map(|(_, t, _)| t)
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("only-left.txt")
+            && errors[0].contains("the item after it was not opened"),
+        "{}",
+        errors[0]
+    );
+}
+
+/// Stop (the job indicator's row) between two launches starts nothing more (review F5).
+#[test]
+fn a_stopped_launch_starts_nothing_more() {
+    let g = gate(false);
+    let launcher = Arc::new(GatedLauncher::new(&g));
+    let world = world_with(launcher.clone());
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    select_all_of(
+        &mut app,
+        view,
+        &["only-left.txt", "only-right.txt", "a.txt"],
+    );
+    app.execute(CommandId::AssocApp);
+    let w = app.win();
+    assert!(
+        app.jobs(w).iter().any(|j| j.view == view),
+        "the launch is a job of the view"
+    );
+    poll_until(&world, &mut app, |_| {
+        launcher.arrived.load(std::sync::atomic::Ordering::SeqCst) == 1
+    });
+    app.0.cancel_jobs(view);
+    set_gate(&g, true);
+    poll_until(&world, &mut app, |a| a.jobs(w).is_empty());
+    assert_eq!(
+        associated(&launcher.inner.calls()).len(),
+        1,
+        "the one held at the gate"
+    );
+    assert!(
+        !notices(&app)
+            .iter()
+            .any(|(k, _, _)| *k == crate::notify::NoticeKind::Error),
+        "a stop is no error"
+    );
+}
+
+// ---- A9.30 after the W9b review (F9): names that are not valid Unicode ----------------------------------------------
+
+/// `stem`, a code unit that is not valid Unicode, then `tail`: a byte that is not UTF-8 on Unix, an unpaired surrogate
+/// on Windows.
+#[cfg(not(target_os = "macos"))]
+fn not_unicode(stem: &str, tail: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = stem.as_bytes().to_vec();
+        bytes.push(0xff);
+        bytes.extend(tail.as_bytes());
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = stem.encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(tail.encode_utf16());
+        std::ffi::OsString::from_wide(&wide)
+    }
+}
+
+/// Selects the row whose path starts with `prefix` on the sides it has.
+#[cfg(not(target_os = "macos"))]
+fn select_prefixed(app: &mut AppCore, view: ViewId, prefix: &str) -> hikasa_folder::NodeId {
+    let m = folder_model(app, view);
+    let model = Arc::clone(m.prepared().expect("prepared").model());
+    let node = {
+        let read = model.read();
+        read.preorder()
+            .map(|(id, _)| id)
+            .find(|&id| {
+                id != hikasa_folder::NodeId::ROOT && read.path(id).as_str().starts_with(prefix)
+            })
+            .unwrap_or_else(|| panic!("no row {prefix}"))
+    };
+    m.with_selection(|sel, _, present| {
+        sel.items = Default::default();
+        sel.items.insert(node, present(node));
+        sel.current = Some(node);
+    });
+    node
+}
+
+/// The view a command opened last: the newest tab.
+#[cfg(not(target_os = "macos"))]
+fn newest(app: &mut TestApp) -> &mut crate::app::ViewModel {
+    app.0
+        .active_tab_mut(app.0.focused())
+        .and_then(|t| t.model_mut())
+        .expect("a view")
+}
+
+/// A9.30 (review F9): Quick Compare, Compare To and Open With ▸ Text Compare / Folder Compare take a name that is not
+/// valid Unicode as it is on disk (OS strings, never `canonical()`'s replacement characters). Not on macOS: APFS keeps
+/// names valid UTF-8 only, such a name cannot exist there.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a9_30_names_that_are_not_unicode_reach_the_views_and_quick_compare() {
+    use crate::app::ViewModel;
+    let world = World::new();
+    let file = not_unicode("caf", ".txt");
+    let folder = not_unicode("dir", "");
+    for (side, text) in [("l", "left\n"), ("r", "right!\n")] {
+        let root = world.path(&format!("work/{side}"));
+        std::fs::create_dir_all(root.join(&folder)).expect("mkdir");
+        std::fs::write(root.join(&file), text).expect("write");
+        std::fs::write(root.join(&folder).join("in.txt"), text).expect("write");
+    }
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let (left, right) = (world.path("work/l"), world.path("work/r"));
+    // Quick Compare: the pair is read, not "not found".
+    select_prefixed(&mut app, view, "caf");
+    app.execute(CommandId::QuickCompare);
+    world.settle(&mut app);
+    app.0.handle(crate::app::UiMsg::Tick);
+    world.settle(&mut app);
+    let d = find::<QuickCompareDialog>(&mut app).expect("Quick Compare");
+    assert_eq!(d.rows().len(), 1);
+    assert!(d.rows()[0].result.is_ok(), "{:?}", d.rows()[0].result);
+    press(&world, &mut app, ButtonRole::Cancel);
+    // Compare To and Open With ▸ Text Compare: a Text Compare view of the exact paths, loaded.
+    let w = app.win();
+    for invocation in [
+        Invocation::new(CommandId::CompareTo),
+        Invocation::with(
+            CommandId::OpenWithList,
+            CommandArg::OpenWith(OpenWithItem::TextCompare),
+        ),
+    ] {
+        app.activate(app.tabs().iter().position(|t| t.id == view).expect("view"));
+        select_prefixed(&mut app, view, "caf");
+        let tabs = app.tabs().len();
+        app.0.execute(w, invocation.clone());
+        world.settle(&mut app);
+        assert_eq!(
+            app.tabs().len(),
+            tabs + 1,
+            "{invocation:?}: {:?}",
+            logged(&app, LogKind::Error)
+        );
+        let Some(ViewModel::Text(m)) = Some(newest(&mut app)) else {
+            panic!("a Text Compare view");
+        };
+        assert_eq!(m.request().left, left.join(&file).into_os_string());
+        assert_eq!(m.request().right, right.join(&file).into_os_string());
+        assert!(m.response().is_some(), "{invocation:?}: loaded");
+    }
+    // Open With ▸ Folder Compare: the two folders as they are.
+    app.activate(app.tabs().iter().position(|t| t.id == view).expect("view"));
+    select_prefixed(&mut app, view, "dir");
+    let tabs = app.tabs().len();
+    app.0.execute(
+        w,
+        Invocation::with(
+            CommandId::OpenWithList,
+            CommandArg::OpenWith(OpenWithItem::FolderCompare),
+        ),
+    );
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs + 1);
+    let Some(ViewModel::Folder(m)) = Some(newest(&mut app)) else {
+        panic!("a Folder Compare view");
+    };
+    let prepared = m.prepared().expect("loaded");
+    let specs = prepared.specs();
+    assert_eq!(
+        hikasa_session::api::spec_os_string(specs.left),
+        left.join(&folder).into_os_string()
+    );
+    assert_eq!(prepared.model().read().len(), 2, "the base and in.txt");
+}
+
 // ---- A9.14: one operation per view; errors; beep ------------------------------------------------------------------
 
 /// A second command is off while an operation runs; Stop cancels the execute job and its outcome reaches the log; a

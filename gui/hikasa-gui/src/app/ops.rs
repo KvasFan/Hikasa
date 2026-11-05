@@ -7,6 +7,7 @@ use hikasa_core::{JobKind, Side};
 use hikasa_folder::ops::ConfirmMode;
 use hikasa_folder::select::ExcludeWhat;
 use hikasa_folder::sync::SyncOptions;
+use hikasa_session::ApiError;
 use hikasa_session::api::ViewRequest;
 use hikasa_session::api::{
     OpenTarget, OpenWithRequest, QuickMethod, parse_content_method, parse_exclude_what,
@@ -89,6 +90,63 @@ impl AppCore {
     }
 }
 
+/// The view of two specs (Compare To, Open With ▸ *Text Compare* / *Folder Compare*): the kind inferred or forced, the
+/// request of `open_view_request` with the specs' exact OS strings (review F9).
+fn open_pair(
+    svc: &hikasa_session::Service,
+    specs: &[hikasa_core::Spec; 2],
+    kind: Option<ViewKind>,
+) -> Result<crate::home::HomeOpen, ApiError> {
+    let kind = hikasa_session::api::infer_view_kind(svc, specs, kind)?;
+    let options = hikasa_session::ipc::OpenOptions::default();
+    let texts = vec![specs[0].canonical(), specs[1].canonical()];
+    let mut request = svc.open_view_request(kind, &texts, &options)?;
+    let [left, right] = specs.each_ref().map(hikasa_session::api::spec_os_string);
+    match &mut request {
+        ViewRequest::Text { request, .. } => {
+            request.left = left;
+            request.right = right;
+        }
+        ViewRequest::Folder { request, .. } | ViewRequest::Sync { request, .. } => {
+            request.left = left;
+            request.right = right;
+        }
+    }
+    Ok(crate::home::HomeOpen {
+        kind,
+        request,
+        options,
+        specs: texts,
+    })
+}
+
+/// More selected items than this ask before Open With or the associated application starts them (review F5).
+pub const LAUNCH_ASK: usize = 10;
+
+/// What a launch starts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaunchWhat {
+    /// An application of `openwith.toml` (its index and description).
+    App(usize, String),
+    /// Each item's associated application (FC-062).
+    Associated,
+}
+
+/// A launch of Open With or the associated application, kept by its question until Yes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Launch {
+    /// The view.
+    pub view: ViewId,
+    /// The command's caption.
+    pub caption: String,
+    /// The application.
+    pub what: LaunchWhat,
+    /// The items with their bases, in tree order.
+    pub items: Vec<(hikasa_core::Spec, hikasa_core::Spec)>,
+    /// The rows' folders to refresh when the application ends (`refresh_when_finished`), by path.
+    pub refresh: Option<Vec<String>>,
+}
+
 impl AppCore {
     /// `Ignored`, `Exclude`, `Compare`, `QuickCompare`, `CompareTo`, `OpenWithList`, `AssocApp` (§1.9.13).
     pub(super) fn content_verb(&mut self, window: WindowId, inv: &Invocation) {
@@ -110,6 +168,14 @@ impl AppCore {
         };
         let refresh_app: Vec<bool> = (0..self.settings.openwith.value().app.len())
             .map(refresh_app)
+            .collect();
+        let app_names: Vec<String> = self
+            .settings
+            .openwith
+            .value()
+            .app
+            .iter()
+            .map(|a| a.description.clone())
             .collect();
         let scope = self.scope(window);
         let caption = self.tables.caption(scope, inv.id);
@@ -167,78 +233,144 @@ impl AppCore {
             }
             CommandId::CompareTo => {
                 if let Some(pair) = m.compare_to_pair() {
-                    self.open_specs(window, pair.to_vec(), None);
+                    self.open_specs(window, pair, None);
                 } else if let Some((first, folder)) = m.compare_to_first() {
                     let mode = if folder {
                         BrowseMode::Folder
                     } else {
                         BrowseMode::File
                     };
-                    let start = crate::browse::folder_of(&first);
+                    let start = crate::browse::folder_of(&first.canonical());
                     self.open_browse(window, mode, start, BrowseTarget::CompareTo(view));
                 }
             }
             CommandId::OpenWithList => match inv.arg {
                 Some(CommandArg::OpenWith(OpenWithItem::TextCompare)) => {
                     if let Some(pair) = m.compare_to_pair() {
-                        self.open_specs(window, pair.to_vec(), Some(ViewKind::TextCompare));
+                        self.open_specs(window, pair, Some(ViewKind::TextCompare));
                     }
                 }
                 Some(CommandArg::OpenWith(OpenWithItem::FolderCompare)) => {
                     if let Some(pair) = m.compare_to_pair() {
-                        self.open_specs(window, pair.to_vec(), Some(ViewKind::FolderCompare));
+                        self.open_specs(window, pair, Some(ViewKind::FolderCompare));
                     }
                 }
                 Some(CommandArg::OpenWith(OpenWithItem::App(index))) => {
                     let items = m.selected_specs();
-                    let parents = m.selected_parents();
+                    // Paths, not ids: the model may be renumbered before the application ends (review F10).
                     let refresh = refresh_app
                         .get(index)
                         .copied()
                         .unwrap_or(false)
-                        .then_some(parents);
-                    let job = Job::spawn(
-                        &service,
-                        JobKind::VfsRead,
-                        caption.clone(),
-                        &wake,
-                        move |svc, job| {
-                            let target = OpenTarget::App(index);
-                            let request = OpenWithRequest {
-                                target: target.clone(),
-                                items,
-                                line: None,
-                            };
-                            let commands = svc.open_with_commands(&request, job)?;
-                            let waits = svc.open_with_waits(&target)?;
-                            svc.open_with_run(&commands, waits, job)
+                        .then(|| m.selected_parent_paths());
+                    let name = app_names.get(index).cloned().unwrap_or_default();
+                    self.launch_or_ask(
+                        window,
+                        Launch {
+                            view,
+                            caption,
+                            what: LaunchWhat::App(index, name),
+                            items,
+                            refresh,
                         },
                     );
-                    self.jobs.push(CoreJob::Launch(view, caption, refresh, job));
                 }
                 _ => {}
             },
             CommandId::AssocApp => {
                 let items = m.selected_specs();
-                if items.is_empty() {
-                    return;
-                }
-                let job = Job::spawn(
-                    &service,
-                    JobKind::VfsRead,
-                    caption.clone(),
-                    &wake,
-                    move |svc, job| {
-                        for (spec, _) in &items {
-                            svc.open_associated(spec, job)?;
-                        }
-                        Ok(())
+                self.launch_or_ask(
+                    window,
+                    Launch {
+                        view,
+                        caption,
+                        what: LaunchWhat::Associated,
+                        items,
+                        refresh: None,
                     },
                 );
-                self.jobs.push(CoreJob::Launch(view, caption, None, job));
             }
             _ => {}
         }
+    }
+
+    /// Open With an application or the associated one (review F5): more than [`LAUNCH_ASK`] items ask first, with the
+    /// count; then the launch job.
+    fn launch_or_ask(&mut self, window: WindowId, launch: Launch) {
+        let count = launch.items.len();
+        if count == 0 {
+            return;
+        }
+        if count <= LAUNCH_ASK {
+            self.launch(launch);
+            return;
+        }
+        let with = match &launch.what {
+            LaunchWhat::App(_, name) => format!("with {name}"),
+            LaunchWhat::Associated => "with their associated applications".to_owned(),
+        };
+        let prompt = Prompt::confirm(
+            launch.caption.clone(),
+            format!("Open {count} items {with}?"),
+            None,
+            vec![Followup::Launch(Box::new(launch))],
+        );
+        self.push_dialog(window, Box::new(prompt));
+    }
+
+    /// Starts the items one after the other in a job: a Stop or the first that cannot start ends it (the error names
+    /// it); folders open as files do.
+    pub(crate) fn launch(&mut self, launch: Launch) {
+        let Launch {
+            view,
+            caption,
+            what,
+            items,
+            refresh,
+        } = launch;
+        let job = match what {
+            LaunchWhat::App(index, _) => Job::spawn(
+                &self.service,
+                JobKind::VfsRead,
+                caption.clone(),
+                &self.wake(),
+                move |svc, job| {
+                    let target = OpenTarget::App(index);
+                    let request = OpenWithRequest {
+                        target: target.clone(),
+                        items,
+                        line: None,
+                    };
+                    let commands = svc.open_with_commands(&request, job)?;
+                    let waits = svc.open_with_waits(&target)?;
+                    svc.open_with_run(&commands, waits, job)
+                },
+            ),
+            LaunchWhat::Associated => Job::spawn(
+                &self.service,
+                JobKind::VfsRead,
+                caption.clone(),
+                &self.wake(),
+                move |svc, job| {
+                    let count = items.len();
+                    for (i, (spec, _)) in items.iter().enumerate() {
+                        job.cancel.check().map_err(|_| ApiError::Cancelled)?;
+                        svc.open_associated(spec, job)
+                            .map_err(|e| match count - i - 1 {
+                                0 => e,
+                                1 => ApiError::InvalidArgument(format!(
+                                    "{e}; the item after it was not opened"
+                                )),
+                                rest => ApiError::InvalidArgument(format!(
+                                    "{e}; the {rest} items after it were not opened"
+                                )),
+                            })?;
+                    }
+                    Ok(())
+                },
+            ),
+        };
+        self.jobs.push(CoreJob::Launch(view, caption, refresh, job));
     }
 
     fn push_dialog(&mut self, window: WindowId, dialog: Box<dyn crate::dialog::DialogModel>) {
@@ -247,24 +379,21 @@ impl AppCore {
         }
     }
 
-    /// Opens a view of `specs` (resolved as two dropped paths are; `kind` forces the view type) in `window`.
+    /// Opens a view of two items of the model (`kind` forces the view type, else it is inferred as for two dropped
+    /// paths) in `window`. The view's request takes the specs as OS strings (`spec_os_string`): a name that is not valid
+    /// Unicode reaches the view as it is on disk (review F9), where the IPC-shaped open refuses it.
     pub(super) fn open_specs(
         &mut self,
         window: WindowId,
-        specs: Vec<String>,
+        specs: [hikasa_core::Spec; 2],
         kind: Option<ViewKind>,
     ) {
-        let request = hikasa_session::api::GuiOpenRequest {
-            specs: specs.into_iter().map(std::ffi::OsString::from).collect(),
-            kind,
-            ..hikasa_session::api::GuiOpenRequest::default()
-        };
         let job = Job::spawn(
             &self.service,
             JobKind::VfsRead,
             "open the items".into(),
             &self.wake(),
-            move |svc, _| crate::home::resolve(svc, &request),
+            move |svc, _| open_pair(svc, &specs, kind),
         );
         self.jobs.push(CoreJob::Drop(window, job));
     }
@@ -275,9 +404,20 @@ impl AppCore {
             Some(ViewModel::Folder(m)) => m.compare_to_first(),
             _ => None,
         };
-        if let Some((first, _)) = first {
-            self.open_specs(window, vec![first, second], None);
-        }
+        let Some((first, _)) = first else {
+            return;
+        };
+        let job = Job::spawn(
+            &self.service,
+            JobKind::VfsRead,
+            "open the items".into(),
+            &self.wake(),
+            move |svc, _| {
+                let second = svc.parse_spec(std::ffi::OsStr::new(&second))?;
+                open_pair(svc, &[first, second], None)
+            },
+        );
+        self.jobs.push(CoreJob::Drop(window, job));
     }
 
     /// An application of Open With (or the associated one) ended: a launch error is a warning notice with the core
@@ -286,28 +426,30 @@ impl AppCore {
         &mut self,
         view: ViewId,
         caption: &str,
-        refresh: Option<Vec<hikasa_folder::NodeId>>,
+        refresh: Option<Vec<String>>,
         result: Result<(), hikasa_session::ApiError>,
     ) {
         let window = self.window_of(view).unwrap_or_else(|| self.focused());
         match result {
             Ok(()) => {
-                if let Some(nodes) = refresh {
+                if let Some(paths) = refresh {
                     let service = self.service.clone();
                     if let Some(ViewModel::Folder(m)) =
                         self.tab_mut(view).and_then(|t| t.model_mut())
                     {
-                        m.refresh_after_launch(&service, nodes);
+                        m.refresh_after_launch(&service, &paths);
                     }
                 }
             }
+            Err(hikasa_session::ApiError::Cancelled) => {}
+            // The first item that could not start stopped the rest (review F5): an error notice that names it.
             Err(e) => {
                 let notice = Notice::new(
                     format!("launch:{}", view.0),
-                    NoticeKind::Warning,
+                    NoticeKind::Error,
                     format!("{caption}: {e}"),
                 );
-                self.notify(window, notice, caption, LogKind::Warning);
+                self.notify(window, notice, caption, LogKind::Error);
             }
         }
     }

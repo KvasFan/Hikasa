@@ -760,17 +760,18 @@ impl FolderViewModel {
 
     /// Compare To (FC-062): the specs of two selected items, or of one and the Space mark (`select::open_pair`); `None`
     /// with one item and no mark (the window asks for the second through the browse dialog).
-    pub fn compare_to_pair(&self) -> Option<[String; 2]> {
+    pub fn compare_to_pair(&self) -> Option<[hikasa_core::Spec; 2]> {
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let mut items = self.selection.items.clone();
         items.remove(NodeId::ROOT, SideSet::all());
+        // Specs, never their canonical text: a name that is not valid Unicode stays exact (review F9).
         let pair = hikasa_folder::select::open_pair(&read, &items, self.selection.mark)?;
-        Some([pair.left.canonical(), pair.right.canonical()])
+        Some([pair.left, pair.right])
     }
 
     /// The one selected item of Compare To when no second one is given: its spec and whether it is a folder.
-    pub fn compare_to_first(&self) -> Option<(String, bool)> {
+    pub fn compare_to_first(&self) -> Option<(hikasa_core::Spec, bool)> {
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let mut found = None;
@@ -780,34 +781,56 @@ impl FolderViewModel {
                     return None;
                 }
                 let folder = read.node(node)?.is_folder();
-                found = Some((read.spec(node, side)?.canonical(), folder));
+                found = Some((read.spec(node, side)?, folder));
             }
         }
         found
     }
 
-    /// The parents of the selected rows (Open With's `refresh_when_finished`).
-    pub fn selected_parents(&self) -> Vec<NodeId> {
+    /// The folders of the selected rows by path (Open With's `refresh_when_finished`; `""` is the base): the ids may
+    /// move before the application ends (review F10).
+    pub fn selected_parent_paths(&self) -> Vec<String> {
         let Some(prepared) = self.prepared() else {
             return Vec::new();
         };
         let read = prepared.model().read();
-        let mut out: Vec<NodeId> = Vec::new();
+        let mut out: Vec<String> = Vec::new();
         for (node, _) in self.selection.items.iter() {
             let parent = read
                 .node(node)
                 .and_then(|n| n.parent)
                 .unwrap_or(NodeId::ROOT);
-            if !out.contains(&parent) {
-                out.push(parent);
+            let path = read.path(parent).as_str().to_owned();
+            if !out.contains(&path) {
+                out.push(path);
             }
         }
         out
     }
 
-    /// Refreshes `nodes` (an application of Open With ended with `refresh_when_finished`); nothing while a task runs.
-    pub fn refresh_after_launch(&mut self, service: &Service, nodes: Vec<NodeId>) {
-        if self.task.is_none() && !self.busy() {
+    /// Refreshes the folders at `paths` as the model has them now (an application of Open With ended with
+    /// `refresh_when_finished`); a folder gone is skipped; nothing while a task runs.
+    pub fn refresh_after_launch(&mut self, service: &Service, paths: &[String]) {
+        if self.task.is_some() || self.busy() {
+            return;
+        }
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let nodes: Vec<NodeId> = {
+            let read = prepared.model().read();
+            paths
+                .iter()
+                .filter_map(|path| {
+                    if path.is_empty() {
+                        Some(NodeId::ROOT)
+                    } else {
+                        super::live_at(&read, path, true)
+                    }
+                })
+                .collect()
+        };
+        if !nodes.is_empty() {
             self.refresh_rows(service, nodes, super::AfterRefresh::Operation);
         }
     }

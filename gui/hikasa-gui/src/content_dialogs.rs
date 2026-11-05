@@ -610,7 +610,7 @@ impl DialogModel for QuickCompareDialog {
                 &self.wake,
                 move |svc, job| {
                     let rows = svc.folder_selection(&model, &select)?;
-                    let pairs: Vec<(NodeId, String, String, String)> = {
+                    let pairs: Vec<(NodeId, String, std::ffi::OsString, std::ffi::OsString)> = {
                         let read = model.read();
                         rows.iter()
                             .filter_map(|(node, _)| {
@@ -621,8 +621,13 @@ impl DialogModel for QuickCompareDialog {
                                 Some((
                                     node,
                                     read.path(node).as_str().to_owned(),
-                                    read.spec(node, hikasa_core::Side::Left)?.canonical(),
-                                    read.spec(node, hikasa_core::Side::Right)?.canonical(),
+                                    // OS strings: a name that is not valid Unicode is kept (review F9).
+                                    hikasa_session::api::spec_os_string(
+                                        &read.spec(node, hikasa_core::Side::Left)?,
+                                    ),
+                                    hikasa_session::api::spec_os_string(
+                                        &read.spec(node, hikasa_core::Side::Right)?,
+                                    ),
                                 ))
                             })
                             .collect()
@@ -634,8 +639,8 @@ impl DialogModel for QuickCompareDialog {
                             return Err(ApiError::Cancelled);
                         }
                         let request = QuickRequest {
-                            left: left.into(),
-                            right: right.into(),
+                            left,
+                            right,
                             method,
                             ignore_unimportant: iu,
                             ..QuickRequest::default()
