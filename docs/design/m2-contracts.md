@@ -8748,7 +8748,10 @@ Mutations (each failed the tests named, then was reverted):
     the time rule once per item. On the G15 tree `folder_op_plan` went from 0.77–0.86 s to 0.30–0.32 s (load 6–29); the
     plan is the same (compared on that tree without the row ids, which a parallel scan numbers as they come; the plan
     goldens and properties unchanged). `tests/perf_plan.rs` (ignored) measures it; the preview bench reports the plan
-    job's own time (`plan_job_ms`). No parallel planning was needed.
+    job's own time (`plan_job_ms`). No parallel planning was needed. G15 after the review (`docs/02`, load 6.7–14.1):
+    preview **met** (first frame 330.7 ms, the plan job 324.8 ms of it; scrolling max 3.04 ms; PSS +84.3 MiB); sync met
+    (200.8 ms, an override 274.0 ms); select, completion and browse met; tree max met and p95 not (14.43 ms over 10
+    frames while scanning, W9a's open finding).
 
 Mutations (each failed the tests named, then was reverted):
 

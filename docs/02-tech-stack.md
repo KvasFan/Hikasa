@@ -606,6 +606,24 @@ row under 1 s needs a faster planner (W6's item builder: target stats and specs 
 reported as found (docs/17 §7.1), threshold unchanged. The tree row's p95 is W9a's open finding (§1.9.25 W9a note 34);
 no profiler (`perf`) is installed on this machine, so it was not profiled further.
 
+**After the W9b review** (the same command and desktop, 2026-11-05, on `feat/m2` after the review's fixes; other
+sessions' builds ran meanwhile, load 6.7 to 14.1; one run each). The planner no longer asks the disk per replacing item
+(§1.9.25 W9b note 30): core's `folder_op_plan` of the bench's tree went from 0.77–0.86 s to 0.30–0.32 s
+(`core/hikasa-session/tests/perf_plan.rs`, ignored, release, the reviewer's G15-shaped tree of 100,020 files a side;
+load 6.5 to 29), the plan unchanged. The bench now reports the plan job's own time apart from the first frame.
+
+| Row | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G15 preview | 14.1 | 100,021 lines; the preview's first frame **330.7 ms** after the command, of it the plan job 324.8 ms; 600 frames of scrolling p95 1.67 / max 3.04 ms; PSS 124.1 MiB before, 208.4 MiB while open (+84.3 MiB) | first frame < 1.0 s; max < 16.7 ms; ≤ view + 96 MiB | **met** |
+| G15 sync | 6.9 | plan shown 200.8 ms after the comparison ended; an override re-planned and repainted in 274.0 ms; PSS 134.6 MiB | ≤ 0.5 s; ≤ 0.5 s; max < 16.7 ms | **met** |
+| G15 tree (`folder_columns`) | 6.7 | scan 384 ms, 10 frames while scanning: UI work p50 2.04 / p95 = max 14.43 ms (one rebuild frame; 10 frames make the p95 the maximum); PSS 149.9 MiB | max ≤ 16.7, p95 < 8 ms | max met; p95 **not met** (W9a's open finding, out of the review's scope) |
+| G15 select | 9.0 | Select All 14.9 ms, Invert 4.6 ms, Shift+Left 1.3 ms; Shift+Down p95 1.97 / max 3.49 ms; Select All Files 7.4 ms | each ≤ 16.7 ms; p95 < 4 ms | met |
+| G15 completion | 11.6 | the list 165 ms after the last key; typing max 1.38 ms | ≤ 200 ms; ≤ 16.7 ms | met |
+| G15 browse | 12.1 | listed 320 ms; scrolling p95 4.02 / max 6.96 ms; PSS 170.4 MiB | ≤ 1 s; < 16.7 ms | met |
+
+A node grew from 160 to 176 bytes (each side's identity fingerprint, 8 bytes; M1's budget is 256 bytes a node); the PSS
+figures above are within their bounds, and the preview's +84.3 MiB within its 96.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
