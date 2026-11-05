@@ -82,7 +82,14 @@ fn check(
                 }
             }
             Err(e) if e.kind() == ErrorKind::NotFound => {
-                return Ok(BaseCheck::Missing(k, spec.clone()));
+                // The question names the folder it creates: absolute (a relative text is the service's current
+                // folder's), and the very spec the creation gets.
+                let absolute = hikasa_core::spec::Spec::parse_os(
+                    std::ffi::OsStr::new(spec),
+                    &svc.spec_context(),
+                )
+                .map_or_else(|_| spec.clone(), |s| s.canonical());
+                return Ok(BaseCheck::Missing(k, absolute));
             }
             Err(e) => return Ok(BaseCheck::Bad(k, e.to_string())),
         }
@@ -173,6 +180,9 @@ impl AppCore {
                 let Some(window) = self.window_of(view) else {
                     return;
                 };
+                // Created as named in the question.
+                let mut specs = specs;
+                specs[k].clone_from(&path);
                 let prompt = Prompt::ask(
                     "Create Folder",
                     format!("Folder {path} does not exist. Create it?"),
@@ -529,6 +539,13 @@ impl AppCore {
         let Some(tab) = self.tab(view) else {
             return;
         };
+        // An empty view already: nothing to clear (no error).
+        if let Some(ViewModel::Folder(m)) = tab.model()
+            && m.prepared().is_none()
+            && m.committed().iter().all(|s| s.is_empty())
+        {
+            return;
+        }
         let Some(capture) = AppCore::capture(tab) else {
             return;
         };

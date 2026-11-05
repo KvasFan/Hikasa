@@ -3164,6 +3164,11 @@ impl FolderViewModel {
         self.names.to_vec()
     }
 
+    /// The committed specs of the path edits (what the view runs on; empty after Clear Session).
+    pub fn committed(&self) -> [&str; 2] {
+        [&self.paths[0].committed, &self.paths[1].committed]
+    }
+
     /// The running jobs (the job indicator, D-115).
     pub fn jobs(&self, view: hikasa_session::ipc::ViewId) -> Vec<JobStatus> {
         if let Some((title, phase, fraction)) = self.task.as_ref().and_then(Task::job_status) {

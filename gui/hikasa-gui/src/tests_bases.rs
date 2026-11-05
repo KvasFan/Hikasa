@@ -239,7 +239,22 @@ fn a9_9_clear_session_gives_an_empty_view_that_runs_after_accept() {
     let m = folder_model(&mut app, view);
     assert!(m.prepared().is_none(), "no comparison");
     assert!(!m.busy());
+    // The view's session changed (mutation AI: a cleared session not marked dirty).
+    assert!(
+        app.view_session(view).is_some_and(|s| s.dirty),
+        "the cleared session is dirty"
+    );
+    // Clear Session again on the empty view: nothing happens, no message.
+    let notices = crate::tests_folder_ops::notices(&app).len();
+    run(&world, &mut app, CommandId::SessionClear);
+    assert_eq!(
+        crate::tests_folder_ops::notices(&app).len(),
+        notices,
+        "no error"
+    );
+    assert_eq!(committed(&mut app, view), [String::new(), String::new()]);
     // Accept with both fields typed runs it.
+    let m = folder_model(&mut app, view);
     m.path_edit(0).text = path(&world, "work/l");
     m.path_edit(1).text = path(&world, "work/r");
     m.accept_paths();

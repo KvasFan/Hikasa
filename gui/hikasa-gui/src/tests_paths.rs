@@ -426,3 +426,36 @@ fn a_newer_accept_drops_the_older_check() {
     assert_eq!(app.0.state().mru(MruList::Left), [other]);
     assert!(!world.path("work/missing").exists());
 }
+
+/// Review item 13: a relative folder that does not exist is named absolute in the question (the service's current
+/// folder's), and that very folder is created.
+#[test]
+fn a_relative_missing_folder_is_named_and_created_absolute() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    folder_model(&mut app, view).path_edit(1).text = "made_here".into();
+    accept(&world, &mut app, view);
+    let absolute = world.path("work/made_here").to_string_lossy().into_owned();
+    let w = app.win();
+    let text = app
+        .0
+        .window(w)
+        .and_then(|w| w.dialogs.top())
+        .and_then(|d| {
+            d.as_any()
+                .downcast_ref::<crate::dialog::Prompt>()
+                .map(|p| p.message.clone())
+        })
+        .expect("the question");
+    assert!(text.contains(&absolute), "{text}");
+    press(&world, &mut app, ButtonRole::Yes);
+    app.0.handle(crate::app::UiMsg::Tick);
+    world.settle(&mut app);
+    assert!(
+        world.path("work/made_here").is_dir(),
+        "created where the question said"
+    );
+    assert_eq!(committed(&mut app, view)[1], absolute);
+}

@@ -677,3 +677,79 @@ fn bad_layout_entries_are_dropped_one_by_one_with_a_warning() {
         "{warning}"
     );
 }
+
+// ---- A9.1: the layout written on close, a session's columns first -------------------------------------------------
+
+/// A9.1 (review item 13): a folder view's columns, widths and sort go to `[layout.folder-compare]` on close (golden
+/// `state.toml`) and come back at the next start.
+#[test]
+fn a9_1_the_folder_columns_are_written_on_close_and_read_back() {
+    let world = World::new();
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let m = folder_model(&mut app, view);
+    m.change_columns(|c| {
+        c.toggle(ColumnId::Crc);
+        c.toggle(ColumnId::Ext);
+        c.move_to(ColumnId::Ext, 1);
+        c.resize(ColumnId::Crc, 90.0);
+    });
+    m.header_click(ColumnId::Size, Side::Right);
+    m.header_click(ColumnId::Size, Side::Right);
+    let columns = m.columns().clone();
+    app.shutdown();
+    app.flush(Duration::from_secs(10));
+    let state = std::fs::read_to_string(world.path("config/state.toml")).expect("state.toml");
+    crate::tests_shell::golden("state-folder-columns.toml", &state);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    assert_eq!(folder_model(&mut app, view).columns(), &columns);
+}
+
+/// A9.1 (review item 13): a session's `[view]` columns and tree order win over the view type's layout (D-108).
+#[test]
+fn a9_1_a_session_s_columns_win_over_the_layout() {
+    use crate::folder::columns::ColumnLayout;
+    use hikasa_session::sessions::{Session, SessionType};
+    let (size, owner) = (ColumnId::Size.as_str(), ColumnId::Owner.as_str());
+    let state = format!(
+        "schema_version = 1\n\n[layout.folder-compare]\ncolumns = [\"{size}\", \"{owner}\"]\nsort = \"{size}\"\n\
+         sort_side = \"right\"\nsort_descending = true\n"
+    );
+    let world = World::with_files(&[("state.toml", &state)]);
+    put(&world, "l", "a.txt", "a\n", 1_000);
+    put(&world, "r", "a.txt", "b\n", 1_000);
+    let mut session = Session::builtin(SessionType::FolderCompare);
+    session.specs.left = world.path("work/l").to_string_lossy().into_owned();
+    session.specs.right = world.path("work/r").to_string_lossy().into_owned();
+    let mut mine = ColumnLayout::default();
+    mine.visible = vec![ColumnId::Name, ColumnId::Ext];
+    for (key, value) in mine.to_layout() {
+        session.view.insert(key.to_owned(), value.to_toml());
+    }
+    world
+        .service
+        .session_save(&crate::tests_sessions::r("mine"), &session, false)
+        .expect("save");
+    let mut app = world.app(None);
+    // Without the session: the view type's layout.
+    let plain = open(&world, &mut app);
+    let columns = folder_model(&mut app, plain).columns().clone();
+    assert_eq!(
+        columns.visible,
+        [ColumnId::Name, ColumnId::Size, ColumnId::Owner]
+    );
+    assert!(columns.sort.is_some());
+    // The session's own columns and its tree order.
+    let target = crate::app::OpenTarget::Window(app.win());
+    app.0.open_named(
+        crate::tests_sessions::r("mine"),
+        crate::app::OpenHow::Target(target),
+    );
+    world.settle(&mut app);
+    let view = app.active_tab().expect("a tab").id;
+    let columns = folder_model(&mut app, view).columns().clone();
+    assert_eq!(columns.visible, [ColumnId::Name, ColumnId::Ext]);
+    assert_eq!(columns.sort, None, "the session's tree order wins");
+}

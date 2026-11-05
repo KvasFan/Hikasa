@@ -241,6 +241,18 @@ fn the_cells_of_every_column() {
     );
     assert_eq!(attr_marks(&w), "");
     assert_eq!(cell_of(&w, &input).ext, "");
+    // Any write bit counts (`mode & 0o222`): the owner may not write, the group may: no mark (mutation AD).
+    let group = entry(
+        "g",
+        Attrs::Unix {
+            meta: UnixMeta {
+                mode: 0o464,
+                uid: 0,
+                gid: 0,
+            },
+        },
+    );
+    assert_eq!(attr_marks(&group), "");
     // A folder: its total once scanned, nothing before.
     let folder = CellInput {
         folder: true,
