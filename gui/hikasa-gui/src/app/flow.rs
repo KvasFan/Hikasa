@@ -242,6 +242,10 @@ pub enum StoreDone {
         session: Box<Session>,
         /// `is_dirty(loaded, session)`.
         dirty: bool,
+        /// A re-root (the base commands, Accept, Swap, Clear): refused while an operation of the view runs, which it
+        /// would cancel (§1.9.2 rule 4). Session Settings' OK replaces the model and reports the operation instead
+        /// (§1.6.25 W6d after review, note 4).
+        rebase: bool,
     },
     /// The panel of a Home tab takes a session.
     Panel(ViewId, PanelTarget, Option<Box<Session>>),
@@ -616,7 +620,17 @@ impl AppCore {
                 opened,
                 session,
                 dirty,
-            } => self.reopen(view, *opened, *session, dirty),
+                rebase,
+            } => {
+                // A re-root never cancels a running operation (§1.9.2 rule 4).
+                if rebase && self.refuse_busy(view) {
+                    if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                        vs.settings_pending = false;
+                    }
+                } else {
+                    self.reopen(view, *opened, *session, dirty);
+                }
+            }
             StoreDone::Panel(view, target, session) => {
                 if let Some(ViewModel::Home(home)) = self.tab_mut(view).and_then(|t| t.model_mut())
                 {
@@ -2554,6 +2568,7 @@ impl AppCore {
                         opened: Box::new(opened),
                         session: Box::new(session),
                         dirty,
+                        rebase: false,
                     })
                 });
             }
@@ -2583,13 +2598,6 @@ impl AppCore {
     /// A view takes changed specs or rules: its model is rebuilt in its tab, origin kept.
     fn reopen(&mut self, view: ViewId, opened: SessionView, session: Session, dirty: bool) {
         if self.tab(view).is_none() {
-            return;
-        }
-        // A view whose operation runs is never replaced: the operation would be cancelled (§1.9.2 rule 4).
-        if self.refuse_busy(view) {
-            if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
-                vs.settings_pending = false;
-            }
             return;
         }
         let mut request = opened.request;

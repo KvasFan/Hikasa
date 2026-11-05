@@ -250,6 +250,7 @@ impl AppCore {
                 opened: Box::new(opened),
                 session: Box::new(session),
                 dirty,
+                rebase: true,
             })
         });
     }
@@ -525,6 +526,7 @@ impl AppCore {
                 opened: Box::new(opened),
                 session: Box::new(session),
                 dirty: true,
+                rebase: true,
             })
         });
     }
