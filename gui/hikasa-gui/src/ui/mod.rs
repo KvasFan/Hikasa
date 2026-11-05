@@ -680,7 +680,8 @@ impl HikasaApp {
                 .core
                 .window_mut(window)
                 .is_some_and(|w| std::mem::take(&mut w.focus_sessions));
-            let enabled = |id: CommandId| self.core.enabled(window, id);
+            // The frame's context, computed once (G15 select: not once per button).
+            let enabled = |id: CommandId| self.core.enabled_in(&state, id);
             let checked = |id: CommandId| self.core.checked(window, id);
             let t = ToolbarCtx {
                 tables: self.core.tables(),
@@ -848,7 +849,7 @@ impl HikasaApp {
                 let Some(view) = active_view else {
                     return;
                 };
-                let dispatch_ctx = self.core.ctx(window);
+                let dispatch_ctx = state;
                 let tables = self.core.shared_tables();
                 let Some(tab) = self.core.tab_mut(view) else {
                     return;

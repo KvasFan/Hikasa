@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 
 use common::{compared, config, gen_rules, gen_tree, host, materialize_gen};
 use hikasa_core::{CaseSensitivity, FileTime, Side};
-use hikasa_folder::view::{SortColumn, SortKey, attributes_text, compare_rows, extension};
+use hikasa_folder::view::{
+    SortCache, SortColumn, SortKey, attributes_text, compare_rows, extension,
+};
 use hikasa_folder::{
     Attrs, DisplayOptions, DosAttrs, FolderComparison, FolderRules, FolderRulesPatch, NodeId,
     TreeRead, UnixMeta, VisibleRow,
@@ -413,5 +415,128 @@ proptest! {
         };
         check_sorted(&cmp.read(), &opts, &sort)?;
         check_sorted(&cmp.read(), &all(), &sort)?;
+        check_cached(&cmp, &opts, &sort)?;
     }
+}
+
+/// The rows of `sort` with and without a cache kept from earlier calls.
+fn both(
+    read: &TreeRead<'_>,
+    opts: &DisplayOptions,
+    open: &dyn Fn(NodeId) -> bool,
+    sort: &SortKey,
+    cache: &mut SortCache,
+) -> (Vec<VisibleRow>, Vec<VisibleRow>) {
+    let (mut fresh, mut kept) = (Vec::new(), Vec::new());
+    read.visible_rows_sorted(opts, open, Some(sort), &mut fresh);
+    read.visible_rows_sorted_cached(opts, open, Some(sort), cache, &mut kept);
+    (fresh, kept)
+}
+
+/// M2 W9a after review (G15 tree): a cache kept across rebuilds gives the rows a fresh sort gives: again (nothing
+/// sorted the second time), with other folders open, and after a change of the finished model.
+fn check_cached(
+    cmp: &FolderComparison,
+    opts: &DisplayOptions,
+    sort: &SortKey,
+) -> Result<(), TestCaseError> {
+    let mut cache = SortCache::default();
+    let all_open = |_: NodeId| true;
+    let (fresh, kept) = both(&cmp.read(), opts, &all_open, sort, &mut cache);
+    prop_assert_eq!(&fresh, &kept);
+    let (fresh, kept) = both(&cmp.read(), opts, &all_open, sort, &mut cache);
+    prop_assert_eq!(&fresh, &kept);
+    prop_assert_eq!(cache.sorted_last, 0, "every order from the cache");
+    let odd = |id: NodeId| id.0 % 2 == 1;
+    let (fresh, kept) = both(&cmp.read(), opts, &odd, sort, &mut cache);
+    prop_assert_eq!(&fresh, &kept);
+    // A change after the comparison ended (an Ignored mark): sorted again, as a fresh sort.
+    let some = cmp.read().preorder().map(|(id, _)| id).nth(1);
+    if let Some(node) = some {
+        cmp.model().set_ignored(&[node], true);
+        let (fresh, kept) = both(&cmp.read(), opts, &all_open, sort, &mut cache);
+        prop_assert_eq!(&fresh, &kept);
+    }
+    Ok(())
+}
+
+/// M2 W9a after review (G15 tree): a cache kept while the comparison runs, read between the scan's batches (from its
+/// observer), gives at every step the rows a fresh sort gives.
+#[test]
+fn a_cache_kept_while_the_comparison_runs_sorts_as_a_fresh_one() {
+    use std::sync::{Arc, Mutex};
+    struct Probe {
+        model: Arc<hikasa_folder::FolderModel>,
+        caches: Mutex<Vec<(SortKey, SortCache)>>,
+        failures: Mutex<Vec<String>>,
+        steps: Mutex<usize>,
+    }
+    impl hikasa_folder::ScanObserver for Probe {
+        fn on_event(&self, _event: hikasa_folder::ScanEvent) {
+            let read = self.model.read();
+            let mut caches = self.caches.lock().unwrap();
+            for (sort, cache) in caches.iter_mut() {
+                let (fresh, kept) = both(&read, &all(), &|_| true, sort, cache);
+                if fresh != kept {
+                    self.failures.lock().unwrap().push(format!("{sort:?}"));
+                }
+            }
+            *self.steps.lock().unwrap() += 1;
+        }
+    }
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    for side in ["/l", "/r"] {
+        for d in 0..6 {
+            for f in 0..5 {
+                let size = (d * 7 + f * 3 + usize::from(side == "/r")) % 11;
+                vfs.insert_file(
+                    &host(&format!("{side}/d{d}/s{}/f{f}.txt", d % 3)),
+                    vec![b'x'; size].as_slice(),
+                    meta(Some(1_000 + (f as i64) * 10), None, None),
+                )
+                .unwrap();
+            }
+        }
+    }
+    let model = hikasa_folder::FolderModel::new(
+        common::mspec("/l"),
+        common::mspec("/r"),
+        FolderRules::default(),
+    )
+    .unwrap();
+    let keys = [
+        key(SortColumn::Size, Side::Left, true),
+        key(SortColumn::Name, Side::Right, false),
+        key(SortColumn::Modified, Side::Left, false),
+    ];
+    let probe = Probe {
+        model: Arc::clone(&model),
+        caches: Mutex::new(keys.iter().map(|k| (*k, SortCache::default())).collect()),
+        failures: Mutex::new(Vec::new()),
+        steps: Mutex::new(0),
+    };
+    let engines = common::engines(1 << 30);
+    let progress = hikasa_core::NullProgress;
+    let now = common::default_now();
+    let cancel = hikasa_core::CancelToken::new();
+    let env = hikasa_folder::FolderEnv {
+        vfs: &vfs,
+        content: &engines,
+        pool: None,
+        ctl: hikasa_core::Ctl {
+            cancel: &cancel,
+            progress: &progress,
+        },
+        observer: &probe,
+        now: &now,
+        content_budget: 1 << 30,
+        archive_entries_max: hikasa_folder::SCAN_ARCHIVE_ENTRIES_MAX,
+    };
+    hikasa_folder::compare_into(&model, &env).unwrap();
+    assert!(*probe.steps.lock().unwrap() > 5, "read between the batches");
+    assert!(
+        probe.failures.lock().unwrap().is_empty(),
+        "{:?}",
+        probe.failures.lock().unwrap()
+    );
 }

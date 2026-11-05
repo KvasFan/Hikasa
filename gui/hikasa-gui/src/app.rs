@@ -1646,10 +1646,14 @@ impl AppCore {
 
     /// True when `id` is shown and available in the window's active view.
     pub fn enabled(&self, window: WindowId, id: CommandId) -> bool {
-        let ctx = self.ctx(window);
+        self.enabled_in(&self.ctx(window), id)
+    }
+
+    /// [`AppCore::enabled`] in a context computed once for the frame (the toolbar asks for each of its buttons).
+    pub fn enabled_in(&self, ctx: &Ctx, id: CommandId) -> bool {
         !ctx.dialog_open
             && crate::commands::shown(&self.tables, ctx.scope, id)
-            && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx))
+            && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(ctx))
     }
 
     /// The check state of a toggle or radio command in the window's active view.

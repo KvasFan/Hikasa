@@ -309,20 +309,39 @@ impl ViewSelection {
     /// Only shown rows are selected: rows no longer in `rows` (collapsed, hidden by the display, gone) and sides they
     /// no longer have leave the selection, the current row, the anchor and the mark.
     pub fn retain_shown(&mut self, rows: &[VisibleRow], present: &dyn Fn(NodeId) -> SideSet) {
-        let shown: std::collections::HashSet<NodeId> = rows.iter().map(|r| r.node).collect();
+        // Nothing selected, current, anchored or marked: nothing to check (the rebuilds of a scan, G15 tree).
+        if self.items.is_empty()
+            && self.current.is_none()
+            && self.anchor.is_none()
+            && self.mark.is_none()
+        {
+            return;
+        }
+        // The shown ids as a dense set (a node id indexes it).
+        let mut shown = vec![
+            false;
+            rows.iter()
+                .map(|r| r.node.0 as usize + 1)
+                .max()
+                .unwrap_or(0)
+        ];
+        for row in rows {
+            shown[row.node.0 as usize] = true;
+        }
+        let shown = |n: &NodeId| shown.get(n.0 as usize).copied().unwrap_or(false);
         let mut kept = Selection::default();
         for (node, sides) in self.items.iter() {
-            if shown.contains(&node) {
+            if shown(&node) {
                 kept.insert(node, sides & present(node));
             }
         }
         self.items = kept;
-        let keep = |id: Option<NodeId>| id.filter(|n| shown.contains(n));
+        let keep = |id: Option<NodeId>| id.filter(|n| shown(n));
         self.current = keep(self.current);
         self.anchor = keep(self.anchor);
         self.mark = self
             .mark
-            .filter(|(n, side)| shown.contains(n) && present(*n).contains(SideSet::of(*side)));
+            .filter(|(n, side)| shown(n) && present(*n).contains(SideSet::of(*side)));
     }
 
     /// Moves every id by a refresh's `renumbered` (`follow`).

@@ -5,13 +5,16 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
-use hikasa_core::Side;
+use hikasa_core::{Pair, Side};
 use serde::{Deserialize, Serialize};
 
 use crate::align::canonical_fold;
+use crate::counts::{Aggregates, SideTotals};
 use crate::display::{DisplayOptions, VisibleRow, is_visible};
-use crate::model::{EntryView, NodeId, NodeView, TreeRead};
+use crate::model::store::{Node, Store, internal};
+use crate::model::{EntryView, NodeId, TreeRead};
 
 /// A column a folder view sorts by (FC-040; the GUI's `ColumnId` without the fixed centre column).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -114,26 +117,22 @@ enum Value<'a> {
     Parts(Vec<Cow<'a, str>>),
 }
 
-/// The entry of `side`, else the other side's (a row missing on the sorted side sorts by the other side).
-fn entry_on<'n, 'a>(node: &'n NodeView<'a>, side: Side) -> Option<&'n EntryView<'a>> {
-    node.side(side).or_else(|| node.side(side.opposite()))
-}
-
-/// The value of `column` for `node` on `side`.
+/// The value of `column` for the raw node `node` (id `id`) on `side` (a row missing there by the other side's), read
+/// from the store without building a `NodeView` (M2 W9a after review, G15 tree).
 fn value_of<'a>(
-    read: &TreeRead<'_>,
-    node: &NodeView<'a>,
+    store: &'a Store,
+    node: &Node,
+    id: u32,
     column: SortColumn,
     side: Side,
 ) -> Value<'a> {
-    let Some(entry) = entry_on(node, side) else {
-        return Value::Missing;
-    };
-    // The side the value was read from (the other side for a row missing on `side`).
-    let from = if node.side(side).is_some() {
-        side
-    } else {
-        side.opposite()
+    let k = usize::from(side == Side::Right);
+    let (from, entry) = match store.entry_view(node, id, k) {
+        Some(entry) => (k, entry),
+        None => match store.entry_view(node, id, 1 - k) {
+            Some(entry) => (1 - k, entry),
+            None => return Value::Missing,
+        },
     };
     match column {
         SortColumn::Name => Value::Text(canonical_fold(entry.name)),
@@ -142,17 +141,18 @@ fn value_of<'a>(
         }),
         SortColumn::Size => {
             if node.is_folder() {
-                let totals = read.totals(node.id);
-                Value::Int(match from {
-                    Side::Right => totals.right.bytes,
-                    _ => totals.left.bytes,
+                let totals = store.totals(node);
+                Value::Int(if from == 1 {
+                    totals.right.bytes
+                } else {
+                    totals.left.bytes
                 })
             } else {
                 Value::Int(entry.size)
             }
         }
         SortColumn::Modified => entry.mtime.map_or(Value::Missing, Value::Time),
-        SortColumn::Attributes => Value::Text(Cow::Owned(attributes_text(entry))),
+        SortColumn::Attributes => Value::Text(Cow::Owned(attributes_text(&entry))),
         SortColumn::Crc => entry
             .crc32
             .map_or(Value::Missing, |c| Value::Int(u64::from(c))),
@@ -174,10 +174,36 @@ fn value_of<'a>(
 /// The ordering key of one sibling: folders first (D-20), the column's value, then the tree position.
 struct Keyed<'a> {
     folder_rank: u8,
-    kind: crate::model::NodeKind,
+    kind: u8,
     value: Value<'a>,
     position: usize,
-    id: NodeId,
+    id: u32,
+}
+
+/// What a sorted rebuild keeps for the next one (M2 W9a after review, G15 tree): each folder's visible children in the
+/// sort's order with the stamp they were sorted at, so a rebuild sorts again only the folders that changed. A folder's
+/// stamp is its children's range and its counters (categories and totals, which every change below it moves) while the
+/// comparison runs; once it has ended, any change of the model sorts everything again (a refresh may move values and
+/// keep the sums), as does a CRC found while the sort is on CRC. Another model, display or key starts it over.
+#[derive(Debug, Default)]
+pub struct SortCache {
+    key: Option<(SortKey, DisplayOptions, usize)>,
+    /// The model's generation once it had finished (`None` while it runs).
+    finished_at: Option<u64>,
+    cache_generation: u64,
+    folders: HashMap<u32, (Stamp, Vec<u32>)>,
+    /// The folders the last rebuild sorted (the others came from the cache; tests, the bench).
+    pub sorted_last: usize,
+}
+
+/// A folder's children and counters when its order was cached.
+type Stamp = (u32, u32, Aggregates, Pair<SideTotals>);
+
+impl SortCache {
+    /// Forgets every order.
+    pub fn clear(&mut self) {
+        *self = SortCache::default();
+    }
 }
 
 impl TreeRead<'_> {
@@ -193,51 +219,125 @@ impl TreeRead<'_> {
         sort: Option<&SortKey>,
         out: &mut Vec<VisibleRow>,
     ) {
+        self.visible_rows_sorted_cached(opts, expanded, sort, &mut SortCache::default(), out);
+    }
+
+    /// [`TreeRead::visible_rows_sorted`] with the folders' orders kept in `cache` between rebuilds: only a folder
+    /// whose children or counters changed is sorted again ([`SortCache`]). The rows are the same as without it.
+    pub fn visible_rows_sorted_cached(
+        &self,
+        opts: &DisplayOptions,
+        expanded: &dyn Fn(NodeId) -> bool,
+        sort: Option<&SortKey>,
+        cache: &mut SortCache,
+        out: &mut Vec<VisibleRow>,
+    ) {
         let Some(sort) = sort else {
             self.visible_rows(opts, expanded, out);
             return;
         };
-        let mut stack: Vec<(NodeId, u32)> = Vec::new();
+        let model = self.model_ref();
+        let key = (*sort, *opts, std::ptr::from_ref(model) as usize);
+        if cache.key != Some(key) {
+            cache.clear();
+            cache.key = Some(key);
+            cache.cache_generation = model.cache_generation();
+        }
+        if sort.column == SortColumn::Crc && cache.cache_generation != model.cache_generation() {
+            cache.folders.clear();
+            cache.cache_generation = model.cache_generation();
+        }
+        if model.is_finished() {
+            let generation = model.generation();
+            match cache.finished_at {
+                // The scan's own changes are in the stamps; later ones (a refresh, a content test) sort all again.
+                Some(at) if at != generation => cache.folders.clear(),
+                _ => {}
+            }
+            cache.finished_at = Some(generation);
+        } else {
+            cache.finished_at = None;
+        }
+        cache.sorted_last = 0;
+        let store = self.store();
+        let mut stack: Vec<(u32, u32)> = Vec::new();
         let mut scratch: Vec<Keyed<'_>> = Vec::new();
-        self.push_sorted(NodeId::ROOT, 0, opts, sort, &mut stack, &mut scratch);
+        self.push_sorted(
+            store,
+            NodeId::ROOT.0,
+            0,
+            opts,
+            sort,
+            cache,
+            &mut stack,
+            &mut scratch,
+        );
         while let Some((id, depth)) = stack.pop() {
-            out.push(VisibleRow { node: id, depth });
-            let open = self
-                .node(id)
-                .is_some_and(|n| n.is_folder() && self.children(id).len() > 0)
-                && expanded(id);
+            out.push(VisibleRow {
+                node: NodeId(id),
+                depth,
+            });
+            let open = store
+                .node(NodeId(id))
+                .is_some_and(|n| n.is_folder() && n.child_count > 0)
+                && expanded(NodeId(id));
             if open {
-                self.push_sorted(id, depth + 1, opts, sort, &mut stack, &mut scratch);
+                self.push_sorted(
+                    store,
+                    id,
+                    depth + 1,
+                    opts,
+                    sort,
+                    cache,
+                    &mut stack,
+                    &mut scratch,
+                );
             }
         }
     }
 
-    /// Pushes the visible children of `parent`, sorted, onto `stack` (last first, so they pop in order).
+    /// Pushes the visible children of `parent`, sorted, onto `stack` (last first, so they pop in order); the order
+    /// comes from `cache` while the folder's stamp holds.
+    #[allow(clippy::too_many_arguments)] // the walk's state
     fn push_sorted<'r>(
         &'r self,
-        parent: NodeId,
+        store: &'r Store,
+        parent: u32,
         depth: u32,
         opts: &DisplayOptions,
         sort: &SortKey,
-        stack: &mut Vec<(NodeId, u32)>,
+        cache: &mut SortCache,
+        stack: &mut Vec<(u32, u32)>,
         scratch: &mut Vec<Keyed<'r>>,
     ) {
+        let Some(node) = store.node(NodeId(parent)) else {
+            return;
+        };
+        let stamp: Stamp = (
+            node.first_child,
+            node.child_count,
+            store.aggregates(node),
+            store.totals(node),
+        );
+        if let Some((at, order)) = cache.folders.get(&parent)
+            && *at == stamp
+        {
+            stack.extend(order.iter().rev().map(|&id| (id, depth)));
+            return;
+        }
+        cache.sorted_last += 1;
         scratch.clear();
-        let store = self.store();
-        for (position, child) in self.children(parent).enumerate() {
-            let Some(raw) = store.node(child) else {
+        for (position, child) in node.children().enumerate() {
+            let Some(raw) = store.node(NodeId(child)) else {
                 continue;
             };
-            if !is_visible(store, raw, opts) {
+            if raw.internal & internal::GONE != 0 || !is_visible(store, raw, opts) {
                 continue;
             }
-            let Some(node) = self.node(child) else {
-                continue;
-            };
             scratch.push(Keyed {
-                folder_rank: u8::from(!node.is_folder()),
-                kind: node.kind,
-                value: value_of(self, &node, sort.column, sort.side),
+                folder_rank: u8::from(!raw.is_folder()),
+                kind: raw.kind() as u8,
+                value: value_of(store, raw, child, sort.column, sort.side),
                 position,
                 id: child,
             });
@@ -246,7 +346,7 @@ impl TreeRead<'_> {
         scratch.sort_by(|a, b| {
             // Name keeps the tree's kind rank (Folder, File, Symlink, Other) so that Name ascending is the tree order;
             // the other columns put folders first and compare the value alone.
-            let kind = |k: &Keyed<'_>| if name { k.kind as u8 } else { 0 };
+            let kind = |k: &Keyed<'_>| if name { k.kind } else { 0 };
             let by_value = (kind(a), &a.value).cmp(&(kind(b), &b.value));
             let by_value = if sort.descending {
                 by_value.reverse()
@@ -258,23 +358,26 @@ impl TreeRead<'_> {
                 .then(by_value)
                 .then(a.position.cmp(&b.position))
         });
-        stack.extend(scratch.iter().rev().map(|k| (k.id, depth)));
+        let order: Vec<u32> = scratch.iter().map(|k| k.id).collect();
         scratch.clear();
+        stack.extend(order.iter().rev().map(|&id| (id, depth)));
+        cache.folders.insert(parent, (stamp, order));
     }
 }
 
 /// Compares two rows by `sort` as [`TreeRead::visible_rows_sorted`] does for siblings, without the tree position
 /// (tests and the bench: `Equal` means the tree's order decides).
 pub fn compare_rows(read: &TreeRead<'_>, a: NodeId, b: NodeId, sort: &SortKey) -> Ordering {
-    let (Some(x), Some(y)) = (read.node(a), read.node(b)) else {
+    let store = read.store();
+    let (Some(x), Some(y)) = (store.node(a), store.node(b)) else {
         return Ordering::Equal;
     };
-    let rank = |n: &NodeView<'_>| u8::from(!n.is_folder());
+    let rank = |n: &Node| u8::from(!n.is_folder());
     let name = sort.column == SortColumn::Name;
-    let kind = |n: &NodeView<'_>| if name { n.kind as u8 } else { 0 };
-    let by_value = (kind(&x), value_of(read, &x, sort.column, sort.side))
-        .cmp(&(kind(&y), value_of(read, &y, sort.column, sort.side)));
-    rank(&x).cmp(&rank(&y)).then(if sort.descending {
+    let kind = |n: &Node| if name { n.kind() as u8 } else { 0 };
+    let by_value = (kind(x), value_of(store, x, a.0, sort.column, sort.side))
+        .cmp(&(kind(y), value_of(store, y, b.0, sort.column, sort.side)));
+    rank(x).cmp(&rank(y)).then(if sort.descending {
         by_value.reverse()
     } else {
         by_value

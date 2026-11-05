@@ -107,6 +107,18 @@ fn a9_4_each_edit_command_equals_the_cli_selection() {
             "{id:?} = {word}"
         );
     }
+    // Select All (the bench's; the command is W9c's): every shown row, every present side.
+    folder_model(&mut app, view).select_all();
+    let ours = folder_model(&mut app, view).selection().items.clone();
+    assert_eq!(
+        ours,
+        cli_selection(
+            &world,
+            &mut app,
+            view,
+            &word(SelSide::All, SelState::All, SelKind::All)
+        )
+    );
     // Invert: every shown row's sides not selected; twice is the identity.
     app.execute(CommandId::SelectNewerLeft);
     let before = folder_model(&mut app, view).selection().items.clone();

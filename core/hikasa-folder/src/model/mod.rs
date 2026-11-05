@@ -236,6 +236,11 @@ impl fmt::Debug for TreeRead<'_> {
 }
 
 impl TreeRead<'_> {
+    /// The model this guard reads.
+    pub(crate) fn model_ref(&self) -> &FolderModel {
+        self.model
+    }
+
     pub(crate) fn store(&self) -> &Store {
         &self.store
     }

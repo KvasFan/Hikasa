@@ -420,6 +420,10 @@ pub struct FolderViewModel {
     selected_index: Option<usize>,
     /// The columns, their widths and the sort (D-234, D-235).
     columns: ColumnLayout,
+    /// Each open folder's sorted children between rebuilds (G15 tree: only changed folders are sorted again).
+    sort_cache: hikasa_folder::view::SortCache,
+    /// The selection-derived context flags for (selection moves, rows revision, generation, task state).
+    ctx_memo: Memo<Option<CtxMemo>>,
     /// The zone of the Service's clock: the Modified column's (D-237).
     zone: TimeZone,
     /// The status counts per side `(rows, bytes)` for (selection moves, rows revision), computed when the selection
@@ -524,6 +528,20 @@ struct CrcJob {
 /// The status counts per side `(rows, bytes)` and the (selection moves, rows revision) they were computed for.
 type CountsMemo = ((u64, u64), [(u64, u64); 2]);
 
+/// The context flags the selection decides, and the (selection moves, rows revision, model generation, view busy or
+/// with a task) they were computed for: computed when one of them changes, not once per toolbar button each frame
+/// (G15 select).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CtxMemo {
+    key: (u64, u64, u64, bool),
+    row_on: Option<[bool; 2]>,
+    folder: Option<bool>,
+    pair: bool,
+    bases: bool,
+    other_base: bool,
+    parents: bool,
+}
+
 /// The cached availability of next/previous difference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DifferenceMemo {
@@ -571,6 +589,8 @@ impl FolderViewModel {
             rows: Vec::new(),
             seen_generation: u64::MAX,
             seen_cache_generation: 0,
+            sort_cache: hikasa_folder::view::SortCache::default(),
+            ctx_memo: Memo::new(None),
             rebuilt_at: None,
             selection: ViewSelection::new(),
             selected_index: None,
@@ -690,6 +710,8 @@ impl FolderViewModel {
             },
         );
         self.display.ignore_unimportant |= prepared.ignore_unimportant();
+        // A new model: no order of the old one is kept.
+        self.sort_cache.clear();
         self.state = FolderState::Running { prepared, job };
     }
 
@@ -974,10 +996,11 @@ impl FolderViewModel {
                     expanded.contains(&id)
                 }
             };
-            read.visible_rows_sorted(
+            read.visible_rows_sorted_cached(
                 &self.display,
                 &is_open,
                 self.columns.sort.as_ref(),
+                &mut self.sort_cache,
                 &mut rows,
             );
             // Only shown rows are selected (D-238): collapsed, hidden or gone rows leave the selection.
@@ -2399,22 +2422,71 @@ impl FolderViewModel {
             self.write.writable(Side::Left),
             self.write.writable(Side::Right),
         ];
-        if let Some((_, on)) = self.operable() {
+        let flags = self.ctx_flags();
+        if let Some(on) = flags.row_on {
             ctx.row_selected = true;
             ctx.row_on = on;
         }
-        if let Some((_, open)) = self.selected_folder() {
+        if let Some(open) = flags.folder {
             ctx.open_folder_selected = open;
             ctx.closed_folder_selected = !open;
         }
-        ctx.pair_selected =
-            self.selected_pair().is_some() || self.selected_closed_archive().is_some();
+        ctx.pair_selected = flags.pair;
         (ctx.next_difference, ctx.prev_difference) = self.differences_around();
         let parents = self.base_parents();
         ctx.base_parent = [parents[0].is_some(), parents[1].is_some()];
-        ctx.bases_selected = self.selected_bases().is_some();
-        ctx.other_base_selected = self.selected_other_base().is_some();
-        ctx.parents_available = self.row_parents().is_some();
+        ctx.bases_selected = flags.bases;
+        ctx.other_base_selected = flags.other_base;
+        ctx.parents_available = flags.parents;
+    }
+
+    /// The selection's context flags, computed once per change of the selection, the rows, the model or the task
+    /// state ([`CtxMemo`]).
+    fn ctx_flags(&self) -> CtxMemo {
+        let generation = self.prepared().map_or(0, |p| p.model().generation());
+        let key = (
+            self.selection.moves,
+            self.rows_revision,
+            generation,
+            self.busy() || self.task.is_some(),
+        );
+        if let Some(memo) = self.ctx_memo.get()
+            && memo.key == key
+        {
+            return memo;
+        }
+        let memo = CtxMemo {
+            key,
+            row_on: self.operable_sides(),
+            folder: self.selected_folder().map(|(_, open)| open),
+            pair: self.selected_pair().is_some() || self.selected_closed_archive().is_some(),
+            bases: self.selected_bases().is_some(),
+            other_base: self.selected_other_base().is_some(),
+            parents: self.row_parents().is_some(),
+        };
+        self.ctx_memo.set(Some(memo));
+        memo
+    }
+
+    /// What [`FolderViewModel::operable`] holds per side, without a copy of the selection (the context, each change).
+    fn operable_sides(&self) -> Option<[bool; 2]> {
+        if self.busy() || self.task.is_some() {
+            return None;
+        }
+        let mut on = [false; 2];
+        let mut any = false;
+        for (node, sides) in self.selection.items.iter() {
+            if node == NodeId::ROOT {
+                continue;
+            }
+            any = true;
+            on[0] |= sides.contains(SideSet::LEFT);
+            on[1] |= sides.contains(SideSet::RIGHT);
+            if on[0] && on[1] {
+                break;
+            }
+        }
+        any.then_some(on)
     }
 
     /// The parent of each base (`UpOneLevel*`, FC-004): `Spec::parent`, so an archive's root goes to its folder;
@@ -2427,7 +2499,8 @@ impl FolderViewModel {
         [specs.left, specs.right].map(|s| s.parent().map(|p| p.canonical()))
     }
 
-    /// The selected folder items as (node, side) pairs, when the selection holds folders only.
+    /// The selected folder items as (node, side) pairs, when the selection holds folders only; it stops at the third
+    /// item (its callers want one or two), so a large selection costs nothing.
     fn selected_folders(&self) -> Option<Vec<(NodeId, Side)>> {
         let prepared = self.prepared()?;
         let read = prepared.model().read();
@@ -2440,6 +2513,9 @@ impl FolderViewModel {
                 if sides.contains(on) {
                     out.push((node, side));
                 }
+            }
+            if out.len() > 2 {
+                break;
             }
         }
         Some(out)
@@ -2638,6 +2714,37 @@ impl FolderViewModel {
 
     /// An Edit command (D-238): the pure `hikasa_folder::select` with typed masks and the view's scope (its display
     /// and its open folders), starting from an empty selection; Invert from the current one.
+    /// Select All of the view (§1.9.7: every shown row, every present side; the command is W9c's global `SelectAll`,
+    /// D-252; the G15 select bench runs it now).
+    pub fn select_all(&mut self) {
+        use hikasa_folder::select::{SelKind, SelSide, SelState, SelectMask, SelectScope, select};
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        // The view's rows are what the scope shows.
+        let scope = SelectScope {
+            display: &self.display,
+            expanded: None,
+            rows: Some(&self.rows),
+        };
+        let mut items = Selection::default();
+        let all = [SelectMask::Result {
+            side: SelSide::All,
+            state: SelState::All,
+            kind: SelKind::All,
+        }];
+        select(
+            &read,
+            &scope,
+            &all,
+            self.display.ignore_unimportant,
+            &mut items,
+        );
+        drop(read);
+        self.selection.set_items(items);
+    }
+
     fn edit_select(&mut self, id: CommandId) {
         use hikasa_folder::select::{SelKind, SelSide, SelState, SelectMask, SelectScope, select};
         let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {

@@ -32,7 +32,8 @@ pub enum BenchKind {
     Options,
     /// G15 tree (M2 W9a, D-257): `Folder` with every column shown and the sort Size descending on the left.
     FolderColumns,
-    /// G15 select: `Folder`'s tree, then Select All, Invert Selection, Shift+Left and 300 frames of Shift+Down.
+    /// G15 select: `Folder`'s tree, then Select All Files (an extra figure), Select All, Invert Selection, Shift+Left and
+    /// 300 frames of Shift+Down.
     Select,
     /// G15 completion: 10 characters typed in the left path edit, the folder holding 10,000 entries.
     Completion,
@@ -297,21 +298,29 @@ impl BenchState {
         }
         match self.kind {
             BenchKind::Select => match k {
+                // Select All Files first, an extra figure; then the contract's script: Select All (every shown row,
+                // every present side), Invert Selection, Shift+Left, Shift+Down.
                 1 => {
-                    self.w9a_label = Some("select_all");
+                    self.w9a_label = Some("select_all_files");
                     core.execute(root, CommandId::SelectAllFiles);
                 }
                 2 => {
+                    self.w9a_label = Some("select_all");
+                    if let Some(m) = folder_of(core, view) {
+                        m.select_all();
+                    }
+                }
+                3 => {
                     self.w9a_label = Some("invert_selection");
                     core.execute(root, CommandId::SelectInvert);
                 }
-                3 => {
+                4 => {
                     self.w9a_label = Some("shift_left");
                     if let Some(m) = folder_of(core, view) {
                         m.restrict(hikasa_core::Side::Left);
                     }
                 }
-                k if k < 4 + SELECT_DOWN_FRAMES => {
+                k if k < 5 + SELECT_DOWN_FRAMES => {
                     self.w9a_label = Some("shift_down");
                     if let Some(m) = folder_of(core, view) {
                         let shift = crate::folder::selection::Mods {
@@ -321,7 +330,7 @@ impl BenchState {
                         m.move_by(1, shift);
                     }
                 }
-                k if k > 4 + SELECT_DOWN_FRAMES + W9A_IDLE_FRAMES => self.script = Script::Done,
+                k if k > 5 + SELECT_DOWN_FRAMES + W9A_IDLE_FRAMES => self.script = Script::Done,
                 _ => {}
             },
             BenchKind::Completion => {
