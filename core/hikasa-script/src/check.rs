@@ -233,9 +233,8 @@ pub fn parse_checked(
     let mut script = Script::for_source(source.len());
     let mut references = References::default();
     let mut loaded = Loaded::Never;
-    let names_load = |first: Option<&str>| {
-        first.is_some_and(|w| CommandName::parse(w) == Some(CommandName::Load))
-    };
+    // `CommandName::parse(w) == Some(Load)`, without trying every name on each line.
+    let names_load = |first: Option<&str>| first.is_some_and(|w| w.eq_ignore_ascii_case("load"));
     lex_each(source, &mut |lexed| {
         let line = match lexed {
             Lexed::Line(line) => line,

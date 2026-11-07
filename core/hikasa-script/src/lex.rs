@@ -85,7 +85,9 @@ struct Building {
 /// a debug build within A8.15's bound; `tests::fast_lexer_is_the_char_lexer` holds it to the char-by-char lexer).
 fn lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
     let bytes = text.as_bytes();
-    let mut built: Vec<Building> = Vec::new();
+    let mut built: Vec<Word> = Vec::new();
+    // Where the last word built ends with an unquoted `&`.
+    let mut last_amp: Option<Pos> = None;
     let mut current: Option<Building> = None;
     let mut quote: Option<Pos> = None;
     let mut comment = false;
@@ -129,7 +131,8 @@ fn lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
                 b' ' | b'\t' => {
                     column = column.saturating_add(1);
                     if let Some(word) = current.take() {
-                        built.push(word);
+                        last_amp = word.amp;
+                        built.push(Word::new(word.text, word.quoted, word.pos));
                     }
                     i += 1;
                     continue;
@@ -175,25 +178,25 @@ fn lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
     }
     let unterminated = quote;
     if let Some(word) = current.take() {
-        built.push(word);
+        last_amp = word.amp;
+        built.push(Word::new(word.text, word.quoted, word.pos));
     }
     let mut amp = None;
     if continuation
         && unterminated.is_none()
+        && let Some(at) = last_amp
         && let Some(last) = built.last_mut()
-        && let Some(at) = last.amp
     {
         amp = Some(at);
         last.text.pop();
         if last.text.is_empty() && !last.quoted {
             built.pop();
+        } else {
+            last.expands = crate::expand::has_forms(&last.text);
         }
     }
     Physical {
-        words: built
-            .into_iter()
-            .map(|word| Word::new(word.text, word.quoted, word.pos))
-            .collect(),
+        words: built,
         amp,
         comment,
         unterminated,
@@ -348,8 +351,8 @@ pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Lexed)) {
             });
             continue;
         }
-        let mut words = match pending.take() {
-            Some((words, amp)) => {
+        let words = match pending.take() {
+            Some((mut words, amp)) => {
                 if lexed.words.is_empty() && lexed.amp.is_none() {
                     if lexed.comment {
                         // A comment-only line between continued lines is skipped.
@@ -362,11 +365,11 @@ pub(crate) fn lex_each(source: &[u8], each: &mut dyn FnMut(Lexed)) {
                     }
                     continue;
                 }
+                words.extend(lexed.words);
                 words
             }
-            None => Vec::new(),
+            None => lexed.words,
         };
-        words.extend(lexed.words);
         match lexed.amp {
             Some(amp) => pending = Some((words, amp)),
             None => {
