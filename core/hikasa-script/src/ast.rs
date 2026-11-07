@@ -116,12 +116,19 @@ impl CommandName {
 
     /// The command of `word` (ASCII case-insensitive; `data-report` is `table-report`).
     pub fn parse(word: &str) -> Option<CommandName> {
-        if word.eq_ignore_ascii_case("data-report") {
+        // The word in lower case on the stack, then a binary search of `ALL` (in byte order): every line of a script
+        // names its command, and a linear search compared up to 29 names.
+        let mut buf = [0u8; 16];
+        let lower = buf.get_mut(..word.len())?;
+        lower.copy_from_slice(word.as_bytes());
+        lower.make_ascii_lowercase();
+        if *lower == *b"data-report" {
             return Some(CommandName::TableReport);
         }
         CommandName::ALL
-            .into_iter()
-            .find(|name| name.as_str().eq_ignore_ascii_case(word))
+            .binary_search_by(|name| name.as_str().as_bytes().cmp(lower))
+            .ok()
+            .map(|i| CommandName::ALL[i])
     }
 
     /// True for a command that needs a loaded comparison (column *Needs* of §1.8.6).
@@ -852,12 +859,51 @@ impl Serialize for Script {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandAt, WordAt};
+    use super::{CommandAt, CommandName, WordAt};
 
     /// G14's budget: a word and a command of a checked script take 12 bytes each.
     #[test]
     fn a_word_and_a_command_take_12_bytes() {
         assert_eq!(std::mem::size_of::<WordAt>(), 12);
         assert_eq!(std::mem::size_of::<CommandAt>(), 12);
+    }
+
+    /// `CommandName::parse` searches `ALL` by bytes: it is in that order, and the search finds what comparing each name
+    /// ASCII case-insensitively finds.
+    #[test]
+    fn parse_is_the_case_insensitive_search() {
+        assert!(
+            CommandName::ALL
+                .windows(2)
+                .all(|w| w[0].as_str().as_bytes() < w[1].as_str().as_bytes())
+        );
+        let slow = |word: &str| {
+            if word.eq_ignore_ascii_case("data-report") {
+                return Some(CommandName::TableReport);
+            }
+            CommandName::ALL
+                .into_iter()
+                .find(|name| name.as_str().eq_ignore_ascii_case(word))
+        };
+        let mut words: Vec<String> = vec![
+            String::new(),
+            "data-report".into(),
+            "Data-Report".into(),
+            "registry-reportx".into(),
+            "a-word-longer-than-sixteen".into(),
+            "LOAD".into(),
+            "lo\u{e0}d".into(),
+            "Ｌoad".into(),
+        ];
+        for name in CommandName::ALL {
+            let text = name.as_str();
+            words.push(text.to_owned());
+            words.push(text.to_ascii_uppercase());
+            words.push(format!("{text}s"));
+            words.push(text[..text.len() - 1].to_owned());
+        }
+        for word in &words {
+            assert_eq!(CommandName::parse(word), slow(word), "{word:?}");
+        }
     }
 }
