@@ -1570,6 +1570,17 @@ fn not_unicode(stem: &str, tail: &str) -> std::ffi::OsString {
     }
 }
 
+/// The test runs under wine: the system folder holds `wineboot.exe`, which Windows never has (a marker that does not
+/// depend on the runner's environment variables).
+#[cfg(windows)]
+fn under_wine() -> bool {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    std::path::Path::new(&root)
+        .join("system32")
+        .join("wineboot.exe")
+        .exists()
+}
+
 /// Selects the row whose path starts with `prefix` on the sides it has.
 #[cfg(not(target_os = "macos"))]
 fn select_prefixed(app: &mut AppCore, view: ViewId, prefix: &str) -> hikasa_folder::NodeId {
@@ -1611,6 +1622,19 @@ fn a9_30_names_that_are_not_unicode_reach_the_views_and_quick_compare() {
     let world = World::new();
     let file = not_unicode("caf", ".txt");
     let folder = not_unicode("dir", "");
+    // NTFS takes any UTF-16 code units, a lone surrogate too: Windows itself must create the name, or the test fails.
+    // Wine keeps names as UTF-8 on the Unix side and cannot (`ERROR_FILE_NOT_FOUND`): there the test stops here.
+    #[cfg(windows)]
+    if let Err(e) = std::fs::create_dir_all(world.path("work/l").join(&folder)) {
+        assert!(
+            under_wine(),
+            "Windows refused a name with a lone surrogate: {e}"
+        );
+        eprintln!(
+            "a9_30: wine cannot create a name with a lone surrogate ({e}); the test runs on Windows itself"
+        );
+        return;
+    }
     for (side, text) in [("l", "left\n"), ("r", "right!\n")] {
         let root = world.path(&format!("work/{side}"));
         std::fs::create_dir_all(root.join(&folder)).expect("mkdir");
