@@ -8752,6 +8752,13 @@ Mutations (each failed the tests named, then was reverted):
     preview **met** (first frame 330.7 ms, the plan job 324.8 ms of it; scrolling max 3.04 ms; PSS +84.3 MiB); sync met
     (200.8 ms, an override 274.0 ms); select, completion and browse met; tree max met and p95 not (14.43 ms over 10
     frames while scanning, W9a's open finding).
+31. A9.30 under wine: wine keeps names as UTF-8 on the Unix side and cannot create one with an unpaired surrogate
+    (`ERROR_FILE_NOT_FOUND`), while NTFS takes any UTF-16 code units through the wide calls (`OsString::from_wide`).
+    The test creates its folder first; when that fails it panics unless it runs under wine (the system folder holds
+    `wineboot.exe`, which Windows never has: a marker of wine itself, not the runner's `WINEPREFIX`) and under wine
+    ends there with a line saying so. It runs whole on Linux and on Windows CI; macOS is out (note 25). It is not one of
+    §6.6's wine-only failures (it passes under wine), but under wine it checks only that the name cannot be made: a
+    limit of wine, decided after the review (the same probe as A7.6's `a7_6_names_that_are_not_unicode`).
 
 Mutations (each failed the tests named, then was reverted):
 
