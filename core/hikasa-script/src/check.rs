@@ -130,19 +130,14 @@ pub fn check_word(
 }
 
 /// The spec words of `command` that must name a folder or a target (the bases of a load, the target of `copyto` and
-/// `moveto`), with what they are.
-fn folder_specs(command: &Command) -> Vec<(&crate::lex::Word, String)> {
+/// `moveto`), with what they are (static words: a large script checks a load on most lines).
+fn folder_specs(command: &Command) -> Vec<(&crate::lex::Word, &'static str)> {
     match &command.args {
-        Args::Load(LoadArgs::Folders { left, right, .. }) => vec![
-            (left, "base folders".to_owned()),
-            (right, "base folders".to_owned()),
-        ],
-        Args::CopyTo(args) | Args::MoveTo(args) => {
-            vec![(
-                &args.target,
-                format!("targets of {}", command.name.as_str()),
-            )]
+        Args::Load(LoadArgs::Folders { left, right, .. }) => {
+            vec![(left, "base folders"), (right, "base folders")]
         }
+        Args::CopyTo(args) => vec![(&args.target, "targets of copyto")],
+        Args::MoveTo(args) => vec![(&args.target, "targets of moveto")],
         _ => Vec::new(),
     }
 }

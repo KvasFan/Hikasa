@@ -79,74 +79,104 @@ struct Building {
 }
 
 /// Lexes one physical line, numbered `line`; with `continuation`, a trailing unquoted `&` continues the command.
+///
+/// It walks the bytes: the characters it acts on (blank, tab, `#`, `"`, `&`) are ASCII, and a run of other characters is
+/// added to its word as one slice, its columns counted by the bytes that start a character (a 16 MiB script checks in
+/// a debug build within A8.15's bound; `tests::fast_lexer_is_the_char_lexer` holds it to the char-by-char lexer).
 fn lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
-    let mut words = Vec::new();
+    let bytes = text.as_bytes();
+    let mut built: Vec<Building> = Vec::new();
     let mut current: Option<Building> = None;
     let mut quote: Option<Pos> = None;
     let mut comment = false;
+    // The column of the last character taken.
     let mut column: u32 = 0;
-    let mut chars = text.chars().peekable();
-    let finish = |current: &mut Option<Building>, built: &mut Vec<Building>| {
-        if let Some(word) = current.take() {
-            built.push(word);
-        }
-    };
-    let mut built: Vec<Building> = Vec::new();
-    while let Some(c) = chars.next() {
-        column = column.saturating_add(1);
-        let here = Pos::new(line, column);
-        if quote.is_some() {
-            let word = current.get_or_insert_with(|| Building {
+    let mut i = 0;
+    let start_word = |current: &mut Option<Building>, quoted: bool, pos: Pos| {
+        if current.is_none() {
+            *current = Some(Building {
                 text: String::new(),
-                quoted: true,
-                pos: here,
+                quoted,
+                pos,
                 amp: None,
             });
-            word.amp = None;
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    column = column.saturating_add(1);
+        }
+    };
+    while i < bytes.len() {
+        let b = bytes[i];
+        let quoted = quote.is_some();
+        if quoted && b == b'"' {
+            column = column.saturating_add(1);
+            start_word(&mut current, true, Pos::new(line, column));
+            if bytes.get(i + 1) == Some(&b'"') {
+                column = column.saturating_add(1);
+                if let Some(word) = &mut current {
                     word.text.push('"');
-                } else {
-                    quote = None;
+                    word.amp = None;
                 }
+                i += 2;
             } else {
-                word.text.push(c);
+                quote = None;
+                if let Some(word) = &mut current {
+                    word.amp = None;
+                }
+                i += 1;
             }
             continue;
         }
-        match c {
-            ' ' | '\t' => finish(&mut current, &mut built),
-            '#' if current.is_none() => {
-                comment = true;
+        if !quoted {
+            match b {
+                b' ' | b'\t' => {
+                    column = column.saturating_add(1);
+                    if let Some(word) = current.take() {
+                        built.push(word);
+                    }
+                    i += 1;
+                    continue;
+                }
+                b'#' if current.is_none() => {
+                    comment = true;
+                    break;
+                }
+                b'"' => {
+                    column = column.saturating_add(1);
+                    let here = Pos::new(line, column);
+                    start_word(&mut current, true, here);
+                    if let Some(word) = &mut current {
+                        word.quoted = true;
+                        word.amp = None;
+                    }
+                    quote = Some(here);
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        // A run of characters the word takes as they are: up to a `"`, or outside quotes up to a blank or a tab.
+        let run = i;
+        let first = column.saturating_add(1);
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'"' || (!quoted && (b == b' ' || b == b'\t')) {
                 break;
             }
-            '"' => {
-                let word = current.get_or_insert_with(|| Building {
-                    text: String::new(),
-                    quoted: true,
-                    pos: here,
-                    amp: None,
-                });
-                word.quoted = true;
-                word.amp = None;
-                quote = Some(here);
+            if b & 0xC0 != 0x80 {
+                column = column.saturating_add(1);
             }
-            _ => {
-                let word = current.get_or_insert_with(|| Building {
-                    text: String::new(),
-                    quoted: false,
-                    pos: here,
-                    amp: None,
-                });
-                word.text.push(c);
-                word.amp = (c == '&').then_some(here);
-            }
+            i += 1;
+        }
+        start_word(&mut current, quoted, Pos::new(line, first));
+        if let Some(word) = &mut current {
+            word.text.push_str(&text[run..i]);
+            // Outside quotes an `&` that ends the run is a continuation candidate; inside, never.
+            word.amp = (!quoted && bytes[i - 1] == b'&').then_some(Pos::new(line, column));
         }
     }
     let unterminated = quote;
-    finish(&mut current, &mut built);
+    if let Some(word) = current.take() {
+        built.push(word);
+    }
     let mut amp = None;
     if continuation
         && unterminated.is_none()
@@ -159,13 +189,11 @@ fn lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
             built.pop();
         }
     }
-    words.extend(
-        built
-            .into_iter()
-            .map(|word| Word::new(word.text, word.quoted, word.pos)),
-    );
     Physical {
-        words,
+        words: built
+            .into_iter()
+            .map(|word| Word::new(word.text, word.quoted, word.pos))
+            .collect(),
         amp,
         comment,
         unterminated,
@@ -179,7 +207,12 @@ fn physical_lines(text: &str) -> impl Iterator<Item = (u32, &str)> {
     std::iter::from_fn(move || {
         let current = rest?;
         number = number.saturating_add(1);
-        match current.find(['\n', '\r']) {
+        let bytes = current.as_bytes();
+        let mut at = 0;
+        while at < bytes.len() && bytes[at] != b'\n' && bytes[at] != b'\r' {
+            at += 1;
+        }
+        match (at < bytes.len()).then_some(at) {
             Some(at) => {
                 let line = &current[..at];
                 let after = &current[at..];
@@ -383,4 +416,153 @@ pub fn split_words(text: &str) -> Result<Vec<String>, ScriptError> {
         ));
     }
     Ok(lexed.words.into_iter().map(|word| word.text).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// The char-by-char lexer the byte lexer replaced (the oracle of `fast_lexer_is_the_char_lexer`): lexes one physical line, numbered `line`; with `continuation`, a trailing unquoted `&` continues the command.
+    fn char_lex_physical(text: &str, line: u32, continuation: bool) -> Physical {
+        let mut words = Vec::new();
+        let mut current: Option<Building> = None;
+        let mut quote: Option<Pos> = None;
+        let mut comment = false;
+        let mut column: u32 = 0;
+        let mut chars = text.chars().peekable();
+        let finish = |current: &mut Option<Building>, built: &mut Vec<Building>| {
+            if let Some(word) = current.take() {
+                built.push(word);
+            }
+        };
+        let mut built: Vec<Building> = Vec::new();
+        while let Some(c) = chars.next() {
+            column = column.saturating_add(1);
+            let here = Pos::new(line, column);
+            if quote.is_some() {
+                let word = current.get_or_insert_with(|| Building {
+                    text: String::new(),
+                    quoted: true,
+                    pos: here,
+                    amp: None,
+                });
+                word.amp = None;
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        column = column.saturating_add(1);
+                        word.text.push('"');
+                    } else {
+                        quote = None;
+                    }
+                } else {
+                    word.text.push(c);
+                }
+                continue;
+            }
+            match c {
+                ' ' | '\t' => finish(&mut current, &mut built),
+                '#' if current.is_none() => {
+                    comment = true;
+                    break;
+                }
+                '"' => {
+                    let word = current.get_or_insert_with(|| Building {
+                        text: String::new(),
+                        quoted: true,
+                        pos: here,
+                        amp: None,
+                    });
+                    word.quoted = true;
+                    word.amp = None;
+                    quote = Some(here);
+                }
+                _ => {
+                    let word = current.get_or_insert_with(|| Building {
+                        text: String::new(),
+                        quoted: false,
+                        pos: here,
+                        amp: None,
+                    });
+                    word.text.push(c);
+                    word.amp = (c == '&').then_some(here);
+                }
+            }
+        }
+        let unterminated = quote;
+        finish(&mut current, &mut built);
+        let mut amp = None;
+        if continuation
+            && unterminated.is_none()
+            && let Some(last) = built.last_mut()
+            && let Some(at) = last.amp
+        {
+            amp = Some(at);
+            last.text.pop();
+            if last.text.is_empty() && !last.quoted {
+                built.pop();
+            }
+        }
+        words.extend(
+            built
+                .into_iter()
+                .map(|word| Word::new(word.text, word.quoted, word.pos)),
+        );
+        Physical {
+            words,
+            amp,
+            comment,
+            unterminated,
+        }
+    }
+
+    fn same(text: &str) {
+        for continuation in [true, false] {
+            let fast = lex_physical(text, 7, continuation);
+            let slow = char_lex_physical(text, 7, continuation);
+            assert_eq!(fast.words, slow.words, "{text:?}");
+            assert_eq!(fast.amp, slow.amp, "{text:?}");
+            assert_eq!(fast.comment, slow.comment, "{text:?}");
+            assert_eq!(fast.unterminated, slow.unterminated, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn fast_lexer_is_the_char_lexer_on_edges() {
+        for text in [
+            "",
+            " ",
+            "&",
+            " & ",
+            "a&",
+            "a &",
+            "\"&\"",
+            "\"a\"&",
+            "a\"b c\"d&",
+            "\"\"",
+            "\"\"\"\"",
+            "\"a\"\"b\"",
+            "\"open",
+            "#c",
+            " # c",
+            "a#b",
+            "a #b",
+            "é&",
+            "\"é\"\"ü\" ñ&",
+            "x\t\ty",
+            "&&",
+            "a\"\"&",
+            "\"&",
+        ] {
+            same(text);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn fast_lexer_is_the_char_lexer(text in "[ \t#\"&a%é\u{1F600}]{0,24}") {
+            same(&text);
+        }
+    }
 }
