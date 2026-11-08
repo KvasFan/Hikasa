@@ -728,6 +728,11 @@ pub fn show(
             let mut ctx = panes.ctx;
             m.ctx_into(&mut ctx);
             ctx.folder_pane = true;
+            // The entries that act on the clicked side are on only when it may be written (review F10).
+            ctx.clicked = match area {
+                Area::FolderPane(side) | Area::SyncPane(side) => Some(side),
+                _ => None,
+            };
             let items = (panes.menu)(area, &ctx);
             let mut hint = None;
             crate::ui::menus::items(ui, &items, &mut run, &mut hint);

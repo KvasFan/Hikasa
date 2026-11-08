@@ -149,8 +149,8 @@ Edit
   Compare To...	F7
   Quick Compare
   ---
-  Copy to Other Side
-  Move to Other Side
+  Copy to Other Side (disabled)
+  Move to Other Side (disabled)
   Copy to Folder...
   Move to Folder...
   Exchange (disabled)
@@ -433,8 +433,8 @@ Edit
   Compare To...	F7
   Quick Compare
   ---
-  Copy to Other Side
-  Move to Other Side
+  Copy to Other Side (disabled)
+  Move to Other Side (disabled)
   Copy to Folder...
   Move to Folder...
   Exchange (disabled)
@@ -481,7 +481,7 @@ Edit
   Quick Compare
   ---
   Copy to Other Side
-  Move to Other Side
+  Move to Other Side (disabled)
   Copy to Folder...
   Move to Folder...
   Exchange (disabled)
@@ -490,7 +490,7 @@ Edit
   Delete Permanently	Shift+Del
   Rename	F2
   Touch...
-  New Folder...	Ins
+  New Folder...	Ins (disabled)
   ---
   Compare Contents
   [ ] Ignored
@@ -507,7 +507,7 @@ Edit
   Compare Parent Folders
   ---
   Copy	Ctrl+C
-  Paste	Ctrl+V
+  Paste	Ctrl+V (disabled)
   Copy Filename
   > File Manager
     Open Folder in File Manager

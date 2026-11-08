@@ -589,6 +589,12 @@ impl AppCore {
             ctx.scope,
             crate::commands::Scope::Folder | crate::commands::Scope::Sync
         );
+        ctx.clicked = match area {
+            crate::commands::Area::FolderPane(side) | crate::commands::Area::SyncPane(side) => {
+                Some(side)
+            }
+            _ => None,
+        };
         let checked = |id: CommandId| self.checked(window, id);
         let names = self.workspace_names();
         let columns = self.column_menu(window);

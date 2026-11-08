@@ -1874,6 +1874,18 @@ impl AppCore {
         self.enabled_in(&self.ctx(window), id)
     }
 
+    /// [`AppCore::enabled`] of an invocation: a side it carries (a pane's context menu, a prompt's follow-up) is the
+    /// side its command acts on (M2 W9c after review F10).
+    pub fn enabled_inv(&self, window: WindowId, inv: &Invocation) -> bool {
+        let mut ctx = self.ctx(window);
+        if let Some(CommandArg::Side(side)) = inv.arg
+            && crate::commands::takes_side(inv.id)
+        {
+            ctx.clicked = Some(side);
+        }
+        self.enabled_in(&ctx, inv.id)
+    }
+
     /// [`AppCore::enabled`] in a context computed once for the frame (the toolbar asks for each of its buttons).
     pub fn enabled_in(&self, ctx: &Ctx, id: CommandId) -> bool {
         !ctx.dialog_open
@@ -1957,7 +1969,7 @@ impl AppCore {
         {
             self.activate(window, index);
         }
-        if !self.enabled(window, inv.id) {
+        if !self.enabled_inv(window, &inv) {
             return Vec::new();
         }
         self.run(window, inv, false)
@@ -3329,7 +3341,7 @@ impl AppCore {
     fn followup(&mut self, window: WindowId, f: Followup) -> Vec<Effect> {
         match f {
             Followup::Run(inv) => {
-                if self.enabled(window, inv.id) {
+                if self.enabled_inv(window, &inv) {
                     self.run(window, inv, true)
                 } else {
                     Vec::new()

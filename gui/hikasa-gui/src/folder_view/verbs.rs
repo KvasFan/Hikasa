@@ -488,8 +488,18 @@ impl FolderViewModel {
         if !writable[0] && !writable[1] {
             return VerbStart::Nothing;
         }
+        // From a pane's context menu: that side, which must be writable (review F10).
+        if let Some(side @ (Side::Left | Side::Right)) = options.arg
+            && !writable[usize::from(side == Side::Right)]
+        {
+            return VerbStart::Nothing;
+        }
         let focus = self.selection.focus;
-        let sides = if focus == SideSet::LEFT && writable[0] {
+        let sides = if options.arg == Some(Side::Left) {
+            SideChoice::Left
+        } else if options.arg == Some(Side::Right) {
+            SideChoice::Right
+        } else if focus == SideSet::LEFT && writable[0] {
             SideChoice::Left
         } else if focus == SideSet::RIGHT && writable[1] {
             SideChoice::Right

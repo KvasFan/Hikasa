@@ -517,6 +517,19 @@ pub struct Ctx {
     /// Folder (D-254): the current item on the left, on the right is on a local disk or in an archive there (the
     /// file-manager entries).
     pub explorer: [bool; 2],
+    /// Folder (M2 W9c after review F10): the side a pane's context menu was opened on; `CopySide`, `MoveSide`,
+    /// `Paste` and `NewFolder` act on it.
+    pub clicked: Option<Side>,
+    /// Folder: the focus side when one side only is focused (what `CopySide`, `MoveSide` and `Paste` act on without a
+    /// clicked side).
+    pub focus_side: Option<Side>,
+}
+
+impl Ctx {
+    /// The index of the side `CopySide`, `MoveSide` and `Paste` act on: the clicked one, else the focus side.
+    fn acting_side(&self) -> Option<usize> {
+        self.clicked.or(self.focus_side).and_then(side_index)
+    }
 }
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
@@ -646,7 +659,8 @@ pub enum Predicate {
     Movable(Side),
     /// A selection on both sides, both writable (Exchange).
     BothWritable,
-    /// A writable side and a finished comparison, nothing running (New Folder: no selection needed).
+    /// A writable side and a finished comparison, nothing running (New Folder: no selection needed); from a pane's
+    /// context menu, that pane's side writable (review F10).
     AnyWritable,
     /// A selection in a comparison with its folder structure (the Synchronize submenu).
     NotFlat,
@@ -661,6 +675,14 @@ pub enum Predicate {
     /// `FolderPaneFocused` with at least one selected item (`Copy`; the items not on a local disk are left out when it
     /// runs, with a message).
     LocalSelection,
+    /// M2 W9c after review F10 (`CopySide`): the side acted on (clicked, else the focus side) has selected items and
+    /// its other side is writable.
+    CopyFromSide,
+    /// `MoveSide`: [`Predicate::CopyFromSide`] and the side acted on writable too.
+    MoveFromSide,
+    /// `Paste`: [`Predicate::FolderPaneFocused`], a finished comparison, nothing running, and the side acted on writable
+    /// (with both sides focused and none clicked the command asks for a row on one side).
+    PasteSide,
 }
 
 impl Predicate {
@@ -723,7 +745,13 @@ impl Predicate {
                     && ctx.row_on[1]
             }
             Predicate::AnyWritable => {
-                ctx.ready && ctx.idle && !ctx.busy && (ctx.writable[0] || ctx.writable[1])
+                ctx.ready
+                    && ctx.idle
+                    && !ctx.busy
+                    && match ctx.clicked.and_then(side_index) {
+                        Some(k) => ctx.writable[k],
+                        None => ctx.writable[0] || ctx.writable[1],
+                    }
             }
             Predicate::NotFlat => ctx.ready && ctx.idle && !ctx.busy && !ctx.flat,
             Predicate::Loaded => ctx.ready && !ctx.busy,
@@ -731,6 +759,23 @@ impl Predicate {
             Predicate::HasConflict => ctx.has_conflict,
             Predicate::FolderPaneFocused => ctx.folder_pane,
             Predicate::LocalSelection => ctx.folder_pane && ctx.row_selected,
+            Predicate::CopyFromSide => {
+                ctx.row_selected
+                    && ctx
+                        .acting_side()
+                        .is_some_and(|k| ctx.row_on[k] && ctx.writable[1 - k])
+            }
+            Predicate::MoveFromSide => {
+                Predicate::CopyFromSide.holds(ctx)
+                    && ctx.acting_side().is_some_and(|k| ctx.writable[k])
+            }
+            Predicate::PasteSide => {
+                ctx.folder_pane
+                    && ctx.ready
+                    && ctx.idle
+                    && !ctx.busy
+                    && ctx.acting_side().is_none_or(|k| ctx.writable[k])
+            }
         }
     }
 }
@@ -930,15 +975,7 @@ pub const PRESENTATION: &[Row] = &[
         P::LocalSelection,
         NONE,
     ),
-    row(
-        C::Paste,
-        S::Global,
-        None,
-        None,
-        G::None,
-        P::FolderPaneFocused,
-        NONE,
-    ),
+    row(C::Paste, S::Global, None, None, G::None, P::PasteSide, NONE),
     row(
         C::SelectAll,
         S::Global,
@@ -1560,7 +1597,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::Selection,
+        P::CopyFromSide,
         NONE,
     ),
     row(
@@ -1596,7 +1633,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::RowSelected,
+        P::MoveFromSide,
         NONE,
     ),
     row(

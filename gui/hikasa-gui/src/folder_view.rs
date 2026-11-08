@@ -3013,6 +3013,13 @@ impl FolderViewModel {
         ctx.two_items = flags.two_items;
         ctx.two_folders = flags.two_folders;
         ctx.explorer = self.explorer_sides();
+        ctx.focus_side = if self.selection.focus == SideSet::LEFT {
+            Some(Side::Left)
+        } else if self.selection.focus == SideSet::RIGHT {
+            Some(Side::Right)
+        } else {
+            None
+        };
         self.sync_ctx_into(ctx);
     }
 
