@@ -224,7 +224,9 @@ records and serves them (tests), `FileClipboard` keeps one path a line, and the 
 arboard's `file_list` (`text/uri-list` on X11 and Wayland, `CF_HDROP`, file URLs), the Linux helper of D-203 keeping
 the list after the window closes. `AppLauncher` (FC-062's seam) gains `reveal(path)`: `SystemLauncher` runs the
 pure `host::reveal_command` of the platform (`explorer.exe /select,…`, `open -R`, the `ShowItems` D-Bus call through
-`dbus-send`) and opens the folder when it fails; `RecordingLauncher` records it. `Service::reveal_in_file_manager` and
+`dbus-send`) and opens the folder when it fails; `RecordingLauncher` records it. `open_folder(path)` (default
+`open_associated`) runs the pure `host::open_folder_command` (`explorer.exe`, `open`, `xdg-open`); both start in
+`host::launch_dir` (home, else `/`; Windows `System32`), never the item's folder or the program's own. `Service::reveal_in_file_manager` and
 `open_folder_in_file_manager` take a spec (a member shows its outermost archive; a spec off the disk is `unsupported`).
 Architecture check 2 keeps `file_list` and the reveal commands in `host.rs`.
 

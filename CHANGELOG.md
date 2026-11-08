@@ -104,10 +104,11 @@
 - Rows dragged onto a folder whose name ends in a space land in that folder; a name that is not valid Unicode is refused.
 - Pasted text gives only absolute paths and `file://` addresses of this computer; Copy and Copy Filename write in the
   order asked; the Linux clipboard helper is reaped; `localhost` is taken off file addresses read on Linux.
-- *Show in File Manager* starts in the home (Windows: system) folder, never the item's, and on Windows checks the item
-  and takes `\\?\` off before selecting it.
+- *Show in File Manager* and *Open Folder in File Manager* start in the home (Windows: system) folder, never the
+  item's nor the program's own, and on Windows *Show in File Manager* checks the item and takes `\\?\` off before
+  selecting it.
 - The Filters edit applies and records a filter only when the view is free, *Add To Presets* leaves the field as typed,
-  and a new comparison no longer replaces text being typed.
+  and neither a new comparison nor Session Settings' OK replaces text being typed.
 
 ### Changed (W9b)
 - `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.

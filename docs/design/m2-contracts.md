@@ -9007,14 +9007,15 @@ Mutations (each failed the tests named, then was reverted):
     item's folder. On Windows the item must exist and `explorer_path` must give a form explorer selects (`\\?\C:\…` →
     `C:\…`, `\\?\UNC\s\h\…` → `\\s\h\…`; a device or volume path has none), else the folder opens; a started
     explorer counts as shown whatever its exit code. *Open Folder in File Manager* keeps `open::that_detached` (the
-    process's own folder).
+    process's own folder; revised by note 34).
 30. **The keyboard's context menu (F16).** Shift+F10 or the Menu key, while the tree has the keyboard or nothing has it
     (a binding of the key wins first), opens the menu of the focus pane (the centre's with both sides focused; a sync
     view's pane) for the current row, anchored at that row (`egui::Popup::open_id` with `at_position`).
 31. **The Filters edit (F17).** `FiltersEdit::check` parses without touching the text; Enter shows the canonical text and
     records the MRU only once the view takes the filter (a busy view keeps the text as typed); *Add To Presets* saves the
     canonical text and leaves the field; a new model replaces the text only when it is not being edited (also when the
-    view had no filter). A reopen (Session Settings' OK) builds a new view, whose field starts from its filter.
+    view had no filter). A reopen (Session Settings' OK) builds a new view, whose field starts from its filter
+    (revised by note 35).
 32. **The review's survivors (F6).** Tests now catch M1–M4, M6, M7, M9, M13, M16, M18–M22, M25 and M29 (table below).
     Equivalent: M5 (`drop_into` without `present_on`: `TreeRead::spec` is `None` for a side without the item, so the walk
     goes up the same; `fixes::f6_a_drop_on_a_folder_the_side_lacks_goes_up` pins the behaviour), M8 (`clipboard_paths`
@@ -9027,6 +9028,26 @@ Mutations (each failed the tests named, then was reverted):
     All 4.1 ms, Shift+Down p95 0.54 ms), `two_windows` 259.0 MiB with p95 2.86 / max 8.26 ms. The first runs, started
     while the machine was still loaded by other sessions, had the tree's p95 at 8.0 ms over two frames and one
     `two_windows` frame of 23.15 ms; both are recorded. The other rows are untouched by the fixes (note 17 stands).
+
+*At W9's close* (two decisions taken after the fixer; revise notes 29 and 31):
+
+34. **Open Folder in File Manager starts in the fixed folder (revises note 29).** `AppLauncher` gains `open_folder(path)`
+    (default: `open_associated`, so a launcher that does not know it behaves as before); `Service::open_folder_in_file_manager`
+    and *Show in File Manager*'s fallback call it, and `RecordingLauncher` records `Recorded::OpenFolder`. `open` 5.4.5
+    takes no folder to start in, so `SystemLauncher::open_folder` runs the pure `host::open_folder_command(platform,
+    path, cwd)` (Windows `explorer.exe "<path>"` after `explorer_path`, macOS `open <path>`, Linux and the other Unix
+    systems `xdg-open <path>`) in `launch_dir`, as `reveal_command` is run. A started explorer counts as opened; elsewhere
+    an opener that ends with an error within `OPEN_CHECK` (250 ms, `open`'s own check) is the error, one still running
+    then has handed the folder on and is waited for on a thread of its own (never a zombie). When the program cannot
+    start, `open::commands` of the platform are tried in turn, each in the same folder. No new crate. Tests: the pure
+    builder per platform with `launch_dir` (`launcher::the_folder_opener_of_each_platform_starts_in_the_fixed_folder`)
+    and the records of the Service and the GUI (`OpenFolder`); no test starts a program.
+35. **A reopen keeps the Filters edit (revises note 31).** `AppCore::reopen` (Session Settings' OK, and the filter's own
+    Enter) hands the old view's `FiltersEdit` to the new one (`FolderViewModel::keep_filters_edit`): the text being
+    typed and its message stay, nothing is pushed to `mru.name_filters` (only Enter of the field records), and the
+    field then follows the new model as after any run (note 31): edited, it keeps its text and compares with the new
+    view's filter (Esc shows it); not edited, it shows the new filter. Test:
+    `tests_rule_tabs::a_reopen_keeps_the_filters_edit`.
 
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
