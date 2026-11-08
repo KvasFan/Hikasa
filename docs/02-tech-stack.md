@@ -648,6 +648,36 @@ p50 0.87 / p95 **4.69** / max **4.97 ms**, the tree's rebuild max 6.0 ms, PSS 15
 figures, where the round above at load 6.7 had one rebuild frame of 14.43 ms among 10. Every earlier round missed the
 p95 (W9a's open finding, at load 4.3–6.7); one round that meets it does not close the finding.
 
+### M2 W9c: gate G15 and ARCH-GUI-003 at the end of the wave (D-257)
+
+The whole G15 table and ARCH-GUI-003 once more at the end of W9c (§1.9.21, A9.27): release build of `feat/m2` after
+W9c's commits, `env -u WAYLAND_DISPLAY xvfb-run -a cargo test --release -p hikasa-gui --test perf_gate -- --ignored
+--nocapture --test-threads 1 --exact <row>`, llvmpipe only (D-132), one run each (`text_scroll`, `two_windows`: three
+runs, the median), 2026-11-08; each row started once the 1-minute load average was below 6 or after waiting for it
+(the load given is the row's own; `two_windows` started at 5.96, other sessions' builds pushed it to 8.6 meanwhile). The trees and inputs are the rows' own (the scan's 100,020 files a side in 11,110
+folders; the preview's and the sync view's trees of W9b; 10,000 and 100,000 entries for completion and browse).
+
+| Row | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G15 tree (`folder_columns`) | 6.1 | scan 245 ms, 7 frames while scanning: UI work p95 6.88 / max 6.88 ms (none above 16.7 ms); PSS 161.1 MiB (M1's `folder_scan` 130.7 MiB + 48 = 178.7) | max ≤ 16.7, p95 < 8 ms; PSS < 381.5 MiB and ≤ M1 + 48 MiB | **met** |
+| G15 select | 6.1 | Select All 3.8 ms, Invert Selection 0.8 ms, Shift+Left 0.4 ms (one frame each); 300 × Shift+Down p95 0.42 / max 0.49 ms; Select All Files (extra) 3.4 ms | each command ≤ 16.7 ms; Shift+Down p95 < 4 ms | **met** |
+| G15 preview | 6.5 | 100,021 lines; the preview's first frame 153.9 ms after Copy to Right (the plan job 153.6 ms of it); 600 frames of scrolling p95 0.40 / max 0.73 ms; PSS 149.3 MiB before, 227.7 MiB while open (+78.4 MiB) | first frame < 1.0 s; max < 16.7 ms; ≤ view + 96 MiB | **met** |
+| G15 sync | 5.1 | plan shown 58.7 ms after the comparison ended; an override re-planned and repainted in 85.9 ms; 600 frames of scrolling p95 0.21 / max 0.35 ms; PSS 163.6 MiB | ≤ 0.5 s; ≤ 0.5 s; max < 16.7 ms | **met** |
+| G15 completion | 5.8 | the list 157.0 ms after the last key (the 150 ms debounce included); typing max 0.37 ms | ≤ 200 ms; no frame above 16.7 ms | **met** |
+| G15 browse | 5.7 | listed 201.7 ms after it opened (100,000 entries); 600 frames of scrolling p95 0.82 / max 1.16 ms; PSS 195.5 MiB | ≤ 1 s; max < 16.7 ms | **met** |
+| ARCH-GUI-003 `text_scroll` | 6.0–7.3 | PSS 273.6, 277.2, 280.0 (**277.2**) MiB; 405.8 / 329.0 / 302.7 fps; first screen 265 ms, coloured 546 ms | < 381.5 MiB, ≥ 60 fps, < 1 s | **met** |
+| ARCH-GUI-003 `two_windows` | 7.6–8.6 | PSS 290.4, 284.9, 282.2 (**284.9**) MiB; last run UI work p95 4.02, max 13.21 ms | < 381.5 MiB, p95 < 8, max < 16.7 ms | **met** |
+| G12 `workspace_restore` | 5.0 | per pending tab −0.02 MiB PSS, −0.01 MiB anonymous (three rounds); first screen 199 ms | ≤ 20 MiB a tab | **met** |
+
+W9c adds no work to a frame while no menu is open and nothing is dragged: the pane menus are built only while one is
+open, the drop targets are a lookup of the row under the pointer, and the command context gains the file-manager flags
+of the current row (two lookups). No crate was added (D-258): `Cargo.lock` is unchanged and this document gains no
+dependency line.
+
+G1, G2, G4 and G7 were not measured again: W9c changes none of their paths (core gains the clipboard's file lists, the
+launcher's reveal, `check_folder_rules` and tests; the comparison, the scan, the plan and the copy are untouched since
+their figures *after the W9b review* above).
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |

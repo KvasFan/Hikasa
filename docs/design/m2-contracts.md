@@ -8839,7 +8839,7 @@ Mutations (each failed the tests named, then was reverted):
 | R25: Touch from the other side reversed | `ops::a9_13_touch_sets_the_local_time_or_copies_the_other_side` (the times pinned) |
 
 
-**W9c.** Interpretations and extensions of §1.9.16–§1.9.18 and §1.9.22 (one implementer):
+**W9c.** Interpretations and extensions of §1.9.16–§1.9.18 and §1.9.21–§1.9.22 (one implementer):
 
 1. Clipboard file lists (D-252). `FixedClipboard` holds a list as its content once one is placed (`files`,
    `set_files`, `file_lists`): `read_files` gives it back, `read` sees no text, as on a real clipboard. `FileClipboard`
@@ -8925,6 +8925,13 @@ Mutations (each failed the tests named, then was reverted):
     headless instead, through the real drawing code with synthetic egui input (`ui/tests_pointer.rs` `w9c_*`: a
     right-click and its menu entry, a row dragged to the other pane, Ctrl+C from the tree and from the Filters edit, a
     file dropped on a pane), which needs no display; the `#[ignore]` window test under xvfb was not added.
+17. G15 and ARCH-GUI-003 at the end of W9c (`docs/02`, release, xvfb with llvmpipe, 2026-11-08, load 5.0–8.6): every
+    row **met** — tree p95 6.88 / max 6.88 ms with PSS 161.1 MiB, select (Select All 3.8 ms, Shift+Down p95 0.42 ms),
+    preview (first frame 153.9 ms, +78.4 MiB), sync (58.7 ms, an override 85.9 ms), completion 157.0 ms, browse
+    201.7 ms; `text_scroll` 277.2 MiB and ≥ 302 fps, `two_windows` 284.9 MiB with p95 4.02 / max 13.21 ms,
+    `workspace_restore` −0.02 MiB a pending tab. The tree row's p95, W9a's open finding, met here as in the round at
+    load 3.8 after the W9b review; every row is one run on a machine others load, so the GPU run stays the
+    maintainer's (§6.9).
 
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
