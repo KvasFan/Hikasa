@@ -90,6 +90,25 @@
   `AppLauncher::reveal`, `host::reveal_command`, `Service::reveal_in_file_manager`, `open_folder_in_file_manager`,
   `api::file_manager_targets`, `Service::check_folder_rules`.
 
+### Fixed (W9c review)
+- A paste or drop never moves items out of a side with *Disable editing* on (or `--ro`): *Move* is off with the reason
+  and checked again when pressed. Pane context menu entries are off exactly when their command would refuse.
+- Session Settings with *Update session defaults* or a parent scope writes only what the dialog changed, no longer the
+  view's own values (an earlier *this view only* change, Ignored items, sync overrides); a tab holding a refusal is
+  marked and OK's tip names it.
+- Ctrl+V pastes when the clipboard holds only files; Shift+Del on Windows is Delete Permanently, not Cut; Shift+F10 and
+  the Menu key open a pane's context menu.
+- A drop from another program whose place the window cannot tell (no pointer position during the drag) asks which
+  pane's folder it goes into and offers *Open as new comparison* for one or two paths, instead of using a stale position;
+  a drop on a file row goes into its folder; Shift at the drop shows the move first.
+- Rows dragged onto a folder whose name ends in a space land in that folder; a name that is not valid Unicode is refused.
+- Pasted text gives only absolute paths and `file://` addresses of this computer; Copy and Copy Filename write in the
+  order asked; the Linux clipboard helper is reaped; `localhost` is taken off file addresses read on Linux.
+- *Show in File Manager* starts in the home (Windows: system) folder, never the item's, and on Windows checks the item
+  and takes `\\?\` off before selecting it.
+- The Filters edit applies and records a filter only when the view is free, *Add To Presets* leaves the field as typed,
+  and a new comparison no longer replaces text being typed.
+
 ### Changed (W9b)
 - `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.
 

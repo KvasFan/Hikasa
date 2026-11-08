@@ -81,8 +81,9 @@ selection first, on the side you clicked. The menu lists the commands that work 
 Compare To, Quick Compare; Copy and Move to Other Side (from that side), Copy and Move to Folder, Exchange; Delete,
 Delete Permanently, Rename, Touch, New Folder; Compare Contents, Ignored, Exclude, Synchronize ▸; Set as Base Folders,
 Set as Base on Other Side, Compare Parent Folders; Copy, Paste, Copy Filename, File Manager ▸; Open and Close Folder and
-Subfolders. Unavailable entries are greyed out. A right-click on the column header lists the columns and *Reset
-Columns* (the default columns, widths and order).
+Subfolders. Unavailable entries are greyed out, among them those that would write a side with *Disable editing* on.
+Shift+F10 or the Menu key opens the menu of the focused pane for the current row. A right-click on the column header
+lists the columns and *Reset Columns* (the default columns, widths and order).
 
 **File Manager** ▸ *Open Folder in File Manager* opens the folder of the current row (a folder row itself) with your
 file manager; *Show in File Manager* shows the item selected in its folder (Explorer, Finder, or your desktop's file
@@ -95,14 +96,21 @@ manager; the folder when it cannot select). An item inside an archive shows the 
 - Drop them on a pane's tree: they go into the folder row under the pointer (or the side's base folder). A prompt asks
   *Copy* or *Move*, with what to do when an item exists there (*Fail*, *Skip*, *Replace if newer*, *Replace*) and the
   plan of either, line by line as `hikasa vfs cp … --dry-run` prints it; the plan you see is the plan that runs, then
-  the folder is read again.
+  the folder is read again. On a file row they go into its folder; hold Shift as you drop to see the move first. Items
+  from a side with *Disable editing* on are only copied (*Move* is off and says why).
+- While another program drags, the window often cannot tell where the pointer is. When it cannot, the prompt asks
+  which pane's current folder the items go into (the focused pane first) and, for one or two items, offers *Open as
+  new comparison* instead.
 - Drag selected rows to the other pane: they are copied there (hold Shift when you let go: moved), through the
   operation's preview; onto a folder row of the other pane: Copy to Folder (Move with Shift) into that folder.
 - Dropping from other programs works on X11, Windows and macOS, not on Wayland; rows cannot be dragged out of the
   window. Use the clipboard instead: Edit ▸ **Copy** (Ctrl+C) puts the selected items as files your file manager
   pastes (items inside archives are left out); **Paste** (Ctrl+V) brings a file manager's copied files (or text lines
-  that are paths) into the pane's current folder through the same prompt; **Select All** (Ctrl+A) selects every row
-  shown. Actions ▸ **Copy Filename** copies the selected paths as text, one a line.
+  that are absolute paths or `file://` addresses of this computer) into the pane's current folder through the same
+  prompt; **Select All** (Ctrl+A) selects every row shown. Actions ▸ **Copy Filename** copies the selected paths as
+  text, one a line.
+- On Linux the clipboard's file lists name each item by its real path (a link's target), leave out items that no longer
+  exist, and cannot carry a name that is not valid Unicode from another program.
 - In a text field (a base field, the Filters edit, Find Filename, a dialog) Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A edit the
   text.
 

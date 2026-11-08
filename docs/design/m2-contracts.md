@@ -16,7 +16,7 @@
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
   Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7 W7 Reports (parts W7a Core, W7b Service and CLI) ·
   §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9 W9 GUI Folder Compare and Folder
-  Sync (parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10–§1.14 W10–W14 (outline in plan §6,
+  Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10–§1.14 W10–W14 (outline in plan §6,
   written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
   §6.8 W8 · §6.9 W9
@@ -7648,7 +7648,7 @@ Mutations of the review's survivors and of the fixes (each applied alone, revert
 | 49 | the handler accepts a relative `path` | `tests_script.rs` `a8_19_run_script_needs_an_absolute_path_and_reads_on_a_worker` |
 | 50 | `run_silently` does not arm `CtrlC` | `gui/tests/cli_script.rs` `ctrl_c::a8_14_ctrl_c_stops_a_silent_hikasa_gui_script_at_that_line`, `ctrl_c::a8_14_ctrl_c_on_a_terminal_stops_a_silent_hikasa_gui_script` |
 
-### 1.9 W9 — GUI Folder Compare and Folder Sync
+### 1.9 W9 — GUI Folder Compare and Folder Sync (complete)
 
 **Ids.** FC-002 (path edits, completion, MRU, Browse, create missing), FC-003 (the dialogs' read-only sides), FC-004
 (Up One Level, Set as Base, Compare Parent Folders, Sync/Compare Base Folders; merge entries D-59), FC-012 (glyphs),
@@ -8938,6 +8938,90 @@ Mutations (each failed the tests named, then was reverted):
     they are and always drops at least one entry (both mutations of its table caught again). Under wine the rest failed
     only in §6.6's five wine-only tests; every W9c test passes there.
 
+*After the W9c review* (one fixer; the findings F1–F17 by the review's numbers, then the mutations that survived):
+
+19. **A move never takes items from a read-only side (F1).** `FolderViewModel::move_refused` maps each source onto the
+    view's bases by its path (`path_within`: components, `.` dropped, `..` taken back, a verbatim Windows prefix read as
+    the plain one, names folded on Windows and macOS; a member base by its outermost archive, a snapshot by its file): a
+    source that is a read-only base or lies below one makes the drop prompt *Copy*-only, *Move* off and its preview the
+    reason (note 5's message, `read_only_message`). `drop_answered` checks a move again before it runs; a refusal then
+    runs nothing and is the view's message. The check is by path, not by the disk: a source reached through a symbolic
+    link to a read-only base is not recognised (the plan's own checks apply).
+20. **Rule tabs write only their changes (F2; revises the scope path of note 11).** `apply_scope` (core, D-82) writes
+    `change` sparse against the view's rules before it (`view.rules` on entry) over the defaults, or over the override it
+    replaces (Pair, Type: that override's keys kept, the change written over them, sparse against the defaults): a value
+    the view held on its own (an earlier *this view only* edit, its Ignored paths, its sync overrides, opened archives, a
+    command line's filters, `format_overrides`) stays the view's, and a Defaults write equals `session edit --set` of the
+    keys edited (`tabs::a9_23_values_the_view_holds_on_its_own_stay_out_of_the_defaults`, from each of the three). W4b's
+    text tab takes the same path. A key the dialog *removes* (an optional value cleared) is not carried to the defaults
+    (as `session edit --set` cannot say it either).
+21. **Ctrl+V with files only, Shift+Del, the image paste (F3, F15).** `ui::clipboard_key`: egui-winit swallows a pressed
+    Ctrl+V and sends `Paste` only with text (`PasteImage` with an image), so a Ctrl/Cmd+V (Windows: Shift+Insert)
+    release with no paste since its press, no text field and no dialog taking keys, is Ctrl+V; a paste event sets the
+    window's `paste_seen` and its release clears it (losing the keyboard clears it too); a press that reaches the window
+    itself is dispatched as it is. `PasteImage` is Ctrl+V. A `Cut` with Shift held (egui-winit's Windows Shift+Del) is
+    Shift+Del (Delete Permanently), else Ctrl+X. A Ctrl+V released after Ctrl is not a paste (the release carries no
+    Ctrl).
+22. **A drop whose place is unknown asks (F4, F8).** winit 0.30 sends no `CursorMoved` while another program holds the
+    drag (X11 ignores `XdndPosition`, Windows and macOS pass none), so egui's position is the one from before the drag.
+    Per window, `OsDrag` keeps when the drag began (its first frame with hovered or dropped files) and when the pointer
+    last moved or pressed; a position counts only when it is as fresh as the drag, else it is discarded everywhere (the
+    Home fields, the type buttons, the panes, the hover highlight). A drop on a folder view without one is
+    `DropTarget::PaneAsk` → `DropOutcome::Ask`: the prompt (`DropDialog::asking`) shows *Into the current folder of:*
+    per side its `paste_into` folder or why it cannot take them, the focus side first (else the side that can), and for
+    one or two paths *Open as new comparison* (`OPEN_NEW`), which applies W4's window rule to the paths (two open as a
+    comparison, one gives its hint); with neither side able, only that and *Cancel*. Modifiers are read in the drop's
+    frame: Shift shows the move first and makes it the default (note 4), unless the move is refused. On the maintainer's
+    desktop list (A9.30): a drop with the pointer still and moving, per platform.
+23. **Rows dragged onto a folder carry its spec (F5).** `DropInto` gains `spec`; `VerbOptions::into` is `(Spec, Side)`;
+    `OpDialog::prefill_target` keeps the spec beside the canonical text it shows, and `resolved_target` takes the spec as
+    it is while the field holds that text (no trim, no new parse; edited, the text is read as typed). A folder whose spec
+    `is_lossy` is refused with "Rows cannot be dropped into a folder whose name is not valid Unicode."
+24. **Pasted text (F7, revises note 6).** `clipboard::pasted_paths` (core): each line, trimmed, that is an absolute local
+    path or a `file://` URI with no host or `localhost` (case-insensitive scheme; `%XX` decoded; Unix keeps the bytes,
+    Windows takes `file:///C:/x` as `C:/x` and needs UTF-8). Anything else, a relative path included (it named the
+    window's current folder), is left out, and a text of none is "The clipboard holds no files to paste."
+25. **A drop on a file row (F9).** `FolderViewModel::drop_row` gives any row's node to OS drops; `drop_into` goes up from
+    a file to its folder as from a folder the side lacks. Rows dragged between the panes keep D-251's rule (a file row of
+    the other pane is "outside a folder row").
+26. **Menu entries as their commands (F10).** `Ctx` gains `clicked` (a pane menu's side) and `focus_side` (one side
+    focused); `Predicate::CopyFromSide` (`CopySide`: items on the side acted on, its other side writable),
+    `MoveFromSide` (`MoveSide`: that and the side itself writable), `PasteSide` (`Paste`: a pane, a finished comparison,
+    nothing running, the side acted on writable; with neither side known it stays on and asks for a row, note 6) and
+    `AnyWritable` with a clicked side needing that side (New Folder, which now presets the clicked side and refuses it
+    when read-only). `AppCore::enabled_inv` checks an invocation that carries `CommandArg::Side` with it (a menu entry, a
+    prompt's follow-up). The pane goldens changed for the orphan's right pane and the read-only side.
+27. **Tab errors (F11).** `SessionSettingsDialog::tab_caption` marks a tab that holds an error `(!)` (drawn in the error
+    colour); `DialogModel::button_tip` (new, default none) gives OK's disabled tip "The <tab> tab holds an error:
+    <message>".
+28. **The clipboard's writes and helpers (F12, F13).** `OrderedClipboard` (core) wraps the GUI's writing provider: a
+    command takes a `Ticket` on the window's thread, its job writes `in_turn`; a ticket older than the last one taken
+    writes nothing, writes never interleave, plain provider calls (a script's `output-to:clipboard`, Info's Copy) take
+    theirs when they write. The Linux helper's `Child` is waited for on a thread of its own (`host::reap`). arboard 3.7
+    has no other format API and bypassing it needs an X11/Wayland client of our own (new crates, D-258), so on Linux
+    `host::local_uri_paths` fixes only what it reads wrong (`file://localhost/p` → `/p`, another host's file and any other
+    relative path left out); the rest is documented (docs/04 FC-080, `view-folder-compare`): a list placed is canonicalized
+    by arboard (a link's target, missing items left out), a list read drops a URI that is not UTF-8 decoded.
+29. **File-manager commands (F14).** `reveal_command(platform, path, cwd)` starts in `launch_dir` (Windows
+    `%SystemRoot%\System32`, else `C:\Windows\System32`; elsewhere the home folder when absolute, else `/`), never the
+    item's folder. On Windows the item must exist and `explorer_path` must give a form explorer selects (`\\?\C:\…` →
+    `C:\…`, `\\?\UNC\s\h\…` → `\\s\h\…`; a device or volume path has none), else the folder opens; a started
+    explorer counts as shown whatever its exit code. *Open Folder in File Manager* keeps `open::that_detached` (the
+    process's own folder).
+30. **The keyboard's context menu (F16).** Shift+F10 or the Menu key, while the tree has the keyboard or nothing has it
+    (a binding of the key wins first), opens the menu of the focus pane (the centre's with both sides focused; a sync
+    view's pane) for the current row, anchored at that row (`egui::Popup::open_id` with `at_position`).
+31. **The Filters edit (F17).** `FiltersEdit::check` parses without touching the text; Enter shows the canonical text and
+    records the MRU only once the view takes the filter (a busy view keeps the text as typed); *Add To Presets* saves the
+    canonical text and leaves the field; a new model replaces the text only when it is not being edited (also when the
+    view had no filter). A reopen (Session Settings' OK) builds a new view, whose field starts from its filter.
+32. **The review's survivors (F6).** Tests now catch M1–M4, M6, M7, M9, M13, M16, M18–M22, M25 and M29 (table below).
+    Equivalent: M5 (`drop_into` without `present_on`: `TreeRead::spec` is `None` for a side without the item, so the walk
+    goes up the same; `fixes::f6_a_drop_on_a_folder_the_side_lacks_goes_up` pins the behaviour), M8 (`clipboard_paths`
+    keeping the root: the root is no row, so no selection holds it), M14 (dispatch without the
+    text-field guard: `dispatch_keys`' own `is_text_edit_key` rule keeps the keys), M30 (`focus_area` without
+    `TextField`: `text_focus` already keeps the clipboard events for the field).
+
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
 
@@ -8976,6 +9060,47 @@ Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`,
 | a right-click inside the selection replaces it | `menus::a9_21_a_right_click_…` |
 | a press on a selected row starts no drag | `pointer::w9c_a_selected_row_dragged_to_the_other_pane_asks_to_copy_it` |
 | an OS drop over a pane's tree has no target | `pointer::w9c_files_dropped_on_a_pane_ask_to_copy_or_move_them` |
+| *After the review* (`fixes` is `tests_pane_fixes`; the review's M-numbers, then the fixes') | |
+| M1: the drop prompt's buttons ignore a pending plan | `fixes::f6_the_overwrite_choice_waits_for_its_plan_and_is_remembered_by_a_run` |
+| M2: the overwrite choice remembered on Cancel | `fixes::f6_the_overwrite_choice_…` |
+| M3: the default overwrite *Replace* | `fixes::f6_the_overwrite_choice_…`, `fixes::f6_a_move_refreshes_its_sources_and_failures_are_logged` |
+| M4: `drop_into` without the read-only check | `fixes::f4_open_as_new_comparison_and_sides_that_cannot_take_them` |
+| M5: `drop_into` without `present_on` | equivalent (note 32) |
+| M6: Paste from a file row goes into the base | `fixes::f6_where_a_paste_goes` |
+| M7: Paste with both sides focused picks the left | `fixes::f6_where_a_paste_goes` |
+| M9: pasted lines not trimmed | `clipboard_files` `pasted_text_names_only_local_absolute_paths`, `fixes::f7_pasted_text_takes_absolute_paths_and_file_uris_only` |
+| M13: Shift+Ctrl+C an editing key of a field | `clip::a9_20_a_text_field_keeps_its_editing_keys` |
+| M16: a cell from a preset without the preset's matrix | `tabs::a_cell_changed_from_a_preset_keeps_the_preset_s_other_cells` |
+| M18: Enter of the view's own filter runs again | `tabs::the_view_s_own_filter_entered_again_runs_nothing` |
+| M19: a new model replaces the text being typed | `tabs::a_new_model_keeps_the_text_being_typed` |
+| M20: a preset name not trimmed | `tabs::a_preset_name_is_trimmed` |
+| M21: a move does not refresh its sources' folders | `fixes::f6_a_move_refreshes_its_sources_and_failures_are_logged` (a source in a subfolder) |
+| M22: failed lines never reach the log | `fixes::f6_a_move_refreshes_…` |
+| M25: `FileClipboard::write_files` lets `\r` through | `clipboard_files` `a9_20_the_file_clipboard_keeps_one_path_a_line` |
+| M29: rows dragged onto a folder without the command's check | `fixes::f6_a_move_to_a_folder_from_a_read_only_side_is_not_offered` |
+| M8, M14, M30 | equivalent (note 32) |
+| F1: `move_refused` refuses nothing | `fixes::f1_a_paste_from_a_read_only_side_copies_only`, `…_sources_are_mapped_onto_the_read_only_bases`, `…_a_move_is_checked_again_before_it_runs` |
+| F1: no check again before the move runs | `fixes::f1_a_move_is_checked_again_before_it_runs` |
+| F2: the whole change, not its delta, to the defaults | `tabs::a9_23_values_the_view_holds_on_its_own_stay_out_of_the_defaults`, `scope::a_scope_writes_only_what_the_change_changed` |
+| F2: an override replaced without its earlier keys | `scope::a_scope_writes_only_what_the_change_changed`, `scope::overlay_order_and_replacement` |
+| F3: a lone Ctrl+V release no paste | `pointer::w9c_clipboard_events_and_a_lone_ctrl_v_release`, `pointer::w9c_ctrl_v_with_files_only_pastes_on_its_release` |
+| F15: a cut with Shift is Ctrl+X | `pointer::w9c_a_cut_with_shift_is_delete_permanently` |
+| F4: a position older than the drag used | `pointer::w9c_a_drop_without_a_fresh_position_asks_for_the_pane` |
+| F4: no *Open as new comparison* | `fixes::f4_a_drop_with_no_place_asks_for_the_pane`, `fixes::f4_open_as_new_…` |
+| F8: Shift at the drop not read | `pointer::w9c_a_drop_without_a_fresh_position_asks_for_the_pane` |
+| F5: the prefilled spec not kept | `fixes::f5_rows_dragged_onto_a_folder_keep_its_spec` |
+| F5: a lossy folder not refused | `fixes::f5_a_folder_that_is_not_unicode_is_refused` |
+| F7: another host's `file://` taken | `clipboard_files` `pasted_text_names_only_local_absolute_paths` |
+| F9: a drop on a file row goes into the base | `fixes::f9_a_drop_on_a_file_row_goes_into_its_folder` |
+| F10: Paste of a read-only pane on | `menus::a9_21_the_pane_menus_per_area` |
+| F10: Copy to Other Side toward a read-only side on | `menus::a9_21_the_pane_menus_per_area` |
+| F11: a tab with an error not marked | `tabs::an_error_on_another_tab_is_marked_and_named` |
+| F12: an older write after a later one | `clipboard_files` `ordered_writes_let_the_latest_win` |
+| F13: `localhost/p` kept relative | `launcher` `a_linux_uri_list_keeps_local_paths` |
+| F14: the command starts in the item's folder | `launcher` `a9_22_the_command_line_of_each_platform` |
+| F14: `\\?\UNC\` not taken off | `launcher` `explorer_selects_plain_paths` |
+| F16: Shift+F10 and the Menu key open nothing | `pointer::w9c_the_keyboard_opens_the_pane_menu` |
+| F17: Enter applies while the view is busy | `tabs::a_busy_view_keeps_the_typed_filter_and_presets_leave_the_field` |
 
 ### 1.10–1.14 W10–W14
 

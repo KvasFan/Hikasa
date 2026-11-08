@@ -467,7 +467,11 @@ Orphans = every atom except the two orphan atoms; …).
   a member of an archive shows its outermost archive file; a spec off the disk has them disabled; a failure is a warning
   notice. **Copy Filename** writes the selected items' specs one a line (`\r\n` on Windows), tree order, the left side
   first per row; **Copy** (Ctrl+C) puts the selected local items on the clipboard as files (members are left out with a
-  message).
+  message). *After the W9c review:* the file-manager commands start in a fixed folder (the home folder, else `/`; on
+  Windows the system folder), never the item's, so a program found through a `PATH` entry `.` is never taken from a
+  compared folder; on Windows the item must exist and `\\?\` is taken off before `explorer.exe /select,` (whose exit
+  code says nothing), else its folder is opened. Shift+F10 or the Menu key opens a pane's context menu for the current
+  row; its entries are off exactly when their command would refuse (the clicked side's *Disable editing* included).
 - **FC-064** (P0): Status bar: counts of selected items per side, total sizes, and the
   comparison state summary; **Folder Compare Info** (Ctrl+I) dialog shows statistics
   (files/folders per state). *M2 W9a (D-238, D-242):* the status bar counts the selection per side (`Selected: L n
@@ -567,6 +571,24 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   centre and outside the window do nothing. Clipboard file lists stand in for the drags the toolkit lacks: Copy puts the
   items as files a file manager pastes; Paste (Ctrl+V) drops the clipboard's files (else its text lines that are specs)
   on the current folder of the pane, through the same prompt.
+  *After the W9c review:* winit 0.30 gives no pointer position while another program holds a drag (X11 ignores the
+  position messages, Windows and macOS pass none), so a drop on a folder view whose pointer has not moved since the drag
+  began cannot say which pane it was dropped on: the prompt then asks, *Into the current folder of:* the left or the
+  right pane (the focus pane's current folder first; a pane that cannot take them is shown with its reason), and for one
+  or two paths offers *Open as new comparison* (W4's window rule: two paths open as a comparison, one gives its hint).
+  A position from before the drag is never used, and the target is highlighted only from a position seen during it. A
+  drop on a file row goes into that file's folder. Shift held at the drop shows the move first. A source that is a
+  read-only side's base or lies under it (by its path; a member by its archive) is copied only: *Move* is off with the
+  reason, and checked again when pressed. Pasted text gives sources only as absolute local paths and `file://` URIs of
+  this computer (percent-decoded); anything else is "The clipboard holds no files to paste." Ctrl+V pastes also when
+  the clipboard holds only files (the key's release stands in for the press the toolkit swallows). Rows dragged onto a
+  folder prefill Copy/Move to Folder with that folder as it is (a name with spaces at its end stays whole); a folder
+  whose name is not valid Unicode is refused. **Linux clipboard lists** go through arboard 3.7, which cannot be bypassed
+  without a new crate: a list placed names each item by its resolved path (a symbolic link's target) and leaves out items
+  that no longer exist; a list read drops a URI that is not UTF-8 once decoded; Hikasa strips `localhost` from the URIs
+  it reads and leaves out another computer's files. Copy and Copy Filename write in the order they were asked, the later
+  one winning. On the maintainer's desktop list (§6.9 A9.30): an OS drop on each platform, with the pointer still and
+  moving.
 - **FC-081** (P0): Remote-target quirks: *Touch local files when copying to an FTP
   site* (when the server cannot set times, set the local time to match the uploaded
   file's).

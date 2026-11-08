@@ -105,6 +105,11 @@ close, and Yes writes a new auto-saved file.
   child's relative paths → the child's own changes. "Update session defaults" writes the rules (never the specs)
   to `_defaults/<type>.toml`; the two parent scopes store an override in the parent (a named or auto-saved folder
   session), sparse against the defaults of the child's type; a locked parent keeps the override in memory only.
+  *M2 W9c after review:* what goes to the defaults or into an override is only what the dialog changed (the new rules
+  sparse against the view's rules before it), written over the defaults or over the override it replaces; a value the
+  view held on its own (an earlier *this view only* edit, its Ignored paths, its sync overrides, a command line's
+  filters) stays the view's, so the file equals `hikasa session edit --set` of the keys edited. A tab that holds an
+  error is marked `(!)` in the tab row and OK's tip names it.
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.

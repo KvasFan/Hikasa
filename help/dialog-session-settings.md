@@ -18,7 +18,9 @@ A folder session has rule tabs (below); the text views get theirs later. When a 
 buttons at the bottom say where the change goes:
 
 - *This view only*: the view's own session.
-- *Update session defaults*: the defaults of the type, for every later session.
+- *Update session defaults*: the defaults of the type, for every later session. Only what you changed in this dialog
+  goes there; what the view holds on its own (an earlier *this view only* change, its Ignored items, its sync
+  overrides) stays the view's. The same holds for the two choices below.
 - *These files within parent* and *All files within parent*: for a view opened from a saved folder session, a rule
   for this pair or for every pair of that type, stored in the folder session.
 
@@ -43,4 +45,5 @@ written):
   within archives*, the recycle bin options, and the rows you set by hand, each with *Remove*.
 
 Each change is checked as the comparison would take it: a refusal shows on its tab and OK stays off until it is fixed.
+A tab that holds a refusal is marked `(!)` in the tab row, and OK's tip names it.
 Settings these tabs do not show are kept as they are.

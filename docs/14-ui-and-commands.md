@@ -157,6 +157,9 @@ Ctrl, Alt or Cmd only at the window root.
   | Folder Sync pane | Leave Alone, Copy Left to Right, Copy Right to Left, Delete Left, Delete Right · Exclude · Open, Open With ▸ · Set as Base Folders, Set as Base on Other Side · Copy, Copy Filename, File Manager ▸ · Open Folder, Close Folder |
 
   The lists ignore the menu flag of `commands.toml` (it is the menu bar's); captions and shortcuts follow it.
+  *After the W9c review:* an entry is off exactly when its command would refuse, the clicked side's *Disable editing*
+  included (Copy/Move to Other Side, Paste and New Folder of a read-only pane, a copy toward a read-only side); Shift+F10
+  and the Menu key open the focus pane's menu (the centre's with both sides focused) for the current row, anchored at it.
 - **Drag and drop, the Wayland gap (UI-008, D-251).** winit 0.30 delivers paths dropped from other programs on X11,
   Windows and macOS, not on Wayland, and cannot start a drag toward other programs. Paths dropped on a folder view's
   path edit or pane header become that side's base; on its tree, a prompt copies or moves them into the folder under the
@@ -167,7 +170,11 @@ Ctrl, Alt or Cmd only at the window root.
   text lines that are specs) on the pane's current folder, **Select All** (Ctrl+A) selects every shown row; the three
   are a folder pane's, disabled elsewhere until the text views take them (W11). While a text field has the keyboard
   (a path edit, the Filters edit, the find panel, a dialog's field) Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A belong to the
-  field, whatever command binds them.
+  field, whatever command binds them. *After the W9c review:* egui-winit sends no paste when the clipboard holds only
+  files, so a Ctrl/Cmd+V release with no paste since its press is Paste; an image's paste is Ctrl+V too; the cut egui-winit
+  makes of Windows' Shift+Del is Shift+Del (Delete Permanently). Pasted text names sources only as absolute local paths
+  and `file://` URIs of this computer. A drop on a folder view whose place the toolkit cannot tell asks for the pane
+  (`docs/04` FC-080).
 
 ## 2. Theming
 
@@ -379,7 +386,9 @@ Legend's action icons. Remembered choices: `state.dialogs."copy-to-folder"` (`st
 
 *M2 W9c (D-249…D-252):* **Session Settings** has the folder rule tabs (`docs/03` SES-020); the **drop prompt** ("Copy
 or Move": the question, the overwrite choice remembered in `state.dialogs.drop`, a preview of either plan, *Copy*,
-*Move*, *Cancel*; help `view-folder-compare`); **Add To Presets** asks a unique name for the filter and writes
+*Move*, *Cancel*; help `view-folder-compare`; after the W9c review also *Into the current folder of:* Left/Right when the
+drop's place is unknown, *Open as new comparison* for one or two paths, and *Move* off with its reason for a source on a
+read-only side); **Add To Presets** asks a unique name for the filter and writes
 `filters.toml` (a concurrent change asks *Overwrite* / *Reload* / *Cancel*).
 
 ## 5. Optional helpers

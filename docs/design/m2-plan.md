@@ -437,7 +437,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   documented); parser goldens; exit-code table; property: a script's `copy`/`sync` gives the same result as the
   matching `folder op`/`folder sync` command (T11).
 
-### Wave 9 — GUI Folder Compare and Folder Sync (L, beside W8, then W10)
+### Wave 9 — GUI Folder Compare and Folder Sync (L, beside W8, then W10; complete)
 
 - **Ids:** FC-002, FC-003, FC-004, FC-012 (glyphs), FC-013/014 (glyph, Path column), FC-029, FC-030 (Legend),
   FC-032, FC-033, FC-040, FC-041, FC-050 (Filters edit, presets, Name Filters tab), FC-052, FC-060…FC-064,
