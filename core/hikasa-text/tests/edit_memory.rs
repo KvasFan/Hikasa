@@ -23,20 +23,28 @@ struct Counting;
 
 static LIVE: AtomicIsize = AtomicIsize::new(0);
 
+// SAFETY: every method forwards to `System`, which upholds the `GlobalAlloc` contract; the counter is a static
+// atomic, so counting never allocates or re-enters.
 unsafe impl GlobalAlloc for Counting {
+    // SAFETY: the caller's guarantees for `layout` are passed on to `System::alloc` unchanged.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
+        // SAFETY: forwarded with the caller's guarantees.
         unsafe { System.alloc(layout) }
     }
+    // SAFETY: `ptr` and `layout` come from `alloc`/`realloc` above, as `System::dealloc` requires.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         LIVE.fetch_sub(layout.size() as isize, Ordering::Relaxed);
+        // SAFETY: forwarded with the caller's guarantees.
         unsafe { System.dealloc(ptr, layout) }
     }
+    // SAFETY: the caller's guarantees for `ptr`, `layout` and `new_size` are passed on unchanged.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         LIVE.fetch_add(
             new_size as isize - layout.size() as isize,
             Ordering::Relaxed,
         );
+        // SAFETY: forwarded with the caller's guarantees.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
