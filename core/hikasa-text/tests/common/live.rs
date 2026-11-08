@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use hikasa_core::{Ctl, Pair, Side};
 use hikasa_text::edit::{
-    EditOptions, EditOutcome, EditRequest, Editability, EditableDocument, GroupHint, TextPos,
+    EditOptions, EditOutcome, EditRequest, Editability, EditableDocument, GroupHint, LineDelta,
+    TextPos,
 };
 use hikasa_text::{
     CompareInput, CompiledFormat, LineEnding, LineIdx, LiveComparison, RegexLimits, TextComparison,
@@ -284,5 +285,128 @@ pub fn side(rng: &mut XorShift) -> Side {
         Side::Left
     } else {
         Side::Right
+    }
+}
+
+/// An oracle of the anchors of a live comparison independent of its own bookkeeping (`move_anchors`): every
+/// line of each side has an identity (a delta's first `min(removed, inserted)` lines keep theirs, the other new
+/// lines get fresh ones); an anchor boundary is the identity of the line at it (or the end), and a boundary
+/// whose line is removed moves to the first line after the change; an anchor whose range becomes empty is
+/// dropped.
+#[derive(Debug, Clone)]
+pub struct AnchorModel {
+    ids: [Vec<u64>; 2],
+    next: u64,
+    /// Per anchor: kind, and per side the boundaries `(start, end)` (`None` = the end of the document).
+    anchors: Vec<ModelAnchor>,
+}
+
+#[derive(Debug, Clone)]
+enum ModelAnchor {
+    Pair([(Option<u64>, Option<u64>); 2]),
+    Isolate(usize, (Option<u64>, Option<u64>)),
+}
+
+impl AnchorModel {
+    /// The model of `anchors` over documents of `lines` lines a side.
+    pub fn new(anchors: &[hikasa_text::Anchor], lines: [u32; 2]) -> AnchorModel {
+        let ids = [
+            (0..u64::from(lines[0])).collect::<Vec<u64>>(),
+            (1_000_000_000..1_000_000_000 + u64::from(lines[1])).collect(),
+        ];
+        let at = |ids: &[u64], x: u32| ids.get(x as usize).copied();
+        let anchors = anchors
+            .iter()
+            .map(|a| match a {
+                hikasa_text::Anchor::Pair { left, right } => ModelAnchor::Pair([
+                    (at(&ids[0], left.start), at(&ids[0], left.end)),
+                    (at(&ids[1], right.start), at(&ids[1], right.end)),
+                ]),
+                hikasa_text::Anchor::Isolate { side, lines } => {
+                    let k = usize::from(*side == hikasa_text::AnchorSide::Right);
+                    ModelAnchor::Isolate(k, (at(&ids[k], lines.start), at(&ids[k], lines.end)))
+                }
+            })
+            .collect();
+        AnchorModel {
+            ids,
+            next: 2_000_000_000,
+            anchors,
+        }
+    }
+
+    /// Applies one change of `side`.
+    pub fn apply(&mut self, side: Side, d: LineDelta) {
+        if d.is_empty() {
+            return;
+        }
+        let k = usize::from(side == Side::Right);
+        let ids = &mut self.ids[k];
+        let (at, removed, inserted) = (d.at as usize, d.removed as usize, d.inserted as usize);
+        let kept = removed.min(inserted);
+        let gone: std::collections::HashSet<u64> =
+            ids[at + kept..at + removed].iter().copied().collect();
+        let after = ids.get(at + removed).copied();
+        let fresh: Vec<u64> = (0..inserted - kept)
+            .map(|_| {
+                self.next += 1;
+                self.next
+            })
+            .collect();
+        ids.splice(at + kept..at + removed, fresh);
+        let moved = |b: &mut Option<u64>| {
+            if b.is_some_and(|id| gone.contains(&id)) {
+                *b = after;
+            }
+        };
+        for a in &mut self.anchors {
+            match a {
+                ModelAnchor::Pair(sides) => {
+                    moved(&mut sides[k].0);
+                    moved(&mut sides[k].1);
+                }
+                ModelAnchor::Isolate(s, (b0, b1)) if *s == k => {
+                    moved(b0);
+                    moved(b1);
+                }
+                ModelAnchor::Isolate(..) => {}
+            }
+        }
+        let ids = self.ids.clone();
+        let pos = |k: usize, b: Option<u64>| -> u32 {
+            b.map_or(ids[k].len(), |id| {
+                ids[k].iter().position(|&x| x == id).unwrap()
+            }) as u32
+        };
+        self.anchors.retain(|a| match a {
+            ModelAnchor::Pair(sides) => (0..2).all(|k| pos(k, sides[k].0) < pos(k, sides[k].1)),
+            ModelAnchor::Isolate(k, (b0, b1)) => pos(*k, *b0) < pos(*k, *b1),
+        });
+    }
+
+    /// The anchors in the current numbering.
+    pub fn anchors(&self) -> Vec<hikasa_text::Anchor> {
+        let pos = |k: usize, b: Option<u64>| -> u32 {
+            b.map_or(self.ids[k].len(), |id| {
+                self.ids[k].iter().position(|&x| x == id).unwrap()
+            }) as u32
+        };
+        self.anchors
+            .iter()
+            .map(|a| match a {
+                ModelAnchor::Pair(sides) => hikasa_text::Anchor::Pair {
+                    left: pos(0, sides[0].0)..pos(0, sides[0].1),
+                    right: pos(1, sides[1].0)..pos(1, sides[1].1),
+                },
+                ModelAnchor::Isolate(k, (b0, b1)) => hikasa_text::Anchor::Isolate {
+                    side: if *k == 1 {
+                        hikasa_text::AnchorSide::Right
+                    } else {
+                        hikasa_text::AnchorSide::Left
+                    },
+                    lines: pos(*k, *b0)..pos(*k, *b1),
+                },
+            })
+            .collect()
     }
 }

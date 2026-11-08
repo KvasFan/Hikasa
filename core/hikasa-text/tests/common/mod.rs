@@ -180,8 +180,20 @@ pub struct Canonical {
     inline: Vec<InlineDto>,
 }
 
-/// Builds the canonical form.
+/// Builds the canonical form (the inline differences of the first 50 rows that have some).
 pub fn canonical(cmp: &TextComparison) -> Canonical {
+    canonical_limited(cmp, 50)
+}
+
+/// The canonical form with the inline differences of every row (the live tests, A10.9).
+pub fn canonical_json_all(cmp: &TextComparison) -> String {
+    let mut text = serde_json::to_string_pretty(&canonical_limited(cmp, usize::MAX)).unwrap();
+    text.push('\n');
+    text
+}
+
+/// Builds the canonical form with the inline differences of the first `inline_rows` rows that have some.
+pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical {
     let mut rows: Vec<RowsDto> = Vec::new();
     for (k, row) in cmp.rows(0..cmp.row_count()).enumerate() {
         let k = k as u32;
@@ -215,7 +227,7 @@ pub fn canonical(cmp: &TextComparison) -> Canonical {
                 whole_line: c.whole_line,
             })
         })
-        .take(50)
+        .take(inline_rows)
         .collect();
     Canonical {
         format: cmp.format().name().to_owned(),

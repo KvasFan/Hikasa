@@ -3,7 +3,10 @@
 //! mixed-terminator text), every algorithm, closeness on and off, never-align, anchors, identity and tokenized
 //! paths; random edit scripts through `note_edit` with recompares after random batches: after each `install` the
 //! comparison equals a fresh `compare_with_limits` of the snapshots (the canonical document: runs, rows,
-//! sections, statistics, warnings, verdicts, inline differences), and so do the anchors. A deterministic sweep
+//! sections, statistics, warnings, verdicts, the inline differences of every row), and the anchors equal an
+//! oracle that tracks line identities. Further generators: nested documents (unique headers around blocks
+//! whose items are unique inside a block, recorded child nodes with chains of their own) with every skew and
+//! duplicate, move and paste edits; `Batch` requests; jobs run while edits come and installed out of order. A deterministic sweep
 //! shows every certificate condition both holding and failing and the T6 fallback taken.
 
 mod common;
@@ -15,6 +18,7 @@ use common::live::{
 use hikasa_core::{Ctl, Pair, Side};
 use hikasa_text::{AlgorithmChoice, Anchor, AnchorSide, Installed, PathCounters, TextRules};
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 
 /// The settings of one case.
 fn setup(rng: &mut XorShift, kind: Gen, lines: (u32, u32)) -> Setup {
@@ -97,6 +101,9 @@ fn run(seed: u64, big: bool) -> PathCounters {
     let (mut left, mut right) = (editable(&l, &opts), editable(&r, &opts));
     let setup = setup(&mut rng, kind, (left.line_count(), right.line_count()));
     let mut lc = live(&setup, Pair::new(&left, &right));
+    // The anchors' oracle: line identities, independent of the live comparison's own bookkeeping.
+    let mut model =
+        common::live::AnchorModel::new(lc.anchors(), [left.line_count(), right.line_count()]);
     let mut counters = PathCounters::default();
     let steps = 6 + rng.below(20);
     for _ in 0..steps {
@@ -111,8 +118,12 @@ fn run(seed: u64, big: bool) -> PathCounters {
             };
             if let Some(out) = random_edit(&mut rng, kind, doc) {
                 lc.note_edit(s, doc, &out);
+                for &d in &out.deltas {
+                    model.apply(s, d);
+                }
             }
         }
+        assert_eq!(lc.anchors(), model.anchors(), "seed {seed}: anchors");
         let job = lc.recompare_job(Pair::new(&left, &right));
         let done = job.run(None, &Ctl::detached()).unwrap();
         counters.add(&done.path);
@@ -120,9 +131,12 @@ fn run(seed: u64, big: bool) -> PathCounters {
             lc.install(done, Pair::new(&left, &right)),
             Installed::Current
         );
-        let want = fresh(&setup, Pair::new(&left, &right), lc.anchors());
+        let want = fresh(&setup, Pair::new(&left, &right), &model.anchors());
         let got = lc.current();
-        let (g, w) = (common::canonical_json(got), common::canonical_json(&want));
+        let (g, w) = (
+            common::canonical_json_all(got),
+            common::canonical_json_all(&want),
+        );
         if g != w {
             let first = g.lines().zip(w.lines()).position(|(a, b)| a != b);
             eprintln!("seed {seed}: first difference at line {first:?}; path {counters:?}");
@@ -398,4 +412,387 @@ fn auto_is_decided_again_from_the_new_prefix_and_suffix() {
         common::canonical_json(lc.current()),
         common::canonical_json(&want)
     );
+}
+
+/// The installed comparison equals a fresh compare (every row, the inline differences of every row).
+fn assert_exact(
+    tag: &str,
+    setup: &Setup,
+    lc: &hikasa_text::LiveComparison,
+    l: &hikasa_text::edit::EditableDocument,
+    r: &hikasa_text::edit::EditableDocument,
+) -> Result<(), TestCaseError> {
+    let want = fresh(setup, Pair::new(l, r), lc.anchors());
+    let (g, w) = (
+        common::canonical_json_all(lc.current()),
+        common::canonical_json_all(&want),
+    );
+    if g != w {
+        let first = g
+            .lines()
+            .zip(w.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        let (gl, wl): (Vec<&str>, Vec<&str>) = (g.lines().collect(), w.lines().collect());
+        let around = |v: &[&str]| v[first.saturating_sub(3)..(first + 5).min(v.len())].join("\n");
+        return Err(TestCaseError::fail(format!(
+            "{tag}: differs at line {first}:\n got {}\nwant {}",
+            around(&gl),
+            around(&wl)
+        )));
+    }
+    Ok(())
+}
+
+/// One recompare, installed (it must be current).
+fn recompare(
+    lc: &mut hikasa_text::LiveComparison,
+    l: &hikasa_text::edit::EditableDocument,
+    r: &hikasa_text::edit::EditableDocument,
+) -> PathCounters {
+    let done = lc
+        .recompare_job(Pair::new(l, r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    let path = done.path;
+    assert_eq!(lc.install(done, Pair::new(l, r)), Installed::Current);
+    path
+}
+
+/// Nested documents: unique headers (the root's chain) around blocks of 30–120 items that are unique inside a
+/// block and repeated across blocks (recorded child nodes with chains of their own), plus repeated filler.
+fn nested_text(rng: &mut XorShift, blocks: u64, items: u64) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in 0..blocks {
+        out.push(format!("header {b} {}", rng.below(1_000_000)));
+        let mut order: Vec<u64> = (0..items).collect();
+        for i in (1..order.len()).rev() {
+            let j = rng.below(i as u64 + 1) as usize;
+            order.swap(i, j);
+        }
+        for j in order {
+            out.push(format!("item {j}"));
+            for _ in 0..rng.below(3) {
+                out.push(["a", "b", "}", "", "  x = 1;"][rng.below(5) as usize].to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// The other side of a nested pair: removed and inserted runs, moved and duplicated lines, changed lines.
+fn perturb(rng: &mut XorShift, lines: &[String]) -> Vec<String> {
+    let mut v = lines.to_vec();
+    for _ in 0..1 + rng.below(12) {
+        if v.is_empty() {
+            break;
+        }
+        let at = rng.below(v.len() as u64) as usize;
+        match rng.below(6) {
+            0 => {
+                for _ in 0..(1 + rng.below(40) as usize).min(v.len() - at) {
+                    v.remove(at);
+                }
+            }
+            1 => {
+                for k in 0..1 + rng.below(40) {
+                    v.insert(at, format!("ins {k} {}", rng.below(50)));
+                }
+            }
+            2 => {
+                let l = v.remove(at);
+                let to = rng.below(v.len() as u64 + 1) as usize;
+                v.insert(to, l);
+            }
+            3 => {
+                let l = v[at].clone();
+                let to = rng.below(v.len() as u64 + 1) as usize;
+                v.insert(to, l);
+            }
+            _ => v[at].push_str(" changed"),
+        }
+    }
+    v
+}
+
+/// An edit of a nested document: a copied line (a duplicate key), a removed block, a pasted run of up to 300
+/// lines (shifts beyond any band), a line replaced by an item key, undo, redo, or a generic random edit.
+fn nested_edit(
+    rng: &mut XorShift,
+    doc: &mut hikasa_text::edit::EditableDocument,
+) -> Option<hikasa_text::EditOutcome> {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    let n = doc.line_count();
+    if n < 2 {
+        return random_edit(rng, Gen::Clustered, doc);
+    }
+    let replace = |doc: &mut hikasa_text::edit::EditableDocument, a: TextPos, b: TextPos, text| {
+        doc.apply(
+            &EditRequest::Replace {
+                range: a..b,
+                text,
+                keep_eols: false,
+            },
+            GroupHint::None,
+        )
+        .ok()
+    };
+    match rng.below(10) {
+        0 => {
+            let from = rng.below(u64::from(n)) as u32;
+            let text = doc.line(hikasa_text::LineIdx(from)).into_owned() + "\n";
+            let at = TextPos::new(rng.below(u64::from(n)) as u32, 0);
+            replace(doc, at, at, text)
+        }
+        1 => {
+            let at = rng.below(u64::from(n)) as u32;
+            let e = (at + 1 + rng.below(60) as u32).min(n - 1);
+            replace(doc, TextPos::new(at, 0), TextPos::new(e, 0), String::new())
+        }
+        2 => {
+            let at = TextPos::new(rng.below(u64::from(n)) as u32, 0);
+            let k = 1 + rng.below(300);
+            let text: String = (0..k)
+                .map(|i| format!("pasted {i} {}\n", rng.below(7)))
+                .collect();
+            replace(doc, at, at, text)
+        }
+        3 => {
+            let at = rng.below(u64::from(n)) as u32;
+            let len = doc.line_len(hikasa_text::LineIdx(at));
+            let text = format!("item {}", rng.below(40));
+            replace(doc, TextPos::new(at, 0), TextPos::new(at, len), text)
+        }
+        4 => doc.undo(),
+        5 => doc.redo(),
+        _ => random_edit(rng, Gen::Clustered, doc),
+    }
+}
+
+/// One nested case (12 recompares).
+fn nested_run(seed: u64) -> Result<PathCounters, TestCaseError> {
+    let mut rng = XorShift(seed | 1);
+    let blocks = 3 + rng.below(12);
+    let items = 30 + rng.below(90);
+    let left = nested_text(&mut rng, blocks, items);
+    let right = perturb(&mut rng, &left);
+    let (lt, rt) = (left.join("\n") + "\n", right.join("\n") + "\n");
+    let mut rules = TextRules::default();
+    rules.alignment.algorithm = [
+        AlgorithmChoice::Standard,
+        AlgorithmChoice::Standard,
+        AlgorithmChoice::Patience,
+        AlgorithmChoice::Auto,
+    ][rng.below(4) as usize];
+    rules.alignment.closeness = rng.below(3) != 0;
+    rules.alignment.never_align_differences = rng.below(6) == 0;
+    rules.alignment.skew_tolerance = [300, 300, 0, 3, 20, 40, 100][rng.below(7) as usize];
+    let fmt = if rng.below(2) == 0 { "ee" } else { "c-cpp" };
+    let setup = Setup {
+        format: common::format(fmt),
+        rules,
+        force_tokenize: rng.below(4) == 0,
+        anchors: Vec::new(),
+    };
+    let opts = edit_options(Gen::Clustered);
+    let (mut l, mut r) = (editable(&lt, &opts), editable(&rt, &opts));
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    let mut total = PathCounters::default();
+    for step in 0..12 {
+        let burst = if rng.below(4) == 0 { 6 } else { 2 };
+        for _ in 0..1 + rng.below(burst) {
+            let s = side(&mut rng);
+            let doc = if s == Side::Left { &mut l } else { &mut r };
+            if let Some(out) = nested_edit(&mut rng, doc) {
+                lc.note_edit(s, doc, &out);
+            }
+        }
+        total.add(&recompare(&mut lc, &l, &r));
+        let a = &setup.rules.alignment;
+        assert_exact(
+            &format!(
+                "nested seed {seed} step {step} ({fmt}, {:?}, skew {})",
+                a.algorithm, a.skew_tolerance
+            ),
+            &setup,
+            &lc,
+            &l,
+            &r,
+        )?;
+    }
+    Ok(total)
+}
+
+/// One case of `Batch` requests (several deltas in one outcome) with their undo and redo.
+fn batch_run(seed: u64) -> Result<(), TestCaseError> {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    let mut rng = XorShift(seed | 1);
+    let kind = GENS[rng.below(4) as usize];
+    let n = 50 + rng.below(600);
+    let (lt, rt) = pair(&mut rng, kind, n);
+    let opts = edit_options(kind);
+    let (mut l, mut r) = (editable(&lt, &opts), editable(&rt, &opts));
+    let mut rules = TextRules::default();
+    rules.alignment.algorithm =
+        [AlgorithmChoice::Standard, AlgorithmChoice::Patience][rng.below(2) as usize];
+    let fmt = if kind == Gen::Source { "c-cpp" } else { "ee" };
+    if fmt == "c-cpp" && rng.below(2) == 0 {
+        rules
+            .importance
+            .elements
+            .insert("Comment".to_owned(), false);
+    }
+    let setup = Setup {
+        format: common::format(fmt),
+        rules,
+        force_tokenize: false,
+        anchors: Vec::new(),
+    };
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    for step in 0..8 {
+        for _ in 0..1 + rng.below(3) {
+            let s = side(&mut rng);
+            let doc = if s == Side::Left { &mut l } else { &mut r };
+            let out = if rng.below(3) == 0 {
+                if rng.below(2) == 0 {
+                    doc.undo()
+                } else {
+                    doc.redo()
+                }
+            } else {
+                let lines = doc.position_lines();
+                let mut starts: Vec<u32> = (0..1 + rng.below(6))
+                    .map(|_| rng.below(u64::from(lines)) as u32)
+                    .collect();
+                starts.sort_unstable();
+                starts.dedup();
+                let mut edits = Vec::new();
+                let mut prev_end: Option<TextPos> = None;
+                for s0 in starts {
+                    let a = TextPos::new(s0, 0);
+                    if prev_end.is_some_and(|p| p >= a) {
+                        continue;
+                    }
+                    let e_line = (s0 + rng.below(3) as u32).min(lines - 1);
+                    let b = doc.clamp(TextPos::new(e_line, rng.below(8) as u32));
+                    let b = if b < a { a } else { b };
+                    let t = match rng.below(4) {
+                        0 => String::new(),
+                        1 => "\n".into(),
+                        2 => {
+                            let k = 1 + rng.below(3);
+                            common::live::text(&mut rng, kind, k)
+                        }
+                        _ => "zz".into(),
+                    };
+                    edits.push((a..b, t));
+                    prev_end = Some(b);
+                }
+                doc.apply(
+                    &EditRequest::Batch {
+                        edits,
+                        keep_eols: rng.below(2) == 0,
+                    },
+                    GroupHint::None,
+                )
+                .ok()
+            };
+            if let Some(out) = out {
+                lc.note_edit(s, doc, &out);
+            }
+        }
+        recompare(&mut lc, &l, &r);
+        assert_exact(
+            &format!("batch seed {seed} step {step}"),
+            &setup,
+            &lc,
+            &l,
+            &r,
+        )?;
+    }
+    Ok(())
+}
+
+/// One case of jobs made while edits keep coming, run, then installed in a random order (stale results change
+/// nothing, newer ones replay the later edits); the last job is current and exact.
+fn out_of_order_run(seed: u64) -> Result<(), TestCaseError> {
+    let mut rng = XorShift(seed | 1);
+    let kind = [Gen::Clustered, Gen::Source][rng.below(2) as usize];
+    let setup = Setup {
+        format: common::format(if kind == Gen::Source { "c-cpp" } else { "ee" }),
+        rules: common::rules_with(
+            [AlgorithmChoice::Standard, AlgorithmChoice::Patience][rng.below(2) as usize],
+        ),
+        force_tokenize: false,
+        anchors: Vec::new(),
+    };
+    let nn = 300 + rng.below(500);
+    let (lt, rt) = pair(&mut rng, kind, nn);
+    let opts = edit_options(kind);
+    let (mut l, mut r) = (editable(&lt, &opts), editable(&rt, &opts));
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    for round in 0..6 {
+        let mut jobs = Vec::new();
+        for _ in 0..3 {
+            for _ in 0..1 + rng.below(3) {
+                let s = side(&mut rng);
+                let doc = if s == Side::Left { &mut l } else { &mut r };
+                if let Some(out) = random_edit(&mut rng, kind, doc) {
+                    lc.note_edit(s, doc, &out);
+                }
+            }
+            jobs.push(lc.recompare_job(Pair::new(&l, &r)));
+        }
+        let mut done: Vec<_> = jobs
+            .into_iter()
+            .map(|j| j.run(None, &Ctl::detached()).unwrap())
+            .collect();
+        while !done.is_empty() {
+            let k = rng.below(done.len() as u64) as usize;
+            let d = done.remove(k);
+            lc.install(d, Pair::new(&l, &r));
+            prop_assert_eq!(
+                lc.current().document(Side::Left).line_count(),
+                l.line_count()
+            );
+            prop_assert_eq!(
+                lc.current().document(Side::Right).line_count(),
+                r.line_count()
+            );
+            lc.check_invariants()
+                .map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+        }
+        recompare(&mut lc, &l, &r);
+        assert_exact(
+            &format!("out of order seed {seed} round {round}"),
+            &setup,
+            &lc,
+            &l,
+            &r,
+        )?;
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(common::config("tests/proptest-regressions/props_incremental_more.txt"))]
+
+    /// P-EDIT-2 on nested documents (W10a review): recorded children with chains of their own, every skew,
+    /// duplicate, move and paste edits.
+    #[test]
+    fn p_edit_2_nested_documents(seed in any::<u64>()) {
+        nested_run(seed)?;
+    }
+
+    /// P-EDIT-2 with `Batch` requests and their undo and redo.
+    #[test]
+    fn p_edit_2_batch_requests(seed in any::<u64>()) {
+        batch_run(seed)?;
+    }
+
+    /// P-EDIT-2 with jobs installed out of order while edits come (A10.10's replay, stale results dropped).
+    #[test]
+    fn p_edit_2_out_of_order_installs(seed in any::<u64>()) {
+        out_of_order_run(seed)?;
+    }
 }
