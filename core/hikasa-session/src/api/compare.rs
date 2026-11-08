@@ -445,6 +445,29 @@ impl Service {
         })
     }
 
+    /// Checks folder rules as the comparison would take them (M2 W9c, D-249): the compile step of
+    /// [`Service::folder_prepare`] without bases: the schema version, the name filters' masks, the time-zone offset
+    /// (`FolderRules::validate`). `Ok` carries the warnings the comparison would give: an unknown format id of
+    /// `format_overrides` (`unknown_config_key`), opened archives while archives are files (`switch_ignored`). The rule
+    /// tabs' OK runs it in a job before anything is written.
+    pub fn check_folder_rules(&self, rules: &FolderRules) -> Result<Vec<Warning>, ApiError> {
+        run_guarded(|| {
+            rules.validate().map_err(ApiError::from_folder)?;
+            let mut warnings = Vec::new();
+            if rules.handling.archives == ArchiveHandling::AsFiles
+                && !rules.open_archives.is_empty()
+            {
+                warnings.push(Warning {
+                    code: WarningCode::SwitchIgnored,
+                    message: "the opened archives have no effect while archives are files".into(),
+                    spec: None,
+                });
+            }
+            let _ = self.enabled_overrides(&rules.format_overrides, &mut warnings);
+            Ok(warnings)
+        })
+    }
+
     /// The overrides of FF-002, from plain data (D-172). An id the registry does not know gives one `unknown_config_key`
     /// warning and is kept (Q11): the format can come back, and then the session means it.
     pub(crate) fn enabled_overrides(
