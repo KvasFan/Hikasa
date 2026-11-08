@@ -8839,7 +8839,131 @@ Mutations (each failed the tests named, then was reverted):
 | R25: Touch from the other side reversed | `ops::a9_13_touch_sets_the_local_time_or_copies_the_other_side` (the times pinned) |
 
 
-**W9c.** *(empty until W9c)*
+**W9c.** Interpretations and extensions of §1.9.16–§1.9.18 and §1.9.22 (one implementer):
+
+1. Clipboard file lists (D-252). `FixedClipboard` holds a list as its content once one is placed (`files`,
+   `set_files`, `file_lists`): `read_files` gives it back, `read` sees no text, as on a real clipboard. `FileClipboard`
+   keeps one path a line (a Unix path's bytes, so a name that is not UTF-8 survives) and refuses a path with a line
+   break; it reads `\r\n` and skips empty lines. `SystemClipboard` uses arboard's `file_list`; on Linux the D-203
+   helper takes the list on its stdin (the second length is `FILES_MARK`, then each path and a NUL byte) and owns it
+   until something else is copied; its test placer writes it one path a line. arboard's own Linux list canonicalizes
+   the paths and leaves out those that do not exist.
+2. *Show in File Manager* (D-254). The pure `host::reveal_command(platform, path)` gives the command line,
+   `reveal_fallback` the folder, `file_uri` the URI: every byte but the unreserved ones and `/` percent-encoded, so a
+   comma (`dbus-send`'s array separator), a space and a byte that is not UTF-8 survive. Windows passes
+   `/select,"<path>"` as one raw argument (the quotes keep a path with spaces whole; `explorer.exe` exits 1 when it
+   worked, so only a failed start falls back); `dbus-send --print-reply --reply-timeout=5000` waits for the file
+   manager's answer, so a missing service falls back to the folder; macOS falls back when `open -R` fails. The Service
+   adds `open_folder_in_file_manager` (*Open Folder in File Manager*: a folder itself, a file's folder, a member's
+   archive's folder) and the pure `api::file_manager_targets`, which the window uses to enable the entries per side
+   (`Ctx::explorer`). Both run in a window job (`CoreJob::Pane`); an error is a warning notice.
+3. `Service::check_folder_rules` is `FolderRules::validate` (schema, masks, the offset) with the warnings the comparison
+   would give: `switch_ignored` for opened archives while archives are files, `unknown_config_key` for a format id the
+   registry does not know. It reads no file (the masks compile, the registry is in memory), so the dialog calls it on
+   the window's thread: at each poll after an edit changed what the tabs would write, and again at OK.
+4. The drop prompt (`drop_dialog.rs`) plans the copy and the move in one job, again on each change of the overwrite
+   choice, and its preview switches between them (Shift at the drop shows the move first and makes *Move* the
+   default): either button runs a plan the user could see, unchanged (T12). The choices are `--overwrite`'s words
+   (*Fail*, *Skip*, *Replace if newer*, *Replace*), remembered in `state.dialogs.drop`. A copy is recursive with the
+   default metadata. The preview lines are core's `human::vfs_op_lines` of the dry run.
+5. A drop or a paste goes into the folder row under the pointer, else its nearest folder above that the side has, else
+   the side's base; a read-only side (*Disable editing*, `--ro`) and a view without a comparison answer with a message.
+   Paths dropped on the centre keep W4's window rule. The run is a task of the view (`Task::Transfer`, `vfs_op_execute`
+   in a `VfsWrite` job): one operation at a time, Stop cancels it, a view that ends keeps it as an orphan
+   (`RunningJob::Transfer`) whose outcome still reaches the log, and D-256's beep applies. Its end refreshes the folder
+   it went into and, for a move, the folders of the sources that lie below a local base of the view; the notice is
+   core's summary text, the log gets each failed line.
+6. `Paste` goes into the current row of the side a context menu names, else of the focus side: a folder row itself, a
+   file's folder, else the base; with both sides focused it says "Select a row on the side to paste into." rather than
+   guess. The clipboard is read in a job: its files first, else the lines of its text that parse as specs other than
+   `-` and `clipboard://` (as typed, resolved by the plan); nothing to paste is a message.
+7. `Copy` and `Copy Filename` list the items in the model's tree order (`items_in_order`: folders first, the left side
+   first per row), not the order of a column sort. A context menu's side restricts `Copy` to that side's items. Both
+   write through the GUI's own writing clipboard (the provider of a script's `output-to:clipboard`, D-203) in a job.
+   `Copy Filename` writes no line end after the last line.
+8. The text-field rule (D-252). egui turns Ctrl+C, Ctrl+X and Ctrl+V into clipboard events; while no text edit has the
+   keyboard (`Context::text_edit_focused`) the window turns them back into those keys for the dispatch, otherwise the
+   field takes them. A focused text edit is `FocusArea::TextField` (beside `PathField` and `HomeSearch`), whose keys
+   Ctrl+C/X/V/A (`is_text_edit_key`) neither dispatch nor bubble to the root, whatever command a user bound to them;
+   `Ctx::folder_pane` (the window's `text_focus`, set each frame) turns Copy, Paste and Select All off in the menus too.
+9. The pane menus are D-253's normative lists in `commands::pane_menu_ids` (order and separators are part of them)
+   rather than the rows' `areas`; `takes_side` names the entries that carry the clicked side. The menu flag of
+   `commands.toml` is the menu bar's: the context menus keep their entries (captions and shortcuts follow the file).
+   *Reset Columns* (`CommandArg::ResetColumns`) puts back the default columns, widths and the tree order; it ends View ▸
+   Columns too. A right-click in a Folder Sync view's centre shows the sync pane list without a side. The menus are
+   built only while one is open.
+10. Rows dragged (D-251) carry egui's payload `RowDrag` (the side pressed, the selection); the release over the tree
+    finds the pane and the folder row; the rows must still be the selection when it lands, rows pressed in the centre
+    go from the side opposite the release. Copy/Move to Folder is prefilled through `VerbOptions::into` (the folder,
+    *relative*, the side the rows came from).
+11. The rule tabs (D-249): `SessionTab` gains `load`, `prepare` (`TabExtras`: `format list`, the presets; read in the
+    store job before the dialog opens), `check` and `error`. OK writes each changed tab's keys over what the tabs before
+    it left (a fold; W4b's first-tab-only would drop the others). The tabs edit typed field sets (`ComparisonFields`,
+    `ListFields`, `HandlingFields`, `MiscFields`, `SyncFields`); a field that does not parse (a tolerance that is not a
+    whole number of seconds in `u32`, hours that are not a number) is the tab's message; core says the rest. Handling
+    hides *Ignore folder structure* in a Folder Sync session (a sync refuses a flat comparison). The Misc tab's check box
+    that gives a format its global state back removes the session's entry, so bold rows are the overrides; ids of
+    formats the registry does not list stay. A matrix cell changed from a preset copies the preset's matrix into
+    `custom` first. `Rules` is `Never` in text views until W11.
+12. `session edit --set` names only keys the session file spells out (an existing limit): the FC-012 keys a default
+    omits (`auto_scan_subfolders`, `expand_on_load`, `expand_differences_only`) cannot be compared with it, so A9.23's
+    scope test takes the P0 keys it can name; the GUI writes those keys through the same `session_apply_scope`.
+13. The Filters edit (D-250): one `FiltersEdit` per view (`FolderViewModel::filters_edit`), taken again from each new
+    model unless the field is being edited; Enter of the view's own filter runs nothing; Esc puts it back. The text is
+    parsed with case-sensitive mask options (the syntax does not depend on the case; the comparison compiles again with
+    its own). The field is shown in Folder Sync views too (their catalogue has no `NameFilterEdit`, so only the focus
+    command is Folder Compare's). A new filter goes through W4b's reopen path (`reopen_changed`).
+14. *Add To Presets* (`PresetNameDialog`): an empty name or one in use is refused; the write is `settings_save` of
+    `filters.toml` on the window's settings queue. On a `Conflict`, *Overwrite* writes with `force`, *Reload* reads the
+    file again and adds the preset to what it holds now (the concurrent change is kept), *Cancel* keeps the dialog; the
+    prompt's answer reaches it by `Followup::Presets`. The Name Filters tab asks the window for the prompt
+    (`DialogRequest::AddToPresets`).
+15. The drop prompt's help is `view-folder-compare` (§1.9.24 lists no topic of its own); the drop, the clipboard and the
+    context menus are described there.
+16. The window's side of the panes is `app/pane.rs` (a model file of check 7, as `drop_dialog.rs`): Copy, Copy
+    Filename, Paste and the file-manager entries run in window jobs (`CoreJob::Pane`); A9.25's window test is taken
+    headless instead, through the real drawing code with synthetic egui input (`ui/tests_pointer.rs` `w9c_*`: a
+    right-click and its menu entry, a row dragged to the other pane, Ctrl+C from the tree and from the Filters edit, a
+    file dropped on a pane), which needs no display; the `#[ignore]` window test under xvfb was not added.
+
+Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
+`tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
+
+| Mutation | Caught by |
+|---|---|
+| `vfs_op_execute` runs the plan's items in reverse | `vfs_ops_plan` `p_the_executed_plan_is_vfs_run` |
+| `vfs_op_execute` drops the plan's last item | `p_the_executed_plan_is_vfs_run` |
+| `FixedClipboard::write_files` records the list but keeps the old content | `clipboard_files` `a9_20_the_fixed_clipboard_records_and_serves_file_lists`, `a9_20_refusals_pass_through_and_the_defaults_are_unavailable` |
+| `FileClipboard::read_files` keeps a `\r` of a CRLF line | `a9_20_the_file_clipboard_keeps_one_path_a_line` |
+| `file_uri` leaves a comma unescaped | `launcher` `a9_22_the_command_line_of_each_platform` |
+| a member reveals its inner archive, not the outermost | `a9_22_the_service_reveals_local_items_and_members_by_their_archive` |
+| `check_folder_rules` without `validate` | `check_folder_rules` `a9_23_check_folder_rules_is_the_compile_step` |
+| the drop prompt runs the other button's plan | `dnd::a9_19_an_os_drop_copies_the_plan_it_shows` |
+| a new overwrite choice does not plan again | `dnd::a9_19_an_os_drop_copies_the_plan_it_shows` |
+| a drop always goes into the base (the folder row ignored) | `dnd::a9_19_an_os_drop_…`, `dnd::a9_19_rows_dragged_…`, `clip::a9_20_paste_of_files_and_of_text_lines_is_a_drop` |
+| the drop's folder not refreshed | `dnd::a9_19_an_os_drop_…` |
+| Shift ignored onto a folder row | `dnd::a9_19_decide_rows_follows_the_table` |
+| dragged rows that are no longer the selection still act | `dnd::a9_19_rows_dragged_are_copy_side_and_copy_to_folder` |
+| the view's own busy check of the drop prompt removed | `dnd::a9_19_nothing_is_dropped_during_an_operation` (after the test asked the model directly: the window's `refuse_busy` hid it first) |
+| rows pressed on a side dropped on their own side act | `dnd::a9_19_decide_rows_…`, `dnd::a9_19_rows_dragged_…` |
+| `Copy` ignores the pane's side | `clip::a9_20_copy_puts_local_items_in_tree_order` |
+| members not counted as left out (no message) | `clip::a9_20_members_are_left_out_with_the_message` |
+| Copy Filename's lines reversed | `clip::a9_20_select_all_and_copy_filename` |
+| Paste takes `-` and `clipboard://` lines | `clip::a9_20_paste_of_files_and_of_text_lines_is_a_drop` |
+| the pane's Edit entries on while a field has the keyboard | `clip::a9_20_a_text_field_keeps_its_editing_keys` |
+| Ctrl+X not an editing key of a field | `clip::a9_20_a_text_field_keeps_its_editing_keys` (a user's Ctrl+X binding) |
+| the clipboard events reach the dispatch while a field has the keyboard | equivalent: the dispatch's own rule (`is_text_edit_key` at `TextField`) keeps them for the field, and the event stays in the queue |
+| the Comparison tab drops the tolerance | `tabs::a9_23_an_edit_with_the_defaults_scope_is_session_edit_set`, `…_of_several_tabs_…`, `…_of_a_named_view_saved_…` |
+| OK takes one changed tab only (W4b's `find_map`) | `tabs::a9_23_edits_of_several_tabs_are_written_together` |
+| OK on while a tab refuses | `tabs::a9_23_invalid_values_keep_ok_off_with_the_message_on_their_tab` |
+| the Misc tab keeps an override equal to the global state | `tabs::a9_23_the_misc_tab_toggles_and_resets_overrides` |
+| the Filters edit keeps the typed text (no canonical form) | `tabs::a9_24_the_filters_edit_shows_applies_and_remembers` |
+| a preset name in use not refused in the dialog | `tabs::a9_24_add_to_presets_writes_filters_toml` (after the test asked before any write: the write job refuses it too) |
+| Reload writes over the file as read (no new read) | `tabs::a9_24_a_concurrent_edit_offers_overwrite_reload_cancel` |
+| the pane menus' side-specific entries without the side | `menus::a9_21_a_right_click_selects_first_and_entries_act_on_their_side` |
+| a right-click inside the selection replaces it | `menus::a9_21_a_right_click_…` |
+| a press on a selected row starts no drag | `pointer::w9c_a_selected_row_dragged_to_the_other_pane_asks_to_copy_it` |
+| an OS drop over a pane's tree has no target | `pointer::w9c_files_dropped_on_a_pane_ask_to_copy_or_move_them` |
 
 ### 1.10–1.14 W10–W14
 
