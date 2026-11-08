@@ -1421,3 +1421,158 @@ fn a9_1_a_side_wider_than_its_half_scrolls_both_sides_together() {
             < 0.5
     );
 }
+
+// ---- M2 W9c (A9.25 through the drawing code, headless): context menus, drags, the clipboard keys, OS drops ---------
+
+/// A folder view of `l` (a.txt, only-left.txt, d/) and `r` (a.txt, d/), every row shown, with a fixed clipboard.
+fn w9c_screen() -> (
+    Screen,
+    hikasa_session::ipc::ViewId,
+    std::sync::Arc<hikasa_session::clipboard::FixedClipboard>,
+) {
+    let world = World::new();
+    world.write("l/a.txt", "left\n");
+    world.write("r/a.txt", "right\n");
+    world.write("l/only-left.txt", "l\n");
+    world.write("l/d/x.txt", "x\n");
+    world.write("r/d/x.txt", "x\n");
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let fixed = std::sync::Arc::new(hikasa_session::clipboard::FixedClipboard::text("t"));
+    s.app
+        .core
+        .set_script_clipboard(std::sync::Arc::clone(&fixed) as _);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    (s, view, fixed)
+}
+
+/// The place of the `n`-th (from 0) drawing of `text`.
+fn nth(s: &mut Screen, text: &str, n: usize) -> Rect {
+    s.drawn()
+        .iter()
+        .filter(|d| d.text == text)
+        .nth(n)
+        .map(|d| d.rect)
+        .unwrap_or_else(|| panic!("{text:?} #{n} is not on screen"))
+}
+
+#[test]
+fn w9c_a_right_click_opens_the_pane_menu_and_its_entry_runs() {
+    use hikasa_folder::select::SideSet;
+    let (mut s, view, fixed) = w9c_screen();
+    s.click("only-left.txt");
+    // A right-click on the right side of a.txt: that row on that side is the selection, the right pane's menu opens.
+    let right = nth(&mut s, "a.txt", 1).center();
+    s.press_release(right, PointerButton::Secondary);
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let node = model.selected().expect("selected");
+    assert_eq!(model.selection().items.get(node), SideSet::RIGHT);
+    let drawn: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+    for entry in [
+        "Copy to Other Side",
+        "Copy Filename",
+        "File Manager",
+        "Paste",
+    ] {
+        assert!(drawn.iter().any(|t| t == entry), "{entry}: {drawn:?}");
+    }
+    // Its Copy Filename copies the right item's spec.
+    s.click("Copy Filename");
+    s.world.settle(&mut s.app.core);
+    let payloads = fixed.payloads();
+    assert_eq!(payloads.len(), 1);
+    assert!(
+        payloads[0].text.ends_with("a.txt"),
+        "{:?}",
+        payloads[0].text
+    );
+    assert!(payloads[0].text.contains("/r/") || payloads[0].text.contains("\\r\\"));
+}
+
+#[test]
+fn w9c_a_selected_row_dragged_to_the_other_pane_asks_to_copy_it() {
+    let (mut s, _view, _) = w9c_screen();
+    s.click("only-left.txt");
+    let from = nth(&mut s, "only-left.txt", 0).center();
+    // Across the centre into the right pane, below the rows.
+    let to_x = 900.0;
+    s.drag(from, vec2(to_x - from.x, 0.0));
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let asked = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::PlanConfirmDialog>())
+        .is_some();
+    assert!(asked, "Copy to Other Side's preview");
+}
+
+#[test]
+fn w9c_ctrl_c_copies_files_from_the_tree_and_not_from_a_text_field() {
+    let (mut s, _view, fixed) = w9c_screen();
+    s.click("only-left.txt");
+    // egui turns Ctrl+C into a copy event; the tree has the keyboard.
+    s.input(vec![Event::Copy]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.file_lists().len(), 1, "Copy ran");
+    // The Filters edit has the keyboard: the field keeps it.
+    let root = s.root();
+    if let Some(w) = s.app.core.window_mut(root) {
+        w.focus_filters = true;
+    }
+    s.settle();
+    s.input(vec![Event::Copy]);
+    s.input(vec![Event::Paste("x".into())]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.file_lists().len(), 1, "nothing more was copied");
+    assert_eq!(s.dialogs(), 0, "nothing was pasted");
+}
+
+#[test]
+fn w9c_files_dropped_on_a_pane_ask_to_copy_or_move_them() {
+    let (mut s, _view, _) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    let over = nth(&mut s, "a.txt", 1).center();
+    s.input(vec![Event::PointerMoved(over)]);
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.events = vec![Event::PointerMoved(over)];
+    input.dropped_files = vec![std::sync::Arc::new(TestDrop(outside)) as egui::DroppedFileHandle];
+    frame(&mut s.app, &s.ctx, input);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let side = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::drop_dialog::DropDialog>())
+        .map(|d| d.into.side);
+    assert_eq!(
+        side,
+        Some(hikasa_core::Side::Right),
+        "the right pane's prompt"
+    );
+}
+
+/// A path dropped from the OS (the integration's file handle).
+#[derive(Debug)]
+struct TestDrop(std::path::PathBuf);
+
+impl egui::DroppedFile for TestDrop {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}

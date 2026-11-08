@@ -560,8 +560,13 @@ fn a9_19_nothing_is_dropped_during_an_operation() {
     set_gate(&g, true);
     world.settle(&mut app);
     assert!(!listing(&world, "work/r/d").contains_key("one.txt"));
-    // Paste waits the same way, and after the operation the drop is asked.
+    // After the operation the drop is asked; while its prompt is open the view takes no second one (the model's own
+    // check, below the window's).
     drop(&mut app);
     world.settle(&mut app);
     assert!(drop_dialog(&mut app).is_some(), "the prompt once idle");
+    assert!(
+        !folder_model(&mut app, view).start_drop_prompt(),
+        "the view waits for the first prompt"
+    );
 }

@@ -637,9 +637,14 @@ fn a9_24_add_to_presets_writes_filters_toml() {
     folder_model(&mut app.0, view).filters_edit().text = "*.rs;-*.bak".into();
     let w = app.win();
     app.0.filters_add_to_presets(w);
-    // A name in use is refused.
+    // A name in use is refused at once, nothing is written.
     preset_dialog(&mut app).name = "Mine".into();
     app.0.dialog_button(w, ButtonRole::Ok);
+    assert!(
+        preset_dialog(&mut app).error.is_some(),
+        "refused before any write"
+    );
+    assert!(!preset_dialog(&mut app).busy());
     world.settle(&mut app);
     assert!(preset_dialog(&mut app).error.is_some());
     preset_dialog(&mut app).name = "Rust".into();
