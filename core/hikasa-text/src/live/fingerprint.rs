@@ -406,6 +406,25 @@ impl<'a> SideView<'a> {
         Some((i64::from(x) + self.shift(k)) as u32)
     }
 
+    /// [`SideView::new_of`] of ascending old lines `xs`, walking the spans once.
+    pub(crate) fn new_of_sorted(&self, xs: impl Iterator<Item = u32>) -> Vec<Option<u32>> {
+        let mut k = 0usize;
+        xs.map(|x| {
+            while k < self.spans.len() && self.spans[k].old.end <= x {
+                k += 1;
+            }
+            match self.spans.get(k) {
+                Some(s) if s.old.start <= x => {
+                    let equal = s.new.end - s.new.start == s.old.end - s.old.start;
+                    let y = s.new.start + (x - s.old.start);
+                    (equal && !self.adirty_at(y)).then_some(y)
+                }
+                _ => Some((i64::from(x) + self.shift(k)) as u32),
+            }
+        })
+        .collect()
+    }
+
     /// The new position of old boundary `x` (inside a span of unchanged length by its offset, inside another
     /// span its new start).
     pub(crate) fn pos(&self, x: u32) -> u32 {

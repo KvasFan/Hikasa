@@ -219,6 +219,7 @@ fn attempt(
         gone: Default::default(),
         added_outside: Vec::new(),
         band_used: 0,
+        mapped_chain: Vec::new(),
         weights,
         threshold: a.closeness_threshold_permille,
     };
@@ -334,6 +335,8 @@ struct Inc<'a, 'p> {
     added_outside: Vec<(u32, u32)>,
     /// The largest shift D of the last certified node (wears its band's margin).
     band_used: u32,
+    /// The last certified node's old chain in the new numbering (`None`: an anchor on a dirty line).
+    mapped_chain: Vec<Option<(u32, u32)>>,
     weights: bool,
     threshold: u16,
 }
@@ -532,7 +535,20 @@ impl Inc<'_, '_> {
                 let [lv, rv] = &self.sides.views;
                 let mut leaving: std::collections::HashSet<u32> = Default::default();
                 let mut entering: Vec<(u32, u32)> = Vec::new();
+                let (ol_len, or_len) = (oml.end - oml.start, omr.end - omr.start);
+                let near = |ox: u32, oy: u32| -> bool {
+                    // A shift of at most d moves a displacement by at most d: only pairs within d of the edge can
+                    // move.
+                    let (x, y) = (i64::from(ox - oml.start), i64::from(oy - omr.start));
+                    let ds = (x - y).abs();
+                    let de = ((i64::from(ol_len) - x) - (i64::from(or_len) - y)).abs();
+                    let sk = i64::from(skew);
+                    (ds - sk).abs() <= d as i64 + 1 || (de - sk).abs() <= d as i64 + 1
+                };
                 for &(ox, oy) in &old.band {
+                    if d == 0 || !near(ox, oy) {
+                        continue;
+                    }
                     if self.gone.contains(&ox) {
                         continue;
                     }
@@ -645,13 +661,23 @@ impl Inc<'_, '_> {
             }
         }
         let [lv, rv] = &self.sides.views;
+        // The old chain in the new numbering (both coordinates ascending: one walk each).
+        let xs = lv.new_of_sorted(old.chain.iter().map(|c| c.0));
+        let ys = rv.new_of_sorted(old.chain.iter().map(|c| c.1));
+        self.mapped_chain = xs
+            .into_iter()
+            .zip(ys)
+            .map(|(x, y)| Some((x?, y?)))
+            .collect();
+        let mapped_chain = self.mapped_chain.clone();
         let mapped = |chain: &[(u32, u32)],
                       drop: &std::collections::HashSet<u32>|
          -> Option<Vec<(u32, u32)>> {
             chain
                 .iter()
-                .filter(|(x, _)| !drop.contains(x))
-                .map(|&(x, y)| Some((lv.new_of(x)?, rv.new_of(y)?)))
+                .zip(&mapped_chain)
+                .filter(|((x, _), _)| !drop.contains(x))
+                .map(|(_, m)| *m)
                 .collect()
         };
         if keys.is_empty() {
@@ -964,8 +990,11 @@ impl Inc<'_, '_> {
                 if anchors.first()?.0 != ox || c + anchors.len() > chain.len() {
                     return None;
                 }
-                for (i, &(ax, ay)) in anchors.iter().enumerate() {
-                    if (lv.new_of(ax)?, rv.new_of(ay)?) != chain[c + i] {
+                for (i, m) in self.mapped_chain[block_anchors[k].clone()]
+                    .iter()
+                    .enumerate()
+                {
+                    if (*m)? != chain[c + i] {
                         return None;
                     }
                 }
