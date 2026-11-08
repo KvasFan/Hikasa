@@ -47,6 +47,12 @@ pub struct LiveKeys {
 }
 
 impl LiveKeys {
+    /// The derivation of the last exact result. **Not a stable API** (tests and measurements).
+    #[doc(hidden)]
+    pub fn derivation(&self) -> &Derivation {
+        &self.trace
+    }
+
     /// Bytes held (memory accounting): fingerprints, checkpoints, the derivation's nodes and chains.
     pub fn heap_bytes(&self) -> usize {
         let fp: usize = self.fingerprints.iter().map(|f| 2 * f.capacity()).sum();

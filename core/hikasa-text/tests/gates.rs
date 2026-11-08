@@ -744,6 +744,7 @@ fn g8_lines_split_delete_paste() {
         .collect();
     for name in ["enter", "delete line", "paste 100 lines"] {
         let (mut notes, mut recs) = (Vec::new(), Vec::new());
+        let mut total = hikasa_text::PathCounters::default();
         for _ in 0..20 {
             let line = rng.below(u64::from(left.line_count() - 2)) as u32;
             let len = left.line_len(LineIdx(line));
@@ -771,11 +772,13 @@ fn g8_lines_split_delete_paste() {
                 }
             };
             let out = left.apply(&req, GroupHint::None).unwrap();
-            let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            total.add(&path);
             notes.push(n);
             recs.push(r);
         }
         ok &= g8_report(name, &mut notes, &mut recs, 50.0);
+        println!("  paths {total:?}");
     }
     assert!(ok);
 }
@@ -881,4 +884,43 @@ fn g8_worst_prefix_edit() {
         "gate G8 worst (a character in the common prefix: the root re-runs): {:.1} ms, path {path:?} (reported)",
         r.as_secs_f64() * 1000.0
     );
+}
+
+#[test]
+#[ignore = "measurement"]
+fn g8_root_window_profile() {
+    let (_, _, live) = g8_setup();
+    let d = live.keys().derivation();
+    let seg = &d.segments[0];
+    let root = &seg.nodes[seg.root.unwrap() as usize];
+    let (ml, mr) = root.stripped();
+    let (na, nb) = (ml.end - ml.start, mr.end - mr.start);
+    let s = 300i64;
+    let mut hist = std::collections::BTreeMap::new();
+    for &(x, y) in &root.chain {
+        let (x, y) = (i64::from(x - ml.start), i64::from(y - mr.start));
+        let ds = (x - y).abs();
+        let de = ((i64::from(na) - x) - (i64::from(nb) - y)).abs();
+        let class = match (ds <= s, de <= s) {
+            (true, true) => format!("both sum<{}", ((s - ds + 1) + (s - de + 1)) / 64 * 64 + 64),
+            (true, false) => format!("start ms<{}", (s - ds + 1) / 64 * 64 + 64),
+            (false, true) => format!("end me<{}", (s - de + 1) / 64 * 64 + 64),
+            _ => "out".into(),
+        };
+        *hist.entry(class).or_insert(0u64) += 1;
+    }
+    println!(
+        "root: {} lines x {} lines, chain {}, candidates {}, slack {}, band {}, blocks {}, children {}",
+        na,
+        nb,
+        root.chain.len(),
+        root.candidates,
+        root.slack,
+        root.band.len(),
+        root.blocks.len(),
+        root.children.len()
+    );
+    for (k, v) in hist {
+        println!("  {k}: {v}");
+    }
 }

@@ -115,6 +115,8 @@ struct Standard {
     stage: Stage,
     /// The slack of the last stage A (§1.10.11 condition 3).
     slack: u32,
+    /// The unique pairs of the last stage A near its window's edge (range-local).
+    band: Vec<(u32, u32)>,
 }
 
 pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
@@ -125,6 +127,7 @@ pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
         s: Scratch::default(),
         stage: Stage::Flat,
         slack: u32::MAX,
+        band: Vec::new(),
     };
     let fallback_budget = cx
         .fallback_budget
@@ -307,6 +310,12 @@ impl Standard {
                 })
                 .collect();
             n.slack = self.slack;
+            n.band = self
+                .band
+                .iter()
+                .map(|&(x, y)| (a.start + x, b.start + y))
+                .collect();
+            n.band_margin = crate::trace::WINDOW_BAND;
             n.candidates = self.s.u_x.len() as u32;
         } else {
             n.slack = 0;
@@ -377,6 +386,7 @@ impl Standard {
         let skew = cx.opts.skew_tolerance;
         let mut examined = 0u64;
         let mut slack = u32::MAX;
+        self.band.clear();
         let record = cx.rec.is_some();
         for (x, t) in s.la.iter().enumerate() {
             checkpoint(cx.cancel, x)?;
@@ -392,6 +402,9 @@ impl Standard {
             let y = s.pos_b[t];
             if record {
                 slack = slack.min(window_slack(x, y, na, nb, skew));
+                if near_edge(x, y, na, nb, skew) {
+                    self.band.push((x, y));
+                }
             }
             if !in_window(x, y, na, nb, skew) {
                 continue;
@@ -629,6 +642,18 @@ impl Standard {
         }
         stack.extend(s.tasks.drain(..).rev());
     }
+}
+
+/// True when the start or the end displacement of `(x, y)` lies within [`crate::trace::WINDOW_BAND`] of the skew.
+fn near_edge(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> bool {
+    if skew == u32::MAX {
+        return false;
+    }
+    let band = i64::from(crate::trace::WINDOW_BAND);
+    let s = i64::from(skew);
+    let ds = (i64::from(x) - i64::from(y)).abs();
+    let de = (i64::from(na - x) - i64::from(nb - y)).abs();
+    (ds - s).abs() <= band || (de - s).abs() <= band
 }
 
 /// How much the line counts of a range may change (in total, both sides) before the window membership of the

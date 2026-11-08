@@ -60,7 +60,7 @@ pub use model::{
 pub use options::{Algorithm, AlignOptions, Closeness};
 pub use similarity::{BigramProfile, bigram_similarity};
 pub use trace::{
-    Derivation, NO_NODE, NodeId, RECORD_MIN, SegmentTrace, Stage, TraceNode, WorkTotals,
+    Derivation, NO_NODE, NodeId, RECORD_MIN, WINDOW_BAND, SegmentTrace, Stage, TraceNode, WorkTotals,
     align_traced,
 };
 

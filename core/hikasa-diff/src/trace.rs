@@ -25,6 +25,9 @@ pub type NodeId = u32;
 /// No node (the owner of a segment's root).
 pub const NO_NODE: NodeId = u32::MAX;
 
+/// The width of [`TraceNode::band`] around the skew tolerance.
+pub const WINDOW_BAND: u32 = 256;
+
 /// Ranges with fewer lines than this on both sides are not recorded (re-running the parent's gap is cheaper
 /// than storing it).
 pub const RECORD_MIN: u32 = 64;
@@ -71,6 +74,13 @@ pub struct TraceNode {
     /// §1.10.11 condition 3: how far the line counts may change before a unique pair's window membership can
     /// change (`u32::MAX`: no window).
     pub slack: u32,
+    /// The unique pairs of a Standard `AnchorsUnique` node (segment coordinates, chained or not) whose start or end
+    /// displacement lies within [`WINDOW_BAND`] of the skew tolerance: the only ones a change of fewer lines than
+    /// `band_margin` can move into or out of the window. The incremental recompare checks each exactly.
+    pub band: Vec<(u32, u32)>,
+    /// Every unique pair outside `band` is at least this far from the window's edge (the band's width at
+    /// recording; edits that the recompare certified wear it down).
+    pub band_margin: u32,
     /// The candidates of an `AnchorsUnique` node (unique-on-both-sides pairs in the window): when the chain holds
     /// every one of them, removing or adding a compatible candidate keeps the chain the set of all candidates.
     pub candidates: u32,
@@ -92,6 +102,8 @@ impl TraceNode {
             scorer: 0,
             refusals: 0,
             slack: u32::MAX,
+            band: Vec::new(),
+            band_margin: 0,
             candidates: 0,
         }
     }

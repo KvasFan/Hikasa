@@ -216,7 +216,9 @@ fn attempt(
         ),
         refusals: 0,
         path,
-        added_slack: u32::MAX,
+        gone: Default::default(),
+        added_outside: Vec::new(),
+        band_used: 0,
         weights,
         threshold: a.closeness_threshold_permille,
     };
@@ -301,23 +303,6 @@ struct KeyInfo {
     old_lines: [Vec<u32>; 2],
 }
 
-/// The window slack of a unique pair (as hikasa-diff records it, §1.10.11 condition 3).
-fn pair_slack(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> u32 {
-    if skew == u32::MAX {
-        return u32::MAX;
-    }
-    let s = i64::from(skew);
-    let ds = (i64::from(x) - i64::from(y)).abs();
-    let de = (i64::from(na) - i64::from(x) - (i64::from(nb) - i64::from(y))).abs();
-    let slack = if ds <= s || de <= s {
-        let margin = |d: i64| if d <= s { s - d + 1 } else { 0 };
-        margin(ds).max(margin(de))
-    } else {
-        (ds - s).min(de - s)
-    };
-    slack.clamp(0, i64::from(u32::MAX - 1)) as u32
-}
-
 /// The window of Standard's stage A (range-local coordinates): the start or the end diagonal within the skew.
 fn window_holds(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> bool {
     let start = (i64::from(x) - i64::from(y)).unsigned_abs();
@@ -343,8 +328,12 @@ struct Inc<'a, 'p> {
     budgets: (u64, u64, u64),
     refusals: u64,
     path: &'p mut PathCounters,
-    /// The smallest window slack of the unique pairs the last certified node gained.
-    added_slack: u32,
+    /// The old left lines of the unique pairs the last certified node lost.
+    gone: std::collections::HashSet<u32>,
+    /// The unique pairs the last certified node gained, in or outside the window (new coordinates).
+    added_outside: Vec<(u32, u32)>,
+    /// The largest shift D of the last certified node (wears its band's margin).
+    band_used: u32,
     weights: bool,
     threshold: u16,
 }
@@ -430,6 +419,7 @@ impl Inc<'_, '_> {
                 .iter()
                 .map(|&(x, y, l)| (ml(x), mr(y), l))
                 .collect(),
+            band: old.band.iter().map(|&(x, y)| (ml(x), mr(y))).collect(),
             children: Vec::new(),
             ..old.clone()
         };
@@ -519,14 +509,69 @@ impl Inc<'_, '_> {
             return Ok(None);
         };
         self.path.candidates_held += 1;
-        // 3. Window: the line counts change at several places, so a unique pair's displacement from the window's
-        // start diagonal changes by at most the largest cumulative shift before it, and from the end diagonal
-        // by the largest shift after it; both sides add up.
-        let (a_l, b_l) = self.shift_extremes(0, &old.left);
-        let (a_r, b_r) = self.shift_extremes(1, &old.right);
-        if (a_l + a_r).max(b_l + b_r) >= u64::from(old.slack) {
-            self.path.window_failed += 1;
-            return Ok(None);
+        // 3. Window. Every unique pair outside the node's band is farther from the window's edge than the band's
+        // margin, so a change of fewer lines (the largest cumulative shift D, both sides) keeps it where it is;
+        // the band's pairs are checked one by one. When the chain holds every candidate, a pair that enters or
+        // leaves the window joins or leaves the chain (which must still increase on both sides); else no pair may
+        // move, which the recorded slack bounds.
+        let mut chain = chain;
+        if self.opts.algorithm == Algorithm::Standard && self.opts.skew_tolerance != u32::MAX {
+            let (a_l, b_l) = self.shift_extremes(0, &old.left);
+            let (a_r, b_r) = self.shift_extremes(1, &old.right);
+            let d = (a_l + a_r).max(b_l + b_r);
+            let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
+            let ok = if !all {
+                d < u64::from(old.slack)
+            } else if d >= u64::from(old.band_margin) {
+                false
+            } else {
+                let skew = self.opts.skew_tolerance;
+                let (oml, omr) = old.stripped();
+                let (nml, nmr) = (la.start + p..la.end - s, ra.start + p..ra.end - s);
+                let (nl_len, nr_len) = (nml.end - nml.start, nmr.end - nmr.start);
+                let [lv, rv] = &self.sides.views;
+                let mut leaving: std::collections::HashSet<u32> = Default::default();
+                let mut entering: Vec<(u32, u32)> = Vec::new();
+                for &(ox, oy) in &old.band {
+                    if self.gone.contains(&ox) {
+                        continue;
+                    }
+                    let (Some(x), Some(y)) = (lv.new_of(ox), rv.new_of(oy)) else {
+                        continue;
+                    };
+                    let was = window_holds(
+                        ox - oml.start,
+                        oy - omr.start,
+                        oml.end - oml.start,
+                        omr.end - omr.start,
+                        skew,
+                    );
+                    let now = x >= nml.start
+                        && y >= nmr.start
+                        && x < nml.end
+                        && y < nmr.end
+                        && window_holds(x - nml.start, y - nmr.start, nl_len, nr_len, skew);
+                    if was && !now {
+                        leaving.insert(x);
+                    } else if !was && now {
+                        entering.push((x, y));
+                    }
+                }
+                if !leaving.is_empty() || !entering.is_empty() {
+                    chain.retain(|(x, _)| !leaving.contains(x));
+                    chain.extend(entering);
+                    chain.sort_unstable();
+                    chain.dedup();
+                }
+                !chain
+                    .windows(2)
+                    .any(|w| w[0].0 >= w[1].0 || w[0].1 >= w[1].1)
+            };
+            if !ok {
+                self.path.window_failed += 1;
+                return Ok(None);
+            }
+            self.band_used = d.min(u64::from(u32::MAX)) as u32;
         }
         self.path.window_held += 1;
         Ok(Some(chain))
@@ -658,12 +703,15 @@ impl Inc<'_, '_> {
             }
         }
         let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
-        self.added_slack = u32::MAX;
+        self.gone.clear();
+        self.added_outside.clear();
+        self.band_used = 0;
         let (na, nb) = (
             middle[0].end - middle[0].start,
             middle[1].end - middle[1].start,
         );
         let mut removed: std::collections::HashSet<u32> = Default::default();
+        let mut gone_lines: Vec<u32> = Vec::new();
         let mut added: Vec<(u32, u32)> = Vec::new();
         for (k, (_, info)) in list.iter().enumerate() {
             let new = counts[k];
@@ -679,6 +727,14 @@ impl Inc<'_, '_> {
             if !all {
                 return Ok(None);
             }
+            if was && !is {
+                // The pair stops being unique: drop it from the recorded pairs.
+                if let Some(&x) = info.old_lines[0].first() {
+                    gone_lines.push(x);
+                } else if let Some(x) = hits[k][0].iter().find_map(|&h| lv.old_of(h)) {
+                    gone_lines.push(x);
+                }
+            }
             if was {
                 // The candidate's old left line: the dirty old line with the key, else the clean hit.
                 let x = match info.old_lines[0].first() {
@@ -692,15 +748,6 @@ impl Inc<'_, '_> {
             }
             if is {
                 let (x, y) = (hits[k][0][0], hits[k][1][0]);
-                if self.opts.algorithm == Algorithm::Standard {
-                    self.added_slack = self.added_slack.min(pair_slack(
-                        x - middle[0].start,
-                        y - middle[1].start,
-                        na,
-                        nb,
-                        self.opts.skew_tolerance,
-                    ));
-                }
                 let in_window = self.opts.algorithm != Algorithm::Standard
                     || window_holds(
                         x - middle[0].start,
@@ -712,8 +759,11 @@ impl Inc<'_, '_> {
                 if in_window {
                     added.push((x, y));
                 }
+                self.added_outside.push((x, y));
             }
         }
+        self.gone.extend(gone_lines);
+        self.gone.extend(removed.iter().copied());
         let Some(mut chain) = mapped(&old.chain, &removed) else {
             return Ok(None);
         };
@@ -775,8 +825,21 @@ impl Inc<'_, '_> {
                     let (a_l, b_l) = self.shift_extremes(0, &old.left);
                     let (a_r, b_r) = self.shift_extremes(1, &old.right);
                     let used = (a_l + a_r + b_l + b_r).min(u64::from(u32::MAX)) as u32;
-                    old.slack.saturating_sub(used).min(self.added_slack)
+                    old.slack.saturating_sub(used)
                 },
+                band: {
+                    let [lv, rv] = &self.sides.views;
+                    let mut f: Vec<(u32, u32)> = old
+                        .band
+                        .iter()
+                        .filter(|(x, _)| !self.gone.contains(x))
+                        .filter_map(|&(x, y)| Some((lv.new_of(x)?, rv.new_of(y)?)))
+                        .collect();
+                    // Pairs that became unique: kept in the band whatever their distance (checked exactly).
+                    f.extend(self.added_outside.iter().copied());
+                    f
+                },
+                band_margin: old.band_margin.saturating_sub(self.band_used),
                 ..old.clone()
             },
             parent,
@@ -857,10 +920,93 @@ impl Inc<'_, '_> {
                 ox < bx + bl && i64::from(oy) - i64::from(ox) == i64::from(by) - i64::from(bx)
             }
         };
+        // The old chain anchors of each old block (two pointers over the sorted chain and blocks).
+        let mut block_anchors: Vec<Range<usize>> = Vec::with_capacity(old.blocks.len());
+        let mut c0 = 0usize;
+        for &(bx, _, bl) in &old.blocks {
+            while c0 < old.chain.len() && old.chain[c0].0 < bx {
+                c0 += 1;
+            }
+            let mut c1 = c0;
+            while c1 < old.chain.len() && old.chain[c1].0 < bx + bl {
+                c1 += 1;
+            }
+            block_anchors.push(c0..c1);
+            c0 = c1;
+        }
+        // The old region of block k: from the previous block's end to the next block's start (both sides).
+        let (oml, omr) = old.stripped();
+        let region = |k: usize| -> (Range<u32>, Range<u32>) {
+            let (bx, by, bl) = old.blocks[k];
+            let (px, py) = if k == 0 {
+                (oml.start, omr.start)
+            } else {
+                let (x, y, l) = old.blocks[k - 1];
+                (x + l, y + l)
+            };
+            let (nx, ny) = old
+                .blocks
+                .get(k + 1)
+                .map_or((oml.end, omr.end), |&(x, y, _)| (x, y));
+            let _ = (bx, by, bl);
+            (px..nx, py..ny)
+        };
         let mut blocks: Vec<(u32, u32, u32)> = Vec::with_capacity(old.blocks.len() + 2);
         let (mut px, mut py) = start;
         let mut steps = 0u64;
-        for c in 0..chain.len() {
+        let mut c = 0usize;
+        while c < chain.len() {
+            // A whole old block whose anchors, surroundings and start bound are unchanged is taken as it was.
+            let reused = (|| -> Option<(usize, (u32, u32, u32))> {
+                let ox = lv.old_of(chain[c].0)?;
+                let k = old.blocks.partition_point(|b| b.0 <= ox).checked_sub(1)?;
+                let anchors = &old.chain[block_anchors[k].clone()];
+                if anchors.first()?.0 != ox || c + anchors.len() > chain.len() {
+                    return None;
+                }
+                for (i, &(ax, ay)) in anchors.iter().enumerate() {
+                    if (lv.new_of(ax)?, rv.new_of(ay)?) != chain[c + i] {
+                        return None;
+                    }
+                }
+                let (rl, rr) = region(k);
+                if self.dirty_in(0, &rl) || self.dirty_in(1, &rr) {
+                    return None;
+                }
+                let prev_end = if k == 0 {
+                    start
+                } else {
+                    let (x, y, l) = old.blocks[k - 1];
+                    (lv.pos(x + l), rv.pos(y + l))
+                };
+                if prev_end != (px, py) {
+                    return None;
+                }
+                // The next anchor bounds the forward extension: it must be the old next block's first anchor.
+                let next_new = chain.get(c + anchors.len()).copied().unwrap_or(end);
+                let next_old = old
+                    .blocks
+                    .get(k + 1)
+                    .and_then(|_| old.chain.get(block_anchors[k].end))
+                    .map(|&(x, y)| (lv.pos(x), rv.pos(y)))
+                    .unwrap_or(end);
+                if next_new != next_old {
+                    return None;
+                }
+                let (bx, by, bl) = old.blocks[k];
+                Some((anchors.len(), (lv.pos(bx), rv.pos(by), bl)))
+            })();
+            if let Some((count, block)) = reused {
+                match blocks.last_mut() {
+                    Some(last) if last.0 + last.2 == block.0 && last.1 + last.2 == block.1 => {
+                        last.2 += block.2
+                    }
+                    _ => blocks.push(block),
+                }
+                (px, py) = (block.0 + block.2, block.1 + block.2);
+                c += count;
+                continue;
+            }
             let (x0, y0) = chain[c];
             let (nx, ny) = chain.get(c + 1).copied().unwrap_or(end);
             let mut back = 0u32;
@@ -887,6 +1033,7 @@ impl Inc<'_, '_> {
                 _ => blocks.push((x, y, xe - x)),
             }
             (px, py) = (xe, ye);
+            c += 1;
         }
         // The extension steps re-counted (an upper bound of the node's new extension work).
         self.bound.standard += steps;
@@ -993,6 +1140,7 @@ impl Inc<'_, '_> {
                         .iter()
                         .map(|&(x, y, l)| (x + dx, y + dy, l))
                         .collect(),
+                    band: n.band.iter().map(|&(x, y)| (x + dx, y + dy)).collect(),
                     children: n.children.iter().map(|&c| c + first).collect(),
                     ..n
                 };
