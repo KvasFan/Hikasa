@@ -74,6 +74,7 @@
         "never_align_differences": false
       }
     },
+    "anchors": [],
     "ignore_unimportant": false,
     "verdict": {
       "result": "important_differences"

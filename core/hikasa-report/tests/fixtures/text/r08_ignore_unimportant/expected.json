@@ -57,6 +57,7 @@
       "never_align_differences": false
     }
   },
+  "anchors": [],
   "ignore_unimportant": true,
   "verdict": {
     "result": "important_differences"

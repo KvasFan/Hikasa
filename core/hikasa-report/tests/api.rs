@@ -425,7 +425,9 @@ fn text_json_document() {
     assert_eq!(v["sections"][1]["left_lines"], serde_json::json!([6, 6]));
     assert_eq!(v["sections"][1]["right_lines"], serde_json::json!([6, 7]));
     let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(keys.len(), 12, "{keys:?}");
+    // 12 keys of M1 and `anchors` (M2 W10a, additive; `[]` without anchors).
+    assert_eq!(keys.len(), 13, "{keys:?}");
+    assert_eq!(v["anchors"], serde_json::json!([]));
     assert_eq!(TEXT_COMPARE_SCHEMA, "hikasa.text_compare.v1");
 }
 
