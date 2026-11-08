@@ -1703,6 +1703,74 @@ impl Service {
             self.launcher().open_associated(&path)
         })
     }
+
+    /// FC-063 *Show in File Manager* (M2 W9c, D-254): the file manager shows the item selected in its folder
+    /// (`AppLauncher::reveal`); a member of an archive shows its outermost archive file. A spec that is not on a local
+    /// disk is `unsupported` ([`file_manager_targets`] says the same without a call).
+    pub fn reveal_in_file_manager(&self, spec: &Spec, job: &JobControl) -> Result<(), ApiError> {
+        run_guarded(|| {
+            job.cancel.check().map_err(|_| ApiError::Cancelled)?;
+            let targets = file_manager_targets(spec, false).ok_or_else(|| not_local(spec))?;
+            self.launcher().reveal(&targets.item)
+        })
+    }
+
+    /// FC-063 *Open Folder in File Manager* (D-254): the folder itself, a file's folder, a member's outermost archive's
+    /// folder, opened with the system handler (`AppLauncher::open_associated`). `folder`: the spec is a folder.
+    pub fn open_folder_in_file_manager(
+        &self,
+        spec: &Spec,
+        folder: bool,
+        job: &JobControl,
+    ) -> Result<(), ApiError> {
+        run_guarded(|| {
+            job.cancel.check().map_err(|_| ApiError::Cancelled)?;
+            let targets = file_manager_targets(spec, folder).ok_or_else(|| not_local(spec))?;
+            self.launcher().open_associated(&targets.folder)
+        })
+    }
+}
+
+/// The error of a file-manager entry on a spec that is not on a local disk.
+fn not_local(spec: &Spec) -> ApiError {
+    ApiError::Unsupported(format!(
+        "{}: not on a local disk, so no file manager can show it",
+        spec.canonical()
+    ))
+}
+
+/// What the file-manager entries act on (D-254).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerTargets {
+    /// *Open Folder in File Manager*: a folder itself, else the item's folder.
+    pub folder: PathBuf,
+    /// *Show in File Manager*: the item (a member: its outermost archive file).
+    pub item: PathBuf,
+}
+
+/// The local paths of the file-manager entries of `spec` (pure; D-254): a local item is itself, a member of an archive
+/// is its outermost archive file (a member is never a folder of the disk); `None` for every other spec (remote, a
+/// profile, a snapshot, the clipboard, standard input), whose entries are disabled. `folder`: a local spec is a folder.
+pub fn file_manager_targets(spec: &Spec, folder: bool) -> Option<FileManagerTargets> {
+    let (path, folder) = match spec {
+        Spec::Local(path) => (path.as_path().to_path_buf(), folder),
+        Spec::ArchiveMember { archive, .. } => {
+            let mut outer: &Spec = archive;
+            while let Spec::ArchiveMember { archive, .. } = outer {
+                outer = archive;
+            }
+            match outer {
+                Spec::Local(path) => (path.as_path().to_path_buf(), false),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let parent = crate::host::reveal_fallback(&path);
+    Some(FileManagerTargets {
+        folder: if folder { path.clone() } else { parent },
+        item: path,
+    })
 }
 
 /// The command of one item, or one pair.

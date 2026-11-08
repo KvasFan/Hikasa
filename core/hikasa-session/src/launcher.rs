@@ -59,6 +59,14 @@ pub trait AppLauncher: Send + Sync {
     }
     /// FC-062 *Associated Application*.
     fn open_associated(&self, path: &Path) -> Result<(), ApiError>;
+    /// FC-063 *Show in File Manager* (M2 W9c, D-254): the file manager shows `path` selected in its folder. Default:
+    /// `unsupported`.
+    fn reveal(&self, path: &Path) -> Result<(), ApiError> {
+        Err(ApiError::Unsupported(format!(
+            "this program cannot show {} in a file manager",
+            path.display()
+        )))
+    }
 }
 
 /// What [`AppLauncher::start`] gives back: waits for the started program's end, with its exit code.
@@ -91,6 +99,8 @@ pub enum Recorded {
     Run(OpenCommand),
     /// [`AppLauncher::open_associated`].
     Associated(PathBuf),
+    /// [`AppLauncher::reveal`] (M2 W9c).
+    Reveal(PathBuf),
 }
 
 /// For tests: records each call and answers from a script: one answer per call, in order, then exit code 0. An answer
@@ -136,6 +146,11 @@ impl AppLauncher for RecordingLauncher {
         self.calls
             .lock()
             .push(Recorded::Associated(path.to_path_buf()));
+        self.answer(&path.display().to_string()).map(drop)
+    }
+
+    fn reveal(&self, path: &Path) -> Result<(), ApiError> {
+        self.calls.lock().push(Recorded::Reveal(path.to_path_buf()));
         self.answer(&path.display().to_string()).map(drop)
     }
 }

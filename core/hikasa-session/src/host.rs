@@ -873,6 +873,124 @@ impl AppLauncher for SystemLauncher {
         open::that_detached(path)
             .map_err(|e| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display())))
     }
+
+    /// *Show in File Manager* (D-254): [`reveal_command`] of this platform, run to its end; when it cannot start, or
+    /// (outside Windows, whose `explorer.exe` exits 1 when it worked) it ends with an error, the folder is opened
+    /// instead ([`reveal_fallback`]).
+    fn reveal(&self, path: &std::path::Path) -> Result<(), ApiError> {
+        let platform = Platform::HOST;
+        let command = reveal_command(platform, path);
+        let mut process = std::process::Command::new(&command.program);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            // `/select,"<path>"` as one word: the standard quoting would quote the `/select,` too.
+            for arg in &command.args {
+                process.raw_arg(arg);
+            }
+        }
+        #[cfg(not(windows))]
+        process.args(&command.args);
+        let status = process
+            .current_dir(&command.cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let shown = match status {
+            Ok(status) => platform == Platform::Windows || status.success(),
+            Err(_) => false,
+        };
+        if shown {
+            return Ok(());
+        }
+        self.open_associated(&reveal_fallback(path))
+    }
+}
+
+/// What *Show in File Manager* runs for `path` on `platform` (D-254), a pure builder: Windows
+/// `explorer.exe /select,"<path>"`, macOS `open -R <path>`, Linux and the other Unix systems the D-Bus call
+/// `org.freedesktop.FileManager1.ShowItems` of the session bus through `dbus-send` with the item's `file://` URI
+/// ([`file_uri`]). The command starts in the item's folder.
+pub fn reveal_command(platform: Platform, path: &std::path::Path) -> OpenCommand {
+    let cwd = reveal_fallback(path);
+    let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+    match platform {
+        Platform::Windows => {
+            let mut arg = OsString::from("/select,\"");
+            arg.push(path.as_os_str());
+            arg.push("\"");
+            OpenCommand {
+                program: "explorer.exe".into(),
+                args: vec![arg],
+                cwd,
+            }
+        }
+        Platform::MacOs => {
+            let mut args = words(&["-R"]);
+            args.push(path.as_os_str().to_owned());
+            OpenCommand {
+                program: "open".into(),
+                args,
+                cwd,
+            }
+        }
+        Platform::Linux | Platform::OtherUnix => {
+            let mut args = words(&[
+                "--session",
+                "--print-reply",
+                "--reply-timeout=5000",
+                "--type=method_call",
+                "--dest=org.freedesktop.FileManager1",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+            ]);
+            args.push(format!("array:string:{}", file_uri(path)).into());
+            args.push("string:".into());
+            OpenCommand {
+                program: "dbus-send".into(),
+                args,
+                cwd,
+            }
+        }
+    }
+}
+
+/// The folder *Show in File Manager* opens when the file manager cannot select the item: the item's folder (a root
+/// is its own).
+pub fn reveal_fallback(path: &std::path::Path) -> PathBuf {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(path)
+        .to_path_buf()
+}
+
+/// The `file://` URI of an absolute path (RFC 8089): every byte but the unreserved ones (`A–Z a–z 0–9 - . _ ~`) and
+/// `/` percent-encoded, so a comma (`dbus-send`'s array separator), a space or a byte that is not UTF-8 survives.
+/// Windows paths become `file:///C:/…`.
+pub fn file_uri(path: &std::path::Path) -> String {
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt as _;
+        path.as_os_str().as_bytes().to_vec()
+    };
+    #[cfg(not(unix))]
+    let bytes = path.to_string_lossy().replace('\\', "/").into_bytes();
+    let mut uri = String::from("file://");
+    if bytes.first() != Some(&b'/') {
+        uri.push('/');
+    }
+    for byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(char::from(byte));
+            }
+            // A drive's colon stays readable.
+            b':' if uri.len() <= 10 => uri.push(':'),
+            other => uri.push_str(&format!("%{other:02X}")),
+        }
+    }
+    uri
 }
 
 #[cfg(test)]
