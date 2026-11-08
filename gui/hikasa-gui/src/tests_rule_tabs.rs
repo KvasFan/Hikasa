@@ -252,6 +252,97 @@ fn a9_23_an_edit_with_the_defaults_scope_is_session_edit_set() {
     }
 }
 
+/// What the view holds on its own (a *this view only* value, an Ignored path, a sync row's override) stays out of the
+/// defaults when a later edit is written with the Defaults scope: the file equals `session edit --set` of the key
+/// edited alone (W9c review F2).
+#[test]
+fn a9_23_values_the_view_holds_on_its_own_stay_out_of_the_defaults() {
+    for start in ["this view only", "an ignored path", "a sync override"] {
+        let (gui, twin) = (World::new(), World::new());
+        fixture(&gui);
+        let mut app = gui.app(None);
+        let sync = start == "a sync override";
+        let view = if sync {
+            crate::tests_sync_view::open_sync(
+                &gui,
+                &mut app.0,
+                hikasa_folder::sync::SyncOptions::default(),
+            )
+        } else {
+            open(&gui, &mut app)
+        };
+        match start {
+            "this view only" => {
+                settings(&gui, &mut app, CommandId::Rules);
+                tab::<ComparisonTab>(&mut app).fields.tolerance = "9".into();
+                dialog(&mut app).scope = RuleScope::View;
+                ok(&gui, &mut app);
+            }
+            "an ignored path" => {
+                crate::tests_folder_ops::select(&mut app.0, view, "a.txt");
+                app.execute(CommandId::Ignored);
+                gui.settle(&mut app);
+                assert_eq!(
+                    folder_model(&mut app.0, view).ignored_list(),
+                    Some(&["a.txt".to_owned()][..])
+                );
+            }
+            _ => {
+                crate::tests_folder_ops::select(&mut app.0, view, "a.txt");
+                app.execute(CommandId::SyncLeave);
+                for _ in 0..4 {
+                    app.0.handle(crate::app::UiMsg::Tick);
+                    gui.settle(&mut app);
+                }
+                assert!(
+                    folder_model(&mut app.0, view)
+                        .sync()
+                        .is_some_and(|s| s.options.overrides.contains_key("a.txt")),
+                    "the override"
+                );
+            }
+        }
+        settings(&gui, &mut app, CommandId::Rules);
+        tab::<ComparisonTab>(&mut app).fields.size = false;
+        assert!(
+            dialog(&mut app).scope_available(RuleScope::Defaults),
+            "{start}"
+        );
+        dialog(&mut app).scope = RuleScope::Defaults;
+        ok(&gui, &mut app);
+        let kind = if sync {
+            SessionType::FolderSync
+        } else {
+            SessionType::FolderCompare
+        };
+        twin.service
+            .session_edit(
+                &SessionTarget::Defaults(kind),
+                &SessionEdit {
+                    set: vec![("rules.criteria.size".into(), "false".into())],
+                    ..SessionEdit::default()
+                },
+                false,
+            )
+            .expect("session edit");
+        assert_eq!(sessions_files(&gui), sessions_files(&twin), "{start}");
+        // The view keeps its own value and takes the edit.
+        app.execute(CommandId::FavCompareAll);
+        gui.settle(&mut app);
+        let options = folder_model(&mut app.0, view)
+            .prepared()
+            .expect("a comparison")
+            .rules()
+            .clone();
+        assert!(!options.criteria.size, "{start}");
+        match start {
+            "this view only" => assert_eq!(options.criteria.timestamps.tolerance_secs, 9),
+            "an ignored path" => assert_eq!(options.ignored, ["a.txt"]),
+            _ => {}
+        }
+    }
+}
+
 /// Edits on several tabs at once are all written (each tab writes its keys over the others').
 #[test]
 fn a9_23_edits_of_several_tabs_are_written_together() {
