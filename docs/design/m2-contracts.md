@@ -8932,6 +8932,11 @@ Mutations (each failed the tests named, then was reverted):
     `workspace_restore` −0.02 MiB a pending tab. The tree row's p95, W9a's open finding, met here as in the round at
     load 3.8 after the W9b review; every row is one run on a machine others load, so the GPU run stays the
     maintainer's (§6.9).
+18. The pre-push run of W9c (`prepush.sh`: every CI job, wine, macOS clippy, `PROPTEST_CASES=4000`) found the drop
+    property's report comparing a Windows source path through `{:?}` (its backslashes escaped, so `<root>` did not
+    replace it) and, with 4,000 cases, too many cases rejected for an empty drop; the property now prints the texts as
+    they are and always drops at least one entry (both mutations of its table caught again). Under wine the rest failed
+    only in §6.6's five wine-only tests; every W9c test passes there.
 
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
