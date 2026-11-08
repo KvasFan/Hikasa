@@ -15,7 +15,7 @@ use crate::dnd::{DropTarget, RowDrag, RowTarget};
 use crate::drop_dialog::{DropDialog, OPEN_NEW};
 use crate::folder_view::WritePolicy;
 use crate::folder_view::pane::read_only_message;
-use crate::op_dialogs::{OpDialog, OpForm};
+use crate::op_dialogs::OpDialog;
 use crate::tests::{TestApp, World, folder_model};
 use crate::tests_folder_ops::{node_of, open, open_with, put, select};
 use crate::window::{CommandArg, Invocation};
@@ -316,7 +316,9 @@ fn f5_rows_dragged_onto_a_folder_keep_its_spec() {
         hikasa_session::api::spec_os_string(&resolved),
         world.path("work/r/f ").into_os_string()
     );
-    assert!(matches!(d.form(), OpForm::CopyTo { target, .. } if target.ends_with("f ")));
+    assert!(
+        matches!(d.form(), crate::op_dialogs::OpForm::CopyTo { target, .. } if target.ends_with("f "))
+    );
     crate::tests_op_dialogs::start_and_confirm(&world, &mut app);
     assert!(exists(&world, "work/r/f /a.txt"));
     assert!(!exists(&world, "work/r/f"), "no folder `f` made");
