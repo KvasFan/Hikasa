@@ -951,6 +951,12 @@ impl FolderViewModel {
         &mut self.filters.0
     }
 
+    /// A reopen (Session Settings' OK) keeps the Filters edit of the view it replaces (W9c note 35): the text being
+    /// typed and its message stay; the new view's filter is taken as from any new model ([`Self::filters_edit`]).
+    pub fn keep_filters_edit(&mut self, old: &FolderViewModel) {
+        self.filters = (old.filters.0.clone(), 0);
+    }
+
     /// Tab caption.
     pub fn caption(&self) -> String {
         crate::shared::view_title(

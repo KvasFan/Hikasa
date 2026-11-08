@@ -944,6 +944,69 @@ fn a_new_model_keeps_the_text_being_typed() {
     assert_eq!(m.filters_edit().committed, "");
 }
 
+/// Session Settings' OK reopens the view; its Filters edit stays as it was (W9c note 35): the text being typed and its
+/// message are kept, nothing goes to the recent filters, and the field compares with the new view's filter (Esc shows
+/// it); a field not being edited shows the new filter.
+#[test]
+fn a_reopen_keeps_the_filters_edit() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let w = app.win();
+    folder_model(&mut app.0, view).filters_edit().text = "*.rs".into();
+    app.0.filters_enter(w, None);
+    world.settle(&mut app);
+    let recent = app.0.filters_choices().1;
+    assert_eq!(recent, ["*.rs"]);
+    // Typed, not entered; a bad one keeps its message too.
+    {
+        let edit = folder_model(&mut app.0, view).filters_edit();
+        edit.text = "[a".into();
+        assert!(edit.check().is_err());
+    }
+    let model = std::sync::Arc::clone(
+        folder_model(&mut app.0, view)
+            .prepared()
+            .expect("p")
+            .model(),
+    );
+    settings(&world, &mut app, CommandId::NameFilter);
+    tab::<NameFiltersTab>(&mut app).fields.exclude_files = "*.bak".into();
+    ok(&world, &mut app);
+    let m = folder_model(&mut app.0, view);
+    assert!(
+        !std::sync::Arc::ptr_eq(m.prepared().expect("p").model(), &model),
+        "OK built a new view"
+    );
+    let new_filter =
+        crate::filters_edit::FiltersEdit::of(&m.prepared().expect("p").rules().filters.names)
+            .committed;
+    assert!(new_filter.contains("-*.bak"), "{new_filter}");
+    let edit = m.filters_edit();
+    assert_eq!(edit.text, "[a", "the typed text stays");
+    assert!(edit.error.is_some(), "its message stays");
+    assert_eq!(edit.committed, new_filter);
+    assert_eq!(app.0.filters_choices().1, recent, "nothing recorded");
+    // Esc: the new view's filter; a field not being edited follows the next reopen.
+    folder_model(&mut app.0, view).filters_edit().revert();
+    assert_eq!(
+        folder_model(&mut app.0, view).filters_edit().text,
+        new_filter
+    );
+    settings(&world, &mut app, CommandId::NameFilter);
+    tab::<NameFiltersTab>(&mut app).fields.exclude_files = "*.tmp".into();
+    ok(&world, &mut app);
+    let m = folder_model(&mut app.0, view);
+    let newer =
+        crate::filters_edit::FiltersEdit::of(&m.prepared().expect("p").rules().filters.names)
+            .committed;
+    assert!(newer.contains("-*.tmp"), "{newer}");
+    assert_eq!(m.filters_edit().text, newer);
+    assert!(!m.filters_edit().edited());
+    assert_eq!(app.0.filters_choices().1, recent, "nothing recorded");
+}
+
 /// A preset's name is taken trimmed: one that is a used name with spaces around it is refused.
 #[test]
 fn a_preset_name_is_trimmed() {

@@ -2639,6 +2639,12 @@ impl AppCore {
         let mut old = None;
         if let Some(tab) = self.tab_mut(view) {
             let source = tab.caption();
+            // The Filters edit stays as it was, the text being typed included (W9c note 35).
+            if let (ViewModel::Folder(new), TabContent::Live(ViewModel::Folder(was))) =
+                (&mut model, &tab.content)
+            {
+                new.keep_filters_edit(was);
+            }
             old = Some((
                 source,
                 std::mem::replace(&mut tab.content, TabContent::Live(model)),
