@@ -11,6 +11,8 @@
 //! | [`Alignment`], [`Run`], [`RunKind`], [`RowRef`], [`RunSink`] | the canonical run model with stable run ids and progressive output (ARCH-004) |
 //! | [`inline_diff`], [`split_ranges_by_class`] | inline differences (TC-014; §2.16) |
 //! | [`BigramProfile`], [`bigram_similarity`] | the closeness similarity measure (§2.15.3) |
+//! | [`Anchor`], [`align_anchored`], [`normalize_anchors`] | Align With and Isolate (TC-013; M2 §1.10.8) |
+//! | [`align_traced`], [`Derivation`] | the alignment with its derivation (M2 §1.10.9) |
 //!
 //! Every function is a deterministic function of its arguments (T1). Heuristic cut-offs count operations,
 //! never time (T6): the Standard work and fallback budgets and the closeness cell budgets. Every imara-diff call
@@ -29,7 +31,8 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-mod algo;
+pub(crate) mod algo;
+pub mod anchors;
 pub mod classify;
 mod closeness;
 mod dense;
@@ -40,10 +43,12 @@ pub mod intern;
 pub mod model;
 pub mod options;
 pub mod similarity;
+pub mod trace;
 
 pub use algo::align;
 #[doc(hidden)]
 pub use algo::testing;
+pub use anchors::{Anchor, AnchorSide, align_anchored, auto_algorithm, normalize_anchors};
 pub use classify::split_ranges_by_class;
 pub use error::DiffError;
 pub use inline::{InlineDiff, InlineOptions, inline_diff};
@@ -52,6 +57,10 @@ pub use intern::{InternedPair, Interner, MAX_SEQUENCE_LEN, TokenId, intern_pair}
 pub use model::{Alignment, DiffWarning, DiffWarningCode, RowRef, Run, RunKind, RunSink};
 pub use options::{Algorithm, AlignOptions, Closeness};
 pub use similarity::{BigramProfile, bigram_similarity};
+pub use trace::{
+    Derivation, NO_NODE, NodeId, RECORD_MIN, SegmentTrace, Stage, TraceNode, WorkTotals,
+    align_traced,
+};
 
 #[cfg(test)]
 mod test_config {

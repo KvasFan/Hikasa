@@ -13,7 +13,11 @@ pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
     let common = n.min(m);
     let never = cx.opts.never_align_differences;
     for k in 0..common {
-        if cx.left[k as usize] == cx.right[k as usize] {
+        if cx.iso_left(k) || cx.iso_right(k) {
+            // An isolated line pairs with nothing (§1.10.8).
+            cx.out.delete(1);
+            cx.out.insert(1);
+        } else if cx.left[k as usize] == cx.right[k as usize] {
             cx.out.equal(1);
         } else if never {
             cx.out.delete(1);

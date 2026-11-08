@@ -157,7 +157,7 @@ pub(crate) struct Limits {
 
 impl Limits {
     /// The limits of [`align`].
-    const PRODUCTION: Limits = Limits {
+    pub(crate) const PRODUCTION: Limits = Limits {
         helper_threshold: HELPER_THRESHOLD,
         fallback_budget: None,
     };
@@ -172,6 +172,35 @@ pub(crate) fn align_with_limits(
     cancel: &CancelToken,
     limits: Limits,
 ) -> Result<Alignment, DiffError> {
+    align_core(input, opts, scorer, sink, cancel, limits, Extras::NONE).map(|(a, _)| a)
+}
+
+/// What an anchored or traced alignment adds to [`align`]: isolated lines (one flag per line of each side;
+/// empty = none) and the recording of the derivation.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Extras<'x> {
+    pub(crate) isolated: [&'x [bool]; 2],
+    pub(crate) record: bool,
+}
+
+impl Extras<'_> {
+    pub(crate) const NONE: Extras<'static> = Extras {
+        isolated: [&[], &[]],
+        record: false,
+    };
+}
+
+/// The one alignment routine: [`align`] plus isolated lines and an optional record (the runs never depend on
+/// whether the record is kept, §1.10.9).
+pub(crate) fn align_core(
+    input: &AlignInput<'_>,
+    opts: &AlignOptions,
+    scorer: Option<&dyn PairScorer>,
+    sink: Option<&mut dyn RunSink>,
+    cancel: &CancelToken,
+    limits: Limits,
+    extras: Extras<'_>,
+) -> Result<(Alignment, Option<crate::trace::Recorder>), DiffError> {
     check_sequence_len(input.left.len())?;
     check_sequence_len(input.right.len())?;
     check_weights(input.left_weights, input.left.len())?;
@@ -179,6 +208,10 @@ pub(crate) fn align_with_limits(
     cancel.check()?;
     let dense = Dense::of(input, cancel)?;
     let mut cx = Ctx::new(&dense, input, opts, scorer, sink, cancel, limits);
+    cx.isolated = extras.isolated;
+    if extras.record {
+        cx.rec = Some(crate::trace::Recorder::default());
+    }
     match opts.algorithm {
         Algorithm::Unaligned => unaligned::run(&mut cx)?,
         Algorithm::Standard => standard::run(&mut cx)?,
@@ -186,9 +219,19 @@ pub(crate) fn align_with_limits(
         Algorithm::Patience => patience::run(&mut cx)?,
         Algorithm::Histogram => lcs::run(&mut cx, ImaraAlgorithm::Histogram)?,
     }
+    let mut rec = cx.rec.take();
+    if let Some(r) = rec.as_mut() {
+        r.totals.closeness = cx.cells_used;
+        r.totals.closeness_budget = cx.cells_cap;
+        r.totals.scorer = cx.scorer.map_or(0, |s| s.spent());
+        r.totals.exhausted |= cx.cap_refused;
+    }
     let alignment = cx.finish();
-    debug_assert_eq!(alignment.check_invariants(input, opts), Ok(()));
-    Ok(alignment)
+    debug_assert!(
+        !extras.isolated.iter().all(|m| m.is_empty())
+            || alignment.check_invariants(input, opts).is_ok()
+    );
+    Ok((alignment, rec))
 }
 
 /// `WeightsLength` unless `weights` is empty or as long as the sequence.
@@ -285,13 +328,13 @@ fn renumber(
 /// A pending piece of work of the range-splitting engines (Standard, Patience).
 #[derive(Debug, Clone)]
 pub(crate) enum Task {
-    /// A range still to align.
-    Range(Range<u32>, Range<u32>),
+    /// A range still to align, and the recorded node its work belongs to (`trace::NO_NODE`: none).
+    Range(Range<u32>, Range<u32>, u32),
     /// Equal pairs at the cursor (a block, or the common suffix of a range).
     Equal(u32),
     /// A gap left by the degraded split of Standard's fallback: Histogram if it fits the fallback budget, else
     /// gap pairing (§2.15); never split again. Only Standard produces it.
-    Residual(Range<u32>, Range<u32>),
+    Residual(Range<u32>, Range<u32>, u32),
 }
 
 /// How a gap with both sides non-empty is resolved (§2.15.1); never-align is checked first.
@@ -315,7 +358,7 @@ pub(crate) struct Ctx<'a, 's> {
     pub(crate) trivial: &'a TrivialSet,
     /// The options.
     pub(crate) opts: AlignOptions,
-    scorer: Option<&'a dyn PairScorer>,
+    pub(crate) scorer: Option<&'a dyn PairScorer>,
     /// Cancellation.
     pub(crate) cancel: &'a CancelToken,
     sink: Option<&'s mut (dyn RunSink + 's)>,
@@ -335,8 +378,16 @@ pub(crate) struct Ctx<'a, 's> {
     gap_mode: GapMode,
     dp: ClosenessDp,
     dp_pairs: Vec<(u32, u32)>,
-    cells_used: u64,
+    pub(crate) cells_used: u64,
     cells_cap: u64,
+    /// Isolated lines (anchors, §1.10.8): one flag per line of each side, empty when none.
+    pub(crate) isolated: [&'a [bool]; 2],
+    /// The derivation being recorded (`align_traced`).
+    pub(crate) rec: Option<crate::trace::Recorder>,
+    /// True once the total closeness cell budget refused a gap (an order-dependent decision).
+    pub(crate) cap_refused: bool,
+    /// Gaps paired by position because the closeness budget refused them (per-gap or total).
+    pub(crate) closeness_refusals: u64,
 }
 
 impl<'a, 's> Ctx<'a, 's> {
@@ -381,6 +432,10 @@ impl<'a, 's> Ctx<'a, 's> {
             dp_pairs: Vec::new(),
             cells_used: 0,
             cells_cap,
+            isolated: [&[], &[]],
+            rec: None,
+            cap_refused: false,
+            closeness_refusals: 0,
         };
         if opts.algorithm == Algorithm::Myers && opts.closeness.is_some() {
             cx.warn(WarningCode::ClosenessIgnored, || {
@@ -437,6 +492,11 @@ impl<'a, 's> Ctx<'a, 's> {
             self.cancel.check()?;
         }
         Ok(())
+    }
+
+    /// True while no diff-local warning was added (the fallback did not degrade).
+    pub(crate) fn diff_warnings_empty(&self) -> bool {
+        self.diff_warnings.is_empty()
     }
 
     /// Sends the runs that are final to the sink.
@@ -496,22 +556,123 @@ impl<'a, 's> Ctx<'a, 's> {
             self.out.insert(q);
             return Ok(());
         }
+        if self.any_isolated(&a, &b) {
+            return self.gap_isolated(a, b);
+        }
         if let GapMode::Closeness(c) = self.gap_mode {
             self.cancel.check()?;
             let cells = u64::from(p) * u64::from(q);
-            if cells <= c.max_cells_per_gap
-                && self.cells_used.saturating_add(cells) <= self.cells_cap
-                && self.closeness(c, &a, &b)?
-            {
+            let fits_total = self.cells_used.saturating_add(cells) <= self.cells_cap;
+            if cells <= c.max_cells_per_gap && !fits_total {
+                self.cap_refused = true;
+            }
+            if cells <= c.max_cells_per_gap && fits_total && self.closeness(c, &a, &b)? {
                 self.cells_used += cells;
                 return Ok(());
             }
+            self.closeness_refusals += 1;
             self.warn(WarningCode::ClosenessBudgetExhausted, || {
                 "the closeness matching budget ran out; some differing lines were paired by position"
                     .to_owned()
             });
         }
         self.positional(a, b)
+    }
+
+    /// True when left line `i` is isolated.
+    #[inline]
+    pub(crate) fn iso_left(&self, i: u32) -> bool {
+        self.isolated[0].get(i as usize).copied().unwrap_or(false)
+    }
+
+    /// True when right line `j` is isolated.
+    #[inline]
+    pub(crate) fn iso_right(&self, j: u32) -> bool {
+        self.isolated[1].get(j as usize).copied().unwrap_or(false)
+    }
+
+    fn any_isolated(&self, a: &Range<u32>, b: &Range<u32>) -> bool {
+        (!self.isolated[0].is_empty() && a.clone().any(|i| self.iso_left(i)))
+            || (!self.isolated[1].is_empty() && b.clone().any(|j| self.iso_right(j)))
+    }
+
+    /// A gap with isolated lines (§1.10.8): they take no part in the pairing, which runs on the other lines
+    /// only (closeness or by position), and stay Delete/Insert at their places.
+    fn gap_isolated(&mut self, a: Range<u32>, b: Range<u32>) -> Result<(), DiffError> {
+        let li: Vec<u32> = a.clone().filter(|&i| !self.iso_left(i)).collect();
+        let ri: Vec<u32> = b.clone().filter(|&j| !self.iso_right(j)).collect();
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        if !li.is_empty() && !ri.is_empty() {
+            let (p, q) = (li.len() as u32, ri.len() as u32);
+            let mut done = false;
+            if let GapMode::Closeness(c) = self.gap_mode {
+                self.cancel.check()?;
+                let cells = u64::from(p) * u64::from(q);
+                let fits_total = self.cells_used.saturating_add(cells) <= self.cells_cap;
+                if cells <= c.max_cells_per_gap && !fits_total {
+                    self.cap_refused = true;
+                }
+                if cells <= c.max_cells_per_gap && fits_total {
+                    let (left, right, trivial, scorer) =
+                        (self.left, self.right, self.trivial, self.scorer);
+                    let sim = |i: u32, j: u32| -> u16 {
+                        let (l, r) = (li[i as usize], ri[j as usize]);
+                        let (x, y) = (left[l as usize], right[r as usize]);
+                        if x == y {
+                            1000
+                        } else if trivial.contains(x) || trivial.contains(y) {
+                            0
+                        } else {
+                            scorer.map_or(0, |s| s.similarity(l, r).min(1000))
+                        }
+                    };
+                    if let Some(s) = scorer {
+                        s.begin_gap();
+                    }
+                    let outcome = self.dp.pair(
+                        p,
+                        q,
+                        c.threshold_permille,
+                        sim,
+                        self.cancel,
+                        &mut self.dp_pairs,
+                    )?;
+                    if outcome != DpOutcome::NoMemory {
+                        self.cells_used += cells;
+                        pairs = self
+                            .dp_pairs
+                            .iter()
+                            .map(|&(i, j)| (li[i as usize], ri[j as usize]))
+                            .collect();
+                        done = true;
+                    }
+                }
+                if !done {
+                    self.closeness_refusals += 1;
+                    self.warn(WarningCode::ClosenessBudgetExhausted, || {
+                        "the closeness matching budget ran out; some differing lines were paired by position"
+                            .to_owned()
+                    });
+                }
+            }
+            if !done {
+                pairs = li.iter().copied().zip(ri.iter().copied()).collect();
+            }
+        }
+        let (mut ca, mut cb) = (a.start, b.start);
+        for (i, j) in pairs {
+            self.out.delete(i - ca);
+            self.out.insert(j - cb);
+            if self.left[i as usize] == self.right[j as usize] {
+                self.out.equal(1);
+            } else {
+                self.out.changed(1);
+            }
+            (ca, cb) = (i + 1, j + 1);
+        }
+        self.out.delete(a.end - ca);
+        self.out.insert(b.end - cb);
+        self.tick(u64::from(span(&a) + span(&b)))
     }
 
     /// Positional pairing: `(k, k)` for `k < min(p, q)` (Equal if the keys are equal, else Changed), then the
@@ -554,6 +715,9 @@ impl<'a, 's> Ctx<'a, 's> {
             }
         };
         let (p, q) = (span(a), span(b));
+        if let Some(s) = scorer {
+            s.begin_gap();
+        }
         let outcome = self.dp.pair(
             p,
             q,
@@ -626,6 +790,39 @@ pub mod testing {
             ..Limits::PRODUCTION
         };
         align_with_limits(input, opts, scorer, sink, cancel, limits)
+    }
+
+    /// [`crate::align_traced`] without anchors, with Standard's fallback budget set to `fallback_budget` cells
+    /// (P-ALIGN-REN on the degraded split). The derivation has one segment.
+    pub fn align_traced_with_fallback_budget(
+        input: &AlignInput<'_>,
+        opts: &AlignOptions,
+        scorer: Option<&dyn PairScorer>,
+        cancel: &CancelToken,
+        fallback_budget: u64,
+    ) -> Result<(Alignment, crate::trace::Derivation), DiffError> {
+        let limits = Limits {
+            fallback_budget: Some(fallback_budget),
+            ..Limits::PRODUCTION
+        };
+        let extras = Extras {
+            isolated: [&[], &[]],
+            record: true,
+        };
+        let (a, rec) = align_core(input, opts, scorer, None, cancel, limits, extras)?;
+        let rec = rec.unwrap_or_default();
+        let segment = crate::trace::SegmentTrace {
+            left: 0..input.left.len() as u32,
+            right: 0..input.right.len() as u32,
+            prefix: 0,
+            suffix: 0,
+            engine: opts.algorithm,
+            pair: false,
+            root: rec.root,
+            nodes: rec.nodes,
+            work: rec.totals,
+        };
+        Ok((a, crate::trace::Derivation::from_segments(vec![segment])))
     }
 
     /// Number of abandoned helper threads (of cancelled calls) whose imara-diff computation is still running,

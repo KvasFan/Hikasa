@@ -105,6 +105,9 @@ pub enum WarningCode {
     AttribUnsupported,
     /// A script's log file is not written in a dry run (M2 W8a, §1.8.9).
     LogNotWritten,
+    /// An alignment anchor overlapped or crossed an earlier one, left the lines, or lost every line to edits, and
+    /// was dropped (M2 W10a, §1.10.8).
+    AnchorDropped,
 }
 
 impl WarningCode {
@@ -150,6 +153,7 @@ impl WarningCode {
             WarningCode::NothingSelected => "nothing_selected",
             WarningCode::AttribUnsupported => "attrib_unsupported",
             WarningCode::LogNotWritten => "log_not_written",
+            WarningCode::AnchorDropped => "anchor_dropped",
         }
     }
 }
@@ -207,6 +211,7 @@ mod tests {
             WarningCode::NothingSelected,
             WarningCode::AttribUnsupported,
             WarningCode::LogNotWritten,
+            WarningCode::AnchorDropped,
         ];
         for code in all {
             assert_eq!(

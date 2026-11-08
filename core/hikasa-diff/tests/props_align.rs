@@ -5,9 +5,12 @@ mod common;
 
 use common::*;
 use hikasa_core::{CancelToken, WarningCode};
-use hikasa_diff::testing::{align_with_fallback_budget, align_with_helper_threshold};
+use hikasa_diff::testing::{
+    align_traced_with_fallback_budget, align_with_fallback_budget, align_with_helper_threshold,
+};
 use hikasa_diff::{
     Algorithm, AlignOptions, Closeness, DiffWarningCode, RunKind, TokenId, TrivialSet, align,
+    align_traced,
 };
 use proptest::prelude::*;
 
@@ -332,19 +335,43 @@ proptest! {
         let scorer = case.scorer();
         let never = CancelToken::never();
         let (input, renamed_input) = (case.input(), other.input());
-        let (a, b) = match fallback {
+        let ((a, da), (b, db)) = match fallback {
             Some(budget) if opts.algorithm == Algorithm::Standard => (
-                align_with_fallback_budget(&input, &opts, Some(&scorer), None, &never, budget).unwrap(),
-                align_with_fallback_budget(&renamed_input, &opts, Some(&scorer), None, &never, budget)
+                align_traced_with_fallback_budget(&input, &opts, Some(&scorer), &never, budget).unwrap(),
+                align_traced_with_fallback_budget(&renamed_input, &opts, Some(&scorer), &never, budget)
                     .unwrap(),
             ),
             _ => (
-                align(&input, &opts, Some(&scorer), None, &never).unwrap(),
-                align(&renamed_input, &opts, Some(&scorer), None, &never).unwrap(),
+                align_traced(&input, &opts, &[], false, Some(&scorer), None, &never).unwrap(),
+                align_traced(&renamed_input, &opts, &[], false, Some(&scorer), None, &never).unwrap(),
             ),
         };
         prop_assert_eq!(a.runs(), b.runs());
         prop_assert_eq!(a.warnings(), b.warnings());
         prop_assert_eq!(a.diff_warnings(), b.diff_warnings());
+        prop_assert_eq!(da, db);
+    }
+
+    /// A10.8: `align_traced`'s runs equal `align`'s (and the fallback variants agree), for every engine.
+    #[test]
+    fn p_align_traced_gives_the_runs_of_align(
+        case in case_strategy(),
+        opts in options_strategy(),
+        fallback in prop_oneof![Just(None), Just(Some(0u64)), (0u64..3000).prop_map(Some)],
+    ) {
+        let scorer = case.scorer();
+        let never = CancelToken::never();
+        let input = case.input();
+        let (traced, plain) = match fallback {
+            Some(budget) => (
+                align_traced_with_fallback_budget(&input, &opts, Some(&scorer), &never, budget).unwrap().0,
+                align_with_fallback_budget(&input, &opts, Some(&scorer), None, &never, budget).unwrap(),
+            ),
+            None => (
+                align_traced(&input, &opts, &[], false, Some(&scorer), None, &never).unwrap().0,
+                align(&input, &opts, Some(&scorer), None, &never).unwrap(),
+            ),
+        };
+        prop_assert_eq!(traced, plain);
     }
 }

@@ -77,6 +77,9 @@ pub enum DiffWarningCode {
     /// Standard alignment ran out of its work budget **and** of its fallback budget: at least one remaining
     /// range was aligned by unique-line anchors and gap pairing instead of Histogram (D-16, §2.14.5).
     AlignmentDegraded,
+    /// An anchor was dropped by `normalize_anchors` (§1.10.8): it overlaps or crosses an earlier one, leaves the
+    /// lines, or is empty. hikasa-text maps it to `hikasa_core::WarningCode::AnchorDropped`.
+    AnchorDropped,
 }
 
 impl DiffWarningCode {
@@ -84,6 +87,7 @@ impl DiffWarningCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             DiffWarningCode::AlignmentDegraded => "alignment_degraded",
+            DiffWarningCode::AnchorDropped => "anchor_dropped",
         }
     }
 }

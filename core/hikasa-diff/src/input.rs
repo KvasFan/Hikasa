@@ -62,6 +62,15 @@ pub trait PairScorer: Sync {
     /// Similarity of left line `l` and right line `r` (indices into the full sequences). Values above 1000
     /// count as 1000.
     fn similarity(&self, l: u32, r: u32) -> u16;
+
+    /// Called before the closeness DP of each gap (additive, W10a): a scorer that caches per gap starts afresh,
+    /// so the work of a gap depends on that gap alone (§1.10.11 condition 4). The default does nothing.
+    fn begin_gap(&self) {}
+
+    /// Work units the scorer has spent so far (additive, W10a; recorded per derivation node). Default 0.
+    fn spent(&self) -> u64 {
+        0
+    }
 }
 
 impl<F: Fn(u32, u32) -> u16 + Sync> PairScorer for F {

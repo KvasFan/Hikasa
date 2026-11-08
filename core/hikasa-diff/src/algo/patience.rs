@@ -20,6 +20,7 @@ use super::lis::patience_chain;
 use super::{Ctx, Task, checkpoint, lcs};
 use crate::error::DiffError;
 use crate::model::span;
+use crate::trace::{NO_NODE, Stage, recorded};
 
 /// Reusable buffers.
 #[derive(Debug, Default)]
@@ -40,18 +41,48 @@ struct Scratch {
 pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
     let (n, m) = (cx.left.len() as u32, cx.right.len() as u32);
     let mut scratch = Scratch::default();
-    let mut stack = vec![Task::Range(0..n, 0..m)];
+    let mut stack = vec![Task::Range(0..n, 0..m, NO_NODE)];
     while let Some(task) = stack.pop() {
         match task {
             Task::Equal(len) => cx.out.equal(len),
             // Patience never produces `Residual` (only Standard's fallback does); a range is a range.
-            Task::Range(a, b) | Task::Residual(a, b) => {
-                process(cx, a, b, &mut stack, &mut scratch)?
+            Task::Range(a, b, owner) | Task::Residual(a, b, owner) => {
+                let before = counters(cx);
+                let node = match cx.rec.as_mut() {
+                    Some(rec) if recorded(owner, &a, &b) => {
+                        Some(rec.open(owner, a.clone(), b.clone()))
+                    }
+                    _ => None,
+                };
+                let child_owner = node.unwrap_or(owner);
+                process(cx, a, b, &mut stack, &mut scratch, node, child_owner)?;
+                let after = counters(cx);
+                if let Some(rec) = cx.rec.as_mut() {
+                    rec.charge(
+                        child_owner,
+                        0,
+                        after.0 - before.0,
+                        after.1.saturating_sub(before.1),
+                        after.2 - before.2,
+                    );
+                }
             }
         }
         cx.flush_ready();
     }
     Ok(())
+}
+
+/// (cells, scorer units, closeness refusals) for the record.
+fn counters(cx: &Ctx<'_, '_>) -> (u64, u64, u64) {
+    if cx.rec.is_none() {
+        return (0, 0, 0);
+    }
+    (
+        cx.cells_used,
+        cx.scorer.map_or(0, |s| s.spent()),
+        cx.closeness_refusals,
+    )
 }
 
 fn process(
@@ -60,6 +91,8 @@ fn process(
     b: Range<u32>,
     stack: &mut Vec<Task>,
     s: &mut Scratch,
+    node: Option<u32>,
+    owner: u32,
 ) -> Result<(), DiffError> {
     let prefix = cx.common_prefix(&a, &b)?;
     cx.out.equal(prefix);
@@ -69,6 +102,12 @@ fn process(
         stack.push(Task::Equal(suffix));
     }
     let (a, b) = (a.start..a.end - suffix, b.start..b.end - suffix);
+    if let (Some(id), Some(rec)) = (node, cx.rec.as_mut())
+        && let Some(n) = rec.node(id)
+    {
+        n.prefix = prefix;
+        n.suffix = suffix;
+    }
     if a.is_empty() || b.is_empty() {
         cx.out.delete(span(&a));
         cx.out.insert(span(&b));
@@ -111,6 +150,17 @@ fn process(
     }
     patience_chain(&s.u_y, &mut s.tails, &mut s.pred, &mut s.chain, cx.cancel)?;
     cx.tick(s.u_x.len() as u64)?;
+    if let (Some(id), Some(rec)) = (node, cx.rec.as_mut())
+        && let Some(n) = rec.node(id)
+    {
+        n.stage = Stage::AnchorsUnique;
+        n.chain = s
+            .chain
+            .iter()
+            .map(|&u| (a.start + s.u_x[u as usize], b.start + s.u_y[u as usize]))
+            .collect();
+        n.blocks = n.chain.iter().map(|&(x, y)| (x, y, 1)).collect();
+    }
     // The pieces in document order: gap, anchor, gap, anchor, …, gap; pushed in reverse.
     s.tasks.clear();
     let (mut x0, mut y0) = (0u32, 0u32);
@@ -120,6 +170,7 @@ fn process(
             s.tasks.push(Task::Range(
                 a.start + x0..a.start + x,
                 b.start + y0..b.start + y,
+                owner,
             ));
         }
         s.tasks.push(Task::Equal(1));
@@ -127,7 +178,7 @@ fn process(
     }
     if a.start + x0 < a.end || b.start + y0 < b.end {
         s.tasks
-            .push(Task::Range(a.start + x0..a.end, b.start + y0..b.end));
+            .push(Task::Range(a.start + x0..a.end, b.start + y0..b.end, owner));
     }
     stack.extend(s.tasks.drain(..).rev());
     Ok(())
