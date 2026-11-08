@@ -123,56 +123,81 @@ fn a9_23_rules_and_name_filter_open_their_tabs_with_the_p0_keys() {
     assert_eq!(d.tabs[d.active].title(), NAME_FILTERS);
 }
 
-/// One P0 key edited on its tab with the Defaults scope, and the same key through `session edit --set` on a twin.
-type Edit = (&'static str, &'static str, fn(&mut SessionSettingsDialog));
+/// One P0 key edited on its tab with the Defaults scope, and the same key through `session edit --set` on a twin
+/// (a word of the vocabulary is written as core serializes it, a TOML string).
+type Edit = (&'static str, String, fn(&mut SessionSettingsDialog));
 
-const EDITS: &[Edit] = &[
-    ("rules.criteria.size", "false", |d| {
-        d.tab_mut::<ComparisonTab>().expect("tab").fields.size = false;
-    }),
-    ("rules.criteria.timestamps.tolerance_secs", "5", |d| {
-        d.tab_mut::<ComparisonTab>().expect("tab").fields.tolerance = "5".into();
-    }),
-    ("rules.criteria.filename_case", "true", |d| {
-        d.tab_mut::<ComparisonTab>()
-            .expect("tab")
-            .fields
-            .filename_case = true;
-    }),
-    ("rules.criteria.content.method", "binary", |d| {
-        d.tab_mut::<ComparisonTab>().expect("tab").fields.method = ContentMethod::Binary;
-    }),
-    ("rules.alignment.align_extensions", "true", |d| {
-        d.tab_mut::<HandlingTab>()
-            .expect("tab")
-            .fields
-            .align_extensions = true;
-    }),
-    ("rules.handling.follow_symlinks", "true", |d| {
-        d.tab_mut::<HandlingTab>()
-            .expect("tab")
-            .fields
-            .follow_symlinks = true;
-    }),
-    ("rules.handling.scan_orphan_folders", "false", |d| {
-        d.tab_mut::<HandlingTab>()
-            .expect("tab")
-            .fields
-            .scan_orphan_folders = false;
-    }),
-    ("rules.handling.archives", "always", |d| {
-        d.tab_mut::<HandlingTab>().expect("tab").fields.archives = ArchiveHandling::Always;
-    }),
-    ("rules.alignment.case", "insensitive", |d| {
-        d.tab_mut::<HandlingTab>().expect("tab").fields.case = CaseMode::Insensitive;
-    }),
-    ("rules.filters.names.exclude_files", "[\"*.bak\"]", |d| {
-        d.tab_mut::<NameFiltersTab>()
-            .expect("tab")
-            .fields
-            .exclude_files = "*.bak".into();
-    }),
-];
+/// The serde word of a value, as a TOML string.
+fn word<T: serde::Serialize>(value: T) -> String {
+    serde_json::to_string(&value).expect("a word")
+}
+
+fn edits() -> Vec<Edit> {
+    let plain = |v: &str| v.to_owned();
+    vec![
+        ("rules.criteria.size", plain("false"), |d| {
+            d.tab_mut::<ComparisonTab>().expect("tab").fields.size = false;
+        }),
+        (
+            "rules.criteria.timestamps.tolerance_secs",
+            plain("5"),
+            |d| {
+                d.tab_mut::<ComparisonTab>().expect("tab").fields.tolerance = "5".into();
+            },
+        ),
+        ("rules.criteria.filename_case", plain("true"), |d| {
+            d.tab_mut::<ComparisonTab>()
+                .expect("tab")
+                .fields
+                .filename_case = true;
+        }),
+        (
+            "rules.criteria.content.method",
+            word(ContentMethod::Binary),
+            |d| {
+                d.tab_mut::<ComparisonTab>().expect("tab").fields.method = ContentMethod::Binary;
+            },
+        ),
+        ("rules.alignment.align_extensions", plain("true"), |d| {
+            d.tab_mut::<HandlingTab>()
+                .expect("tab")
+                .fields
+                .align_extensions = true;
+        }),
+        ("rules.handling.follow_symlinks", plain("true"), |d| {
+            d.tab_mut::<HandlingTab>()
+                .expect("tab")
+                .fields
+                .follow_symlinks = true;
+        }),
+        ("rules.handling.scan_orphan_folders", plain("false"), |d| {
+            d.tab_mut::<HandlingTab>()
+                .expect("tab")
+                .fields
+                .scan_orphan_folders = false;
+        }),
+        (
+            "rules.handling.archives",
+            word(ArchiveHandling::Always),
+            |d| {
+                d.tab_mut::<HandlingTab>().expect("tab").fields.archives = ArchiveHandling::Always;
+            },
+        ),
+        ("rules.alignment.case", word(CaseMode::Insensitive), |d| {
+            d.tab_mut::<HandlingTab>().expect("tab").fields.case = CaseMode::Insensitive;
+        }),
+        (
+            "rules.filters.names.exclude_files",
+            plain("[\"*.bak\"]"),
+            |d| {
+                d.tab_mut::<NameFiltersTab>()
+                    .expect("tab")
+                    .fields
+                    .exclude_files = "*.bak".into();
+            },
+        ),
+    ]
+}
 
 /// Every file below the configuration's sessions folder: path → content.
 fn sessions_files(world: &World) -> std::collections::BTreeMap<String, String> {
@@ -202,7 +227,7 @@ fn sessions_files(world: &World) -> std::collections::BTreeMap<String, String> {
 
 #[test]
 fn a9_23_an_edit_with_the_defaults_scope_is_session_edit_set() {
-    for (key, value, edit) in EDITS {
+    for (key, value, edit) in edits() {
         let (gui, twin) = (World::new(), World::new());
         fixture(&gui);
         let mut app = gui.app(None);
@@ -217,7 +242,7 @@ fn a9_23_an_edit_with_the_defaults_scope_is_session_edit_set() {
             .session_edit(
                 &SessionTarget::Defaults(SessionType::FolderCompare),
                 &SessionEdit {
-                    set: vec![((*key).to_owned(), (*value).to_owned())],
+                    set: vec![(key.to_owned(), value.clone())],
                     ..SessionEdit::default()
                 },
                 false,
@@ -225,6 +250,36 @@ fn a9_23_an_edit_with_the_defaults_scope_is_session_edit_set() {
             .expect("session edit");
         assert_eq!(sessions_files(&gui), sessions_files(&twin), "{key}");
     }
+}
+
+/// Edits on several tabs at once are all written (each tab writes its keys over the others').
+#[test]
+fn a9_23_edits_of_several_tabs_are_written_together() {
+    let (gui, twin) = (World::new(), World::new());
+    fixture(&gui);
+    let mut app = gui.app(None);
+    let _view = open(&gui, &mut app);
+    settings(&gui, &mut app, CommandId::Rules);
+    let all = edits();
+    for (_, _, edit) in &all {
+        edit(dialog(&mut app));
+    }
+    dialog(&mut app).scope = RuleScope::Defaults;
+    ok(&gui, &mut app);
+    twin.service
+        .session_edit(
+            &SessionTarget::Defaults(SessionType::FolderCompare),
+            &SessionEdit {
+                set: all
+                    .iter()
+                    .map(|(key, value, _)| ((*key).to_owned(), value.clone()))
+                    .collect(),
+                ..SessionEdit::default()
+            },
+            false,
+        )
+        .expect("session edit");
+    assert_eq!(sessions_files(&gui), sessions_files(&twin));
 }
 
 #[test]
@@ -371,7 +426,10 @@ fn a9_23_a_bad_matrix_cell_is_refused_and_the_sync_tab_edits_the_options() {
     let _ = view;
     settings(&world, &mut app, CommandId::Rules);
     let titles: Vec<String> = dialog(&mut app).tabs.iter().map(|t| t.title()).collect();
-    assert_eq!(titles.last().map(String::as_str), Some("Sync"));
+    assert_eq!(
+        titles.last().map(String::as_str),
+        Some(crate::folder_tabs::sync_title())
+    );
     // Invalid cells are not offered: core's rule.
     assert!(!SyncTab::allows(Situation::AddedLeft, SyncAction::CopyLeft));
     assert!(SyncTab::allows(Situation::AddedLeft, SyncAction::CopyRight));
@@ -413,7 +471,8 @@ fn a9_23_disable_editing_ok_reruns_and_p1_keys_survive() {
     if let SessionRules::Folder(r) = &mut session.rules {
         r.criteria.dos_attributes = hikasa_vfs::DosAttrs::parse_letters("HR").expect("letters");
         r.criteria.unix.permissions = true;
-        r.filters.other.size = Some(hikasa_folder::SizeFilter::parse("<10MB").expect("size"));
+        r.filters.other.size =
+            Some(hikasa_folder::SizeFilter::parse("<10MB").expect("a size filter"));
     }
     world
         .service

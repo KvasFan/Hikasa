@@ -1364,6 +1364,27 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
                     line_of(&code, at)
                 ));
             }
+            // M2 W9c (D-258): arboard's file lists and the file managers' commands (the reveal of D-254) in the
+            // adapter's file only; tests may name the commands they check.
+            for at in find_token(&code, "file_list") {
+                violations.push(format!(
+                    "{rel}:{}: `file_list` (the clipboard's file lists) is called only in core/hikasa-session/src/host.rs",
+                    line_of(&code, at)
+                ));
+            }
+            if rel.contains("/src/") {
+                let text = without_comments(&raw);
+                for literal in string_literals(&text) {
+                    let word = literal.content.trim();
+                    if matches!(word, "dbus-send" | "explorer.exe" | "-R" | "open -R") {
+                        violations.push(format!(
+                            "{rel}:{}: the file manager's command `{word}` is named only in \
+                             core/hikasa-session/src/host.rs",
+                            line_of(&text, literal.start)
+                        ));
+                    }
+                }
+            }
             // M2 W6 (§1.6.21): `open::` of the crate, not of a method or a path that ends in it.
             for at in find_token(&code, "open::") {
                 let before = code[..at].trim_end();
@@ -2823,6 +2844,9 @@ const GUI_MODEL_FILES: &[&str] = &[
     "folder_tabs.rs",
     "filters_edit.rs",
     "dnd.rs",
+    // M2 W9c: the drop's prompt and the window's side of the panes (clipboard, drops, file manager, menus).
+    "drop_dialog.rs",
+    "app/pane.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -3832,6 +3856,52 @@ fn check_2_confines_open_and_the_ways_into_execution() {
             ["api/folder_ops.rs:", "api/vfs_ops.rs:", "src/host.rs:"]
                 .iter()
                 .any(|file| v.contains(&format!("{file}1")))
+        }),
+        "{violations:?}"
+    );
+}
+
+/// M2 W9c (D-258): arboard's `file_list` and the reveal commands only in `host.rs`.
+#[test]
+fn check_2_confines_file_lists_and_the_reveal_commands() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-session/src/host.rs",
+        "fn a() { c.set().file_list(&p); let _ = (\"dbus-send\", \"explorer.exe\", \"-R\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/clipboard.rs",
+        "// file_list in a comment is fine\nfn b() { c.get().file_list(); }\nfn c() { run(\"dbus-send\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/launcher.rs",
+        "fn d() { let _ = [\"open\", \"-R\"]; let _ = \"explorer.exe\"; }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/tests/launcher.rs",
+        "fn e() { assert_eq!(p, \"dbus-send\"); }\n",
+    );
+    let violations = check_confined_crates(root);
+    for needle in [
+        "src/clipboard.rs:2: `file_list`",
+        "src/clipboard.rs:3: the file manager's command `dbus-send`",
+        "src/launcher.rs:1: the file manager's command `-R`",
+        "src/launcher.rs:1: the file manager's command `explorer.exe`",
+    ] {
+        assert!(
+            violations.iter().any(|v| v.contains(needle)),
+            "{needle}: {violations:?}"
+        );
+    }
+    assert!(
+        !violations.iter().any(|v| {
+            v.starts_with("core/hikasa-session/src/host.rs")
+                || v.starts_with("core/hikasa-session/tests/launcher.rs")
         }),
         "{violations:?}"
     );

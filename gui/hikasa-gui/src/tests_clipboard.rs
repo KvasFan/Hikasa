@@ -251,6 +251,27 @@ fn a9_20_a_text_field_keeps_its_editing_keys() {
             "{key} at {area:?}"
         );
     }
+    // A user's binding of an editing key to a command available anywhere: the field still keeps the key.
+    let world = World::with_files(&[(
+        "commands.toml",
+        "schema_version = 1\n[view.folder-compare.command.FullRefresh]\nshortcuts = [\"Ctrl+X\"]\n",
+    )]);
+    let (mut bound, _, _) = fixture(&world);
+    let bw = bound.win();
+    bound.0.set_text_focus(bw, false);
+    assert_eq!(
+        bound
+            .0
+            .dispatch_keys(bw, &[sc("Ctrl+X")], FocusArea::ViewMain),
+        Some(CommandId::FullRefresh)
+    );
+    bound.0.set_text_focus(bw, true);
+    assert_eq!(
+        bound
+            .0
+            .dispatch_keys(bw, &[sc("Ctrl+X")], FocusArea::TextField),
+        None
+    );
     // With a text field focused the pane's Edit entries are off in the menus too.
     app.0.set_text_focus(w, true);
     for id in [CommandId::Copy, CommandId::Paste, CommandId::SelectAll] {
