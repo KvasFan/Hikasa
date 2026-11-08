@@ -62,7 +62,7 @@ pub enum DropOutcome {
     OpenType(SessionType, [PathBuf; 2]),
     /// A folder view's bases (M2 W9c): the path edits of these sides take these texts, then Accept.
     Bases(Vec<(Side, String)>),
-    /// A folder view's pane took paths (M2 W9c): the prompt "Copy (or move) <n> items into `<folder>`?" with the plan
+    /// A folder view's pane took paths (M2 W9c): the prompt "Copy (or move) `<n>` items into `<folder>`?" with the plan
     /// of a copy and of a move into that folder (`vfs_op_plan`), then the plan chosen runs as it is.
     Transfer {
         /// The pane.

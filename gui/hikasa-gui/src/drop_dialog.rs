@@ -1,6 +1,6 @@
 //! The prompt of paths dropped on a folder view's pane or pasted into it (M2 W9c, FC-080, D-251, D-252): "Copy (or
-//! move) <n> items into `<folder>`?" with *Copy*, *Move*, *Cancel* and an overwrite choice (*Fail*, *Skip*, *Newer*,
-//! *Always*). A toolkit-free model (check 7): one job asks core for the plan of a copy and of a move into the folder
+//! move) `<n>` items into `<folder>`?" with *Copy*, *Move*, *Cancel* and an overwrite choice (*Fail*, *Skip*,
+//! *Replace if newer*, *Replace*: `--overwrite`'s words). A toolkit-free model (check 7): one job asks core for the plan of a copy and of a move into the folder
 //! (`vfs_op_plan`), the preview shows core's lines of either (`vfs_op_lines`), and the button pressed hands its plan,
 //! unchanged, to the view, which runs it (`vfs_op_execute`, T12). A change of the overwrite choice plans again.
 
