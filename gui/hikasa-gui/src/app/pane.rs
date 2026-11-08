@@ -13,12 +13,11 @@ use hikasa_session::ipc::ViewId;
 use hikasa_session::log::LogKind;
 
 use super::{AppCore, CoreJob, Effect};
-use crate::commands::{Area, CommandId};
+use crate::commands::CommandId;
 use crate::dnd::{RowDrag, RowDrop, RowTarget, decide_rows};
 use crate::drop_dialog::{DROP_DIALOG, DropDialog, overwrite_of, overwrite_word};
 use crate::folder_view::pane::NOT_LOCAL;
 use crate::job::Job;
-use crate::menus::{MenuContext, MenuItem};
 use crate::notify::{Notice, NoticeKind};
 use crate::status::Message;
 use crate::window::{CommandArg, ExplorerAction, ExplorerItem, Invocation, ViewModel, WindowId};
@@ -496,8 +495,13 @@ impl AppCore {
         }
     }
 
-    /// The context menu of a pane area of the active view (D-253), for the drawing layer and the tests.
-    pub fn pane_menu(&self, window: WindowId, area: Area) -> Vec<MenuItem> {
+    /// The context menu of a pane area of the active view (D-253), as the drawing layer builds it (tests).
+    #[cfg(test)]
+    pub fn pane_menu(
+        &self,
+        window: WindowId,
+        area: crate::commands::Area,
+    ) -> Vec<crate::menus::MenuItem> {
         let mut ctx = self.ctx(window);
         ctx.folder_pane = matches!(
             ctx.scope,
@@ -507,7 +511,7 @@ impl AppCore {
         let names = self.workspace_names();
         let columns = self.column_menu(window);
         let apps = self.open_with_names();
-        let mc = MenuContext {
+        let mc = crate::menus::MenuContext {
             tables: self.tables(),
             scope: ctx.scope,
             ctx,

@@ -1,0 +1,10 @@
+Edit
+  [ ] Ext
+  [x] Size
+  [x] Modified
+  [ ] Attributes
+  [ ] CRC
+  [ ] Owner
+  [ ] Group
+  ---
+  Reset Columns

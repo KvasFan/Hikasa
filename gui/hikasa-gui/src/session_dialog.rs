@@ -594,11 +594,6 @@ impl SessionSettingsDialog {
             .find_map(|t| t.as_any_mut().downcast_mut())
     }
 
-    /// The tab of type `T`.
-    pub fn tab<T: SessionTab>(&self) -> Option<&T> {
-        self.tabs.iter().find_map(|t| t.as_any().downcast_ref())
-    }
-
     /// Core checks every rule tab's edits over the session's rules (D-249): each refusal stays on its tab.
     pub fn check_tabs(&mut self, svc: &Service) {
         let current = self.session.rules.clone();
@@ -621,10 +616,7 @@ impl SessionSettingsDialog {
     fn signature(&self) -> Option<SessionRules> {
         let mut rules = self.session.rules.clone();
         for tab in self.tabs.iter().filter(|t| t.changes_rules()) {
-            match tab.rules(&rules) {
-                Some(next) => rules = next,
-                None => return None,
-            }
+            rules = tab.rules(&rules)?;
         }
         Some(rules)
     }

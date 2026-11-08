@@ -73,6 +73,10 @@ mod tests_bases;
 #[cfg(test)]
 mod tests_browse;
 #[cfg(test)]
+mod tests_clipboard;
+#[cfg(test)]
+mod tests_context_menus;
+#[cfg(test)]
 mod tests_dnd;
 #[cfg(test)]
 mod tests_find;
@@ -96,6 +100,8 @@ mod tests_options;
 mod tests_options_fixes;
 #[cfg(test)]
 mod tests_paths;
+#[cfg(test)]
+mod tests_rule_tabs;
 #[cfg(test)]
 mod tests_script;
 #[cfg(test)]

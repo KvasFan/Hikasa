@@ -46,7 +46,9 @@ fn a9_23_check_folder_rules_is_the_compile_step() {
     });
     let err = svc.check_folder_rules(&offset).unwrap_err();
     assert!(err.to_string().contains("-12..=12"), "{err}");
-    let mut future = FolderRules::default();
-    future.schema_version = 99;
+    let future = FolderRules {
+        schema_version: 99,
+        ..FolderRules::default()
+    };
     assert!(svc.check_folder_rules(&future).is_err());
 }

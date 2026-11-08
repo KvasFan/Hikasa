@@ -1,0 +1,10 @@
+schema_version = 1
+future_key = "kept"
+
+[[preset]]
+name = "Mine"
+mask = "*.c"
+
+[[preset]]
+name = "Rust"
+mask = "*.rs;-*.bak"

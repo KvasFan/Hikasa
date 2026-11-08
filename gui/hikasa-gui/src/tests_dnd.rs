@@ -14,7 +14,7 @@ use hikasa_session::api::VfsOpRequest;
 use hikasa_vfs::ops::{CopyOptions, MoveOptions, OverwritePolicy};
 
 use crate::commands::CommandId;
-use crate::dialog::{ButtonRole, DialogModel};
+use crate::dialog::ButtonRole;
 use crate::dnd::{
     DropOutcome, DropTarget, FieldId, RowDrag, RowDrop, RowTarget, decide, decide_rows,
 };
@@ -72,7 +72,7 @@ fn a9_19_decide_follows_the_table() {
     let (a, b, c) = (p("/a"), p("/b"), p("/c"));
     // A path edit or a pane's header: that side's base; two paths on the left: both.
     assert_eq!(
-        decide(DropTarget::PanePath(Side::Right), &[a.clone()]),
+        decide(DropTarget::PanePath(Side::Right), std::slice::from_ref(&a)),
         DropOutcome::Bases(vec![(Side::Right, "/a".into())])
     );
     assert_eq!(
@@ -334,7 +334,7 @@ fn a9_19_an_os_drop_copies_the_plan_it_shows() {
             lines.last().is_some_and(|l| l.starts_with("would ")),
             "{lines:?}"
         );
-        assert!(listing(&world, "work/r/d").get("one.txt").is_none());
+        assert!(!listing(&world, "work/r/d").contains_key("one.txt"));
         let shown = serde_json::to_string(&plan).expect("json");
         press(
             &world,
@@ -559,7 +559,7 @@ fn a9_19_nothing_is_dropped_during_an_operation() {
     );
     set_gate(&g, true);
     world.settle(&mut app);
-    assert!(listing(&world, "work/r/d").get("one.txt").is_none());
+    assert!(!listing(&world, "work/r/d").contains_key("one.txt"));
     // Paste waits the same way, and after the operation the drop is asked.
     drop(&mut app);
     world.settle(&mut app);

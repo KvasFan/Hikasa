@@ -1,0 +1,54 @@
+## one file pair, Left pane
+Edit
+  Leave Alone
+  Copy Left to Right
+  Copy Right to Left
+  Delete Left
+  Delete Right
+  ---
+  Exclude
+  ---
+  Open	Enter
+  > Open With
+    Text Compare
+    ---
+    Associated Application
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  ---
+  Copy	Ctrl+C
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+## one file pair, Right pane
+Edit
+  Leave Alone
+  Copy Left to Right
+  Copy Right to Left
+  Delete Left
+  Delete Right
+  ---
+  Exclude
+  ---
+  Open	Enter
+  > Open With
+    Text Compare
+    ---
+    Associated Application
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  ---
+  Copy	Ctrl+C
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
