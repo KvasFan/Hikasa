@@ -5,12 +5,14 @@
 //! table indexes it. Ropey's line indexing is not used, because its default features also break lines at the
 //! Unicode separators VT, FF, NEL, LS and PS; Hikasa lines end only at CR, LF and CRLF (INV-DOC-1).
 
+pub(crate) mod blocks;
 pub(crate) mod lines;
 mod load;
 
 use std::borrow::Cow;
 use std::fmt;
 
+use hikasa_core::cancel::CancelToken;
 use hikasa_core::spec::Spec;
 use hikasa_core::time::FileTime;
 use hikasa_formats::{BinaryVerdict, DecodeOptions, DetectedEncoding, LineSource};
@@ -336,6 +338,138 @@ impl TextDocument {
             .map(|slice| slice.chunks())
             .into_iter()
             .flatten()
+    }
+}
+
+/// The edit marks of one line (§1.10.5): what [`TextDocument::marks`] returns. Additive (W10a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LineMarks {
+    /// Generation of the edit that last changed the line's content or terminator (0 = as loaded).
+    pub generation: u32,
+    /// The line's index in the file as last saved or loaded (`None` = it has none: inserted or changed).
+    pub orig: Option<LineIdx>,
+}
+
+impl TextDocument {
+    /// True when the document is a snapshot of an edited document (an `EditableDocument` changed it at least
+    /// once). Additive (W10a, §1.10.2).
+    pub fn edited(&self) -> bool {
+        self.lines.edited()
+    }
+
+    /// The edit marks of `line` (§1.10.5): generation 0 and the line's own index for a document as loaded;
+    /// `orig: None` out of range. Additive (W10a).
+    pub fn marks(&self, line: LineIdx) -> LineMarks {
+        if line.0 >= self.line_count() {
+            return LineMarks {
+                generation: 0,
+                orig: None,
+            };
+        }
+        let (generation, orig) = self.lines.marks(line.0);
+        LineMarks {
+            generation,
+            orig: (orig != blocks::NO_ORIG).then_some(LineIdx(orig)),
+        }
+    }
+
+    /// Checks the block line table against a fresh build of the document's text with the characters-per-line
+    /// limit `cpl` (P-BLOCK, A10.1): equal starts, terminators, physical lines and artificial breaks, block sizes
+    /// within 128…1,024 lines (the last may be shorter), prefix sums, `uniform` exactly when it may be, and the
+    /// EOL summary. **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_line_table(&self, cpl: Option<u32>) -> Result<(), String> {
+        self.lines.check_structure()?;
+        let text = self.rope.to_string();
+        let (built, eol) = LineTable::build(text.as_bytes(), cpl, "check", &CancelToken::never())
+            .map_err(|e| e.to_string())?;
+        if built.len() != self.lines.len() {
+            return Err(format!(
+                "{} lines, a fresh build has {}",
+                self.lines.len(),
+                built.len()
+            ));
+        }
+        for line in 0..built.len() {
+            if built.content(line) != self.lines.content(line)
+                || built.eol(line) != self.lines.eol(line)
+                || built.physical(line) != self.lines.physical(line)
+            {
+                return Err(format!(
+                    "line {line}: {:?} {:?} {} != built {:?} {:?} {}",
+                    self.lines.content(line),
+                    self.lines.eol(line),
+                    self.lines.physical(line),
+                    built.content(line),
+                    built.eol(line),
+                    built.physical(line)
+                ));
+            }
+        }
+        if eol != self.eol {
+            return Err(format!("EOL summary {:?} != built {eol:?}", self.eol));
+        }
+        Ok(())
+    }
+
+    /// The block layout: lines per block, whether line → block is a division, and an identity per block (equal
+    /// identities are shared blocks). **Not a stable API** (tests of D-260).
+    #[doc(hidden)]
+    pub fn block_layout(&self) -> (Vec<u32>, bool, Vec<usize>) {
+        let t = &self.lines;
+        (
+            (0..t.block_count()).map(|b| t.block_lines(b)).collect(),
+            t.uniform(),
+            (0..t.block_count())
+                .map(|b| t.block_ptr(b) as usize)
+                .collect(),
+        )
+    }
+
+    /// Heap bytes of the line table (blocks, headers, prefix sums). **Not a stable API** (memory tests).
+    #[doc(hidden)]
+    pub fn line_table_bytes(&self) -> usize {
+        self.lines.heap_bytes()
+    }
+
+    /// The line table (crate-internal: the editor and the live comparison).
+    pub(crate) fn table(&self) -> &LineTable {
+        &self.lines
+    }
+
+    /// Replaces `remove` bytes at byte `at_byte` of the text with `insert`, and lines `[at, at + removed)` of the
+    /// table with `recs` (which describe exactly the lines of the new text there). The EOL summary follows.
+    pub(crate) fn edit_raw(
+        &mut self,
+        at_byte: usize,
+        remove: usize,
+        insert: &str,
+        at: u32,
+        removed: u32,
+        recs: &[blocks::LineRec],
+    ) {
+        for line in at..at + removed {
+            self.eol.uncount(self.lines.eol(line));
+        }
+        for r in recs {
+            self.eol.count(r.eol);
+        }
+        if remove > 0 {
+            let from = self.rope.byte_to_char(at_byte);
+            let to = self.rope.byte_to_char(at_byte + remove);
+            self.rope.remove(from..to);
+        }
+        if !insert.is_empty() {
+            let at_char = self.rope.byte_to_char(at_byte);
+            self.rope.insert(at_char, insert);
+        }
+        self.lines.splice(at, removed, recs);
+        debug_assert_eq!(self.rope.len_bytes(), self.lines.text_len() as usize);
+    }
+
+    /// Sets every line's file line to its own index (a save).
+    pub(crate) fn rebase_orig(&mut self) {
+        self.lines.rebase_orig();
     }
 }
 

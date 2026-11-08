@@ -5,6 +5,7 @@
 
 use hikasa_core::cancel::CancelToken;
 
+pub(crate) use crate::document::blocks::{LineTable, TableBuilder};
 use crate::document::{EolSummary, LineEnding};
 use crate::error::TextError;
 
@@ -13,30 +14,6 @@ pub(crate) const BUILD_STEP: usize = 1 << 20;
 
 /// Most lines a document may have (D-43): `hikasa_diff::MAX_SEQUENCE_LEN`.
 pub const MAX_LINES: u32 = hikasa_diff::MAX_SEQUENCE_LEN;
-
-/// The line table of one decoded text: 4 bytes of start offset and 1 byte of terminator kind per line, plus
-/// the indices of artificially broken lines (only when the characters-per-line limit wrapped something).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct LineTable {
-    /// Start byte of every line in the decoded text.
-    starts: Vec<u32>,
-    /// Terminator of every line.
-    eols: Vec<LineEnding>,
-    /// Length of the decoded text in bytes.
-    text_len: u32,
-    /// Sorted indices of the lines whose terminator is `Artificial` (for `physical_line`).
-    artificial: Vec<u32>,
-}
-
-/// Byte length of a terminator in the text (artificial breaks have none).
-#[inline]
-pub(crate) fn eol_len(eol: LineEnding) -> u32 {
-    match eol {
-        LineEnding::Lf | LineEnding::Cr => 1,
-        LineEnding::CrLf => 2,
-        LineEnding::None | LineEnding::Artificial => 0,
-    }
-}
 
 /// The D-43 line-count guard: more than [`MAX_LINES`] lines → `TooManyLines`.
 pub(crate) fn check_line_count(lines: u64, spec: &str) -> Result<(), TextError> {
@@ -88,20 +65,8 @@ impl LineTable {
             spec: spec.to_owned(),
             limit: u64::from(u32::MAX),
         };
-        let mut table = LineTable {
-            starts: Vec::new(),
-            eols: Vec::new(),
-            text_len,
-            artificial: Vec::new(),
-        };
-        table
-            .starts
-            .try_reserve_exact(estimate)
-            .map_err(|_| too_large())?;
-        table
-            .eols
-            .try_reserve_exact(estimate)
-            .map_err(|_| too_large())?;
+        let mut table = TableBuilder::new(text_len);
+        table.reserve(estimate).map_err(|_| too_large())?;
         let mut summary = EolSummary::default();
         let mut start = 0usize;
         let mut at = 0usize;
@@ -115,7 +80,7 @@ impl LineTable {
             } else {
                 (LineEnding::Cr, p + 1)
             };
-            table.push_line(bytes, start, p, eol, limit);
+            push_line(&mut table, bytes, start, p, eol, limit);
             summary.count(eol);
             start = next;
             at = next;
@@ -128,87 +93,48 @@ impl LineTable {
             }
         }
         if start < bytes.len() {
-            table.push_line(bytes, start, bytes.len(), LineEnding::None, limit);
+            push_line(
+                &mut table,
+                bytes,
+                start,
+                bytes.len(),
+                LineEnding::None,
+                limit,
+            );
             summary.count(LineEnding::None);
         }
-        check_line_count(table.starts.len() as u64, spec)?;
-        if table.starts.capacity() > table.starts.len() + table.starts.len() / 4 + 16 {
-            table.starts.shrink_to_fit();
-            table.eols.shrink_to_fit();
-        }
-        Ok((table, summary))
+        check_line_count(u64::from(table.len()), spec)?;
+        Ok((table.finish(), summary))
     }
+}
 
-    /// Appends the line `text[start..end]` with terminator `eol`, wrapped at `limit` chars (0: no limit).
-    fn push_line(&mut self, text: &[u8], start: usize, end: usize, eol: LineEnding, limit: usize) {
-        // A line of at most `limit` bytes has at most `limit` chars.
-        if limit > 0 && end - start > limit {
-            let mut piece_start = start;
-            let mut chars = 0usize;
-            for (p, &b) in text.iter().enumerate().take(end).skip(start) {
-                if is_continuation(b) {
-                    continue;
-                }
-                if chars == limit {
-                    self.push_raw(piece_start, LineEnding::Artificial);
-                    piece_start = p;
-                    chars = 0;
-                }
-                chars += 1;
+/// Appends the line `text[start..end]` with terminator `eol`, wrapped at `limit` chars (0: no limit).
+fn push_line(
+    table: &mut TableBuilder,
+    text: &[u8],
+    start: usize,
+    end: usize,
+    eol: LineEnding,
+    limit: usize,
+) {
+    // A line of at most `limit` bytes has at most `limit` chars; `start ≤ text_len ≤ u32::MAX` was checked.
+    if limit > 0 && end - start > limit {
+        let mut piece_start = start;
+        let mut chars = 0usize;
+        for (p, &b) in text.iter().enumerate().take(end).skip(start) {
+            if is_continuation(b) {
+                continue;
             }
-            self.push_raw(piece_start, eol);
-        } else {
-            self.push_raw(start, eol);
+            if chars == limit {
+                table.push(piece_start as u32, LineEnding::Artificial);
+                piece_start = p;
+                chars = 0;
+            }
+            chars += 1;
         }
-    }
-
-    fn push_raw(&mut self, start: usize, eol: LineEnding) {
-        if eol == LineEnding::Artificial {
-            self.artificial.push(self.starts.len() as u32);
-        }
-        // `start ≤ text_len ≤ u32::MAX` was checked in `build`.
-        self.starts.push(start as u32);
-        self.eols.push(eol);
-    }
-
-    /// Number of lines.
-    #[inline]
-    pub(crate) fn len(&self) -> u32 {
-        self.starts.len() as u32
-    }
-
-    /// Byte range of the content of line `idx` (without its terminator); `None` out of range.
-    #[inline]
-    pub(crate) fn content(&self, idx: u32) -> Option<(usize, usize)> {
-        let i = idx as usize;
-        let start = *self.starts.get(i)?;
-        let next = self.starts.get(i + 1).copied().unwrap_or(self.text_len);
-        let eol = self.eols.get(i).copied().unwrap_or(LineEnding::None);
-        Some((start as usize, (next - eol_len(eol)) as usize))
-    }
-
-    /// Terminator of line `idx` (`None` out of range).
-    #[inline]
-    pub(crate) fn eol(&self, idx: u32) -> LineEnding {
-        self.eols
-            .get(idx as usize)
-            .copied()
-            .unwrap_or(LineEnding::None)
-    }
-
-    /// 1-based physical line number of `idx` (0 out of range).
-    pub(crate) fn physical(&self, idx: u32) -> u32 {
-        if idx >= self.len() {
-            return 0;
-        }
-        let artificial_before = self.artificial.partition_point(|&a| a < idx) as u32;
-        idx + 1 - artificial_before
-    }
-
-    /// Bytes used by the table (memory accounting in tests).
-    #[cfg(test)]
-    pub(crate) fn heap_bytes(&self) -> usize {
-        self.starts.capacity() * 4 + self.eols.capacity() + self.artificial.capacity() * 4
+        table.push(piece_start as u32, eol);
+    } else {
+        table.push(start as u32, eol);
     }
 }
 
@@ -290,6 +216,18 @@ impl EolSummary {
             LineEnding::None => self.none += 1,
             LineEnding::Artificial => {}
         }
+    }
+
+    /// Removes one terminator from the counts (an edit).
+    pub(crate) fn uncount(&mut self, eol: LineEnding) {
+        let slot = match eol {
+            LineEnding::Lf => &mut self.lf,
+            LineEnding::CrLf => &mut self.crlf,
+            LineEnding::Cr => &mut self.cr,
+            LineEnding::None => &mut self.none,
+            LineEnding::Artificial => return,
+        };
+        *slot = slot.saturating_sub(1);
     }
 }
 
@@ -509,8 +447,9 @@ mod tests {
         let text = "a\n".repeat(10_000);
         let (table, _) =
             LineTable::build(text.as_bytes(), None, "t", &CancelToken::never()).unwrap();
+        // 5 bytes a line plus at most 0.1 for block headers and prefix sums (§1.10.2).
         assert!(
-            table.heap_bytes() <= 10_001 * 5 + 64,
+            table.heap_bytes() <= 10_000 * 51 / 10 + 64,
             "{}",
             table.heap_bytes()
         );

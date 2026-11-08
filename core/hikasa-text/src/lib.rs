@@ -7,7 +7,8 @@
 //!
 //! | Module | Content |
 //! |---|---|
-//! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF line table), [`load_document`], [`LoadOptions`] |
+//! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF block line table), [`load_document`], [`LoadOptions`] |
+//! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
 //! | [`compare`](mod@compare) | [`compare()`](fn@compare::compare), [`TextComparison`] (rows, sections, inline, spans, navigation, thumbnail) |
@@ -57,6 +58,7 @@
 pub mod classify;
 pub mod compare;
 pub mod document;
+pub mod edit;
 pub mod error;
 pub mod quick;
 pub mod rules;
@@ -71,8 +73,12 @@ pub use compare::{
     TextComparison, ThumbCell, compare, compare_with_limits,
 };
 pub use document::{
-    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LoadOptions, MAX_DOCUMENT_BYTES,
-    MAX_LINES, TextDocument, load_document,
+    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LineMarks, LoadOptions,
+    MAX_DOCUMENT_BYTES, MAX_LINES, TextDocument, load_document,
+};
+pub use edit::{
+    CopyEdit, EditBlock, EditCommand, EditError, EditOptions, EditOutcome, EditRequest,
+    Editability, EditableDocument, GroupHint, LineDelta, LineMark, Selection, TextPos, UndoId,
 };
 pub use error::TextError;
 pub use quick::{
