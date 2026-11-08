@@ -1,6 +1,7 @@
 //! A5.8: memory stays bounded: peak allocation below 64 MiB for a stream of 1 GiB of zeros with a 16 MiB `stream_max`.
 //! The counting `#[global_allocator]` lives in this test binary only (§6.1), so nothing else runs beside it under
-//! `cargo nextest`, which runs each test in its own process.
+//! `cargo nextest`, which runs each test in its own process; under `cargo test`, which runs them on threads of one
+//! process, each test holds `MEASURE` from its start, its inputs included.
 #![allow(unsafe_code)]
 
 mod common;
@@ -8,6 +9,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use common::archives::{RawEntry, RawTar, compress, name_of, on_memory, pax, raw_zip};
 use hikasa_core::{CancelToken, Spec};
@@ -41,6 +43,13 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
+
+/// One test at a time in this process: the counters are global.
+static MEASURE: Mutex<()> = Mutex::new(());
+
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    MEASURE.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// `body` under a clean peak; returns the peak above what was live at the start.
 fn peak_of<T>(body: impl FnOnce() -> T) -> (T, usize) {
@@ -99,27 +108,32 @@ fn a_stream_of_zeros(format: ArchiveFormat, ratio_stops_it: bool) {
 
 #[test]
 fn a_gz_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     a_stream_of_zeros(ArchiveFormat::Gz, true);
 }
 
 #[test]
 fn a_bz2_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     a_stream_of_zeros(ArchiveFormat::Bz2, true);
 }
 
 #[test]
 fn an_xz_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     a_stream_of_zeros(ArchiveFormat::Xz, true);
 }
 
 #[test]
 fn a_stream_of_1_gib_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     a_stream_of_zeros(ArchiveFormat::Zst, true);
 }
 
 /// The index of a compressed tar walks the same guards as a stream.
 #[test]
 fn a_tar_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     let mut tar = RawTar {
         size: Some(1 << 30),
         ..RawTar::file(b"zeros", b"")
@@ -142,6 +156,7 @@ fn a_tar_of_zeros_stays_small() {
 /// A read of a zip member spools through the guards too, and a declared size does not allocate.
 #[test]
 fn a_zip_member_of_zeros_stays_small() {
+    let _one = one_at_a_time();
     const SIZE: usize = 256 << 20;
     let zeros = vec![0u8; SIZE];
     let mut deflate =
@@ -203,6 +218,7 @@ fn deep_name(index: usize, depth: usize) -> Vec<u8> {
 /// The review's bomb of 46 KiB: each of 3,000 names opens 2,000 folders of up to 4 KiB, 13.4 GiB as full paths.
 #[test]
 fn a_tree_deeper_than_the_cap_stops_at_once() {
+    let _one = one_at_a_time();
     let bytes = tar_zst(|tar| {
         let header = RawTar::typed(b"longlink", b'0').bytes();
         for index in 0..3000 {
@@ -220,6 +236,7 @@ fn a_tree_deeper_than_the_cap_stops_at_once() {
 /// Below the depth cap the same bomb stops at the text of its folders, and nothing is stored per folder.
 #[test]
 fn a_tree_of_long_paths_stops_at_the_paths_limit() {
+    let _one = one_at_a_time();
     let bytes = tar_zst(|tar| {
         let header = RawTar::typed(b"longlink", b'0').bytes();
         for index in 0..3000 {
@@ -237,6 +254,7 @@ fn a_tree_of_long_paths_stops_at_the_paths_limit() {
 /// The same through a zip, with folders that fit: the tree holds each path once.
 #[test]
 fn a_tree_that_fits_costs_its_members() {
+    let _one = one_at_a_time();
     let entries: Vec<RawEntry> = (0..200)
         .map(|index| RawEntry::new(&deep_name(index, 200), b""))
         .collect();
@@ -254,6 +272,7 @@ fn a_tree_that_fits_costs_its_members() {
 /// The review's 3.3 MiB tar.gz of 9 GiB: link targets of 1 MiB. Targets stop at 4,096 bytes, as in a zip.
 #[test]
 fn long_link_targets_are_not_kept() {
+    let _one = one_at_a_time();
     let target = vec![b't'; (1 << 20) - 200];
     for pax_header in [true, false] {
         let bytes = tar_zst(|tar| {
@@ -287,6 +306,7 @@ fn long_link_targets_are_not_kept() {
 /// Long names within the entries limit stop at the bytes they cost.
 #[test]
 fn many_long_names_stop_at_the_paths_limit() {
+    let _one = one_at_a_time();
     let bytes = tar_zst(|tar| {
         let header = RawTar::typed(b"longlink", b'0').bytes();
         for index in 0..20_000 {
@@ -311,6 +331,7 @@ fn many_long_names_stop_at_the_paths_limit() {
 /// are what is bounded: 200 names of 60 KiB stop at the limit, before they reach the tree.
 #[test]
 fn a_central_directory_of_long_names_stops_at_the_paths_limit() {
+    let _one = one_at_a_time();
     let entries: Vec<RawEntry> = (0..200)
         .map(|index| {
             let mut name = vec![b'n'; 60_000];
