@@ -14,6 +14,10 @@ Session
   Compare	Enter (in a path field) (disabled)
   ---
   Close Tab	Ctrl+W
+Edit
+  Copy	Ctrl+C (disabled)
+  Paste	Ctrl+V (disabled)
+  Select All	Ctrl+A (disabled)
 Search
   Find...	Ctrl+F
 View

@@ -77,6 +77,39 @@ pub enum CommandArg {
     Side(hikasa_core::Side),
     /// An item of Open With ▸ (M2 W9b, D-245).
     OpenWith(OpenWithItem),
+    /// An item of the File Manager ▸ submenu (M2 W9c, D-254).
+    Explorer(ExplorerItem),
+    /// *Reset Columns* of `ColList` (M2 W9c, §1.9.18).
+    ResetColumns,
+}
+
+/// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
+/// focus side, else the left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExplorerItem {
+    /// What the file manager does.
+    pub action: ExplorerAction,
+    /// The side whose current item it acts on.
+    pub side: Option<hikasa_core::Side>,
+}
+
+/// The two file-manager entries (FC-063).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerAction {
+    /// *Open Folder in File Manager*: a folder itself, a file's folder.
+    OpenFolder,
+    /// *Show in File Manager*: the item selected in its folder.
+    ShowItem,
+}
+
+impl ExplorerAction {
+    /// The menu caption.
+    pub fn caption(self) -> &'static str {
+        match self {
+            ExplorerAction::OpenFolder => "Open Folder in File Manager",
+            ExplorerAction::ShowItem => "Show in File Manager",
+        }
+    }
 }
 
 /// An item of the Open With submenu (§1.9.13): a view of a kind that exists, or an application of `openwith.toml`
@@ -268,6 +301,11 @@ pub struct WindowModel {
     pub help: Option<&'static str>,
     /// `SessionsCombo` asks the UI to open the toolbar's sessions drop-down.
     pub focus_sessions: bool,
+    /// A text field of the window has the keyboard (M2 W9c, D-252): the folder pane's Edit entries are off, the field
+    /// keeps Ctrl+C/X/V/A. The UI sets it each frame.
+    pub text_focus: bool,
+    /// `NameFilterEdit` asks the UI to focus the toolbar's Filters edit (D-250).
+    pub focus_filters: bool,
 }
 
 impl WindowModel {
@@ -284,6 +322,8 @@ impl WindowModel {
             focused_seq,
             help: None,
             focus_sessions: false,
+            text_focus: false,
+            focus_filters: false,
         }
     }
 

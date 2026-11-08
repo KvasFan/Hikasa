@@ -41,7 +41,7 @@ pub struct InlineRename {
 }
 
 /// What the window knows when a verb starts.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct VerbOptions<'a> {
     /// The pane a context menu was opened on (`CopySide`, `MoveSide`).
     pub arg: Option<Side>,
@@ -51,6 +51,9 @@ pub struct VerbOptions<'a> {
     pub include_hidden: bool,
     /// Names follow Windows' rules.
     pub windows: bool,
+    /// Rows dragged onto a folder row of the other pane (M2 W9c, D-251): Copy/Move to Folder's target prefilled with
+    /// that folder, structure *relative*, from the side the rows were dragged from.
+    pub into: Option<(String, Side)>,
 }
 
 /// How a verb started.
@@ -268,8 +271,22 @@ impl FolderViewModel {
                 let recent = state
                     .mru(hikasa_session::settings::state::MruList::Folders)
                     .to_vec();
-                let target = recent.first().cloned().unwrap_or_default();
-                let sides = self.side_preset(on, moving);
+                let (target, structure, sides) = match &options.into {
+                    Some((folder, from)) => (
+                        folder.clone(),
+                        PathStructure::Relative,
+                        if *from == Side::Right {
+                            SideChoice::Right
+                        } else {
+                            SideChoice::Left
+                        },
+                    ),
+                    None => (
+                        recent.first().cloned().unwrap_or_default(),
+                        structure,
+                        self.side_preset(on, moving),
+                    ),
+                };
                 let started = self.open_dialog(
                     service,
                     view,

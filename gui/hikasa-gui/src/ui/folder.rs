@@ -9,7 +9,8 @@ use egui::{
 };
 use hikasa_session::ipc::ViewId;
 
-use crate::commands::CommandId;
+use crate::commands::{Area, CommandId, Ctx};
+use crate::dnd::{DropTarget, RowDrag, RowTarget};
 use crate::folder::columns::{self, ColumnId};
 use crate::folder::glyphs::{CentreIcon, Glyph, GlyphColour, GlyphView};
 use crate::folder::selection::{Hit, Mods, Press, SWIPE_THRESHOLD, Swipe};
@@ -69,6 +70,14 @@ pub struct FolderUi {
     pub spans: [Vec<(ColumnId, egui::Rangef)>; 2],
     /// The inline Rename's Enter was pressed (the window commits it, M2 W9b).
     pub commit_rename: bool,
+    /// The pane a context menu was opened on (M2 W9c, D-253).
+    menu_area: Option<Area>,
+    /// Rows are being dragged (D-251): egui's payload holds them.
+    dragging_rows: bool,
+    /// Dragged rows were released this frame: the drag, where, Shift (the window applies it).
+    pub row_drop: Option<(RowDrag, RowTarget, bool)>,
+    /// Where paths from the OS would land under the pointer this frame (D-251).
+    pub os_target: Option<DropTarget>,
 }
 
 /// A drag in the column header (D-234).
@@ -161,8 +170,11 @@ pub fn show(
     tree_font: &FontId,
     keys: bool,
     header_menu: &[crate::menus::MenuItem],
+    panes: &PaneMenus<'_>,
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();
+    st.os_target = None;
+    let pointer = ui.input(|i| i.pointer.hover_pos());
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
@@ -184,6 +196,10 @@ pub fn show(
     let _ = &status.bases;
     for (k, x) in side_x.iter().enumerate() {
         let cell = Rect::from_min_max(pos2(*x, bases.top()), pos2(*x + side_w, bases.bottom()));
+        // Paths from the OS on a path edit (D-251): that side's base.
+        if pointer.is_some_and(|p| cell.contains(p)) {
+            st.os_target = Some(DropTarget::PanePath(side_of(k)));
+        }
         path_edit(
             ui,
             view,
@@ -263,6 +279,14 @@ pub fn show(
         tree_id(view).with("header"),
         Sense::click_and_drag(),
     );
+    // Paths from the OS on a pane's header (D-251): that side's base.
+    if let Some(p) = pointer.filter(|p| header.contains(*p)) {
+        st.os_target = Some(DropTarget::PanePath(if p.x >= side_x[1] {
+            hikasa_core::Side::Right
+        } else {
+            hikasa_core::Side::Left
+        }));
+    }
     // The spans of the side under the pointer (both sides have the same ones, D-234).
     let spans_at = |x: f32| side_spans[usize::from(x >= side_x[1])].clone();
     let mut separator_hover = false;
@@ -541,6 +565,20 @@ pub fn show(
         if m.selection_press(index, hit) == Press::Swipe {
             st.press = Some((at, Swipe::new(index, hit)));
             st.swiping = false;
+        } else {
+            // A press on a selected row: the selection is dragged (D-251).
+            let from = match hit {
+                Hit::Side(side) => Some(side),
+                Hit::Centre => None,
+            };
+            egui::DragAndDrop::set_payload(
+                ui.ctx(),
+                RowDrag {
+                    from,
+                    rows: m.selection().items.clone(),
+                },
+            );
+            st.dragging_rows = true;
         }
     }
     if response.dragged()
@@ -564,9 +602,81 @@ pub fn show(
             }
         }
     }
+    // Where dragged rows or paths from the OS would land (D-251): a folder row of a side, else the side's pane.
+    let tree_target =
+        |p: egui::Pos2| -> Option<(hikasa_core::Side, Option<hikasa_folder::NodeId>)> {
+            if !tree.contains(p) {
+                return None;
+            }
+            let Hit::Side(side) = hit_at(p.x) else {
+                return None;
+            };
+            let folder = pointer_row(p).and_then(|(index, _)| m.folder_row(index));
+            Some((side, folder))
+        };
+    if let Some((side, folder)) = pointer.and_then(tree_target) {
+        st.os_target = Some(DropTarget::PaneTree { side, folder });
+    }
+    if st.dragging_rows {
+        let released = ui.input(|i| i.pointer.any_released());
+        let at = ui.input(|i| i.pointer.latest_pos());
+        if let Some(p) = at
+            && let Some((side, folder)) = tree_target(p)
+        {
+            // The pane the rows would go to.
+            let x = side_x[usize::from(side == hikasa_core::Side::Right)];
+            painter.rect_stroke(
+                Rect::from_min_max(pos2(x, tree.top()), pos2(x + side_w, tree.bottom())),
+                CornerRadius::ZERO,
+                Stroke::new(2.0, pal.accent),
+                egui::StrokeKind::Inside,
+            );
+            let _ = folder;
+        }
+        if released {
+            st.dragging_rows = false;
+            if let Some(drag) = egui::DragAndDrop::take_payload::<RowDrag>(ui.ctx()) {
+                let target = match at.and_then(tree_target) {
+                    Some((side, folder)) => RowTarget::Pane { side, folder },
+                    None => RowTarget::Elsewhere,
+                };
+                let shift = ui.input(|i| i.modifiers.shift);
+                st.row_drop = Some(((*drag).clone(), target, shift));
+            }
+        }
+    }
     if response.drag_stopped() {
         st.press = None;
         st.swiping = false;
+    }
+    // A right-click (D-253): a row outside the selection becomes the selection first; the menu of the pane.
+    if response.secondary_clicked()
+        && let Some(at) = response.interact_pointer_pos()
+    {
+        response.request_focus();
+        let hit = hit_at(at.x);
+        if let Some((index, _)) = pointer_row(at) {
+            m.context_press(index, hit);
+        }
+        st.menu_area = Some(match (hit, m.is_sync()) {
+            (Hit::Side(side), false) => Area::FolderPane(side),
+            (Hit::Centre, false) => Area::FolderCentre,
+            (Hit::Side(side), true) => Area::SyncPane(side),
+            (Hit::Centre, true) => Area::SyncPane(hikasa_core::Side::Center),
+        });
+    }
+    if let Some(area) = st.menu_area {
+        let opened = response.context_menu(|ui| {
+            let mut ctx = panes.ctx;
+            m.ctx_into(&mut ctx);
+            ctx.folder_pane = true;
+            let items = (panes.menu)(area, &ctx);
+            let mut hint = None;
+            crate::ui::menus::items(ui, &items, &mut run, &mut hint);
+        });
+        if opened.is_none() {
+            st.menu_area = None;
+        }
     }
     if (response.clicked() || response.double_clicked())
         && let Some(at) = response.interact_pointer_pos()
@@ -786,6 +896,23 @@ pub fn show(
         response.hint_at_pointer(tip);
     }
     run
+}
+
+/// What the pane context menus need from the window (D-253): its command context and the menu of an area.
+pub struct PaneMenus<'a> {
+    /// The window's command context this frame (the view's flags are taken again when a menu opens).
+    pub ctx: Ctx,
+    /// The items of an area's menu in a context.
+    pub menu: &'a dyn Fn(Area, &Ctx) -> Vec<crate::menus::MenuItem>,
+}
+
+/// The side of path edit `k`.
+fn side_of(k: usize) -> hikasa_core::Side {
+    if k == 0 {
+        hikasa_core::Side::Left
+    } else {
+        hikasa_core::Side::Right
+    }
 }
 
 /// The span of each shown column of a side, from its content's left edge (D-234): Name first, as wide as the side

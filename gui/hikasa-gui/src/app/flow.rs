@@ -2480,6 +2480,11 @@ impl AppCore {
     // ---- the Session Settings dialog -------------------------------------------------------------------------
 
     fn edit_view(&mut self, window: WindowId) {
+        self.edit_view_on(window, None);
+    }
+
+    /// Session Settings of the active view, on the tab of that title (`Rules`, `NameFilter`, D-249), else the first.
+    pub(super) fn edit_view_on(&mut self, window: WindowId, tab_title: Option<&'static str>) {
         let Some(tab) = self.active_tab(window) else {
             return;
         };
@@ -2490,26 +2495,30 @@ impl AppCore {
         let parent = tab.session.as_ref().and_then(|v| v.parent.clone());
         let mru = self.mru_lists();
         let formats = self.catalog.formats.clone();
+        let presets = self.presets();
         self.store("read the session", Some(view), move |svc, _| {
             let (session, _) = capture.session(svc)?;
             let (folder_parent, link) = parent_facts(svc, parent.as_ref());
-            Ok(StoreDone::Dialog(
-                window,
-                Box::new(SessionSettingsDialog::new(
-                    EditTarget::View(view),
-                    session,
-                    folder_parent,
-                    link,
-                    mru,
-                    formats,
-                )),
-            ))
+            let mut dialog = SessionSettingsDialog::new(
+                EditTarget::View(view),
+                session,
+                folder_parent,
+                link,
+                mru,
+                formats,
+            );
+            dialog.prepare_rule_tabs(svc, presets);
+            if let Some(title) = tab_title {
+                dialog.show_tab(title);
+            }
+            Ok(StoreDone::Dialog(window, Box::new(dialog)))
         });
     }
 
     fn edit_stored(&mut self, window: WindowId, target: EditTarget) {
         let mru = self.mru_lists();
         let formats = self.catalog.formats.clone();
+        let presets = self.presets();
         self.store("read the session", None, move |svc, _| {
             let session = match &target {
                 EditTarget::Named(r) => svc.session_load(r)?.value,
@@ -2517,18 +2526,22 @@ impl AppCore {
                 EditTarget::View(_) => return Ok(StoreDone::Nothing),
             };
             let (folder_parent, link) = parent_facts(svc, session.parent.as_ref());
-            Ok(StoreDone::Dialog(
-                window,
-                Box::new(SessionSettingsDialog::new(
-                    target,
-                    session,
-                    folder_parent,
-                    link,
-                    mru,
-                    formats,
-                )),
-            ))
+            let mut dialog =
+                SessionSettingsDialog::new(target, session, folder_parent, link, mru, formats);
+            dialog.prepare_rule_tabs(svc, presets);
+            Ok(StoreDone::Dialog(window, Box::new(dialog)))
         });
+    }
+
+    /// The name-filter presets of `filters.toml` as the window read them: name, mask (M2 W9c).
+    pub(super) fn presets(&self) -> Vec<(String, String)> {
+        self.settings
+            .filters
+            .value()
+            .preset
+            .iter()
+            .map(|p| (p.name.clone(), p.mask.clone()))
+            .collect()
     }
 
     fn mru_lists(&self) -> [Vec<String>; 2] {

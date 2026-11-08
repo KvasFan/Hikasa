@@ -52,6 +52,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 mod bases;
 mod flow;
 pub(crate) mod ops;
+pub(crate) mod pane;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
@@ -175,6 +176,8 @@ enum CoreJob {
     /// An application started for a view's items (M2 W9b: Open With, the associated application): its caption and the
     /// rows whose folders are refreshed once it ended (`refresh_when_finished`).
     Launch(ViewId, String, Option<Vec<String>>, Job<()>),
+    /// A job of a folder pane (M2 W9c): the clipboard read or written, a file manager started.
+    Pane(WindowId, ViewId, Job<pane::PaneDone>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -210,6 +213,7 @@ impl CoreJob {
             CoreJob::Store(j, ..) => j.settling(),
             CoreJob::Rebase(_, _, _, j) => j.settling(),
             CoreJob::Launch(_, _, _, j) => j.settling(),
+            CoreJob::Pane(_, _, j) => j.settling(),
         }
     }
 }
@@ -1459,6 +1463,17 @@ impl AppCore {
                         effects.push(Effect::Beep(window));
                     }
                 }
+                FolderEvent::Transferred {
+                    caption,
+                    outcome,
+                    moving,
+                    elapsed,
+                } => {
+                    self.transfer_outcome(window, view, None, source, &caption, &outcome, moving);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
                 FolderEvent::Rebase(specs) => self.rebase(view, specs, None),
             }
         }
@@ -1600,6 +1615,20 @@ impl AppCore {
                     outcome,
                     elapsed,
                 } => self.op_outcome(window, view, Some(why), source, &caption, &outcome, elapsed),
+                FolderEvent::Transferred {
+                    caption,
+                    outcome,
+                    moving,
+                    ..
+                } => self.transfer_outcome(
+                    window,
+                    view,
+                    Some(why),
+                    source,
+                    &caption,
+                    &outcome,
+                    moving,
+                ),
                 FolderEvent::SyncOutcome {
                     caption,
                     outcome,
@@ -1649,6 +1678,22 @@ impl AppCore {
                         orphan.op.began.elapsed(),
                     );
                     outcome.exit_code()
+                }
+                Ok(crate::folder_view::RunningEnd::Transfer(outcome, moving)) => {
+                    self.transfer_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        moving,
+                    );
+                    if outcome.ok() {
+                        ExitCode::Success
+                    } else {
+                        ExitCode::UnknownError
+                    }
                 }
                 Ok(crate::folder_view::RunningEnd::Sync(outcome)) => {
                     self.sync_outcome(
@@ -1787,7 +1832,11 @@ impl AppCore {
             ctx.named = tab.session.as_ref().is_some_and(|s| s.named());
             match tab.model() {
                 Some(ViewModel::Home(m)) => m.ctx_into(&mut ctx),
-                Some(ViewModel::Folder(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Folder(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // M2 W9c (D-252): the pane has the keyboard unless a text field of the window has it.
+                    ctx.folder_pane = !w.text_focus;
+                }
                 Some(ViewModel::Text(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
@@ -1807,6 +1856,13 @@ impl AppCore {
     /// The scope of a window's active view.
     pub fn scope(&self, window: WindowId) -> Scope {
         self.active_tab(window).map_or(Scope::Global, Tab::scope)
+    }
+
+    /// A text field of the window has the keyboard (the UI says so each frame, D-252).
+    pub fn set_text_focus(&mut self, window: WindowId, on: bool) {
+        if let Some(w) = self.window_mut(window) {
+            w.text_focus = on;
+        }
     }
 
     /// True when `id` is shown and available in the window's active view.
@@ -1863,6 +1919,10 @@ impl AppCore {
         at: FocusArea,
     ) -> Option<CommandId> {
         keys.iter().find_map(|key| {
+            // A focused text field keeps its editing keys: they never bubble to the root (D-252).
+            if at.edits_text() && crate::commands::is_text_edit_key(key) {
+                return None;
+            }
             (at != FocusArea::Root)
                 .then(|| self.dispatch_key(window, key, at))
                 .flatten()
@@ -1907,6 +1967,12 @@ impl AppCore {
         if let Some(done) = self.session_command(window, &inv) {
             effects.extend(done);
             self.start_active_pending();
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.pane_command(window, &inv) {
+            effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
             return effects;
@@ -2080,11 +2146,14 @@ impl AppCore {
                 }
             }
             CommandId::ColList => {
-                if let Some(CommandArg::Column(column)) = inv.arg
-                    && let Some(ViewModel::Folder(m)) =
-                        self.active_tab_mut(window).and_then(|t| t.model_mut())
+                if let Some(ViewModel::Folder(m)) =
+                    self.active_tab_mut(window).and_then(|t| t.model_mut())
                 {
-                    m.toggle_column(column);
+                    match inv.arg {
+                        Some(CommandArg::Column(column)) => m.toggle_column(column),
+                        Some(CommandArg::ResetColumns) => m.reset_columns(),
+                        _ => {}
+                    }
                 }
             }
             id => {
@@ -3129,6 +3198,13 @@ impl AppCore {
             }
             return Vec::new();
         }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::drop_dialog::DropDialog>()
+        {
+            self.drop_closed(d);
+            return Vec::new();
+        }
         if let Some(d) = closed.as_any_mut().downcast_mut::<DeleteDialog>() {
             let (view, choice) = (d.view, d.take_choice());
             let service = self.service.clone();
@@ -3203,6 +3279,14 @@ impl AppCore {
                         self.notify(window, notice, &source, kind);
                     }
                     DialogRequest::Beep => effects.push(Effect::Beep(window)),
+                    DialogRequest::AddToPresets(mask) => {
+                        let dialog =
+                            crate::filters_edit::PresetNameDialog::new(mask, self.settings.clone());
+                        if let Some(w) = self.window_mut(window) {
+                            w.dialogs.push(Box::new(dialog));
+                        }
+                        effects.push(Effect::Raise(window));
+                    }
                 }
             }
         }
@@ -3295,6 +3379,15 @@ impl AppCore {
                     .window_mut(window)
                     .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
                 {
+                    d.answer(answer);
+                }
+                self.dialog_requests()
+            }
+            Followup::Presets(answer) => {
+                if let Some(d) = self.window_mut(window).and_then(|w| {
+                    w.dialogs
+                        .find_mut::<crate::filters_edit::PresetNameDialog>()
+                }) {
                     d.answer(answer);
                 }
                 self.dialog_requests()
@@ -3817,6 +3910,10 @@ impl AppCore {
                     None => pending.push(CoreJob::Launch(view, caption, refresh, j)),
                     Some(result) => self.launched(view, &caption, refresh, result),
                 },
+                CoreJob::Pane(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Pane(window, view, j)),
+                    Some(result) => effects.extend(self.pane_done(window, view, result)),
+                },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {
@@ -4095,6 +4192,15 @@ impl AppCore {
                 }
             }
             DropOutcome::NewSession(kind, left) => self.drop_new_session(window, kind, left),
+            DropOutcome::Bases(bases) => self.drop_bases(window, bases),
+            DropOutcome::Transfer {
+                side,
+                folder,
+                paths,
+            } => {
+                let sources = paths.into_iter().map(PathBuf::into_os_string).collect();
+                return self.drop_transfer(window, side, folder, sources, false);
+            }
             DropOutcome::OpenType(kind, paths) => self.drop_open_type(window, kind, paths),
             DropOutcome::Open([left, right]) => {
                 let request = hikasa_session::api::GuiOpenRequest {

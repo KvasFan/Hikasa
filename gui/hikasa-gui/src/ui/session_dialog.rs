@@ -108,8 +108,17 @@ fn path_row(
     browse
 }
 
-fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab) {
+fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab, folder: bool) {
     let on = !specs.specs_disabled;
+    if folder && on {
+        // *Disable editing* per side (FC-003, M2 W9c).
+        ui.horizontal(|ui| {
+            ui.label("Disable editing:");
+            ui.checkbox(&mut specs.read_only[0], "Left");
+            ui.checkbox(&mut specs.read_only[1], "Right");
+        });
+        ui.add_space(4.0);
+    }
     egui::Grid::new("hk-session-specs")
         .num_columns(2)
         .show(ui, |ui| {
@@ -180,12 +189,19 @@ pub fn settings(ui: &mut Ui, dialog: &mut SessionSettingsDialog, pal: &Palette) 
         });
         ui.separator();
     }
-    if dialog
-        .tabs
-        .get(dialog.active)
-        .is_some_and(|t| t.as_any().is::<SpecsTab>())
-    {
-        specs_tab(ui, dialog.specs_mut());
+    let folder = dialog.session.kind.is_folder();
+    let active = dialog.active;
+    if let Some(tab) = dialog.tabs.get_mut(active) {
+        let any = tab.as_any_mut();
+        if let Some(specs) = any.downcast_mut::<SpecsTab>() {
+            specs_tab(ui, specs, folder);
+        } else {
+            crate::ui::folder_tabs::show(ui, any, pal);
+        }
+        if let Some(error) = tab.error() {
+            ui.add_space(4.0);
+            ui.label(RichText::new(error).color(pal.error));
+        }
     }
     if !matches!(
         dialog.target,
@@ -201,5 +217,12 @@ pub fn settings(ui: &mut Ui, dialog: &mut SessionSettingsDialog, pal: &Palette) 
             }
         });
     }
+    error_line(ui, dialog.error.as_ref(), pal);
+}
+
+/// The name prompt of *Add To Presets* (M2 W9c, D-250).
+pub fn preset_name(ui: &mut Ui, dialog: &mut crate::filters_edit::PresetNameDialog, pal: &Palette) {
+    ui.label(format!("A name for the preset `{}`:", dialog.mask));
+    ui.add(TextEdit::singleline(&mut dialog.name).desired_width(320.0));
     error_line(ui, dialog.error.as_ref(), pal);
 }

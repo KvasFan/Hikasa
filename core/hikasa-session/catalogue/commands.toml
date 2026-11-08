@@ -136,7 +136,7 @@ menu = "Edit"
 caption = "Copy"
 shortcut = "Ctrl+C"
 description = "Copies selection and puts it on Clipboard."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Paste"
@@ -144,7 +144,7 @@ menu = "Edit"
 caption = "Paste"
 shortcut = "Ctrl+V"
 description = "Inserts Clipboard contents."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectAll"
@@ -152,7 +152,7 @@ menu = "Edit"
 caption = "Select All"
 shortcut = "Ctrl+A"
 description = "Selects all visible items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ProgramOptions"
@@ -268,14 +268,16 @@ help = "view-folder-compare"
 [[section.command]]
 id = "NameFilterEdit"
 menu = "Session"
+caption = "Filters"
 description = "Focuses on edit listing current name file filters."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "NameFilter"
 menu = "Session"
+caption = "Name Filters..."
 description = "Edits name file filters."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SpecsBack"
@@ -1099,7 +1101,7 @@ id = "CopyFilenames"
 menu = "Actions"
 caption = "Copy Filename"
 description = "Copies selected items' paths to Clipboard."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "RefreshSelection"
@@ -1114,7 +1116,7 @@ id = "ExplorerList"
 menu = "Actions"
 caption = "File Manager"
 description = "Shows file manager context menu for selected items."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExpandAll"
@@ -2347,8 +2349,9 @@ status = "implemented"
 [[section.command]]
 id = "Rules"
 menu = "Session"
+caption = "Rules..."
 description = "Edits current Rules definitions."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Swap"

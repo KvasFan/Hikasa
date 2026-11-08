@@ -11,6 +11,7 @@ pub mod browse;
 pub mod dialog;
 pub mod find_panel;
 pub mod folder;
+pub mod folder_tabs;
 pub mod fonts;
 pub mod help;
 pub mod hint;
@@ -90,6 +91,80 @@ enum Action {
     Home(ui_home::HomeAction),
     /// The inline Rename's Enter (M2 W9b, D-245).
     CommitRename,
+    /// Rows dragged in the active folder view were released (M2 W9c, D-251).
+    RowDrop(crate::dnd::RowDrag, crate::dnd::RowTarget, bool),
+    /// The Filters edit: Enter (`None`) or a preset or recent filter chosen (M2 W9c, D-250).
+    FiltersEnter(Option<String>),
+    /// The Filters edit's *Add To Presets*.
+    FiltersAdd,
+}
+
+/// The id of a folder view's Filters edit.
+pub fn filters_id(view: ViewId) -> egui::Id {
+    egui::Id::unique(("hk-filters-edit", view.0))
+}
+
+/// The Filters edit (D-250): the text field, Enter applies, Esc reverts; the drop-down of the presets and the recent
+/// filters, *Add To Presets*; core's message under it.
+fn filters_field(
+    ui: &mut Ui,
+    view: ViewId,
+    edit: &mut crate::filters_edit::FiltersEdit,
+    presets: &[(String, String)],
+    recent: &[String],
+    focus: bool,
+    pal: &crate::ui::theme::Palette,
+) -> Option<Action> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label("Filters");
+        let id = filters_id(view);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut edit.text)
+                .id(id)
+                .hint_text("*.* (all files)")
+                .desired_width(320.0)
+                .font(egui::FontId::monospace(12.0)),
+        );
+        if focus {
+            response.request_focus();
+        }
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            action = Some(Action::FiltersEnter(None));
+        } else if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            edit.revert();
+        }
+        ui.menu_button("▾", |ui| {
+            if !presets.is_empty() {
+                ui.label(RichText::new("Presets").color(pal.muted));
+                for (name, mask) in presets {
+                    if ui.button(name).on_hover_text(mask).clicked() {
+                        action = Some(Action::FiltersEnter(Some(mask.clone())));
+                        ui.close();
+                    }
+                }
+            }
+            if !recent.is_empty() {
+                ui.separator();
+                ui.label(RichText::new("Recent").color(pal.muted));
+                for mask in recent {
+                    if ui.button(mask).clicked() {
+                        action = Some(Action::FiltersEnter(Some(mask.clone())));
+                        ui.close();
+                    }
+                }
+            }
+            ui.separator();
+            if ui.button("Add To Presets…").clicked() {
+                action = Some(Action::FiltersAdd);
+                ui.close();
+            }
+        });
+        if let Some(error) = &edit.error {
+            ui.label(RichText::new(error).color(pal.error));
+        }
+    });
+    action
 }
 
 /// Where a window's parts were last drawn (tab drags, D-107).
@@ -329,6 +404,17 @@ impl HikasaApp {
                 self.core.commit_inline_rename(window);
                 Vec::new()
             }
+            Action::RowDrop(drag, target, shift) => {
+                self.core.drop_rows(window, &drag, target, shift)
+            }
+            Action::FiltersEnter(mask) => {
+                self.core.filters_enter(window, mask.as_deref());
+                Vec::new()
+            }
+            Action::FiltersAdd => {
+                self.core.filters_add_to_presets(window);
+                Vec::new()
+            }
             Action::Dialog(DialogInput::Button(role)) => self.core.dialog_button(window, role),
             Action::Dialog(DialogInput::DoNotAsk(on)) => {
                 self.core.set_do_not_ask(window, on);
@@ -529,6 +615,9 @@ impl HikasaApp {
         let help_open = self.core.window(window).is_some_and(|w| w.help.is_some());
         let mut dialog_keys = Vec::new();
         let mut run = Vec::new();
+        // A text field with the keyboard keeps the clipboard keys and Ctrl+A (D-252); the panes' Edit entries are off.
+        let text_focus = ctx.text_edit_focused();
+        self.core.set_text_focus(window, text_focus);
         {
             let core = &self.core;
             // The focused area (D-111): a Home path field takes the path-field shortcuts first; the folder tree
@@ -536,6 +625,29 @@ impl HikasaApp {
             let area = self.focus_area(&ctx, window);
             ctx.input_mut(|i| {
                 i.events.retain(|event| {
+                    // egui turns Ctrl+C, Ctrl+X and Ctrl+V into clipboard events: without a text field they are the
+                    // catalogue's keys (Copy, Paste of a folder pane; the GUI reads its own clipboard, D-252).
+                    let clipboard_key = match event {
+                        egui::Event::Copy => Some(egui::Key::C),
+                        egui::Event::Cut => Some(egui::Key::X),
+                        egui::Event::Paste(_) => Some(egui::Key::V),
+                        _ => None,
+                    };
+                    let converted;
+                    let event = match clipboard_key {
+                        Some(_) if text_focus || wants_keys => return true,
+                        Some(key) => {
+                            converted = egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::COMMAND,
+                            };
+                            &converted
+                        }
+                        None => event,
+                    };
                     let egui::Event::Key {
                         key,
                         pressed: true,
@@ -722,6 +834,35 @@ impl HikasaApp {
             }
         }
 
+        // The Filters edit of a folder view's toolbar (M2 W9c, D-250).
+        if show_toolbar
+            && matches!(scope, Scope::Folder | Scope::Sync)
+            && let Some(view) = active_view
+        {
+            let (presets, recent) = self.core.filters_choices();
+            let focus = self
+                .core
+                .window_mut(window)
+                .is_some_and(|w| std::mem::take(&mut w.focus_filters));
+            if let Some(ViewModel::Folder(m)) = self.core.tab_mut(view).and_then(|t| t.model_mut())
+            {
+                let edit = m.filters_edit();
+                egui::Panel::top(format!("hk-filters-{}", view.0))
+                    .frame(
+                        Frame::NONE
+                            .fill(pal.chrome)
+                            .inner_margin(Margin::symmetric(8, 2)),
+                    )
+                    .show(ui, |ui| {
+                        if let Some(a) =
+                            filters_field(ui, view, edit, &presets, &recent, focus, &pal)
+                        {
+                            actions.push(a);
+                        }
+                    });
+            }
+        }
+
         // Status bar, message panel, log panel.
         let items = self.core.status(window);
         let jobs = self.core.jobs(window);
@@ -873,6 +1014,8 @@ impl HikasaApp {
             pal.bg
         };
         let mut drop_fields: Option<[egui::Rect; 2]> = None;
+        // Where paths from the OS land in a folder view under the pointer (M2 W9c, D-251).
+        let mut folder_target: Option<DropTarget> = None;
         let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
@@ -888,6 +1031,7 @@ impl HikasaApp {
                 };
                 let dispatch_ctx = state;
                 let tables = self.core.shared_tables();
+                let apps = self.core.open_with_names();
                 let Some(tab) = self.core.tab_mut(view) else {
                     return;
                 };
@@ -936,6 +1080,25 @@ impl HikasaApp {
                             columns: &columns,
                             open_with: &[],
                         });
+                        // The pane context menus (D-253), built only while one is open.
+                        let pane_menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: view_scope,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &columns,
+                                    open_with: &apps,
+                                },
+                                area,
+                            )
+                        };
+                        let panes = folder::PaneMenus {
+                            ctx: dispatch_ctx,
+                            menu: &pane_menu,
+                        };
                         let st = self.folders.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
                             tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
@@ -951,10 +1114,15 @@ impl HikasaApp {
                             &tree_font,
                             keys,
                             &header_menu,
+                            &panes,
                         ));
                         if std::mem::take(&mut st.commit_rename) {
                             actions.push(Action::CommitRename);
                         }
+                        if let Some((drag, target, shift)) = st.row_drop.take() {
+                            actions.push(Action::RowDrop(drag, target, shift));
+                        }
+                        folder_target = st.os_target;
                     }
                     Some(ViewModel::Text(m)) => {
                         let s = m.status();
@@ -991,9 +1159,12 @@ impl HikasaApp {
                 (Some([_, r]), Some(p)) if r.contains(p) => {
                     DropTarget::PathField(FieldId::HomeRight)
                 }
-                _ => pointer
-                    .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
-                    .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
+                _ => match folder_target {
+                    Some(target) => target,
+                    None => pointer
+                        .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
+                        .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
+                },
             };
             actions.push(Action::Drop(target, dropped));
         }
@@ -1210,6 +1381,8 @@ impl HikasaApp {
             Some(ViewModel::Home(_)) if focused == home::search_id(tab.id) => FocusArea::HomeSearch,
             Some(ViewModel::Text(_)) if focused == text::pane_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Folder(_)) if focused == folder::tree_id(tab.id) => FocusArea::ViewMain,
+            // A path edit, the Filters edit, the find panel: a text field keeps its editing keys (D-252).
+            _ if ctx.text_edit_focused() => FocusArea::TextField,
             _ => FocusArea::Root,
         }
     }

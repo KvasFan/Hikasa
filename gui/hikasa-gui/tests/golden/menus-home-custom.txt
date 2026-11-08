@@ -15,6 +15,10 @@ Session
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
+Edit
+  Copy	Ctrl+C (disabled)
+  Paste	Ctrl+V (disabled)
+  Select All	Ctrl+A (disabled)
 Search
   Find...	Ctrl+F
 View

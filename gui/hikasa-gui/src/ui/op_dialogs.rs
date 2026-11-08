@@ -682,3 +682,51 @@ fn method_label(method: hikasa_core::ContentMethod) -> &'static str {
         ContentMethod::None => "",
     }
 }
+
+/// The prompt of paths dropped or pasted on a pane (M2 W9c, D-251): the question, the overwrite choice, which plan the
+/// preview shows, and core's lines of it.
+pub fn drop_dialog(ui: &mut Ui, d: &mut crate::drop_dialog::DropDialog, pal: &Palette) {
+    use crate::drop_dialog::{OVERWRITES, overwrite_caption};
+    ui.label(d.message());
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("If an item exists:");
+        let mut chosen = d.overwrite;
+        egui::ComboBox::from_id_salt("hk-drop-overwrite")
+            .selected_text(overwrite_caption(chosen))
+            .show_ui(ui, |ui| {
+                for policy in OVERWRITES {
+                    ui.selectable_value(&mut chosen, policy, overwrite_caption(policy));
+                }
+            });
+        d.set_overwrite(chosen);
+        ui.add_space(12.0);
+        ui.label("Preview:");
+        ui.radio_value(&mut d.show_move, false, "Copy");
+        ui.radio_value(&mut d.show_move, true, "Move");
+    });
+    ui.add_space(4.0);
+    match d.shown() {
+        None => {
+            ui.label(egui::RichText::new("Planning…").color(pal.muted));
+        }
+        Some(Err(message)) => {
+            ui.label(egui::RichText::new(message).color(pal.error));
+        }
+        Some(Ok((_, lines))) => {
+            let row = 18.0;
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, row, lines.len(), |ui, range| {
+                    for line in &lines[range] {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(line).font(egui::FontId::monospace(12.0)),
+                            )
+                            .truncate(),
+                        );
+                    }
+                });
+        }
+    }
+}

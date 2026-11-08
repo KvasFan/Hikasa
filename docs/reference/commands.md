@@ -24,9 +24,9 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Undo` | Edit |  | Ctrl+Z | Undoes previous action. | planned |
 | `Redo` | Edit |  | Ctrl+Y | Redoes previously undone action. | planned |
 | `Cut` | Edit | Cut | Ctrl+X | Cuts selection and puts it on Clipboard. | planned |
-| `Copy` | Edit | Copy | Ctrl+C | Copies selection and puts it on Clipboard. | planned |
-| `Paste` | Edit | Paste | Ctrl+V | Inserts Clipboard contents. | planned |
-| `SelectAll` | Edit | Select All | Ctrl+A | Selects all visible items. | planned |
+| `Copy` | Edit | Copy | Ctrl+C | Copies selection and puts it on Clipboard. | implemented |
+| `Paste` | Edit | Paste | Ctrl+V | Inserts Clipboard contents. | implemented |
+| `SelectAll` | Edit | Select All | Ctrl+A | Selects all visible items. | implemented |
 | `ProgramOptions` | Tools | Options... |  | Sets global preferences. | implemented |
 | `FileFormatManager` | Tools | File Formats... |  | Manages file formats. | planned |
 | `ProfileManager` | Tools | Profiles... |  | Manages profiles. | planned |
@@ -47,8 +47,8 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `NameFilterEdit` | Session |  |  | Focuses on edit listing current name file filters. | planned |
-| `NameFilter` | Session |  |  | Edits name file filters. | planned |
+| `NameFilterEdit` | Session | Filters |  | Focuses on edit listing current name file filters. | implemented |
+| `NameFilter` | Session | Name Filters... |  | Edits name file filters. | implemented |
 | `SpecsBack` | Session | Back | Alt+Left | Changes to previous base folders. | planned |
 | `SpecsForward` | Session | Forward | Alt+Right | Changes to next base folders. | planned |
 | `UpOneLevelList` | Session | Up One Level |  | Changes base folders on picked sides to their parent folders. | implemented |
@@ -169,9 +169,9 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `OpenWithList` | Actions | Open With |  | Opens selected items in new view of picked type. | implemented |
 | `AssocApp` | Actions | Associated Application |  | Opens selected items with associated application. | implemented |
 | `Exclude` | Actions | Exclude |  | Filters selected items to remove them from comparison. | implemented |
-| `CopyFilenames` | Actions | Copy Filename |  | Copies selected items' paths to Clipboard. | planned |
+| `CopyFilenames` | Actions | Copy Filename |  | Copies selected items' paths to Clipboard. | implemented |
 | `RefreshSelection` | Actions | Refresh Selection | Shift+F5 | Refreshes selected items. | planned |
-| `ExplorerList` | Actions | File Manager |  | Shows file manager context menu for selected items. | planned |
+| `ExplorerList` | Actions | File Manager |  | Shows file manager context menu for selected items. | implemented |
 | `ExpandAll` | Edit | Expand All |  | Opens all folders. | implemented |
 | `CollapseAll` | Edit | Collapse All |  | Closes all folders. | implemented |
 | `SelectInvert` | Edit | Invert Selection |  | Selects all items not currently selected, and deselects all items currently selected. | implemented |
@@ -385,7 +385,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `SessionEdit` | Session | Session Settings... |  | Edits current session settings. | implemented |
 | `SessionLocked` | Session | Locked |  | Locks or unlocks current session. | implemented |
 | `SessionClear` | Session | Clear Session | Shift+Ctrl+C | Replaces current view with empty session. | implemented |
-| `Rules` | Session |  |  | Edits current Rules definitions. | planned |
+| `Rules` | Session | Rules... |  | Edits current Rules definitions. | implemented |
 | `Swap` | Session | Swap Sides |  | Exchanges left, right files. | implemented |
 | `Report` | Session | <Type> Report... |  | Produces <type> report. | planned |
 | `Info` | Session | <Type> Info | Ctrl+I | Displays <type> statistics. | implemented |

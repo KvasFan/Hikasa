@@ -139,6 +139,16 @@ pub fn show(
                     crate::browse::BrowseTarget::Specs(side),
                 ));
             }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::drop_dialog::DropDialog>()
+        {
+            fixed_body(ui, height, |ui| op_dialogs::drop_dialog(ui, d, pal));
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::filters_edit::PresetNameDialog>()
+        {
+            session_dialog::preset_name(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<SaveWorkspaceDialog>() {
             workspace::save_as(ui, d, pal);
         } else if let Some(d) = dialog.as_any_mut().downcast_mut::<ManageWorkspacesDialog>() {

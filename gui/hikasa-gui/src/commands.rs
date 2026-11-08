@@ -427,6 +427,22 @@ command_ids! {
     TreeCollapseAll,
     /// Sessions tree: toggles the favorite mark.
     TreeFavorite,
+    /// The selected items as files on the clipboard (M2 W9c, D-252).
+    Copy,
+    /// The clipboard's files dropped on the pane's folder (D-252).
+    Paste,
+    /// Selects every shown row (D-238, D-252).
+    SelectAll,
+    /// The selected items' specs as text (FC-063).
+    CopyFilenames,
+    /// The file-manager entries (FC-063, D-254).
+    ExplorerList,
+    /// Session Settings on the Comparison tab (SES-020, D-249).
+    Rules,
+    /// Session Settings on the Name Filters tab (FC-050).
+    NameFilter,
+    /// Focuses the toolbar's Filters edit (D-250).
+    NameFilterEdit,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -495,6 +511,12 @@ pub struct Ctx {
     pub has_conflict: bool,
     /// Folder: the selection is two folders (Open With ▸ *Folder Compare*).
     pub two_folders: bool,
+    /// Folder (M2 W9c, D-252): a folder or sync view is active and no text field of the window has the keyboard
+    /// (`FolderPaneFocused`).
+    pub folder_pane: bool,
+    /// Folder (D-254): the current item on the left, on the right is on a local disk or in an archive there (the
+    /// file-manager entries).
+    pub explorer: [bool; 2],
 }
 
 /// The submenus of the catalogue's `…List` entries (M2 W9a): a list's children show in its submenu, not in the menu.
@@ -634,6 +656,11 @@ pub enum Predicate {
     PlanReady,
     /// Sync: a conflict is shown (Next/Previous Conflict).
     HasConflict,
+    /// M2 W9c (D-252): a folder or sync view's pane has the keyboard (no text field has it): `Paste`, `SelectAll`.
+    FolderPaneFocused,
+    /// `FolderPaneFocused` with at least one selected item (`Copy`; the items not on a local disk are left out when it
+    /// runs, with a message).
+    LocalSelection,
 }
 
 impl Predicate {
@@ -702,6 +729,8 @@ impl Predicate {
             Predicate::Loaded => ctx.ready && !ctx.busy,
             Predicate::PlanReady => ctx.plan_ready && ctx.idle,
             Predicate::HasConflict => ctx.has_conflict,
+            Predicate::FolderPaneFocused => ctx.folder_pane,
+            Predicate::LocalSelection => ctx.folder_pane && ctx.row_selected,
         }
     }
 }
@@ -726,6 +755,99 @@ pub enum Area {
     SessionTree,
     /// A folder view's column header (M2 W9a, D-234): the `ColList` items.
     FolderHeader,
+    /// A folder view's pane of a side (M2 W9c, D-253): the list of [`pane_menu_ids`].
+    FolderPane(Side),
+    /// A folder view's centre column (D-253).
+    FolderCentre,
+    /// A Folder Sync view's pane of a side (D-253).
+    SyncPane(Side),
+}
+
+/// D-253's normative lists of the pane context menus, groups in order (a separator between non-empty groups); an
+/// entry that is not shown in the view (planned, no row) is left out, one that is not available is disabled.
+pub fn pane_menu_ids(area: Area) -> &'static [&'static [CommandId]] {
+    use CommandId as C;
+    const PANE: &[&[CommandId]] = &[
+        &[C::Open, C::OpenWithList, C::CompareTo, C::QuickCompare],
+        &[C::CopySide, C::MoveSide, C::CopyTo, C::MoveTo, C::MoveBoth],
+        &[
+            C::Delete,
+            C::PermanentDelete,
+            C::Rename,
+            C::Touch,
+            C::NewFolder,
+        ],
+        &[C::Compare, C::Ignored, C::Exclude, C::SyncList],
+        &[
+            C::SetAsBaseFolders,
+            C::SetAsOtherBaseFolder,
+            C::CompareParents,
+        ],
+        &[C::Copy, C::Paste, C::CopyFilenames, C::ExplorerList],
+        &[
+            C::Expand,
+            C::Collapse,
+            C::ExpandSubfolders,
+            C::CollapseSubfolders,
+        ],
+    ];
+    const CENTRE: &[&[CommandId]] = &[
+        &[C::Open, C::OpenWithList, C::CompareTo, C::QuickCompare],
+        &[C::CopyTo, C::MoveTo, C::MoveBoth],
+        &[
+            C::Delete,
+            C::PermanentDelete,
+            C::Rename,
+            C::Touch,
+            C::NewFolder,
+        ],
+        &[C::Compare, C::Ignored, C::Exclude, C::SyncList],
+        &[C::SetAsBaseFolders, C::CompareParents],
+        &[C::Copy, C::CopyFilenames, C::ExplorerList],
+        &[
+            C::Expand,
+            C::Collapse,
+            C::ExpandSubfolders,
+            C::CollapseSubfolders,
+        ],
+    ];
+    const SYNC: &[&[CommandId]] = &[
+        &[
+            C::SyncLeave,
+            C::SyncCopyRight,
+            C::SyncCopyLeft,
+            C::SyncDeleteLeft,
+            C::SyncDeleteRight,
+        ],
+        &[C::Exclude],
+        &[C::Open, C::OpenWithList],
+        &[C::SetAsBaseFolders, C::SetAsOtherBaseFolder],
+        &[C::Copy, C::CopyFilenames, C::ExplorerList],
+        &[C::Expand, C::Collapse],
+    ];
+    const HEADER_IDS: &[&[CommandId]] = &[&[C::ColList]];
+    match area {
+        Area::FolderPane(_) => PANE,
+        Area::FolderCentre => CENTRE,
+        Area::SyncPane(_) => SYNC,
+        Area::FolderHeader => HEADER_IDS,
+        Area::Tab | Area::Toolbar | Area::SessionTree => &[],
+    }
+}
+
+/// The entries of a pane menu that act on the clicked side (D-253): they carry it as `CommandArg::Side`.
+pub fn takes_side(id: CommandId) -> bool {
+    matches!(
+        id,
+        CommandId::CopySide
+            | CommandId::MoveSide
+            | CommandId::SetAsOtherBaseFolder
+            | CommandId::Copy
+            | CommandId::Paste
+            | CommandId::CopyFilenames
+            | CommandId::ExplorerList
+            | CommandId::NewFolder
+    )
 }
 
 /// A radio or check group of the presentation.
@@ -798,6 +920,34 @@ const HEADER: &[Area] = &[A::FolderHeader];
 /// The presentation table, one row per (scope, id). A view type's row wins over a global one.
 pub const PRESENTATION: &[Row] = &[
     // Global
+    // M2 W9c (D-252): the Edit entries act in a folder pane; the text views take them in W11.
+    row(
+        C::Copy,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::LocalSelection,
+        NONE,
+    ),
+    row(
+        C::Paste,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::FolderPaneFocused,
+        NONE,
+    ),
+    row(
+        C::SelectAll,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::FolderPaneFocused,
+        NONE,
+    ),
     row(
         C::TabNew,
         S::Global,
@@ -1972,6 +2122,53 @@ pub const PRESENTATION: &[Row] = &[
         NONE,
     ),
     row(C::Info, S::Folder, None, None, G::None, P::Ready, NONE),
+    // M2 W9c (FC-063, D-254, D-249, D-250).
+    row(
+        C::CopyFilenames,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::ExplorerList,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Selection,
+        NONE,
+    ),
+    row(
+        C::Rules,
+        S::Folder,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::Rules, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::NameFilter,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::NameFilterEdit,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
     row(
         C::UpOneLevelList,
@@ -2543,6 +2740,25 @@ pub enum FocusArea {
     HomeSearch,
     /// A dialog (it handles its keys itself).
     Dialog,
+    /// A text field of a view (M2 W9c, D-252): a folder view's path edit, the Filters edit, the find panel. Like a
+    /// path field it keeps Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A.
+    TextField,
+}
+
+impl FocusArea {
+    /// True for an area whose control edits text (D-252: it keeps the clipboard keys and Ctrl+A).
+    pub fn edits_text(self) -> bool {
+        matches!(
+            self,
+            FocusArea::PathField | FocusArea::HomeSearch | FocusArea::TextField | FocusArea::Dialog
+        )
+    }
+}
+
+/// The keys a focused text field keeps (D-252, D-111 refinement): Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A, without Shift or
+/// Alt.
+pub fn is_text_edit_key(s: &Shortcut) -> bool {
+    s.ctrl && !s.shift && !s.alt && matches!(s.key.as_str(), "C" | "X" | "V" | "A")
 }
 
 /// A key that focused controls use themselves (D-111): no Ctrl, Alt or Cmd, and a letter, digit, punctuation,
@@ -2597,6 +2813,10 @@ pub fn dispatch(
     at: FocusArea,
 ) -> Option<CommandId> {
     if ctx.dialog_open || at == FocusArea::Dialog {
+        return None;
+    }
+    // A focused text field keeps its editing keys, whatever binds them (D-252).
+    if at.edits_text() && is_text_edit_key(key) {
         return None;
     }
     let bare = |s: &Shortcut| Shortcut {

@@ -6,3 +6,5 @@ View
   [ ] CRC
   [ ] Owner
   [ ] Group
+  ---
+  Reset Columns

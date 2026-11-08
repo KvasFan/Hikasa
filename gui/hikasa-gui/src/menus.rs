@@ -222,6 +222,10 @@ impl MenuContext<'_> {
                 caption: self.tables.caption(self.scope, id),
                 items: column_items(self),
             },
+            CommandId::ExplorerList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: explorer_items(self, None),
+            },
             id if !crate::commands::list_children(id).is_empty() => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: crate::commands::list_children(id)
@@ -310,7 +314,119 @@ pub fn column_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
                 .description(ctx.scope, CommandId::ColList)
                 .to_owned(),
         })
+        .chain(
+            // *Reset Columns* (M2 W9c, §1.9.18): the shown columns, their order and widths back to the defaults.
+            (!ctx.columns.is_empty())
+                .then(|| {
+                    [
+                        MenuItem::Separator,
+                        MenuItem::Command {
+                            invocation: Invocation::with(
+                                CommandId::ColList,
+                                CommandArg::ResetColumns,
+                            ),
+                            caption: RESET_COLUMNS.to_owned(),
+                            shortcut: None,
+                            check: Check::None,
+                            enabled,
+                            description: ctx
+                                .tables
+                                .description(ctx.scope, CommandId::ColList)
+                                .to_owned(),
+                        },
+                    ]
+                })
+                .into_iter()
+                .flatten(),
+        )
         .collect()
+}
+
+/// The caption of *Reset Columns* (part of `ColList`, §1.9.18).
+pub const RESET_COLUMNS: &str = "Reset Columns";
+
+/// The items of File Manager ▸ (FC-063, D-254): *Open Folder in File Manager* and *Show in File Manager*, on the
+/// current item of `side` (`None`: the focus side); disabled where that item is not on a local disk.
+pub fn explorer_items(ctx: &MenuContext<'_>, side: Option<hikasa_core::Side>) -> Vec<MenuItem> {
+    use crate::window::{ExplorerAction, ExplorerItem};
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::ExplorerList)
+            .is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    let local = match side.and_then(crate::commands::side_index) {
+        Some(k) => ctx.ctx.explorer[k],
+        None => ctx.ctx.explorer[0] || ctx.ctx.explorer[1],
+    };
+    [ExplorerAction::OpenFolder, ExplorerAction::ShowItem]
+        .into_iter()
+        .map(|action| MenuItem::Command {
+            invocation: Invocation::with(
+                CommandId::ExplorerList,
+                CommandArg::Explorer(ExplorerItem { action, side }),
+            ),
+            caption: action.caption().to_owned(),
+            shortcut: None,
+            check: Check::None,
+            enabled: enabled && local,
+            description: ctx
+                .tables
+                .description(ctx.scope, CommandId::ExplorerList)
+                .to_owned(),
+        })
+        .collect()
+}
+
+/// The context menu of a folder view's pane area (D-253): D-110's list of the area ([`crate::commands::pane_menu_ids`]),
+/// groups separated; an entry the view does not show (planned, no row) is left out, an unavailable one disabled; the
+/// entries that act on a side carry the clicked pane's (`CommandArg::Side`); `…List` entries are submenus.
+pub fn pane_menu(ctx: &MenuContext<'_>, area: crate::commands::Area) -> Vec<MenuItem> {
+    use crate::commands::Area;
+    let side = match area {
+        Area::FolderPane(side) | Area::SyncPane(side) => Some(side),
+        _ => None,
+    };
+    if area == Area::FolderHeader {
+        return header_menu(ctx);
+    }
+    let mut items = Vec::new();
+    for group in crate::commands::pane_menu_ids(area) {
+        let mut entries = Vec::new();
+        for &id in *group {
+            if !crate::commands::shown(ctx.tables, ctx.scope, id) {
+                continue;
+            }
+            let arg = side
+                .filter(|_| crate::commands::takes_side(id))
+                .map(CommandArg::Side);
+            let item = match id {
+                CommandId::ExplorerList => MenuItem::Submenu {
+                    caption: ctx.tables.caption(ctx.scope, id),
+                    items: explorer_items(ctx, side),
+                },
+                CommandId::OpenWithList => MenuItem::Submenu {
+                    caption: ctx.tables.caption(ctx.scope, id),
+                    items: open_with_items(ctx),
+                },
+                id if !crate::commands::list_children(id).is_empty() => MenuItem::Submenu {
+                    caption: ctx.tables.caption(ctx.scope, id),
+                    items: crate::commands::list_children(id)
+                        .iter()
+                        .filter(|c| crate::commands::shown(ctx.tables, ctx.scope, **c))
+                        .map(|c| ctx.item(*c, None))
+                        .collect(),
+                },
+                id => ctx.item(id, arg),
+            };
+            entries.push(item);
+        }
+        if entries.is_empty() {
+            continue;
+        }
+        if !items.is_empty() {
+            items.push(MenuItem::Separator);
+        }
+        items.extend(entries);
+    }
+    items
 }
 
 /// The header's context menu of a folder view (`Area::FolderHeader`): the commands of that area, `ColList` as its

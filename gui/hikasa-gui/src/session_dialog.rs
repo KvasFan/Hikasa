@@ -332,10 +332,30 @@ pub trait SessionTab: Any + Send {
     fn changes_rules(&self) -> bool;
     /// The rules as this tab leaves them, given the session's (`None`: unchanged).
     fn rules(&self, current: &SessionRules) -> Option<SessionRules>;
+    /// Fills the tab from the session's rules (M2 W9c, D-249). Default: nothing.
+    fn load(&mut self, _rules: &SessionRules) {}
+    /// What the window knows that the rules do not hold: the formats, the presets (a job before the dialog opens).
+    fn prepare(&mut self, _extras: &TabExtras) {}
+    /// Checks the tab's edits over `current` with core (`check_folder_rules`, `SyncMatrix::validate`): its message
+    /// becomes [`SessionTab::error`].
+    fn check(&mut self, _svc: &Service, _current: &SessionRules) {}
+    /// Why OK is off: core's message, shown on this tab.
+    fn error(&self) -> Option<&str> {
+        None
+    }
     /// For the drawing layer.
     fn as_any(&self) -> &dyn Any;
     /// For the drawing layer.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+/// What the rule tabs read besides the session (M2 W9c): the registry's formats and the name-filter presets.
+#[derive(Debug, Clone, Default)]
+pub struct TabExtras {
+    /// `format list`: id, name, globally enabled.
+    pub formats: Vec<(String, String, bool)>,
+    /// `filters.toml`: name, mask.
+    pub presets: Vec<(String, String)>,
 }
 
 /// The Specs tab (§1.4.10).
@@ -343,6 +363,8 @@ pub trait SessionTab: Any + Send {
 pub struct SpecsTab {
     /// A Browse button was pressed (0 left, 1 right; the window opens the browse dialog, D-240).
     pub browse: Option<usize>,
+    /// *Disable editing* per side (M2 W9c, FC-003): `read_only_left`, `read_only_right`; offered for folder sessions.
+    pub read_only: [bool; 2],
     /// Left.
     pub left: String,
     /// Right.
@@ -399,9 +421,12 @@ impl SessionTab for SpecsTab {
     }
 }
 
-/// The tab registry of a session type (D-122): the rule tabs of W9, W11 and W13 are added here.
-pub fn tabs(_kind: SessionType) -> Vec<Box<dyn SessionTab>> {
-    vec![Box::new(SpecsTab::default())]
+/// The tab registry of a session type (D-122): Specs, then the rule tabs (W9c: the folder tabs, D-249; W11 and W13 add
+/// theirs here).
+pub fn tabs(kind: SessionType) -> Vec<Box<dyn SessionTab>> {
+    let mut tabs: Vec<Box<dyn SessionTab>> = vec![Box::new(SpecsTab::default())];
+    tabs.extend(crate::folder_tabs::rule_tabs(kind));
+    tabs
 }
 
 /// What OK of the Session Settings dialog changes.
@@ -463,6 +488,8 @@ pub struct SessionSettingsDialog {
     pub parent: Option<String>,
     /// Why OK did not close.
     pub error: Option<String>,
+    /// The rules the tabs were last checked with (`poll` checks again when they change).
+    checked: Option<Option<SessionRules>>,
 }
 
 impl SessionSettingsDialog {
@@ -480,6 +507,7 @@ impl SessionSettingsDialog {
         if let Some(specs) = tabs[0].as_any_mut().downcast_mut::<SpecsTab>() {
             *specs = SpecsTab {
                 browse: None,
+                read_only: [session.specs.read_only_left, session.specs.read_only_right],
                 left: session.specs.left.clone(),
                 right: session.specs.right.clone(),
                 description: session.description.clone(),
@@ -493,6 +521,9 @@ impl SessionSettingsDialog {
                 formats,
             };
         }
+        for tab in &mut tabs {
+            tab.load(&session.rules);
+        }
         SessionSettingsDialog {
             target,
             session,
@@ -502,6 +533,7 @@ impl SessionSettingsDialog {
             folder_parent,
             parent,
             error: None,
+            checked: None,
         }
     }
 
@@ -531,6 +563,72 @@ impl SessionSettingsDialog {
         self.tabs.iter().any(|t| t.changes_rules())
     }
 
+    /// Gives the rule tabs what the window knows (the formats of `format list`, the presets): a job, before the dialog
+    /// opens (M2 W9c).
+    pub fn prepare_rule_tabs(&mut self, svc: &Service, presets: Vec<(String, String)>) {
+        let formats = svc
+            .format_list()
+            .formats
+            .into_iter()
+            .map(|f| (f.id, f.name, f.enabled))
+            .collect();
+        let extras = TabExtras { formats, presets };
+        for tab in &mut self.tabs {
+            tab.prepare(&extras);
+        }
+    }
+
+    /// Shows the tab of that title (`Rules`: Comparison, `NameFilter`: Name Filters); unknown: the first.
+    pub fn show_tab(&mut self, title: &str) {
+        self.active = self
+            .tabs
+            .iter()
+            .position(|t| t.title() == title)
+            .unwrap_or(0);
+    }
+
+    /// The tab of type `T`, mutable (the drawing layer and the tests).
+    pub fn tab_mut<T: SessionTab>(&mut self) -> Option<&mut T> {
+        self.tabs
+            .iter_mut()
+            .find_map(|t| t.as_any_mut().downcast_mut())
+    }
+
+    /// The tab of type `T`.
+    pub fn tab<T: SessionTab>(&self) -> Option<&T> {
+        self.tabs.iter().find_map(|t| t.as_any().downcast_ref())
+    }
+
+    /// Core checks every rule tab's edits over the session's rules (D-249): each refusal stays on its tab.
+    pub fn check_tabs(&mut self, svc: &Service) {
+        let current = self.session.rules.clone();
+        for tab in &mut self.tabs {
+            tab.check(svc, &current);
+        }
+        self.checked = Some(self.signature());
+    }
+
+    /// The first tab with an error.
+    pub fn tab_error(&self) -> Option<(usize, &str)> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .find_map(|(k, t)| t.error().map(|e| (k, e)))
+    }
+
+    /// What the tabs would write (`None` while a field does not parse); a change of it is checked again at the next
+    /// poll.
+    fn signature(&self) -> Option<SessionRules> {
+        let mut rules = self.session.rules.clone();
+        for tab in self.tabs.iter().filter(|t| t.changes_rules()) {
+            match tab.rules(&rules) {
+                Some(next) => rules = next,
+                None => return None,
+            }
+        }
+        Some(rules)
+    }
+
     /// True when `scope` can be chosen now (§1.4.10): *this view only* always; the others only while a rule tab
     /// changed something, and `Pair`/`Type` only with a named or auto-saved folder parent.
     pub fn scope_available(&self, scope: Scope) -> bool {
@@ -551,6 +649,7 @@ impl SessionSettingsDialog {
         if !specs.specs_disabled {
             session.specs.left.clone_from(&specs.left);
             session.specs.right.clone_from(&specs.right);
+            [session.specs.read_only_left, session.specs.read_only_right] = specs.read_only;
             if specs.file_type {
                 session.specs.format.clone_from(&specs.format);
                 session.specs.left_encoding.clone_from(&specs.left_encoding);
@@ -561,12 +660,15 @@ impl SessionSettingsDialog {
             }
         }
         session.description.clone_from(&specs.description);
-        let rules = self
-            .tabs
-            .iter()
-            .filter(|t| t.changes_rules())
-            .find_map(|t| t.rules(&session.rules))
-            .map(|rules| (self.scope, rules));
+        // Each rule tab writes its own keys over what the tabs before it left (D-249).
+        let mut rules = None;
+        for tab in self.tabs.iter().filter(|t| t.changes_rules()) {
+            let base = rules.as_ref().unwrap_or(&session.rules);
+            if let Some(next) = tab.rules(base) {
+                rules = Some(next);
+            }
+        }
+        let rules = rules.map(|rules| (self.scope, rules));
         Ok(SettingsResult {
             target: self.target.clone(),
             specs_changed: session.specs != before,
@@ -578,6 +680,40 @@ impl SessionSettingsDialog {
 }
 
 impl DialogModel for SessionSettingsDialog {
+    fn poll(&mut self, svc: &Service) -> bool {
+        // An edit of a rule tab is checked at the next frame (core's message under the tab, OK off).
+        if self.tabs.len() < 2 {
+            return false;
+        }
+        let signature = self.signature();
+        // A field that does not parse is checked every time (its message names the text).
+        if signature.is_some() && self.checked.as_ref() == Some(&signature) {
+            return false;
+        }
+        let before: Vec<Option<String>> = self
+            .tabs
+            .iter()
+            .map(|t| t.error().map(str::to_owned))
+            .collect();
+        self.check_tabs(svc);
+        let after: Vec<Option<String>> = self
+            .tabs
+            .iter()
+            .map(|t| t.error().map(str::to_owned))
+            .collect();
+        signature.is_some() || before != after
+    }
+
+    fn take_requests(&mut self) -> Vec<crate::dialog::DialogRequest> {
+        let mask = self
+            .tab_mut::<crate::folder_tabs::NameFiltersTab>()
+            .and_then(|t| t.add_to_presets.take());
+        match mask {
+            Some(mask) => vec![crate::dialog::DialogRequest::AddToPresets(mask)],
+            None => Vec::new(),
+        }
+    }
+
     fn title(&self) -> String {
         match &self.target {
             EditTarget::View(_) => "Session Settings".to_owned(),
@@ -594,14 +730,20 @@ impl DialogModel for SessionSettingsDialog {
 
     fn buttons(&self) -> Vec<DialogButton> {
         vec![
-            button("OK", ButtonRole::Ok, true, true),
+            button("OK", ButtonRole::Ok, self.tab_error().is_none(), true),
             button("Cancel", ButtonRole::Cancel, true, false),
         ]
     }
 
-    fn on_button(&mut self, role: ButtonRole, _svc: &Service) -> DialogStep {
+    fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep {
         if role != ButtonRole::Ok {
             return DialogStep::Close;
+        }
+        // The edits are checked as the comparison would take them (D-249): a refusal shows on its tab.
+        self.check_tabs(svc);
+        if let Some((k, _)) = self.tab_error() {
+            self.active = k;
+            return DialogStep::Stay;
         }
         match self.result() {
             Err(e) => {

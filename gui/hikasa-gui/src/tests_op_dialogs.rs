@@ -1354,7 +1354,7 @@ fn associated(calls: &[Recorded]) -> Vec<String> {
         .iter()
         .filter_map(|c| match c {
             Recorded::Associated(p) => Some(p.to_string_lossy().replace('\\', "/")),
-            Recorded::Run(_) => None,
+            Recorded::Run(_) | Recorded::Reveal(_) => None,
         })
         .collect()
 }

@@ -229,6 +229,17 @@ pub enum FolderEvent {
         /// How long it ran.
         elapsed: Duration,
     },
+    /// A drop's or a paste's run ended (M2 W9c): the log takes its failed items, the window one notice.
+    Transferred {
+        /// The run's caption.
+        caption: String,
+        /// What ran.
+        outcome: Box<hikasa_session::api::VfsOpDto>,
+        /// It moved.
+        moving: bool,
+        /// How long it ran.
+        elapsed: Duration,
+    },
     /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
     Outcome {
         /// The command's caption.
@@ -260,6 +271,7 @@ pub struct OpenPair {
     pub ticket: Option<ChildTicket>,
 }
 
+pub(crate) mod pane;
 pub(crate) mod sync;
 pub(crate) mod verbs;
 
@@ -363,6 +375,16 @@ enum Task {
         began: Instant,
         job: Job<ContentsDto>,
     },
+    /// A drop's or a paste's plan runs (M2 W9c, D-251: `vfs_op_execute` of the plan its prompt answered).
+    Transfer {
+        caption: String,
+        moving: bool,
+        /// The model the drop was made on: its rows are refreshed only while it is the view's.
+        mark: Option<Mark>,
+        refresh: Vec<NodeId>,
+        began: Instant,
+        job: Job<hikasa_session::api::VfsOpDto>,
+    },
     /// `folder_refresh` or `folder_open_archive`.
     Refreshing {
         after: AfterRefresh,
@@ -382,6 +404,7 @@ impl Task {
             Task::Contents { job, .. } => (job.title(), job.progress()),
             Task::Syncing { job, .. } => (job.title(), job.progress()),
             Task::Executing { job, .. } => (job.title(), job.progress()),
+            Task::Transfer { job, .. } => (job.title(), job.progress()),
             Task::Refreshing { job, .. } => (job.title(), job.progress()),
             Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => return None,
         };
@@ -394,6 +417,7 @@ impl Task {
             Task::Contents { job, .. } => job.settling(),
             Task::Syncing { job, .. } => job.settling(),
             Task::Executing { job, .. } => job.settling(),
+            Task::Transfer { job, .. } => job.settling(),
             Task::Refreshing { job, .. } => job.settling(),
             Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => false,
         }
@@ -405,6 +429,7 @@ impl Task {
             Task::Contents { job, .. } => job.cancel(),
             Task::Syncing { job, .. } => job.cancel(),
             Task::Executing { job, .. } => job.cancel(),
+            Task::Transfer { job, .. } => job.cancel(),
             Task::Refreshing { job, .. } => job.cancel(),
             Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => {}
         }
@@ -444,6 +469,8 @@ pub enum RunningJob {
     Op(Job<FolderOpOutcome>),
     /// `folder_sync_execute` (Run Sync, Synchronize ▸).
     Sync(Job<hikasa_session::api::FolderSyncOutcome>),
+    /// `vfs_op_execute` of a drop or a paste (M2 W9c): a move or not.
+    Transfer(Job<hikasa_session::api::VfsOpDto>, bool),
 }
 
 /// What a [`RunningJob`] ended with.
@@ -452,6 +479,8 @@ pub enum RunningEnd {
     Op(Box<FolderOpOutcome>),
     /// A sync's outcome.
     Sync(Box<hikasa_session::api::FolderSyncOutcome>),
+    /// A drop's outcome: what ran and whether it moved.
+    Transfer(Box<hikasa_session::api::VfsOpDto>, bool),
 }
 
 impl RunningJob {
@@ -464,6 +493,9 @@ impl RunningJob {
             RunningJob::Sync(job) => job
                 .try_result()
                 .map(|r| r.map(|o| RunningEnd::Sync(Box::new(o)))),
+            RunningJob::Transfer(job, moving) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Transfer(Box::new(o), *moving))),
         }
     }
 
@@ -608,6 +640,8 @@ pub struct FolderViewModel {
     /// Counts the models this view prepared: with the model's generation, the key a sync plan is made for (review F7:
     /// no pointer address, which a new model may reuse).
     model_serial: u64,
+    /// The toolbar's Filters edit (M2 W9c, D-250) and the model serial it shows the filter of.
+    filters: (crate::filters_edit::FiltersEdit, u64),
     /// The view's sync options or rules changed since the window last asked (its session becomes dirty).
     dirty_options: bool,
     /// Tests: the next sync's execute job fails as a whole (its job's error, A9.17).
@@ -799,6 +833,7 @@ impl FolderViewModel {
             inline_rename: None,
             sync,
             model_serial: 0,
+            filters: (crate::filters_edit::FiltersEdit::default(), 0),
             plan_job_time: None,
             dirty_options: false,
             #[cfg(test)]
@@ -894,6 +929,25 @@ impl FolderViewModel {
         self.sort_cache.clear();
         self.model_serial += 1;
         self.state = FolderState::Running { prepared, job };
+    }
+
+    /// The toolbar's Filters edit (D-250): the view's name filter as core's toolbar text, taken again from each new
+    /// model unless the field is being edited.
+    pub fn filters_edit(&mut self) -> &mut crate::filters_edit::FiltersEdit {
+        if self.filters.1 != self.model_serial {
+            let fresh = self
+                .prepared()
+                .map(|p| crate::filters_edit::FiltersEdit::of(&p.rules().filters.names));
+            if let Some(fresh) = fresh {
+                self.filters.1 = self.model_serial;
+                if !self.filters.0.edited() || self.filters.0.committed.is_empty() {
+                    self.filters.0 = fresh;
+                } else {
+                    self.filters.0.committed = fresh.committed;
+                }
+            }
+        }
+        &mut self.filters.0
     }
 
     /// Tab caption.
@@ -1004,6 +1058,20 @@ impl FolderViewModel {
                     caption,
                     began,
                     job: RunningJob::Sync(job),
+                })
+            }
+            Some(Task::Transfer {
+                caption,
+                moving,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job: RunningJob::Transfer(job, moving),
                 })
             }
             Some(task) => {
@@ -1578,7 +1646,6 @@ impl FolderViewModel {
     }
 
     /// The selection (D-238).
-    #[cfg(test)]
     pub fn selection(&self) -> &ViewSelection {
         &self.selection
     }
@@ -2377,6 +2444,7 @@ impl FolderViewModel {
             Some(Task::Contents { job, .. }) => job.try_result().map(Ready::Contents),
             Some(Task::Syncing { job, .. }) => job.try_result().map(Ready::Synced),
             Some(Task::Executing { job, .. }) => job.try_result().map(Ready::Outcome),
+            Some(Task::Transfer { job, .. }) => job.try_result().map(Ready::Transferred),
             Some(Task::Refreshing { job, .. }) => job.try_result().map(Ready::Refresh),
             _ => None,
         };
@@ -2475,6 +2543,36 @@ impl FolderViewModel {
                     self.prepared().map_or(&mark.model, |p| p.model()),
                 ) {
                     self.refresh_rows(service, nodes, AfterRefresh::Operation);
+                }
+            }
+            (
+                Task::Transfer {
+                    caption,
+                    moving,
+                    mark,
+                    refresh,
+                    began,
+                    ..
+                },
+                Ready::Transferred(result),
+            ) => {
+                match result {
+                    Ok(outcome) => self.outbox.push(FolderEvent::Transferred {
+                        caption,
+                        outcome: Box::new(outcome),
+                        moving,
+                        elapsed: self.elapsed_since(began),
+                    }),
+                    Err(e) => self.outbox.push(FolderEvent::Notice {
+                        kind: NoticeKind::Error,
+                        text: format!("{caption}: {e}"),
+                    }),
+                }
+                // What was written is shown: the folders it went into and left, in the model the drop was made on.
+                if mark.is_some_and(|m| {
+                    Arc::ptr_eq(&m.model, self.prepared().map_or(&m.model, |p| p.model()))
+                }) {
+                    self.refresh_rows(service, refresh, AfterRefresh::Operation);
                 }
             }
             (
@@ -2914,6 +3012,7 @@ impl FolderViewModel {
         ctx.flat = self.flat();
         ctx.two_items = flags.two_items;
         ctx.two_folders = flags.two_folders;
+        ctx.explorer = self.explorer_sides();
         self.sync_ctx_into(ctx);
     }
 
@@ -3684,6 +3783,11 @@ impl FolderViewModel {
         self.change_columns(|c| c.toggle(column));
     }
 
+    /// *Reset Columns* (M2 W9c, part of `ColList`): the default columns, order and widths, and the tree order.
+    pub fn reset_columns(&mut self) {
+        self.change_columns(|c| *c = ColumnLayout::default());
+    }
+
     /// A header click on `column` on `side` (D-235: ascending, descending, the tree order).
     pub fn header_click(&mut self, column: ColumnId, side: Side) {
         self.change_columns(|c| c.header_click(column, side));
@@ -3986,6 +4090,7 @@ enum Ready {
     Contents(Result<ContentsDto, ApiError>),
     Synced(Result<hikasa_session::api::FolderSyncOutcome, ApiError>),
     Outcome(Result<FolderOpOutcome, ApiError>),
+    Transferred(Result<hikasa_session::api::VfsOpDto, ApiError>),
     Refresh(Result<RefreshDto, ApiError>),
 }
 

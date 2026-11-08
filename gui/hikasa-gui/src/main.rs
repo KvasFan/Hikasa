@@ -34,8 +34,11 @@ mod commands;
 mod content_dialogs;
 mod dialog;
 mod dnd;
+mod drop_dialog;
+mod filters_edit;
 mod find_panel;
 mod folder;
+mod folder_tabs;
 mod folder_view;
 mod fonts;
 mod home;
@@ -69,6 +72,8 @@ mod tests;
 mod tests_bases;
 #[cfg(test)]
 mod tests_browse;
+#[cfg(test)]
+mod tests_dnd;
 #[cfg(test)]
 mod tests_find;
 #[cfg(test)]

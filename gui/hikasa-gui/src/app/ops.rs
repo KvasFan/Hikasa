@@ -34,6 +34,27 @@ impl AppCore {
     /// `CopyPrompt`, `CopySide`, `MoveRight`, `MoveLeft`, `MovePrompt`, `MoveSide`, `MoveBoth`, `CopyTo`, `MoveTo`,
     /// `Rename`, `Touch`, `NewFolder` on the active folder view (§1.9.13).
     pub(super) fn start_verb(&mut self, window: WindowId, inv: &Invocation) {
+        self.start_verb_with(window, inv, None);
+    }
+
+    /// Copy/Move to Folder of rows dragged from `from` onto a folder row of the other pane (M2 W9c, D-251): the dialog
+    /// prefilled with that folder, structure *relative*, its preview first (D-244's flow).
+    pub(super) fn start_verb_into(
+        &mut self,
+        window: WindowId,
+        id: CommandId,
+        from: Side,
+        folder: String,
+    ) {
+        self.start_verb_with(window, &Invocation::new(id), Some((folder, from)));
+    }
+
+    fn start_verb_with(
+        &mut self,
+        window: WindowId,
+        inv: &Invocation,
+        into: Option<(String, Side)>,
+    ) {
         let service = self.service.clone();
         let scope = self.scope(window);
         let caption = self.tables.caption(scope, inv.id);
@@ -48,6 +69,7 @@ impl AppCore {
             state: &state,
             include_hidden,
             windows: cfg!(windows),
+            into,
         };
         let started = {
             let Some(tab) = self.active_tab_mut(window) else {

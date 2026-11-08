@@ -598,6 +598,9 @@ const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
         (C::DirCompareStructure, P::OtherMode, E::Checked),
         (C::DirCompareFilesOnly, P::OtherMode, E::Checked),
         (C::DirFlatten, P::None, E::Checked),
+        // M2 W9c (D-249, D-250).
+        (C::NameFilter, P::None, E::Dialog),
+        (C::NameFilterEdit, P::None, E::Focus),
         // folder-shared
         (C::Swap, P::None, E::Bases),
         (C::BrowseList, P::None, E::Submenu),
@@ -624,6 +627,9 @@ const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
         (C::ColList, P::None, E::Model),
         (C::Legend, P::None, E::Checked),
         (C::ShowLog, P::None, E::Checked),
+        // M2 W9c (FC-063, D-252, D-254): the test window has no clipboard and no launcher: the core message.
+        (C::CopyFilenames, P::File, E::Notice),
+        (C::ExplorerList, P::File, E::Notice),
         // session
         (C::SessionHome, P::None, E::Tab),
         (C::SessionsCombo, P::None, E::Focus),
@@ -633,6 +639,7 @@ const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
         (C::SessionLocked, P::Named, E::Checked),
         (C::SessionClear, P::None, E::Bases),
         (C::Info, P::None, E::Dialog),
+        (C::Rules, P::None, E::Dialog),
         (C::CompareParents, P::File, E::Tab),
         (C::InsigIgnored, P::None, E::Checked),
         (C::ShowToolbar, P::None, E::Checked),
@@ -874,7 +881,9 @@ fn a9_10_every_implemented_folder_entry_has_a_row_and_its_effect() {
             }
             Expect::Focus => {
                 assert!(
-                    app.0.window(w).is_some_and(|w| w.focus_sessions),
+                    app.0
+                        .window(w)
+                        .is_some_and(|w| w.focus_sessions || w.focus_filters),
                     "{id:?}: the focus"
                 );
             }

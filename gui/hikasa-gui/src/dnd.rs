@@ -1,10 +1,15 @@
-//! Drag and drop from the OS (M2 W4a, UI-008): the targets and the rule of a drop ([`decide`]); the app core
-//! applies it ([`crate::app::AppCore::drop_paths`]). The UI layer reads `raw.dropped_files` (paths only;
-//! bytes-only drops are ignored) and highlights the target under `raw.hovered_files`; delivery depends on the
-//! platform backend.
+//! Drag and drop (M2 W4a, UI-008; M2 W9c, FC-080, D-251): the targets and the rule of a drop from the OS ([`decide`])
+//! and of rows dragged inside a folder view ([`decide_rows`]); the app core applies them
+//! ([`crate::app::AppCore::drop_paths`], [`crate::app::AppCore::drop_rows`]). The UI layer reads `raw.dropped_files`
+//! (paths only; bytes-only drops are ignored) and highlights the target under `raw.hovered_files` or under egui's own
+//! drag payload; delivery from the OS depends on the platform backend: winit 0.30 delivers drops on X11, Windows and
+//! macOS, not on Wayland, and cannot start a drag toward other programs (the clipboard's file lists stand in, D-252).
 
 use std::path::PathBuf;
 
+use hikasa_core::Side;
+use hikasa_folder::NodeId;
+use hikasa_folder::select::Selection;
 use hikasa_session::sessions::SessionType;
 
 /// The message of a drop the window cannot use.
@@ -29,6 +34,15 @@ pub enum DropTarget {
     PathField(FieldId),
     /// A type button of Home (W4b).
     HomeType(SessionType),
+    /// A folder view's path edit or the header of its pane (M2 W9c): the side's base.
+    PanePath(Side),
+    /// A folder view's tree (M2 W9c): a folder row of the side (`Some`), or the empty area, the side's base (`None`).
+    PaneTree {
+        /// The pane.
+        side: Side,
+        /// The folder row under the pointer.
+        folder: Option<NodeId>,
+    },
     /// The window (any view other than Home's targets).
     Window,
 }
@@ -46,6 +60,18 @@ pub enum DropOutcome {
     NewSession(SessionType, String),
     /// A Home type button took two paths: that type's view.
     OpenType(SessionType, [PathBuf; 2]),
+    /// A folder view's bases (M2 W9c): the path edits of these sides take these texts, then Accept.
+    Bases(Vec<(Side, String)>),
+    /// A folder view's pane took paths (M2 W9c): the prompt "Copy (or move) <n> items into `<folder>`?" with the plan
+    /// of a copy and of a move into that folder (`vfs_op_plan`), then the plan chosen runs as it is.
+    Transfer {
+        /// The pane.
+        side: Side,
+        /// The folder row (`None`: the side's base).
+        folder: Option<NodeId>,
+        /// The paths, as dropped.
+        paths: Vec<PathBuf>,
+    },
     /// Nothing (no path).
     Ignore,
 }
@@ -66,9 +92,92 @@ pub fn decide(target: DropTarget, paths: &[PathBuf]) -> DropOutcome {
         }
         (DropTarget::HomeType(kind), [one]) => DropOutcome::NewSession(kind, text(one)),
         (DropTarget::HomeType(kind), [l, r]) => DropOutcome::OpenType(kind, [l.clone(), r.clone()]),
+        (DropTarget::PanePath(Side::Left), [l, r, ..]) => {
+            DropOutcome::Bases(vec![(Side::Left, text(l)), (Side::Right, text(r))])
+        }
+        (DropTarget::PanePath(side), [first, ..]) => DropOutcome::Bases(vec![(side, text(first))]),
+        (DropTarget::PaneTree { side, folder }, paths) => DropOutcome::Transfer {
+            side,
+            folder,
+            paths: paths.to_vec(),
+        },
         (DropTarget::Window, [_]) => DropOutcome::Message(DROP_ONE_MORE),
         (DropTarget::Window, [l, r]) => DropOutcome::Open([l.clone(), r.clone()]),
         (DropTarget::Window | DropTarget::HomeType(_), _) => DropOutcome::Message(DROP_ONE_OR_TWO),
+    }
+}
+
+/// Rows dragged in a folder view (D-251): the side they were pressed on and the selection they are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowDrag {
+    /// The pane the drag started on (the centre: `None`, both sides).
+    pub from: Option<Side>,
+    /// The dragged rows (the selection at the press).
+    pub rows: Selection,
+}
+
+/// Where dragged rows are released.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowTarget {
+    /// A pane of the same view: a folder row of that side (`Some`), or anywhere else in it (`None`).
+    Pane {
+        /// The pane.
+        side: Side,
+        /// The folder row under the pointer.
+        folder: Option<NodeId>,
+    },
+    /// The centre column, a header, another view, another window, outside the window.
+    Elsewhere,
+}
+
+/// What a release of dragged rows does (§1.9.16's table).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowDrop {
+    /// `CopySide` (`MoveSide` when `moving`) of the rows from `from`, through D-244's flow.
+    ToOtherSide {
+        /// The side the rows are copied from.
+        from: Side,
+        /// Shift held at the release.
+        moving: bool,
+    },
+    /// `CopyTo` (`MoveTo` when `moving`) of the rows from `from` into the folder row, structure *relative*, the dialog
+    /// prefilled (its preview shows first).
+    IntoFolder {
+        /// The side the rows are copied from.
+        from: Side,
+        /// The folder row of the other pane.
+        folder: NodeId,
+        /// Shift held at the release.
+        moving: bool,
+    },
+    /// Nothing: the own pane, the centre, out of the window, nothing dragged (D-251's limits).
+    Nothing,
+}
+
+/// The rule of a release of dragged rows: on the other pane outside a folder row they go to the other side, on a folder
+/// row of the other pane into that folder; Shift moves; the own pane, the centre and everything outside the view do
+/// nothing. Rows dragged from the centre (both sides) come from the side opposite the release.
+pub fn decide_rows(drag: &RowDrag, target: RowTarget, shift: bool) -> RowDrop {
+    let RowTarget::Pane { side, folder } = target else {
+        return RowDrop::Nothing;
+    };
+    if drag.rows.is_empty() || !matches!(side, Side::Left | Side::Right) {
+        return RowDrop::Nothing;
+    }
+    let from = side.opposite();
+    if drag.from.is_some_and(|f| f != from) {
+        return RowDrop::Nothing;
+    }
+    match folder {
+        Some(folder) => RowDrop::IntoFolder {
+            from,
+            folder,
+            moving: shift,
+        },
+        None => RowDrop::ToOtherSide {
+            from,
+            moving: shift,
+        },
     }
 }
 

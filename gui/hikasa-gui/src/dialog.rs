@@ -71,6 +71,8 @@ pub enum Followup {
     Session(SessionAction),
     /// The answer to the conflict prompt of the Options dialog (D-128).
     Options(ConflictAnswer),
+    /// The answer to the conflict prompt of *Add To Presets* (M2 W9c, D-250: W4c's choices).
+    Presets(ConflictAnswer),
     /// The overwrite of an existing package was confirmed (the Export wizard, D-131).
     WizardOverwrite,
     /// The Import wizard drops its choices and takes this package (D-127).
@@ -127,6 +129,8 @@ pub enum DialogRequest {
     Notice(crate::notify::Notice),
     /// A beep: the window asks for attention (§1.8.9).
     Beep,
+    /// *Add To Presets* (M2 W9c, D-250): the window asks a name for this mask and saves it to `filters.toml`.
+    AddToPresets(String),
 }
 
 /// What a button or key did.
