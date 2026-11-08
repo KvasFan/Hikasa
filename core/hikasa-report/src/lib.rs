@@ -30,6 +30,7 @@
 //!     rules: TextRules::default(),
 //!     bytes_identical: false,
 //!     force_tokenize: false,
+//!     anchors: Vec::new(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None)?;
 //! let opts = TextReportOptions {

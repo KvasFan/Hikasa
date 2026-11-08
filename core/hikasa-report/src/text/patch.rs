@@ -474,6 +474,7 @@ mod tests {
                 rules,
                 bytes_identical: left == right,
                 force_tokenize: false,
+                anchors: Vec::new(),
             },
             None,
             &Ctl::detached(),

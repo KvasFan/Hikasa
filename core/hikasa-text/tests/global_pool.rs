@@ -97,6 +97,7 @@ fn compare_uses_only_the_pool_it_is_given() {
             rules,
             bytes_identical: false,
             force_tokenize: false,
+            anchors: Vec::new(),
         };
         let pool = Arc::clone(&pool);
         let (done_tx, done_rx) = mpsc::channel();

@@ -53,6 +53,7 @@ fn perf_rss_text_compare_1m() {
         rules: TextRules::default(),
         bytes_identical,
         force_tokenize: false,
+        anchors: Vec::new(),
     };
     let cmp = compare(input, Some(&pool), &Ctl::detached(), None).unwrap();
     let peak = vm_hwm();

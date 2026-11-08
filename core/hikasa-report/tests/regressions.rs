@@ -251,6 +251,7 @@ fn characters_per_line_pieces_show_their_source_line() {
             rules: TextRules::default(),
             bytes_identical: false,
             force_tokenize: false,
+            anchors: Vec::new(),
         },
         None,
         &Ctl::detached(),

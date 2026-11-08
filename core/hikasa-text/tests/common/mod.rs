@@ -3,6 +3,8 @@
 //! "pool None equals pool 8") and a recording observer.
 #![allow(dead_code)]
 
+pub mod live;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -117,6 +119,7 @@ pub fn compare_docs(
         format: Arc::clone(format),
         rules: rules.clone(),
         force_tokenize,
+        anchors: Vec::new(),
     };
     let cmp = compare(input, pool, &Ctl::detached(), None).unwrap();
     cmp.check_invariants().unwrap();

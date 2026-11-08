@@ -276,6 +276,7 @@ impl Service {
             rules,
             bytes_identical,
             force_tokenize: false,
+            anchors: Vec::new(),
         };
         let comparison = compare_with_limits(
             input,

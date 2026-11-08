@@ -121,6 +121,16 @@ impl PackedRow {
         }
     }
 
+    /// The same state and importance with other lines.
+    #[inline]
+    pub(crate) fn with_lines(self, left: Option<u32>, right: Option<u32>) -> PackedRow {
+        PackedRow {
+            left: left.unwrap_or(NO_LINE),
+            right: right.unwrap_or(NO_LINE),
+            meta: self.meta,
+        }
+    }
+
     #[inline]
     pub(crate) fn left(self) -> Option<u32> {
         (self.left != NO_LINE).then_some(self.left)

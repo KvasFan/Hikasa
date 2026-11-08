@@ -34,6 +34,19 @@ impl TextComparison {
     ///    (byte-identical lines never show as important); orphans are Important when orphans are always
     ///    important or the line is not trivial.
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
+        self.check_structure()?;
+        // 8. Importance follows the rules.
+        self.check_importance()
+    }
+
+    /// Checks 1–5 of [`TextComparison::check_invariants`] (rows, runs, sections, statistics, verdicts) without
+    /// the importance rules (8): what a live comparison's provisional splice keeps (§1.10.10, A10.10), whose
+    /// pending rows keep their old states. **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_structure(&self) -> Result<(), InvariantViolation> {
+        if let Err(e) = self.rows.check() {
+            return fail("INV-TC-1", format!("row store: {e}"));
+        }
         let (nl, nr) = (self.left.line_count(), self.right.line_count());
         // 1. Runs and rows.
         let (mut li, mut ri, mut row) = (0u32, 0u32, 0usize);
@@ -99,7 +112,7 @@ impl TextComparison {
             li = run.left.end;
             ri = run.right.end;
         }
-        if row != self.rows.len() {
+        if row != self.rows.len() as usize {
             return fail(
                 "INV-TC-1",
                 format!("{} rows for {row} run rows", self.rows.len()),
@@ -141,7 +154,12 @@ impl TextComparison {
             );
         }
         // 3 and 4. Sections and statistics equal a recount.
-        let recount = sections::derive(&self.rows, nl, nr, self.format.text().lines_independent);
+        let recount = sections::derive(
+            &self.rows.to_vec(),
+            nl,
+            nr,
+            self.format.text().lines_independent,
+        );
         if recount.sections != self.sections {
             return fail("INV-TC-3", "sections differ from a recount".into());
         }
@@ -176,8 +194,7 @@ impl TextComparison {
                 format!("verdicts {strict:?} / {lenient:?}, expected {expected:?}"),
             );
         }
-        // 8. Importance follows the rules.
-        self.check_importance()
+        Ok(())
     }
 
     /// INV-TC-8 (see `check_invariants`).

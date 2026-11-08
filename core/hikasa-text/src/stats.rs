@@ -61,3 +61,28 @@ impl TextStats {
             && self.right_lines == self.same_rows + self.changed_rows + self.right_only_rows
     }
 }
+
+impl TextStats {
+    /// Adds (`sign` 1) or removes (`sign` -1) the row and section counts of `other` (a provisional splice
+    /// replaces a window's counts, §1.10.10); `rows`, `left_lines` and `right_lines` are left alone.
+    pub(crate) fn merge_counts(&mut self, other: &TextStats, sign: i64) {
+        let f = |a: &mut u64, b: u64| *a = (*a as i64 + sign * b as i64).max(0) as u64;
+        f(&mut self.same_rows, other.same_rows);
+        f(&mut self.changed_rows, other.changed_rows);
+        f(&mut self.left_only_rows, other.left_only_rows);
+        f(&mut self.right_only_rows, other.right_only_rows);
+        f(&mut self.important_rows, other.important_rows);
+        f(&mut self.unimportant_rows, other.unimportant_rows);
+        f(&mut self.sections, other.sections);
+        f(&mut self.important_sections, other.important_sections);
+        for (a, b) in [
+            (&mut self.important, other.important),
+            (&mut self.unimportant, other.unimportant),
+        ] {
+            f(&mut a.added, b.added);
+            f(&mut a.deleted, b.deleted);
+            f(&mut a.changed, b.changed);
+            f(&mut a.original, b.original);
+        }
+    }
+}

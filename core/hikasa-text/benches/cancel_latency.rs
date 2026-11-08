@@ -42,6 +42,7 @@ fn input(
         rules: rules.clone(),
         bytes_identical: false,
         force_tokenize: false,
+        anchors: Vec::new(),
     }
 }
 

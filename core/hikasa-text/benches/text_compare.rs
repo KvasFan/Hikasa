@@ -53,6 +53,7 @@ fn end_to_end(
         rules: rules.clone(),
         bytes_identical: left == right,
         force_tokenize: false,
+        anchors: Vec::new(),
     };
     compare(input, Some(pool), &Ctl::detached(), None).unwrap()
 }

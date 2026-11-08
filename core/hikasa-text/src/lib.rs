@@ -8,6 +8,7 @@
 //! | Module | Content |
 //! |---|---|
 //! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF block line table), [`load_document`], [`LoadOptions`] |
+//! | [`live`] | [`LiveComparison`]: provisional splices and the exact incremental recompare (§1.10.10–§1.10.11) |
 //! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
@@ -32,6 +33,7 @@
 //!     rules: TextRules::default(),
 //!     bytes_identical: false,
 //!     force_tokenize: false,
+//!     anchors: Vec::new(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None).unwrap();
 //! assert_eq!(cmp.row_count(), 3);
@@ -60,6 +62,7 @@ pub mod compare;
 pub mod document;
 pub mod edit;
 pub mod error;
+pub mod live;
 pub mod quick;
 pub mod rules;
 pub mod stats;
@@ -81,6 +84,9 @@ pub use edit::{
     Editability, EditableDocument, GroupHint, LineDelta, LineMark, Selection, TextPos, UndoId,
 };
 pub use error::TextError;
+pub use live::{
+    Installed, LiveComparison, LiveKeys, PathCounters, RecompareJob, Recompared, compare_live,
+};
 pub use quick::{
     DEFAULT_RULES_MAX_BYTES, QuickOptions, RulesComparator, quick_compare_bytes,
     quick_compare_bytes_with,
@@ -93,7 +99,7 @@ pub use stats::{ChangeCounts, TextStats};
 pub use view::{FilteredView, TextDisplayFilter, TextToggles, ViewItem, ViewOptions};
 
 // Re-exports (§0.4 rule 8), so that hikasa-report and hikasa-cli need no extra manifest edges.
-pub use hikasa_diff::{Algorithm, InlineDiff, Run, RunKind};
+pub use hikasa_diff::{Algorithm, Anchor, AnchorSide, InlineDiff, Run, RunKind};
 pub use hikasa_formats::{
     BinaryReason, BinaryVerdict, CompiledFormat, DetectReason, DetectedEncoding, ElementId,
     ElementTable, EncodingSource, FormatId, FormatKind, LineState, MagicKind, RegexLimits,

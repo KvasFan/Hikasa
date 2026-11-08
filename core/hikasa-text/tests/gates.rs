@@ -92,6 +92,7 @@ fn run_logged(
         rules: rules.clone(),
         bytes_identical: left == right,
         force_tokenize: false,
+        anchors: Vec::new(),
     };
     let ctl = Ctl {
         cancel,
@@ -425,6 +426,7 @@ fn compare_loaded(
         rules: rules.clone(),
         bytes_identical,
         force_tokenize: false,
+        anchors: Vec::new(),
     };
     compare(input, Some(pool), &ctl, None)
 }

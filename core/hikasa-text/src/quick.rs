@@ -256,6 +256,7 @@ fn quick_with_patterns(
         rules: rules.clone(),
         bytes_identical: false,
         force_tokenize: false,
+        anchors: Vec::new(),
     };
     let prepared = match Prepared::new(input, patterns, None, ctl, None) {
         Ok(p) => p,

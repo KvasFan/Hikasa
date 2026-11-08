@@ -212,6 +212,7 @@ pub fn compare_bytes_with(
             rules: rules.clone(),
             bytes_identical: left_raw == right_raw,
             force_tokenize: false,
+            anchors: Vec::new(),
         },
         None,
         &Ctl::detached(),

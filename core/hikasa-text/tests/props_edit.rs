@@ -162,6 +162,7 @@ fn request(
                     rules: TextRules::default(),
                     bytes_identical: false,
                     force_tokenize: false,
+                    anchors: Vec::new(),
                 },
                 None,
                 &Ctl::detached(),
