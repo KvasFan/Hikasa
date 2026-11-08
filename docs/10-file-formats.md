@@ -36,6 +36,9 @@ FileFormat {
   warns once and is kept, and a child view opens with the format its row was compared by.
 - **FF-002** (P0): Folder sessions can override the enabled state of formats
   (Rules ▸ Misc ▸ Enabled file formats; bold when different from global).
+  *M2 W9c (D-249):* Session Settings ▸ Misc lists every format of `format list`, checked as it is for the session
+  (its own state, else the global one), **bold** where the session has its own (`format_overrides`); a check that gives
+  the global state back removes the session's entry, *Reset* does too; ids no listed format has are kept as stored.
 - **FF-003** (P0): File views show the detected format ("Detected (C/C++ Source)") in
   the File Info header; the user can pick another format for a pane or all panes;
   the session's Format tab stores per-side overrides and encoding overrides.

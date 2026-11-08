@@ -218,7 +218,7 @@ Tests that require reading files:
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
   (persisted in the session). *M2 W9b (D-245):* Actions ▸ Ignored (a check: the current row's mark) sets or clears the
   marks of the selection with `folder_set_ignored`; the list it returns replaces the view's `rules.ignored` (the session
-  is changed) and nothing runs again.
+  is changed) and nothing runs again. *M2 W9c (D-249):* Session Settings ▸ Misc lists the Ignored paths with *Remove*.
 
 **States, folder states and colours (binding interpretation; decision D-55).**
 
@@ -273,6 +273,14 @@ folders and bytes of each side, and the content-test results.
   excludes; trailing `\` (or `/`) denotes a folder mask; dropdown of **presets**
   (editable in options). Session Settings ▸ Name Filters tab has four lists: Include
   Files, Exclude Files, Include Folders, Exclude Folders; "Clear"; "Add To Presets".
+  *M2 W9c (D-250):* the field sits in the folder views' toolbar (`NameFilterEdit` focuses it) and shows the view's filter
+  as core's canonical text (`NameFilter::to_filter_string`: include files, include folders, exclude files, exclude
+  folders); Enter parses it with core: an error shows under the field and nothing runs, else the view's rules take it,
+  the view runs again and the text goes to `mru.name_filters`; Esc puts the view's filter back. The ▾ drop-down lists the
+  presets of `filters.toml` and the recent filters, and *Add To Presets…*, which asks a name (empty or used: refused)
+  and writes `filters.toml` through `settings_save` (sparse, unknown keys kept); a file changed meanwhile asks
+  *Overwrite* / *Reload* (read it again and add the preset to it) / *Cancel*. The Name Filters tab (`NameFilter`,
+  D-249) edits the four lists one mask a line, with *Clear*, the presets, *Add To Presets…* and the toolbar text below.
 - **FC-051** (P0): Mask syntax: `?` one char, `*` any run, `[az]`, `[a-z]`, `[!az]`,
   `[[]`; trailing `.` means "no extension" (`*.` matches files without extension);
   relative masks `p\f` (f inside folder p), `.\f` (in base folder), `...\f` (any
@@ -451,6 +459,15 @@ Orphans = every atom except the two orphan atoms; …).
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
   copies the selected paths. *M2 W9a:* unchanged; the pane context menus and file-manager entries are W9c's.
+  *M2 W9c (D-254, D-252):* a native shell menu needs platform code the project does not write; Actions ▸ **File
+  Manager** ▸ *Open Folder in File Manager* (a folder: itself, a file: its folder, opened with the system handler) and
+  *Show in File Manager* (the item selected in its folder: Windows `explorer.exe /select,"<path>"`, macOS
+  `open -R <path>`, Linux and other Unix systems the D-Bus call `org.freedesktop.FileManager1.ShowItems` through
+  `dbus-send`, the folder opened when that fails or is missing) act on the current row of the clicked or focused side;
+  a member of an archive shows its outermost archive file; a spec off the disk has them disabled; a failure is a warning
+  notice. **Copy Filename** writes the selected items' specs one a line (`\r\n` on Windows), tree order, the left side
+  first per row; **Copy** (Ctrl+C) puts the selected local items on the clipboard as files (members are left out with a
+  message).
 - **FC-064** (P0): Status bar: counts of selected items per side, total sizes, and the
   comparison state summary; **Folder Compare Info** (Ctrl+I) dialog shows statistics
   (files/folders per state). *M2 W9a (D-238, D-242):* the status bar counts the selection per side (`Selected: L n
@@ -530,6 +547,26 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
 - **FC-080** (P0): Drag & drop: from the OS into a pane (sets base folder or copies
   into the dropped folder, with a prompt), between panes (copy/move), onto the Home
   view buttons.
+  *M2 W9c (D-251, D-252):* what the platform toolkit (winit 0.30) can do decides what works where:
+
+  | | Linux X11 | Linux Wayland | Windows | macOS |
+  |---|---|---|---|---|
+  | Paths from the OS dropped on a window | yes | no (the backend has no drop support) | yes | yes |
+  | Items dragged out to other programs | no (no drag source) | no | no | no |
+  | Rows dragged between the panes | yes | yes | yes | yes |
+  | Clipboard file lists (Copy, Paste) | yes | yes | yes | yes |
+
+  Paths dropped on a path edit or a pane's header become that side's base (two on the left: both), then the view runs
+  on them. Paths dropped on a pane's tree go into the folder row under the pointer (its nearest folder the side has),
+  else the side's base: a prompt "Copy (or move) <n> items into `<folder>`?" shows core's plan of either (`vfs_op_plan`,
+  the `vfs cp`/`vfs mv --dry-run` lines) with an overwrite choice (*Fail*, *Skip*, *Replace if newer*, *Replace*,
+  remembered), and *Copy* or *Move* runs that plan as it is (`vfs_op_execute`); the folder it went into (and, for a move,
+  the folders the sources left) are refreshed. A read-only side or a view at work refuses with a message. Rows dragged
+  from a pane to the other run Copy to Other Side (Shift at the release: Move), onto a folder row of the other pane Copy
+  to Folder (Move with Shift) prefilled with that folder and *relative*, both through their preview; the own pane, the
+  centre and outside the window do nothing. Clipboard file lists stand in for the drags the toolkit lacks: Copy puts the
+  items as files a file manager pastes; Paste (Ctrl+V) drops the clipboard's files (else its text lines that are specs)
+  on the current folder of the pane, through the same prompt.
 - **FC-081** (P0): Remote-target quirks: *Touch local files when copying to an FTP
   site* (when the server cannot set times, set the local time to match the uploaded
   file's).
@@ -569,11 +606,18 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   the plan's state and Run Sync; the centre column shows each row's planned action (an override in the accent colour, a
   conflict marked, a folder's summary as its tooltip with a small mark). It is prepared with `folder_sync_prepare`, planned
   after the comparison, every refresh and every change of the preset, an option or an override; *Sync within archives*
-  runs the comparison again. Rules and Filters buttons (and the Sync tab) are W9c.
+  runs the comparison again. Rules and Filters buttons (and the Sync tab) are W9c. *M2 W9c:* Session ▸ Rules… opens
+  Session Settings with the Sync tab beside the folder tabs, the toolbar has the Filters edit, the panes have their
+  context menus (`SyncPane`: the sync actions, Exclude, Open, the base commands, Copy, Copy Filename, File Manager,
+  Expand, Collapse).
 - **FS-002** (P0): Custom operation matrix (Rules ▸ Sync tab): action for each
   situation — file newer on left / newer on right / added on left / added on right /
   deleted on left / deleted on right / files different / files same — each from the
   set {copy left→right, copy right→left, delete left, delete right, leave alone}.
+  *M2 W9c (D-249):* the Sync tab of Session Settings: the preset, the 8 × 5 matrix (a cell names a side its item is not on
+  is disabled, `Situation::allows`; a change makes the preset *custom*), *Read items on one side only as* added /
+  deleted, *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if possible*, *If the recycle bin fails,
+  delete permanently*, and the overrides with *Remove*; `SyncMatrix::validate` refuses a bad cell on the tab.
   *M2 W6c (D-181):* the presets, normative:
 
   | Situation | Update Right | Update Left | Update Both | Mirror to Right | Mirror to Left |

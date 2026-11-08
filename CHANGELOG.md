@@ -67,6 +67,29 @@
   `ViewKind::is_served`, `SyncPlan::dropped_overrides` and `unused_overrides`; `Session::swap_sides` mirrors a
   folder-sync session's options; `AppLauncher::start`; `TreeRead::spec_below`; `EntryView::ident`.
 
+### Added (W9 part c: drag and drop, menus, rules)
+- **Drag and drop.** Files and folders dropped from a file manager on a path edit or a pane's header become that side's
+  base; dropped on a pane's tree they go into the folder under the pointer (or the base) after a prompt that shows the
+  plan of a copy and of a move (`vfs cp`/`vfs mv --dry-run` lines) with an overwrite choice; the plan shown runs, and the
+  folder is refreshed. Rows dragged to the other pane are copied (Shift: moved) through the operation's preview, onto a
+  folder row of the other pane through Copy/Move to Folder. Drops from other programs need X11, Windows or macOS (not
+  Wayland); nothing can be dragged out of the window.
+- **Clipboard file lists.** Edit ▸ Copy (Ctrl+C) puts the selected items as files a file manager pastes (items inside
+  archives are left out, with a message), Paste (Ctrl+V) drops a file manager's copy (or text lines that are paths) on
+  the pane's folder, Select All (Ctrl+A) selects every row shown; a focused text field keeps these keys. Actions ▸ Copy
+  Filename copies the selected paths as text.
+- **Pane context menus** (right-click: the row is selected first; the entries of that side), the column header's menu
+  with *Reset Columns*, and **File Manager** ▸ *Open Folder in File Manager*, *Show in File Manager* (Explorer, Finder,
+  or the desktop's file manager over D-Bus).
+- **Session Settings tabs for folder sessions:** Comparison, Name Filters, Handling, Misc (file formats per session,
+  Ignored items) and, for Folder Sync, Sync (preset, matrix, options, overrides); *Disable editing* per side on Specs.
+  Session ▸ Rules… and Name Filters… open them; core checks every change and shows a refusal on its tab.
+- **The Filters edit** in the folder views' toolbar: the view's name filter, Enter applies it, the presets and recent
+  filters in its drop-down, *Add To Presets…* (also on the Name Filters tab) writes `filters.toml`.
+- Core: `ClipboardProvider::write_files`, `read_files` (the Linux clipboard helper keeps a file list too),
+  `AppLauncher::reveal`, `host::reveal_command`, `Service::reveal_in_file_manager`, `open_folder_in_file_manager`,
+  `api::file_manager_targets`, `Service::check_folder_rules`.
+
 ### Changed (W9b)
 - `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.
 

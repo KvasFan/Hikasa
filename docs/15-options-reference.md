@@ -288,7 +288,10 @@ is used, else one per item. Default: no applications.
 **`filters.toml` (OPT-020).** `schema_version = 1`, then `[[preset]]` entries with
 `name` (unique, required) and `mask` (required). Defaults: `Source files` =
 `*.c;*.cpp;*.h;*.hpp;*.rs;*.py;*.java;*.cs;*.go;*.js;*.ts`, `Web files` =
-`*.htm;*.html;*.css;*.js`, `Documents` = `*.txt;*.md;*.rst;*.adoc`.
+`*.htm;*.html;*.css;*.js`, `Documents` = `*.txt;*.md;*.rst;*.adoc`. *M2 W9c (D-250):* the folder views' Filters edit
+offers the presets in its drop-down; its *Add To Presets…* and the Name Filters tab's ask a unique name and add an entry
+through `settings_save` (unknown keys kept; a file changed meanwhile asks *Overwrite* / *Reload* / *Cancel*); this page
+edits the same list.
 
 **`state.toml`, `theme.toml`, `themes/<name>.toml`** are described in
 `03-sessions-settings-profiles.md` §5.2 and `14-ui-and-commands.md` §2.1.

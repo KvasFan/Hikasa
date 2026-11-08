@@ -141,6 +141,34 @@ shows or maximizes the management panel. The sessions tree is a focus area: Ente
 (`Area::SessionTree`). A workspace shortcut applies when no command took the key (D-111 rule 3), and a key without
 Ctrl, Alt or Cmd only at the window root.
 
+*M2 W9c (§1.9.16–§1.9.18, D-251…D-254):*
+
+- **Pane context menus (UI-005, D-253).** A right-click on a row outside the selection selects it (that side) first,
+  then the menu of the area opens; the entries are D-110's normative lists, a separator between groups, an entry not
+  available disabled, a planned one absent, the `…List` entries as submenus. Entries that act on a side carry the
+  clicked one (Copy to Other Side, Move to Other Side, Set as Base on Other Side, Copy, Paste, Copy Filename, File
+  Manager, New Folder).
+
+  | Area | Entries |
+  |---|---|
+  | Folder pane (a side) | Open, Open With ▸, Compare To, Quick Compare · Copy to Other Side, Move to Other Side, Copy to Folder, Move to Folder, Exchange · Delete, Delete Permanently, Rename, Touch, New Folder · Compare Contents, Ignored, Exclude, Synchronize ▸ · Set as Base Folders, Set as Base on Other Side, Compare Parent Folders · Copy, Paste, Copy Filename, File Manager ▸ · Open Folder, Close Folder, Open Subfolders, Close Subfolders |
+  | Centre column | the same without Copy/Move to Other Side, Set as Base on Other Side and Paste |
+  | Column header | the columns (View ▸ Columns), *Reset Columns* |
+  | Folder Sync pane | Leave Alone, Copy Left to Right, Copy Right to Left, Delete Left, Delete Right · Exclude · Open, Open With ▸ · Set as Base Folders, Set as Base on Other Side · Copy, Copy Filename, File Manager ▸ · Open Folder, Close Folder |
+
+  The lists ignore the menu flag of `commands.toml` (it is the menu bar's); captions and shortcuts follow it.
+- **Drag and drop, the Wayland gap (UI-008, D-251).** winit 0.30 delivers paths dropped from other programs on X11,
+  Windows and macOS, not on Wayland, and cannot start a drag toward other programs. Paths dropped on a folder view's
+  path edit or pane header become that side's base; on its tree, a prompt copies or moves them into the folder under the
+  pointer through core's plan (`docs/04` FC-080); rows dragged between the panes copy (Shift: move) through the
+  operation's preview. The clipboard's file lists are the fallback both ways, everywhere.
+- **Clipboard (D-252).** Edit ▸ **Copy** (Ctrl+C) puts the selected local items as files on the GUI's own clipboard
+  (members and other back-ends are left out with a message), **Paste** (Ctrl+V) drops the clipboard's files (else its
+  text lines that are specs) on the pane's current folder, **Select All** (Ctrl+A) selects every shown row; the three
+  are a folder pane's, disabled elsewhere until the text views take them (W11). While a text field has the keyboard
+  (a path edit, the Filters edit, the find panel, a dialog's field) Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A belong to the
+  field, whatever command binds them.
+
 ## 2. Theming
 
 - **UI-020** (P0): Theme mode: Follow operating system / Light / Dark. Colour
@@ -348,6 +376,11 @@ Operations preset, the plan's state, Run Sync), the planned action in the centre
 Legend's action icons. Remembered choices: `state.dialogs."copy-to-folder"` (`structure`, `overwrite`), `"rename"`
 (`mode`, `dos`, `old`, `new`), `"touch"` (`mode`, `last`), `"new-folder"` (`sides`), `"exclude"` (`what`),
 `"compare-contents"` (`method`, `show_results`), `"quick-compare"` (`method`).
+
+*M2 W9c (D-249…D-252):* **Session Settings** has the folder rule tabs (`docs/03` SES-020); the **drop prompt** ("Copy
+or Move": the question, the overwrite choice remembered in `state.dialogs.drop`, a preview of either plan, *Copy*,
+*Move*, *Cancel*; help `view-folder-compare`); **Add To Presets** asks a unique name for the filter and writes
+`filters.toml` (a concurrent change asks *Overwrite* / *Reload* / *Cancel*).
 
 ## 5. Optional helpers
 

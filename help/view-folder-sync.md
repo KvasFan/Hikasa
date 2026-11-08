@@ -48,6 +48,11 @@ Session ▸ **Compare Base Folders** opens a Folder Compare view of the same bas
 sides and mirrors the options (Update Right becomes Update Left, overrides and the matrix too), so the same folders get
 the same actions. Session ▸ **Folder Sync Info** adds the plan's counts to the statistics.
 
+Session ▸ **Rules…** opens [Session Settings](topic:dialog-session-settings) with the folder tabs and the **Sync** tab
+(the preset, the action of each situation, the options, the rows set by hand); the toolbar's **Filters** field and the
+panes' context menus (the actions of a row, Exclude, Open, the base folders, Copy, Copy Filename, File Manager) work as
+in the [Folder Compare view](topic:view-folder-compare).
+
 A view opened with `--wait` ends with the exit code of its last Run (0, or 100 when an item failed, did not run or the
 sync was stopped); without a Run, 0 when the comparison completed, else 100. See [Exit codes](topic:exit-codes) and
 [hikasa folder sync](topic:folder-sync), the same sync from the command line.

@@ -61,7 +61,11 @@ Help ▸ About shows the version.
 ## Drag and drop
 
 Drop one file or folder on a path field of the Home view to fill it (two on the left field fill both), or on a type
-button (two open as that type). Drop two files or two folders on a window to compare them.
+button (two open as that type). Drop two files or two folders on a window to compare them. In a
+[Folder Compare view](topic:view-folder-compare) a drop on a base field compares that folder, a drop on a pane copies
+or moves the items into its folder after a prompt, and rows dragged between the panes are copied or moved. Drops from
+other programs need X11, Windows or macOS; on Wayland, and to take items out of the window, use Edit ▸ Copy and Paste,
+which carry files through the clipboard.
 
 ## Help
 

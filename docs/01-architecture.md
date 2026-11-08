@@ -218,6 +218,16 @@ matching the child's relative paths → the child's own changes (`effective_rule
 `apply_scope(View | Defaults | Pair | Type)`: `Defaults` writes `_defaults/<type>.toml` (rules only), `Pair` and
 `Type` store an override in the parent (named or auto-saved), which a locked parent keeps in memory only.
 
+**M2 W9c (D-252, D-254): the clipboard's file lists and the file manager.** `ClipboardProvider` (the pure seam of
+`clipboard://`, D-100) gains `write_files(&[PathBuf])` and `read_files()`, `Unavailable` by default; `FixedClipboard`
+records and serves them (tests), `FileClipboard` keeps one path a line, and the adapter-only `SystemClipboard` uses
+arboard's `file_list` (`text/uri-list` on X11 and Wayland, `CF_HDROP`, file URLs), the Linux helper of D-203 keeping
+the list after the window closes. `AppLauncher` (FC-062's seam) gains `reveal(path)`: `SystemLauncher` runs the
+pure `host::reveal_command` of the platform (`explorer.exe /select,…`, `open -R`, the `ShowItems` D-Bus call through
+`dbus-send`) and opens the folder when it fails; `RecordingLauncher` records it. `Service::reveal_in_file_manager` and
+`open_folder_in_file_manager` take a spec (a member shows its outermost archive; a spec off the disk is `unsupported`).
+Architecture check 2 keeps `file_list` and the reveal commands in `host.rs`.
+
 ### 3.4 Comparison result models
 
 Each engine returns an immutable result that the view renders:

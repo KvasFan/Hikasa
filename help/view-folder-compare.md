@@ -74,6 +74,50 @@ Save, Save As, Duplicate Tab and workspaces, and a session saved from the view k
 session does not. An operation, a sync or a content compare of 10 seconds or more beeps at its end with
 `beep_after_long_operations`. [hikasa folder op](topic:folder-op) has every operation from the command line.
 
+## Context menus
+
+A right-click on a row opens the menu of that pane (or of the centre column); a row outside the selection becomes the
+selection first, on the side you clicked. The menu lists the commands that work on the selection: Open, Open With ▸,
+Compare To, Quick Compare; Copy and Move to Other Side (from that side), Copy and Move to Folder, Exchange; Delete,
+Delete Permanently, Rename, Touch, New Folder; Compare Contents, Ignored, Exclude, Synchronize ▸; Set as Base Folders,
+Set as Base on Other Side, Compare Parent Folders; Copy, Paste, Copy Filename, File Manager ▸; Open and Close Folder and
+Subfolders. Unavailable entries are greyed out. A right-click on the column header lists the columns and *Reset
+Columns* (the default columns, widths and order).
+
+**File Manager** ▸ *Open Folder in File Manager* opens the folder of the current row (a folder row itself) with your
+file manager; *Show in File Manager* shows the item selected in its folder (Explorer, Finder, or your desktop's file
+manager; the folder when it cannot select). An item inside an archive shows the archive file.
+
+## Drag and drop, the clipboard
+
+- Drop files or folders from your file manager on a base field or a pane's header: that side compares the first one
+  (two on the left field: both sides).
+- Drop them on a pane's tree: they go into the folder row under the pointer (or the side's base folder). A prompt asks
+  *Copy* or *Move*, with what to do when an item exists there (*Fail*, *Skip*, *Replace if newer*, *Replace*) and the
+  plan of either, line by line as `hikasa vfs cp … --dry-run` prints it; the plan you see is the plan that runs, then
+  the folder is read again.
+- Drag selected rows to the other pane: they are copied there (hold Shift when you let go: moved), through the
+  operation's preview; onto a folder row of the other pane: Copy to Folder (Move with Shift) into that folder.
+- Dropping from other programs works on X11, Windows and macOS, not on Wayland; rows cannot be dragged out of the
+  window. Use the clipboard instead: Edit ▸ **Copy** (Ctrl+C) puts the selected items as files your file manager
+  pastes (items inside archives are left out); **Paste** (Ctrl+V) brings a file manager's copied files (or text lines
+  that are paths) into the pane's current folder through the same prompt; **Select All** (Ctrl+A) selects every row
+  shown. Actions ▸ **Copy Filename** copies the selected paths as text, one a line.
+- In a text field (a base field, the Filters edit, Find Filename, a dialog) Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A edit the
+  text.
+
+## Rules and the Filters edit
+
+Session ▸ **Rules…** opens [Session Settings](topic:dialog-session-settings) on its Comparison tab, **Name Filters…** on
+its Name Filters tab: what is compared, the name filters, how names align and folders are read, the file formats and the
+Ignored items of this session; OK compares again.
+
+The **Filters** field in the toolbar (Session ▸ Filters focuses it) shows the session's name filter: `*.c;*.h` keeps
+those files, `-*.bak` hides files, `obj\` and `-obj\` keep and hide folders. Enter compares with what you typed (a
+mask that does not parse is explained under the field and nothing runs); Esc puts it back. Its ▾ button lists the
+presets and your recent filters, and *Add To Presets…*, which saves the filter under a name of your choice (the
+presets are on the Name Filters page of [Options](topic:dialog-options)).
+
 ## Folders and archives
 
 - A folder that was not compared yet (*Automatically scan subfolders* off) is read when you open it (after the

@@ -113,6 +113,19 @@ close, and Yes writes a new auto-saved file.
   scope is *this view only*; every other scope needs a change in a rule tab, and the two parent scopes a named or
   auto-saved folder parent. Removing an inherited map entry (`false` in a session or override) comes with the
   importance tab (W11).
+- *M2 W9c (D-249):* Folder Compare and Folder Sync sessions have their rule tabs after Specs: **Comparison** (size,
+  timestamps with the tolerance, *Ignore daylight saving difference*, *Ignore timezone differences* and the offset of a
+  side, name case, the content method, *Skip if quick tests indicate files are the same*, *Override quick test
+  results*), **Name Filters** (the four lists, *Clear*, the presets, *Add To Presets*, the toolbar text), **Handling**
+  (name case, the two alignments, the FC-012 scan and open keys, *Follow symbolic links*, *Ignore folder structure*,
+  archive handling), **Misc** (the enabled file formats, **bold** where the session has its own state, *Reset*; the
+  Ignored paths with *Remove*) and, for Folder Sync, **Sync** (preset, matrix, the FS-005 options, the overrides with
+  *Remove*); the Specs tab gains *Disable editing* per side (`read_only_left`, `read_only_right`). Each tab shows its P0
+  keys and writes only those, so every other key of the session stays as stored; core checks each tab's edits
+  (`Service::check_folder_rules`, `SyncMatrix::validate`): a refusal shows on its tab with core's message and OK is off.
+  OK goes through the scope selector (`session_apply_scope`) and the view runs again. Session ▸ **Rules…** (`Rules`)
+  opens the dialog on Comparison, **Name Filters…** (`NameFilter`) on Name Filters; in text views `Rules` waits for W11's
+  tabs.
 
 ## 3. Home view and session management
 
@@ -347,7 +360,9 @@ find_panel = false                       # the Find Filename panel (D-241)
 Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
 `[tweaks.metrics] max_mru_items` entries. *M2 W9a:* `left`/`right` take a folder view's base once it loads (a path
 edit's Accept, Browse, the base commands; D-239), `folders`/`files` every folder and file the browse dialog confirms
-(D-240, also its *recent* places), `find` the Find Filename texts (D-241); `name_filters` waits for W9c.
+(D-240, also its *recent* places), `find` the Find Filename texts (D-241). *M2 W9c (D-250):* `name_filters` takes
+each filter entered in the Filters edit (its canonical text), offered again by the field's drop-down. `[dialogs.drop]`
+keeps the overwrite choice of the drop prompt (`overwrite`, a word of `--overwrite`).
 
 *M2 W4a (D-108):* the GUI writes `[window]` (the geometry of the last window closed) and the `[layout.<view
 type>]` tables (the last closed view of a type wins) when a window closes and at exit; a view that opens takes
