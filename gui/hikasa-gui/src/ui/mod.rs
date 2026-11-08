@@ -211,6 +211,58 @@ pub struct HikasaApp {
     toolbar_cache: Option<(Arc<CommandTables>, Scope, Vec<ToolItem>)>,
     /// Per window: when the drag from another program began and when the pointer last moved (W9c review F4).
     os_drags: HashMap<WindowId, OsDrag>,
+    /// Per window: a paste came since the last Ctrl+V release (W9c review F3, [`clipboard_key`]).
+    paste_seen: HashMap<WindowId, bool>,
+}
+
+/// The catalogue key an egui clipboard event stands for (D-252, §1.9.25 W9c note 8): Copy is Ctrl+C, Cut Ctrl+X (with
+/// Shift held, the Shift+Del egui-winit makes a cut of on Windows: Delete Permanently; review F15), Paste and an
+/// image's paste Ctrl+V. egui-winit swallows a pressed Ctrl+V and sends a paste only when the clipboard holds text or an
+/// image, so with files alone nothing comes but the key's release: a Ctrl/Cmd+V (Windows: Shift+Insert) release with
+/// no paste since its press is Ctrl+V (review F3). `paste_seen` keeps, across frames, that a paste came since the last
+/// release.
+fn clipboard_key(
+    event: &egui::Event,
+    shift: bool,
+    paste_seen: &mut bool,
+) -> Option<(egui::Key, egui::Modifiers)> {
+    let ctrl_v = (egui::Key::V, egui::Modifiers::COMMAND);
+    match event {
+        egui::Event::Copy => Some((egui::Key::C, egui::Modifiers::COMMAND)),
+        egui::Event::Cut if shift => Some((egui::Key::Delete, egui::Modifiers::SHIFT)),
+        egui::Event::Cut => Some((egui::Key::X, egui::Modifiers::COMMAND)),
+        egui::Event::Paste(_) | egui::Event::PasteImage(_) => {
+            *paste_seen = true;
+            Some(ctrl_v)
+        }
+        egui::Event::Key {
+            key,
+            pressed,
+            modifiers,
+            ..
+        } if is_paste_key(*key, *modifiers) => {
+            if *pressed {
+                // The press reached the window itself: it is dispatched as it is.
+                *paste_seen = true;
+                None
+            } else if std::mem::take(paste_seen) {
+                None
+            } else {
+                Some(ctrl_v)
+            }
+        }
+        egui::Event::WindowFocused(false) => {
+            *paste_seen = false;
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Ctrl/Cmd+V, or Shift+Insert on Windows: the keys egui-winit makes a paste of.
+fn is_paste_key(key: egui::Key, modifiers: egui::Modifiers) -> bool {
+    (key == egui::Key::V && modifiers.command_only())
+        || (cfg!(windows) && key == egui::Key::Insert && modifiers.shift && !modifiers.command)
 }
 
 /// What a window knows of a drag from another program (W9c review F4): winit sends no pointer position while the
@@ -332,6 +384,7 @@ impl HikasaApp {
             builders: HashMap::new(),
             toolbar_cache: None,
             os_drags: HashMap::new(),
+            paste_seen: HashMap::new(),
         }
     }
 
@@ -660,26 +713,23 @@ impl HikasaApp {
             // The focused area (D-111): a Home path field takes the path-field shortcuts first; the folder tree
             // and the text panes take theirs while they draw.
             let area = self.focus_area(&ctx, window);
+            let paste_seen = self.paste_seen.entry(window).or_default();
             ctx.input_mut(|i| {
+                let shift = i.modifiers.shift;
                 i.events.retain(|event| {
                     // egui turns Ctrl+C, Ctrl+X and Ctrl+V into clipboard events: without a text field they are the
                     // catalogue's keys (Copy, Paste of a folder pane; the GUI reads its own clipboard, D-252).
-                    let clipboard_key = match event {
-                        egui::Event::Copy => Some(egui::Key::C),
-                        egui::Event::Cut => Some(egui::Key::X),
-                        egui::Event::Paste(_) => Some(egui::Key::V),
-                        _ => None,
-                    };
+                    let clipboard_key = clipboard_key(event, shift, paste_seen);
                     let converted;
                     let event = match clipboard_key {
                         Some(_) if text_focus || wants_keys => return true,
-                        Some(key) => {
+                        Some((key, modifiers)) => {
                             converted = egui::Event::Key {
                                 key,
                                 physical_key: None,
                                 pressed: true,
                                 repeat: false,
-                                modifiers: egui::Modifiers::COMMAND,
+                                modifiers,
                             };
                             &converted
                         }

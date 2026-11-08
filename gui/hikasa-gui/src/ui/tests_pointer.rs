@@ -1600,6 +1600,176 @@ fn w9c_a_drop_without_a_fresh_position_asks_for_the_pane() {
     assert!(d.show_move, "Shift shows the move first");
 }
 
+/// egui's clipboard events as the catalogue's keys (review F3, F15): Copy, Cut (with Shift: Shift+Del), Paste and an
+/// image's paste; a Ctrl+V release is Ctrl+V only when no paste came since its press.
+#[test]
+fn w9c_clipboard_events_and_a_lone_ctrl_v_release() {
+    use egui::{Key, Modifiers};
+    let release = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    let ctrl_v = Some((Key::V, Modifiers::COMMAND));
+    let mut seen = false;
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), ctrl_v);
+    assert_eq!(
+        super::clipboard_key(&Event::Paste("x".into()), false, &mut seen),
+        ctrl_v
+    );
+    assert!(seen);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    assert!(!seen);
+    let image = Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled(
+        [1, 1],
+        egui::Color32::BLACK,
+    )));
+    assert_eq!(super::clipboard_key(&image, false, &mut seen), ctrl_v);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    // A press that reached the window is dispatched as it is; its release is not a second paste.
+    let press = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    assert_eq!(super::clipboard_key(&press, false, &mut seen), None);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    // A release with Shift too, or without Ctrl, is no paste.
+    let other = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    assert_eq!(super::clipboard_key(&other, false, &mut seen), None);
+    // Losing the keyboard forgets a paste.
+    seen = true;
+    assert_eq!(
+        super::clipboard_key(&Event::WindowFocused(false), false, &mut seen),
+        None
+    );
+    assert!(!seen);
+    assert_eq!(
+        super::clipboard_key(&Event::Copy, false, &mut seen),
+        Some((Key::C, Modifiers::COMMAND))
+    );
+    assert_eq!(
+        super::clipboard_key(&Event::Cut, false, &mut seen),
+        Some((Key::X, Modifiers::COMMAND))
+    );
+    assert_eq!(
+        super::clipboard_key(&Event::Cut, true, &mut seen),
+        Some((Key::Delete, Modifiers::SHIFT))
+    );
+}
+
+/// Ctrl+V with only files on the clipboard: egui-winit sends nothing but the key's release, and that pastes (review
+/// F3); a paste event and its release paste once.
+#[test]
+fn w9c_ctrl_v_with_files_only_pastes_on_its_release() {
+    let (mut s, _view, fixed) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    fixed.set_files(vec![outside]);
+    s.click("only-left.txt");
+    let release = Event::Key {
+        key: egui::Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    s.input(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        release.clone(),
+    ]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(s.dialogs(), 1, "the drop's prompt");
+    let root = s.root();
+    s.app.core.dialog_button(root, ButtonRole::Cancel);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let reads = fixed.reads();
+    s.input(vec![Event::Paste("text".into())]);
+    s.input(vec![release]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.reads(), reads + 1, "one paste");
+}
+
+/// Shift+Del that egui-winit makes a cut of (Windows) is Delete Permanently (review F15).
+#[test]
+fn w9c_a_cut_with_shift_is_delete_permanently() {
+    let (mut s, _view, _) = w9c_screen();
+    s.click("only-left.txt");
+    s.input(vec![
+        Event::ModifiersChanged(egui::Modifiers::SHIFT),
+        Event::Cut,
+    ]);
+    s.input(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let asked = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::DeleteDialog>())
+        .map(|d| d.permanent());
+    assert_eq!(asked, Some(true), "Delete Permanently's dialog");
+}
+
+/// Shift+F10 and the Menu key open the focus pane's menu for the current row (review F16).
+#[test]
+fn w9c_the_keyboard_opens_the_pane_menu() {
+    for key in [egui::Key::F10, egui::Key::Menu] {
+        let (mut s, _view, _) = w9c_screen();
+        s.click("only-left.txt");
+        let shift = if key == egui::Key::F10 {
+            egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::NONE
+        };
+        let drawn_before: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+        assert!(
+            !drawn_before.iter().any(|t| t == "Copy Filename"),
+            "{key:?}"
+        );
+        s.input(vec![
+            Event::ModifiersChanged(shift),
+            Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: shift,
+            },
+        ]);
+        s.input(vec![
+            Event::Key {
+                key,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: shift,
+            },
+            Event::ModifiersChanged(egui::Modifiers::NONE),
+        ]);
+        let drawn: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+        for entry in ["Copy to Other Side", "Copy Filename", "Paste"] {
+            assert!(
+                drawn.iter().any(|t| t == entry),
+                "{key:?} {entry}: {drawn:?}"
+            );
+        }
+    }
+}
+
 /// A path dropped from the OS (the integration's file handle).
 #[derive(Debug)]
 struct TestDrop(std::path::PathBuf);

@@ -72,6 +72,8 @@ pub struct FolderUi {
     pub commit_rename: bool,
     /// The pane a context menu was opened on (M2 W9c, D-253).
     menu_area: Option<Area>,
+    /// Where a menu opened from the keyboard is anchored (its row; review F16); `None`: at the pointer.
+    menu_anchor: Option<egui::Pos2>,
     /// Rows are being dragged (D-251): egui's payload holds them.
     dragging_rows: bool,
     /// Dragged rows were released this frame: the drag, where, Shift (the window applies it).
@@ -672,8 +674,57 @@ pub fn show(
             (Hit::Centre, true) => Area::SyncPane(hikasa_core::Side::Center),
         });
     }
+    // The keyboard's context menu (review F16): Shift+F10 or the Menu key while the tree has the keyboard (or nothing
+    // has) opens the menu of the focus pane for the current row, anchored at that row.
+    let tree_keys = response.has_focus() || ui.ctx().memory(|mem| mem.focused().is_none());
+    let menu_key = tree_keys
+        && ui.input(|i| {
+            i.key_pressed(egui::Key::Menu) || (i.modifiers.shift && i.key_pressed(egui::Key::F10))
+        });
+    if menu_key {
+        let focus = m.selection().focus;
+        let side = if focus == hikasa_folder::select::SideSet::RIGHT {
+            Some(hikasa_core::Side::Right)
+        } else if focus == hikasa_folder::select::SideSet::LEFT {
+            Some(hikasa_core::Side::Left)
+        } else {
+            None
+        };
+        let index = m.selection().current.and_then(|node| {
+            window
+                .rows
+                .iter()
+                .find(|r| r.node == node.0)
+                .map(|r| r.index as usize)
+        });
+        let y = index.map_or(tree.top(), |index| {
+            let at = tree.top() + ((index as f64 - st.top) as f32 + 1.0) * rh;
+            at.clamp(tree.top(), tree.bottom())
+        });
+        let x = match side {
+            Some(hikasa_core::Side::Right) => side_x[1],
+            Some(_) => side_x[0],
+            None => side_x[0] + side_w,
+        } + 16.0;
+        st.menu_area = Some(match (side, m.is_sync()) {
+            (Some(side), false) => Area::FolderPane(side),
+            (None, false) => Area::FolderCentre,
+            (Some(side), true) => Area::SyncPane(side),
+            (None, true) => Area::SyncPane(hikasa_core::Side::Center),
+        });
+        st.menu_anchor = Some(pos2(x, y));
+        response.request_focus();
+        egui::Popup::open_id(ui.ctx(), egui::Popup::context_menu(&response).get_id());
+    }
+    if response.secondary_clicked() {
+        st.menu_anchor = None;
+    }
     if let Some(area) = st.menu_area {
-        let opened = response.context_menu(|ui| {
+        let popup = match st.menu_anchor {
+            Some(at) => egui::Popup::context_menu(&response).at_position(at),
+            None => egui::Popup::context_menu(&response),
+        };
+        let opened = popup.show(|ui| {
             let mut ctx = panes.ctx;
             m.ctx_into(&mut ctx);
             ctx.folder_pane = true;
@@ -683,6 +734,7 @@ pub fn show(
         });
         if opened.is_none() {
             st.menu_area = None;
+            st.menu_anchor = None;
         }
     }
     if (response.clicked() || response.double_clicked())
