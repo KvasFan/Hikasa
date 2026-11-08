@@ -426,6 +426,17 @@ pub struct ReadOnly {
     pub right: bool,
 }
 
+impl ReadOnly {
+    /// The panes the switches make read-only (`--ro` both, `--ro1` the left, `--ro2` the right): what
+    /// `LiveOptions::read_only` takes (§1.10.22). Additive (M2 W10a).
+    pub const fn sides(&self) -> hikasa_folder::ops::ReadOnlySides {
+        hikasa_folder::ops::ReadOnlySides {
+            left: self.all || self.left,
+            right: self.all || self.right,
+        }
+    }
+}
+
 /// Why a view closed (sent as its snake_case name inside `ViewResult::reason`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

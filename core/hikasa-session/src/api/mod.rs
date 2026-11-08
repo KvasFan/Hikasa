@@ -22,6 +22,7 @@
 //! | `workspace list/show/delete/rename` | [`Service::workspace_list`], [`Service::workspace_show`], [`Service::workspace_delete`], [`Service::workspace_rename`] |
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
 //! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_snapshot_partial`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`], [`Service::sessions_stamp`] |
+//! | live text comparisons (M2 W10a) | [`Service::text_compare_live`], [`ensure_editable`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -43,6 +44,7 @@ mod script_host;
 pub mod script_log;
 pub mod sessions;
 pub mod settings;
+pub mod text_live;
 pub mod vfs_ops;
 pub mod vocab;
 
@@ -62,7 +64,7 @@ use hikasa_vfs::{
 };
 use parking_lot::{Mutex, RwLock};
 
-pub use error::ApiError;
+pub use error::{ApiError, ensure_editable};
 pub use folder_ops::{
     ContentsDto, ContentsKind, ContentsRequest, EmptiedDto, ExpandWords, FileManagerTargets,
     FolderOpDto, FolderOpOutcome, FolderOpRequest, FolderSyncDto, FolderSyncOutcome,
@@ -101,6 +103,7 @@ pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
     SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
 };
+pub use text_live::{EditFacts, LiveOptions, LiveTextView, converts_without_save, edit_options};
 pub use vfs_ops::{
     TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
     parse_overwrite, parse_time,

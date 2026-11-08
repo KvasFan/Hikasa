@@ -4,7 +4,7 @@ use hikasa_core::{Classify, ErrorKind, ErrorReport, ExitCode, Side, SpecError, i
 use hikasa_folder::FolderError;
 use hikasa_formats::FormatError;
 use hikasa_report::{ReportError, ReportKind};
-use hikasa_text::TextError;
+use hikasa_text::{EditBlock, Editability, TextError};
 use hikasa_vfs::VfsError;
 
 use super::ApiOp;
@@ -39,6 +39,15 @@ pub enum ApiError {
     ReadOnlySide {
         /// The side.
         side: Side,
+    },
+    /// A call that writes a pane whose document may not be edited (§1.10.7, D-265; M2 W10a): the side (`None` for
+    /// the one pane of Text Edit) and its first block. Nothing is planned. Kind `permission_denied`, exit 100.
+    #[error("{} cannot be edited: {}", edit_side(*side), edit_block_reason(*block))]
+    EditBlocked {
+        /// The pane (`None`: a Text Edit view's document).
+        side: Option<Side>,
+        /// The first cause ([`hikasa_text::Editability::first`]).
+        block: EditBlock,
     },
     /// Spec syntax.
     #[error(transparent)]
@@ -118,6 +127,43 @@ pub enum ApiError {
     },
 }
 
+/// The subject of an [`ApiError::EditBlocked`] message.
+fn edit_side(side: Option<Side>) -> &'static str {
+    match side {
+        Some(Side::Left) => "the left document",
+        Some(Side::Right) => "the right document",
+        Some(Side::Center) => "the center document",
+        Some(Side::Output) => "the output document",
+        None => "the document",
+    }
+}
+
+/// Why a document may not be edited, in words (§1.10.7's causes).
+fn edit_block_reason(block: EditBlock) -> &'static str {
+    match block {
+        EditBlock::LoadFailed => "it could not be loaded",
+        EditBlock::Cancelled => "the comparison was cancelled",
+        EditBlock::ReadOnlyLocation => "its location is read-only",
+        EditBlock::ArchiveReadOnly => "it is in an archive that cannot be written",
+        EditBlock::Converted => "its format converts it without a way to save it back",
+        EditBlock::Truncated => "it was cut at the size limit",
+        EditBlock::ParentReadOnly => "the folder comparison it comes from has this side read-only",
+        EditBlock::SessionReadOnly => "the session has this side read-only",
+        EditBlock::CommandLine => "it was opened read-only (--ro)",
+        EditBlock::Binary => "it holds binary data",
+    }
+}
+
+/// The check every `Service` call that writes a pane makes before it plans anything (§1.10.7, D-184's rule; M2
+/// W10a for the save and copy-file calls of W10b and W10c): `Ok` for an editable pane, else
+/// [`ApiError::EditBlocked`] with the first block. `side` is `None` for a Text Edit view's document.
+pub fn ensure_editable(side: Option<Side>, editability: &Editability) -> Result<(), ApiError> {
+    match editability.first() {
+        None => Ok(()),
+        Some(block) => Err(ApiError::EditBlocked { side, block }),
+    }
+}
+
 impl Classify for ApiError {
     fn kind(&self) -> ErrorKind {
         ApiError::kind(self)
@@ -133,7 +179,9 @@ impl ApiError {
             ApiError::AlreadyExists(_) => ErrorKind::AlreadyExists,
             ApiError::Unsupported(_) => ErrorKind::Unsupported,
             ApiError::InvalidData(_) => ErrorKind::InvalidData,
-            ApiError::ReadOnlySide { .. } => ErrorKind::PermissionDenied,
+            ApiError::ReadOnlySide { .. } | ApiError::EditBlocked { .. } => {
+                ErrorKind::PermissionDenied
+            }
             ApiError::Spec(e) => e.kind(),
             ApiError::LoadFailed { source, .. } | ApiError::Vfs(source) => source.kind(),
             ApiError::Format(e) => e.kind(),
@@ -251,6 +299,7 @@ impl ApiError {
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
             | ApiError::ReadOnlySide { .. }
+            | ApiError::EditBlocked { .. }
             | ApiError::Spec(_)
             | ApiError::Vfs(_)
             | ApiError::Format(_)
@@ -283,6 +332,7 @@ impl ApiError {
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
             | ApiError::ReadOnlySide { .. }
+            | ApiError::EditBlocked { .. }
             | ApiError::Spec(_)
             | ApiError::Format(_)
             | ApiError::Text(_)
