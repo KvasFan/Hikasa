@@ -603,6 +603,16 @@ impl SessionSettingsDialog {
         self.checked = Some(self.signature());
     }
 
+    /// The caption of tab `k` in the tab row: its title, marked when it holds an error (review F11: OK is off for an
+    /// error on any tab, not only the one shown).
+    pub fn tab_caption(&self, k: usize) -> String {
+        match self.tabs.get(k) {
+            Some(tab) if tab.error().is_some() => format!("{} (!)", tab.title()),
+            Some(tab) => tab.title(),
+            None => String::new(),
+        }
+    }
+
     /// The first tab with an error.
     pub fn tab_error(&self) -> Option<(usize, &str)> {
         self.tabs
@@ -725,6 +735,12 @@ impl DialogModel for SessionSettingsDialog {
             button("OK", ButtonRole::Ok, self.tab_error().is_none(), true),
             button("Cancel", ButtonRole::Cancel, true, false),
         ]
+    }
+
+    fn button_tip(&self, role: ButtonRole) -> Option<String> {
+        let (k, error) = self.tab_error().filter(|_| role == ButtonRole::Ok)?;
+        let title = self.tabs.get(k).map(|t| t.title()).unwrap_or_default();
+        Some(format!("The {title} tab holds an error: {error}"))
     }
 
     fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep {

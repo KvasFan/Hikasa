@@ -504,6 +504,42 @@ fn a9_23_invalid_values_keep_ok_off_with_the_message_on_their_tab() {
     );
 }
 
+/// A tab other than the one shown holds an error: its title is marked and OK's tip names it (W9c review F11).
+#[test]
+fn an_error_on_another_tab_is_marked_and_named() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let _view = open(&world, &mut app);
+    settings(&world, &mut app, CommandId::Rules);
+    tab::<NameFiltersTab>(&mut app).fields.exclude_folders = "[a".into();
+    app.0.handle(crate::app::UiMsg::Tick);
+    world.settle(&mut app);
+    let d = dialog(&mut app);
+    assert_eq!(d.tabs[d.active].title(), COMPARISON, "another tab is shown");
+    let k = d
+        .tabs
+        .iter()
+        .position(|t| t.title() == NAME_FILTERS)
+        .expect("the tab");
+    assert_eq!(d.tab_caption(k), format!("{NAME_FILTERS} (!)"));
+    assert_eq!(d.tab_caption(d.active), COMPARISON);
+    let tip = d.button_tip(ButtonRole::Ok).expect("a reason");
+    assert!(tip.starts_with(&format!("The {NAME_FILTERS} tab")), "{tip}");
+    assert!(d.button_tip(ButtonRole::Cancel).is_none());
+    d.tabs[k]
+        .as_any_mut()
+        .downcast_mut::<NameFiltersTab>()
+        .expect("tab")
+        .fields
+        .exclude_folders = String::new();
+    app.0.handle(crate::app::UiMsg::Tick);
+    world.settle(&mut app);
+    let d = dialog(&mut app);
+    assert_eq!(d.tab_caption(k), NAME_FILTERS);
+    assert!(d.button_tip(ButtonRole::Ok).is_none());
+}
+
 #[test]
 fn a9_23_a_bad_matrix_cell_is_refused_and_the_sync_tab_edits_the_options() {
     let world = World::new();
@@ -805,4 +841,125 @@ fn a9_24_a_concurrent_edit_offers_overwrite_reload_cancel() {
         assert!(text.contains(&format!("name = \"{name}\"")), "{text}");
     }
     assert!(text.contains("future_key"), "unknown keys kept");
+}
+
+// ---- After the W9c review: F17's nits and the Filters edit's guards (F6: M18, M19, M20) ---------------------------
+
+/// The view's own filter entered again, spelled otherwise: nothing runs, nothing is recorded, the field shows the
+/// canonical text (note 13).
+#[test]
+fn the_view_s_own_filter_entered_again_runs_nothing() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let w = app.win();
+    folder_model(&mut app.0, view).filters_edit().text = "*.rs".into();
+    app.0.filters_enter(w, None);
+    world.settle(&mut app);
+    let model = std::sync::Arc::clone(
+        folder_model(&mut app.0, view)
+            .prepared()
+            .expect("p")
+            .model(),
+    );
+    let recent = app.0.filters_choices().1.len();
+    folder_model(&mut app.0, view).filters_edit().text = " *.rs ".into();
+    app.0.filters_enter(w, None);
+    world.settle(&mut app);
+    let m = folder_model(&mut app.0, view);
+    assert!(
+        std::sync::Arc::ptr_eq(m.prepared().expect("p").model(), &model),
+        "no re-run"
+    );
+    assert_eq!(m.filters_edit().text, "*.rs");
+    assert_eq!(app.0.filters_choices().1.len(), recent, "nothing recorded");
+}
+
+/// While the view is busy, Enter keeps the text as typed and records nothing (review F17); Add To Presets takes the
+/// canonical text and leaves the field as typed.
+#[test]
+fn a_busy_view_keeps_the_typed_filter_and_presets_leave_the_field() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    let w = app.win();
+    // A drop's prompt holds the view.
+    let source = world.write("work/src/x.txt", "x\n");
+    app.0.drop_paths(
+        w,
+        crate::dnd::DropTarget::PaneTree {
+            side: hikasa_core::Side::Right,
+            folder: None,
+        },
+        vec![source],
+    );
+    world.settle(&mut app);
+    assert!(!folder_model(&mut app.0, view).idle());
+    folder_model(&mut app.0, view).filters_edit().text = "-*.txt;*.rs".into();
+    app.0.filters_enter(w, None);
+    world.settle(&mut app);
+    assert_eq!(
+        folder_model(&mut app.0, view).filters_edit().text,
+        "-*.txt;*.rs"
+    );
+    assert!(app.0.filters_choices().1.is_empty(), "nothing recorded");
+    let w = app.win();
+    app.0.dialog_button(w, ButtonRole::Cancel);
+    world.settle(&mut app);
+    // Add To Presets: the canonical text is saved; the field keeps what was typed.
+    app.0.filters_add_to_presets(w);
+    assert_eq!(preset_dialog(&mut app).mask, "*.rs;-*.txt");
+    assert_eq!(
+        folder_model(&mut app.0, view).filters_edit().text,
+        "-*.txt;*.rs"
+    );
+}
+
+/// A new model keeps the text being typed, also when the view had no filter (review F17).
+#[test]
+fn a_new_model_keeps_the_text_being_typed() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    assert_eq!(folder_model(&mut app.0, view).filters_edit().committed, "");
+    folder_model(&mut app.0, view).filters_edit().text = "*.r".into();
+    // The comparison runs again in the view (Full Refresh): a new model.
+    let model = std::sync::Arc::clone(
+        folder_model(&mut app.0, view)
+            .prepared()
+            .expect("p")
+            .model(),
+    );
+    app.execute(CommandId::FullRefresh);
+    world.settle(&mut app);
+    let m = folder_model(&mut app.0, view);
+    assert!(
+        !std::sync::Arc::ptr_eq(m.prepared().expect("p").model(), &model),
+        "a new model"
+    );
+    assert_eq!(m.filters_edit().text, "*.r", "the typed text stays");
+    assert_eq!(m.filters_edit().committed, "");
+}
+
+/// A preset's name is taken trimmed: one that is a used name with spaces around it is refused.
+#[test]
+fn a_preset_name_is_trimmed() {
+    let world = World::with_files(&[("filters.toml", FILTERS_FILE)]);
+    fixture(&world);
+    let mut app = world.app(None);
+    let view = open(&world, &mut app);
+    folder_model(&mut app.0, view).filters_edit().text = "*.rs".into();
+    let w = app.win();
+    app.0.filters_add_to_presets(w);
+    preset_dialog(&mut app).name = "  Mine ".into();
+    app.0.dialog_button(w, ButtonRole::Ok);
+    assert!(preset_dialog(&mut app).error.is_some(), "a used name");
+    preset_dialog(&mut app).name = "  Rust ".into();
+    app.0.dialog_button(w, ButtonRole::Ok);
+    world.settle(&mut app);
+    let text = std::fs::read_to_string(world.path("config/filters.toml")).expect("filters.toml");
+    assert!(text.contains("name = \"Rust\""), "{text}");
 }

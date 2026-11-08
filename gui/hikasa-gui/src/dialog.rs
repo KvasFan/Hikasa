@@ -154,6 +154,10 @@ pub trait DialogModel: Any {
     fn buttons(&self) -> Vec<DialogButton>;
     /// A button was pressed.
     fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep;
+    /// Why a button is off, shown when the pointer rests on it (M2 W9c after review F11); `None`: no reason given.
+    fn button_tip(&self, _role: ButtonRole) -> Option<String> {
+        None
+    }
     /// A key: Esc → Cancel (or Close, or No), Enter → the default button.
     fn on_key(&mut self, key: &Shortcut) -> Option<ButtonRole> {
         default_key(&self.buttons(), key)

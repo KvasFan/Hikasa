@@ -248,13 +248,14 @@ pub fn show(
                 } else {
                     RichText::new(&b.label)
                 };
-                if ui
-                    .add_enabled(
-                        b.enabled,
-                        Button::new(text).min_size(vec2(80.0, BUTTON_HEIGHT)),
-                    )
-                    .clicked()
-                {
+                let mut button = ui.add_enabled(
+                    b.enabled,
+                    Button::new(text).min_size(vec2(80.0, BUTTON_HEIGHT)),
+                );
+                if let Some(tip) = dialog.button_tip(b.role) {
+                    button = button.on_disabled_hover_text(tip);
+                }
+                if button.clicked() {
                     out.push(DialogInput::Button(b.role));
                 }
             }

@@ -50,32 +50,28 @@ impl FiltersEdit {
         self.text != self.committed
     }
 
-    /// Enter: the text parsed by core into the four lists, or core's message (kept under the field; nothing runs).
-    /// The same filter as the view's runs nothing either (`Ok(None)`).
-    pub fn enter(&mut self) -> Result<Option<NameFilterLists>, String> {
-        match NameFilter::parse(&self.text, TEXT_OPTIONS) {
-            Ok(filter) => {
+    /// The text parsed by core, the field left as it is: its canonical text and the four lists, or core's message.
+    pub fn parsed(&self) -> Result<(String, NameFilterLists), String> {
+        NameFilter::parse(&self.text, TEXT_OPTIONS)
+            .map(|filter| (filter.to_filter_string(), filter.to_lists()))
+            .map_err(|e| e.to_string())
+    }
+
+    /// Enter, the text left as it is (review F17: the window shows the canonical text only once the view takes it): the
+    /// canonical text and the lists to apply (`None`: the view's own filter, nothing runs), or core's message, kept
+    /// under the field (nothing runs).
+    pub fn check(&mut self) -> Result<(String, Option<NameFilterLists>), String> {
+        match self.parsed() {
+            Ok((canonical, lists)) => {
                 self.error = None;
-                let canonical = filter.to_filter_string();
-                if canonical == self.committed {
-                    self.text = canonical;
-                    return Ok(None);
-                }
-                self.text = canonical;
-                Ok(Some(filter.to_lists()))
+                let lists = (canonical != self.committed).then_some(lists);
+                Ok((canonical, lists))
             }
-            Err(e) => {
-                let message = e.to_string();
+            Err(message) => {
                 self.error = Some(message.clone());
                 Err(message)
             }
         }
-    }
-
-    /// A preset or a recent filter chosen in the drop-down: it becomes the text and is entered.
-    pub fn choose(&mut self, mask: &str) -> Result<Option<NameFilterLists>, String> {
-        self.text = mask.to_owned();
-        self.enter()
     }
 
     /// Esc: the view's filter again.

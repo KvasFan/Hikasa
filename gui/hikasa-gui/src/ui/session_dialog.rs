@@ -178,11 +178,15 @@ fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab, folder: bool) {
 pub fn settings(ui: &mut Ui, dialog: &mut SessionSettingsDialog, pal: &Palette) {
     if dialog.tabs.len() > 1 {
         ui.horizontal(|ui| {
-            for (i, tab) in dialog.tabs.iter().enumerate() {
-                if ui
-                    .selectable_label(dialog.active == i, tab.title())
-                    .clicked()
-                {
+            for i in 0..dialog.tabs.len() {
+                // A tab that holds an error is marked: OK is off for any of them (review F11).
+                let caption = dialog.tab_caption(i);
+                let text = if dialog.tabs[i].error().is_some() {
+                    RichText::new(caption).color(pal.error)
+                } else {
+                    RichText::new(caption)
+                };
+                if ui.selectable_label(dialog.active == i, text).clicked() {
                     dialog.active = i;
                 }
             }

@@ -932,7 +932,8 @@ impl FolderViewModel {
     }
 
     /// The toolbar's Filters edit (D-250): the view's name filter as core's toolbar text, taken again from each new
-    /// model unless the field is being edited.
+    /// model unless the field is being edited (then only what it compares with changes; review F17: also when the view
+    /// had no filter).
     pub fn filters_edit(&mut self) -> &mut crate::filters_edit::FiltersEdit {
         if self.filters.1 != self.model_serial {
             let fresh = self
@@ -940,7 +941,7 @@ impl FolderViewModel {
                 .map(|p| crate::filters_edit::FiltersEdit::of(&p.rules().filters.names));
             if let Some(fresh) = fresh {
                 self.filters.1 = self.model_serial;
-                if !self.filters.0.edited() || self.filters.0.committed.is_empty() {
+                if !self.filters.0.edited() {
                     self.filters.0 = fresh;
                 } else {
                     self.filters.0.committed = fresh.committed;

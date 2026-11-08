@@ -512,22 +512,33 @@ impl AppCore {
         let Some(view) = self.active_folder(window) else {
             return;
         };
+        // Parsed first, the field untouched: a view that is busy keeps the text as typed and records nothing
+        // (review F17).
         let entered = match self.tab_mut(view).and_then(|t| t.model_mut()) {
             Some(ViewModel::Folder(m)) => {
                 let edit = m.filters_edit();
-                let result = match mask {
-                    Some(mask) => edit.choose(mask),
-                    None => edit.enter(),
-                };
-                result.map(|lists| (lists, edit.text.clone()))
+                if let Some(mask) = mask {
+                    edit.text = mask.to_owned();
+                }
+                edit.check()
             }
             _ => return,
         };
-        let Ok((Some(lists), text)) = entered else {
-            return;
+        let (text, lists) = match entered {
+            Ok((text, Some(lists))) => (text, lists),
+            Ok((text, None)) => {
+                if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    m.filters_edit().text = text;
+                }
+                return;
+            }
+            Err(_) => return,
         };
         if self.refuse_busy(view) {
             return;
+        }
+        if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+            m.filters_edit().text.clone_from(&text);
         }
         if !text.is_empty() {
             self.push_mru(hikasa_session::settings::state::MruList::NameFilters, text);
@@ -561,14 +572,12 @@ impl AppCore {
         let Some(view) = self.active_folder(window) else {
             return;
         };
+        // The field's filter in canonical form; the field itself is left as typed (review F17).
         let mask = match self.tab_mut(view).and_then(|t| t.model_mut()) {
-            Some(ViewModel::Folder(m)) => {
-                let edit = m.filters_edit();
-                match edit.enter() {
-                    Ok(_) if !edit.text.is_empty() => edit.text.clone(),
-                    _ => return,
-                }
-            }
+            Some(ViewModel::Folder(m)) => match m.filters_edit().check() {
+                Ok((canonical, _)) if !canonical.is_empty() => canonical,
+                _ => return,
+            },
             _ => return,
         };
         let dialog = crate::filters_edit::PresetNameDialog::new(mask, self.settings.clone());
