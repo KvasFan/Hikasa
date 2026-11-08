@@ -119,8 +119,9 @@ pub struct TableScorer<'c> {
 
 impl PairScorer for TableScorer<'_> {
     fn similarity(&self, l: u32, r: u32) -> u16 {
-        let a = self.case.left[l as usize].0 as usize;
-        let b = self.case.right[r as usize].0 as usize;
+        // Symbols beyond 8 (large alphabets) share the table by their low bits.
+        let a = self.case.left[l as usize].0 as usize % 8;
+        let b = self.case.right[r as usize].0 as usize % 8;
         self.case.table[a * 8 + b]
     }
 }
@@ -164,6 +165,42 @@ pub fn case_strategy() -> impl Strategy<Value = Case> {
                 proptest::collection::vec(any::<bool>(), alphabet as usize),
                 prop_oneof![Just(false), Just(true)],
                 proptest::collection::vec(0u8..=4, 400),
+                proptest::collection::vec(0u16..=1000, 64),
+            )
+        })
+        .prop_map(
+            |(alphabet, left, other, edits, edited, trivial_symbols, weighted, weights, table)| {
+                let right = if edited { mutate(&left, &edits) } else { other };
+                build_case(
+                    alphabet,
+                    &left,
+                    &right,
+                    trivial_symbols,
+                    weighted,
+                    &weights,
+                    table,
+                )
+            },
+        )
+}
+
+/// Cases over large alphabets (up to 400 symbols, lengths up to 400): mostly unique lines, so Standard's stage A,
+/// Patience and the window decide; the right side an edited copy (moves and duplicates included) or independent.
+pub fn large_case_strategy() -> impl Strategy<Value = Case> {
+    prop_oneof![9u32..=40, 41u32..=400]
+        .prop_flat_map(|alphabet| {
+            (
+                Just(alphabet),
+                symbols(alphabet, 400),
+                symbols(alphabet, 400),
+                proptest::collection::vec((any::<usize>(), 0u8..3, 0..alphabet), 0..40),
+                prop_oneof![1 => Just(false), 3 => Just(true)],
+                proptest::collection::vec(
+                    prop_oneof![9 => Just(false), 1 => Just(true)],
+                    alphabet as usize,
+                ),
+                any::<bool>(),
+                proptest::collection::vec(0u8..=4, 800),
                 proptest::collection::vec(0u16..=1000, 64),
             )
         })

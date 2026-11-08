@@ -352,6 +352,33 @@ proptest! {
         prop_assert_eq!(da, db);
     }
 
+    /// P-ALIGN-REN over true random permutations of large alphabets (W10a review): every symbol of up to 400 gets
+    /// a distinct new id from a shuffled order, spread over small, large and huge ids (the dense renumbering at
+    /// every engine's entry), so unique lines, the window and the chains are renamed as a whole.
+    #[test]
+    fn p_align_ren_random_permutations_of_large_alphabets(
+        (case, perm) in large_case_strategy().prop_flat_map(|case| {
+            let symbols: Vec<u32> = (0..case.alphabet).collect();
+            (Just(case), Just(symbols).prop_shuffle())
+        }),
+        opts in options_strategy(),
+        spread in prop_oneof![Just(1u32), Just(7u32), Just(1_000u32)],
+        offset in prop_oneof![Just(0u32), Just(2_000_000u32)],
+    ) {
+        let targets: Vec<u32> = perm.iter().map(|&p| p * spread + offset).collect();
+        let other = renamed(&case, &targets);
+        let scorer = case.scorer();
+        let never = CancelToken::never();
+        let (a, da) =
+            align_traced(&case.input(), &opts, &[], false, Some(&scorer), None, &never).unwrap();
+        let (b, db) =
+            align_traced(&other.input(), &opts, &[], false, Some(&scorer), None, &never).unwrap();
+        prop_assert_eq!(a.runs(), b.runs());
+        prop_assert_eq!(a.warnings(), b.warnings());
+        prop_assert_eq!(a.diff_warnings(), b.diff_warnings());
+        prop_assert_eq!(da, db);
+    }
+
     /// A10.8: `align_traced`'s runs equal `align`'s (and the fallback variants agree), for every engine.
     #[test]
     fn p_align_traced_gives_the_runs_of_align(
