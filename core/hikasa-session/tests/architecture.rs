@@ -1155,6 +1155,56 @@ fn script_violations(rel: &str, raw: &str) -> Vec<String> {
     violations
 }
 
+/// The text engine rules of M2 W10 (D-291, §1.10.25), part of check 2: `core/hikasa-text/src` and
+/// `core/hikasa-diff/src` name no `std::fs`, `std::process`, `std::net` (as a path or an import) and read no clock
+/// (`Instant::now`, `SystemTime::now`): typing time comes from the adapter, the save program runs through the injected
+/// `ProcessRunner`, files are read through `&dyn Vfs`.
+fn text_engine_violations(rel: &str, raw: &str) -> Vec<String> {
+    if !(rel.starts_with("core/hikasa-text/src/") || rel.starts_with("core/hikasa-diff/src/")) {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let compact = compact(&code);
+    let file_imports = imports(&code);
+    let mut violations = Vec::new();
+    for (token, head) in [
+        ("std::fs", "fs"),
+        ("std::process", "process"),
+        ("std::net", "net"),
+    ] {
+        let imported = file_imports
+            .iter()
+            .any(|(_, (path, _))| path.len() >= 2 && path[0] == "std" && path[1] == head);
+        if compact.contains(token) || imported {
+            violations.push(format!(
+                "{rel}: names `{token}` (the text engine is pure: files through `&dyn Vfs`, programs through \
+                 `ProcessRunner`, D-291)"
+            ));
+        }
+    }
+    for token in ["Instant::now", "SystemTime::now"] {
+        if compact.contains(token) {
+            violations.push(format!(
+                "{rel}: reads the clock (`{token}`; typing time comes from the adapter, D-291)"
+            ));
+        }
+    }
+    violations
+}
+
+fn check_text_engine_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["core/hikasa-text/src", "core/hikasa-diff/src"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(text_engine_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
 fn check_script_rules(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for dir in ["core/hikasa-script/src", "core/hikasa-session/src/api"] {
@@ -2912,6 +2962,95 @@ fn planner_violations(rel: &str, raw: &str) -> Vec<String> {
     violations
 }
 
+/// The engine entry points of M2 W10 no adapter names (D-291, §1.10.25): the aligner and the comparisons, the save
+/// and its plans, the executor, the pattern compiler, the templates and the encoder. Adapters reach them through the
+/// Service or the pure entry points (`EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform`,
+/// `commands`).
+const ADAPTER_BANNED_ENGINE_CALLS: &[&str] = &[
+    "hikasa_diff::align",
+    "align_traced",
+    "hikasa_text::compare(",
+    "compare_with_limits",
+    "compare_live",
+    "save_content",
+    "plan_save",
+    "execute_save",
+    "execute_with",
+    "Pattern::compile",
+    "template::",
+    "hikasa_formats::encode",
+];
+
+/// The imports that bring an engine entry point in under its own name (`use hikasa_text::compare;` then `compare(…)`).
+const ADAPTER_BANNED_ENGINE_IMPORTS: &[&[&str]] = &[
+    &["hikasa_diff", "align"],
+    &["hikasa_diff", "align_traced"],
+    &["hikasa_text", "compare"],
+    &["hikasa_text", "compare_with_limits"],
+    &["hikasa_text", "compare_live"],
+    &["hikasa_formats", "encode"],
+];
+
+/// The rope mutations the GUI never makes (§1.10.25: the GUI computes no text edit; `EditableDocument` does).
+const GUI_BANNED_ROPE: &[&str] = &["ropey", "Rope::insert", "Rope::remove"];
+
+/// Check 7 (M2 W10, D-291): an adapter file (anything under `cli/` or `gui/`) that names an engine entry point of
+/// [`ADAPTER_BANNED_ENGINE_CALLS`] or imports one; a GUI file that names a rope mutation.
+fn engine_call_violations(rel: &str, raw: &str) -> Vec<String> {
+    let gui = rel.starts_with("gui/");
+    if !(gui || rel.starts_with("cli/")) {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    let mut lines = std::collections::BTreeSet::new();
+    for token in ADAPTER_BANNED_ENGINE_CALLS {
+        for at in find_token(&code, token) {
+            lines.insert(line_of(&code, at));
+            violations.push(format!(
+                "{rel}:{}: `{token}` in an adapter (engines are reached through the Service, D-291)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    for (at, (path, _)) in imports(&code) {
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        // One violation per line: `use hikasa_diff::align;` is already the token's.
+        if ADAPTER_BANNED_ENGINE_IMPORTS.contains(&path.as_slice())
+            && lines.insert(line_of(&code, at))
+        {
+            violations.push(format!(
+                "{rel}:{}: imports `{}` (engines are reached through the Service, D-291)",
+                line_of(&code, at),
+                path.join("::")
+            ));
+        }
+    }
+    if gui {
+        for token in GUI_BANNED_ROPE {
+            for at in find_token(&code, token) {
+                violations.push(format!(
+                    "{rel}:{}: `{token}` in the GUI (text edits are EditableDocument's, D-291)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn check_engine_calls(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui"] {
+        for file in rust_files(&root.join(top)) {
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(engine_call_violations(&relative(root, &file), &raw));
+            }
+        }
+    }
+    violations
+}
+
 fn check_adapters(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for file in gui_model_files(root) {
@@ -2967,8 +3106,9 @@ fn check_2_no_banned_tokens_in_core() {
     violations.extend(check_inclusions(&root));
     violations.extend(check_report_rules(&root));
     violations.extend(check_script_rules(&root));
+    violations.extend(check_text_engine_rules(&root));
     assert_none(
-        "2 (banned tokens, adapter-only functions, file inclusion, report writes)",
+        "2 (banned tokens, adapter-only functions, file inclusion, report writes, text engine)",
         violations,
     );
 }
@@ -3013,6 +3153,101 @@ fn check_7_adapters_parse_no_vocabulary() {
         "7 (hikasa_script in the adapters)",
         check_script_adapters(&workspace_root()),
     );
+    assert_none(
+        "7 (engine entry points and rope edits in the adapters)",
+        check_engine_calls(&workspace_root()),
+    );
+}
+
+/// A10.28 (D-291): each text engine rule of check 2 and each engine rule of check 7 finds a planted violation; the
+/// rules cover both engine crates and every adapter file; names in comments, longer identifiers and the Service's
+/// own calls are fine.
+#[test]
+fn check_2_and_7_text_engine_rules_find_planted_violations() {
+    for rel in [
+        "core/hikasa-text/src/edit/apply.rs",
+        "core/hikasa-diff/src/anchors.rs",
+    ] {
+        for planted in [
+            "use std::fs;\nfn f() {}\n",
+            "use std::{fs::File, io};\nfn f() {}\n",
+            "fn f() { let _ = std::fs::read(\"x\"); }\n",
+            "fn f() { let _ = std::process::Command::new(\"x\"); }\n",
+            "use std::process as p;\nfn f() {}\n",
+            "fn f() { let _ = std::net::Ipv4Addr::LOCALHOST; }\n",
+            "fn f() { let _ = std::time::Instant::now(); }\n",
+            "fn f() { let _ = std::time::SystemTime :: now(); }\n",
+        ] {
+            assert_eq!(
+                text_engine_violations(rel, planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        let fine = "//! Never std::fs here.\nfn f(v: &dyn Vfs) { let _ = \"std::process\"; }\n";
+        assert!(text_engine_violations(rel, fine).is_empty(), "{rel}");
+    }
+    // Other crates are not this rule's (check 2's banned tokens and check 3 cover them).
+    assert!(
+        text_engine_violations("core/hikasa-vfs/src/local/mod.rs", "use std::fs;\n").is_empty()
+    );
+    let root = workspace_root();
+    assert!(rust_files(&root.join("core/hikasa-text/src")).len() > 10);
+    assert!(rust_files(&root.join("core/hikasa-diff/src")).len() > 5);
+
+    for token in ADAPTER_BANNED_ENGINE_CALLS {
+        let call = if token.ends_with('(') || token.ends_with("::") {
+            format!("{token}x()")
+        } else {
+            format!("{token}()")
+        };
+        let planted = format!("fn f() {{ let _ = {call}; }}\n");
+        for rel in [
+            "cli/hikasa-cli/src/cmd/text.rs",
+            "gui/hikasa-gui/src/text_view.rs",
+            "cli/hikasa-cli/tests/cli_text.rs",
+        ] {
+            assert_eq!(
+                engine_call_violations(rel, &planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        assert!(
+            engine_call_violations("core/hikasa-session/src/api/compare.rs", &planted).is_empty()
+        );
+    }
+    for import in [
+        "use hikasa_text::compare;\nfn f() { compare(); }\n",
+        "use hikasa_diff::align;\n",
+        "use hikasa_text::{compare as run, Row};\n",
+        "use hikasa_diff::{align, Anchor};\n",
+        "use hikasa_formats::encode;\n",
+    ] {
+        assert_eq!(
+            engine_call_violations("gui/hikasa-gui/src/app.rs", import).len(),
+            1,
+            "{import}"
+        );
+    }
+    for planted in [
+        "use ropey::Rope;\n",
+        "fn f(r: &mut Rope) { Rope::insert(r, 0, \"x\"); }\n",
+        "fn f(r: &mut Rope) { Rope::remove(r, 0..1); }\n",
+    ] {
+        assert_eq!(
+            engine_call_violations("gui/hikasa-gui/src/text_view.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+        assert!(engine_call_violations("cli/hikasa-cli/src/cmd/text.rs", planted).is_empty());
+    }
+    let fine = "//! Never calls compare_live or plan_save.\n\
+                fn f(s: &Service) { s.text_compare_live(); s.text_compare(); let _ = recompare_with_limits(); }\n\
+                use hikasa_text::{CompareInput, EditableDocument, LiveComparison};\n\
+                const HELP: &str = \"template::x\";\n";
+    let v = engine_call_violations("gui/hikasa-gui/src/text_view.rs", fine);
+    assert!(v.is_empty(), "{v:?}");
 }
 
 /// A8.22 (D-230): each script rule of check 2 and check 7 finds a planted violation.
