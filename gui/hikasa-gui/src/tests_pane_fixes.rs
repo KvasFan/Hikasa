@@ -715,7 +715,7 @@ fn f6_a_move_refreshes_its_sources_and_failures_are_logged() {
             side: Side::Right,
             folder: None,
         },
-        vec![world.path("work/l/b.txt")],
+        vec![world.path("work/l/d/c.txt")],
         true,
     );
     world.settle(&mut app);
@@ -724,15 +724,16 @@ fn f6_a_move_refreshes_its_sources_and_failures_are_logged() {
     crate::tests_folder_ops::poll_until(&world, &mut app.0, |app| {
         crate::tests::folder_model(app, view).idle()
     });
-    assert!(!exists(&world, "work/l/b.txt") && exists(&world, "work/r/b.txt"));
-    let b = node_of(&mut app.0, view, "b.txt").expect("b.txt");
+    assert!(!exists(&world, "work/l/d/c.txt") && exists(&world, "work/r/c.txt"));
+    // The source's folder `d` (not the folder it went into) was read again: `d/c.txt` is on the right only now.
+    let b = node_of(&mut app.0, view, "d/c.txt").expect("d/c.txt");
     let sides = {
         let m = folder_model(&mut app.0, view);
         let model = Arc::clone(m.prepared().expect("p").model());
         let read = model.read();
         crate::folder_view::present_sides(&read, b)
     };
-    assert_eq!(sides, SideSet::RIGHT, "the left folder was refreshed too");
+    assert_eq!(sides, SideSet::RIGHT, "the source folder was refreshed too");
     // A copy over an existing item with Fail: the failure is logged.
     prompt_on_the_right(&world, &mut app, world.path("work/l/a.txt"));
     press(&world, &mut app, ButtonRole::Other(1));
