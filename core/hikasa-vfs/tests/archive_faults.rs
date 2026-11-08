@@ -377,19 +377,28 @@ fn path_of(selector: u8) -> String {
 
 /// The outcome of a step: what kind of failure a back-end gave, so two back-ends must agree on that too. A path through
 /// a link is the one difference: a disk follows the link and finds nothing, an archive never follows one (rule 5).
+/// So when the target's parent is a link, the model's planner finds the target absent, plans the whole tree and
+/// fails at its first step (the root failed, every item below it not run), while the archive's planner already
+/// fails the root at planning (`NotADirectory`, one item): a failed root with nothing below it run is one outcome.
 fn outcome(report: &OpReport) -> Vec<(String, Option<ErrorKind>)> {
     let kind = |kind| match kind {
         ErrorKind::NotADirectory => ErrorKind::NotFound,
         other => other,
     };
-    report
+    let mut out: Vec<(String, Option<ErrorKind>)> = report
         .results
         .iter()
         .map(|r| {
             let status = format!("{:?}", r.status);
             (status, r.error.as_ref().map(|e| kind(e.kind)))
         })
-        .collect()
+        .collect();
+    if out.first().is_some_and(|(s, _)| s == "Failed")
+        && out[1..].iter().all(|(s, _)| s == "NotRun")
+    {
+        out.truncate(1);
+    }
+    out
 }
 
 fn run(step: &Step, vfs: &dyn Vfs, at: &dyn Fn(&str) -> Spec) -> Vec<(String, Option<ErrorKind>)> {
@@ -566,6 +575,23 @@ proptest! {
         chained in any::<bool>(),
     ) {
         matches_the_model(&steps, format, batched, chained)?;
+    }
+}
+
+/// A folder copied to a path below a link member: the archive refuses it at planning (`NotADirectory`, rule 5), the
+/// model when it runs (the link is dangling): one outcome (found by 4,000 cases of P-ARCH-2).
+#[test]
+fn a_copy_below_a_link_member_fails_like_the_model() {
+    for format in WRITABLE {
+        let steps = [
+            Step::Rename(245, 18),
+            Step::RemoveTree(163),
+            Step::Link(163),
+            Step::Copy(82, 32),
+        ];
+        for chained in [false, true] {
+            matches_the_model(&steps, format, false, chained).unwrap();
+        }
     }
 }
 
