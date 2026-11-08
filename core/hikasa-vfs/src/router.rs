@@ -290,6 +290,15 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        match self.route(spec) {
+            Route::Local => self.local.writable(spec),
+            Route::Archive(archive) => archive.writable(spec),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => Ok(None),
+            Route::Unsupported => Err(unsupported(spec)),
+        }
+    }
+
     fn settable_dos_attrs(&self, at: &Spec) -> crate::entry::DosAttrs {
         match self.route(at) {
             Route::Local => self.local.settable_dos_attrs(at),

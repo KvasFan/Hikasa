@@ -1246,6 +1246,25 @@ impl Vfs for ArchiveVfs {
         Ok(caps)
     }
 
+    /// A member is writable when every level of its chain is a writable format (zip and the tar family, D-63)
+    /// and the outermost archive file is; else `Some(false)`.
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        let Spec::ArchiveMember { archive, .. } = spec else {
+            return self.core.base.writable(spec);
+        };
+        if !batch::chain_writable(archive, &self.core.config()) {
+            return Ok(Some(false));
+        }
+        let mut outer: &Spec = archive;
+        while let Spec::ArchiveMember { archive, .. } = outer {
+            outer = archive;
+        }
+        Ok(match self.core.base.writable(outer)? {
+            Some(false) => Some(false),
+            other => other,
+        })
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         let Spec::ArchiveMember { archive, member } = spec else {
             return self.core.base.stat(spec, follow);

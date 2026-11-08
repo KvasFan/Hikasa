@@ -220,3 +220,15 @@ pub(super) fn is_folder_link(_meta: &Metadata) -> bool {
 pub(super) fn symlink(target: &OsStr, path: &Path, _target_is_dir: bool) -> io::Result<()> {
     std::os::unix::fs::symlink(target, path)
 }
+
+/// Write access for this process (`access(W_OK)`): `Some(false)` on EACCES, EPERM and EROFS, `None` on any other
+/// error (the save decides).
+pub(super) fn writable(path: &Path) -> Option<bool> {
+    use rustix::fs::{Access, access};
+    use rustix::io::Errno;
+    match access(path, Access::WRITE_OK) {
+        Ok(()) => Some(true),
+        Err(e) if e == Errno::ACCESS || e == Errno::PERM || e == Errno::ROFS => Some(false),
+        Err(_) => None,
+    }
+}

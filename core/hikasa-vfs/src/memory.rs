@@ -1195,6 +1195,21 @@ impl Vfs for MemoryVfs {
         Ok(self.shared.read().caps)
     }
 
+    /// The read-only flags of the entry: a Unix mode without the owner's write bit, the DOS `R` bit, or a tree
+    /// without the `WRITE` capability; an entry without attributes is writable.
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        if !self.shared.read().caps.contains(Capabilities::WRITE) {
+            return Ok(Some(false));
+        }
+        let entry = self.stat(spec, FollowLinks::Yes)?;
+        let read_only = match &entry.attrs {
+            crate::entry::Attrs::Unix { meta } => meta.mode & 0o200 == 0,
+            crate::entry::Attrs::Dos { attrs } => attrs.contains(crate::entry::DosAttrs::READONLY),
+            crate::entry::Attrs::None => false,
+        };
+        Ok(Some(!read_only))
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         let path = local(spec)?;
         let spec_text = spec.canonical();

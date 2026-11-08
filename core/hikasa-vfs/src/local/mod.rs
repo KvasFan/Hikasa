@@ -48,6 +48,9 @@ mod platform {
     pub(super) fn file_id(_meta: &Metadata) -> Option<FileId> {
         None
     }
+    pub(super) fn writable(_path: &Path) -> Option<bool> {
+        None
+    }
     pub(super) fn capabilities() -> crate::caps::Capabilities {
         use crate::caps::Capabilities as C;
         C::READ
@@ -448,6 +451,12 @@ impl Vfs for LocalVfs {
             .map_err(|_| VfsError::InvalidName {
                 name: name.as_str().to_owned(),
             })
+    }
+
+    /// `access(W_OK)` through `rustix` on Unix; the DOS `R` attribute on Windows (§1.10.7).
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        let path = local(spec)?;
+        Ok(platform::writable(path.as_path()))
     }
 
     /// The path when `spec` is a local regular file (symlinks followed).

@@ -239,3 +239,12 @@ pub(super) fn symlink(target: &OsStr, path: &Path, target_is_dir: bool) -> io::R
         std::os::windows::fs::symlink_file(target, path)
     }
 }
+
+/// Write access as Windows tells it without Win32 calls (D-99: no `unsafe`): the DOS `R` attribute of the file
+/// makes it read-only; a read-only volume is not visible to `std` and is left to the save (`None` when the
+/// metadata cannot be read).
+pub(super) fn writable(path: &Path) -> Option<bool> {
+    fs::metadata(path)
+        .ok()
+        .map(|meta| !meta.permissions().readonly())
+}

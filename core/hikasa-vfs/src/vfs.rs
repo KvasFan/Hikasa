@@ -296,6 +296,13 @@ pub trait Vfs: Send + Sync {
         spec: &Spec,
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError>;
+    /// Whether `spec` can be written in place (W10, §1.10.7): `Some(false)` for a read-only file system, a
+    /// file without write access for this process, a read-only archive chain; `None` when the back-end cannot
+    /// tell (treated as writable and left to the save). Additive (W10a); the default cannot tell.
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        let _ = spec;
+        Ok(None)
+    }
     /// The spec of child `name` inside folder `dir`.
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError>;
     /// A local path for `spec` when it is a local regular file (enables mmap). The default body names its
