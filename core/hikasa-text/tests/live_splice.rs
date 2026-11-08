@@ -229,3 +229,129 @@ fn a_stale_result_is_never_shown() {
     assert_eq!(common::canonical_json(lc.current()), shown);
     assert_eq!(lc.current().document(Side::Left).line(LineIdx(0)), "first");
 }
+
+/// A recompare keeps the base's `bytes_identical` only while no edit came since (n20): identical files compared
+/// with `bytes_identical`, an edit and its recompare show a difference (not `BinarySame`), and the edit undone
+/// is rules-same but not byte-identical any more (nothing re-reads the bytes).
+#[test]
+fn bytes_identical_holds_only_until_an_edit() {
+    use hikasa_core::ContentResult;
+    use hikasa_text::{CompareInput, RegexLimits, compare_live};
+    let text: String = (0..300).map(|k| format!("line {k}\n")).collect();
+    let opts = edit_options(Gen::Clustered);
+    let (mut l, r) = (editable(&text, &opts), editable(&text, &opts));
+    let setup = setup(Gen::Clustered);
+    let mut lc = compare_live(
+        CompareInput {
+            left: l.snapshot(),
+            right: r.snapshot(),
+            format: setup.format.clone(),
+            rules: setup.rules.clone(),
+            bytes_identical: true,
+            force_tokenize: false,
+            anchors: Vec::new(),
+        },
+        &RegexLimits::default(),
+        None,
+        &Ctl::detached(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(lc.current().verdict(false), ContentResult::BinarySame);
+    // A recompare without an edit keeps it.
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    lc.install(done, Pair::new(&l, &r));
+    assert!(lc.current().bytes_identical());
+    let mut rng = XorShift(7);
+    let out = loop {
+        if let Some(out) = random_edit(&mut rng, Gen::Clustered, &mut l)
+            && out.deltas.iter().any(|d| !d.is_empty())
+        {
+            break out;
+        }
+    };
+    lc.note_edit(Side::Left, &l, &out);
+    assert!(!lc.current().bytes_identical());
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    lc.install(done, Pair::new(&l, &r));
+    assert!(!lc.current().bytes_identical());
+    assert_ne!(lc.current().verdict(false), ContentResult::BinarySame);
+    while let Some(out) = l.undo() {
+        lc.note_edit(Side::Left, &l, &out);
+    }
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    lc.install(done, Pair::new(&l, &r));
+    assert!(!lc.current().bytes_identical());
+    assert_eq!(lc.current().verdict(false), ContentResult::RulesSame);
+}
+
+/// Anchors move like line boundaries (§1.10.8): a boundary at the first line after a change moves with it, one
+/// inside a removed run goes to the change's end, and an anchor that loses every line is dropped with a warning.
+#[test]
+fn anchors_move_with_their_lines() {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    use hikasa_text::{Anchor, AnchorSide};
+    let text: String = (0..40).map(|k| format!("line {k}\n")).collect();
+    let opts = edit_options(Gen::Clustered);
+    let (mut l, r) = (editable(&text, &opts), editable(&text, &opts));
+    let mut setup = setup(Gen::Clustered);
+    setup.anchors = vec![
+        Anchor::Pair {
+            left: 10..12,
+            right: 10..12,
+        },
+        Anchor::Isolate {
+            side: AnchorSide::Left,
+            lines: 20..22,
+        },
+        Anchor::Isolate {
+            side: AnchorSide::Left,
+            lines: 30..31,
+        },
+    ];
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    let mut edit = |l: &mut hikasa_text::edit::EditableDocument, a: u32, b: u32, t: &str| {
+        let out = l
+            .apply(
+                &EditRequest::Replace {
+                    range: TextPos::new(a, 0)..TextPos::new(b, 0),
+                    text: t.into(),
+                    keep_eols: false,
+                },
+                GroupHint::None,
+            )
+            .unwrap();
+        lc.note_edit(Side::Left, l, &out);
+    };
+    // Line 9 becomes two lines: the pair starting right after it moves by one.
+    edit(&mut l, 9, 10, "a\nb\n");
+    // Lines 22..25 (the isolated range's second line and two after it) removed: its end moves to the change.
+    edit(&mut l, 22, 25, "");
+    // Line 28 (old 30) removed: that anchor is dropped.
+    edit(&mut l, 28, 29, "");
+    assert_eq!(
+        lc.anchors(),
+        [
+            Anchor::Pair {
+                left: 11..13,
+                right: 10..12
+            },
+            Anchor::Isolate {
+                side: AnchorSide::Left,
+                lines: 21..22
+            },
+        ]
+    );
+    let warnings = lc.take_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].code, hikasa_core::WarningCode::AnchorDropped);
+}
