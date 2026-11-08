@@ -276,6 +276,50 @@ fn fresh(text: &str) -> EditableDocument {
     )
 }
 
+/// §1.10.4: a step never merges across the save point. Typing on after a save (within the second, same word,
+/// caret in place) starts a new step, so one undo goes back exactly to the saved text (`is_modified` false), for
+/// typing and for group ids alike.
+#[test]
+fn typing_never_merges_across_the_save_point() {
+    let mut doc = fresh("\n");
+    let a = typed(&mut doc, TextPos::new(0, 0), "a", 0);
+    let b = typed(&mut doc, TextPos::new(0, 1), "b", 10);
+    assert_eq!(a, b);
+    doc.saved();
+    assert!(!doc.is_modified());
+    let c = typed(&mut doc, TextPos::new(0, 2), "c", 20);
+    assert_ne!(b, c, "a step merged across the save point");
+    let d = typed(&mut doc, TextPos::new(0, 3), "d", 30);
+    assert_eq!(c, d);
+    assert!(doc.is_modified());
+    doc.undo();
+    assert_eq!(doc.line(LineIdx(0)), "ab");
+    assert!(!doc.is_modified());
+    doc.redo();
+    assert_eq!(doc.line(LineIdx(0)), "abcd");
+    // The same with a group id spanning the save.
+    let mut doc = fresh("x\n");
+    let g = |doc: &mut EditableDocument| {
+        doc.apply(
+            &EditRequest::Replace {
+                range: TextPos::ZERO..TextPos::ZERO,
+                text: "y".into(),
+                keep_eols: false,
+            },
+            GroupHint::Group(3),
+        )
+        .unwrap()
+        .step
+    };
+    let s1 = g(&mut doc);
+    doc.saved();
+    let s2 = g(&mut doc);
+    assert_ne!(s1, s2);
+    doc.undo();
+    assert_eq!(doc.line(LineIdx(0)), "yx");
+    assert!(!doc.is_modified());
+}
+
 /// The coalescing table of §1.10.4 (explicit `at_ms`).
 #[test]
 fn typing_coalesces_within_a_second_and_a_word() {
