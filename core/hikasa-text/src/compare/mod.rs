@@ -431,6 +431,17 @@ impl Prepared {
             )
         };
         let scorer_exhausted = scorer.exhausted();
+        // A scorer that ran out decided by the order of the work: the recorded run counts as exhausted
+        // (§1.10.11 condition 4).
+        let trace = trace.map(|mut d| {
+            if scorer_exhausted {
+                d.work.exhausted = true;
+                for s in &mut d.segments {
+                    s.work.exhausted = true;
+                }
+            }
+            d
+        });
         drop(scorer);
         drop(left_weights);
         drop(right_weights);

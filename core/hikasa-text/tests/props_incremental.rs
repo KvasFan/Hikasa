@@ -58,12 +58,16 @@ fn setup(rng: &mut XorShift, kind: Gen, lines: (u32, u32)) -> Setup {
             }
         }
     }
+    let c = kind == Gen::Source || rng.below(4) == 0;
+    if c && rng.below(2) == 0 {
+        // Comments unimportant: their keys depend on the tokenizer's state (an opened block comment).
+        rules
+            .importance
+            .elements
+            .insert("Comment".to_owned(), false);
+    }
     Setup {
-        format: common::format(if kind == Gen::Source || rng.below(4) == 0 {
-            "c-cpp"
-        } else {
-            "ee"
-        }),
+        format: common::format(if c { "c-cpp" } else { "ee" }),
         rules,
         force_tokenize: rng.below(4) == 0,
         anchors,
@@ -109,9 +113,13 @@ fn run(seed: u64, big: bool) -> PathCounters {
         );
         let want = fresh(&setup, Pair::new(&left, &right), lc.anchors());
         let got = lc.current();
+        let (g, w) = (common::canonical_json(got), common::canonical_json(&want));
+        if g != w {
+            let first = g.lines().zip(w.lines()).position(|(a, b)| a != b);
+            eprintln!("seed {seed}: first difference at line {first:?}; path {counters:?}");
+        }
         assert_eq!(
-            common::canonical_json(got),
-            common::canonical_json(&want),
+            g, w,
             "seed {seed}: the installed comparison differs from a fresh compare"
         );
         assert_eq!(got.anchors(), want.anchors(), "seed {seed}");

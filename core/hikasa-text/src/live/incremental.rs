@@ -277,33 +277,20 @@ fn attempt(
     Ok(Some((cmp, keys)))
 }
 
-/// The alignment-dirty part of each re-keyed span: the span without its leading and trailing lines whose key
-/// (and weight, when weights count) equal the old ones. Fully equal spans are dropped.
+/// The alignment-dirty spans: every re-keyed span except those whose keys (and weights, when weights count) all
+/// equal the old ones line by line. A span is taken whole: inside a span whose line count changed, which old
+/// line an equal new line "is" is a choice the alignment makes, so no boundary inside it is fixed.
 fn trimmed(spans: &[Rekeyed], weights: bool) -> Vec<(Range<u32>, Range<u32>)> {
-    let mut out = Vec::new();
-    for s in spans {
-        let (o, n) = (&s.old_keys, &s.new_keys);
-        let same = |i: usize, j: usize| {
-            o.keys[i] == n.keys[j] && (!weights || o.weights[i] == n.weights[j])
-        };
-        let (ol, nl) = (o.keys.len(), n.keys.len());
-        let mut p = 0;
-        while p < ol && p < nl && same(p, p) {
-            p += 1;
-        }
-        let mut q = 0;
-        while q < ol - p && q < nl - p && same(ol - 1 - q, nl - 1 - q) {
-            q += 1;
-        }
-        if p + q == ol && p + q == nl {
-            continue;
-        }
-        out.push((
-            s.old.start + p as u32..s.old.end - q as u32,
-            s.new.start + p as u32..s.new.end - q as u32,
-        ));
-    }
-    out
+    spans
+        .iter()
+        .filter(|s| {
+            let (o, n) = (&s.old_keys, &s.new_keys);
+            o.keys.len() != n.keys.len()
+                || o.keys.iter().zip(&n.keys).any(|(a, b)| a != b)
+                || (weights && o.weights != n.weights)
+        })
+        .map(|s| (s.old.clone(), s.new.clone()))
+        .collect()
 }
 
 /// A dirty key with its dirty counts per side: (old lines, new lines).
@@ -491,15 +478,35 @@ impl Inc<'_, '_> {
             return Ok(false);
         }
         self.path.candidates_held += 1;
-        // 3. Window.
-        let dl = (i64::from(nl) - i64::from(old.left.end - old.left.start)).unsigned_abs();
-        let dr = (i64::from(nr) - i64::from(old.right.end - old.right.start)).unsigned_abs();
-        if dl + dr >= u64::from(old.slack) {
+        // 3. Window: the line counts change at several places, so a unique pair's displacement from the window's
+        // start diagonal changes by at most the largest cumulative shift before it, and from the end diagonal
+        // by the largest shift after it; both sides add up.
+        let (a_l, b_l) = self.shift_extremes(0, &old.left);
+        let (a_r, b_r) = self.shift_extremes(1, &old.right);
+        if (a_l + a_r).max(b_l + b_r) >= u64::from(old.slack) {
             self.path.window_failed += 1;
             return Ok(false);
         }
         self.path.window_held += 1;
         Ok(true)
+    }
+
+    /// The largest |cumulative line-count change| before any line of the old range `old` on `side` (A), and the
+    /// largest |change after it| (B), over the alignment-dirty spans inside the range.
+    fn shift_extremes(&self, side: usize, old: &Range<u32>) -> (u64, u64) {
+        let deltas: Vec<i64> = self
+            .spans_in(side, old)
+            .iter()
+            .map(|(o, n)| i64::from(n.end - n.start) - i64::from(o.end - o.start))
+            .collect();
+        let total: i64 = deltas.iter().sum();
+        let (mut cum, mut a, mut b) = (0i64, 0u64, total.unsigned_abs());
+        for d in deltas {
+            cum += d;
+            a = a.max(cum.unsigned_abs());
+            b = b.max((total - cum).unsigned_abs());
+        }
+        (a, b)
     }
 
     /// Condition 2: no key of a removed or inserted dirty line is, or becomes, unique on both sides in the middle.
@@ -642,13 +649,11 @@ impl Inc<'_, '_> {
                 blocks: blocks.clone(),
                 children: Vec::new(),
                 slack: {
-                    let dl = (i64::from(la.end - la.start)
-                        - i64::from(old.left.end - old.left.start))
-                    .unsigned_abs();
-                    let dr = (i64::from(ra.end - ra.start)
-                        - i64::from(old.right.end - old.right.start))
-                    .unsigned_abs();
-                    old.slack.saturating_sub((dl + dr) as u32)
+                    // Every pair's margin shrank by at most the shifts this edit made.
+                    let (a_l, b_l) = self.shift_extremes(0, &old.left);
+                    let (a_r, b_r) = self.shift_extremes(1, &old.right);
+                    let used = (a_l + a_r + b_l + b_r).min(u64::from(u32::MAX)) as u32;
+                    old.slack.saturating_sub(used)
                 },
                 ..old.clone()
             },

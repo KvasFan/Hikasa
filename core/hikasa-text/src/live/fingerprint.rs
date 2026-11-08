@@ -264,7 +264,7 @@ impl Keyer<'_> {
             let mut sn = self.key_lines(new, span.new.clone(), state, &mut r.new_keys)?;
             k += 1;
             // Grow while the states disagree; a later span reached is absorbed.
-            while so != sn && r.old.end < old_len && r.new.end < new_len {
+            while so != sn {
                 if let Some(next) = map.spans.get(k)
                     && next.new.start == r.new.end
                 {
@@ -274,6 +274,9 @@ impl Keyer<'_> {
                     r.new.end = next.new.end;
                     k += 1;
                     continue;
+                }
+                if r.old.end >= old_len || r.new.end >= new_len {
+                    break;
                 }
                 so = self.key_lines(old, r.old.end..r.old.end + 1, so, &mut r.old_keys)?;
                 sn = self.key_lines(new, r.new.end..r.new.end + 1, sn, &mut r.new_keys)?;
