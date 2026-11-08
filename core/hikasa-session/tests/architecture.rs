@@ -1158,24 +1158,29 @@ fn script_violations(rel: &str, raw: &str) -> Vec<String> {
 /// The text engine rules of M2 W10 (D-291, §1.10.25), part of check 2: `core/hikasa-text/src` and
 /// `core/hikasa-diff/src` name no `std::fs`, `std::process`, `std::net` (as a path or an import) and read no clock
 /// (`Instant::now`, `SystemTime::now`): typing time comes from the adapter, the save program runs through the injected
-/// `ProcessRunner`, files are read through `&dyn Vfs`.
+/// `ProcessRunner`, files are read through `&dyn Vfs`. Renamed imports, globs, crate and type aliases are resolved
+/// first, as for the banned tokens (W10a review).
 fn text_engine_violations(rel: &str, raw: &str) -> Vec<String> {
     if !(rel.starts_with("core/hikasa-text/src/") || rel.starts_with("core/hikasa-diff/src/")) {
         return Vec::new();
     }
     let code = code_only(raw);
-    let compact = compact(&code);
-    let file_imports = imports(&code);
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
+    let texts = [compact(&code), compact(&squeezed), compact(&resolved)];
     let mut violations = Vec::new();
     for (token, head) in [
         ("std::fs", "fs"),
         ("std::process", "process"),
         ("std::net", "net"),
     ] {
-        let imported = file_imports
-            .iter()
-            .any(|(_, (path, _))| path.len() >= 2 && path[0] == "std" && path[1] == head);
-        if compact.contains(token) || imported {
+        // `use std::fs;`, `use std::{fs::File}`, `use std::process as p;` and a glob of `std` (which brings all
+        // three in: counted once, as `std::fs`).
+        let imported = file_imports.iter().any(|(_, (path, _))| {
+            path.len() >= 2
+                && path[0] == "std"
+                && (path[1] == head || (path[1] == "*" && head == "fs"))
+        });
+        if texts.iter().any(|t| t.contains(token)) || imported {
             violations.push(format!(
                 "{rel}: names `{token}` (the text engine is pure: files through `&dyn Vfs`, programs through \
                  `ProcessRunner`, D-291)"
@@ -1183,13 +1188,25 @@ fn text_engine_violations(rel: &str, raw: &str) -> Vec<String> {
         }
     }
     for token in ["Instant::now", "SystemTime::now"] {
-        if compact.contains(token) {
+        if texts.iter().any(|t| t.contains(token)) {
             violations.push(format!(
                 "{rel}: reads the clock (`{token}`; typing time comes from the adapter, D-291)"
             ));
         }
     }
     violations
+}
+
+/// `code` (comment- and literal-free) squeezed (`std :: fs`, `<Instant>::now`), and with every imported or
+/// aliased name spelled out as its full path (`use std::time::Instant as I; I::now()` becomes
+/// `std::time::Instant::now()`, `use hikasa_text as t; t::compare(…)` becomes `hikasa_text::compare(…)`), with
+/// the imports (renamed imports, globs, type and crate aliases), as check 2 resolves them.
+fn resolved_code(code: &str) -> (String, String, Vec<(usize, Import)>) {
+    let squeezed = squeeze(code);
+    let mut file_imports = imports(&squeezed);
+    file_imports.extend(alias_imports(&squeezed));
+    let resolved = resolve_aliases(&resolve_aliases(&squeezed, &file_imports), &file_imports);
+    (squeezed, resolved, file_imports)
 }
 
 fn check_text_engine_rules(root: &Path) -> Vec<String> {
@@ -2995,43 +3012,62 @@ const ADAPTER_BANNED_ENGINE_IMPORTS: &[&[&str]] = &[
 const GUI_BANNED_ROPE: &[&str] = &["ropey", "Rope::insert", "Rope::remove"];
 
 /// Check 7 (M2 W10, D-291): an adapter file (anything under `cli/` or `gui/`) that names an engine entry point of
-/// [`ADAPTER_BANNED_ENGINE_CALLS`] or imports one; a GUI file that names a rope mutation.
+/// [`ADAPTER_BANNED_ENGINE_CALLS`] or imports one (also under another name, through a renamed crate, or with a glob
+/// of an engine crate); a GUI file that names a rope mutation.
 fn engine_call_violations(rel: &str, raw: &str) -> Vec<String> {
     let gui = rel.starts_with("gui/");
     if !(gui || rel.starts_with("cli/")) {
         return Vec::new();
     }
     let code = code_only(raw);
+    // Renamed imports and crate aliases spelled out (`use hikasa_text as t; t::compare(…)`).
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
     let mut violations = Vec::new();
     let mut lines = std::collections::BTreeSet::new();
     for token in ADAPTER_BANNED_ENGINE_CALLS {
-        for at in find_token(&code, token) {
-            lines.insert(line_of(&code, at));
+        let mut hits = std::collections::BTreeSet::new();
+        for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+            for at in find_token(text, token) {
+                hits.insert(line_of(text, at));
+            }
+        }
+        for line in hits {
+            lines.insert(line);
             violations.push(format!(
-                "{rel}:{}: `{token}` in an adapter (engines are reached through the Service, D-291)",
-                line_of(&code, at)
+                "{rel}:{line}: `{token}` in an adapter (engines are reached through the Service, D-291)"
             ));
         }
     }
-    for (at, (path, _)) in imports(&code) {
+    for (at, (path, _)) in &file_imports {
         let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        // A glob of an engine crate brings every entry point in under its own name (`use hikasa_text::*;` then
+        // `compare(…)`).
+        let glob = matches!(
+            path.as_slice(),
+            ["hikasa_diff" | "hikasa_text" | "hikasa_formats", "*"]
+        );
         // One violation per line: `use hikasa_diff::align;` is already the token's.
-        if ADAPTER_BANNED_ENGINE_IMPORTS.contains(&path.as_slice())
-            && lines.insert(line_of(&code, at))
+        if (ADAPTER_BANNED_ENGINE_IMPORTS.contains(&path.as_slice()) || glob)
+            && lines.insert(line_of(&squeezed, *at))
         {
             violations.push(format!(
                 "{rel}:{}: imports `{}` (engines are reached through the Service, D-291)",
-                line_of(&code, at),
+                line_of(&squeezed, *at),
                 path.join("::")
             ));
         }
     }
     if gui {
         for token in GUI_BANNED_ROPE {
-            for at in find_token(&code, token) {
+            let mut hits = std::collections::BTreeSet::new();
+            for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+                for at in find_token(text, token) {
+                    hits.insert(line_of(text, at));
+                }
+            }
+            for line in hits {
                 violations.push(format!(
-                    "{rel}:{}: `{token}` in the GUI (text edits are EditableDocument's, D-291)",
-                    line_of(&code, at)
+                    "{rel}:{line}: `{token}` in the GUI (text edits are EditableDocument's, D-291)"
                 ));
             }
         }
@@ -3177,6 +3213,13 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
             "fn f() { let _ = std::net::Ipv4Addr::LOCALHOST; }\n",
             "fn f() { let _ = std::time::Instant::now(); }\n",
             "fn f() { let _ = std::time::SystemTime :: now(); }\n",
+            // Renamed imports, globs, crate and type aliases (W10a review).
+            "use std::time::Instant as I;\nfn f() { let _ = I::now(); }\n",
+            "use std::time::{Instant as Clock};\nfn f() { let _ = Clock :: now(); }\n",
+            "use std::time::*;\nfn f() { let _ = Instant::now(); }\n",
+            "use std::*;\nfn f() { let _ = fs::read(\"x\"); }\n",
+            "use std as s;\nfn f() { let _ = s::net::Ipv4Addr::LOCALHOST; }\n",
+            "type T = std::time::SystemTime;\nfn f() { let _ = T::now(); }\n",
         ] {
             assert_eq!(
                 text_engine_violations(rel, planted).len(),
@@ -3218,6 +3261,12 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
         );
     }
     for import in [
+        // Renamed crates and globs of an engine crate (W10a review).
+        "use hikasa_text as t;\nfn f() { t::compare(x); }\n",
+        "use hikasa_diff as d;\nfn f() { let _ = d::align(x); }\n",
+        "use hikasa_text::*;\nfn f() { compare(x); }\n",
+        "use hikasa_diff::*;\n",
+        "use hikasa_formats::{*};\nfn f() { encode(x); }\n",
         "use hikasa_text::compare;\nfn f() { compare(); }\n",
         "use hikasa_diff::align;\n",
         "use hikasa_text::{compare as run, Row};\n",
@@ -3230,6 +3279,12 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
             "{import}"
         );
     }
+    let aliased = "use ropey as r;\nfn f(x: &mut r::Rope) { x.insert(0, \"x\"); }\n";
+    assert_eq!(
+        engine_call_violations("gui/hikasa-gui/src/text_view.rs", aliased).len(),
+        2,
+        "{aliased}"
+    );
     for planted in [
         "use ropey::Rope;\n",
         "fn f(r: &mut Rope) { Rope::insert(r, 0, \"x\"); }\n",
