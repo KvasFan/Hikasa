@@ -569,8 +569,15 @@ pub struct CopyEdit {
 /// The edit that makes rows `rows` equal to `from`'s lines (Copy to Right/Left, Copy Line, §1.10.6): the target
 /// lines those rows cover are replaced by the source lines in row order; rows without a target line insert
 /// after the target line of the last row above them (or at the start). The source lines are read from the
-/// comparison's documents (a live comparison keeps them equal to the panes). `None` for an empty row range.
-pub fn copy_rows(cmp: &TextComparison, rows: Range<u32>, from: Side) -> Option<CopyEdit> {
+/// comparison's documents (a live comparison keeps them equal to the panes). A terminator the copy has to add
+/// (after the source's open last line, or after the target's) is `insert_eol`, the target pane's
+/// [`crate::edit::EditableDocument::insert_eol`] (D-290). `None` for an empty row range.
+pub fn copy_rows(
+    cmp: &TextComparison,
+    rows: Range<u32>,
+    from: Side,
+    insert_eol: LineEnding,
+) -> Option<CopyEdit> {
     let rows = rows.start..rows.end.min(cmp.row_count());
     if rows.is_empty() {
         return None;
@@ -608,7 +615,10 @@ pub fn copy_rows(cmp: &TextComparison, rows: Range<u32>, from: Side) -> Option<C
         }
     }
     let n = dst.line_count();
-    let dominant = dst.eol().dominant();
+    let dominant = match insert_eol {
+        LineEnding::None | LineEnding::Artificial => LineEnding::Lf,
+        e => e,
+    };
     let (start, end) = match t0 {
         Some(t0) => (t0, t1),
         None => {

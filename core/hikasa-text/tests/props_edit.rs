@@ -175,7 +175,7 @@ fn request(
             }
             let a = rng.below(u64::from(n)) as u32;
             let b = a + 1 + rng.below(u64::from(n - a).min(5)) as u32;
-            copy_rows(&cmp, a..b, Side::Left).map(|c| c.request)
+            copy_rows(&cmp, a..b, Side::Left, doc.insert_eol()).map(|c| c.request)
         }
     }
 }

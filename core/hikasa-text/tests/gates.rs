@@ -804,7 +804,7 @@ fn g8_copy_section() {
         };
         let rows = cmp.sections()[id.0 as usize].rows.clone();
         let rows = rows.start..rows.end.min(rows.start + 10);
-        let edit = copy_rows(&cmp, rows, Side::Left).unwrap();
+        let edit = copy_rows(&cmp, rows, Side::Left, right.insert_eol()).unwrap();
         let out = right.apply(&edit.request, GroupHint::None).unwrap();
         let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Right, &out);
         notes.push(n);

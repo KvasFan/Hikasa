@@ -11,8 +11,8 @@ use hikasa_text::edit::{
     copy_rows, line_home, plan_command, select_section, word_at, word_boundary,
 };
 use hikasa_text::{
-    CompareInput, CompiledFormat, LineIdx, RowIdx, RowState, TextComparison, TextDocument,
-    TextRules, compare,
+    CompareInput, CompiledFormat, LineEnding, LineIdx, RowIdx, RowState, TextComparison,
+    TextDocument, TextRules, compare,
 };
 
 fn doc_with(text: &str, opts: EditOptions) -> EditableDocument {
@@ -487,9 +487,9 @@ fn copy_and_check(left: &str, right: &str, row: u32, single: bool, from: Side) {
         let id = cmp.section_at(RowIdx(row)).unwrap();
         cmp.sections()[id.0 as usize].rows.clone()
     };
-    let edit = copy_rows(&cmp, rows.clone(), from).unwrap();
     let target_text = if from == Side::Left { right } else { left };
     let mut target = doc_with(target_text, EditOptions::default());
+    let edit = copy_rows(&cmp, rows.clone(), from, target.insert_eol()).unwrap();
     let out = target.apply(&edit.request, GroupHint::None).unwrap();
     assert_eq!(target.undo_steps(), 1);
     let _ = out;
@@ -531,4 +531,30 @@ fn copy_rows_makes_them_equal() {
     copy_and_check("a\nb", "a\nb\nz", 2, false, Side::Left);
     copy_and_check("q\na", "a", 0, false, Side::Left);
     copy_and_check("a\nb\n", "a\nb\nz", 2, false, Side::Left);
+}
+
+/// A terminator the copy adds is the target pane's insert terminator (D-290), not the target text's dominant
+/// one: a target without a terminated line takes `default_eol`.
+#[test]
+fn copy_rows_adds_the_target_insert_terminator() {
+    let cmp = cmp_of("b\nz", "b");
+    let opts = EditOptions {
+        default_eol: LineEnding::CrLf,
+        ..EditOptions::default()
+    };
+    let mut target = doc_with("b", opts);
+    assert_eq!(target.insert_eol(), LineEnding::CrLf);
+    let edit = copy_rows(&cmp, 1..2, Side::Left, target.insert_eol()).unwrap();
+    target.apply(&edit.request, GroupHint::None).unwrap();
+    assert_eq!(target.document().rope().to_string(), "b\r\nz");
+    // The source's open last line copied before more target lines.
+    let cmp = cmp_of("x", "y\r\nw\r\n");
+    let mut target = doc_with("y\r\nw\r\n", EditOptions::default());
+    let edit = copy_rows(&cmp, 0..1, Side::Left, LineEnding::Cr).unwrap();
+    target.apply(&edit.request, GroupHint::None).unwrap();
+    assert!(
+        target.document().rope().to_string().starts_with("x\r"),
+        "{:?}",
+        target.document().rope().to_string()
+    );
 }
