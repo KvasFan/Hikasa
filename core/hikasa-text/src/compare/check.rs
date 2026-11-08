@@ -36,7 +36,18 @@ impl TextComparison {
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
         self.check_structure()?;
         // 8. Importance follows the rules.
-        self.check_importance()
+        self.check_importance(&|_| false)
+    }
+
+    /// [`TextComparison::check_invariants`] with INV-TC-8 skipped on the rows `skip` names (a live comparison's
+    /// pending rows, §1.10.10). **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_invariants_except(
+        &self,
+        skip: &dyn Fn(u32) -> bool,
+    ) -> Result<(), InvariantViolation> {
+        self.check_structure()?;
+        self.check_importance(skip)
     }
 
     /// Checks 1–5 of [`TextComparison::check_invariants`] (rows, runs, sections, statistics, verdicts) without
@@ -198,7 +209,7 @@ impl TextComparison {
     }
 
     /// INV-TC-8 (see `check_invariants`).
-    fn check_importance(&self) -> Result<(), InvariantViolation> {
+    fn check_importance(&self, skip: &dyn Fn(u32) -> bool) -> Result<(), InvariantViolation> {
         let compare_eol = self.rules.importance.compare_line_endings;
         let orphans = self.rules.importance.orphans_always_important;
         let shape = KeyShape {
@@ -214,6 +225,9 @@ impl TextComparison {
                 let Some(r) = self.rows.get(k) else {
                     return fail("INV-TC-8", format!("row {k} missing"));
                 };
+                if skip(k as u32) {
+                    continue;
+                }
                 match (r.left(), r.right()) {
                     (Some(l), Some(x)) => {
                         let equal = raw_equal(

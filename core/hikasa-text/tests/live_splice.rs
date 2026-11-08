@@ -30,6 +30,8 @@ fn check(
 ) {
     let cmp = live.current();
     cmp.check_structure().unwrap();
+    // INV-TC-8 too, except on pending rows (they keep their state until the recompare).
+    live.check_invariants().unwrap();
     assert_eq!(
         cmp.document(Side::Left).line_count(),
         docs.left.line_count()
@@ -51,6 +53,15 @@ fn check(
         if live.is_pending(RowIdx(r)) {
             let orphan = row.left.is_none() || row.right.is_none();
             assert!(t || orphan, "row {r} {row:?} is pending but untouched");
+            // A pending pair's inline differences come from the live lines, whatever its provisional state.
+            if let (Some(l), Some(x)) = (row.left, row.right) {
+                let equal = docs.left.line(l) == docs.right.line(x);
+                assert_eq!(
+                    live.inline(RowIdx(r), docs).is_none(),
+                    equal,
+                    "row {r} {row:?}: inline of the live lines"
+                );
+            }
         }
     }
 }

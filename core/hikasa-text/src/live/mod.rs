@@ -27,7 +27,7 @@ use hikasa_formats::{CompiledFormat, LineState, RegexLimits};
 
 use crate::classify::compile_patterns;
 use crate::compare::{
-    ClassifiedInline, CompareInput, CompareObserver, Prepared, RowIdx, RowState, TextComparison,
+    ClassifiedInline, CompareInput, CompareObserver, Prepared, RowIdx, TextComparison,
 };
 use crate::edit::{EditOutcome, EditableDocument, LineDelta};
 use crate::error::TextError;
@@ -333,18 +333,31 @@ impl LiveComparison {
     }
 
     /// The inline differences of `row` of `current()`: the comparison's own for a row that is not pending, else
-    /// computed from the live lines (every difference important until the recompare classifies it).
+    /// computed from the live lines of a paired row, whatever its provisional state (a `Same` row whose line was
+    /// just edited differs already): every difference important until the recompare classifies it; `None` when
+    /// the live lines are equal.
     pub fn inline(&self, row: RowIdx, docs: Pair<&EditableDocument>) -> Option<ClassifiedInline> {
         if !self.is_pending(row) {
             return self.current.inline(row);
         }
         let r = self.current.row(row)?;
-        if r.state == RowState::Same {
-            return None;
-        }
         let (l, x) = (r.left?, r.right?);
         let (a, b) = (docs.left.line(l), docs.right.line(x));
+        if a == b {
+            return None;
+        }
         Some(crate::compare::pending_inline(&a, &b))
+    }
+
+    /// [`TextComparison::check_invariants`] of `current()`, except INV-TC-8 (importance follows the rules) on
+    /// pending rows: the provisional splice keeps a pending row's state and importance from before the edit
+    /// until the recompare classifies it (§1.10.10), so a `Same` row whose line was edited is not raw-equal yet.
+    /// Every other invariant (rows, runs, sections, statistics, verdicts) holds at every moment. **Not a stable
+    /// API** (tests).
+    #[doc(hidden)]
+    pub fn check_invariants(&self) -> Result<(), hikasa_core::error::InvariantViolation> {
+        self.current
+            .check_invariants_except(&|row| self.pending.contains(row))
     }
 
     /// The live data (memory accounting).
