@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added (W10 text engine, part a: editing and recompare)
+- **Editable documents** (core, rendered by W11): every text document keeps its lines in copy-on-write blocks, so an
+  edit costs its own size and a snapshot shares every untouched block. Edits follow fixed line-ending rules: pasted
+  breaks take the document's most frequent terminator (`[text_editing] default_line_ending`, `platform` by default,
+  for a document without one), a joined line keeps the later line's terminator, a copy from the other pane keeps its
+  own, wrapped lines are wrapped again. Undo and redo are unbounded per pane (typing groups within a second, at most a
+  word a step); lines are marked *edited* and *saved edit*; bookmarks 0–9 follow their lines. The editing commands
+  (Enter with auto indent, Tab and Shift+Tab, indent, Backspace that unindents, the Delete Line/Word family, Insert Line
+  Before/After, overwrite, smart Home, word steps, Select Section, Copy to Right/Left and Copy Line) are defined in
+  core.
+- **Editability**: a pane is *Read-only* (read-only file or file system, a gz/bz2/xz/zst member, a Sorted or External
+  conversion without a save program, a cut document) or *Editing disabled* (`--ro`, `--ro1`, `--ro2`, the session, a
+  read-only parent folder side, binary content until the user allows it); writes of such a pane are refused.
+- **Align With and Isolate** (TC-013): `hikasa text compare` (also `report text`, `session run` of a text session)
+  takes `--align <L>:<R>` (lines or ranges, 1-based, repeatable) and `--isolate left|right:<a>[-<b>]`; a pair is a
+  segment of its own, isolated lines align with nothing; crossing or overlapping pairs are dropped with warning
+  `anchor_dropped`; `hikasa.text_compare.v1` gains `anchors`. Without anchors every result is unchanged.
+- **Live comparison**: an edit moves the rows at once, then the comparison is recomputed off the window, re-running only
+  the part of the alignment the edit can change; the result is always exactly that of comparing the two documents from
+  scratch.
+
 ### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
   the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,

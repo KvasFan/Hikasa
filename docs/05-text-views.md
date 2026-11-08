@@ -120,6 +120,14 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   counterpart on the other side; **Isolate**: force the selected lines to align with
   nothing. Overrides are kept across recompare and saved with the session as line-content
   anchors (P1).
+  *M2 W10 notes (contract §1.10.8):* an Align With pair makes its two line ranges one segment of their own (a pair of
+  single lines is one row: same when the lines are equal, else changed); the lines between two pairs are aligned on
+  their own, with their own budgets and *Auto* choice. Isolated lines take part in nothing: they are always left-only
+  or right-only, also inside a pair. A pair that crosses or overlaps an earlier one, or leaves the lines, is dropped
+  with warning `anchor_dropped`; edits move anchors like bookmarks, and a pair that loses all its lines is dropped.
+  `hikasa text compare --align 10:12 --align 20-24:22-23 --isolate left:5-6` sets them from the command line (1-based
+  lines; a line beyond a document is an error), and `hikasa.text_compare.v1` lists the kept ones. Without anchors the
+  result is the M1 one, bit for bit.
 - **TC-014** (P0): Inline (within-line) differences are computed per aligned pair at
   character level, grouped by grammar element, so that an unimportant token change inside
   an otherwise important line is coloured blue, not red.
@@ -311,8 +319,28 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   format.
 - **TC-061** (P0): Comparison re-runs incrementally after each edit (debounced); the
   edited lines are marked.
+  *M2 W10 notes (contract §1.10.2–§1.10.11):* every document keeps its lines in copy-on-write blocks of 512, so an
+  edit costs the size of the edit plus the number of blocks, and a snapshot shares every block the edit did not touch.
+  Edits follow fixed line-ending rules: pasted line breaks take the document's insert terminator (its most frequent
+  one; `[text_editing] default_line_ending` for a document without a terminated line), a joined line keeps the later
+  line's terminator, a copy from the other pane keeps its terminators, and a wrapped physical line is wrapped again.
+  Undo is unbounded per pane; typing within a second groups into one step of at most one word. A line is *edited*
+  until the next save and *saved edit* after it; undoing past a save marks the restored lines edited again.
+  Bookmarks 0–9 follow their lines. Each keystroke first moves the rows at once (the touched rows are pending), then
+  the exact comparison is computed off the window: the recompare re-runs only the part of the alignment the edit can
+  change and gives exactly the result of comparing the two documents from scratch (proved on random edits by the
+  property P-EDIT-2); when it cannot show that cheaply (an edit that changes which lines are unique on both sides, a
+  shift near the skew window's edge, more than a quarter of the lines dirty), it compares from scratch.
 - **TC-062** (P0): Copy to Right/Left (Ctrl+R/L: selected lines or current section),
   Copy Line to Right/Left (Shift+Ctrl+R/L), dynamic "to Other Side".
+  *M2 W10 notes (contract §1.10.6–§1.10.7):* a copy replaces the target lines of the selected rows by the source lines
+  in one undo step (rows without a target line insert after the target line above them). The editing commands of
+  TC-060 are defined in core (overwrite never replaces a terminator, auto indent copies the split line's leading
+  blanks up to the caret, Backspace in leading blanks goes back to the previous tab stop, words are letters, digits,
+  `_` and the format's word characters). A pane cannot be edited when its location is read-only (*Read-only*: a
+  read-only file or file system, a gz/bz2/xz/zst member, a Sorted or External conversion without a save program, a
+  cut document) or when the session, the command line (`--ro`, `--ro1`, `--ro2`), a read-only parent folder side or
+  binary content say so (*Editing disabled*; only binary content can be lifted, by the user).
 - **TC-063** (P0): Convert File ▸ Trim Trailing Whitespace, Leading Spaces to Tabs,
   Tabs to Spaces, Line Endings ▸ To Windows/DOS, To Unix, To Macintosh (reported as
   "Converted N lines").

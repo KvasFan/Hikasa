@@ -46,6 +46,8 @@ pub enum JobKind {
     FolderRefresh,
     /// A script run (M2 W8a, §1.8.12; additive): every call inside keeps its own kind.
     Script,
+    /// The recompare of a live text comparison after edits (M2 W10a, §1.10.10; additive).
+    TextRecompare,
 }
 
 impl JobKind {
@@ -64,6 +66,7 @@ impl JobKind {
             JobKind::FolderSync => "folder_sync",
             JobKind::FolderRefresh => "folder_refresh",
             JobKind::Script => "script",
+            JobKind::TextRecompare => "text_recompare",
         }
     }
 }

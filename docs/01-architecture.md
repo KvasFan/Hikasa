@@ -244,6 +244,16 @@ Each engine returns an immutable result that the view renders:
 - **ARCH-050** (P0): Result models carry stable identifiers so edits can be applied
   incrementally (re-diff only affected sections) and so undo/redo can refer to them.
 
+  *M2 W10a (contract §1.10.2–§1.10.11):* a text pane edits an `EditableDocument` (hikasa-text `edit`): the rope plus a
+  copy-on-write block line table, an unbounded undo log of reversible changes, line marks and bookmarks; the editing
+  commands are pure functions in core, so the view computes no text. A `LiveComparison` (hikasa-text `live`) keeps the
+  comparison valid while the panes change: `note_edit` splices each edit into the chunked rows at once (pending rows),
+  and a recompare job (`JobKind::TextRecompare`, off the UI thread, after the view's debounce) re-runs only the nodes
+  of the recorded alignment derivation (`hikasa_diff::align_traced`) whose certificate an edit breaks, giving exactly
+  the result of a fresh comparison. `Service::text_compare_live` opens one with each pane's editability
+  (`Vfs::writable`, the format's conversion, `--ro*`, the session); writes of a blocked pane are refused in the
+  Service (`ApiError::EditBlocked`).
+
 ### 3.5 Jobs, progress, cancellation (hikasa-core)
 
 ```

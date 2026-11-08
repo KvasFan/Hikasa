@@ -10234,7 +10234,124 @@ docs/17 §5 anywhere: grep before each commit.
 *To be written by each part*, as §1.9.25: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property and integration test was checked by (§6.10 rules).
 
-**W10a.** (none yet)
+**W10a.** Interpretations and extensions of §1.10.2–§1.10.11 and the W10a share of §1.10.22–§1.10.26:
+
+1. INV-ALIGN-8 held on every engine before any change: every imara-diff call and Standard's stages renumber the range
+   densely in first-occurrence order (`DenseRemap`), so no engine needed a fix; P-ALIGN-REN passes 20,000 cases and the
+   M1 goldens are untouched. P-ALIGN-REN also compares the derivations (and `align_traced` = `align`).
+2. A block is one `Arc<[u8]>`: `n` relative starts (the first slot, always 0, holds the *marked* flag), `n` terminator
+   codes, and in a block an edit touched `n` generations and `n` file lines; `first_byte` is `u32` (texts are below
+   4 GiB) and `first_line` stays empty while uniform. Headers and prefix sums take 0.07 bytes a line. The last block may
+   hold fewer than 128 lines (as a load builds it); `uniform` also needs the last block ≤ 512 lines.
+3. Positions: after a terminated last line (and in an empty document) one empty line holds positions
+   (`EditableDocument::position_lines()`) but is never a table line, so the table always equals a fresh build of the
+   text. A lone CR line meeting a following empty LF line is joined into one CRLF line by the edit (the span is widened),
+   exactly as a load reads those bytes.
+4. Every request becomes changes that replace bytes inside spans of whole physical lines; a `Batch` turns its ranges
+   into changes last-first, each just before it is applied. Lines whose content and terminator are unchanged at a
+   span's start or end keep their marks (Enter at a line start marks only the new line), and the deltas are trimmed to
+   the changed lines. `EditOutcome` gains `deltas` (each change's own delta; `delta` is their union).
+5. `TextDocument::marks` returns `LineMarks { generation, orig }`; `EditableDocument::mark` gives
+   Original/Edited/SavedEdit; `saved()` records a save for W10b. Undo restores a change's marks when the change was made
+   after the last save; otherwise the restored lines take the undo's generation and no file line.
+6. Typing coalesces inserts at the caret within 1,000 ms; the *word start* rule applies to inserts only (Backspace
+   through a word stays one step); a step never merges across the save point. `with_limits` (hidden) lowers the D-43
+   limits for the `TooLarge` tests.
+7. Anchors are a parameter of `align_anchored` / `align_traced` (with `auto`: *Auto* decided per segment), not an
+   `AlignOptions` field, so `AlignOptions` stays `Copy` (M1 API); `CompareInput` gains `anchors` instead. Runs never
+   merge across a pair's boundary: INV-ALIGN-9 wins over INV-ALIGN-5 there (INV-ALIGN-5 holds inside each segment;
+   `Alignment::check_invariants_anchored`). With *Auto* and anchors the reported algorithm is Standard when any
+   segment ran Standard, else Histogram. Dropped anchors give one `anchor_dropped` warning each
+   (`DiffWarningCode::AnchorDropped`, `WarningCode::AnchorDropped`).
+8. `PairScorer` gains `begin_gap()` and `spent()` (defaults); the text scorer empties its profile windows per gap, so a
+   gap's scorer units depend on that gap alone (only once the scorer's budget runs out does this differ from M1).
+   `TraceNode` gains `scorer`, `refusals`, `candidates`, `band`, `band_margin`; `SegmentTrace` gains `pair` and `work`;
+   `WorkTotals` gains `scorer`; `exhausted` covers the order-dependent refusals only (work budget, fallback, the total
+   closeness cap, a scorer that ran out). `hikasa_diff::canonical_runs` (additive) canonicalizes concatenated runs.
+9. Rows are a chunk store (`compare/store.rs`): chunks of at most 1,024 rows whose lines are relative to per-chunk
+   bases; a splice rebuilds the touched chunks (merging below 256 rows), later chunks change bases.
+   `TextComparison` derives `Clone` (documents and chunks shared) and gains `anchors()`, `provisional()`.
+10. The provisional splice works on a window of the touched rows widened to whole sections, so sections, class runs
+    and statistics are re-derived over that window only; runs are cut at the window's edges. A section of N changed
+    rows costs O(N) per `note_edit` (a pair that differs everywhere); the G1 pair's sections are small.
+11. `note_edit` also gives `current()` a snapshot of the edited document, so the comparison's documents follow the
+    panes and `copy_rows(current(), …)` reads live text; a pending row's inline difference is the plain inline diff of
+    the live lines, all important. An anchor that loses every line is dropped and reported by
+    `LiveComparison::take_warnings` (the comparison itself equals a fresh compare); `set_anchors` makes the next
+    recompare full. `install` of a result older than the installed one changes nothing (`Replayed` with the pending
+    count). A recompare's `bytes_identical` is the base's while no edit or anchor change came since, else false.
+12. The incremental path covers one segment (no anchors) aligned by Standard or Patience; anchored comparisons,
+    Histogram, Myers, Unaligned, a recorded exhaustion or refusal and the T6 thresholds take the full compare (the same
+    result). Condition 4 keeps upper bounds: old totals plus every re-run's work, re-extension steps and remap growth,
+    never subtracting replaced work (a later full compare resets them).
+13. Checkpoints are `(line, state)` pairs that move with edits: every 64 lines at load, made again inside re-keyed
+    spans and at their ends. Re-keying grows a span line by line while the old and new end states differ (absorbing an
+    adjacent span first), instead of stopping only at checkpoints.
+14. A re-keyed span is alignment-dirty whole unless every key (and weight, with Standard) equals the old line's: in a
+    span whose line count changed no inner boundary is fixed. Condition 1 checks the boundary pairs after the prefix and
+    before the suffix by key.
+15. Condition 2 extended: when the recorded chain holds every candidate (`TraceNode::candidates`), candidates may leave
+    (their line changed or their key stopped being unique) and join (a key became unique in the window), as long as
+    the new set still increases on both sides; the chain is then the new set. Otherwise any such change fails.
+16. Condition 3 is exact: Standard records the unique pairs whose start or end displacement lies within
+    `WINDOW_BAND` = 256 lines of the skew (`band`); every other pair is farther than `band_margin`, which certified
+    edits wear down by their largest cumulative shift (several dirty spans: the largest shift before and after any
+    line, both sides). Band pairs are checked one by one; with an all-candidate chain a pair entering or leaving the
+    window joins or leaves the chain. Patience has no window. Re-extension reuses whole old blocks whose anchors,
+    surroundings and bounds are unchanged; other pairs are compared by key (equal pairs inside an old block on the same
+    diagonal with clean lines are known equal).
+17. The session share (W10a): `TextCompareRequest::anchors`; one vocabulary parser `api::vocab::parse_anchor` for
+    `<L>:<R>` and `left|right:<a>[-<b>]` (`parse_align`, `parse_isolate`, `parse_anchors` take one form each; side
+    words through `parse_side`). A line beyond a document is `invalid_input` (exit 100) after loading and before
+    comparing, for pairs and isolated ranges alike (the CLI never clips). JSON `anchors` is always present (`[]`),
+    right after `rules`, 1-based half-open ranges, `kind` `pair`/`isolate`, inapplicable fields `null`. `--gui` with
+    anchors is refused (exit 100): `OpenOptions` has no anchors; the window sets its own in W11. The flags live in a
+    shared `AnchorArgs` (`text compare`, `report text`, `session run`; refused for folder and sync sessions); sessions
+    save none (P1).
+18. `Service::text_compare_live` and `text_compare_live_on(vfs, …)`: `LiveOptions` gains `session_read_only`
+    (`hikasa_folder::ops::ReadOnlySides`; `ipc::ReadOnly::sides()` turns `--ro*` into it); `LiveTextView` carries
+    `specs` and `options` instead of `stamps` (W10b's `LoadStamp` does not exist yet). A side that fails to load or a
+    cancel fails the call as `text_compare` does; `EditFacts::editability()` maps those blocks for W11.
+    `Vfs::writable` errors count as *cannot tell* (writable); `-` and `clipboard://` are not asked and get
+    `can_save_in_place = false`; `Some(false)` on an archive member is `ArchiveReadOnly`, else `ReadOnlyLocation`;
+    `Converted` comes from `CompiledFormat::conversion()`. `EditOptions` take tab size, tab-as-spaces, word characters
+    and CPL from the one chosen format, the OPT-006 keys from `options.toml` (lenient) at open; `platform` resolves
+    through `EnvFacts::platform` (`DefaultLineEnding::resolve`). `ApiError::EditBlocked` ("the right document cannot
+    be edited: …", exit 100) with the helper `api::ensure_editable` for W10b/W10c's writers.
+19. `default_line_ending` has Options-dialog captions and a field on its page (the GUI tests require every P0 key on a
+    page). Check 7 covers every `.rs` file under `cli/` and `gui/` (src, tests, benches), flags imports of the names
+    too, includes the W10b/W10c names now, and bans `ropey` and `Rope::insert`/`remove` in `gui/`; check 2 gained a rule
+    for `std::fs`/`process`/`net` in hikasa-text and hikasa-diff (the clocks were already banned in core), each with
+    planted-violation self-tests.
+20. A10.6's refusals of `text_save_plan` and `text_copy_file_steps` wait for those calls (W10b, W10c): the helper is
+    tested. `Truncated` is tested through `EditFacts` (`load_document` never truncates). The memory table is measured
+    by `tests/edit_memory.rs` (counting allocator: 1,000,000 lines for the line table and marks, 100,000 lines for a
+    live comparison over 1,000 edits); the 1,000,000-line live comparison is measured by the G8 harness (release).
+21. G8 (§1.10.26) is not fully met; the figures are in docs/02 (a failure is reported, never relaxed).
+
+Mutations (docs/17 §3 point 6; each failed its test and was reverted):
+
+| Test | Mutation | Result |
+|---|---|---|
+| P-ALIGN-REN (`props_align.rs`) | stage B ties broken by token id parity (`standard.rs`) | fails; seed persisted (`props_align_ren.txt`) |
+| P-BLOCK (`blocks.rs`) | a split keeps one line in both halves | fails (`p_block…`, `blocks_split_and_merge`) |
+| P-BLOCK | `first_byte` not rebuilt after a merge | fails (both) |
+| P-EDIT-1 (`props_edit.rs`) | an undo step forgets a displaced bookmark | fails, seed 20431356 |
+| coalescing table (`props_edit.rs`) | typing merges across a caret jump | `typing_coalesces_within_a_second_and_a_word` fails |
+| A10.5 (`edit_commands.rs`) | auto indent copies past the caret | `command_table` fails |
+| P-ANCHOR (`anchors.rs`) | a pair's segment aligned with the following gap | fails |
+| A10.6 (`text_editability.rs`) | `Vfs::writable`'s `None` treated as read-only | 3 of 13 fail (`edit_facts_table`, `stdin_has_no_location`, `cancelled_and_failed_loads`) |
+| A10.10 (`live_splice.rs`) | inserted orphan rows placed before their split line | `provisional_splices_keep_the_comparison_consistent` fails |
+| P-EDIT-2 (`props_incremental.rs`, 3,000 release cases, no persisted seeds) | condition 3 ignored | fails, seed 17790864286962173152 |
+| P-EDIT-2 | a key that becomes unique not counted | fails, seed 1038069099171397698 |
+| P-EDIT-2 | blocks taken from the old record instead of re-extended | fails, seed 17086893951711096520 |
+| P-EDIT-2 | tokenizer states not re-converged past a dirty span | fails, seed 4412538066973688576 |
+| condition 4 (`a_budget_exhausted_by_an_edit_is_never_computed_incrementally`) | budget totals not recomputed (final check and re-run budget) | fails, seed 113 |
+
+P-EDIT-2's heavy runs (10,000 release cases, several times) found four real inexactnesses, all fixed before the
+mutations above were checked: a run whose scorer ran out not counted as exhausted; condition 3 bounded by the net
+change only; boundaries inside spans whose line count changed treated as fixed; a span stopping at the end of a document
+before absorbing an adjacent one.
 
 **W10b.** (none yet)
 
