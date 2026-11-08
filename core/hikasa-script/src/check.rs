@@ -123,10 +123,20 @@ pub fn check_word(
     quoted: bool,
     checker: &dyn WordChecker,
 ) -> Result<String, String> {
+    checked_word(slot, word, quoted, checker).map(std::borrow::Cow::into_owned)
+}
+
+/// [`check_word`] that borrows the word when it is not normalized (a large script checks a word on most lines).
+fn checked_word<'w>(
+    slot: Slot,
+    word: &'w str,
+    quoted: bool,
+    checker: &dyn WordChecker,
+) -> Result<std::borrow::Cow<'w, str>, String> {
     let word = normalize_sides(slot, word, quoted);
     script_syntax(slot, &word)?;
     checker.check(slot, &word)?;
-    Ok(word.into_owned())
+    Ok(word)
 }
 
 /// The spec words of `command` that must name a folder or a target (the bases of a load, the target of `copyto` and
@@ -147,7 +157,7 @@ fn folder_specs(command: &Command) -> Vec<(&crate::lex::Word, &'static str)> {
 fn slot_errors(command: &Command, checker: &dyn WordChecker, errors: &mut Errors) {
     let specs = folder_specs(command);
     let slots = command.slots();
-    let mut checked: Vec<(Slot, String)> = Vec::with_capacity(slots.len());
+    let mut checked: Vec<(Slot, std::borrow::Cow<'_, str>)> = Vec::with_capacity(slots.len());
     let mut alone_ok = true;
     for (slot, word) in &slots {
         if word.expands {
@@ -159,7 +169,7 @@ fn slot_errors(command: &Command, checker: &dyn WordChecker, errors: &mut Errors
             .and_then(|(_, what)| spec_word_refusal(std::ffi::OsStr::new(&word.text), what));
         let result = match refusal {
             Some(message) => Err(message),
-            None => check_word(*slot, &word.text, word.quoted, checker),
+            None => checked_word(*slot, &word.text, word.quoted, checker),
         };
         match result {
             Ok(normal) => checked.push((*slot, normal)),
@@ -176,7 +186,7 @@ fn slot_errors(command: &Command, checker: &dyn WordChecker, errors: &mut Errors
     if !alone_ok || slots.iter().any(|(_, w)| w.expands) || slots.is_empty() {
         return;
     }
-    let words: Vec<(Slot, &str)> = checked.iter().map(|(s, w)| (*s, w.as_str())).collect();
+    let words: Vec<(Slot, &str)> = checked.iter().map(|(s, w)| (*s, w.as_ref())).collect();
     if let Err((at, message)) = checker.check_command(command.name, &words) {
         let pos = slots.get(at).map_or(command.pos, |(_, w)| w.pos);
         errors.push(ScriptError::new(pos, ScriptErrorCode::InvalidWord, message));
