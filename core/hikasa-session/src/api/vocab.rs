@@ -21,6 +21,7 @@
 //! | `--path` | [`parse_select_path`] |
 //! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
 //! | `--time` and the Touch dialog's local time (M2 W9b) | [`parse_touch_time`] |
+//! | `--align <L>:<R>`, `--isolate left\|right:<a>[-<b>]` (M2 W10a, D-266) | [`parse_anchor`], [`parse_align`], [`parse_isolate`] |
 //! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
@@ -31,7 +32,7 @@ use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
-use hikasa_text::AlgorithmChoice;
+use hikasa_text::{AlgorithmChoice, Anchor, AnchorSide};
 
 use super::ApiError;
 use crate::ipc::SyncWords;
@@ -139,6 +140,79 @@ pub fn parse_line_range(text: &str) -> Result<RangeInclusive<u32>, ApiError> {
         return Err(invalid());
     }
     Ok(first..=last)
+}
+
+/// Parses an alignment anchor word (TC-013, D-266, §1.10.8), either form:
+///
+/// | Word | Anchor |
+/// |---|---|
+/// | `<L>:<R>` (`10:12`, `10-14:12-13`) | *Align With*: [`Anchor::Pair`] of left lines `L` and right lines `R` |
+/// | `left:<a>[-<b>]`, `right:<a>[-<b>]` | *Isolate*: [`Anchor::Isolate`] of those lines of that side |
+///
+/// `L`, `R`, `a-b` are 1-based lines or inclusive ranges as [`parse_line_range`] reads them (`1 <= a <= b`); the
+/// side word is ASCII case-insensitive (`lt`, `rt` too, as [`parse_side`]). The anchor holds 0-based half-open
+/// ranges (`10-14` → `9..14`). A malformed word is `InvalidArgument` (exit 100). Whether a line lies inside the
+/// document is checked by the service once the documents are loaded ([`super::Service::text_compare`]); crossing
+/// and overlapping pairs are dropped there with the warning `anchor_dropped`.
+pub fn parse_anchor(word: &str) -> Result<Anchor, ApiError> {
+    let invalid = || {
+        ApiError::InvalidArgument(format!(
+            "invalid anchor {word:?} (expected <left lines>:<right lines> such as 10:12 or 10-14:12-13, or \
+             left|right:<a>[-<b>])"
+        ))
+    };
+    let (head, tail) = word.split_once(':').ok_or_else(invalid)?;
+    let lines = |text: &str| -> Result<std::ops::Range<u32>, ApiError> {
+        let range = parse_line_range(text).map_err(|_| invalid())?;
+        Ok(range.start() - 1..*range.end())
+    };
+    if head.trim().starts_with(|c: char| c.is_ascii_alphabetic()) {
+        let side = match parse_side(head).map_err(|_| invalid())? {
+            Side::Right => AnchorSide::Right,
+            _ => AnchorSide::Left,
+        };
+        return Ok(Anchor::Isolate {
+            side,
+            lines: lines(tail)?,
+        });
+    }
+    Ok(Anchor::Pair {
+        left: lines(head)?,
+        right: lines(tail)?,
+    })
+}
+
+/// Parses `--align <L>:<R>`: [`parse_anchor`] that accepts the *Align With* form only.
+pub fn parse_align(word: &str) -> Result<Anchor, ApiError> {
+    match parse_anchor(word)? {
+        anchor @ Anchor::Pair { .. } => Ok(anchor),
+        Anchor::Isolate { .. } => Err(ApiError::InvalidArgument(format!(
+            "--align takes <left lines>:<right lines> (such as 10:12), not {word:?}: use --isolate"
+        ))),
+    }
+}
+
+/// Parses `--isolate left|right:<a>[-<b>]`: [`parse_anchor`] that accepts the *Isolate* form only.
+pub fn parse_isolate(word: &str) -> Result<Anchor, ApiError> {
+    match parse_anchor(word)? {
+        anchor @ Anchor::Isolate { .. } => Ok(anchor),
+        Anchor::Pair { .. } => Err(ApiError::InvalidArgument(format!(
+            "--isolate takes left:<a>[-<b>] or right:<a>[-<b>], not {word:?}: use --align"
+        ))),
+    }
+}
+
+/// The anchors of `--align` and `--isolate` words, in that order (one owner for `text compare`, `report text` and
+/// `session run`).
+pub fn parse_anchors(align: &[String], isolate: &[String]) -> Result<Vec<Anchor>, ApiError> {
+    let mut anchors = Vec::with_capacity(align.len() + isolate.len());
+    for word in align {
+        anchors.push(parse_align(word)?);
+    }
+    for word in isolate {
+        anchors.push(parse_isolate(word)?);
+    }
+    Ok(anchors)
 }
 
 /// The text display mode of `--display` and `--context` (§4.3.2, §1.9.2 amendment): a `--display` word
@@ -503,6 +577,54 @@ mod tests {
         ] {
             assert!(parse_line_range(bad).is_err(), "{bad:?} must be rejected");
         }
+    }
+
+    #[test]
+    fn anchor_words() {
+        let pair =
+            |l: std::ops::Range<u32>, r: std::ops::Range<u32>| Anchor::Pair { left: l, right: r };
+        assert_eq!(parse_anchor("10:12").unwrap(), pair(9..10, 11..12));
+        assert_eq!(parse_anchor("10-14:12-13").unwrap(), pair(9..14, 11..13));
+        assert_eq!(parse_anchor(" 3 : 4-4 ").unwrap(), pair(2..3, 3..4));
+        assert_eq!(
+            parse_anchor("left:5-6").unwrap(),
+            Anchor::Isolate {
+                side: AnchorSide::Left,
+                lines: 4..6
+            }
+        );
+        assert_eq!(
+            parse_anchor("RIGHT:7").unwrap(),
+            Anchor::Isolate {
+                side: AnchorSide::Right,
+                lines: 6..7
+            }
+        );
+        assert_eq!(
+            parse_anchor("rt:1").unwrap(),
+            parse_anchor("right:1").unwrap()
+        );
+        for bad in [
+            "", "10", "10:", ":12", "0:1", "1:0", "5-3:1", "left:", "left:0", "up:3", "1:2:3",
+            "a:b", "left:2-1", "both:3",
+        ] {
+            let err = parse_anchor(bad).unwrap_err();
+            assert_eq!(err.kind(), hikasa_core::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(parse_align("left:3").is_err());
+        assert!(parse_isolate("3:4").is_err());
+        assert_eq!(parse_align("3:4").unwrap(), pair(2..3, 3..4));
+        let both = parse_anchors(&["1:2".into()], &["right:3-4".into()]).unwrap();
+        assert_eq!(
+            both,
+            vec![
+                pair(0..1, 1..2),
+                Anchor::Isolate {
+                    side: AnchorSide::Right,
+                    lines: 2..4
+                }
+            ]
+        );
     }
 
     #[test]

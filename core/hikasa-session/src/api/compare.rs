@@ -18,9 +18,9 @@ use hikasa_formats::{
     TextEncoding,
 };
 use hikasa_text::{
-    CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, LoadOptions, MAX_DOCUMENT_BYTES,
-    QuickOptions, RulesComparator, TextDocument, TextError, TextRules, TextRulesPatch,
-    compare_with_limits, load_document, quick_compare_bytes_with,
+    Anchor, AnchorSide, CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, LoadOptions,
+    MAX_DOCUMENT_BYTES, QuickOptions, RulesComparator, TextComparison, TextDocument, TextError,
+    TextRules, TextRulesPatch, compare_with_limits, load_document, quick_compare_bytes_with,
 };
 use hikasa_vfs::{
     BinaryComparator, BinaryOutcome, CrcComparator, Entry, EntryKind, FollowLinks, SpecUse, Vfs,
@@ -69,6 +69,101 @@ fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
             source,
         }
     }
+}
+
+/// Both documents of a text comparison, loaded ([`Service::load_text_pair`]).
+pub(crate) struct LoadedPair {
+    /// The resolved specs.
+    pub(crate) specs: Pair<Spec>,
+    /// The documents.
+    pub(crate) docs: Pair<Arc<TextDocument>>,
+    /// The effective format.
+    pub(crate) chosen: ChosenFormat,
+    /// The effective rules.
+    pub(crate) rules: TextRules,
+    /// The raw bytes were identical.
+    pub(crate) bytes_identical: bool,
+    /// Warnings so far (rules file, `format_mismatch`).
+    pub(crate) warnings: Vec<Warning>,
+}
+
+impl LoadedPair {
+    /// The engine's input, with the request's anchors.
+    pub(crate) fn compare_input(&self, req: &TextCompareRequest) -> CompareInput {
+        CompareInput {
+            left: Arc::clone(&self.docs.left),
+            right: Arc::clone(&self.docs.right),
+            format: Arc::clone(&self.chosen.format),
+            rules: self.rules.clone(),
+            bytes_identical: self.bytes_identical,
+            force_tokenize: false,
+            anchors: req.anchors.clone(),
+        }
+    }
+
+    /// The response of a finished comparison: the warnings so far and the comparison's, the verdict and the exit
+    /// code under the request's `ignore_unimportant` (§2.21).
+    pub(crate) fn respond(
+        self,
+        req: &TextCompareRequest,
+        comparison: Arc<TextComparison>,
+    ) -> TextCompareResponse {
+        let mut warnings = self.warnings;
+        warnings.extend(comparison.warnings().iter().cloned());
+        let verdict = comparison.verdict(req.ignore_unimportant);
+        let exit_code = ExitCode::for_content(&verdict, req.ignore_unimportant);
+        TextCompareResponse {
+            comparison,
+            format: self.chosen.choice,
+            detection: self.chosen.detection,
+            verdict,
+            ignore_unimportant: req.ignore_unimportant,
+            exit_code,
+            warnings,
+        }
+    }
+}
+
+/// The request's anchors against the loaded documents (§1.10.8): every line an anchor names must exist, else
+/// `InvalidArgument` (exit 100) naming the anchor and the document's line count. Crossing and overlapping pairs
+/// are left to the engine, which drops them with `anchor_dropped`.
+fn check_anchors(
+    anchors: &[Anchor],
+    left: &TextDocument,
+    right: &TextDocument,
+) -> Result<(), ApiError> {
+    let lines = |side: AnchorSide| match side {
+        AnchorSide::Left => left.line_count(),
+        AnchorSide::Right => right.line_count(),
+    };
+    let beyond = |anchor: &Anchor, side: AnchorSide, end: u32| {
+        let name = match side {
+            AnchorSide::Left => "left",
+            AnchorSide::Right => "right",
+        };
+        ApiError::InvalidArgument(format!(
+            "anchor `{anchor}`: line {end} is beyond the {name} document ({} lines)",
+            lines(side)
+        ))
+    };
+    for anchor in anchors {
+        match anchor {
+            Anchor::Pair { left, right } => {
+                if left.end > lines(AnchorSide::Left) {
+                    return Err(beyond(anchor, AnchorSide::Left, left.end));
+                }
+                if right.end > lines(AnchorSide::Right) {
+                    return Err(beyond(anchor, AnchorSide::Right, right.end));
+                }
+            }
+            Anchor::Isolate { side, lines: range } => {
+                if range.end > lines(*side) {
+                    return Err(beyond(anchor, *side, range.end));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Service {
@@ -225,10 +320,57 @@ impl Service {
         job: &JobControl,
         mut observer: Option<&mut dyn CompareObserver>,
     ) -> Result<TextCompareResponse, ApiError> {
-        let left = self.parse_spec_in(&req.left, self.use_of(&req.left), &job.cancel)?;
-        let right = self.parse_spec_in(&req.right, self.use_of(&req.right), &job.cancel)?;
-        self.prepare_input(Side::Left, &left, job)?;
-        self.prepare_input(Side::Right, &right, job)?;
+        let loaded = self.load_text_pair(None, req, job, &mut observer)?;
+        let ctl = job.ctl();
+        let comparison = compare_with_limits(
+            loaded.compare_input(req),
+            self.registry().limits(),
+            Some(self.pool()),
+            &ctl,
+            observer,
+        )
+        .map_err(|e| ApiError::from_text(e, Side::Left, &loaded.specs.left.canonical()))?;
+        Ok(loaded.respond(req, Arc::new(comparison)))
+    }
+
+    /// An input spec of a file comparison: through the router, or (`on`) resolved on the back-end `vfs` (a test's
+    /// `MemoryVfs`; standard input and the clipboard are still captured by the service).
+    fn parse_input(
+        &self,
+        on: Option<&dyn Vfs>,
+        raw: &OsStr,
+        cancel: &CancelToken,
+    ) -> Result<Spec, ApiError> {
+        match on {
+            None => self.parse_spec_in(raw, self.use_of(raw), cancel),
+            Some(vfs) => {
+                let spec = Spec::parse_os(raw, &self.spec_context())?;
+                self.capture_input(&spec)?;
+                hikasa_vfs::resolve_spec(vfs, spec, self.use_of(raw), cancel)
+                    .map_err(|_| ApiError::Cancelled)
+            }
+        }
+    }
+
+    /// The first steps of a text comparison (§3.2), shared by [`Service::text_compare`] and
+    /// [`Service::text_compare_live`]: specs; rules; the effective format (D-15); both documents loaded on the pool
+    /// (from `on`, else the router); `observer.loaded`; the anchors checked against the documents (a line beyond a
+    /// document is `InvalidArgument`, exit 100, §1.10.8); `bytes_identical`.
+    pub(crate) fn load_text_pair(
+        &self,
+        on: Option<&dyn Vfs>,
+        req: &TextCompareRequest,
+        job: &JobControl,
+        observer: &mut Option<&mut dyn CompareObserver>,
+    ) -> Result<LoadedPair, ApiError> {
+        let left = self.parse_input(on, &req.left, &job.cancel)?;
+        let right = self.parse_input(on, &req.right, &job.cancel)?;
+        let router = self.router();
+        let vfs: &dyn Vfs = on.unwrap_or(&*router);
+        for (side, spec) in [(Side::Left, &left), (Side::Right, &right)] {
+            vfs.prepare(spec, &job.ctl())
+                .map_err(|source| load_failed(side, spec, source))?;
+        }
         let mut warnings = Vec::new();
         let rules = self.text_rules_from(
             req.base_rules.as_ref(),
@@ -249,8 +391,6 @@ impl Service {
             self.load_options(req.encodings.right.as_deref())?,
         );
         let ctl = job.ctl();
-        let router = self.router();
-        let vfs: &dyn Vfs = &*router;
         let external = Some(self.external());
         let format = &chosen.format;
         let (left_loaded, right_loaded) = self.pool().join(
@@ -269,33 +409,13 @@ impl Service {
         let identical = bytes_identical(&left_raw, &right_raw, job);
         drop_large(left_raw, right_raw);
         let bytes_identical = identical?;
-        let input = CompareInput {
-            left: left_doc,
-            right: right_doc,
-            format: Arc::clone(&chosen.format),
+        check_anchors(&req.anchors, &left_doc, &right_doc)?;
+        Ok(LoadedPair {
+            specs: Pair::new(left, right),
+            docs: Pair::new(left_doc, right_doc),
+            chosen,
             rules,
             bytes_identical,
-            force_tokenize: false,
-            anchors: Vec::new(),
-        };
-        let comparison = compare_with_limits(
-            input,
-            self.registry().limits(),
-            Some(self.pool()),
-            &ctl,
-            observer,
-        )
-        .map_err(|e| ApiError::from_text(e, Side::Left, &left.canonical()))?;
-        warnings.extend(comparison.warnings().iter().cloned());
-        let verdict = comparison.verdict(req.ignore_unimportant);
-        let exit_code = ExitCode::for_content(&verdict, req.ignore_unimportant);
-        Ok(TextCompareResponse {
-            comparison: Arc::new(comparison),
-            format: chosen.choice,
-            detection: chosen.detection,
-            verdict,
-            ignore_unimportant: req.ignore_unimportant,
-            exit_code,
             warnings,
         })
     }

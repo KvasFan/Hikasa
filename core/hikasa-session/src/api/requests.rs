@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 
 use hikasa_core::{Pair, Spec};
 use hikasa_folder::{FolderRules, FolderRulesPatch};
-use hikasa_text::{TextRules, TextRulesPatch};
+use hikasa_text::{Anchor, TextRules, TextRulesPatch};
 use serde::{Deserialize, Serialize};
 
 /// Quick compare method (`--size|--crc|--binary|--rules`; default Rules, CLI-003 `--qc`).
@@ -93,6 +93,10 @@ pub struct TextCompareRequest {
     pub base_rules: Option<TextRules>,
     /// FF-002: formats on or off for this comparison, id → enabled, as a folder row was compared (D-172).
     pub format_overrides: BTreeMap<String, bool>,
+    /// Alignment anchors (TC-013, D-266): `--align` and `--isolate`, 0-based ranges
+    /// ([`super::vocab::parse_anchor`]). A line beyond a loaded document is `InvalidArgument` (exit 100);
+    /// crossing and overlapping pairs are dropped with the warning `anchor_dropped`. Additive (M2 W10a).
+    pub anchors: Vec<Anchor>,
 }
 
 impl TextCompareRequest {

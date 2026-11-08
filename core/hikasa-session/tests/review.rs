@@ -576,6 +576,7 @@ fn gui_requests_and_open_views_map_both_ways() {
         ignore_unimportant: true,
         base_rules: None,
         format_overrides: Default::default(),
+        anchors: Vec::new(),
     };
     let words = ViewWords {
         display: Some("context".into()),

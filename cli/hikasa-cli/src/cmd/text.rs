@@ -74,5 +74,6 @@ pub fn request_of(
         ignore_unimportant: rule.ignore_unimportant,
         base_rules: None,
         format_overrides: Default::default(),
+        anchors: Vec::new(),
     })
 }
