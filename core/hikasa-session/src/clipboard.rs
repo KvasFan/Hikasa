@@ -6,6 +6,7 @@
 //! the VFS never calls the clipboard itself. Text wins when the clipboard holds both text and an image.
 
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -126,6 +127,19 @@ pub trait ClipboardProvider: Send + Sync {
             "this clipboard cannot be written".into(),
         ))
     }
+
+    /// Places a list of files (M2 W9c, D-252): file managers paste them as files. Default: `Unavailable`. Called by
+    /// the adapters only (the GUI writes its own provider, D-203).
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        let _ = paths;
+        Err(ClipboardError::Unavailable("file lists".into()))
+    }
+
+    /// Reads the list of files the clipboard holds (M2 W9c, D-252): a file manager's copy. `Empty` when it holds
+    /// none. Default: `Unavailable`.
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        Err(ClipboardError::Unavailable("file lists".into()))
+    }
 }
 
 /// No clipboard: every read is `Unavailable("no clipboard provider")` (the default of `ServiceInit::new`).
@@ -142,18 +156,22 @@ impl ClipboardProvider for NoClipboard {
 #[derive(Debug, Clone)]
 enum Fixed {
     Content(ClipboardContent),
+    /// A list of files (M2 W9c): `read` sees an empty clipboard, `read_files` the list.
+    Files(Vec<PathBuf>),
     Empty,
     Unavailable(String),
     Failed(String),
 }
 
-/// A clipboard with fixed content or a fixed error, counting its reads and recording every payload placed on it
-/// (tests). A clipboard that is unavailable or failing refuses payloads the same way.
+/// A clipboard with fixed content or a fixed error, counting its reads and recording every payload and file list
+/// placed on it (tests). A clipboard that is unavailable or failing refuses payloads and lists the same way. A list
+/// placed becomes the content (`read_files` gives it back, `read` sees no text), as on a real clipboard.
 #[derive(Debug)]
 pub struct FixedClipboard {
     fixed: parking_lot::Mutex<Fixed>,
     reads: AtomicUsize,
     payloads: parking_lot::Mutex<Vec<ClipboardPayload>>,
+    files: parking_lot::Mutex<Vec<Vec<PathBuf>>>,
 }
 
 impl FixedClipboard {
@@ -162,7 +180,23 @@ impl FixedClipboard {
             fixed: parking_lot::Mutex::new(fixed),
             reads: AtomicUsize::new(0),
             payloads: parking_lot::Mutex::new(Vec::new()),
+            files: parking_lot::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Holds a list of files (a file manager's copy; M2 W9c).
+    pub fn files(paths: Vec<PathBuf>) -> FixedClipboard {
+        FixedClipboard::new(Fixed::Files(paths))
+    }
+
+    /// Replaces the content by a list of files.
+    pub fn set_files(&self, paths: Vec<PathBuf>) {
+        *self.fixed.lock() = Fixed::Files(paths);
+    }
+
+    /// Every file list placed, in order.
+    pub fn file_lists(&self) -> Vec<Vec<PathBuf>> {
+        self.files.lock().clone()
     }
 
     /// Every payload placed, in order.
@@ -215,7 +249,7 @@ impl ClipboardProvider for FixedClipboard {
         self.reads.fetch_add(1, Ordering::Relaxed);
         match &*self.fixed.lock() {
             Fixed::Content(content) => Ok(content.clone()),
-            Fixed::Empty => Err(ClipboardError::Empty),
+            Fixed::Empty | Fixed::Files(_) => Err(ClipboardError::Empty),
             Fixed::Unavailable(reason) => Err(ClipboardError::Unavailable(reason.clone())),
             Fixed::Failed(reason) => Err(ClipboardError::Failed(reason.clone())),
         }
@@ -225,10 +259,32 @@ impl ClipboardProvider for FixedClipboard {
         match &*self.fixed.lock() {
             Fixed::Unavailable(reason) => return Err(ClipboardError::Unavailable(reason.clone())),
             Fixed::Failed(reason) => return Err(ClipboardError::Failed(reason.clone())),
-            Fixed::Content(_) | Fixed::Empty => {}
+            Fixed::Content(_) | Fixed::Files(_) | Fixed::Empty => {}
         }
         self.payloads.lock().push(payload.clone());
         Ok(())
+    }
+
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        let mut fixed = self.fixed.lock();
+        match &*fixed {
+            Fixed::Unavailable(reason) => return Err(ClipboardError::Unavailable(reason.clone())),
+            Fixed::Failed(reason) => return Err(ClipboardError::Failed(reason.clone())),
+            Fixed::Content(_) | Fixed::Files(_) | Fixed::Empty => {}
+        }
+        self.files.lock().push(paths.to_vec());
+        *fixed = Fixed::Files(paths.to_vec());
+        Ok(())
+    }
+
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        match &*self.fixed.lock() {
+            Fixed::Files(paths) if !paths.is_empty() => Ok(paths.clone()),
+            Fixed::Files(_) | Fixed::Content(_) | Fixed::Empty => Err(ClipboardError::Empty),
+            Fixed::Unavailable(reason) => Err(ClipboardError::Unavailable(reason.clone())),
+            Fixed::Failed(reason) => Err(ClipboardError::Failed(reason.clone())),
+        }
     }
 }
 
@@ -239,6 +295,14 @@ impl<P: ClipboardProvider + ?Sized> ClipboardProvider for Arc<P> {
 
     fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
         (**self).write_payload(payload)
+    }
+
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        (**self).write_files(paths)
+    }
+
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        (**self).read_files()
     }
 }
 

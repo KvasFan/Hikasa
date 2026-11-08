@@ -354,6 +354,36 @@ impl ClipboardProvider for SystemClipboard {
         }
         place_payload(payload)
     }
+
+    /// Places a list of files (M2 W9c, D-252) with `arboard`'s `file_list`: `text/uri-list` on X11 and Wayland,
+    /// `CF_HDROP` on Windows, file URLs on macOS. On Linux the list outlives the window through the helper, as a
+    /// report does ([`ClipboardProvider::write_payload`]).
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        if paths.is_empty() {
+            return Err(ClipboardError::Failed("no file to place".into()));
+        }
+        if cfg!(target_os = "linux") {
+            let exe = std::env::current_exe()
+                .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
+            let mut command = std::process::Command::new(exe);
+            command.arg(CLIPBOARD_HELPER_ARG);
+            return spawn_helper(&mut command, &encode_files(paths)).map(drop);
+        }
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        clipboard.set().file_list(paths).map_err(arboard_error)
+    }
+
+    /// The files of a file manager's copy (`arboard`'s `file_list`); `Empty` when the clipboard holds none.
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        match clipboard.get().file_list() {
+            Ok(paths) if paths.is_empty() => Err(ClipboardError::Empty),
+            Ok(paths) => Ok(paths),
+            Err(e) => Err(arboard_error(e)),
+        }
+    }
 }
 
 /// The hidden internal entry of the Linux clipboard helper (§1.7.10): `hikasa __clipboard-helper`. Not in `--help`, the
@@ -381,6 +411,59 @@ fn place_payload(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
     .map_err(arboard_error)
 }
 
+/// The second length of a helper input that carries a list of files (M2 W9c): the first length is then the list's
+/// bytes, each path followed by a NUL byte (Unix: the path's bytes; elsewhere UTF-8).
+const FILES_MARK: u64 = u64::MAX - 1;
+
+/// What the helper places.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HelperContent {
+    /// A report (§1.7.10).
+    Payload(ClipboardPayload),
+    /// A list of files (D-252).
+    Files(Vec<PathBuf>),
+}
+
+/// The bytes of a path in the helper's list.
+fn path_bytes(path: &std::path::Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        path.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
+/// A path of the helper's list.
+fn path_of_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// A list of files on the helper's stdin: its length and [`FILES_MARK`], then each path and a NUL byte.
+fn encode_files(paths: &[PathBuf]) -> Vec<u8> {
+    let mut list = Vec::new();
+    for path in paths {
+        list.extend_from_slice(&path_bytes(path));
+        list.push(0);
+    }
+    let mut bytes = Vec::with_capacity(16 + list.len());
+    bytes.extend_from_slice(&(list.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&FILES_MARK.to_le_bytes());
+    bytes.extend_from_slice(&list);
+    bytes
+}
+
 /// The payload on the helper's stdin: the text's and the HTML's lengths (8 bytes little-endian each; `u64::MAX`: no
 /// HTML), then the text, then the HTML.
 fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
@@ -396,8 +479,9 @@ fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
     bytes
 }
 
-/// Reads a payload of [`encode_payload`] (at most [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes).
-fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, String> {
+/// Reads a payload of [`encode_payload`] or a list of [`encode_files`] (at most
+/// [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes).
+fn decode_payload(input: &mut dyn std::io::Read) -> Result<HelperContent, String> {
     let mut head = [0u8; 16];
     input
         .read_exact(&mut head)
@@ -405,6 +489,24 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
     let len = |b: &[u8]| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]));
     let (text_len, html_len) = (len(&head[..8]), len(&head[8..]));
     let max = crate::clipboard::CLIPBOARD_REPORT_MAX;
+    if html_len == FILES_MARK {
+        if text_len > max {
+            return Err("the file list is larger than the clipboard limit".into());
+        }
+        let mut list = vec![0u8; usize::try_from(text_len).map_err(|e| e.to_string())?];
+        input
+            .read_exact(&mut list)
+            .map_err(|e| format!("short file list: {e}"))?;
+        let paths: Vec<PathBuf> = list
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(path_of_bytes)
+            .collect();
+        if paths.is_empty() {
+            return Err("the file list is empty".into());
+        }
+        return Ok(HelperContent::Files(paths));
+    }
     let html_size = if html_len == u64::MAX { 0 } else { html_len };
     if text_len.saturating_add(html_size) > max {
         return Err("the payload is larger than the clipboard limit".into());
@@ -422,7 +524,7 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
     } else {
         Some(read(html_len)?)
     };
-    Ok(ClipboardPayload { text, html })
+    Ok(HelperContent::Payload(ClipboardPayload { text, html }))
 }
 
 /// Starts a clipboard helper `command`, writes the payload to its stdin, closes it and waits for its one status line
@@ -433,6 +535,23 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
 pub fn spawn_clipboard_helper(
     command: &mut std::process::Command,
     payload: &ClipboardPayload,
+) -> Result<std::process::Child, ClipboardError> {
+    spawn_helper(command, &encode_payload(payload))
+}
+
+/// [`spawn_clipboard_helper`] with a list of files (M2 W9c, D-252): the helper owns the list until something else
+/// is copied. Adapter-only.
+pub fn spawn_clipboard_files_helper(
+    command: &mut std::process::Command,
+    paths: &[PathBuf],
+) -> Result<std::process::Child, ClipboardError> {
+    spawn_helper(command, &encode_files(paths))
+}
+
+/// Starts a helper with `input` on its stdin and waits for its status line.
+fn spawn_helper(
+    command: &mut std::process::Command,
+    input: &[u8],
 ) -> Result<std::process::Child, ClipboardError> {
     use std::io::{BufRead, Write};
     #[cfg(unix)]
@@ -451,11 +570,10 @@ pub fn spawn_clipboard_helper(
         let _ = child.wait();
         ClipboardError::Failed(message)
     };
-    let written = child.stdin.take().map(|mut stdin| {
-        stdin
-            .write_all(&encode_payload(payload))
-            .and_then(|()| stdin.flush())
-    });
+    let written = child
+        .stdin
+        .take()
+        .map(|mut stdin| stdin.write_all(input).and_then(|()| stdin.flush()));
     if let Some(Err(e)) = written {
         return Err(fail(
             &mut child,
@@ -515,8 +633,8 @@ pub fn clipboard_helper_main(
         let _ = output.flush();
     };
     // A caller that went away before the whole payload came (stdin at its end) ends the helper here.
-    let payload = match decode_payload(input) {
-        Ok(payload) => payload,
+    let content = match decode_payload(input) {
+        Ok(content) => content,
         Err(e) => {
             report(output, &format!("{HELPER_FAILED}{e}"));
             return 1;
@@ -524,8 +642,16 @@ pub fn clipboard_helper_main(
     };
     match placer {
         HelperPlacer::File(path) => {
-            let bytes = payload.html.as_ref().unwrap_or(&payload.text);
-            match crate::atomic::write_atomic(path, bytes.as_bytes()) {
+            let bytes = match &content {
+                HelperContent::Payload(payload) => payload
+                    .html
+                    .as_ref()
+                    .unwrap_or(&payload.text)
+                    .clone()
+                    .into_bytes(),
+                HelperContent::Files(paths) => file_lines(paths),
+            };
+            match crate::atomic::write_atomic(path, &bytes) {
                 Ok(()) => {
                     report(output, HELPER_PLACED);
                     0
@@ -545,16 +671,19 @@ pub fn clipboard_helper_main(
                     return 1;
                 }
             };
-            let placed = match &payload.html {
-                Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
-                None => clipboard.set_text(payload.text.as_str()),
+            let placed = match &content {
+                HelperContent::Payload(payload) => match &payload.html {
+                    Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
+                    None => clipboard.set_text(payload.text.as_str()),
+                },
+                HelperContent::Files(paths) => clipboard.set().file_list(paths),
             };
             if let Err(e) = placed {
                 report(output, &helper_status(&arboard_error(e)));
                 return 1;
             }
             report(output, HELPER_PLACED);
-            wait_owning(&mut clipboard, &payload);
+            wait_owning(&mut clipboard, &content);
             0
         }
     }
@@ -587,18 +716,31 @@ pub fn is_clipboard_helper(argv: &[std::ffi::OsString]) -> bool {
 
 /// Places the payload once more in Linux's wait mode: returns when another program owns the selection.
 #[cfg(target_os = "linux")]
-fn wait_owning(clipboard: &mut arboard::Clipboard, payload: &ClipboardPayload) {
+fn wait_owning(clipboard: &mut arboard::Clipboard, content: &HelperContent) {
     use arboard::SetExtLinux;
     let set = clipboard.set().wait();
-    let _ = match &payload.html {
-        Some(html) => set.html(html.as_str(), Some(payload.text.as_str())),
-        None => set.text(payload.text.as_str()),
+    let _ = match content {
+        HelperContent::Payload(payload) => match &payload.html {
+            Some(html) => set.html(html.as_str(), Some(payload.text.as_str())),
+            None => set.text(payload.text.as_str()),
+        },
+        HelperContent::Files(paths) => set.file_list(paths),
     };
 }
 
 /// Elsewhere the content outlives the process: nothing to wait for.
 #[cfg(not(target_os = "linux"))]
-fn wait_owning(_clipboard: &mut arboard::Clipboard, _payload: &ClipboardPayload) {}
+fn wait_owning(_clipboard: &mut arboard::Clipboard, _content: &HelperContent) {}
+
+/// A list of files as [`FileClipboard`] keeps it: one path a line, `\n` after each (Unix: the path's bytes).
+fn file_lines(paths: &[PathBuf]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for path in paths {
+        bytes.extend_from_slice(&path_bytes(path));
+        bytes.push(b'\n');
+    }
+    bytes
+}
 
 /// A file standing in for the clipboard (`$HIKASA_CLIPBOARD_FILE`): its bytes as text (invalid UTF-8 replaced);
 /// a missing file → `Unavailable`, an empty one → `Empty`, more than [`MAX_TEXT_BYTES`] → `TooLarge`.
@@ -641,6 +783,45 @@ impl ClipboardProvider for FileClipboard {
         let bytes = payload.html.as_ref().unwrap_or(&payload.text);
         crate::atomic::write_atomic(&self.0, bytes.as_bytes())
             .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
+    }
+
+    /// Writes the list one path a line (M2 W9c, D-252), atomically; a path holding a line break cannot be written.
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        if let Some(bad) = paths
+            .iter()
+            .find(|p| path_bytes(p).iter().any(|b| matches!(b, b'\n' | b'\r')))
+        {
+            return Err(ClipboardError::Failed(format!(
+                "{} holds a line break",
+                bad.display()
+            )));
+        }
+        crate::atomic::write_atomic(&self.0, &file_lines(paths))
+            .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
+    }
+
+    /// The file's lines as paths (a `\r` before a line's end is dropped; empty lines are skipped); no line: `Empty`.
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        let bytes = match std::fs::read(&self.0) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ClipboardError::Unavailable(format!(
+                    "HIKASA_CLIPBOARD_FILE {} does not exist",
+                    self.0.display()
+                )));
+            }
+            Err(e) => return Err(ClipboardError::Failed(format!("{}: {e}", self.0.display()))),
+        };
+        let paths: Vec<PathBuf> = bytes
+            .split(|b| *b == b'\n')
+            .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+            .filter(|line| !line.is_empty())
+            .map(path_of_bytes)
+            .collect();
+        if paths.is_empty() {
+            return Err(ClipboardError::Empty);
+        }
+        Ok(paths)
     }
 }
 
@@ -773,7 +954,10 @@ mod tests {
         assert!(child.try_wait().unwrap().is_none(), "the helper runs on");
         assert_eq!(std::fs::read(&got).unwrap(), encode_payload(&payload));
         let mut stdin = std::io::Cursor::new(encode_payload(&payload));
-        assert_eq!(decode_payload(&mut stdin).unwrap(), payload);
+        assert_eq!(
+            decode_payload(&mut stdin).unwrap(),
+            HelperContent::Payload(payload.clone())
+        );
         child.kill().unwrap();
         child.wait().unwrap();
         for script in ["exit 0", "cat >/dev/null; echo 'failed: no display'"] {
@@ -899,6 +1083,45 @@ mod tests {
             );
             assert_eq!(code, 1);
             assert!(String::from_utf8(output).unwrap().starts_with("failed: "));
+            assert!(!dir.path().join("never").exists());
+        }
+    }
+
+    /// A9.20 (D-252): a list of files goes through the helper's input and its test placer one path a line, in order;
+    /// an empty or short list is refused.
+    #[test]
+    fn a9_20_the_helper_takes_a_file_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![PathBuf::from("/a/b c.txt"), PathBuf::from("/d/e,f")];
+        let bytes = encode_files(&paths);
+        assert_eq!(
+            decode_payload(&mut std::io::Cursor::new(bytes.clone())).unwrap(),
+            HelperContent::Files(paths.clone())
+        );
+        let file = dir.path().join("placed");
+        let mut output = Vec::new();
+        let code = clipboard_helper_main(
+            &mut std::io::Cursor::new(bytes.clone()),
+            &mut output,
+            &HelperPlacer::File(file.clone()),
+        );
+        assert_eq!(code, 0);
+        assert_eq!(output, b"placed\n");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "/a/b c.txt\n/d/e,f\n"
+        );
+        assert_eq!(FileClipboard(file).read_files().unwrap(), paths);
+        let mut short = bytes;
+        short.truncate(short.len() - 3);
+        for input in [encode_files(&[]), short] {
+            let mut output = Vec::new();
+            let code = clipboard_helper_main(
+                &mut std::io::Cursor::new(input),
+                &mut output,
+                &HelperPlacer::File(dir.path().join("never")),
+            );
+            assert_eq!(code, 1);
             assert!(!dir.path().join("never").exists());
         }
     }
