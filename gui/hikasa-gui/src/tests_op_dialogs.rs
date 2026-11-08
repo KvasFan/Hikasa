@@ -156,7 +156,7 @@ fn cli_twin(world: &World, op: OpRequest, paths: &[(&str, SideSet)]) {
 }
 
 /// Presses Start and answers every question with Yes to All.
-fn start_and_confirm(world: &World, app: &mut TestApp) {
+pub(crate) fn start_and_confirm(world: &World, app: &mut TestApp) {
     press(world, app, ButtonRole::Ok);
     for _ in 0..4 {
         if find::<PlanConfirmDialog>(app).is_some() {
@@ -167,7 +167,7 @@ fn start_and_confirm(world: &World, app: &mut TestApp) {
 }
 
 /// Waits for a dialog's plan.
-fn planned(world: &World, app: &mut TestApp) {
+pub(crate) fn planned(world: &World, app: &mut TestApp) {
     for _ in 0..3 {
         app.0.handle(crate::app::UiMsg::Tick);
         world.settle(app);

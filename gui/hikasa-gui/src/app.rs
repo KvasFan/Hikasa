@@ -312,9 +312,10 @@ pub struct AppCore {
     /// The runs of the scripts started here (the status window's name, alive while the run's job body runs, also after
     /// its status window went): the shutdown waits for them as for the orphaned operations (review F4).
     script_runs: Vec<(String, std::sync::Weak<()>)>,
-    /// The GUI's clipboard for writing: a script's `output-to:clipboard`, the Info dialog's Copy (the adapter's
-    /// provider; none in tests).
-    script_clipboard: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
+    /// The GUI's clipboard for writing: a script's `output-to:clipboard`, the Info dialog's Copy, the panes' Copy and
+    /// Copy Filename (the adapter's provider; none in tests), its writes in the order they were asked (W9c review
+    /// F12).
+    script_clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -445,7 +446,9 @@ impl AppCore {
             last_opened: None,
             orphans: Vec::new(),
             script_runs: Vec::new(),
-            script_clipboard: Arc::new(hikasa_session::clipboard::NoClipboard),
+            script_clipboard: Arc::new(hikasa_session::clipboard::OrderedClipboard::new(Arc::new(
+                hikasa_session::clipboard::NoClipboard,
+            ))),
             #[cfg(test)]
             before_wait: None,
         };
@@ -740,7 +743,8 @@ impl AppCore {
         &mut self,
         provider: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
     ) {
-        self.script_clipboard = provider;
+        self.script_clipboard =
+            Arc::new(hikasa_session::clipboard::OrderedClipboard::new(provider));
     }
 
     /// The status window `id` (a question's, a notice's: never the first one found, review F1).
@@ -763,7 +767,7 @@ impl AppCore {
             usize::try_from(options.tweaks.log_panel.display_up_to).unwrap_or(usize::MAX),
             options.tweaks.scripts.close_when_finished,
             &self.wake(),
-            Arc::clone(&self.script_clipboard),
+            Arc::clone(&self.script_clipboard) as _,
         );
         self.script_runs
             .retain(|(_, alive)| alive.strong_count() > 0);
@@ -2137,7 +2141,7 @@ impl AppCore {
                         scope.type_title(),
                         stats,
                         partial,
-                        Arc::clone(&self.script_clipboard),
+                        Arc::clone(&self.script_clipboard) as _,
                     )
                     .with_sync(sync);
                     if let Some(w) = self.window_mut(window) {
@@ -3202,8 +3206,7 @@ impl AppCore {
             .as_any_mut()
             .downcast_mut::<crate::drop_dialog::DropDialog>()
         {
-            self.drop_closed(d);
-            return Vec::new();
+            return self.drop_closed(d);
         }
         if let Some(d) = closed.as_any_mut().downcast_mut::<DeleteDialog>() {
             let (view, choice) = (d.view, d.take_choice());
@@ -4169,6 +4172,18 @@ impl AppCore {
         target: DropTarget,
         paths: Vec<PathBuf>,
     ) -> Vec<Effect> {
+        self.drop_paths_moving(window, target, paths, false)
+    }
+
+    /// [`AppCore::drop_paths`] with Shift held at the drop (`moving`): a pane's prompt shows the move first (§1.9.25
+    /// W9c note 4; review F8).
+    pub fn drop_paths_moving(
+        &mut self,
+        window: WindowId,
+        target: DropTarget,
+        paths: Vec<PathBuf>,
+        moving: bool,
+    ) -> Vec<Effect> {
         match decide(target, &paths) {
             DropOutcome::Ignore => {}
             DropOutcome::Fill(fields) => {
@@ -4199,7 +4214,11 @@ impl AppCore {
                 paths,
             } => {
                 let sources = paths.into_iter().map(PathBuf::into_os_string).collect();
-                return self.drop_transfer(window, side, folder, sources, false);
+                return self.drop_transfer(window, side, folder, sources, moving);
+            }
+            DropOutcome::Ask(paths) => {
+                let sources = paths.into_iter().map(PathBuf::into_os_string).collect();
+                return self.drop_ask(window, sources, moving);
             }
             DropOutcome::OpenType(kind, paths) => self.drop_open_type(window, kind, paths),
             DropOutcome::Open([left, right]) => {

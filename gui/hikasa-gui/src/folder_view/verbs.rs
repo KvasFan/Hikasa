@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use hikasa_core::Side;
+use hikasa_core::{Side, Spec};
 use hikasa_folder::NodeId;
 use hikasa_folder::ops::{Confirmation, FolderOp, PathStructure, RenameMask, base_mask};
 use hikasa_folder::select::{Selection, SideSet};
@@ -52,8 +52,9 @@ pub struct VerbOptions<'a> {
     /// Names follow Windows' rules.
     pub windows: bool,
     /// Rows dragged onto a folder row of the other pane (M2 W9c, D-251): Copy/Move to Folder's target prefilled with
-    /// that folder, structure *relative*, from the side the rows were dragged from.
-    pub into: Option<(String, Side)>,
+    /// that folder (its spec: the dialog keeps it as it is until the target is edited, review F5), structure
+    /// *relative*, from the side the rows were dragged from.
+    pub into: Option<(Spec, Side)>,
 }
 
 /// How a verb started.
@@ -271,9 +272,10 @@ impl FolderViewModel {
                 let recent = state
                     .mru(hikasa_session::settings::state::MruList::Folders)
                     .to_vec();
+                let prefilled = options.into.as_ref().map(|(folder, _)| folder.clone());
                 let (target, structure, sides) = match &options.into {
                     Some((folder, from)) => (
-                        folder.clone(),
+                        folder.canonical(),
                         PathStructure::Relative,
                         if *from == Side::Right {
                             SideChoice::Right
@@ -307,6 +309,9 @@ impl FolderViewModel {
                     VerbStart::Dialog(mut dialog) => {
                         if let Some(d) = dialog.as_any_mut().downcast_mut::<OpDialog>() {
                             d.recent = recent;
+                            if let Some(spec) = prefilled {
+                                d.prefill_target(spec);
+                            }
                         }
                         VerbStart::Dialog(dialog)
                     }

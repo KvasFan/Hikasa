@@ -688,6 +688,33 @@ fn method_label(method: hikasa_core::ContentMethod) -> &'static str {
 pub fn drop_dialog(ui: &mut Ui, d: &mut crate::drop_dialog::DropDialog, pal: &Palette) {
     use crate::drop_dialog::{OVERWRITES, overwrite_caption};
     ui.label(d.message());
+    // The window could not say where the paths were dropped: the pane is chosen here (F4).
+    if let Some(sides) = d.sides.clone() {
+        ui.add_space(4.0);
+        ui.label("Into the current folder of:");
+        for (k, side) in [(0, hikasa_core::Side::Left), (1, hikasa_core::Side::Right)] {
+            let name = if k == 0 { "Left" } else { "Right" };
+            let chosen = d.into.as_ref().is_some_and(|i| i.side == side);
+            match &sides[k] {
+                Ok(into) => {
+                    if ui
+                        .radio(chosen, format!("{name}: {}", into.shown))
+                        .clicked()
+                    {
+                        d.choose_side(side);
+                    }
+                }
+                Err(why) => {
+                    ui.add_enabled(false, egui::RadioButton::new(false, name))
+                        .on_disabled_hover_text(why.as_str());
+                    ui.label(egui::RichText::new(why).color(pal.muted));
+                }
+            }
+        }
+    }
+    if let Some(why) = &d.move_refused {
+        ui.label(egui::RichText::new(format!("Move is off: {why}")).color(pal.muted));
+    }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label("If an item exists:");
@@ -703,7 +730,13 @@ pub fn drop_dialog(ui: &mut Ui, d: &mut crate::drop_dialog::DropDialog, pal: &Pa
         ui.add_space(12.0);
         ui.label("Preview:");
         ui.radio_value(&mut d.show_move, false, "Copy");
-        ui.radio_value(&mut d.show_move, true, "Move");
+        let can_move = d.move_refused.is_none();
+        if ui
+            .add_enabled(can_move, egui::RadioButton::new(d.show_move, "Move"))
+            .clicked()
+        {
+            d.show_move = true;
+        }
     });
     ui.add_space(4.0);
     match d.shown() {

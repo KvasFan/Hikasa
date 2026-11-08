@@ -99,6 +99,8 @@ mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;
 #[cfg(test)]
+mod tests_pane_fixes;
+#[cfg(test)]
 mod tests_paths;
 #[cfg(test)]
 mod tests_rule_tabs;

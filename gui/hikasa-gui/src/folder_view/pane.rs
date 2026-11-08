@@ -101,10 +101,7 @@ impl FolderViewModel {
             return Err(PASTE_WHERE.to_owned());
         }
         if !self.write.writable(side) {
-            return Err(format!(
-                "The {} side is read-only (Disable editing).",
-                side_name(side)
-            ));
+            return Err(read_only_message(side));
         }
         let read = prepared.model().read();
         let mut at = folder.unwrap_or(NodeId::ROOT);
@@ -141,6 +138,26 @@ impl FolderViewModel {
             folder: (at != NodeId::ROOT).then_some(at),
             shown,
             target,
+            spec,
+        })
+    }
+
+    /// Why a move of `sources` may not run (W9c review F1): a source that is the base of a read-only side (*Disable
+    /// editing*, `--ro`), or lies below it, would be deleted from that side. Each source is mapped onto the view's
+    /// local bases by its path (a member base by its outermost archive), compared by components (`.` and `..` taken
+    /// out; case folded where the platform's disks fold it).
+    pub fn move_refused(&self, sources: &[OsString]) -> Option<String> {
+        let prepared = self.prepared()?;
+        let specs = prepared.specs();
+        [Side::Left, Side::Right].into_iter().find_map(|side| {
+            if self.write.writable(side) {
+                return None;
+            }
+            let base = local_root(specs.get(side)?)?;
+            sources
+                .iter()
+                .any(|source| path_within(std::path::Path::new(source), base))
+                .then(|| read_only_message(side))
         })
     }
 
@@ -204,6 +221,12 @@ impl FolderViewModel {
         }
     }
 
+    /// The row at visible row `index` that paths from the OS are dropped on (D-251): a folder row itself, a file row
+    /// for its folder ([`FolderViewModel::drop_into`] goes up to the nearest folder the side has; review F9).
+    pub fn drop_row(&self, index: usize) -> Option<NodeId> {
+        self.rows.get(index).map(|row| row.node)
+    }
+
     /// The folder row of `side` at visible row `index` (a drop target, D-251): the row when it is a folder.
     pub fn folder_row(&self, index: usize) -> Option<NodeId> {
         let row = self.rows.get(index)?;
@@ -234,14 +257,25 @@ impl FolderViewModel {
 
     /// The drop's prompt closed: the plan of the button pressed runs as it is (`vfs_op_execute`, T12); after it, the
     /// folder it went into and, for a move, the folders the sources left that this comparison shows are refreshed.
-    pub fn drop_answered(&mut self, service: &Service, answer: Option<DropAnswer>) {
+    /// A move is checked again first (review F1): a source on a side that became read-only meanwhile runs nothing,
+    /// and the message says why (`Err`).
+    pub fn drop_answered(
+        &mut self,
+        service: &Service,
+        answer: Option<DropAnswer>,
+    ) -> Result<(), String> {
         if !matches!(self.task, Some(Task::Dialog { .. })) {
-            return;
+            return Ok(());
         }
         self.task = None;
         let Some(answer) = answer else {
-            return;
+            return Ok(());
         };
+        if answer.moving
+            && let Some(why) = self.move_refused(&answer.sources)
+        {
+            return Err(why);
+        }
         let caption = transfer_caption(answer.moving).to_owned();
         let mut refresh = vec![answer.into.folder.unwrap_or(NodeId::ROOT)];
         if answer.moving {
@@ -278,6 +312,7 @@ impl FolderViewModel {
             began: Instant::now(),
             job,
         });
+        Ok(())
     }
 
     /// The folders of the view that hold `sources` (local paths below a local base), by the comparison's paths.
@@ -310,6 +345,73 @@ impl FolderViewModel {
         }
         out
     }
+}
+
+/// The message of a drop, a paste or a move that would write a read-only side (§1.9.25 W9c note 5).
+pub fn read_only_message(side: Side) -> String {
+    format!(
+        "The {} side is read-only (Disable editing).",
+        side_name(side)
+    )
+}
+
+/// The local path a base lives in: a local folder itself, a member's outermost archive file, a snapshot's file;
+/// `None` for the other back-ends (nothing local can be moved out of them).
+fn local_root(spec: &Spec) -> Option<&std::path::Path> {
+    match spec {
+        Spec::Local(path) => Some(path.as_path()),
+        Spec::ArchiveMember { archive, .. } => local_root(archive),
+        Spec::Snapshot { file, .. } => Some(file.as_path()),
+        _ => None,
+    }
+}
+
+/// True when `path` is `base` or lies below it, by components: `.` dropped, `..` taken back, a Windows verbatim
+/// prefix read as the plain one, and names folded on Windows and macOS (their disks fold case by default).
+pub fn path_within(path: &std::path::Path, base: &std::path::Path) -> bool {
+    let (path, base) = (components(path), components(base));
+    !base.is_empty() && path.len() >= base.len() && path[..base.len()] == base[..]
+}
+
+/// The comparable components of a path (see [`path_within`]).
+fn components(path: &std::path::Path) -> Vec<OsString> {
+    use std::path::{Component, Prefix};
+    let fold = cfg!(any(windows, target_os = "macos"));
+    let mut out: Vec<OsString> = Vec::new();
+    let mut root = 0;
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if out.len() > root {
+                    out.pop();
+                }
+            }
+            Component::RootDir => {
+                out.push(OsString::from("/"));
+                root = out.len();
+            }
+            Component::Prefix(p) => {
+                root = out.len() + 1;
+                out.push(OsString::from(match p.kind() {
+                    Prefix::Disk(d) | Prefix::VerbatimDisk(d) => {
+                        format!("{}:", char::from(d).to_ascii_lowercase())
+                    }
+                    Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => format!(
+                        "//{}/{}",
+                        server.to_string_lossy().to_lowercase(),
+                        share.to_string_lossy().to_lowercase()
+                    ),
+                    _ => p.as_os_str().to_string_lossy().to_lowercase(),
+                }));
+            }
+            Component::Normal(name) => out.push(match name.to_str() {
+                Some(text) if fold => OsString::from(text.to_lowercase()),
+                _ => name.to_os_string(),
+            }),
+        }
+    }
+    out
 }
 
 /// True when `node` has an item on `side` (the base always).

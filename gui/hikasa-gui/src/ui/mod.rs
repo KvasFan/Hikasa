@@ -87,7 +87,8 @@ enum Action {
     Log(ViewId, LogAction),
     LogHeight(ViewId, f64),
     MoveTab(usize, Option<WindowId>, Option<usize>, Option<[f32; 2]>),
-    Drop(DropTarget, Vec<std::path::PathBuf>),
+    /// Paths dropped from the OS; Shift held at the drop (a pane's prompt shows the move first).
+    Drop(DropTarget, Vec<std::path::PathBuf>, bool),
     Home(ui_home::HomeAction),
     /// The inline Rename's Enter (M2 W9b, D-245).
     CommitRename,
@@ -208,6 +209,39 @@ pub struct HikasaApp {
     builders: HashMap<WindowId, ViewportBuilder>,
     /// The toolbar items of the tables and scope drawn last (rebuilt when either changes).
     toolbar_cache: Option<(Arc<CommandTables>, Scope, Vec<ToolItem>)>,
+    /// Per window: when the drag from another program began and when the pointer last moved (W9c review F4).
+    os_drags: HashMap<WindowId, OsDrag>,
+}
+
+/// What a window knows of a drag from another program (W9c review F4): winit sends no pointer position while the
+/// other program holds the drag (X11 ignores `XdndPosition`, Windows and macOS give none), so the position egui keeps
+/// is the one from before the drag, often over another place. A position counts only when the pointer moved after
+/// the drag began (in its first frame at the earliest).
+#[derive(Debug, Default, Clone, Copy)]
+struct OsDrag {
+    /// The input time of the drag's first frame (files hovered or dropped).
+    since: Option<f64>,
+    /// The input time of the last pointer move or button.
+    moved: Option<f64>,
+}
+
+impl OsDrag {
+    /// One frame: `moved` (a pointer event in it), `hovering` (files over the window), `dropping` (files dropped);
+    /// true when the pointer's position is as fresh as the drag.
+    fn frame(&mut self, now: f64, moved: bool, hovering: bool, dropping: bool) -> bool {
+        if moved {
+            self.moved = Some(now);
+        }
+        if (hovering || dropping) && self.since.is_none() {
+            self.since = Some(now);
+        }
+        let since = self.since.unwrap_or(now);
+        let fresh = self.moved.is_some_and(|t| t >= since);
+        if !hovering {
+            self.since = None;
+        }
+        fresh
+    }
 }
 
 type Mailbox = crate::mailbox::Mailbox<UiMsg>;
@@ -297,6 +331,7 @@ impl HikasaApp {
             watch,
             builders: HashMap::new(),
             toolbar_cache: None,
+            os_drags: HashMap::new(),
         }
     }
 
@@ -487,7 +522,9 @@ impl HikasaApp {
                 }
                 effects
             }
-            Action::Drop(target, paths) => self.core.drop_paths(window, target, paths),
+            Action::Drop(target, paths, moving) => {
+                self.core.drop_paths_moving(window, target, paths, moving)
+            }
             Action::Home(action) => match action {
                 ui_home::HomeAction::Run(id) => self.core.execute(window, id),
                 ui_home::HomeAction::Browse(side) => {
@@ -710,8 +747,31 @@ impl HikasaApp {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        let pointer = ctx.input(|i| i.pointer.hover_pos().or(i.pointer.interact_pos()));
         let hovering_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        // Shift at the drop shows the move first (§1.9.25 W9c note 4; review F8).
+        let (now, moved, shift) = ctx.input(|i| {
+            (
+                i.time,
+                i.raw.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }
+                    )
+                }),
+                i.modifiers.shift,
+            )
+        });
+        let fresh = self.os_drags.entry(window).or_default().frame(
+            now,
+            moved,
+            hovering_files,
+            !dropped.is_empty(),
+        );
+        // Only a position the pointer reached after the drag began places it (review F4).
+        let pointer = ctx
+            .input(|i| i.pointer.hover_pos().or(i.pointer.interact_pos()))
+            .filter(|_| fresh);
+        let mut folder_view = false;
 
         let Some(w) = self.core.window(window) else {
             return;
@@ -1100,6 +1160,8 @@ impl HikasaApp {
                             menu: &pane_menu,
                         };
                         let st = self.folders.entry(view).or_default();
+                        st.os_pointer = pointer;
+                        folder_view = true;
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
                             tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
@@ -1161,12 +1223,14 @@ impl HikasaApp {
                 }
                 _ => match folder_target {
                     Some(target) => target,
+                    // A folder view with no fresh position asks for the pane (review F4).
+                    None if folder_view && pointer.is_none() => DropTarget::PaneAsk,
                     None => pointer
                         .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
                         .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
                 },
             };
-            actions.push(Action::Drop(target, dropped));
+            actions.push(Action::Drop(target, dropped, shift));
         }
 
         // Notices.

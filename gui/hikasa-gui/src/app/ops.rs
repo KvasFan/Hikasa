@@ -44,7 +44,7 @@ impl AppCore {
         window: WindowId,
         id: CommandId,
         from: Side,
-        folder: String,
+        folder: hikasa_core::Spec,
     ) {
         self.start_verb_with(window, &Invocation::new(id), Some((folder, from)));
     }
@@ -53,7 +53,7 @@ impl AppCore {
         &mut self,
         window: WindowId,
         inv: &Invocation,
-        into: Option<(String, Side)>,
+        into: Option<(hikasa_core::Spec, Side)>,
     ) {
         let service = self.service.clone();
         let scope = self.scope(window);

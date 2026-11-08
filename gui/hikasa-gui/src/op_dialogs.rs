@@ -745,6 +745,8 @@ pub struct OpDialog {
     pub recent: Vec<String>,
     /// How many plan jobs started (tests: an option change re-plans, the older job is cancelled).
     pub plans: u64,
+    /// Copy/Move to Folder prefilled by a row drag: the field's text and the folder's spec (review F5).
+    prefilled: Option<(String, hikasa_core::Spec)>,
 }
 
 impl std::fmt::Debug for OpDialog {
@@ -777,6 +779,7 @@ impl OpDialog {
             wake,
             recent: Vec::new(),
             plans: 0,
+            prefilled: None,
         }
     }
 
@@ -787,6 +790,12 @@ impl OpDialog {
         let OpForm::CopyTo { target, .. } = &self.form else {
             return None;
         };
+        // A folder rows were dragged onto is its spec, as it is, until the field is edited (review F5).
+        if let Some((text, spec)) = &self.prefilled
+            && text == target
+        {
+            return Some(Ok(spec.clone()));
+        }
         let text = target.trim();
         if text.is_empty() {
             return None;
@@ -913,6 +922,18 @@ impl OpDialog {
     /// True when *Plan again* was pressed (the window runs the command again).
     pub fn plan_again(&self) -> bool {
         self.again
+    }
+
+    /// Copy/Move to Folder of rows dragged onto a folder row (D-251): the target is that folder's spec, shown as its
+    /// canonical text and taken as it is (never trimmed nor parsed again) while the field keeps that text.
+    pub fn prefill_target(&mut self, spec: hikasa_core::Spec) {
+        let text = spec.canonical();
+        self.edit(|form| {
+            if let OpForm::CopyTo { target, .. } = form {
+                target.clone_from(&text);
+            }
+        });
+        self.prefilled = Some((text, spec));
     }
 
     /// The browse dialog's answer for the target (Copy/Move to Folder).

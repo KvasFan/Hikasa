@@ -1555,12 +1555,49 @@ fn w9c_files_dropped_on_a_pane_ask_to_copy_or_move_them() {
         .core
         .window_mut(root)
         .and_then(|w| w.dialogs.find_mut::<crate::drop_dialog::DropDialog>())
-        .map(|d| d.into.side);
+        .and_then(|d| d.into.as_ref().map(|i| i.side));
     assert_eq!(
         side,
         Some(hikasa_core::Side::Right),
         "the right pane's prompt"
     );
+}
+
+/// A drop whose only pointer position is older than the drag (winit sends none while another program holds it) asks
+/// for the pane rather than trusting that position (W9c review F4); Shift held at the drop shows the move first (F8).
+#[test]
+fn w9c_a_drop_without_a_fresh_position_asks_for_the_pane() {
+    let (mut s, _view, _) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    let over = nth(&mut s, "a.txt", 1).center();
+    // The pointer was over the right pane before the drag began.
+    s.input(vec![Event::PointerMoved(over)]);
+    s.input(Vec::new());
+    // The drag enters the window: files hovered, no position.
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.hovered_files = vec![egui::HoveredFile {
+        path: Some(outside.clone()),
+        mime: String::new(),
+    }];
+    frame(&mut s.app, &s.ctx, input);
+    // Dropped, Shift held, still no position.
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.events = vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)];
+    input.dropped_files = vec![std::sync::Arc::new(TestDrop(outside)) as egui::DroppedFileHandle];
+    frame(&mut s.app, &s.ctx, input);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let d = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::drop_dialog::DropDialog>())
+        .expect("the prompt");
+    assert!(d.sides.is_some(), "it asks for the pane");
+    assert!(d.show_move, "Shift shows the move first");
 }
 
 /// A path dropped from the OS (the integration's file handle).

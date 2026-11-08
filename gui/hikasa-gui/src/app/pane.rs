@@ -6,9 +6,11 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use hikasa_core::{JobKind, Side, Spec};
+use hikasa_core::{JobKind, Side};
 use hikasa_folder::NodeId;
-use hikasa_session::clipboard::{ClipboardContent, ClipboardError, ClipboardPayload};
+use hikasa_session::clipboard::{
+    ClipboardContent, ClipboardError, ClipboardPayload, ClipboardProvider as _,
+};
 use hikasa_session::ipc::ViewId;
 use hikasa_session::log::LogKind;
 
@@ -42,18 +44,16 @@ pub(crate) enum PaneDone {
 /// The message of a paste whose clipboard holds no file and no spec.
 pub const NOTHING_TO_PASTE: &str = "The clipboard holds no files to paste.";
 
-/// The specs of a clipboard text (D-252): its lines, trimmed, that parse as specs other than standard input and the
-/// clipboard itself.
-pub(crate) fn text_specs(svc: &hikasa_session::Service, text: &str) -> Vec<OsString> {
-    let context = svc.spec_context();
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| {
-            Spec::parse(line, &context)
-                .is_ok_and(|spec| !matches!(spec, Spec::Stdin | Spec::Clipboard))
-        })
-        .map(OsString::from)
+/// The message of rows dragged onto a folder whose name is not valid Unicode (review F5).
+pub const LOSSY_FOLDER: &str =
+    "Rows cannot be dropped into a folder whose name is not valid Unicode.";
+
+/// The sources of a clipboard text (D-252): core's [`hikasa_session::clipboard::pasted_paths`], absolute local paths
+/// and `file://` URIs of this computer only (review F7).
+pub(crate) fn text_sources(text: &str) -> Vec<OsString> {
+    hikasa_session::clipboard::pasted_paths(text)
+        .into_iter()
+        .map(PathBuf::into_os_string)
         .collect()
 }
 
@@ -126,6 +126,7 @@ impl AppCore {
             return;
         }
         let clipboard = std::sync::Arc::clone(&self.script_clipboard);
+        let ticket = clipboard.ticket();
         let job = Job::spawn(
             &self.service,
             JobKind::VfsRead,
@@ -133,7 +134,7 @@ impl AppCore {
             &self.wake(),
             move |_, _| {
                 clipboard
-                    .write_files(&paths)
+                    .in_turn(ticket, |c| c.write_files(&paths))
                     .map_err(|e| hikasa_session::ApiError::Vfs(e.to_vfs_write()))?;
                 Ok(PaneDone::Copied)
             },
@@ -154,6 +155,7 @@ impl AppCore {
             return;
         }
         let clipboard = std::sync::Arc::clone(&self.script_clipboard);
+        let ticket = clipboard.ticket();
         let job = Job::spawn(
             &self.service,
             JobKind::VfsRead,
@@ -161,7 +163,9 @@ impl AppCore {
             &self.wake(),
             move |_, _| {
                 clipboard
-                    .write_payload(&ClipboardPayload { text, html: None })
+                    .in_turn(ticket, |c| {
+                        c.write_payload(&ClipboardPayload { text, html: None })
+                    })
                     .map_err(|e| hikasa_session::ApiError::Vfs(e.to_vfs_write()))?;
                 Ok(PaneDone::Named)
             },
@@ -195,7 +199,7 @@ impl AppCore {
             JobKind::VfsRead,
             "read the clipboard".into(),
             &self.wake(),
-            move |svc, _| {
+            move |_, _| {
                 let sources: Vec<OsString> = match clipboard.read_files() {
                     Ok(paths) => paths.into_iter().map(PathBuf::into_os_string).collect(),
                     Err(ClipboardError::Failed(why)) => {
@@ -204,7 +208,7 @@ impl AppCore {
                         ));
                     }
                     Err(_) => match clipboard.read() {
-                        Ok(ClipboardContent::Text(text)) => text_specs(svc, &text),
+                        Ok(ClipboardContent::Text(text)) => text_sources(&text),
                         Ok(_) | Err(ClipboardError::Empty | ClipboardError::Unavailable(_)) => {
                             Vec::new()
                         }
@@ -317,7 +321,66 @@ impl AppCore {
         }
     }
 
-    /// Opens the drop's prompt over its view (the view waits for its answer).
+    /// Paths dropped on a folder view where the window could not say which pane (W9c review F4: winit gives no
+    /// pointer position during an OS drag): the prompt asks for the pane, the focus pane's current folder first, and
+    /// offers W4's *Open as new comparison* for one or two paths. Never a silent fallback.
+    pub(super) fn drop_ask(
+        &mut self,
+        window: WindowId,
+        sources: Vec<OsString>,
+        moving: bool,
+    ) -> Vec<Effect> {
+        let Some(view) = self.active_folder(window) else {
+            return Vec::new();
+        };
+        if self.refuse_busy(view) {
+            return Vec::new();
+        }
+        let (sides, first, refused) = match self.tab(view).and_then(|t| t.model()) {
+            Some(ViewModel::Folder(m)) => (
+                [Side::Left, Side::Right].map(|side| m.paste_into(view, Some(side))),
+                if m.selection().focus == hikasa_folder::select::SideSet::RIGHT {
+                    Side::Right
+                } else {
+                    Side::Left
+                },
+                m.move_refused(&sources),
+            ),
+            _ => return Vec::new(),
+        };
+        if !self.start_drop_prompt(view) {
+            return Vec::new();
+        }
+        let overwrite = overwrite_of(self.state.dialog_text(DROP_DIALOG, "overwrite"));
+        let dialog = DropDialog::asking(
+            view,
+            sides,
+            first,
+            sources,
+            overwrite,
+            moving,
+            refused,
+            self.wake(),
+        );
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
+        vec![Effect::Raise(window)]
+    }
+
+    /// The view waits for the drop's prompt (false: it is busy; the window said why).
+    fn start_drop_prompt(&mut self, view: ViewId) -> bool {
+        if self.refuse_busy(view) {
+            return false;
+        }
+        match self.tab_mut(view).and_then(|t| t.model_mut()) {
+            Some(ViewModel::Folder(m)) => m.start_drop_prompt(),
+            _ => false,
+        }
+    }
+
+    /// Opens the drop's prompt over its view (the view waits for its answer). A source on a read-only side leaves
+    /// *Copy* only (review F1).
     fn open_drop(
         &mut self,
         window: WindowId,
@@ -326,26 +389,24 @@ impl AppCore {
         moving: bool,
     ) -> Vec<Effect> {
         let view = into.view;
-        if self.refuse_busy(view) {
-            return Vec::new();
-        }
-        let started = match self.tab_mut(view).and_then(|t| t.model_mut()) {
-            Some(ViewModel::Folder(m)) => m.start_drop_prompt(),
-            _ => false,
+        let refused = match self.tab(view).and_then(|t| t.model()) {
+            Some(ViewModel::Folder(m)) => m.move_refused(&sources),
+            _ => None,
         };
-        if !started {
+        if !self.start_drop_prompt(view) {
             return Vec::new();
         }
         let overwrite = overwrite_of(self.state.dialog_text(DROP_DIALOG, "overwrite"));
-        let dialog = DropDialog::new(into, sources, overwrite, moving, self.wake());
+        let dialog = DropDialog::new(into, sources, overwrite, moving, refused, self.wake());
         if let Some(w) = self.window_mut(window) {
             w.dialogs.push(Box::new(dialog));
         }
         vec![Effect::Raise(window)]
     }
 
-    /// The drop's prompt closed: the plan of its answer runs in its view; the overwrite choice is remembered.
-    pub(super) fn drop_closed(&mut self, dialog: &mut DropDialog) {
+    /// The drop's prompt closed: the plan of its answer runs in its view (a move checked again first); the overwrite
+    /// choice is remembered; *Open as new comparison* applies W4's window rule to the paths.
+    pub(super) fn drop_closed(&mut self, dialog: &mut DropDialog) -> Vec<Effect> {
         let (view, answer) = (dialog.view(), dialog.take_answer());
         if answer.is_some() {
             let word = overwrite_word(dialog.overwrite);
@@ -353,8 +414,20 @@ impl AppCore {
             self.update_state(move |s| s.set_dialog_text(DROP_DIALOG, "overwrite", word));
         }
         let service = self.service.clone();
-        if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
-            m.drop_answered(&service, answer);
+        let refused = match self.tab_mut(view).and_then(|t| t.model_mut()) {
+            Some(ViewModel::Folder(m)) => m.drop_answered(&service, answer).err(),
+            _ => None,
+        };
+        if let Some(message) = refused {
+            self.set_message(view, Message::warning(message));
+        }
+        match (dialog.take_open_new(), self.window_of(view)) {
+            (Some(paths), Some(window)) => self.drop_paths(
+                window,
+                crate::dnd::DropTarget::Window,
+                paths.into_iter().map(PathBuf::from).collect(),
+            ),
+            _ => Vec::new(),
         }
     }
 
@@ -399,15 +472,24 @@ impl AppCore {
                 folder,
                 moving,
             } => {
+                // The folder goes to the dialog as its spec, never as text read back (review F5); a name that is not
+                // valid Unicode cannot be shown or typed back, so it is refused.
                 let target = match self.tab(view).and_then(|t| t.model()) {
                     Some(ViewModel::Folder(m)) => m
                         .drop_into(view, from.opposite(), Some(folder))
-                        .ok()
-                        .map(|into| into.shown),
-                    _ => None,
+                        .map(|into| into.spec),
+                    _ => return Vec::new(),
                 };
-                let Some(target) = target else {
-                    return Vec::new();
+                let target = match target {
+                    Ok(spec) if spec.is_lossy() => {
+                        self.set_message(view, Message::warning(LOSSY_FOLDER));
+                        return Vec::new();
+                    }
+                    Ok(spec) => spec,
+                    Err(message) => {
+                        self.set_message(view, Message::warning(message));
+                        return Vec::new();
+                    }
                 };
                 let id = if moving {
                     CommandId::MoveTo

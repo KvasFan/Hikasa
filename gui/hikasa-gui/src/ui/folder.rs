@@ -78,6 +78,9 @@ pub struct FolderUi {
     pub row_drop: Option<(RowDrag, RowTarget, bool)>,
     /// Where paths from the OS would land under the pointer this frame (D-251).
     pub os_target: Option<DropTarget>,
+    /// The pointer's position for paths from the OS, only when it moved after their drag began (the window's rule,
+    /// W9c review F4); `None` otherwise.
+    pub os_pointer: Option<egui::Pos2>,
 }
 
 /// A drag in the column header (D-234).
@@ -174,7 +177,7 @@ pub fn show(
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();
     st.os_target = None;
-    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let pointer = st.os_pointer;
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
@@ -614,7 +617,11 @@ pub fn show(
             let folder = pointer_row(p).and_then(|(index, _)| m.folder_row(index));
             Some((side, folder))
         };
-    if let Some((side, folder)) = pointer.and_then(tree_target) {
+    // Paths from the OS on a file row go into its folder, as a paste does (review F9).
+    if let Some(p) = pointer
+        && let Some((side, _)) = tree_target(p)
+    {
+        let folder = pointer_row(p).and_then(|(index, _)| m.drop_row(index));
         st.os_target = Some(DropTarget::PaneTree { side, folder });
     }
     if st.dragging_rows {

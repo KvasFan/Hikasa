@@ -43,6 +43,9 @@ pub enum DropTarget {
         /// The folder row under the pointer.
         folder: Option<NodeId>,
     },
+    /// A folder view, the place unknown (W9c review F4): winit gives no pointer position during a drag from another
+    /// program (X11, Windows, macOS), and a position older than the drag is not used; the prompt asks for the pane.
+    PaneAsk,
     /// The window (any view other than Home's targets).
     Window,
 }
@@ -72,6 +75,10 @@ pub enum DropOutcome {
         /// The paths, as dropped.
         paths: Vec<PathBuf>,
     },
+    /// Paths dropped on a folder view where the window could not say which pane (W9c review F4): the prompt asks
+    /// which pane's current folder they go into and, for one or two paths, offers W4's window rule (*Open as new
+    /// comparison*).
+    Ask(Vec<PathBuf>),
     /// Nothing (no path).
     Ignore,
 }
@@ -101,6 +108,7 @@ pub fn decide(target: DropTarget, paths: &[PathBuf]) -> DropOutcome {
             folder,
             paths: paths.to_vec(),
         },
+        (DropTarget::PaneAsk, paths) => DropOutcome::Ask(paths.to_vec()),
         (DropTarget::Window, [_]) => DropOutcome::Message(DROP_ONE_MORE),
         (DropTarget::Window, [l, r]) => DropOutcome::Open([l.clone(), r.clone()]),
         (DropTarget::Window | DropTarget::HomeType(_), _) => DropOutcome::Message(DROP_ONE_OR_TWO),

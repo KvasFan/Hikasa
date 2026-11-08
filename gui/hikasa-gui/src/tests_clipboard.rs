@@ -136,8 +136,11 @@ fn a9_20_paste_of_files_and_of_text_lines_is_a_drop() {
         .window_mut(w)
         .and_then(|w| w.dialogs.find_mut::<DropDialog>())
         .expect("the drop's prompt");
-    assert_eq!(d.into.side, Side::Left);
-    assert_eq!(d.into.shown, world.path("work/l/d").display().to_string());
+    assert_eq!(d.into.as_ref().expect("a pane").side, Side::Left);
+    assert_eq!(
+        d.into.as_ref().expect("a pane").shown,
+        world.path("work/l/d").display().to_string()
+    );
     assert_eq!(
         d.sources,
         outside
@@ -168,7 +171,7 @@ fn a9_20_paste_of_files_and_of_text_lines_is_a_drop() {
         .window_mut(w)
         .and_then(|w| w.dialogs.find_mut::<DropDialog>())
         .expect("the drop's prompt");
-    assert_eq!(d.into.side, Side::Right);
+    assert_eq!(d.into.as_ref().expect("a pane").side, Side::Right);
     assert_eq!(d.sources.len(), 2);
     crate::tests_folder_ops::press(&world, &mut app, crate::dialog::ButtonRole::Cancel);
     // Nothing to paste: a message, no prompt.
