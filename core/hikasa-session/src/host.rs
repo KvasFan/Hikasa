@@ -350,7 +350,7 @@ impl ClipboardProvider for SystemClipboard {
                 .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
             let mut command = std::process::Command::new(exe);
             command.arg(CLIPBOARD_HELPER_ARG);
-            return spawn_clipboard_helper(&mut command, payload).map(drop);
+            return spawn_clipboard_helper(&mut command, payload).map(|child| drop(reap(child)));
         }
         place_payload(payload)
     }
@@ -367,23 +367,60 @@ impl ClipboardProvider for SystemClipboard {
                 .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
             let mut command = std::process::Command::new(exe);
             command.arg(CLIPBOARD_HELPER_ARG);
-            return spawn_helper(&mut command, &encode_files(paths)).map(drop);
+            return spawn_helper(&mut command, &encode_files(paths)).map(|child| drop(reap(child)));
         }
         let mut clipboard =
             arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
         clipboard.set().file_list(paths).map_err(arboard_error)
     }
 
-    /// The files of a file manager's copy (`arboard`'s `file_list`); `Empty` when the clipboard holds none.
+    /// The files of a file manager's copy (`arboard`'s `file_list`); `Empty` when the clipboard holds none. On Linux
+    /// [`local_uri_paths`] keeps the local ones only (review F13).
     fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
         let mut clipboard =
             arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
         match clipboard.get().file_list() {
-            Ok(paths) if paths.is_empty() => Err(ClipboardError::Empty),
-            Ok(paths) => Ok(paths),
+            Ok(paths) => {
+                let paths = if cfg!(target_os = "linux") {
+                    local_uri_paths(paths)
+                } else {
+                    paths
+                };
+                if paths.is_empty() {
+                    Err(ClipboardError::Empty)
+                } else {
+                    Ok(paths)
+                }
+            }
             Err(e) => Err(arboard_error(e)),
         }
     }
+}
+
+/// The paths of arboard 3.7's Linux `text/uri-list` read, fixed where it reads them wrong (M2 W9c after review F13):
+/// it strips `file://` only, so `file://localhost/p` comes as `localhost/p` (made `/p` here) and `file://host/p` as
+/// `host/p` (another computer's file: left out, as is any other relative path). What arboard itself loses cannot be
+/// recovered here and is documented (docs/04 FC-080): it drops a URI that is not UTF-8 once decoded, and it writes a
+/// list with each path canonicalized (a symbolic link's target, items that no longer exist left out).
+pub fn local_uri_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            if path.has_root() {
+                return Some(path);
+            }
+            let rest = path.strip_prefix("localhost").ok()?;
+            Some(PathBuf::from("/").join(rest))
+        })
+        .collect()
+}
+
+/// Waits for a clipboard helper on a thread of its own (review F12): the helper lives until something else is copied,
+/// and its exit status is collected then, so it never stays a zombie of the window.
+fn reap(
+    mut child: std::process::Child,
+) -> std::thread::JoinHandle<Option<std::process::ExitStatus>> {
+    std::thread::spawn(move || child.wait().ok())
 }
 
 /// The hidden internal entry of the Linux clipboard helper (§1.7.10): `hikasa __clipboard-helper`. Not in `--help`, the
@@ -874,12 +911,25 @@ impl AppLauncher for SystemLauncher {
             .map_err(|e| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display())))
     }
 
-    /// *Show in File Manager* (D-254): [`reveal_command`] of this platform, run to its end; when it cannot start, or
-    /// (outside Windows, whose `explorer.exe` exits 1 when it worked) it ends with an error, the folder is opened
-    /// instead ([`reveal_fallback`]).
+    /// *Show in File Manager* (D-254): [`reveal_command`] of this platform, started in [`launch_dir`] (never the
+    /// item's folder: a program found through a `PATH` entry `.` would be taken from there; review F14) and run to its
+    /// end; when it cannot start, or (outside Windows) it ends with an error, the folder is opened instead
+    /// ([`reveal_fallback`]). `explorer.exe` exits 1 when it worked, so on Windows the item is checked first: it must
+    /// exist and have a form explorer selects ([`explorer_path`], `\\?\` taken off), else the folder is opened.
     fn reveal(&self, path: &std::path::Path) -> Result<(), ApiError> {
         let platform = Platform::HOST;
-        let command = reveal_command(platform, path);
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
+        let cwd = launch_dir(platform, home.as_deref(), system_root.as_deref());
+        let shown_path = if platform == Platform::Windows {
+            match explorer_path(path).filter(|_| path.exists()) {
+                Some(plain) => plain,
+                None => return self.open_associated(&reveal_fallback(path)),
+            }
+        } else {
+            path.to_path_buf()
+        };
+        let command = reveal_command(platform, &shown_path, &cwd);
         let mut process = std::process::Command::new(&command.program);
         #[cfg(windows)]
         {
@@ -911,9 +961,13 @@ impl AppLauncher for SystemLauncher {
 /// What *Show in File Manager* runs for `path` on `platform` (D-254), a pure builder: Windows
 /// `explorer.exe /select,"<path>"`, macOS `open -R <path>`, Linux and the other Unix systems the D-Bus call
 /// `org.freedesktop.FileManager1.ShowItems` of the session bus through `dbus-send` with the item's `file://` URI
-/// ([`file_uri`]). The command starts in the item's folder.
-pub fn reveal_command(platform: Platform, path: &std::path::Path) -> OpenCommand {
-    let cwd = reveal_fallback(path);
+/// ([`file_uri`]). The command starts in `cwd` ([`launch_dir`]; review F14).
+pub fn reveal_command(
+    platform: Platform,
+    path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> OpenCommand {
+    let cwd = cwd.to_path_buf();
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     match platform {
         Platform::Windows => {
@@ -956,6 +1010,48 @@ pub fn reveal_command(platform: Platform, path: &std::path::Path) -> OpenCommand
     }
 }
 
+/// The folder a file-manager command starts in (review F14): never one of the compared folders, so a program looked
+/// up through a `PATH` entry `.` or an empty one is not taken from there. Windows: the system folder
+/// (`%SystemRoot%\System32`, else `C:\Windows\System32`); elsewhere the user's home when it is absolute, else `/`.
+pub fn launch_dir(
+    platform: Platform,
+    home: Option<&std::path::Path>,
+    system_root: Option<&std::path::Path>,
+) -> PathBuf {
+    match platform {
+        Platform::Windows => system_root
+            .filter(|r| !r.as_os_str().is_empty())
+            .map_or_else(
+                || PathBuf::from(r"C:\Windows\System32"),
+                |r| r.join("System32"),
+            ),
+        _ => home
+            .filter(|h| h.has_root())
+            .map_or_else(|| PathBuf::from("/"), std::path::Path::to_path_buf),
+    }
+}
+
+/// The form of a Windows path `explorer.exe /select,` takes (review F14), by its text: a verbatim `\\?\C:\…` is
+/// `C:\…`, `\\?\UNC\server\share\…` is `\\server\share\…`; a device path (`\\.\…`) or another verbatim form
+/// (a volume GUID) has none (`None`: the folder is opened instead). Other paths are as they are.
+pub fn explorer_path(path: &std::path::Path) -> Option<PathBuf> {
+    let Some(text) = path.to_str() else {
+        return Some(path.to_path_buf());
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return Some(PathBuf::from(format!(r"\\{rest}")));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let drive = rest.as_bytes();
+        let is_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
+        return is_drive.then(|| PathBuf::from(rest));
+    }
+    if text.starts_with(r"\\.\") {
+        return None;
+    }
+    Some(path.to_path_buf())
+}
+
 /// The folder *Show in File Manager* opens when the file manager cannot select the item: the item's folder (a root
 /// is its own).
 pub fn reveal_fallback(path: &std::path::Path) -> PathBuf {
@@ -996,6 +1092,18 @@ pub fn file_uri(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A helper's child is waited for on a thread of its own (review F12): its status is collected once it ends.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_is_reaped() {
+        let child = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("sh");
+        let status = reap(child).join().expect("the waiter");
+        assert!(status.is_some_and(|s| s.success()));
+    }
 
     #[test]
     fn locale_codesets() {

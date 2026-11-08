@@ -306,6 +306,143 @@ impl<P: ClipboardProvider + ?Sized> ClipboardProvider for Arc<P> {
     }
 }
 
+/// The clipboard writes of a window in the order they were asked, the latest winning (M2 W9c after review F12): each
+/// command takes a [`Ticket`] when it is invoked, its job writes in turn; a write whose ticket is older than the last
+/// one taken is skipped (a later Copy or Copy Filename already replaces it), and writes never interleave. Plain calls of
+/// the [`ClipboardProvider`] methods (a script's `output-to:clipboard`) take their ticket when they write.
+pub struct OrderedClipboard {
+    inner: Arc<dyn ClipboardProvider>,
+    issued: std::sync::atomic::AtomicU64,
+    turn: parking_lot::Mutex<()>,
+}
+
+/// The place of a write in an [`OrderedClipboard`]'s order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Ticket(u64);
+
+impl OrderedClipboard {
+    /// The writes to `inner`, in order.
+    pub fn new(inner: Arc<dyn ClipboardProvider>) -> OrderedClipboard {
+        OrderedClipboard {
+            inner,
+            issued: std::sync::atomic::AtomicU64::new(0),
+            turn: parking_lot::Mutex::new(()),
+        }
+    }
+
+    /// A ticket for a write about to be asked (taken when the command runs, on the window's thread).
+    pub fn ticket(&self) -> Ticket {
+        Ticket(self.issued.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    /// Runs `write` in turn: `Ok(false)` without writing when a later ticket was taken meanwhile.
+    pub fn in_turn(
+        &self,
+        ticket: Ticket,
+        write: impl FnOnce(&dyn ClipboardProvider) -> Result<(), ClipboardError>,
+    ) -> Result<bool, ClipboardError> {
+        let _turn = self.turn.lock();
+        if self.issued.load(Ordering::SeqCst) != ticket.0 {
+            return Ok(false);
+        }
+        write(&*self.inner).map(|()| true)
+    }
+}
+
+impl std::fmt::Debug for OrderedClipboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrderedClipboard")
+            .field("issued", &self.issued)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ClipboardProvider for OrderedClipboard {
+    fn read(&self) -> Result<ClipboardContent, ClipboardError> {
+        self.inner.read()
+    }
+
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        let ticket = self.ticket();
+        self.in_turn(ticket, |c| c.write_payload(payload)).map(drop)
+    }
+
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        let ticket = self.ticket();
+        self.in_turn(ticket, |c| c.write_files(paths)).map(drop)
+    }
+
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        self.inner.read_files()
+    }
+}
+
+/// The paths a clipboard text names (D-252's Paste of text; M2 W9c after review F7): each line, trimmed, that is an
+/// absolute local path or a `file://` URI with no host or `localhost` (percent-decoded; on Unix its bytes, so a name
+/// that is not UTF-8 survives; on Windows `file:///C:/x` is `C:/x`). Every other line (prose, a relative path, a URL
+/// of another host or scheme, `-`, `clipboard://`) is left out.
+pub fn pasted_paths(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(pasted_path)
+        .collect()
+}
+
+/// One line of [`pasted_paths`].
+fn pasted_path(line: &str) -> Option<PathBuf> {
+    let scheme = line.get(..7).filter(|s| s.eq_ignore_ascii_case("file://"));
+    let path = match scheme {
+        Some(_) => {
+            let rest = &line[7..];
+            let slash = rest.find('/')?;
+            let host = &rest[..slash];
+            if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+                return None;
+            }
+            path_of_uri(&percent_decoded(&rest[slash..])?)?
+        }
+        None => PathBuf::from(line),
+    };
+    path.is_absolute().then_some(path)
+}
+
+/// The bytes of a URI path with its `%XX` escapes decoded (`None`: a `%` not followed by two hex digits).
+pub fn percent_decoded(text: &str) -> Option<Vec<u8>> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = text.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
+/// The local path of a decoded URI path (`/home/a`, `/C:/x`).
+fn path_of_uri(bytes: &[u8]) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        let text = std::str::from_utf8(bytes).ok()?;
+        let drive = text
+            .as_bytes()
+            .get(1..3)
+            .is_some_and(|d| d[0].is_ascii_alphabetic() && d[1] == b':');
+        Some(PathBuf::from(if drive { &text[1..] } else { text }))
+    }
+}
+
 /// The blob of clipboard content: text → its UTF-8 bytes without a name hint (format detection by content);
 /// an image → a PNG ([`encode_png_rgba`]) named [`CLIPBOARD_IMAGE_NAME`]. `mtime` is the injected clock at capture
 /// (T1). Empty text is an empty clipboard (`NotFound`, as [`ClipboardError::Empty`]); text above

@@ -11,7 +11,9 @@ use std::sync::Arc;
 use common::{facts, fixed_clock, job};
 use hikasa_core::{JobKind, LocalPath, Spec};
 use hikasa_session::api::file_manager_targets;
-use hikasa_session::host::{Platform, file_uri, reveal_command, reveal_fallback};
+use hikasa_session::host::{
+    Platform, explorer_path, file_uri, launch_dir, local_uri_paths, reveal_command, reveal_fallback,
+};
 use hikasa_session::launcher::{AppLauncher, NoLauncher, Recorded, RecordingLauncher};
 use hikasa_session::{ApiError, Service, ServiceInit};
 
@@ -23,15 +25,18 @@ fn texts(args: &[std::ffi::OsString]) -> Vec<String> {
 
 #[test]
 fn a9_22_the_command_line_of_each_platform() {
-    let windows = reveal_command(Platform::Windows, Path::new(r"C:\Data\a b.txt"));
+    let system = Path::new(r"C:\Windows\System32");
+    let windows = reveal_command(Platform::Windows, Path::new(r"C:\Data\a b.txt"), system);
     assert_eq!(windows.program, "explorer.exe");
     assert_eq!(texts(&windows.args), [r#"/select,"C:\Data\a b.txt""#]);
-    let mac = reveal_command(Platform::MacOs, Path::new("/Users/me/a b.txt"));
+    assert_eq!(windows.cwd, system);
+    let home = Path::new("/Users/me");
+    let mac = reveal_command(Platform::MacOs, Path::new("/Users/me/x/a b.txt"), home);
     assert_eq!(mac.program, "open");
-    assert_eq!(texts(&mac.args), ["-R", "/Users/me/a b.txt"]);
-    assert_eq!(mac.cwd, PathBuf::from("/Users/me"));
+    assert_eq!(texts(&mac.args), ["-R", "/Users/me/x/a b.txt"]);
+    assert_eq!(mac.cwd, home, "never the item's folder");
     for platform in [Platform::Linux, Platform::OtherUnix] {
-        let linux = reveal_command(platform, Path::new("/home/me/a b,c%.txt"));
+        let linux = reveal_command(platform, Path::new("/home/me/a b,c%.txt"), Path::new("/"));
         assert_eq!(linux.program, "dbus-send");
         assert_eq!(
             texts(&linux.args),
@@ -47,8 +52,69 @@ fn a9_22_the_command_line_of_each_platform() {
                 "string:",
             ]
         );
-        assert_eq!(linux.cwd, PathBuf::from("/home/me"));
+        assert_eq!(linux.cwd, PathBuf::from("/"));
     }
+}
+
+/// The folder file-manager commands start in (W9c review F14): the system folder on Windows, the home folder (else `/`)
+/// elsewhere; never an item's folder.
+#[test]
+fn file_manager_commands_start_in_a_fixed_folder() {
+    let home = Path::new("/home/me");
+    for platform in [Platform::Linux, Platform::MacOs, Platform::OtherUnix] {
+        assert_eq!(launch_dir(platform, Some(home), None), home);
+        assert_eq!(launch_dir(platform, None, None), Path::new("/"));
+        assert_eq!(
+            launch_dir(platform, Some(Path::new("rel")), None),
+            Path::new("/")
+        );
+    }
+    assert_eq!(
+        launch_dir(Platform::Windows, Some(home), Some(Path::new(r"D:\Win"))),
+        Path::new(r"D:\Win").join("System32")
+    );
+    assert_eq!(
+        launch_dir(Platform::Windows, None, None),
+        Path::new(r"C:\Windows\System32")
+    );
+}
+
+/// What `explorer.exe /select,` is given (review F14): `\\?\` taken off a drive or UNC path; device paths and other
+/// verbatim forms have no form it selects (the folder is opened instead).
+#[test]
+fn explorer_selects_plain_paths() {
+    let plain = |p: &str| explorer_path(Path::new(p)).map(|p| p.to_string_lossy().into_owned());
+    assert_eq!(plain(r"C:\a\b.txt").as_deref(), Some(r"C:\a\b.txt"));
+    assert_eq!(plain(r"\\?\C:\a\b.txt").as_deref(), Some(r"C:\a\b.txt"));
+    assert_eq!(
+        plain(r"\\?\UNC\srv\share\b.txt").as_deref(),
+        Some(r"\\srv\share\b.txt")
+    );
+    assert_eq!(
+        plain(r"\\srv\share\b.txt").as_deref(),
+        Some(r"\\srv\share\b.txt")
+    );
+    assert_eq!(plain(r"\\?\Volume{0-1}\b.txt"), None);
+    assert_eq!(plain(r"\\.\COM1"), None);
+}
+
+/// arboard's Linux list read back as local paths (review F13): `localhost` stripped, another host's file and every
+/// relative path left out.
+#[test]
+fn a_linux_uri_list_keeps_local_paths() {
+    let paths = local_uri_paths(vec![
+        PathBuf::from("/home/me/a.txt"),
+        PathBuf::from("localhost/home/me/b.txt"),
+        PathBuf::from("server/share/c.txt"),
+        PathBuf::from("relative.txt"),
+    ]);
+    assert_eq!(
+        paths,
+        [
+            PathBuf::from("/home/me/a.txt"),
+            PathBuf::from("/home/me/b.txt")
+        ]
+    );
 }
 
 #[test]

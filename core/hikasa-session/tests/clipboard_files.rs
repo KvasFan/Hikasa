@@ -123,3 +123,78 @@ fn a9_20_a_name_that_is_not_unicode_keeps_its_bytes() {
     clipboard.write_files(std::slice::from_ref(&odd)).unwrap();
     assert_eq!(clipboard.read_files().unwrap(), vec![odd]);
 }
+
+/// A clipboard text's paths (W9c review F7): absolute local paths and `file://` URIs of this computer, decoded;
+/// prose, relative paths, other hosts and schemes, `-` and `clipboard://` are not paths.
+#[test]
+fn pasted_text_names_only_local_absolute_paths() {
+    use hikasa_session::clipboard::pasted_paths;
+    #[cfg(unix)]
+    {
+        let text = "  /data/a b.txt  \r\nfile:///data/c%20d.txt\nFILE://localhost/data/e.txt\n\
+                    file://server/share/f.txt\nhttp://example.com/x\nrelative.txt\nsome words here\n-\n\
+                    clipboard://\n\nfile:///data/bad%zz\n";
+        assert_eq!(
+            pasted_paths(text),
+            [
+                PathBuf::from("/data/a b.txt"),
+                PathBuf::from("/data/c d.txt"),
+                PathBuf::from("/data/e.txt"),
+            ]
+        );
+        use std::os::unix::ffi::OsStrExt as _;
+        assert_eq!(
+            pasted_paths("file:///d/caf%E9\n"),
+            [PathBuf::from(std::ffi::OsStr::from_bytes(b"/d/caf\xe9"))]
+        );
+    }
+    #[cfg(windows)]
+    {
+        let text = " C:\\data\\a b.txt \r\nfile:///C:/data/c%20d.txt\n\\data\\no-drive.txt\nfile://srv/s/x\n";
+        assert_eq!(
+            pasted_paths(text),
+            [
+                PathBuf::from("C:\\data\\a b.txt"),
+                PathBuf::from("C:/data/c d.txt"),
+            ]
+        );
+    }
+    assert!(pasted_paths("The clipboard holds prose.\nAnd more.").is_empty());
+}
+
+/// Clipboard writes in the order they were asked, the latest winning (review F12): a write whose ticket is older than
+/// the last one taken is skipped; plain writes take their ticket when they write.
+#[test]
+fn ordered_writes_let_the_latest_win() {
+    use hikasa_session::clipboard::{ClipboardPayload, OrderedClipboard};
+    let fixed = Arc::new(FixedClipboard::text("t"));
+    let ordered = OrderedClipboard::new(Arc::clone(&fixed) as Arc<dyn ClipboardProvider>);
+    let first = ordered.ticket();
+    let second = ordered.ticket();
+    // The second job ends first: it writes; the first one, older, writes nothing.
+    let payload = ClipboardPayload {
+        text: "names".into(),
+        html: None,
+    };
+    assert!(
+        ordered
+            .in_turn(second, |c| c.write_payload(&payload))
+            .unwrap()
+    );
+    assert!(!ordered.in_turn(first, |c| c.write_files(&paths())).unwrap());
+    assert_eq!(fixed.payloads(), [payload]);
+    assert!(fixed.file_lists().is_empty());
+    // In order, each writes; a plain write is a ticket of its own.
+    let third = ordered.ticket();
+    assert!(ordered.in_turn(third, |c| c.write_files(&paths())).unwrap());
+    ordered.write_files(&paths()).unwrap();
+    assert_eq!(fixed.file_lists().len(), 2);
+    // Reads pass through; a refusal reaches the writer.
+    assert_eq!(ordered.read_files().unwrap(), paths());
+    let refusing = OrderedClipboard::new(Arc::new(FixedClipboard::failing("no")));
+    let t = refusing.ticket();
+    assert!(matches!(
+        refusing.in_turn(t, |c| c.write_files(&paths())),
+        Err(ClipboardError::Failed(_))
+    ));
+}
