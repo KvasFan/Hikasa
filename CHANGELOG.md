@@ -85,6 +85,8 @@
 - Compare Contents beeps after a long run (`beep_after_long_operations`).
 - Faster plans of large operations: the plan compares the file identities the scan recorded instead of reading each
   file's metadata again (the G15 preview's plan of 100,000 replacing copies: 0.8 s → 0.3 s).
+- Faster script checks: the lexer scans bytes and a command name is a binary search (a 16 MiB script checks in a
+  debug build in about half the time; same results).
 
 ### Changed (W9a)
 - The Modified column shows local times (the zone of the clock), no longer UTC.

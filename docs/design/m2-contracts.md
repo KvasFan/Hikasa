@@ -7432,6 +7432,21 @@ numbered per part, with the mutations each property test was checked by (§6.8 r
     `moveto`, `delete recyclebin=yes` (compared as a dry run: never the real recycle bin), rename by mask, `touch` with a
     direction, `attrib -r`, `sync visible`/`create-empty`; a refusal on both sides compares the messages. A command a
     cancel stopped fails with the kind `cancelled` (it was `invalid_input`).
+31. **After the W9b review: A8.15's 16 MiB check in debug.** The smoke bound (G14's 0.5 s for 8 MB, × 2 for 16 MiB, × 4
+    for debug: 4 s) took 2.5 s alone on a quiet machine and about 5 s under load, and had never run on GitHub's slower
+    runners. The check path did avoidable work: the lexer took a line one `char` at a time through a peekable iterator
+    and pushed each alone, found line ends with a char-set pattern, made each line's words twice (a `Building` list,
+    then `Word`s) and copied them into a new list; `CommandName::parse` compared up to 29 names, and the flow check
+    parsed the name again; `folder_specs` formatted a message per command and every checked word was copied. Now the
+    lexer scans bytes (every character it acts on is ASCII), adds a run of other characters as one slice and counts its
+    columns by the bytes that start a character; the words are made once and moved; a name is a binary search of its
+    lower-case form (`ALL` is in byte order); the flow check compares one word; the messages are static and a checked
+    word is borrowed unless it was normalized. The char-by-char lexer stays as the oracle of a property
+    (`lex::tests::fast_lexer_is_the_char_lexer`). The test alone in debug: 1.45–1.46 s against 2.48–2.50 s before (three
+    runs each, the two builds in turn, load 3.7–3.8: 0.59 ×), 1.6–3.0 s against 2.5–5.5 s at load 16–44. Alone it takes
+    under half the 4 s bound (2.7 × room), the margin kept for CI's slower runners; no `opt-level` override was needed
+    and the bound is unchanged. A8.15's mutation (the log's lines kept in a `Vec`) still fails
+    `a8_15_a_million_log_lines_stream` (peak 72.9 MB against 34.0 MB at level `none`).
 
 Mutations (each reverted; a property's minimal case was not persisted):
 
@@ -7465,8 +7480,13 @@ Mutations (each reverted; a property's minimal case was not persisted):
 | 26 | host: a base shown through `Spec::canonical` | `cli_script.rs` `non_utf8_arguments_reach_load_and_copyto_and_are_escaped` |
 | 27 | planner: the settable DOS bits ignored | `ops_plan.rs` `a8_16_attrib_where_only_r_can_change_applies_r_and_skips_a_s_h_with_a_warning` |
 | 28 | `beep_when_finished` also when silent; never | `script_log.rs` `beep_when_finished_beeps_once_at_the_end_unless_silent` |
+| 29 | byte lexer (note 31): a blank or a tab adds no column | `lex::tests::fast_lexer_is_the_char_lexer` and its edge cases, `lex.rs` and `parse.rs` goldens, `check.rs` column tests, P-LEX `p_lex_total` |
+| 30 | byte lexer: every byte of a run counted as a column | `fast_lexer_is_the_char_lexer` (minimal `"😀&"`), `lex.rs` goldens, P-LEX `p_lex_total` |
+| 31 | `CommandName::parse` without lowering the word | `ast::tests::parse_is_the_case_insensitive_search`, `parse.rs` goldens |
 
-The review's s03 (`touch DIR` with sides `all`) is equivalent: the planner recomputes a direction's sides. The fixes of
+The review's s03 (`touch DIR` with sides `all`) is equivalent: the planner recomputes a direction's sides. The byte lexer's
+`!quoted` in a run's `&` is equivalent too (removed, nothing fails): a run inside quotes ends at the closing quote, which
+clears the `&`, or at the line's end, where the quote is unterminated and no `&` is read. The fixes of
 notes 23–29 were each checked against the code before them (the new test fails there).
 
 **W8b.** Interpretations and extensions of §1.8.13, §1.8.14, §1.8.16 and §1.8.19:
@@ -8751,7 +8771,10 @@ Mutations (each failed the tests named, then was reverted):
     job's own time (`plan_job_ms`). No parallel planning was needed. G15 after the review (`docs/02`, load 6.7–14.1):
     preview **met** (first frame 330.7 ms, the plan job 324.8 ms of it; scrolling max 3.04 ms; PSS +84.3 MiB); sync met
     (200.8 ms, an override 274.0 ms); select, completion and browse met; tree max met and p95 not (14.43 ms over 10
-    frames while scanning, W9a's open finding).
+    frames while scanning, W9a's open finding). Taken again at load 3.8 (2026-11-08): p95 4.69 / max 4.97 ms over 22
+    frames, met. G7 copy failed once at 1.61 × while the load rose from 5.5 to 26.6 (2026-11-05); at load 3.8 it gave
+    1.41 and 1.43 ×, met (`docs/02`): its targets are absent, so the identity check never runs for it, and execution is
+    unchanged.
 31. A9.30 under wine: wine keeps names as UTF-8 on the Unix side and cannot create one with an unpaired surrogate
     (`ERROR_FILE_NOT_FOUND`), while NTFS takes any UTF-16 code units through the wide calls (`OsString::from_wide`).
     The test creates its folder first; when that fails it panics unless it runs under wine (the system folder holds

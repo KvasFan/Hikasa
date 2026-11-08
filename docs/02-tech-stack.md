@@ -624,6 +624,30 @@ load 6.5 to 29), the plan unchanged. The bench now reports the plan job's own ti
 A node grew from 160 to 176 bytes (each side's identity fingerprint, 8 bytes; M1's budget is 256 bytes a node); the PSS
 figures above are within their bounds, and the preview's +84.3 MiB within its 96.
 
+**G1, G2, G4 and G7 after the W9b review** (release builds on `feat/m2` after the review's fixes, the commands of their
+own sections; one round each, the load average before and after each round given, other sessions' builds running
+meanwhile unless the load says otherwise). The planner's change touched the model's file identity, so the gates that run
+through the model and the copy path were taken again.
+
+| Item | Load | Measured | Threshold | Result |
+|---|---|---|---|---|
+| G1 through the binary (`perf_gates.rs`, 2026-11-05) | 11.7 → 5.5 | auto **0.982 s** median (0.972–0.999), standard 0.989 s, identity 0.826 s; peak RSS 300 MiB (bound 427 MiB) | < 3 s; RSS bound | met |
+| G1 bench (`text_compare`, 2026-11-05) | 28.8 → 26.4 | best of three: auto 2.019 s, standard 1.940 s, identity 1.142 s | < 3 s | met |
+| G2 through the binary (2026-11-05) | 11.7 → 5.5 | warm **0.083 s** median (0.083–0.094), `--json` 0.100 s; peak RSS 37 MiB | < 1.5 s warm | met |
+| G4 folder (`cancel_latency`, 2026-11-05) | 24.7 → 28.8 | worst latency: `folder_100k` 21.1 ms, `huge_folder_1m` 86.7 ms over 15 cancellations, `restat_200k` 2.3 ms | ≤ 100 ms | met |
+| G7 plan (`sync_plan_100k`, 2026-11-05) | 26.6 → 24.7 | median of five **0.227 s** (0.204–0.256), criterion 0.231 s | < 0.5 s | met |
+| G7 copy (`perf_g7.rs`, 2026-11-05) | 5.5 → 26.6 | 1.61 ×: `folder_op_execute` 893.7 ms against the plain copy's 555.2 ms (both twice their quiet figures; the load rose from 5.5 to 26.6 during the round) | ≤ 1.5 × | not met, under load |
+| G7 copy again (2026-11-08) | 3.8 | **1.41 ×** and **1.43 ×** in two rounds: `folder_op_execute` 357.8 and 350.2 ms against 253.1 and 244.8 ms | ≤ 1.5 × | **met** |
+
+The G7 copy round of 2026-11-05 ran while the load rose fivefold, and the plain copy itself took twice its quiet time.
+Nothing on the copy's path changed in the review: the planner's identity check applies to items that replace a file
+(G7's targets are absent), the plan is made before the clock starts, and no commit of the review touched execution. At
+load 3.8 the gate gives W6c's figures (1.39–1.48 ×, 347–357 ms against 241–253 ms); as W6c found, it keeps no margin
+on a loaded machine. The G15 tree row (`folder_columns`) taken again at load 3.8 (2026-11-08): scan 340 ms, 22 frames while scanning, UI work
+p50 0.87 / p95 **4.69** / max **4.97 ms**, the tree's rebuild max 6.0 ms, PSS 159.5 MiB: **met** in both its frame
+figures, where the round above at load 6.7 had one rebuild frame of 14.43 ms among 10. Every earlier round missed the
+p95 (W9a's open finding, at load 4.3–6.7); one round that meets it does not close the finding.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
