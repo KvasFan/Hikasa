@@ -8979,8 +8979,9 @@ Mutations (each failed the tests named, then was reverted):
     `is_lossy` is refused with "Rows cannot be dropped into a folder whose name is not valid Unicode."
 24. **Pasted text (F7, revises note 6).** `clipboard::pasted_paths` (core): each line, trimmed, that is an absolute local
     path or a `file://` URI with no host or `localhost` (case-insensitive scheme; `%XX` decoded; Unix keeps the bytes,
-    Windows takes `file:///C:/x` as `C:/x` and needs UTF-8). Anything else, a relative path included (it named the
-    window's current folder), is left out, and a text of none is "The clipboard holds no files to paste."
+    Windows takes `file:///C:/x` as `C:\x` and needs UTF-8; the native separators since W9's close, note 36).
+    Anything else, a relative path included (it named the window's current folder), is left out, and a text of none
+    is "The clipboard holds no files to paste."
 25. **A drop on a file row (F9).** `FolderViewModel::drop_row` gives any row's node to OS drops; `drop_into` goes up from
     a file to its folder as from a folder the side lacks. Rows dragged between the panes keep D-251's rule (a file row of
     the other pane is "outside a folder row").
@@ -9029,7 +9030,7 @@ Mutations (each failed the tests named, then was reverted):
     while the machine was still loaded by other sessions, had the tree's p95 at 8.0 ms over two frames and one
     `two_windows` frame of 23.15 ms; both are recorded. The other rows are untouched by the fixes (note 17 stands).
 
-*At W9's close* (two decisions taken after the fixer; revise notes 29 and 31):
+*At W9's close* (two decisions taken after the fixer, and what the close's pre-push run found; revise notes 24, 29 and 31):
 
 34. **Open Folder in File Manager starts in the fixed folder (revises note 29).** `AppLauncher` gains `open_folder(path)`
     (default: `open_associated`, so a launcher that does not know it behaves as before); `Service::open_folder_in_file_manager`
@@ -9048,6 +9049,11 @@ Mutations (each failed the tests named, then was reverted):
     field then follows the new model as after any run (note 31): edited, it keeps its text and compares with the new
     view's filter (Esc shows it); not edited, it shows the new filter. Test:
     `tests_rule_tabs::a_reopen_keeps_the_filters_edit`.
+36. **A pasted `file://` URI on Windows has Windows' separators (revises note 24).** The W9 close's pre-push run under
+    wine found `file:///C:/x` pasted as `C:/x`: the same file typed as `C:\x` gave a second, differently spelled source
+    in the drop prompt (`tests_pane_fixes::f7_…`). `path_of_uri` now turns every `/` into `\` (never part of a Windows
+    name); `clipboard_files::pasted_text_names_only_local_absolute_paths` compares the paths as text on Windows, since
+    `PathBuf` equality takes `/` and `\` as the same separator.
 
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
