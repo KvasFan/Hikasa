@@ -156,13 +156,12 @@ fn pasted_text_names_only_local_absolute_paths() {
     #[cfg(windows)]
     {
         let text = " C:\\data\\a b.txt \r\nfile:///C:/data/c%20d.txt\n\\data\\no-drive.txt\nfile://srv/s/x\n";
-        assert_eq!(
-            pasted_paths(text),
-            [
-                PathBuf::from("C:\\data\\a b.txt"),
-                PathBuf::from("C:/data/c d.txt"),
-            ]
-        );
+        // Compared as text: a path with `/` would equal one with `\` as a `PathBuf` (W9 close).
+        let texts: Vec<std::ffi::OsString> = pasted_paths(text)
+            .into_iter()
+            .map(PathBuf::into_os_string)
+            .collect();
+        assert_eq!(texts, ["C:\\data\\a b.txt", "C:\\data\\c d.txt"]);
     }
     assert!(pasted_paths("The clipboard holds prose.\nAnd more.").is_empty());
 }

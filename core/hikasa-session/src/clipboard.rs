@@ -379,7 +379,7 @@ impl ClipboardProvider for OrderedClipboard {
 
 /// The paths a clipboard text names (D-252's Paste of text; M2 W9c after review F7): each line, trimmed, that is an
 /// absolute local path or a `file://` URI with no host or `localhost` (percent-decoded; on Unix its bytes, so a name
-/// that is not UTF-8 survives; on Windows `file:///C:/x` is `C:/x`). Every other line (prose, a relative path, a URL
+/// that is not UTF-8 survives; on Windows `file:///C:/x` is `C:\x`). Every other line (prose, a relative path, a URL
 /// of another host or scheme, `-`, `clipboard://`) is left out.
 pub fn pasted_paths(text: &str) -> Vec<PathBuf> {
     text.lines()
@@ -425,7 +425,7 @@ pub fn percent_decoded(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The local path of a decoded URI path (`/home/a`, `/C:/x`).
+/// The local path of a decoded URI path (`/home/a`; `/C:/x` on Windows is `C:\x`).
 fn path_of_uri(bytes: &[u8]) -> Option<PathBuf> {
     #[cfg(unix)]
     {
@@ -439,7 +439,10 @@ fn path_of_uri(bytes: &[u8]) -> Option<PathBuf> {
             .as_bytes()
             .get(1..3)
             .is_some_and(|d| d[0].is_ascii_alphabetic() && d[1] == b':');
-        Some(PathBuf::from(if drive { &text[1..] } else { text }))
+        // Windows' own separators (W9 close): `/` is never part of a Windows name, and the path then reads as the
+        // same path typed or dropped does.
+        let text = if drive { &text[1..] } else { text };
+        Some(PathBuf::from(text.replace('/', "\\")))
     }
 }
 
