@@ -70,6 +70,15 @@ check_cli() { # <hikasa command…>, with $fixture and $to_path (how the program
 
 same_path() { printf '%s\n' "$1"; }
 
+# The processes matching <pattern> that run with this test's HOME: a Hikasa the user has open is never counted or
+# stopped.
+own_pids() { # <pattern>
+    local pid
+    for pid in $(pgrep -f "$1"); do
+        tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -qxF "HOME=$HOME" && echo "$pid"
+    done
+}
+
 # The CLI starts the GUI, which is then asked to quit. <process> is the pattern of what must end.
 gui_session() { # <process> <hikasa command…>
     local process=$1 list="" i
@@ -89,11 +98,11 @@ gui_session() { # <process> <hikasa command…>
     fi
     "$@" gui quit >>"$fixture/gui.out" 2>&1 || fail "gui quit exit $?"
     for i in $(seq 1 40); do
-        pgrep -f "$process" >/dev/null || return 0
+        [[ -z $(own_pids "$process") ]] && return 0
         sleep 0.5
     done
     fail "the GUI did not end"
-    pkill -f "$process"
+    own_pids "$process" | xargs -r kill
 }
 
 test_linux_tree() { # <label> <folder with hikasa and hikasa-gui>

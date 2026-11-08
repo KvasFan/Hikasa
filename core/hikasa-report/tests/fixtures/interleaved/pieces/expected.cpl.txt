@@ -1,0 +1,10 @@
+Text Compare
+Left: /l/l.txt (UTF-8, lf)
+Right: /r/r.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+1 1    0123456789
+1   -! abcdefghij
+  1 +! abcdefghiJ
+2 2    x

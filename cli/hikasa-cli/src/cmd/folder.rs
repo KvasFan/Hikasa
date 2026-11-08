@@ -1,27 +1,25 @@
 //! `hikasa folder compare <left> <right>` (§3.3): `Service::folder_prepare` + `Service::folder_run`, then the
-//! human report (`Service::render_folder_with`; the status list by default) or `hikasa.folder_compare.v1`
+//! report through REPORT ([`super::report::run_folder`]; the status list by default) or `hikasa.folder_compare.v1`
 //! (`FolderCompareResponse::json`, display `differences` with the folder structure by default). Rules precedence
 //! (§3.5): defaults ← `--rules-file` ← `--criteria` ← the individual flags (the service applies them in that
 //! order). `--gui` sends the request to the GUI instead (D-50).
 
 use std::collections::BTreeMap;
 
-use hikasa_core::{JobKind, Warning};
 use hikasa_folder::{
-    AttribFilter, CaseMode, Change, DateFilter, DisplayOptions, DosAttrs, FolderError,
-    FolderRulesPatch, NullObserver, SizeFilter, UnixTypeFilter,
+    AttribFilter, CaseMode, Change, DateFilter, DosAttrs, FolderError, FolderRulesPatch,
+    SizeFilter, UnixTypeFilter,
 };
-use hikasa_report::{FolderColumns, FolderLayout, FolderReportOptions, OutputFormat};
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{FOLDER_COMPARE_SCHEMA, GUI_OPEN_SCHEMA};
 use hikasa_session::api::{
-    ApiOp, FolderCompareRequest, GuiOpenRequest, ReportSettings, ViewWords, parse_archive_handling,
-    parse_content_method, resolve_folder_display,
+    ApiOp, FolderCompareRequest, GuiOpenRequest, ViewWords, parse_archive_handling,
+    parse_content_method,
 };
 
+use super::report::{Shape, run_folder};
 use super::{Ctx, gui, importance_patch, tri};
 use crate::args::{FolderCompareArgs, FolderRuleArgs};
-use crate::output::WriteError;
 
 /// Runs `folder compare`.
 pub fn run(ctx: &mut Ctx<'_>, args: &FolderCompareArgs) -> u8 {
@@ -39,76 +37,16 @@ pub fn run(ctx: &mut Ctx<'_>, args: &FolderCompareArgs) -> u8 {
     };
     if args.gui {
         let words = ViewWords {
-            display: args.display.clone(),
+            display: args.report.display.clone(),
             context_lines: None,
-            folders: args.folders.clone(),
-            suppress_filters: args.suppress_filters,
+            folders: args.report.folders.clone(),
+            suppress_filters: args.report.suppress_filters,
             expand_all: args.expand_all,
         };
         let open = GuiOpenRequest::for_folder(&request, &words, args.wait);
         return gui::open_view(ctx, &open, args.no_launch, &[]);
     }
-    execute(ctx, args, &request)
-}
-
-/// Compares and prints (`folder compare` without `--gui`, and `session run` of a Folder Compare session, T11):
-/// `args` gives the presentation words, `request` the comparison.
-pub fn execute(ctx: &mut Ctx<'_>, args: &FolderCompareArgs, request: &FolderCompareRequest) -> u8 {
-    let op = ApiOp::FolderCompare;
-    // The words are checked before the scan; an unsupported layout/format combination (`--report list --html`)
-    // is refused by the renderer afterwards (§1.9.3 item 10a).
-    let plan = match Plan::new(args) {
-        Ok(plan) => plan,
-        Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
-    };
-    let job = ctx.job(JobKind::FolderCompare);
-    let prepared = match ctx.service.folder_prepare_in(request, &job) {
-        Ok(prepared) => prepared,
-        Err(e) => return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &[]),
-    };
-    let resp = match ctx.service.folder_run(&prepared, &job, &NullObserver) {
-        Ok(resp) => resp,
-        Err(e) => {
-            let warnings: Vec<Warning> = prepared.warnings().to_vec();
-            return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &warnings);
-        }
-    };
-    ctx.progress.clear();
-    let code = resp.exit_code.code();
-    let warnings = resp.warnings.clone();
-    // A scan that was cancelled ends `Ok` with a part of the tree, for the GUI: here it is a failed command. Nothing
-    // is rendered and `--output` keeps the report it had (D-159).
-    if job.cancel.is_cancelled() {
-        return ctx.fail(FOLDER_COMPARE_SCHEMA, &ApiError::Cancelled, op, &warnings);
-    }
-    if let Some(target) = &args.output {
-        let mut report = Vec::new();
-        let written = ctx
-            .service
-            .render_folder_with(&resp, &plan.report(false), &plan.settings, &mut report)
-            .and_then(|()| ctx.service.write_output(target, &report).map(|_| ()));
-        if let Err(e) = written {
-            return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, op, &warnings);
-        }
-        if !ctx.out.json() {
-            return ctx.human_done(Ok(()), code, FOLDER_COMPARE_SCHEMA, &warnings, op);
-        }
-    }
-    if ctx.out.json() {
-        let result = resp.json(&plan.display);
-        return ctx.json_success(FOLDER_COMPARE_SCHEMA, code, result, &warnings, op);
-    }
-    let colour = ctx.out.colour();
-    let written = ctx
-        .service
-        .render_folder_with(
-            &resp,
-            &plan.report(colour),
-            &plan.settings,
-            ctx.out.stdout(),
-        )
-        .map_err(WriteError::from_api);
-    ctx.human_done(written, code, FOLDER_COMPARE_SCHEMA, &warnings, op)
+    run_folder(ctx, &args.report, request, "list", Shape::Compare)
 }
 
 /// A filter's flag: `none` is off, anything else its expression, parsed by hikasa-folder.
@@ -225,60 +163,4 @@ pub fn rules_request(
         base_rules: None,
         base_text_rules: None,
     })
-}
-
-/// The parsed presentation words of one invocation.
-struct Plan {
-    /// Display filter, folder mode and suppress-filters (the effective ignore-unimportant replaces the flag).
-    display: DisplayOptions,
-    layout: FolderLayout,
-    columns: FolderColumns,
-    html: Option<bool>,
-    settings: ReportSettings,
-}
-
-impl Plan {
-    fn new(args: &FolderCompareArgs) -> Result<Plan, ApiError> {
-        let display = resolve_folder_display(
-            args.display.as_deref(),
-            args.folders.as_deref(),
-            args.suppress_filters,
-            args.ignore_unimportant,
-        )?;
-        let layout = FolderLayout::parse(&args.report)?;
-        let columns = match args.columns.as_deref() {
-            Some(list) => FolderColumns::parse_list(list)?,
-            None => FolderColumns::default(),
-        };
-        let html = if args.html_mono {
-            Some(true)
-        } else if args.html {
-            Some(false)
-        } else {
-            None
-        };
-        Ok(Plan {
-            display,
-            layout,
-            columns,
-            html,
-            settings: ReportSettings {
-                title: args.title.clone(),
-                ..ReportSettings::default()
-            },
-        })
-    }
-
-    /// The report options; `ansi` only for a terminal (never for `--output`).
-    fn report(&self, ansi: bool) -> FolderReportOptions {
-        FolderReportOptions {
-            layout: self.layout,
-            display: self.display,
-            columns: self.columns,
-            format: match self.html {
-                Some(mono) => OutputFormat::Html { mono },
-                None => OutputFormat::Text { ansi },
-            },
-        }
-    }
 }

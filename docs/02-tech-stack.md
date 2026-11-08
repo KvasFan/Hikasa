@@ -65,6 +65,7 @@ writing and must be re-checked when the dependency is actually added.
 | Logging | `tracing` + `tracing-subscriber` | MIT | Structured logs; Log panel subscribes to a tracing layer. |
 | Config dirs | `directories` 6 | MIT OR Apache-2.0 | Per-platform config/cache paths. |
 | Property testing | `proptest`, `criterion` (dev) | MIT/Apache | |
+| XML checks | `roxmltree` 0.21 (dev-only, `hikasa-report` tests), `xmllint` (libxml2, a CI tool, never linked) | MIT OR Apache-2.0 / MIT | Well-formedness and structure of the XML report dumps; `xmllint --schema` against `docs/schemas/hikasa-report-1.xsd` on Linux and macOS CI (M2 W7, D-199, D-211). |
 | License audit | `cargo-deny` (CI tool) | — | Enforces the license policy. |
 
 ### M1 dependency constraints (binding for milestone M1)

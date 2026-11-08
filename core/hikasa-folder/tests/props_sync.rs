@@ -699,7 +699,8 @@ fn cases() -> impl Strategy<Value = Case> {
         ),
         (
             proptest::option::weighted(0.12, (any::<u8>(), any::<bool>())),
-            proptest::option::weighted(0.2, (any::<u8>(), any::<bool>())),
+            // A protected side 0.3 (0.2 before W7b): it is the rarest share the end checks.
+            proptest::option::weighted(0.3, (any::<u8>(), any::<bool>())),
             proptest::option::weighted(0.2, Just(1u8)),
         ),
         (proptest::bool::weighted(0.25), 0u8..16, any::<bool>()),
@@ -866,7 +867,12 @@ struct Seen {
 
 #[test]
 fn p_sync_the_tree_is_what_the_model_says() {
-    let config = config_with("tests/proptest-regressions/props_sync.txt", 384);
+    // 1,536 cases by default (W7b; 384 before): the coverage shares at the end are checked at the default count, and
+    // at 384 the rarest categories (a protected side, a failed listing, a refused incomplete comparison, about 6 % of
+    // the cases each against a share of 3 %) lay two standard deviations above their share, so a run in fifty failed
+    // one. Four times the cases double that margin (and a protected side is drawn more often): every share is now four to
+    // twenty standard deviations above its bound; a run takes about a second and a half in debug.
+    let config = config_with("tests/proptest-regressions/props_sync.txt", 1536);
     let total = config.cases;
     let mut runner = TestRunner::new(config);
     let seen = Seen::default();

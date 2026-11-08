@@ -373,3 +373,44 @@ fn settings_packages_reach_the_import_wizard() {
     let mut silent = world.gui(&[&pkg_text, "--silent"]).spawn().expect("spawn");
     assert_eq!(wait_child(&mut silent, Duration::from_secs(30)), 0);
 }
+
+/// A7.15 (review): the GUI executable handles the clipboard helper's hidden entry before anything else (a report the
+/// GUI places on a Linux clipboard is handed to it), so the entry opens no window. Without a display either way, and
+/// with the fake placer `HIKASA_CLIPBOARD_HELPER_FILE`: never the real clipboard.
+#[test]
+fn the_gui_executable_is_a_clipboard_helper_too() {
+    use std::io::Write as _;
+    let world = World::new();
+    let placed = world.path("placed.html");
+    let (text, html) = ("plain", "<p>html</p>");
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&(text.len() as u64).to_le_bytes());
+    payload.extend_from_slice(&(html.len() as u64).to_le_bytes());
+    payload.extend_from_slice(text.as_bytes());
+    payload.extend_from_slice(html.as_bytes());
+    let mut child = Command::new(GUI)
+        .arg("__clipboard-helper")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env("HIKASA_CLIPBOARD_HELPER_FILE", &placed)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start the GUI executable");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&payload)
+        .expect("payload");
+    let out = child.wait_with_output().expect("wait");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "placed\n");
+    assert_eq!(std::fs::read_to_string(&placed).expect("placed"), html);
+}

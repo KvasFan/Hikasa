@@ -77,6 +77,39 @@ impl ClipboardError {
             },
         }
     }
+
+    /// The VFS error of a report that could not be placed on the clipboard (§1.7.10): `Unavailable` →
+    /// `VfsError::Unavailable` (kind `unsupported`), `TooLarge` → `TooLarge`, anything else → `Io` (op `write`)
+    /// "cannot write the clipboard: …".
+    pub fn to_vfs_write(&self) -> VfsError {
+        let spec = CLIPBOARD_SPEC.to_owned();
+        match self {
+            ClipboardError::Unavailable(_) | ClipboardError::TooLarge(_) => self.to_vfs(),
+            ClipboardError::Failed(why) => VfsError::from_io(
+                spec,
+                VfsOp::Write,
+                std::io::Error::other(format!("cannot write the clipboard: {why}")),
+            ),
+            ClipboardError::Empty => VfsError::from_io(
+                spec,
+                VfsOp::Write,
+                std::io::Error::other(format!("cannot write the clipboard: {self}")),
+            ),
+        }
+    }
+}
+
+/// The most a report placed on the clipboard may hold, its text and HTML flavours together (§1.7.9): 128 MiB.
+pub const CLIPBOARD_REPORT_MAX: u64 = 128 << 20;
+
+/// A report for the clipboard (§1.7.10): `text` always (a plain-text rendering of an HTML report), `html` for an HTML
+/// report. Bytes as a file target's (`\n` line ends on every platform).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardPayload {
+    /// The plain text.
+    pub text: String,
+    /// The HTML document, for an HTML report.
+    pub html: Option<String>,
 }
 
 /// A source of clipboard content. The service calls it only when a `clipboard://` spec is parsed (once per
@@ -84,6 +117,15 @@ impl ClipboardError {
 pub trait ClipboardProvider: Send + Sync {
     /// Reads the clipboard now.
     fn read(&self) -> Result<ClipboardContent, ClipboardError>;
+
+    /// Places a report (M2 W7, §1.7.10). Default: `Unavailable`. Called by the adapters only (architecture check 2):
+    /// the Service returns the payload in `ReportOutcome::clipboard`.
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        let _ = payload;
+        Err(ClipboardError::Unavailable(
+            "this clipboard cannot be written".into(),
+        ))
+    }
 }
 
 /// No clipboard: every read is `Unavailable("no clipboard provider")` (the default of `ServiceInit::new`).
@@ -105,11 +147,13 @@ enum Fixed {
     Failed(String),
 }
 
-/// A clipboard with fixed content or a fixed error, counting its reads (tests).
+/// A clipboard with fixed content or a fixed error, counting its reads and recording every payload placed on it
+/// (tests). A clipboard that is unavailable or failing refuses payloads the same way.
 #[derive(Debug)]
 pub struct FixedClipboard {
     fixed: parking_lot::Mutex<Fixed>,
     reads: AtomicUsize,
+    payloads: parking_lot::Mutex<Vec<ClipboardPayload>>,
 }
 
 impl FixedClipboard {
@@ -117,7 +161,13 @@ impl FixedClipboard {
         FixedClipboard {
             fixed: parking_lot::Mutex::new(fixed),
             reads: AtomicUsize::new(0),
+            payloads: parking_lot::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Every payload placed, in order.
+    pub fn payloads(&self) -> Vec<ClipboardPayload> {
+        self.payloads.lock().clone()
     }
 
     /// Holds `text`.
@@ -170,11 +220,25 @@ impl ClipboardProvider for FixedClipboard {
             Fixed::Failed(reason) => Err(ClipboardError::Failed(reason.clone())),
         }
     }
+
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        match &*self.fixed.lock() {
+            Fixed::Unavailable(reason) => return Err(ClipboardError::Unavailable(reason.clone())),
+            Fixed::Failed(reason) => return Err(ClipboardError::Failed(reason.clone())),
+            Fixed::Content(_) | Fixed::Empty => {}
+        }
+        self.payloads.lock().push(payload.clone());
+        Ok(())
+    }
 }
 
 impl<P: ClipboardProvider + ?Sized> ClipboardProvider for Arc<P> {
     fn read(&self) -> Result<ClipboardContent, ClipboardError> {
         (**self).read()
+    }
+
+    fn write_payload(&self, payload: &ClipboardPayload) -> Result<(), ClipboardError> {
+        (**self).write_payload(payload)
     }
 }
 

@@ -1323,3 +1323,58 @@ fn a6_30_session_edit_sets_a_per_row_override() {
     assert!(s.join("r/gone/inner.txt").exists());
     assert_eq!(read(&s, "r/newer-left.txt"), "left wins\n");
 }
+
+/// W7b review: `session run` of a folder-sync session with REPORT's flags names them in one `report_option_unused`
+/// warning (a sync writes no report); the exit code stays the sync's, and no report is written.
+#[test]
+fn a7_18_a_sync_session_names_the_report_flags_it_ignores() {
+    let s = sandbox();
+    let mut new = s.cmd();
+    new.args([
+        "session",
+        "new",
+        "nightly",
+        "--type",
+        "folder-sync",
+        "--left",
+    ]);
+    new.arg(s.join("l")).arg("--right").arg(s.join("r"));
+    assert_eq!(code(&new.output().unwrap()), 0);
+    let report = s.join("report.html");
+    let report = report.to_str().unwrap();
+    let dry = session(
+        &s,
+        &[
+            "run",
+            "nightly",
+            "--dry-run",
+            "--json",
+            "--layout",
+            "xml",
+            "--output-to",
+            report,
+            "--html",
+        ],
+    );
+    assert_eq!(code(&dry), 0, "{}", stderr(&dry));
+    let doc = json(&dry);
+    let unused: Vec<&serde_json::Value> = doc["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] == "report_option_unused")
+        .collect();
+    assert_eq!(unused.len(), 1, "{doc}");
+    let message = unused[0]["message"].as_str().unwrap();
+    for flag in ["--layout", "--output-to", "--html"] {
+        assert!(message.contains(flag), "{message}");
+    }
+    assert!(!message.contains("--dry-run"), "{message}");
+    assert!(!Path::new(report).exists());
+    let plain = session(&s, &["run", "nightly", "--dry-run", "--json"]);
+    assert!(
+        !stdout(&plain).contains("report_option_unused"),
+        "{}",
+        stdout(&plain)
+    );
+}

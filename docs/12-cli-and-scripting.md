@@ -39,7 +39,7 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 | `hikasa picture compare <left> <right> [--mode tolerance\|range\|blend] [--tolerance N] [--diff-output <png>] [--metadata] [--report …]` | `hikasa-picture` | |
 | `hikasa media compare <left> <right>` / `hikasa version compare <left> <right>` / `hikasa registry compare <left> <right>` | `hikasa-metadata` | |
 | `hikasa quick <left> <right> [--size\|--crc\|--binary\|--rules]` | all | Quick compare: no output, exit code only (`--qc`). |
-| `hikasa report <type> …` | `hikasa-report` | Shared report options (`13-reports.md`); every `compare` subcommand accepts `--report` as a shortcut. |
+| `hikasa report <type> …` | `hikasa-report` | Shared report options (`13-reports.md`); every `compare` subcommand accepts `--report` as a shortcut. *M2 W7 (D-205):* `report text` and `report folder` (`[<left> <right>] [--session <REF>]`, the rule flags of the compare subcommand, REPORT); the report flags are one group shared with `text compare`, `folder compare` and `session run`; see §4. |
 | `hikasa script run <file> [args…] [--silent] [--stop-on-error]` / `hikasa script check <file>` | `hikasa-script` | Run or syntax-check a script. |
 | `hikasa session (list\|show\|new\|edit\|delete\|rename\|lock\|unlock\|export\|import\|run) …` | `hikasa-session` | `run` executes a saved session headless (compare/sync/merge) and prints/reports the result. `edit` takes `--set key=value` pairs. *M2 W2 (§1.2 of the contract, D-80…D-84):* `list [--folder <ref>] [--autosaved] [--defaults]`, `show <ref>` / `show --defaults <type>`, `new <ref> --type <type> [--left] [--right] [--description]`, `edit <ref> (--set <key>=<value>… \| --unset <key>… \| --left \| --right \| --description) [--force]`, `edit --defaults <type> (--set … \| --unset …)`, `delete [--force]`, `rename <ref> <new ref> [--force]`, `lock`, `unlock`, `mkdir <folder>`, `rmdir <folder> [--recursive] [--force]`, `run <ref> [output flags of folder/text compare]`. `run` executes Folder Compare and Text Compare sessions through the same service call as `folder compare` / `text compare` (same output, JSON and exit codes, T11); other types exit 100 `unsupported`. *M2 W6c:* `run` of a Folder Sync session is `folder sync` with the session's specs, rules, `[rules.sync]` and read-only sides, and takes `--dry-run`, `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows`; without a terminal and without `--yes` it exits 100, as `folder sync`. Those flags on another type are refused (exit 100). `--set` keys are paths inside the session file, parsed like settings keys; `--unset` removes a rule key so the session follows the defaults again (D-90); editing, deleting or renaming a locked session, and `rmdir --recursive` of a folder holding one, needs `--force` (D-91). Session export and import go through settings packages (`settings export --item sessions:<ref>`). |
 | `hikasa workspace (list\|show\|delete\|rename)` | `hikasa-session` | *M2 W2 (D-85).* `show` warns `session_missing` for a tab whose session no longer exists. |
@@ -280,6 +280,11 @@ touch (left->right|right->left) | touch (left|right|all):(now|<timestamp>)
 version-report layout:(side-by-side|summary) ...
 ```
 
+*M2 note (W7, D-196):* the words of `layout:`, `options:` and `output-options:` of `text-report`, `folder-report`
+and `file-report` are the report vocabulary of `13-reports.md` ("M2 reports"), which adds `no-line-numbers` and
+`display-none` to SCR-001's words; `output-to:` takes a file, `clipboard`, `printer` or `browser` as `--output-to`
+does. The interpreter itself is W8's.
+
 *M1 note (D-57):* `hikasa folder compare --criteria <list>` uses the `criteria`
 syntax above: items separated by `,` or spaces; listed criteria are on, unlisted quick
 tests and the content method are off. Hikasa adds `filename-case` (FC-022);
@@ -371,6 +376,8 @@ values are a usage error (exit 100), wherever they stand.
 | `quick <left> <right>` | `--size` \| `--crc` \| `--binary` \| `--rules` (default); `--ignore-unimportant` (`--iu`); `--format <id\|name>`; `--rules-file <toml>`; `--unimportant <list>`, `--unimportant-text <text>`…, `--unimportant-regex <re>`…, `--compare-line-endings`; `--stdin-name <name>`. Prints nothing; the exit code is the result. `--size` compares only the sizes and `--crc` only the CRC-32 checksums: equal sizes (or checksums) report `binary_same` and exit 1 as specified (contract §2.21) although the bytes were not compared one by one; `--binary` and `--rules` read and compare the contents |
 | `text compare <left> <right>` | `--format`; `--encoding`, `--left-encoding`, `--right-encoding <label>`; `--rules-file` (`--rules`); `--algorithm auto\|unaligned\|standard\|myers\|patience\|histogram`, `--skew <n>`, `--closeness`/`--no-closeness`, `--closeness-threshold <‰>`, `--never-align`; `--unimportant`, `--unimportant-text`, `--unimportant-regex`, `--compare-line-endings`, `--orphans-unimportant`; `--ignore-unimportant` (`--iu`); `--context <n>` (default 3, from the options), `--display all\|mismatches\|context\|matches`; `--report unified\|side-by-side\|summary\|patch\|statistics` (default: the annotated unified diff), `--patch-style normal\|context\|unified`, `--html`, `--html-mono`, `--line-numbers`/`--no-line-numbers`, `--width <n>` (160), `--wrap none\|character\|word`, `--title <text>`, `--output <file>`; `--stdin-name`; `--gui`, `--wait`, `--no-launch` |
 | `folder compare <left> <right>` | `--filters <masks>`; `--rules-file` (`--rules`); `--criteria <list>`; `--size`/`--no-size`, `--timestamps`/`--no-timestamps`, `--tolerance <secs>`, `--ignore-dst`, `--ignore-timezone`, `--filename-case`, `--attributes <letters>`, `--permissions`, `--owner`, `--group`; `--content none\|crc\|binary\|rules`, `--skip-if-quick-same`, `--no-override-quick`; `--text-rules-file <toml>`, `--unimportant`, `--unimportant-text`, `--unimportant-regex` (for `--content rules`); `--case-sensitive`\|`--case-insensitive`, `--align-extensions`, `--align-normalization`; `--cutoff <expr>`, `--size-filter <expr>`, `--include-protected`; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`; `--display <filter>` (default `differences`), `--folders always\|structure\|files-only` (default `structure`), `--ignore-unimportant` (`--iu`), `--suppress-filters`, `--expand-all`; `--report list\|side-by-side\|summary\|json` (default `list`), `--columns <list>`, `--html`, `--html-mono`, `--title`, `--output`; `--gui`, `--wait`, `--no-launch` |
+| REPORT (`text compare`, `folder compare`, `session run`, `report text`, `report folder`) | *M2 W7 (D-205, §1.7.15 of the contract):* `--layout <word>` (alias `--report`), `--options <word,…>`…, `--output-options <word,…>`…, `--output-to <target>` (`-`, `clipboard`, `clipboard://`, `printer`, `browser`, or a file; `./printer` is a file), `--output <file>` (as `--output-to <file>`; both are a usage error), `--title <text>`, `--display <word>`, `--folders <mode>`, `--suppress-filters`, `--context <n>`, `--patch-style <s>`, `--columns <list>`, `--html` \| `--html-mono`, `--line-numbers` \| `--no-line-numbers`, `--width <n>`, `--wrap <mode>`, `--lines [left:\|right:]<a>-<b>`, `--select <mask>`…, `--path <rel>`…, `--dry-run`. One group (`ReportArgs`) in the five commands; a flag only one kind takes is refused for the other by the service (exit 100), not by the parser. `--html`, `--html-mono`, `--wrap`, `--patch-style`, `--columns`, `--line-numbers` and `--no-line-numbers` are words of the vocabulary (`13-reports.md`), so they conflict with a different word of their slot; `--display`, `--folders`, `--suppress-filters`, `--context` and `--width` are what an absent word means. Every word is checked before the comparison runs |
+| `report text [<left> <right>]` / `report folder [<left> <right>]` | *M2 W7 (D-205):* `--session <REF>` (a Text Compare session for `text`; a Folder Compare or Folder Sync session for `folder`), with the flags on top; the rule flags of `text compare` (`report text`) or of `folder compare` and `--ignore-unimportant` (`report folder`); REPORT, the layout `side-by-side` by default and every other default the compare subcommand's, so `report text a b <flags>` and `text compare a b --report side-by-side <flags>` print the same bytes and exit alike. `--json`: `hikasa.report.v1`, refused with the stdout target (exit 100, "the report and the JSON document cannot share stdout: pass --output-to"). Exit codes: the comparison's; 100 for a refused word, combination or target, a write that fails (target untouched), a stylesheet that cannot be read, `too_large`, a launcher that fails, a cancel; 107 where the compare subcommand gives it. A pair report that fails is a warning (`file_report_failed`) |
 | `format list` / `format show <id\|name>` / `format detect <file>` / `format tokens <file>` | `detect`: `--stdin-name`; `tokens`: `--format`, `--encoding`, `--lines <a>-<b>`, `--stdin-name` |
 | `format new <id>` / `edit <id>` / `delete <id>` / `import <path>` / `export <id\|name>` / `enable <id>` / `disable <id>` / `move <id>` / `restore [<id>…]` | *M2 W1 (D-75):* `new`: `--from <id\|name>`, `--name <text>`, `--mask <mask>`, `--kind <kind>`; `edit`: `--from-file <path>` \| `--set <key=value>`…; `import`: `--replace`; `export`: `-o`/`--output <path>`; `move`: one of `--up`, `--down`, `--top`, `--bottom`, `--before <id>`, `--after <id>`; `restore`: `<id>`… \| `--all`, and `--dry-run` \| `--yes`. They write only the files they change (`10-file-formats.md` §1.1) |
 | `folder compare` rule flags of W6 | *M2 W6 (D-169…D-172):* `--attrib-filter <EXPR>`, `--unixtype-filter <EXPR>` (`none` is off; a bad word is `invalid_input`, exit 100), `--no-auto-scan`, `--expand-on-load`, `--expand-differences`, repeatable `--ignored <PATH>` (`!<PATH>` an exception), `--format-on <ID>`, `--format-off <ID>`. The rule flags are one group (`FolderRuleArgs`) |
@@ -394,7 +401,8 @@ and with `--json` the document still goes to stdout. When `<file>` is a symbolic
 file it points to is replaced and the link stays; a FIFO or a device (such as `/dev/null`)
 is written to directly instead, which is not atomic, and is never replaced. A layout that
 has no HTML form (`--report unified|patch|statistics --html`, `folder compare --report
-list|json --html`) is refused (exit 100) once the comparison has run. With `--json`, `text compare` shows
+list|json --html`) is refused (exit 100); since M2 W7 before anything is compared (it was after the comparison in M1;
+the exit code is the same). With `--json`, `text compare` shows
 the mismatches by default (`--context n` alone means `context` with n lines). Human
 `text compare` reports show all lines (`--report side-by-side`, `summary`) or the
 differences with 3 lines of context (the default annotated unified diff and `--report
@@ -411,6 +419,7 @@ e.g. `quick --crc` on a file that cannot be read); warnings are `hikasa: warning
 | Command | Line |
 |---|---|
 | `folder compare` (list) | `<marker>  <path>[/]`, then `# <n> same, <n> left newer, …` (kept with `--quiet`) |
+| `--dry-run` of a report | `write <file>` or `replace <file>`; with links `mkdir <folder>`, `replace <folder> (an earlier report)` or `mkdir <folder> (instead of <wanted>, which is not this report's)`, then `write <folder>/<file>  <path>` per pair (`skip (<reason>) <path>`), then `would write <n> files`; `mkdir <cache>/print/…` first for the printer and the browser (M2 W7) |
 | `format list` | `<position>\t<id>\t<status>\t<name>\t<mask>` |
 | `format detect` | `<id or ->\t<name>` |
 | `format tokens` | `L<line>:<start>-<end>\t<element>\t<text>` |
@@ -448,7 +457,10 @@ status, reason, error}], summary: {planned, done, skipped, failed, bytes}}`; fai
 `ok: true`, `error: null` and exit 100, as `hikasa.settings_import.v1`; M2 W5b adds the action
 `create_archive`, and a rebuild that fails turns the items of its archive into failed ones, with its error, and
 `not_run` when cancelled); 38 schemas in all, with `hikasa.folder_op.v1`, `hikasa.folder_contents.v1` (W6b) and
-`hikasa.folder_sync.v1` (W6c).
+`hikasa.folder_sync.v1` (W6c); M2 W7 appends `hikasa.report.v1` (39 schemas): `{type, layout, format, target,
+output, replaced, dry_run, cancelled, bytes, verdict, words: {layout, options, output_options}, unused, links:
+null|{folder, wanted, renamed, state: new|replace_ours, pairs: [{path, file, status: planned|written|skipped|failed,
+reason, error}], counts: {written, skipped, failed}}, clipboard: null|{text_bytes, html_bytes}, opened}`.
 `hikasa.vfs_stat.v1` lists the capabilities of M2 W3 too (`mkdir`, `remove`, `rename`,
 `set_attrs`, `trash`, `create_symlinks`, `set_created`). TOML values appear as JSON values (a table as an object, a datetime as a string;
 `null` for an optional key without a value or a key without a default).
@@ -467,7 +479,14 @@ start instead of `hikasa-gui` next to `hikasa` or on `PATH`, where a candidate w
 execute bit is skipped; a relative path is taken relative to the current folder; tests) and,
 M2 W3, `HIKASA_CLIPBOARD_FILE` (a file whose text stands in for the clipboard of `clipboard://`:
 scripts, headless machines and tests; a missing file means "no clipboard", an empty one an
-empty clipboard).
+empty clipboard; M2 W7: `--output-to clipboard` writes a report's HTML, else its text, to that file) and, M2 W7,
+`HIKASA_CLIPBOARD_HELPER_FILE` (on Linux a report placed on the clipboard is handed to a helper process, `hikasa` or
+`hikasa-gui` itself, that keeps it after the program ended; with this variable the helper writes the report's HTML,
+else its text, to that file instead of placing it: scripts, headless machines and tests; a clipboard that cannot be
+written is exit 100, `unsupported` without a display, `io` otherwise) and, M2 W7,
+`SOURCE_DATE_EPOCH` (the report time, a decimal count of seconds since the epoch shown in UTC, so a report is the same
+bytes on every run; a value that does not parse is ignored with the warning `source_date_epoch_invalid`; only reports
+read it).
 No usable GUI executable — none found, or one that cannot be started (not executable, a
 missing interpreter) — exits 103 with a message naming it.
 
@@ -494,3 +513,31 @@ The machine was not idle (unrelated builds, load average 5–9): the figures are
 with a small spread; a disturbed run stayed below 1.3 s for G1. The cold G2 figure (gate < 5 s) was measured on 2026-10-26 by the maintainer with
 `sync; echo 3 > /proc/sys/vm/drop_caches` (root) right before the run, on btrfs over NVMe: 0.694 s, exit 13 as
 expected (one file in 997 differs). No CI job runs these tests.
+
+**Gate G13 (reports, M2 W7b; contract §1.7.17, D-212).** The same harness (`g13_*` in `perf_gates.rs`) measures
+each report against `--layout summary` of the same input in the same run: `report text` of the G1 pair to a file,
+display all (side-by-side HTML, interleaved HTML and text, XML), each ≤ the summary + 1.5 s and its peak RSS + 24 MiB;
+`report folder` of the warm G2 tree, display all (side-by-side HTML, XML), ≤ the summary + 1.0 s and + 32 MiB; the
+G2 tree with about 1,000 differing pairs of 4 KiB text, `include-file-links`, into a new files folder each run,
+≤ 5 s end to end and ≤ the summary's RSS + 64 MiB. Measured on 2026-11-03 on the same machine, release build, with
+the load average printed beside each figure. **Loaded machine:** load 5–10 (other projects building), so these are
+upper figures; the two runs of the text gate are both given.
+
+| Gate | Report | Median (min–max) | Over the summary | Peak RSS (over the summary) | Written | Load (1 min) |
+|---|---|---|---|---|---|---|
+| G13 text | summary (baseline) | 0.548 s (0.543–0.553); 0.500 s | — | 300 MiB | — | 8.2; 7.9 |
+| G13 text | side-by-side HTML | 1.437 s (1.354–1.477); 1.676 s (1.092–2.052) | +0.889 s; +1.176 s | 301 MiB (+0.6) | 218 MB | 9.2; 7.5 |
+| G13 text | interleaved HTML | 0.971 s (0.920–1.133); 0.752 s | +0.423 s; +0.252 s | 301 MiB (+0.7) | 128 MB | 8.9; 7.5 |
+| G13 text | interleaved text | 1.095 s (1.077–1.331); 1.285 s | +0.547 s; +0.784 s | 301 MiB (+0.9) | 67 MB | 8.9; 7.1 |
+| G13 text | XML | 1.070 s (0.982–1.257); 1.330 s | +0.522 s; +0.830 s | 301 MiB (+0.4) | 166 MB | 9.6; 6.7 |
+| G13 folder | summary (baseline) | 0.063 s (0.061–0.082) | — | 35 MiB | — | 9.3 |
+| G13 folder | side-by-side HTML | 0.180 s (0.174–0.181) | +0.116 s | 37 MiB (+1.6) | 34 MB | 9.3 |
+| G13 folder | XML | 0.227 s (0.221–0.230) | +0.163 s | 36 MiB (+1.5) | 45 MB | 10.4 |
+| G13 links | 1,027 pairs of 4 KiB, a new files folder | 0.108 s (0.104–0.108) | (summary 0.055 s) | 41 MiB (+5.0) | 1,028 files | 8.6 |
+
+Every row is within its threshold. In the same session G1 and G2 were re-measured unchanged (G1 0.398 s auto,
+0.395 s standard, 0.316 s identical, peak RSS 301/301/278 MiB; G2 warm 0.051 s, 35 MiB; load 7–8), and the G4 bench
+`cancel_latency` (hikasa-text) gave a worst latency of 3.4–5.5 ms against 100 ms (load 5). The streaming row of
+§1.7.17 runs on CI (`core/hikasa-report/tests/stream_memory.rs`, and through the Service
+`core/hikasa-session/tests/report_stream.rs`: every text layout of a 50,000-line pair peaks at 0.14–0.71 MB of live
+heap writing 0.2–9 MB to a file, folder side-by-side HTML and XML at 0.19 MB).

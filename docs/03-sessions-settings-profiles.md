@@ -304,6 +304,12 @@ maximized = false
 first_run_done = false                   # set by the GUI's first start (the D-21 materialization)
 hints_seen = []                          # ids of the one-time hints already shown
 [dialogs]                                # free tables per dialog id ("remembers last choices"), kept as they are
+[dialogs."report-text"]                  # M2 W7 (D-208): the report dialog's last choices; also "report-folder"
+layout = "interleaved"                   # the words as ReportRequest reads them; a refused word is dropped on load
+options = ["display-context", "line-numbers"]   # (warning invalid_config_value); the title is not remembered
+output_options = ["html-color", "wrap-word"]
+output_to = "file"                       # file, clipboard, printer, browser
+file = "/home/u/reports/a.html"          # the last file target, as typed; the CLI never reads these
 [layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
 font_size = 13.0                         # points; the text view's font commands
 thumbnail = true

@@ -1,0 +1,9 @@
+[1mText Compare[0m
+Left: /l/left.c (UTF-8, lf)
+Right: /r/right.c (UTF-8, mixed)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: compared; orphan lines: always important
+
+1   [31m-![0m x
+  1 [31m+![0m x
+2 2    y

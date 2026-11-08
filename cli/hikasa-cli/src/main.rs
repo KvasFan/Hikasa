@@ -39,7 +39,7 @@ use hikasa_session::{
 };
 use hikasa_vfs::{VfsError, VfsOp};
 
-use crate::args::{Cli, Command, FormatCmd, GlobalArgs, GuiCmd, TextCmd};
+use crate::args::{Cli, Command, FormatCmd, GlobalArgs, GuiCmd, ReportCmd, TextCmd};
 use crate::interrupt::Interrupt;
 use crate::output::{Output, colour_enabled, stderr_line};
 use crate::progress::ProgressLine;
@@ -73,8 +73,18 @@ fn main() -> std::process::ExitCode {
 
 /// One invocation; returns the exit code.
 fn run() -> u8 {
-    let env = capture_env();
     let argv: Vec<OsString> = std::env::args_os().collect();
+    // The Linux clipboard helper (§1.7.10): a hidden internal entry, before any argument parsing, so it is in no help.
+    if hikasa_session::host::is_clipboard_helper(&argv) {
+        let placer = hikasa_session::host::clipboard_helper_placer();
+        let code = hikasa_session::host::clipboard_helper_main(
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &placer,
+        );
+        return u8::try_from(code).unwrap_or(FAILURE);
+    }
+    let env = capture_env();
     // Only the arguments before the first `--` can be flags: after it, `--json` is a file name.
     let flags = &argv[..options_end(&argv)];
     let json_anywhere = flags.iter().skip(1).any(|a| a == "--json");
@@ -168,6 +178,7 @@ fn execute(
         None => {
             // The clipboard is read only when a `clipboard://` spec is parsed (D-100).
             let clipboard = clipboard_provider(&env);
+            let placer = Arc::clone(&clipboard);
             let init = ServiceInit {
                 env,
                 config_dir: globals.config_dir.clone(),
@@ -196,6 +207,7 @@ fn execute(
                             progress: &progress,
                             interrupt: &interrupt,
                             matches: leaf_matches(matches),
+                            clipboard: &*placer,
                         };
                         Ok(cmd::dispatch(&mut ctx, command, open))
                     });
@@ -370,7 +382,10 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Quick(args) => args.stdin_name.clone(),
         Command::Text {
             cmd: TextCmd::Compare(args),
-        } => args.stdin_name.clone(),
+        } => args.rule.stdin_name.clone(),
+        Command::Report {
+            cmd: ReportCmd::Text(args),
+        } => args.rule.stdin_name.clone(),
         Command::Format {
             cmd: FormatCmd::Detect(args),
         } => args.stdin_name.clone(),
@@ -378,6 +393,7 @@ fn stdin_name(command: &Command) -> Option<String> {
             cmd: FormatCmd::Tokens(args),
         } => args.stdin_name.clone(),
         Command::Folder { .. }
+        | Command::Report { .. }
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }

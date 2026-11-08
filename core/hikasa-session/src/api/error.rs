@@ -3,7 +3,7 @@
 use hikasa_core::{Classify, ErrorKind, ErrorReport, ExitCode, Side, SpecError, io_error_kind};
 use hikasa_folder::FolderError;
 use hikasa_formats::FormatError;
-use hikasa_report::ReportError;
+use hikasa_report::{ReportError, ReportKind};
 use hikasa_text::TextError;
 use hikasa_vfs::VfsError;
 
@@ -147,8 +147,16 @@ impl ApiError {
         match self {
             ApiError::GuiNotFound | ApiError::GuiNotStartable(_) => ExitCode::GuiNotFound,
             ApiError::LoadFailed { .. } => match op {
-                ApiOp::FolderCompare | ApiOp::FolderOp | ApiOp::FolderSync => ExitCode::LoadFailed,
-                ApiOp::Quick
+                ApiOp::FolderCompare
+                | ApiOp::FolderOp
+                | ApiOp::FolderSync
+                | ApiOp::Report {
+                    kind: ReportKind::Folder,
+                } => ExitCode::LoadFailed,
+                ApiOp::Report {
+                    kind: ReportKind::Text,
+                }
+                | ApiOp::Quick
                 | ApiOp::TextCompare
                 | ApiOp::Format
                 | ApiOp::Vfs
@@ -157,14 +165,22 @@ impl ApiError {
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::Folder(e) => match op {
-                ApiOp::FolderCompare | ApiOp::FolderOp | ApiOp::FolderSync => match e {
+                ApiOp::FolderCompare
+                | ApiOp::FolderOp
+                | ApiOp::FolderSync
+                | ApiOp::Report {
+                    kind: ReportKind::Folder,
+                } => match e {
                     FolderError::BaseNotLoadable { .. } | FolderError::BaseNotFolder { .. } => {
                         ExitCode::LoadFailed
                     }
                     // Another crate's #[non_exhaustive] enum: every other variant is 100 (§0.4 rule 9).
                     _ => ExitCode::UnknownError,
                 },
-                ApiOp::Quick
+                ApiOp::Report {
+                    kind: ReportKind::Text,
+                }
+                | ApiOp::Quick
                 | ApiOp::TextCompare
                 | ApiOp::Format
                 | ApiOp::Vfs
@@ -203,6 +219,7 @@ impl ApiError {
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiControl
+                | ApiOp::Report { .. }
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::InvalidArgument(_)

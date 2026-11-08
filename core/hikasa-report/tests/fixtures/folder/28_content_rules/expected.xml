@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="folder">
+  <header>
+    <title>Folder Compare</title>
+    <side id="left" spec="/l"/>
+    <side id="right" spec="/r"/>
+    <mode display="all" ignore-unimportant="false" folders="structure" suppress-filters="false"/>
+    <rules>size, timestamps (2 s), content: rules; filters: none</rules>
+    <warning code="rules_size_limit">compared by bytes</warning>
+  </header>
+  <tree>
+    <folder name="sub" path="sub" state="unimportant" marker="~">
+      <left name="sub" size="4"/>
+      <right name="sub" size="3"/>
+      <entry name="only_unimportant.txt" path="sub/only_unimportant.txt" state="unimportant" marker="~" kind="file">
+        <left name="only_unimportant.txt" size="4" modified="2026-01-01T00:00:00Z"/>
+        <right name="only_unimportant.txt" size="3" modified="2026-01-01T00:00:00Z"/>
+      </entry>
+    </folder>
+    <entry name="big.txt" path="big.txt" state="same" marker="=" kind="file">
+      <left name="big.txt" size="19" modified="2026-01-01T00:00:00Z"/>
+      <right name="big.txt" size="19" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="broken.txt" path="broken.txt" state="error" marker="E" kind="file">
+      <left name="broken.txt" size="11" modified="2026-01-01T00:00:00Z"/>
+      <right name="broken.txt" size="4" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="crlf.txt" path="crlf.txt" state="same" marker="=" kind="file">
+      <left name="crlf.txt" size="6" modified="2026-01-01T00:00:00Z"/>
+      <right name="crlf.txt" size="5" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="important.txt" path="important.txt" state="different" marker="!" kind="file">
+      <left name="important.txt" size="3" modified="2026-01-01T00:00:00Z"/>
+      <right name="important.txt" size="3" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+    <entry name="spaces.txt" path="spaces.txt" state="unimportant" marker="~" kind="file">
+      <left name="spaces.txt" size="3" modified="2026-01-01T00:00:00Z"/>
+      <right name="spaces.txt" size="2" modified="2026-01-01T00:00:00Z"/>
+    </entry>
+  </tree>
+  <summary verdict="differences" complete="true">
+    <count group="files" name="same" value="2"/>
+    <count group="files" name="left-newer" value="0"/>
+    <count group="files" name="right-newer" value="0"/>
+    <count group="files" name="different" value="3"/>
+    <count group="files" name="left-only" value="0"/>
+    <count group="files" name="right-only" value="0"/>
+    <count group="files" name="unknown" value="0"/>
+    <count group="files" name="error" value="1"/>
+    <count group="files" name="filtered" value="0"/>
+    <count group="folders" name="same" value="0"/>
+    <count group="folders" name="left-newer" value="0"/>
+    <count group="folders" name="right-newer" value="0"/>
+    <count group="folders" name="different" value="1"/>
+    <count group="folders" name="left-only" value="0"/>
+    <count group="folders" name="right-only" value="0"/>
+    <count group="folders" name="unknown" value="0"/>
+    <count group="folders" name="error" value="0"/>
+    <count group="folders" name="filtered" value="0"/>
+    <count group="left" name="files" value="6"/>
+    <count group="left" name="folders" value="1"/>
+    <count group="left" name="bytes" value="46"/>
+    <count group="right" name="files" value="6"/>
+    <count group="right" name="folders" value="1"/>
+    <count group="right" name="bytes" value="36"/>
+    <count group="content" name="binary-same" value="1"/>
+    <count group="content" name="rules-same" value="1"/>
+    <count group="content" name="unimportant-only" value="2"/>
+    <count group="content" name="important-differences" value="1"/>
+    <count group="content" name="binary-different" value="0"/>
+    <count group="content" name="error" value="1"/>
+    <count group="content" name="not-compared" value="0"/>
+  </summary>
+</hikasa-report>

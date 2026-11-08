@@ -90,6 +90,12 @@ pub enum Command {
         #[command(subcommand)]
         cmd: SettingsCmd,
     },
+    /// Reports of a text or folder comparison, to a file, the clipboard, the printer or the browser.
+    Report {
+        /// The report subcommand.
+        #[command(subcommand)]
+        cmd: ReportCmd,
+    },
     /// Named sessions, session folders, defaults and auto-saved sessions.
     Session {
         /// The session subcommand.
@@ -192,6 +198,32 @@ pub struct TextCompareArgs {
     pub left: OsString,
     /// Right file (`-` reads standard input).
     pub right: OsString,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: TextRuleArgs,
+    /// The report.
+    #[command(flatten)]
+    pub report: ReportArgs,
+    // Hands the comparison to the GUI (D-50).
+    /// Show the comparison in the GUI instead of comparing here.
+    #[arg(
+        long,
+        conflicts_with_all = ["output", "output_to", "layout", "options", "output_options", "patch_style", "html",
+                              "html_mono", "line_numbers", "no_line_numbers", "width", "wrap", "title", "lines",
+                              "dry_run"]
+    )]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes and exit with its code.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI when it is not running.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// The rule flags of `text compare` and `report text` (one owner, like [`FolderRuleArgs`]).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TextRuleArgs {
     /// Force a file format (id or name).
     #[arg(long, value_name = "ID|NAME")]
     pub format: Option<String>,
@@ -237,59 +269,85 @@ pub struct TextCompareArgs {
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
-    /// Context lines (default from the options, 3).
-    #[arg(long, value_name = "N")]
-    pub context: Option<u32>,
-    /// Display filter: all, mismatches, context, matches.
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+}
+
+/// REPORT (M2 W7, §1.7.15): the report flags of `text compare`, `folder compare`, `session run`, `report text` and
+/// `report folder`, one owner. A flag that only one kind takes is refused for the other by the service, not by clap,
+/// so the five commands parse alike. Every word is parsed by the core (T11).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct ReportArgs {
+    /// Report layout (text: unified, side-by-side, summary, interleaved, patch, statistics, xml; folders: list,
+    /// side-by-side, summary, json, xml).
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable): display-*, ignore-unimportant, line-numbers, strikeout-*,
+    /// patch-*, column-*, include-file-links.
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*,
+    /// wrap-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output, the default), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout: --output-to FILE.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// Display filter (text: all, mismatches, context, matches; folders: a display filter).
     #[arg(long, value_name = "MODE")]
     pub display: Option<String>,
-    /// Report layout: unified, side-by-side, summary, patch, statistics.
-    #[arg(long, value_name = "LAYOUT", default_value = "unified")]
-    pub report: String,
-    /// Patch style of `--report patch`: normal, context, unified.
-    #[arg(long, value_name = "STYLE", default_value = "unified")]
-    pub patch_style: String,
-    /// HTML output (side-by-side and summary).
+    /// Folders: folder mode of the display: always, structure, files-only.
+    #[arg(long, value_name = "MODE")]
+    pub folders: Option<String>,
+    /// Folders: show the items hidden by file filters.
+    #[arg(long)]
+    pub suppress_filters: bool,
+    /// Text: context lines (default from the options, 3).
+    #[arg(long, value_name = "N")]
+    pub context: Option<u32>,
+    /// Text: patch style of the patch layout: normal, context, unified.
+    #[arg(long, value_name = "STYLE")]
+    pub patch_style: Option<String>,
+    /// Folders: columns of the side-by-side report (e.g. `size,modified`).
+    #[arg(long, value_name = "LIST")]
+    pub columns: Option<String>,
+    /// HTML output (the layouts with an HTML form).
     #[arg(long, conflicts_with = "html_mono")]
     pub html: bool,
     /// Monochrome HTML output.
     #[arg(long)]
     pub html_mono: bool,
-    /// Show line numbers (side-by-side; the default).
+    /// Text: show line numbers (side-by-side, interleaved; the default).
     #[arg(long, overrides_with = "no_line_numbers")]
     pub line_numbers: bool,
-    /// Hide line numbers (side-by-side).
+    /// Text: hide line numbers.
     #[arg(long)]
     pub no_line_numbers: bool,
-    /// Total width of side-by-side text (columns).
-    #[arg(long, value_name = "N", default_value_t = 160)]
-    pub width: u16,
-    /// Line wrapping of side-by-side text: none, character, word.
-    #[arg(long, value_name = "MODE", default_value = "character")]
-    pub wrap: String,
-    /// Report title.
-    #[arg(long, value_name = "TEXT")]
-    pub title: Option<String>,
-    /// Write the report to FILE (atomically) instead of stdout.
-    #[arg(long, value_name = "FILE")]
-    pub output: Option<OsString>,
-    /// File name of standard input, for format detection.
-    #[arg(long, value_name = "NAME")]
-    pub stdin_name: Option<String>,
-    // Hands the comparison to the GUI (D-50).
-    /// Show the comparison in the GUI instead of comparing here.
-    #[arg(
-        long,
-        conflicts_with_all = ["output", "report", "patch_style", "html", "html_mono", "line_numbers",
-                              "no_line_numbers", "width", "wrap", "title"]
-    )]
-    pub gui: bool,
-    /// With `--gui`: wait until the view closes and exit with its code.
-    #[arg(long, requires = "gui")]
-    pub wait: bool,
-    /// With `--gui`: do not start the GUI when it is not running.
-    #[arg(long, requires = "gui")]
-    pub no_launch: bool,
+    /// Text: total width of side-by-side and interleaved text (columns; default 160).
+    #[arg(long, value_name = "N")]
+    pub width: Option<u16>,
+    /// Text: line wrapping of side-by-side and interleaved text: none, character, word.
+    #[arg(long, value_name = "MODE")]
+    pub wrap: Option<String>,
+    /// Text: only the rows of a line range, `[left:|right:]<A>-<B>` (side-by-side, interleaved, xml).
+    #[arg(long, value_name = "RANGE")]
+    pub lines: Option<String>,
+    /// Folders: only the selected rows, by mask (repeatable; list, side-by-side, xml).
+    #[arg(long, value_name = "MASK")]
+    pub select: Vec<String>,
+    /// Folders: only the row at this relative path (repeatable).
+    #[arg(long = "path", value_name = "REL")]
+    pub paths: Vec<String>,
+    /// Print what would be written; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// `hikasa folder …`.
@@ -818,44 +876,21 @@ pub struct FolderCompareArgs {
     /// The rules of the comparison.
     #[command(flatten)]
     pub rule: FolderRuleArgs,
-    /// Display filter (default differences).
-    #[arg(long, value_name = "FILTER")]
-    pub display: Option<String>,
-    /// Folder mode of the display: always, structure, files-only.
-    #[arg(long, value_name = "MODE")]
-    pub folders: Option<String>,
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
-    /// Show the items hidden by file filters.
-    #[arg(long)]
-    pub suppress_filters: bool,
     /// Expand all subfolders (the printed reports are always fully expanded).
     #[arg(long)]
     pub expand_all: bool,
-    /// Report layout: list, side-by-side, summary, json.
-    #[arg(long, value_name = "LAYOUT", default_value = "list")]
-    pub report: String,
-    /// Columns of the side-by-side report (e.g. `size,modified`).
-    #[arg(long, value_name = "LIST")]
-    pub columns: Option<String>,
-    /// HTML output (side-by-side and summary).
-    #[arg(long, conflicts_with = "html_mono")]
-    pub html: bool,
-    /// Monochrome HTML output.
-    #[arg(long)]
-    pub html_mono: bool,
-    /// Report title.
-    #[arg(long, value_name = "TEXT")]
-    pub title: Option<String>,
-    /// Write the report to FILE (atomically) instead of stdout.
-    #[arg(long, value_name = "FILE")]
-    pub output: Option<OsString>,
+    /// The report.
+    #[command(flatten)]
+    pub report: ReportArgs,
     // Hands the comparison to the GUI (D-50).
     /// Show the comparison in the GUI instead of comparing here.
     #[arg(
         long,
-        conflicts_with_all = ["output", "report", "columns", "html", "html_mono", "title"]
+        conflicts_with_all = ["output", "output_to", "layout", "options", "output_options", "columns", "html",
+                              "html_mono", "title", "select", "paths", "dry_run"]
     )]
     pub gui: bool,
     /// With `--gui`: wait until the view closes and exit with its code.
@@ -864,6 +899,56 @@ pub struct FolderCompareArgs {
     /// With `--gui`: do not start the GUI when it is not running.
     #[arg(long, requires = "gui")]
     pub no_launch: bool,
+}
+
+/// `hikasa report …` (M2 W7, §1.7.15).
+#[derive(Debug, clap::Subcommand)]
+pub enum ReportCmd {
+    /// A report of a text comparison (side-by-side by default).
+    Text(Box<ReportTextArgs>),
+    /// A report of a folder comparison (side-by-side by default).
+    Folder(Box<ReportFolderArgs>),
+}
+
+/// `hikasa report text [<LEFT> <RIGHT>] [--session <REF>]`.
+#[derive(Debug, clap::Args)]
+pub struct ReportTextArgs {
+    /// Left file (`-` reads standard input).
+    #[arg(requires = "right", required_unless_present = "session")]
+    pub left: Option<OsString>,
+    /// Right file (`-` reads standard input).
+    pub right: Option<OsString>,
+    /// A saved Text Compare session instead of the two files (the flags apply on top).
+    #[arg(long, value_name = "REF", conflicts_with = "left")]
+    pub session: Option<String>,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: TextRuleArgs,
+    /// The report.
+    #[command(flatten)]
+    pub report: ReportArgs,
+}
+
+/// `hikasa report folder [<LEFT> <RIGHT>] [--session <REF>]`.
+#[derive(Debug, clap::Args)]
+pub struct ReportFolderArgs {
+    /// Left base folder, or an archive.
+    #[arg(requires = "right", required_unless_present = "session")]
+    pub left: Option<OsString>,
+    /// Right base folder, or an archive.
+    pub right: Option<OsString>,
+    /// A saved Folder Compare or Folder Sync session instead of the two folders (the flags apply on top).
+    #[arg(long, value_name = "REF", conflicts_with = "left")]
+    pub session: Option<String>,
+    /// The rules of the comparison.
+    #[command(flatten)]
+    pub rule: FolderRuleArgs,
+    /// Treat unimportant differences as same (verdict, exit code, report).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// The report.
+    #[command(flatten)]
+    pub report: ReportArgs,
 }
 
 /// `hikasa format …`.
@@ -1213,7 +1298,8 @@ pub enum SessionCmd {
     Run(Box<SessionRunArgs>),
 }
 
-/// `hikasa session run <ref>`: the output flags of `folder compare` and `text compare`.
+/// `hikasa session run <ref>`: the report flags of `folder compare` and `text compare` (REPORT); `--dry-run` is the
+/// sync's plan for a folder-sync session and the report's for the others.
 #[derive(Debug, clap::Args)]
 pub struct SessionRunArgs {
     /// The session.
@@ -1222,58 +1308,15 @@ pub struct SessionRunArgs {
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
-    /// Display filter (text: all, mismatches, context, matches; folders: a display filter).
-    #[arg(long, value_name = "MODE")]
-    pub display: Option<String>,
-    /// Text: context lines (default from the options, 3).
-    #[arg(long, value_name = "N")]
-    pub context: Option<u32>,
-    /// Folders: folder mode of the display (always, structure, files-only).
-    #[arg(long, value_name = "MODE")]
-    pub folders: Option<String>,
-    /// Folders: show the items hidden by file filters.
-    #[arg(long)]
-    pub suppress_filters: bool,
-    /// Report layout (text: unified, side-by-side, summary, patch, statistics; folders: list, side-by-side,
-    /// summary, json).
-    #[arg(long, value_name = "LAYOUT")]
-    pub report: Option<String>,
-    /// Text: patch style of `--report patch` (normal, context, unified).
-    #[arg(long, value_name = "STYLE", default_value = "unified")]
-    pub patch_style: String,
-    /// Folders: columns of the side-by-side report.
-    #[arg(long, value_name = "LIST")]
-    pub columns: Option<String>,
-    /// HTML output.
-    #[arg(long, conflicts_with = "html_mono")]
-    pub html: bool,
-    /// Monochrome HTML output.
-    #[arg(long)]
-    pub html_mono: bool,
-    /// Text: hide line numbers (side-by-side).
-    #[arg(long)]
-    pub no_line_numbers: bool,
-    /// Text: total width of side-by-side text.
-    #[arg(long, value_name = "N", default_value_t = 160)]
-    pub width: u16,
-    /// Text: line wrapping of side-by-side text (none, character, word).
-    #[arg(long, value_name = "MODE", default_value = "character")]
-    pub wrap: String,
-    /// Report title.
-    #[arg(long, value_name = "TEXT")]
-    pub title: Option<String>,
-    /// Write the report to FILE (atomically) instead of stdout.
-    #[arg(long, value_name = "FILE")]
-    pub output: Option<OsString>,
+    /// The report.
+    #[command(flatten)]
+    pub report: ReportArgs,
     /// Folder Sync: answer every question yes.
     #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
     pub yes: bool,
     /// Folder Sync: prompt, yes-to-all or no-to-all.
     #[arg(long, value_name = "MODE")]
     pub confirm: Option<String>,
-    /// Folder Sync: print the plan; nothing is written.
-    #[arg(long)]
-    pub dry_run: bool,
     /// Folder Sync: a side with nothing on it may make the other empty.
     #[arg(long)]
     pub allow_empty_source: bool,
@@ -1599,5 +1642,83 @@ mod tests {
     #[test]
     fn the_command_tree_is_valid() {
         Cli::command().debug_assert();
+    }
+}
+
+#[cfg(test)]
+mod report_args_tests {
+    use super::*;
+    use clap::{Args, CommandFactory};
+
+    /// A7.20: docs/12's REPORT row names every flag of `ReportArgs` (long names and visible aliases), and no other.
+    #[test]
+    fn a7_20_docs_12_names_every_report_flag() {
+        let doc = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/12-cli-and-scripting.md"),
+        )
+        .unwrap();
+        let row = doc
+            .lines()
+            .find(|l| l.starts_with("| REPORT ("))
+            .expect("docs/12 §4 has the REPORT row");
+        let named: std::collections::BTreeSet<String> = row
+            .split("`--")
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '-')
+                    .collect::<String>()
+            })
+            .filter(|flag| !flag.is_empty())
+            .collect();
+        let group = ReportArgs::augment_args(clap::Command::new("group"));
+        let mut flags = std::collections::BTreeSet::new();
+        for arg in group.get_arguments() {
+            flags.insert(arg.get_long().unwrap().to_owned());
+            for alias in arg.get_visible_aliases().unwrap_or_default() {
+                flags.insert(alias.to_owned());
+            }
+        }
+        assert_eq!(named, flags);
+    }
+
+    /// A7.18: the five commands flatten one `ReportArgs`: every REPORT argument, with the same long name and value
+    /// name, in each.
+    #[test]
+    fn a7_18_five_commands_flatten_one_report_args() {
+        let group = ReportArgs::augment_args(clap::Command::new("group"));
+        let report: Vec<&clap::Arg> = group.get_arguments().collect();
+        assert_eq!(report.len(), 22, "the flags of REPORT");
+        let cli = Cli::command();
+        for (outer, inner) in [
+            ("text", "compare"),
+            ("folder", "compare"),
+            ("session", "run"),
+            ("report", "text"),
+            ("report", "folder"),
+        ] {
+            let sub = cli
+                .find_subcommand(outer)
+                .and_then(|c| c.find_subcommand(inner))
+                .unwrap_or_else(|| panic!("{outer} {inner}"));
+            for arg in &report {
+                let theirs = sub
+                    .get_arguments()
+                    .find(|a| a.get_id() == arg.get_id())
+                    .unwrap_or_else(|| panic!("{outer} {inner} lacks --{:?}", arg.get_long()));
+                assert_eq!(theirs.get_long(), arg.get_long(), "{outer} {inner}");
+                assert_eq!(
+                    theirs.get_value_names(),
+                    arg.get_value_names(),
+                    "{outer} {inner}"
+                );
+                assert_eq!(
+                    theirs.get_visible_aliases(),
+                    arg.get_visible_aliases(),
+                    "{outer} {inner}"
+                );
+            }
+        }
     }
 }

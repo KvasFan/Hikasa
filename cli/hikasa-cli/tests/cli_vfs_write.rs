@@ -528,7 +528,7 @@ fn a3_11_version_lists_the_schemas_and_help_resolves() {
     let out = s.cmd().args(["version", "--json"]).output().unwrap();
     let doc = json(&out);
     let schemas = doc["result"]["schemas"].as_array().unwrap();
-    assert_eq!(schemas.len(), 38);
+    assert_eq!(schemas.len(), 39);
     assert!(schemas.iter().any(|v| v == "hikasa.vfs_op.v1"));
     let out = s
         .cmd()

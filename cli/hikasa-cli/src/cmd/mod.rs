@@ -10,6 +10,7 @@ pub mod format;
 pub mod gui;
 pub mod help;
 pub mod quick;
+pub mod report;
 pub mod session;
 pub mod settings;
 pub mod text;
@@ -23,11 +24,12 @@ use hikasa_session::api::dto::{
     COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, FORMAT_DETECT_SCHEMA,
     FORMAT_EXPORT_SCHEMA, FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA,
     FORMAT_TOKENS_SCHEMA, FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
-    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, SESSION_LIST_SCHEMA,
-    SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA,
-    SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA,
-    TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA,
-    VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA, REPORT_SCHEMA,
+    SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, SETTINGS_EXPORT_SCHEMA,
+    SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA, SETTINGS_RESTORE_SCHEMA,
+    SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA,
+    VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA,
+    WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -36,8 +38,8 @@ use hikasa_text::{TextPattern, TextRulesPatch, UnimportantItem};
 use serde::Serialize;
 
 use crate::args::{
-    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, SessionCmd, SettingsCmd, TextCmd,
-    VfsCmd, WorkspaceCmd,
+    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, ReportCmd, SessionCmd, SettingsCmd,
+    TextCmd, VfsCmd, WorkspaceCmd,
 };
 use crate::interrupt::Interrupt;
 use crate::output::{Output, WriteError};
@@ -56,6 +58,8 @@ pub struct Ctx<'a> {
     pub interrupt: &'a Interrupt,
     /// clap's matches of the leaf subcommand.
     pub matches: &'a ArgMatches,
+    /// The clipboard provider this process gave the service: a report for the clipboard is placed here (§1.7.10).
+    pub clipboard: &'a dyn hikasa_session::clipboard::ClipboardProvider,
 }
 
 impl Ctx<'_> {
@@ -175,6 +179,7 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         | Command::Vfs { .. }
         | Command::Gui { .. }
         | Command::Settings { .. }
+        | Command::Report { .. }
         | Command::Session { .. }
         | Command::Workspace { .. } => None,
     }
@@ -229,6 +234,20 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             SettingsCmd::RestoreDefaults(_) => (SETTINGS_RESTORE_SCHEMA, ApiOp::Other),
             SettingsCmd::Export(_) => (SETTINGS_EXPORT_SCHEMA, ApiOp::Other),
             SettingsCmd::Import(_) => (SETTINGS_IMPORT_SCHEMA, ApiOp::Other),
+        },
+        Command::Report { cmd } => match cmd {
+            ReportCmd::Text(_) => (
+                REPORT_SCHEMA,
+                ApiOp::Report {
+                    kind: hikasa_report::ReportKind::Text,
+                },
+            ),
+            ReportCmd::Folder(_) => (
+                REPORT_SCHEMA,
+                ApiOp::Report {
+                    kind: hikasa_report::ReportKind::Folder,
+                },
+            ),
         },
         Command::Session { cmd } => match cmd {
             SessionCmd::List { .. } => (SESSION_LIST_SCHEMA, ApiOp::Other),
@@ -299,6 +318,7 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Vfs { cmd } => vfs::run(ctx, cmd),
         Command::Gui { cmd } => gui::run(ctx, cmd, open),
         Command::Settings { cmd } => settings::run(ctx, cmd),
+        Command::Report { cmd } => report::run(ctx, cmd),
         Command::Session { cmd } => session::run(ctx, cmd),
         Command::Workspace { cmd } => workspace::run(ctx, cmd),
         Command::Completions { shell } => completions::run(ctx.out, *shell),

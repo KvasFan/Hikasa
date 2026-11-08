@@ -25,12 +25,19 @@ use crate::select::{Resolved, SideSet};
 struct Below {
     /// Folder (canonical) → whether it will exist only through this plan, with the depth of what lies directly in it.
     folders: BTreeMap<String, Option<u32>>,
+    /// An aligned folder pair whose names differ, under a target folder (canonical) → the one name both sides use there
+    /// (rule 16, D-194).
+    pairs: BTreeMap<(NodeId, String), OsString>,
+    /// The sides with a source at or below a row: who spells a pair's new folder.
+    sourced: BTreeMap<NodeId, SideSet>,
 }
 
 /// One row with its own path below the base.
 struct Source {
     row: Resolved,
     names: Vec<OsString>,
+    /// The row of each name, where it is one (a flat comparison's folders are none).
+    nodes: Vec<Option<NodeId>>,
     /// No row above it counts: `check_nesting` looks at it.
     root: bool,
 }
@@ -74,11 +81,15 @@ impl Builder<'_, '_> {
             .filter(|row| row.sides.contains(bit))
             .map(|row| {
                 let mut names = Vec::new();
+                let mut nodes = Vec::new();
                 let mut at = Some(row.node);
                 let parent = self.read.node(row.node).and_then(|view| view.parent);
                 while let Some(id) = at.filter(|id| *id != NodeId::ROOT) {
                     let view = self.read.node(id);
-                    names.extend(self.read.raw_name(id, side));
+                    if let Some(name) = self.read.raw_name(id, side) {
+                        names.push(name);
+                        nodes.push(Some(id));
+                    }
                     at = view.and_then(|view| view.parent);
                 }
                 // In a flat comparison the folders of a row are no rows.
@@ -87,11 +98,16 @@ impl Builder<'_, '_> {
                     .node(row.node)
                     .and_then(|view| view.side(side)?.dir);
                 let folders = dir.iter().flat_map(|dir| dir.rsplit('/'));
-                names.extend(folders.filter(|name| !name.is_empty()).map(OsString::from));
+                for name in folders.filter(|name| !name.is_empty()) {
+                    names.push(OsString::from(name));
+                    nodes.push(None);
+                }
                 names.reverse();
+                nodes.reverse();
                 Source {
                     row: *row,
                     names,
+                    nodes,
                     root: !parent.is_some_and(|parent| mine.contains(&parent)),
                 }
             })
@@ -217,6 +233,20 @@ impl Builder<'_, '_> {
             )));
         }
         let mut below = Below::default();
+        for side in sides.sides() {
+            let bit = SideSet::of(side);
+            for row in rows.iter().filter(|row| row.sides.contains(bit)) {
+                let mut at = Some(row.node);
+                while let Some(id) = at.filter(|id| *id != NodeId::ROOT) {
+                    let seen = below.sourced.entry(id).or_insert(SideSet::empty());
+                    if seen.contains(bit) {
+                        break;
+                    }
+                    *seen |= bit;
+                    at = self.read.node(id).and_then(|view| view.parent);
+                }
+            }
+        }
         let root = self.target_root(target, folder, &mut below)?;
         self.outside = Some(root.clone());
         let fold = self.folds(&root);
@@ -245,7 +275,7 @@ impl Builder<'_, '_> {
                     moving,
                     overwrite,
                 };
-                self.copy_to_row(tr, source, &root, drop, fold, &mut below, &mut open)?;
+                self.copy_to_row(tr, source, &root, drop, &mut below, &mut open)?;
             }
             self.close_open(&mut open, 0);
         }
@@ -271,7 +301,7 @@ impl Builder<'_, '_> {
                 self.note_made(&at, 0);
                 stack.extend(read.children(row).map(|child| (child, at.clone())));
             } else {
-                let key = key_of(&at.canonical(), self.folds(&at));
+                let key = self.taken_key(&at);
                 self.taken.insert(key);
             }
         }
@@ -311,6 +341,7 @@ impl Builder<'_, '_> {
         if used {
             return true;
         }
+        let key = self.made_key(target);
         self.made.retain(|made, _| {
             !made
                 .strip_prefix(key.as_str())
@@ -403,11 +434,13 @@ impl Builder<'_, '_> {
         let mut new_parent = below.folders.contains_key(&root.canonical());
         let first = source.names.len() - 1 - kept.len();
         for (index, folder) in kept.iter().enumerate() {
-            at = self.vfs.child(&at, &FileName::from_os(folder))?;
+            let node = source.nodes.get(first + index).copied().flatten();
+            let folder = self.pair_name(node, folder, &at, new_parent, below)?;
+            at = self.vfs.child(&at, &FileName::from_os(&folder))?;
             let key = at.canonical();
             // A file of this plan stands where this needs a folder.
-            let folded = key_of(&key, self.folds(&at));
-            if self.taken.contains(&folded) {
+            let taken = self.taken_key(&at);
+            if self.taken.contains(&taken) {
                 return Err(VfsError::NotADirectory { spec: key });
             }
             let known = match below.folders.get(&key) {
@@ -449,8 +482,65 @@ impl Builder<'_, '_> {
             new_parent = known.is_some();
             depth = known.map_or(0, |depth| depth + 1);
         }
-        let target = self.vfs.child(&at, &FileName::from_os(name))?;
+        let node = source.nodes.last().copied().flatten();
+        let folder = node.is_some_and(|id| self.read.node(id).is_some_and(|view| view.is_folder()));
+        let name = if folder {
+            self.pair_name(node, name, &at, new_parent, below)?
+        } else {
+            name.clone()
+        };
+        let target = self.vfs.child(&at, &FileName::from_os(&name))?;
         Ok((target, depth, new_parent))
+    }
+
+    /// The name a folder row takes in the target folder `parent`: its own, unless it is an aligned pair whose two names
+    /// differ (case, NFC/NFD), which gets one folder whichever side is written first (rule 16, D-194): the left's name if
+    /// `parent` holds a folder by it, else the right's if it holds one by that, else the name of the first side in plan
+    /// order with a source in the pair. `new_parent`: this plan makes `parent`, so nothing stands in it.
+    fn pair_name(
+        &mut self,
+        node: Option<NodeId>,
+        own: &OsString,
+        parent: &Spec,
+        new_parent: bool,
+        below: &mut Below,
+    ) -> Result<OsString, VfsError> {
+        let Some(id) = node else {
+            return Ok(own.clone());
+        };
+        let (Some(left), Some(right)) = (
+            self.read.raw_name(id, Side::Left),
+            self.read.raw_name(id, Side::Right),
+        ) else {
+            return Ok(own.clone());
+        };
+        if left == right {
+            return Ok(own.clone());
+        }
+        let key = (id, parent.canonical());
+        if let Some(name) = below.pairs.get(&key) {
+            return Ok(name.clone());
+        }
+        let mut chosen = None;
+        if !new_parent {
+            for name in [&left, &right] {
+                let at = self.vfs.child(parent, &FileName::from_os(name))?;
+                if lstat(self.vfs, &at)?.is_some_and(|entry| entry.kind == EntryKind::Dir) {
+                    chosen = Some(name.clone());
+                    break;
+                }
+            }
+        }
+        let chosen = chosen.unwrap_or_else(|| {
+            let sourced = below.sourced.get(&id).copied().unwrap_or(SideSet::empty());
+            if sourced.contains(SideSet::LEFT) || sourced.is_empty() {
+                left.clone()
+            } else {
+                right.clone()
+            }
+        });
+        below.pairs.insert(key, chosen.clone());
+        Ok(chosen)
     }
 
     /// A folder a source needs below the target: its `create_dir`, from the folder of that level (rule 3).
@@ -520,7 +610,6 @@ impl Builder<'_, '_> {
         source: &Source,
         root: &Spec,
         drop: usize,
-        fold: bool,
         below: &mut Below,
         open: &mut Vec<Open>,
     ) -> Result<(), FolderError> {
@@ -631,7 +720,7 @@ impl Builder<'_, '_> {
         if let (true, Spec::ArchiveMember { archive, .. }) = (opened, &from)
             && (tr.moving || flat)
         {
-            let key = target.canonical();
+            let key = self.taken_key(&target);
             let duplicate = !self.taken.insert(key);
             if duplicate {
                 let reason = SkipReason::DuplicateTarget;
@@ -650,7 +739,7 @@ impl Builder<'_, '_> {
         if view.is_folder() && view.scan == ScanStatus::NotScanned {
             // Flat, and the model never listed it: rule 6 by name.
             let walk = Walk { tr, id, side: None };
-            self.expand_flat(walk, &entry, &from, root, fold, depth)?;
+            self.expand_flat(walk, &entry, &from, root, depth)?;
             self.cover(id);
             return Ok(());
         }
@@ -669,11 +758,7 @@ impl Builder<'_, '_> {
             }
             return Ok(());
         }
-        let key = if fold {
-            hikasa_core::case::fold(&target.canonical()).into_owned()
-        } else {
-            target.canonical()
-        };
+        let key = self.taken_key(&target);
         // A second source of one path: a file, or a folder this plan makes there.
         if self.holds_folder(&target) || !self.taken.insert(key) {
             let reason = SkipReason::DuplicateTarget;
@@ -735,7 +820,7 @@ impl Builder<'_, '_> {
         open: &mut Vec<Open>,
     ) -> Result<(), FolderError> {
         let id = source.row.node;
-        let key = key_of(&target.canonical(), self.folds(&target));
+        let key = self.taken_key(&target);
         if self.taken.contains(&key) {
             let reason = SkipReason::DuplicateTarget;
             self.skip_row(id, EntryKind::Dir, Some(from), target, depth, reason, None);

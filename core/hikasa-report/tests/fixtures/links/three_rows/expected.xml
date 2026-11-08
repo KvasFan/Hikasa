@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="folder">
+  <header>
+    <title>Folder Compare</title>
+    <side id="left" spec="/l"/>
+    <side id="right" spec="/r"/>
+    <mode display="all" ignore-unimportant="false" folders="structure" suppress-filters="false"/>
+    <rules>size, timestamps (2 s); filters: none</rules>
+  </header>
+  <tree>
+    <folder name="sub" path="sub" state="different" marker="!">
+      <left name="sub" size="1"/>
+      <right name="sub" size="1"/>
+      <entry name="né.c" path="sub/né.c" state="left-newer" marker="&gt;" kind="file">
+        <left name="né.c" size="1" modified="1970-01-24T03:33:20Z"/>
+        <right name="né.c" size="1" modified="1970-01-12T13:46:40Z"/>
+        <file-report status="written" href="report_files/1-n%C3%A9.c.html"/>
+      </entry>
+    </folder>
+    <entry name="a b#1.txt" path="a b#1.txt" state="different" marker="!" kind="file">
+      <left name="a b#1.txt" size="3" modified="1970-01-12T13:46:40Z"/>
+      <right name="a b#1.txt" size="4" modified="1970-01-12T13:46:40Z"/>
+      <file-report status="skipped" reason="too_large"/>
+    </entry>
+    <entry name="left-only.txt" path="left-only.txt" state="left-only" marker="-" kind="file">
+      <left name="left-only.txt" size="1" modified="1970-01-12T13:46:40Z"/>
+    </entry>
+    <entry name="right-only.txt" path="right-only.txt" state="right-only" marker="+" kind="file">
+      <right name="right-only.txt" size="1" modified="1970-01-12T13:46:40Z"/>
+    </entry>
+    <entry name="same.txt" path="same.txt" state="same" marker="=" kind="file">
+      <left name="same.txt" size="1" modified="1970-01-12T13:46:40Z"/>
+      <right name="same.txt" size="1" modified="1970-01-12T13:46:40Z"/>
+    </entry>
+    <entry name="z&amp;+.txt" path="z&amp;+.txt" state="different" marker="!" kind="file">
+      <left name="z&amp;+.txt" size="2" modified="1970-01-12T13:46:40Z"/>
+      <right name="z&amp;+.txt" size="1" modified="1970-01-12T13:46:40Z"/>
+      <file-report status="failed" reason="io: &lt;disk&gt; &amp; &quot;full&quot;"/>
+    </entry>
+  </tree>
+  <summary verdict="differences" complete="true">
+    <count group="files" name="same" value="1"/>
+    <count group="files" name="left-newer" value="1"/>
+    <count group="files" name="right-newer" value="0"/>
+    <count group="files" name="different" value="2"/>
+    <count group="files" name="left-only" value="1"/>
+    <count group="files" name="right-only" value="1"/>
+    <count group="files" name="unknown" value="0"/>
+    <count group="files" name="error" value="0"/>
+    <count group="files" name="filtered" value="0"/>
+    <count group="folders" name="same" value="0"/>
+    <count group="folders" name="left-newer" value="0"/>
+    <count group="folders" name="right-newer" value="0"/>
+    <count group="folders" name="different" value="1"/>
+    <count group="folders" name="left-only" value="0"/>
+    <count group="folders" name="right-only" value="0"/>
+    <count group="folders" name="unknown" value="0"/>
+    <count group="folders" name="error" value="0"/>
+    <count group="folders" name="filtered" value="0"/>
+    <count group="left" name="files" value="5"/>
+    <count group="left" name="folders" value="1"/>
+    <count group="left" name="bytes" value="8"/>
+    <count group="right" name="files" value="5"/>
+    <count group="right" name="folders" value="1"/>
+    <count group="right" name="bytes" value="8"/>
+    <count group="content" name="binary-same" value="0"/>
+    <count group="content" name="rules-same" value="0"/>
+    <count group="content" name="unimportant-only" value="0"/>
+    <count group="content" name="important-differences" value="0"/>
+    <count group="content" name="binary-different" value="0"/>
+    <count group="content" name="error" value="0"/>
+    <count group="content" name="not-compared" value="0"/>
+  </summary>
+</hikasa-report>

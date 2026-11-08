@@ -1,0 +1,8 @@
+[1mText Compare[0m
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: everything else; line endings: ignored; orphan lines: always important
+
+1   [34m-~[0m [9;34ma[0m = [9;34m1[0m
+  1 [34m+~[0m [9;34mb[0m = [9;34m2[0m

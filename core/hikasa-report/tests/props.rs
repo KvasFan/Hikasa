@@ -20,8 +20,8 @@ use hikasa_core::{CaseSensitivity, Pair, WarningCode};
 use hikasa_folder::{DisplayOptions, FolderDisplayFilter, FolderMode, FolderRules};
 use hikasa_report::{
     DisplayMode, FolderColumns, FolderLayout, FolderReportOptions, HtmlStyle, OutputFormat,
-    PatchStyle, ReportMeta, TextLayout, TextReportOptions, Wrap, render_folder_report_with,
-    render_text_report_with,
+    PatchStyle, ReportMeta, StrikeOut, TextLayout, TextReportOptions, Wrap,
+    render_folder_report_with, render_text_report_with,
 };
 use hikasa_text::{AlgorithmChoice, TextComparison, TextRules};
 use hikasa_vfs::{MemMeta, MemoryVfs};
@@ -296,6 +296,7 @@ proptest! {
                 }
                 let opts = TextReportOptions {
                     layout, display, ignore_unimportant: iu, line_numbers: numbers, width, wrap, format,
+                    strike: StrikeOut::empty(),
                 };
                 let mut meta = ReportMeta::for_text(&cmp, &opts, Some(zoned()), "hikasa test");
                 meta.title = Some(title.clone());

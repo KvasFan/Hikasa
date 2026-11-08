@@ -1,0 +1,2 @@
+replace <TMP>/out/t.txt
+would write 1 file

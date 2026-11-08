@@ -90,6 +90,9 @@ mod platform {
     pub(super) fn persist_new(from: &Path, to: &Path) -> std::io::Result<()> {
         super::persist_new(from, to)
     }
+    pub(super) fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+        super::persist_new(from, to)
+    }
     pub(super) fn hold_through_rename(file: std::fs::File) -> Option<std::fs::File> {
         Some(file)
     }
@@ -533,6 +536,8 @@ impl Vfs for LocalVfs {
         let from_meta = fs::symlink_metadata(from_path.as_path())
             .map_err(|e| fail(below_a_file(from_path.as_path(), e)))?;
         let mut cleared = Cleared::Nothing;
+        // `to` was free when looked at: with `replace = false` the rename must not replace what appears there since.
+        let mut free = false;
         match fs::symlink_metadata(to_path.as_path()) {
             Ok(to_meta) => {
                 if !same_item(from_path.as_path(), &from_meta, to_path.as_path(), &to_meta) {
@@ -585,9 +590,15 @@ impl Vfs for LocalVfs {
                 if e.kind() != io::ErrorKind::NotFound {
                     return Err(VfsError::from_io(to.canonical(), VfsOp::Rename, e));
                 }
+                free = true;
             }
         }
-        fs::rename(from_path.as_path(), to_path.as_path()).map_err(|e| {
+        let renamed = if free && !replace {
+            rename_free(from_path.as_path(), to_path.as_path())
+        } else {
+            fs::rename(from_path.as_path(), to_path.as_path())
+        };
+        renamed.map_err(|e| {
             // Best effort: what this call removed comes back.
             let _ = match &cleared {
                 Cleared::Nothing => Ok(()),
@@ -598,6 +609,9 @@ impl Vfs for LocalVfs {
             };
             match e.kind() {
                 io::ErrorKind::DirectoryNotEmpty => VfsError::NotEmpty {
+                    spec: to.canonical(),
+                },
+                io::ErrorKind::AlreadyExists if free && !replace => VfsError::AlreadyExists {
                     spec: to.canonical(),
                 },
                 _ => fail(e),
@@ -889,6 +903,24 @@ fn rename_new(tmp: &Path, target: &Path) -> io::Result<()> {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }
             platform::rename(tmp, target)
+        }
+        done => done,
+    }
+}
+
+/// `from` (a file, a link or a folder) takes the name `to`, free when it was looked at, without replacing what another
+/// program put there since (the step after [`LocalVfs::rename`]'s check with `replace = false`): the platform's
+/// no-replace rename (`platform::rename_noreplace`: Linux `renameat2` with `RENAME_NOREPLACE`, macOS `renamex_np` with
+/// `RENAME_EXCL`, through [`tempfile`]'s spelling) → `AlreadyExists` when something came. Where the file system has no
+/// such rename (`EINVAL`, `ENOSYS`, a folder that cannot be hard-linked instead), and on Windows, whose no-replace
+/// call `tempfile` spells with a change of the item's attributes, what is left is to look again and rename.
+fn rename_free(from: &Path, to: &Path) -> io::Result<()> {
+    match platform::rename_noreplace(from, to) {
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+            if fs::symlink_metadata(to).is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            fs::rename(from, to)
         }
         done => done,
     }
@@ -1866,5 +1898,52 @@ mod tests {
         let (made, wanted) = (fs::metadata(&to).unwrap(), fs::metadata(&plain).unwrap());
         assert_eq!(made.modified().unwrap(), wanted.modified().unwrap());
         assert_eq!(made.permissions(), wanted.permissions());
+    }
+
+    /// W7b review: the no-replace step of `rename(replace = false)` never replaces what appeared at `to` after the
+    /// look, an empty folder (which a plain rename replaces on Unix) or a file, and moves a file, a link and a folder
+    /// to a free name. Where the platform has no such call (Windows, W7b notes) the look itself is the guard.
+    #[test]
+    fn a_free_rename_replaces_nothing_that_appeared() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (what, make) in [
+            (
+                "an empty folder",
+                Box::new(|p: &Path| fs::create_dir(p).unwrap()) as Box<dyn Fn(&Path)>,
+            ),
+            (
+                "a file",
+                Box::new(|p: &Path| fs::write(p, b"theirs").unwrap()),
+            ),
+        ] {
+            let from = root.join("from");
+            fs::create_dir_all(&from).unwrap();
+            let to = root.join("to");
+            make(&to);
+            if cfg!(unix) {
+                let err = rename_free(&from, &to).unwrap_err();
+                assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{what}");
+                assert!(from.is_dir(), "{what}: the source stays");
+                assert!(fs::symlink_metadata(&to).is_ok(), "{what}");
+                if to.is_dir() {
+                    assert_eq!(fs::read_dir(&to).unwrap().count(), 0, "{what}");
+                } else {
+                    assert_eq!(fs::read(&to).unwrap(), b"theirs", "{what}");
+                }
+            }
+            let _ = fs::remove_dir(&to).or_else(|_| fs::remove_file(&to));
+            rename_free(&from, &to).unwrap();
+            assert!(
+                to.is_dir() && !from.exists(),
+                "{what}: a free name is taken"
+            );
+            fs::remove_dir(&to).unwrap();
+        }
+        let file = root.join("f.txt");
+        fs::write(&file, b"mine").unwrap();
+        rename_free(&file, &root.join("g.txt")).unwrap();
+        assert_eq!(fs::read(root.join("g.txt")).unwrap(), b"mine");
+        assert!(!file.exists());
     }
 }

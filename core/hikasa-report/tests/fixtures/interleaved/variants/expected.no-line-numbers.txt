@@ -1,0 +1,25 @@
+Text Compare
+Left: /l/left.txt (UTF-8, lf)
+Right: /r/right.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: embedded whitespace; line endings: ignored; orphan lines: always important
+
+   alpha
+-~ beta  gamma
++~ beta gamma
+   same 1
+   same 2
+   same 3
+   same 4
+   same 5
+   same 6
+   same 7
+-! left only
+-! TAB here
++! TAB there
++! right only
+-! wide 日本語 text that runs on and on past forty columns for wrapping
++! wide 日本語 text that runs on and on past forty columns for wrapping too
+-! esc \u{1b}[31m\u{202e}txt.exe
++! esc \u{1b}[32m\u{202e}txt.exe
+   end

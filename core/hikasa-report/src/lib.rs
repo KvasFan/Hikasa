@@ -62,6 +62,14 @@
 //! wave-4 session review, the escapers [`escape_controls`], [`escape_terminal`] and [`escape_name`] for terminal and
 //! list output of the adapters. The complete list, with the accepted interpretations, is §1.7.3 of the contract.
 //!
+//! # M2 W7 (Reports)
+//!
+//! [`ReportRequest`] parses the words of one request (the whole vocabulary of `docs/13`, T11) and [`render_report`]
+//! renders it: the interleaved layout ([`TextLayout::Interleaved`], with strike-out), the XML dumps
+//! ([`TextLayout::Xml`], [`FolderLayout::Xml`]; schema `docs/schemas/hikasa-report-1.xsd`), the HTML wrap and the print
+//! block ([`HtmlStyle`]), a scope ([`ReportScope`]) and the links of a folder report to its pair reports
+//! ([`links`]). [`summary_counts`] feeds every summary. Specification: `docs/design/m2-contracts.md` §1.7.
+//!
 //! Specification: `docs/design/m1-contracts.md` §1.7, §3.4 and §4.3; user documentation: `docs/13-reports.md`.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -70,16 +78,22 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+mod cancel;
 mod cells;
 mod error;
 mod escape;
 pub mod folder;
 pub mod json;
+pub mod links;
 mod meta;
 mod options;
+pub mod request;
 mod style;
+mod summary_counts;
 pub mod text;
+mod xml;
 
+pub use cancel::{CANCEL_CHECK_BYTES, CancelWriter};
 pub use error::ReportError;
 pub use escape::{escape_controls, escape_name, escape_terminal};
 pub use folder::{
@@ -87,10 +101,16 @@ pub use folder::{
     render_folder_report_with,
 };
 pub use json::{folder_compare_json, text_compare_json};
-pub use meta::ReportMeta;
+pub use links::{PairLink, PairLinks, href, linked_rows};
+pub use meta::{FolderLink, ReportMeta};
 pub use options::{
     DisplayMode, HtmlStyle, OutputFormat, Wrap, folder_mode_word, parse_folder_mode,
 };
+pub use request::{
+    FileLinks, LineScope, Orientation, PrintBlock, ReportBody, ReportDefaults, ReportInput,
+    ReportKind, ReportRequest, ReportScope, ReportWords, StrikeOut, TargetKind, render_report,
+};
+pub use summary_counts::{SummaryCount, summary_counts};
 pub use text::{
     PatchStyle, TextLayout, TextReportOptions, render_text_report, render_text_report_with,
 };
