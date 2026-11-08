@@ -225,10 +225,35 @@ pub(super) fn symlink(target: &OsStr, path: &Path, _target_is_dir: bool) -> io::
 /// error (the save decides).
 pub(super) fn writable(path: &Path) -> Option<bool> {
     use rustix::fs::{Access, access};
+    access_verdict(access(path, Access::WRITE_OK))
+}
+
+/// The verdict of an `access(W_OK)` result: a read-only file system (EROFS) is read-only like a missing
+/// permission (EACCES, EPERM); any other error cannot tell.
+fn access_verdict(result: rustix::io::Result<()>) -> Option<bool> {
     use rustix::io::Errno;
-    match access(path, Access::WRITE_OK) {
+    match result {
         Ok(()) => Some(true),
         Err(e) if e == Errno::ACCESS || e == Errno::PERM || e == Errno::ROFS => Some(false),
         Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod writable_tests {
+    use rustix::io::Errno;
+
+    use super::access_verdict;
+
+    /// A read-only mount cannot be made in a test, so the errno table is checked directly.
+    #[test]
+    fn a_read_only_file_system_reads_as_read_only() {
+        assert_eq!(access_verdict(Ok(())), Some(true));
+        for e in [Errno::ROFS, Errno::ACCESS, Errno::PERM] {
+            assert_eq!(access_verdict(Err(e)), Some(false), "{e:?}");
+        }
+        for e in [Errno::NOENT, Errno::IO, Errno::TXTBSY, Errno::INVAL] {
+            assert_eq!(access_verdict(Err(e)), None, "{e:?}");
+        }
     }
 }
