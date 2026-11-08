@@ -12,6 +12,7 @@
 //! Whatever path a recompare takes, the installed comparison equals a fresh [`crate::compare_with_limits`] of
 //! the snapshots with the same rules and anchors (P-EDIT-2).
 
+mod fingerprint;
 mod incremental;
 mod recompare;
 pub(crate) mod splice;
@@ -41,8 +42,7 @@ pub use recompare::{PathCounters, RecompareJob, Recompared};
 pub struct LiveKeys {
     pub(crate) trace: Arc<Derivation>,
     pub(crate) fingerprints: [Arc<Vec<u16>>; 2],
-    pub(crate) checkpoints: [Arc<Vec<LineState>>; 2],
-    #[allow(dead_code)] // read by the incremental path
+    pub(crate) checkpoints: [Arc<Vec<(u32, LineState)>>; 2],
     pub(crate) regex_errors: u64,
 }
 
@@ -158,7 +158,14 @@ pub(crate) fn full_live<'o>(
         regex_errors: 0,
     });
     let [fl, fr] = live.fingerprints;
-    let [cl, cr] = live.checkpoints;
+    let numbered = |states: Vec<LineState>| -> Vec<(u32, LineState)> {
+        states
+            .into_iter()
+            .enumerate()
+            .map(|(k, s)| (k as u32 * crate::compare::CHECKPOINT_LINES, s))
+            .collect()
+    };
+    let [cl, cr] = live.checkpoints.map(numbered);
     Ok((
         cmp,
         LiveKeys {
@@ -273,7 +280,6 @@ impl LiveComparison {
             keys: self.keys.clone(),
             log: self.log.clone(),
             anchors: self.anchors.clone(),
-            base_anchors: self.base_anchors.clone(),
             full: self.anchors_changed,
             rules: self.rules.clone(),
             generation: self.generation,

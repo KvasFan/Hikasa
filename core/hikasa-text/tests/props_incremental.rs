@@ -137,16 +137,131 @@ proptest! {
 
 /// The certificate conditions each hold and fail at least once, and the T6 fallback runs, over a fixed sweep.
 #[test]
-#[ignore = "enabled with the incremental path (next commit)"]
 fn path_counters_reach_every_condition() {
     let mut total = PathCounters::default();
     for seed in 1..=120u64 {
         total.add(&run(seed * 0x2545_F491, seed % 10 == 0));
     }
+    // A pair without common lines whose one gap passes the closeness budget per gap: a recorded refusal.
+    total.add(&refusal_case());
     let c = total;
     assert!(c.incremental > 0 && c.full > 0 && c.fallback > 0, "{c:?}");
     assert!(c.range_held > 0 && c.range_failed > 0, "{c:?}");
     assert!(c.candidates_held > 0 && c.candidates_failed > 0, "{c:?}");
     assert!(c.window_held > 0 && c.window_failed > 0, "{c:?}");
     assert!(c.budgets_held > 0 && c.budgets_failed > 0, "{c:?}");
+}
+
+/// Two documents of 2,100 different lines: the gap of 2,100 × 2,100 cells passes the 4,000,000 cells a gap may
+/// take, so closeness pairs it by position (a recorded refusal; condition 4 fails).
+fn refusal_case() -> PathCounters {
+    let left: String = (0..2_100).map(|k| format!("left line {k}\n")).collect();
+    let right: String = (0..2_100).map(|k| format!("right text {k}\n")).collect();
+    let opts = edit_options(Gen::Clustered);
+    let (mut l, r) = (editable(&left, &opts), editable(&right, &opts));
+    let setup = Setup {
+        format: common::format("ee"),
+        rules: common::rules_with(AlgorithmChoice::Standard),
+        force_tokenize: false,
+        anchors: Vec::new(),
+    };
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    let mut rng = XorShift(5);
+    let out = random_edit(&mut rng, Gen::Clustered, &mut l).unwrap();
+    lc.note_edit(Side::Left, &l, &out);
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    let path = done.path;
+    lc.install(done, Pair::new(&l, &r));
+    let want = fresh(&setup, Pair::new(&l, &r), &[]);
+    assert_eq!(
+        common::canonical_json(lc.current()),
+        common::canonical_json(&want)
+    );
+    path
+}
+
+/// Condition 4 near the limit: a pair whose last exact run spent almost all of Standard's work budget, and an
+/// insertion into a repetitive gap after which the full run exhausts it. The installed comparison must be the
+/// full run's (warning `work_budget_exhausted` included), which the incremental path only gets right by keeping
+/// its totals.
+#[test]
+fn a_budget_exhausted_by_an_edit_is_never_computed_incrementally() {
+    let opts = edit_options(Gen::Clustered);
+    let setup = Setup {
+        format: common::format("ee"),
+        rules: common::rules_with(AlgorithmChoice::Standard),
+        force_tokenize: false,
+        anchors: Vec::new(),
+    };
+    let mut found = 0;
+    for seed in 1..400u64 {
+        let mut rng = XorShift(seed * 0x9E37_79B9 + 17);
+        // Unique lines around repetitive regions: Standard spends its budget in the regions' stage B.
+        let gaps = 3 + rng.below(3);
+        let size = 300 + rng.below(500);
+        let mut left = String::new();
+        let mut right = String::new();
+        for g in 0..gaps {
+            for u in 0..20 {
+                left.push_str(&format!("unique {g} {u}\n"));
+                right.push_str(&format!("unique {g} {u}\n"));
+            }
+            for _ in 0..size {
+                left.push_str(["a\n", "b\n"][rng.below(2) as usize]);
+                right.push_str(["a\n", "b\n"][rng.below(2) as usize]);
+            }
+        }
+        let (mut l, r) = (editable(&left, &opts), editable(&right, &opts));
+        let mut lc = live(&setup, Pair::new(&l, &r));
+        if lc
+            .current()
+            .warnings()
+            .iter()
+            .any(|w| w.code == hikasa_core::WarningCode::WorkBudgetExhausted)
+        {
+            continue;
+        }
+        // Insert repetitive lines into the first region.
+        let insert: String = (0..40 + rng.below(200))
+            .map(|_| ["a\n", "b\n"][rng.below(2) as usize])
+            .collect();
+        let at = hikasa_text::TextPos::new(30, 0);
+        let out = l
+            .apply(
+                &hikasa_text::EditRequest::Replace {
+                    range: at..at,
+                    text: insert,
+                    keep_eols: false,
+                },
+                hikasa_text::GroupHint::None,
+            )
+            .unwrap();
+        lc.note_edit(Side::Left, &l, &out);
+        let want = fresh(&setup, Pair::new(&l, &r), &[]);
+        if !want
+            .warnings()
+            .iter()
+            .any(|w| w.code == hikasa_core::WarningCode::WorkBudgetExhausted)
+        {
+            continue;
+        }
+        found += 1;
+        let done = lc
+            .recompare_job(Pair::new(&l, &r))
+            .run(None, &Ctl::detached())
+            .unwrap();
+        lc.install(done, Pair::new(&l, &r));
+        assert_eq!(
+            common::canonical_json(lc.current()),
+            common::canonical_json(&want),
+            "seed {seed}"
+        );
+        if found == 3 {
+            return;
+        }
+    }
+    assert!(found > 0, "no case reached the budget");
 }

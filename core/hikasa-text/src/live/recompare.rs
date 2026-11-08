@@ -63,7 +63,6 @@ impl PathCounters {
 
 /// An owned recompare (`Send`): the snapshots and the state since the last exact result.
 #[derive(Debug)]
-#[allow(dead_code)] // the base, keys and log are read by the incremental path
 pub struct RecompareJob {
     pub(crate) left: Arc<TextDocument>,
     pub(crate) right: Arc<TextDocument>,
@@ -71,7 +70,6 @@ pub struct RecompareJob {
     pub(crate) keys: LiveKeys,
     pub(crate) log: Vec<Noted>,
     pub(crate) anchors: Vec<Anchor>,
-    pub(crate) base_anchors: Vec<Anchor>,
     pub(crate) full: bool,
     pub(crate) rules: Arc<LiveRules>,
     pub(crate) generation: u64,

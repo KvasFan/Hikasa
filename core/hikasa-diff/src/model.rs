@@ -383,6 +383,19 @@ fn violation(id: &'static str, detail: String) -> InvariantViolation {
     InvariantViolation { id, detail }
 }
 
+/// The canonical form of `runs` (consecutive, in document order): the runs [`crate::align`] would emit for the
+/// same sequence of pairs and gaps (§2.14.1: same kinds merged, a Delete after an Insert moved in front of it,
+/// empty runs dropped). Additive (W10a): the incremental recompare concatenates the runs of re-run and kept
+/// parts and canonicalizes them as one alignment run would.
+pub fn canonical_runs(runs: impl IntoIterator<Item = Run>) -> Vec<Run> {
+    let mut builder = RunBuilder::default();
+    for run in runs {
+        let (l, r) = (span(&run.left), span(&run.right));
+        builder.push(run.kind, l, r);
+    }
+    builder.finish(None)
+}
+
 /// Accumulates canonical runs in document order from an implicit cursor and forwards final runs to a sink.
 ///
 /// Canonicalisation (§2.14.1): a run of the same kind as the last one is merged into it; a `Delete` that follows

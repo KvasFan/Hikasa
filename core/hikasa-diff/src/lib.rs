@@ -54,7 +54,9 @@ pub use error::DiffError;
 pub use inline::{InlineDiff, InlineOptions, inline_diff};
 pub use input::{AlignInput, PairScorer, TrivialSet};
 pub use intern::{InternedPair, Interner, MAX_SEQUENCE_LEN, TokenId, intern_pair};
-pub use model::{Alignment, DiffWarning, DiffWarningCode, RowRef, Run, RunKind, RunSink};
+pub use model::{
+    Alignment, DiffWarning, DiffWarningCode, RowRef, Run, RunKind, RunSink, canonical_runs,
+};
 pub use options::{Algorithm, AlignOptions, Closeness};
 pub use similarity::{BigramProfile, bigram_similarity};
 pub use trace::{

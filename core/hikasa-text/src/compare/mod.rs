@@ -20,7 +20,7 @@ mod inline;
 pub(crate) mod keys;
 mod nav;
 pub(crate) mod rows;
-mod score;
+pub(crate) mod score;
 pub(crate) mod sections;
 pub(crate) mod store;
 mod thumb;
@@ -503,68 +503,16 @@ impl Prepared {
         );
         progress.finish();
 
-        let mut warnings = Vec::new();
-        for doc in [&left, &right] {
-            let spec = doc.origin().spec.as_ref().map(|s| s.canonical());
-            if doc.binary().is_binary {
-                warnings.push(Warning {
-                    code: WarningCode::BinaryContent,
-                    message: format!(
-                        "{}: binary content ({}); the verdict is a binary comparison",
-                        doc.origin().display(),
-                        binary_reason(doc)
-                    ),
-                    spec: spec.clone(),
-                });
-            }
-            if doc.malformed() > 0 {
-                warnings.push(Warning {
-                    code: WarningCode::LossyDecode,
-                    message: format!(
-                        "{}: {} malformed byte sequence(s) replaced with U+FFFD while decoding as {}",
-                        doc.origin().display(),
-                        doc.malformed(),
-                        doc.encoding().encoding
-                    ),
-                    spec,
-                });
-            }
-        }
-        warnings.extend(doc_warnings);
-        if regex_errors > 0 {
-            warnings.push(Warning {
-                code: WarningCode::RegexRuntimeError,
-                message: format!(
-                    "{regex_errors} regular-expression match attempt(s) hit the backtracking limit and counted as no match"
-                ),
-                spec: None,
-            });
-        }
-        warnings.extend(alignment.warnings().iter().cloned());
-        if scorer_exhausted
-            && !warnings
-                .iter()
-                .any(|w| w.code == WarningCode::ClosenessBudgetExhausted)
-        {
-            warnings.push(Warning {
-                code: WarningCode::ClosenessBudgetExhausted,
-                message: format!(
-                    "the closeness scorer's work budget ({} units) ran out; the remaining differing lines were \
-                     left unpaired",
-                    score::scorer_budget(
-                        u64::from(left.line_count()),
-                        u64::from(right.line_count())
-                    )
-                ),
-                spec: None,
-            });
-        }
-        for w in alignment.diff_warnings() {
-            warnings.push(diff_warning(w.code, &w.message));
-        }
-        for w in &dropped_anchors {
-            warnings.push(diff_warning(w.code, &w.message));
-        }
+        let warnings = compose_warnings(&WarningInputs {
+            left: &left,
+            right: &right,
+            doc_warnings,
+            regex_errors,
+            alignment: alignment.warnings(),
+            scorer_exhausted,
+            diff: alignment.diff_warnings(),
+            dropped: &dropped_anchors,
+        });
 
         let runs = alignment.runs().to_vec();
         let mut run_rows = Vec::with_capacity(runs.len());
@@ -646,6 +594,89 @@ fn checkpoints(states: &[LineState]) -> Vec<LineState> {
         .step_by(CHECKPOINT_LINES as usize)
         .copied()
         .collect()
+}
+
+/// What the warnings of a comparison are made of.
+pub(crate) struct WarningInputs<'w> {
+    pub(crate) left: &'w Arc<TextDocument>,
+    pub(crate) right: &'w Arc<TextDocument>,
+    pub(crate) doc_warnings: Vec<Warning>,
+    pub(crate) regex_errors: u64,
+    pub(crate) alignment: &'w [Warning],
+    pub(crate) scorer_exhausted: bool,
+    pub(crate) diff: &'w [hikasa_diff::DiffWarning],
+    pub(crate) dropped: &'w [hikasa_diff::DiffWarning],
+}
+
+/// The warnings of a comparison, in their order (documents, regex limits, alignment, scorer, diff, anchors): one
+/// routine for the full compare and the live recompare.
+pub(crate) fn compose_warnings(w: &WarningInputs<'_>) -> Vec<Warning> {
+    let (left, right) = (w.left, w.right);
+    let regex_errors = w.regex_errors;
+    let scorer_exhausted = w.scorer_exhausted;
+    let mut warnings = Vec::new();
+    for doc in [&left, &right] {
+        let spec = doc.origin().spec.as_ref().map(|s| s.canonical());
+        if doc.binary().is_binary {
+            warnings.push(Warning {
+                code: WarningCode::BinaryContent,
+                message: format!(
+                    "{}: binary content ({}); the verdict is a binary comparison",
+                    doc.origin().display(),
+                    binary_reason(doc)
+                ),
+                spec: spec.clone(),
+            });
+        }
+        if doc.malformed() > 0 {
+            warnings.push(Warning {
+                code: WarningCode::LossyDecode,
+                message: format!(
+                    "{}: {} malformed byte sequence(s) replaced with U+FFFD while decoding as {}",
+                    doc.origin().display(),
+                    doc.malformed(),
+                    doc.encoding().encoding
+                ),
+                spec,
+            });
+        }
+    }
+    warnings.extend(w.doc_warnings.iter().cloned());
+    if regex_errors > 0 {
+        warnings.push(Warning {
+            code: WarningCode::RegexRuntimeError,
+            message: format!(
+                "{regex_errors} regular-expression match attempt(s) hit the backtracking limit and counted as no match"
+            ),
+            spec: None,
+        });
+    }
+    warnings.extend(w.alignment.iter().cloned());
+    if scorer_exhausted
+        && !warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ClosenessBudgetExhausted)
+    {
+        warnings.push(Warning {
+            code: WarningCode::ClosenessBudgetExhausted,
+            message: format!(
+                "the closeness scorer's work budget ({} units) ran out; the remaining differing lines were \
+                 left unpaired",
+                score::scorer_budget(
+                    u64::from(left.line_count()),
+                    u64::from(right.line_count())
+                )
+            ),
+            spec: None,
+        });
+    }
+    for d in w.diff {
+        warnings.push(diff_warning(d.code, &d.message));
+    }
+    for d in w.dropped {
+        warnings.push(diff_warning(d.code, &d.message));
+    }
+    warnings
 }
 
 /// The keys of one side as interned: the surrogate of a long key, else the key itself.
@@ -833,7 +864,7 @@ fn diff_warning(code: DiffWarningCode, message: &str) -> Warning {
 }
 
 /// The warning of a document cut at the D-43 limits by [`TextDocument::from_text`].
-fn truncation_warning(doc: &TextDocument) -> Warning {
+pub(crate) fn truncation_warning(doc: &TextDocument) -> Warning {
     Warning {
         code: WarningCode::LossyDecode,
         message: format!(

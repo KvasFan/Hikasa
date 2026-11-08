@@ -161,6 +161,21 @@ impl<'k> ProfileScorer<'k> {
         }
     }
 
+    /// A scorer with an explicit budget (the live recompare re-runs a node with what is left of the budget).
+    pub(crate) fn with_budget(
+        left: &'k KeyStore,
+        right: &'k KeyStore,
+        shape: KeyShape,
+        threshold: u16,
+        cancel: &'k CancelToken,
+        budget: u64,
+    ) -> ProfileScorer<'k> {
+        ProfileScorer {
+            budget,
+            ..ProfileScorer::new(left, right, shape, threshold, cancel)
+        }
+    }
+
     /// True when the budget ran out (some pairs were scored 0 without being compared).
     pub(crate) fn exhausted(&self) -> bool {
         self.state
