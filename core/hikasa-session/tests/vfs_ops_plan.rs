@@ -52,8 +52,8 @@ fn entry() -> impl Strategy<Value = Entry> {
     ]
 }
 
-fn side() -> impl Strategy<Value = BTreeMap<usize, Entry>> {
-    proptest::collection::btree_map(0usize..NAMES.len(), entry(), 0..4)
+fn side(at_least: usize) -> impl Strategy<Value = BTreeMap<usize, Entry>> {
+    proptest::collection::btree_map(0usize..NAMES.len(), entry(), at_least..4)
 }
 
 fn put(path: &Path, content: u8, age: u8) {
@@ -114,11 +114,13 @@ fn report(dto: &VfsOpDto, root: &Path) -> String {
         .items
         .iter()
         .map(|i| {
+            // The texts as they are (not `{:?}`, which escapes a Windows path's backslashes, so `<root>` would not
+            // replace it).
             format!(
-                "{} {:?} {:?} {} {:?} {} {:?} {:?} {:?}",
+                "{} {:?} {} {} {:?} {} {:?} {:?} {:?}",
                 i.action,
                 i.kind,
-                i.source,
+                i.source.as_deref().unwrap_or("-"),
                 i.target,
                 i.size,
                 i.replaces,
@@ -182,8 +184,8 @@ proptest! {
 
     #[test]
     fn p_the_executed_plan_is_vfs_run(
-        src in side(),
-        dst in side(),
+        src in side(1),
+        dst in side(0),
         moving in any::<bool>(),
         pick in proptest::collection::vec(any::<bool>(), NAMES.len()),
         overwrite in prop::sample::select(&[
@@ -193,8 +195,11 @@ proptest! {
             OverwritePolicy::Newer,
         ][..]),
     ) {
-        let sources: Vec<usize> = src.keys().copied().filter(|k| pick[*k]).collect();
-        prop_assume!(!sources.is_empty());
+        // The picked entries, else the first one: never an empty drop (no case is rejected).
+        let mut sources: Vec<usize> = src.keys().copied().filter(|k| pick[*k]).collect();
+        if sources.is_empty() {
+            sources.extend(src.keys().next().copied());
+        }
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().canonicalize().unwrap();
         let direct = sandbox(&base, "direct", &src, &dst);
