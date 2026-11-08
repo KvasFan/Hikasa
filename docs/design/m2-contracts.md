@@ -9022,6 +9022,12 @@ Mutations (each failed the tests named, then was reverted):
     text-field guard: `dispatch_keys`' own `is_text_edit_key` rule keeps the keys), M30 (`focus_area` without
     `TextField`: `text_focus` already keeps the clipboard events for the field).
 
+33. **Gates after the review** (`docs/02`, release, xvfb with llvmpipe, 2026-11-08, load 5.0–9.1 falling from 18): the
+    rows the fixes touch, each **met** on its second run — tree p95 7.37 / max 7.37 ms with PSS 153.6 MiB, select (Select
+    All 4.1 ms, Shift+Down p95 0.54 ms), `two_windows` 259.0 MiB with p95 2.86 / max 8.26 ms. The first runs, started
+    while the machine was still loaded by other sessions, had the tree's p95 at 8.0 ms over two frames and one
+    `two_windows` frame of 23.15 ms; both are recorded. The other rows are untouched by the fixes (note 17 stands).
+
 Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`, `clip` `tests_clipboard`, `menus`
 `tests_context_menus`, `tabs` `tests_rule_tabs`, `pointer` `ui::tests_pointer`):
 

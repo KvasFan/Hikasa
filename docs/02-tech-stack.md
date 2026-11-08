@@ -678,6 +678,25 @@ G1, G2, G4 and G7 were not measured again: W9c changes none of their paths (core
 launcher's reveal, `check_folder_rules` and tests; the comparison, the scan, the plan and the copy are untouched since
 their figures *after the W9b review* above).
 
+### M2 W9c after the review: the rows the fixes touch (D-257)
+
+The fixes add to every frame the window's check of how fresh the pointer is for a drag from another program (one scan of
+the frame's events), the paste key's state and, in the folder tree, the keyboard's context-menu keys; the command
+context gains two side fields. Measured as above (release, `env -u WAYLAND_DISPLAY xvfb-run -a`, llvmpipe, 2026-11-08,
+the machine loaded by other sessions: 1-minute load 5.0–7.2 falling from 18 at the first run):
+
+| Item | Load | Measured | Threshold | Status |
+|---|---|---|---|---|
+| G15 tree (`folder_columns`), first run | 7.2 | scan 476 ms, 2 frames while scanning: UI work p95 = max 8.0 ms; PSS 169.4 MiB | max ≤ 16.7, p95 < 8 ms; PSS < 381.5 MiB | max met, p95 at the limit (two frames) |
+| G15 tree (`folder_columns`), again | 5.0–6.5 | scan 265 ms, 11 frames while scanning: UI work p95 7.37 / max 7.37 ms; PSS 153.6 MiB | same | **met** |
+| G15 select | 5.0 | Select All 4.1 ms, Invert Selection 0.9 ms, Shift+Left 0.3 ms; 300 × Shift+Down p95 0.54 / max 1.68 ms; Select All Files 4.0 ms | each ≤ 16.7 ms; p95 < 4 ms | **met** |
+| ARCH-GUI-003 `two_windows`, first run | 5.0–5.9 | PSS 274.5, 274.0, 271.4 (**274.0**) MiB; last run UI work p95 4.24, max 23.15 ms | < 381.5 MiB, p95 < 8, max < 16.7 ms | max **not met** (one frame) |
+| ARCH-GUI-003 `two_windows`, again | 5.2–9.1 | PSS 256.4, 259.0, 279.9 (**259.0**) MiB; last run UI work p95 2.86, max 8.26 ms | same | **met** |
+
+The first runs started while the 15-minute load was still 15 from other sessions; the second ones, minutes later, met
+every row with the code unchanged, so the single slow frame is read as the shared machine's (the GPU run stays the
+maintainer's, §6.9). No crate was added: `Cargo.lock` is unchanged.
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
