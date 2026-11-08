@@ -207,6 +207,24 @@ pub fn random_edit(
     }
 }
 
+/// A user format whose first line is a heading item whatever it holds (FF-024 `or_line_one`, element `Head`),
+/// followed by `next_lines` lines: the key of line 0 depends on its being line 0.
+pub fn line_one_format(next_lines: u32) -> Arc<CompiledFormat> {
+    use hikasa_formats::{ElementName, FileFormat, FormatId, FormatKind, GrammarItem, ItemKind};
+    let mut f = FileFormat::new(FormatId::new("hdr").unwrap(), "Hdr", FormatKind::Text);
+    f.grammar.push(GrammarItem {
+        element: ElementName::new("Head").unwrap(),
+        kind: ItemKind::Lines {
+            heading: String::new(),
+            regex: false,
+            match_case: true,
+            next_lines,
+            or_line_one: true,
+        },
+    });
+    Arc::new(CompiledFormat::compile(Arc::new(f), &RegexLimits::default()).unwrap())
+}
+
 /// The settings of a live test.
 #[derive(Debug, Clone)]
 pub struct Setup {

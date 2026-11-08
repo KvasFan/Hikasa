@@ -131,6 +131,14 @@ fn attempt(
         ),
     ];
     let (old_docs, new_docs) = ([&base.left, &base.right], [&job.left, &job.right]);
+    let mut maps = maps;
+    // FF-024 `or_line_one`: the key of line 0 depends on its being line 0, so an edit that reaches line 0 makes
+    // the old and the new line 0 dirty.
+    if !base.identity_path && base.format.grammar().has_line_one() {
+        for k in 0..2 {
+            maps[k].touch_line_zero(old_docs[k].line_count(), new_docs[k].line_count());
+        }
+    }
     let total = u64::from(new_docs[0].line_count()) + u64::from(new_docs[1].line_count());
     let dirty = maps[0].dirty_lines() + maps[1].dirty_lines();
     if dirty > FALLBACK_LINES || dirty as f64 > FALLBACK_SHARE * total.max(1) as f64 {
@@ -223,14 +231,14 @@ fn attempt(
         weights,
         threshold: a.closeness_threshold_permille,
     };
-    let root_node = &seg.nodes[root as usize];
     let la = 0..n;
     let ra = 0..m;
-    // Auto at the segment level: the recorded engine on the new sizes.
+    // Auto at the segment level: the engine of the new stripped middle (its prefix and suffix found from the
+    // old runs outward, O(change)) must be the recorded one, else the full compare.
     if auto {
-        let p = root_node.prefix;
-        let s = root_node.suffix;
-        let cells = u64::from(n.saturating_sub(p + s)) * u64::from(m.saturating_sub(p + s));
+        let p = inc.new_prefix(&la, &ra)?;
+        let s = inc.new_suffix(&la, &ra, p)?;
+        let cells = u64::from(n - p - s) * u64::from(m - p - s);
         let engine = if cells <= AlignOptions::fallback_budget_for(n as usize, m as usize) {
             Algorithm::Histogram
         } else {
@@ -378,6 +386,91 @@ impl Inc<'_, '_> {
         let (a, _) = lv.key(l)?;
         let (b, _) = rv.key(r)?;
         Ok(a == b)
+    }
+
+    /// The pairs from new lines `(l, r)` on known equal without comparing keys: both lines clean, their old lines
+    /// on the diagonal of one old `Equal` run; up to the run's end or the next re-keyed line (0 when not known).
+    fn known_equal_forward(&self, l: u32, r: u32) -> u32 {
+        let [lv, rv] = &self.sides.views;
+        let (Some(ox), Some(oy)) = (lv.old_of(l), rv.old_of(r)) else {
+            return 0;
+        };
+        let runs = &self.base.runs;
+        let k = runs.partition_point(|run| run.left.end <= ox);
+        let Some(run) = runs.get(k) else { return 0 };
+        if run.kind != RunKind::Equal
+            || run.left.start > ox
+            || i64::from(oy) - i64::from(ox)
+                != i64::from(run.right.start) - i64::from(run.left.start)
+        {
+            return 0;
+        }
+        (run.left.end - ox)
+            .min(lv.clean_run(l).max(1))
+            .min(rv.clean_run(r).max(1))
+    }
+
+    /// The pairs ending just before new lines `(l, r)` known equal (as [`Inc::known_equal_forward`], backward).
+    fn known_equal_backward(&self, l: u32, r: u32) -> u32 {
+        if l == 0 || r == 0 {
+            return 0;
+        }
+        let [lv, rv] = &self.sides.views;
+        let (Some(ox), Some(oy)) = (lv.old_of(l - 1), rv.old_of(r - 1)) else {
+            return 0;
+        };
+        let runs = &self.base.runs;
+        let k = runs.partition_point(|run| run.left.end <= ox);
+        let Some(run) = runs.get(k) else { return 0 };
+        if run.kind != RunKind::Equal
+            || run.left.start > ox
+            || i64::from(oy) - i64::from(ox)
+                != i64::from(run.right.start) - i64::from(run.left.start)
+        {
+            return 0;
+        }
+        (ox + 1 - run.left.start)
+            .min(lv.clean_run_back(l).max(1))
+            .min(rv.clean_run_back(r).max(1))
+    }
+
+    /// The common prefix of new ranges `a × b`, found as the engine does, but in steps of known-equal pairs (old
+    /// `Equal` runs between re-keyed lines) and key comparisons elsewhere: O(change), not O(prefix).
+    fn new_prefix(&self, a: &Range<u32>, b: &Range<u32>) -> Result<u32, Fail> {
+        let limit = (a.end - a.start).min(b.end - b.start);
+        let mut p = 0u32;
+        while p < limit {
+            let (l, r) = (a.start + p, b.start + p);
+            let known = self.known_equal_forward(l, r);
+            if known > 0 {
+                p = (p + known).min(limit);
+                continue;
+            }
+            if !self.equal(l, r)? {
+                break;
+            }
+            p += 1;
+        }
+        Ok(p)
+    }
+
+    /// The common suffix of new ranges `a × b` without their first `prefix` pairs (as [`Inc::new_prefix`]).
+    fn new_suffix(&self, a: &Range<u32>, b: &Range<u32>, prefix: u32) -> Result<u32, Fail> {
+        let limit = (a.end - a.start).min(b.end - b.start) - prefix;
+        let mut s = 0u32;
+        while s < limit {
+            let (l, r) = (a.end - s, b.end - s);
+            let known = self.known_equal_backward(l, r);
+            if known > 0 {
+                s = (s + known).min(limit);
+                continue;
+            }
+            if !self.equal(l - 1, r - 1)? {
+                break;
+            }
+            s += 1;
+        }
+        Ok(s)
     }
 
     /// Emits the old runs between old path points `from` and `to`, moved to the new numbering (a clean region).

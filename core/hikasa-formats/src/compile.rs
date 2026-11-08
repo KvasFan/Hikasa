@@ -200,6 +200,20 @@ impl CompiledGrammar {
         self.has_multiline
     }
 
+    /// True when some item starts at the first line whatever it holds (FF-024 `or_line_one`): the first line's
+    /// tokens then depend on its line number (M2 W10a: a live recompare re-keys the old and new first lines).
+    pub fn has_line_one(&self) -> bool {
+        self.items.iter().any(|i| {
+            matches!(
+                i.matcher,
+                ItemMatcher::Lines {
+                    or_line_one: true,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Number of grammar items.
     pub fn item_count(&self) -> usize {
         self.items.len()

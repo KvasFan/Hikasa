@@ -66,8 +66,17 @@ fn setup(rng: &mut XorShift, kind: Gen, lines: (u32, u32)) -> Setup {
             .elements
             .insert("Comment".to_owned(), false);
     }
+    // A first-line heading item (FF-024 `or_line_one`): the key of line 0 depends on its line number.
+    let line_one = !c && rng.below(5) == 0;
+    if line_one && rng.below(2) == 0 {
+        rules.importance.elements.insert("Head".to_owned(), false);
+    }
     Setup {
-        format: common::format(if c { "c-cpp" } else { "ee" }),
+        format: if line_one {
+            common::live::line_one_format(rng.below(3) as u32)
+        } else {
+            common::format(if c { "c-cpp" } else { "ee" })
+        },
         rules,
         force_tokenize: rng.below(4) == 0,
         anchors,
@@ -272,4 +281,121 @@ fn a_budget_exhausted_by_an_edit_is_never_computed_incrementally() {
         }
     }
     assert!(found > 0, "no case reached the budget");
+}
+
+/// Edits at the top of a document whose format starts an item at the first line (FF-024 `or_line_one`): the key
+/// of line 0 depends on its line number, so the old and the new line 0 are re-keyed (an insertion at the top, a
+/// deletion of the first lines, both sides, with the item unimportant and with following lines).
+#[test]
+fn edits_at_the_first_line_rekey_the_old_and_new_line_zero() {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    for next_lines in [0u32, 1, 3] {
+        for unimportant in [false, true] {
+            for (edit, side) in [
+                (0, Side::Left),
+                (1, Side::Left),
+                (2, Side::Right),
+                (3, Side::Left),
+            ] {
+                let mut rules = common::rules_with(AlgorithmChoice::Standard);
+                if unimportant {
+                    rules.importance.elements.insert("Head".to_owned(), false);
+                }
+                let setup = Setup {
+                    format: common::live::line_one_format(next_lines),
+                    rules,
+                    force_tokenize: false,
+                    anchors: Vec::new(),
+                };
+                let text: String = (0..200).map(|k| format!("row {k}\n")).collect();
+                let opts = edit_options(Gen::Clustered);
+                let (mut l, mut r) = (editable(&text, &opts), editable(&text, &opts));
+                let mut lc = live(&setup, Pair::new(&l, &r));
+                let doc = if side == Side::Left { &mut l } else { &mut r };
+                let (range, text) = match edit {
+                    0 => (
+                        TextPos::new(0, 0)..TextPos::new(0, 0),
+                        "new a\nnew b\nnew c\n",
+                    ),
+                    1 => (TextPos::new(0, 0)..TextPos::new(1, 0), ""),
+                    2 => (TextPos::new(0, 0)..TextPos::new(2, 0), "row 0\n"),
+                    _ => (TextPos::new(0, 2)..TextPos::new(0, 2), "x"),
+                };
+                let out = doc
+                    .apply(
+                        &EditRequest::Replace {
+                            range,
+                            text: text.into(),
+                            keep_eols: false,
+                        },
+                        GroupHint::None,
+                    )
+                    .unwrap();
+                lc.note_edit(side, doc, &out);
+                let done = lc
+                    .recompare_job(Pair::new(&l, &r))
+                    .run(None, &Ctl::detached())
+                    .unwrap();
+                lc.install(done, Pair::new(&l, &r));
+                let want = fresh(&setup, Pair::new(&l, &r), &[]);
+                assert_eq!(
+                    common::canonical_json(lc.current()),
+                    common::canonical_json(&want),
+                    "next_lines {next_lines}, unimportant {unimportant}, edit {edit}"
+                );
+            }
+        }
+    }
+}
+
+/// *Auto* with a grammar: the recorded engine is Standard (a large stripped middle); an edit that removes the
+/// first difference shrinks the middle so much that a fresh compare picks Histogram. The engine is decided again
+/// from the new prefix and suffix, and a different decision takes the full compare.
+#[test]
+fn auto_is_decided_again_from_the_new_prefix_and_suffix() {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    let mut rules = TextRules::default();
+    rules.alignment.algorithm = AlgorithmChoice::Auto;
+    let setup = Setup {
+        format: common::format("c-cpp"),
+        rules,
+        force_tokenize: false,
+        anchors: Vec::new(),
+    };
+    let n = 12_000;
+    let left: String = (0..n).map(|k| format!("int v{k} = {k};\n")).collect();
+    let mut right: Vec<String> = (0..n).map(|k| format!("int v{k} = {k};")).collect();
+    right[0] = "int changed = 0;".to_owned();
+    right[n - 1] = "int changed_end = 1;".to_owned();
+    right.swap(n - 100, n - 50);
+    right.swap(n - 200, n - 20);
+    let right = right.join("\n") + "\n";
+    let opts = edit_options(Gen::Clustered);
+    let (l, mut r) = (editable(&left, &opts), editable(&right, &opts));
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    assert_eq!(lc.current().algorithm(), hikasa_text::Algorithm::Standard);
+    let len = r.line_len(hikasa_text::LineIdx(0));
+    let out = r
+        .apply(
+            &EditRequest::Replace {
+                range: TextPos::new(0, 0)..TextPos::new(0, len),
+                text: "int v0 = 0;".into(),
+                keep_eols: false,
+            },
+            GroupHint::None,
+        )
+        .unwrap();
+    lc.note_edit(Side::Right, &r, &out);
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    assert_eq!(done.path.full, 1, "{:?}", done.path);
+    lc.install(done, Pair::new(&l, &r));
+    let want = fresh(&setup, Pair::new(&l, &r), &[]);
+    assert_eq!(want.algorithm(), hikasa_text::Algorithm::Histogram);
+    assert_eq!(
+        common::canonical_json(lc.current()),
+        common::canonical_json(&want)
+    );
 }

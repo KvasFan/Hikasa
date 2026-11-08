@@ -81,6 +81,35 @@ impl LineMap {
         LineMap { spans }
     }
 
+    /// Makes the first lines of both numberings dirty when an edit reached line 0 (a grammar whose item starts at
+    /// the first line, FF-024 `or_line_one`: the key of line 0 depends on its being line 0). The span at line 0 is
+    /// grown by one line on both sides until it holds the old and the new line 0, and absorbs a span it meets.
+    pub(crate) fn touch_line_zero(&mut self, old_len: u32, new_len: u32) {
+        let Some(first) = self.spans.first_mut() else {
+            return;
+        };
+        if first.old.start != 0 || first.new.start != 0 {
+            return;
+        }
+        while (first.old.is_empty() && old_len > 0) || (first.new.is_empty() && new_len > 0) {
+            if first.old.end >= old_len || first.new.end >= new_len {
+                break;
+            }
+            first.old.end += 1;
+            first.new.end += 1;
+        }
+        let first = self.spans[0].clone();
+        if let Some(next) = self.spans.get(1)
+            && next.new.start <= first.new.end
+        {
+            let merged = Span {
+                old: first.old.start..next.old.end,
+                new: first.new.start..next.new.end,
+            };
+            self.spans.splice(0..2, [merged]);
+        }
+    }
+
     /// The old line of clean new line `x` (`None` for a dirty line).
     #[cfg(test)]
     fn old_of(&self, x: u32) -> Option<u32> {
@@ -440,6 +469,26 @@ impl<'a> SideView<'a> {
         (i64::from(x) + self.shift(k)) as u32
     }
 
+    /// The lines from new line `x` on that are outside every re-keyed span (0 when `x` is in one): they map to
+    /// consecutive old lines.
+    pub(crate) fn clean_run(&self, x: u32) -> u32 {
+        let k = self.spans.partition_point(|s| s.new.end <= x);
+        match self.spans.get(k) {
+            Some(s) if s.new.start <= x => 0,
+            Some(s) => s.new.start - x,
+            None => u32::MAX - x,
+        }
+    }
+
+    /// The lines up to new line `x` (excluded) that are outside every re-keyed span, counted backward.
+    pub(crate) fn clean_run_back(&self, x: u32) -> u32 {
+        let k = self.spans.partition_point(|s| s.new.end < x);
+        match self.spans.get(k) {
+            Some(s) if s.new.start < x => 0,
+            _ => x - k.checked_sub(1).map_or(0, |j| self.spans[j].new.end),
+        }
+    }
+
     /// True when new line `x` was re-keyed (its text, terminator or start state changed).
     pub(crate) fn rekeyed(&self, x: u32) -> bool {
         self.span(x).is_some()
@@ -565,6 +614,35 @@ mod tests {
         // A boundary at an insertion point maps after the inserted lines.
         assert_eq!(map.pos(20), 21);
         assert_eq!(map.pos(25), 26);
+        // Line 0 of a grammar with an `or_line_one` item: an insertion at the top makes the old line 0 (now 3)
+        // dirty, a deletion at the top the new line 0.
+        let mut map = LineMap::from_deltas([d(0, 0, 3)].into_iter());
+        map.touch_line_zero(10, 13);
+        assert_eq!(
+            map.spans,
+            [Span {
+                old: 0..1,
+                new: 0..4
+            }]
+        );
+        let mut map = LineMap::from_deltas([d(0, 2, 0), d(1, 1, 1)].into_iter());
+        map.touch_line_zero(10, 8);
+        assert_eq!(
+            map.spans,
+            [Span {
+                old: 0..4,
+                new: 0..2
+            }]
+        );
+        let mut map = LineMap::from_deltas([d(4, 1, 1)].into_iter());
+        map.touch_line_zero(10, 10);
+        assert_eq!(
+            map.spans,
+            [Span {
+                old: 4..5,
+                new: 4..5
+            }]
+        );
         // Touching spans merge.
         let map = LineMap::from_deltas([d(5, 1, 1), d(6, 1, 1)].into_iter());
         assert_eq!(
