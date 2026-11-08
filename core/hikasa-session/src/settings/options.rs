@@ -2,12 +2,14 @@
 //! per table. The reserved sections `archive_types`, `commands` and `open_with` are known and hold nothing (their
 //! data lives in `archives.toml`, `commands.toml` and `openwith.toml`); their keys are kept on save.
 
+use hikasa_text::LineEnding;
 use hikasa_vfs::ops::BackupStyle;
 use toml::Table;
 
 use super::file::{Problem, SettingsSchema, migrate_from_zero};
 use super::keys::{FileId, KindRule, ValueKind};
 use super::theme::ThemeMode;
+use crate::host::Platform;
 use crate::options::ProgramOptions;
 
 settings_enum! {
@@ -51,6 +53,28 @@ settings_enum! {
         StemBakExt = "stem_bak_ext",
         Folder = "folder",
     } default NameBak
+}
+
+settings_enum! {
+    /// `[text_editing] default_line_ending` (OPT-006, D-290): the terminator a new line gets in a document without a
+    /// terminated line. `platform` is CRLF on Windows and LF elsewhere ([`DefaultLineEnding::resolve`]).
+    DefaultLineEnding { Platform = "platform", Lf = "lf", CrLf = "crlf", Cr = "cr" } default Platform
+}
+
+impl DefaultLineEnding {
+    /// The terminator on `platform` (D-290: the host resolves `platform` from its `EnvFacts`, T1): CRLF on
+    /// Windows, LF on every other platform.
+    pub const fn resolve(self, platform: Platform) -> LineEnding {
+        match self {
+            DefaultLineEnding::Platform => match platform {
+                Platform::Windows => LineEnding::CrLf,
+                Platform::Linux | Platform::MacOs | Platform::OtherUnix => LineEnding::Lf,
+            },
+            DefaultLineEnding::Lf => LineEnding::Lf,
+            DefaultLineEnding::CrLf => LineEnding::CrLf,
+            DefaultLineEnding::Cr => LineEnding::Cr,
+        }
+    }
 }
 
 settings_enum! {
@@ -159,6 +183,8 @@ settings_section! {
         show_filtered_line_counts: bool = false,
         /// Context lines of `--context` and the patch reports.
         number_of_context_lines: u32 = 3,
+        /// The terminator of a new line in a document without a terminated line (D-290).
+        default_line_ending: DefaultLineEnding = DefaultLineEnding::Platform,
     }
 }
 
@@ -547,6 +573,12 @@ pub(crate) const RULES: &[KindRule] = &[
         "OPT-006",
         "P0",
     ),
+    rule(
+        "text_editing.default_line_ending",
+        ValueKind::Enum(DefaultLineEnding::ALL),
+        "OPT-006",
+        "P0",
+    ),
     rule("text_editing.*", ValueKind::Bool, "OPT-006", "P0"),
     rule("next_difference.*", ValueKind::Bool, "OPT-007", "P0"),
     rule(
@@ -720,5 +752,49 @@ mod tests {
         assert_eq!(problems[1].key, "tweaks.metrics.max_mru_items");
         o.repair(&problems);
         assert_eq!(o, Options::default());
+    }
+
+    /// A10.2 (D-290): `default_line_ending` on a fixed platform; `platform` is CRLF on Windows only.
+    #[test]
+    fn default_line_ending_resolves_per_platform() {
+        let all = [
+            Platform::Linux,
+            Platform::MacOs,
+            Platform::Windows,
+            Platform::OtherUnix,
+        ];
+        for platform in all {
+            let native = if platform == Platform::Windows {
+                LineEnding::CrLf
+            } else {
+                LineEnding::Lf
+            };
+            assert_eq!(DefaultLineEnding::Platform.resolve(platform), native);
+            assert_eq!(DefaultLineEnding::Lf.resolve(platform), LineEnding::Lf);
+            assert_eq!(DefaultLineEnding::CrLf.resolve(platform), LineEnding::CrLf);
+            assert_eq!(DefaultLineEnding::Cr.resolve(platform), LineEnding::Cr);
+        }
+        assert_eq!(
+            Options::default().text_editing.default_line_ending,
+            DefaultLineEnding::Platform
+        );
+        let file = SettingsFile::<Options>::parse(
+            "[text_editing]\ndefault_line_ending = \"crlf\"\n",
+            "o",
+            LoadMode::Strict,
+        )
+        .unwrap();
+        assert_eq!(
+            file.value().text_editing.default_line_ending,
+            DefaultLineEnding::CrLf
+        );
+        assert!(
+            SettingsFile::<Options>::parse(
+                "[text_editing]\ndefault_line_ending = \"unix\"\n",
+                "o",
+                LoadMode::Strict,
+            )
+            .is_err()
+        );
     }
 }

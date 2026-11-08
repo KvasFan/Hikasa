@@ -228,6 +228,7 @@ pub const PAGES: &[Page] = &[
                 "text_editing.number_of_context_lines",
                 "Number of context lines",
             ),
+            f("text_editing.default_line_ending", "Default line ending"),
         ],
     ),
     page(

@@ -112,6 +112,10 @@ const ENUM_CAPTIONS: &[(&str, &str)] = &[
     ("idle", "Idle"),
     ("compress", "Compress to fit"),
     ("scroll", "Allow scrolling"),
+    ("platform", "As the platform (CRLF on Windows, else LF)"),
+    ("lf", "LF (Unix)"),
+    ("crlf", "CRLF (Windows)"),
+    ("cr", "CR (classic Mac)"),
 ];
 
 #[cfg(test)]

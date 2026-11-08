@@ -47,7 +47,10 @@ never block Apply; overrides of `planned` commands are kept.
 - Auto indent; Backspace unindents; Initialize "Text to find" to be current word;
   Show filtered line counts; Number of context lines (default 3;
   `[text_editing] number_of_context_lines`, also the default of `--context` and of the
-  patch reports). (Tab stops are per file format.)
+  patch reports); Default line ending (M2 W10a, D-290: `[text_editing] default_line_ending`,
+  `platform` (default: CRLF on Windows, LF elsewhere), `lf`, `crlf` or `cr`; the terminator of a
+  new line in a document that has no terminated line, e.g. an empty file; a document with one
+  keeps its dominant terminator). (Tab stops are per file format.)
 
 ## Next Difference
 - When loading new files, go to first difference; Go to next difference in files after
@@ -185,6 +188,7 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-006 | P0 | `[text_editing] auto_indent`, `backspace_unindents`, `init_find_with_current_word` | bool | true |
 | OPT-006 | P0 | `[text_editing] show_filtered_line_counts` | bool | false |
 | OPT-006 | P0 | `[text_editing] number_of_context_lines` | int 0..4294967295 | 3 |
+| OPT-006 | P0 | `[text_editing] default_line_ending` | enum `platform`, `lf`, `crlf`, `cr` | `platform` |
 | OPT-007 | P0 | `[next_difference] go_to_first_difference_on_load` | bool | true |
 | OPT-007 | P0 | `[next_difference] go_to_next_difference_after_copy` | bool | false |
 | OPT-007 | P0 | `[next_difference] limit_next_difference_files_to_current_folder` | bool | false |
