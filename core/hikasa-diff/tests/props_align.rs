@@ -6,7 +6,9 @@ mod common;
 use common::*;
 use hikasa_core::{CancelToken, WarningCode};
 use hikasa_diff::testing::{align_with_fallback_budget, align_with_helper_threshold};
-use hikasa_diff::{Algorithm, AlignOptions, Closeness, DiffWarningCode, RunKind, align};
+use hikasa_diff::{
+    Algorithm, AlignOptions, Closeness, DiffWarningCode, RunKind, TokenId, TrivialSet, align,
+};
 use proptest::prelude::*;
 
 proptest! {
@@ -275,5 +277,74 @@ proptest! {
         if fallback == 0 && opts.work_budget == Some(0) {
             prop_assert_eq!(degraded, work);
         }
+    }
+}
+
+/// A bijective renaming of a case's token ids (trivial ids stay trivial: the trivial set is renamed with them).
+/// `targets` gives the new id of each symbol; duplicates are made distinct by the order of first sight, so every
+/// draw is a bijection. Ids may be huge (beyond `4·(n+m)`), which sends the input through the dense renumbering.
+fn renamed(case: &Case, targets: &[u32]) -> Case {
+    let mut map: Vec<u32> = Vec::with_capacity(case.alphabet as usize);
+    for symbol in 0..case.alphabet as usize {
+        let mut id = targets[symbol % targets.len()];
+        while map.contains(&id) {
+            id = id.wrapping_add(1);
+        }
+        map.push(id);
+    }
+    let mut out = case.clone();
+    out.left = case
+        .left
+        .iter()
+        .map(|t| TokenId(map[t.0 as usize]))
+        .collect();
+    out.right = case
+        .right
+        .iter()
+        .map(|t| TokenId(map[t.0 as usize]))
+        .collect();
+    out.trivial = TrivialSet::default();
+    for (symbol, &is_trivial) in case.trivial_symbols.iter().enumerate() {
+        if is_trivial && symbol < map.len() {
+            out.trivial.insert(TokenId(map[symbol]));
+        }
+    }
+    out.alphabet = map.iter().max().map_or(0, |&m| m.saturating_add(1));
+    out
+}
+
+proptest! {
+    #![proptest_config(config("tests/proptest-regressions/props_align_ren.txt"))]
+
+    /// P-ALIGN-REN (INV-ALIGN-8, A10.8): for every engine (Unaligned, Standard with and without weights, Myers,
+    /// Patience, Histogram, and Standard's budget fallback down to the degraded split), mapping the token ids of
+    /// both sides through a bijection (trivial ids to trivial ids) gives the same runs and the same warnings. The
+    /// scorer is positional (it reads the original case), as the text engine's is.
+    #[test]
+    fn p_align_ren_every_engine_is_renaming_invariant(
+        case in case_strategy(),
+        opts in options_strategy(),
+        targets in proptest::collection::vec(
+            prop_oneof![0u32..16, 1_000u32..1_100, 2_000_000u32..2_000_064], 1..=8),
+        fallback in prop_oneof![Just(None), Just(Some(0u64)), (0u64..3000).prop_map(Some)],
+    ) {
+        let other = renamed(&case, &targets);
+        let scorer = case.scorer();
+        let never = CancelToken::never();
+        let (input, renamed_input) = (case.input(), other.input());
+        let (a, b) = match fallback {
+            Some(budget) if opts.algorithm == Algorithm::Standard => (
+                align_with_fallback_budget(&input, &opts, Some(&scorer), None, &never, budget).unwrap(),
+                align_with_fallback_budget(&renamed_input, &opts, Some(&scorer), None, &never, budget)
+                    .unwrap(),
+            ),
+            _ => (
+                align(&input, &opts, Some(&scorer), None, &never).unwrap(),
+                align(&renamed_input, &opts, Some(&scorer), None, &never).unwrap(),
+            ),
+        };
+        prop_assert_eq!(a.runs(), b.runs());
+        prop_assert_eq!(a.warnings(), b.warnings());
+        prop_assert_eq!(a.diff_warnings(), b.diff_warnings());
     }
 }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 35b846a1b7316780a421840f75469f7ef5cf37a6d3663caaeb0f23ec4a754dd4 # shrinks to case = Case { alphabet: 2, left: [TokenId(1), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(1), TokenId(1)], right: [TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(0), TokenId(1), TokenId(0), TokenId(1), TokenId(0), TokenId(0), TokenId(1), TokenId(0), TokenId(0), TokenId(0), TokenId(1), TokenId(0), TokenId(0)], trivial: TrivialSet { bits: [1] }, trivial_symbols: [true, false], left_weights: [], right_weights: [], table: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, opts = AlignOptions { algorithm: Standard, skew_tolerance: 300, closeness: None, never_align_differences: false, work_budget: None }, targets = [1], fallback = None
