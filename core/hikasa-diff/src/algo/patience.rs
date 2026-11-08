@@ -160,6 +160,7 @@ fn process(
             .map(|&u| (a.start + s.u_x[u as usize], b.start + s.u_y[u as usize]))
             .collect();
         n.blocks = n.chain.iter().map(|&(x, y)| (x, y, 1)).collect();
+        n.candidates = s.u_x.len() as u32;
     }
     // The pieces in document order: gap, anchor, gap, anchor, …, gap; pushed in reverse.
     s.tasks.clear();

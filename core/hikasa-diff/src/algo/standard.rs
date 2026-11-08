@@ -307,6 +307,7 @@ impl Standard {
                 })
                 .collect();
             n.slack = self.slack;
+            n.candidates = self.s.u_x.len() as u32;
         } else {
             n.slack = 0;
         }

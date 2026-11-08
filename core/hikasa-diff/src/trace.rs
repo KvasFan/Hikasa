@@ -71,6 +71,9 @@ pub struct TraceNode {
     /// §1.10.11 condition 3: how far the line counts may change before a unique pair's window membership can
     /// change (`u32::MAX`: no window).
     pub slack: u32,
+    /// The candidates of an `AnchorsUnique` node (unique-on-both-sides pairs in the window): when the chain holds
+    /// every one of them, removing or adding a compatible candidate keeps the chain the set of all candidates.
+    pub candidates: u32,
 }
 
 impl TraceNode {
@@ -89,6 +92,7 @@ impl TraceNode {
             scorer: 0,
             refusals: 0,
             slack: u32::MAX,
+            candidates: 0,
         }
     }
 

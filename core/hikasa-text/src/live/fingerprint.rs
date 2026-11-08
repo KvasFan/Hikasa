@@ -299,6 +299,8 @@ pub(crate) struct SideView<'a> {
     pub(crate) checkpoints: &'a [(u32, LineState)],
     pub(crate) keyer: &'a Keyer<'a>,
     cache: RefCell<HashMap<u32, (Vec<u8>, u8)>>,
+    /// Prefix sums of the spans' line-count changes (`spans + 1` entries).
+    shifts: Vec<i64>,
 }
 
 impl<'a> SideView<'a> {
@@ -310,7 +312,15 @@ impl<'a> SideView<'a> {
         keyer: &'a Keyer<'a>,
         adirty: Vec<Range<u32>>,
     ) -> SideView<'a> {
+        let mut shifts = Vec::with_capacity(spans.len() + 1);
+        let mut at = 0i64;
+        shifts.push(0);
+        for s in spans {
+            at += i64::from(s.new.end - s.new.start) - i64::from(s.old.end - s.old.start);
+            shifts.push(at);
+        }
         SideView {
+            shifts,
             spans,
             adirty,
             old,
@@ -335,11 +345,39 @@ impl<'a> SideView<'a> {
     }
 
     /// The shift of the lines after the first `k` spans.
+    #[inline]
     fn shift(&self, k: usize) -> i64 {
-        self.spans[..k]
-            .iter()
-            .map(|s| i64::from(s.new.end - s.new.start) - i64::from(s.old.end - s.old.start))
-            .sum()
+        self.shifts[k]
+    }
+
+    /// Calls `f(line, fp)` for every new line of `lines`, in order: clean runs straight from the old
+    /// fingerprints, re-keyed lines from their spans.
+    pub(crate) fn for_each_fp(&self, lines: Range<u32>, mut f: impl FnMut(u32, u16)) {
+        let mut x = lines.start;
+        let mut k = self.spans.partition_point(|s| s.new.end <= x);
+        while x < lines.end {
+            match self.spans.get(k) {
+                Some(s) if s.new.start <= x => {
+                    let end = s.new.end.min(lines.end);
+                    for y in x..end {
+                        f(y, s.new_keys.fps[(y - s.new.start) as usize]);
+                    }
+                    x = end;
+                    k += 1;
+                }
+                next => {
+                    let end = next.map_or(lines.end, |s| s.new.start.min(lines.end));
+                    let o = (i64::from(x) - self.shift(k)) as usize;
+                    let len = (end - x) as usize;
+                    if let Some(slice) = self.old_fps.get(o..o + len) {
+                        for (i, &fp) in slice.iter().enumerate() {
+                            f(x + i as u32, fp);
+                        }
+                    }
+                    x = end;
+                }
+            }
+        }
     }
 
     /// The old line of new line `x` when it is alignment-clean: outside the spans by their shift, inside a span

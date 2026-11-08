@@ -596,3 +596,289 @@ fn g4_cancel_latency_adversarial() {
     assert!(full_pass);
     assert!(worst <= Duration::from_millis(100));
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// G8 (W10a rows, §1.10.26): editing the G1 pair (c-cpp, Auto → Standard). Median of 20 edits at seeded random
+// places; every recompare of the 20 must stay below 50 ms, `note_edit` below 1 ms.
+
+use hikasa_core::Pair;
+use hikasa_text::edit::{
+    EditOptions, EditOutcome, EditRequest, Editability, EditableDocument, GroupHint, TextPos,
+    copy_rows,
+};
+use hikasa_text::{LiveComparison, RegexLimits, RowState, compare_live};
+
+/// The G1 pair as editable documents and their live comparison.
+fn g8_setup() -> (EditableDocument, EditableDocument, LiveComparison) {
+    let (left, right) = c_pair(LINES, 0x5EED_0001);
+    let format = format("c-cpp");
+    let load = LoadOptions::default();
+    let doc = |b: &[u8]| TextDocument::from_bytes(b, &format, &load, DocOrigin::default()).unwrap();
+    let (l, r) = (Arc::new(doc(&left)), Arc::new(doc(&right)));
+    let pool = pool();
+    let live = compare_live(
+        CompareInput {
+            left: l.clone(),
+            right: r.clone(),
+            format: format.clone(),
+            rules: TextRules::default(),
+            bytes_identical: false,
+            force_tokenize: false,
+            anchors: Vec::new(),
+        },
+        &RegexLimits::default(),
+        Some(&pool),
+        &Ctl::detached(),
+        None,
+    )
+    .unwrap();
+    let ed = |d: Arc<TextDocument>| {
+        EditableDocument::new(d, EditOptions::default(), Editability::EDITABLE)
+    };
+    (ed(l), ed(r), live)
+}
+
+/// One measured edit: `note_edit`, then the recompare (job, run, install). Returns (note, recompare).
+fn g8_measure(
+    live: &mut LiveComparison,
+    docs: (&EditableDocument, &EditableDocument),
+    side: Side,
+    out: &EditOutcome,
+) -> (Duration, Duration, hikasa_text::PathCounters) {
+    let doc = if side == Side::Left { docs.0 } else { docs.1 };
+    let t = Instant::now();
+    live.note_edit(side, doc, out);
+    let note = t.elapsed();
+    let t = Instant::now();
+    let job = live.recompare_job(Pair::new(docs.0, docs.1));
+    let done = job.run(None, &Ctl::detached()).unwrap();
+    let path = done.path;
+    live.install(done, Pair::new(docs.0, docs.1));
+    (note, t.elapsed(), path)
+}
+
+/// Rows of `state` in the current comparison (left line holders), seeded picks.
+fn g8_lines(live: &LiveComparison, state: RowState, rng: &mut XorShift, count: usize) -> Vec<u32> {
+    let cmp = live.current();
+    let mut picks = Vec::new();
+    while picks.len() < count {
+        let r = rng.below(u64::from(cmp.row_count())) as u32;
+        let row = cmp.row(RowIdx(r)).unwrap();
+        if row.state == state
+            && let Some(l) = row.left
+        {
+            picks.push(l.0);
+        }
+    }
+    picks
+}
+
+fn g8_report(
+    name: &str,
+    notes: &mut [Duration],
+    recompares: &mut [Duration],
+    limit_ms: f64,
+) -> bool {
+    notes.sort();
+    recompares.sort();
+    let worst = recompares.last().copied().unwrap_or_default();
+    let pass = worst.as_secs_f64() * 1000.0 < limit_ms
+        && notes.last().is_none_or(|n| n.as_secs_f64() < 0.001);
+    println!(
+        "gate G8 {name}: recompare median {:.2} ms, worst {:.2} ms (limit {limit_ms} ms each); note_edit median {:.3} ms, worst {:.3} ms (limit 1 ms); load {} {}",
+        recompares[recompares.len() / 2].as_secs_f64() * 1000.0,
+        worst.as_secs_f64() * 1000.0,
+        notes[notes.len() / 2].as_secs_f64() * 1000.0,
+        notes.last().unwrap().as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    pass
+}
+
+fn type_char(doc: &mut EditableDocument, line: u32) -> EditOutcome {
+    let len = doc.line_len(LineIdx(line));
+    let at = TextPos::new(line, len / 2);
+    let at = doc.clamp(at);
+    doc.apply(
+        &EditRequest::Replace {
+            range: at..at,
+            text: "x".into(),
+            keep_eols: false,
+        },
+        GroupHint::None,
+    )
+    .unwrap()
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_type_and_changed_lines() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0001);
+    let mut ok = true;
+    for (name, state) in [
+        ("type (same line)", RowState::Same),
+        ("changed (changed line)", RowState::Changed),
+    ] {
+        let (mut notes, mut recs) = (Vec::new(), Vec::new());
+        for line in g8_lines(&live, state, &mut rng, 20) {
+            let out = type_char(&mut left, line);
+            let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            notes.push(n);
+            recs.push(r);
+        }
+        ok &= g8_report(name, &mut notes, &mut recs, 50.0);
+    }
+    assert!(ok);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_lines_split_delete_paste() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0002);
+    let mut ok = true;
+    let paste: String = (0..100)
+        .map(|k| format!("    pasted_{k} = {k};\n"))
+        .collect();
+    for name in ["enter", "delete line", "paste 100 lines"] {
+        let (mut notes, mut recs) = (Vec::new(), Vec::new());
+        for _ in 0..20 {
+            let line = rng.below(u64::from(left.line_count() - 2)) as u32;
+            let len = left.line_len(LineIdx(line));
+            let req = match name {
+                "enter" => {
+                    let at = left.clamp(TextPos::new(line, len / 2));
+                    EditRequest::Replace {
+                        range: at..at,
+                        text: "\n".into(),
+                        keep_eols: false,
+                    }
+                }
+                "delete line" => EditRequest::Replace {
+                    range: TextPos::new(line, 0)..TextPos::new(line + 1, 0),
+                    text: String::new(),
+                    keep_eols: false,
+                },
+                _ => {
+                    let at = TextPos::new(line, 0);
+                    EditRequest::Replace {
+                        range: at..at,
+                        text: paste.clone(),
+                        keep_eols: false,
+                    }
+                }
+            };
+            let out = left.apply(&req, GroupHint::None).unwrap();
+            let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            notes.push(n);
+            recs.push(r);
+        }
+        ok &= g8_report(name, &mut notes, &mut recs, 50.0);
+    }
+    assert!(ok);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_copy_section() {
+    let (left, mut right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0003);
+    let (mut notes, mut recs) = (Vec::new(), Vec::new());
+    let cmp = live.current().clone();
+    let sections: Vec<_> = cmp
+        .sections()
+        .iter()
+        .filter(|s| s.rows.end - s.rows.start >= 3)
+        .cloned()
+        .collect();
+    for _ in 0..20 {
+        let s = &sections[rng.below(sections.len() as u64) as usize];
+        let cmp = live.current().clone();
+        let Some(id) = cmp.section_at(RowIdx(s.rows.start)) else {
+            continue;
+        };
+        let rows = cmp.sections()[id.0 as usize].rows.clone();
+        let rows = rows.start..rows.end.min(rows.start + 10);
+        let edit = copy_rows(&cmp, rows, Side::Left).unwrap();
+        let out = right.apply(&edit.request, GroupHint::None).unwrap();
+        let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Right, &out);
+        notes.push(n);
+        recs.push(r);
+    }
+    assert!(g8_report(
+        "copy section (≤ 10 rows) to right",
+        &mut notes,
+        &mut recs,
+        50.0
+    ));
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_undo_and_memory() {
+    let (mut left, right, mut live) = g8_setup();
+    let original = live.current().clone();
+    let mut rng = XorShift(0x6008_0004);
+    let rss0 = peak_rss_mib();
+    let mut worst = Duration::ZERO;
+    for k in 0..1000 {
+        let line = rng.below(u64::from(left.line_count())) as u32;
+        let out = type_char(&mut left, line);
+        live.note_edit(Side::Left, &left, &out);
+        if k % 50 == 49 {
+            let t = Instant::now();
+            let done = live
+                .recompare_job(Pair::new(&left, &right))
+                .run(None, &Ctl::detached())
+                .unwrap();
+            live.install(done, Pair::new(&left, &right));
+            worst = worst.max(t.elapsed());
+        }
+    }
+    let rss1 = peak_rss_mib();
+    let t = Instant::now();
+    while let Some(out) = left.undo() {
+        live.note_edit(Side::Left, &left, &out);
+    }
+    let done = live
+        .recompare_job(Pair::new(&left, &right))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    let path = done.path;
+    live.install(done, Pair::new(&left, &right));
+    let undo = t.elapsed();
+    let same = format!("{:?}", live.current().runs()) == format!("{:?}", original.runs())
+        && live.current().stats() == original.stats();
+    let pass = undo < Duration::from_secs(1) && same;
+    println!(
+        "gate G8 undo: 1,000 undos + note_edits + one recompare {:.3} s (limit 1 s), equal to the original {same}; recompare after 50 edits worst {:.1} ms; path {path:?}; load {} {}",
+        undo.as_secs_f64(),
+        worst.as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    let growth = rss1.saturating_sub(rss0);
+    let mem_pass = growth < 10;
+    println!(
+        "gate G8 memory: peak RSS growth over 1,000 edits and their recompares {growth} MiB (limit 10 MiB) {}",
+        if mem_pass { "PASS" } else { "FAIL" }
+    );
+    assert!(pass && mem_pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate (reported)"]
+fn g8_worst_prefix_edit() {
+    let (mut left, right, mut live) = g8_setup();
+    let (mut notes, mut recs) = (Vec::new(), Vec::new());
+    let out = type_char(&mut left, 0);
+    let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+    notes.push(n);
+    recs.push(r);
+    println!(
+        "gate G8 worst (a character in the common prefix: the root re-runs): {:.1} ms, path {path:?} (reported)",
+        r.as_secs_f64() * 1000.0
+    );
+}
