@@ -235,7 +235,8 @@ impl EditableDocument {
         opts: EditOptions,
         editability: Editability,
     ) -> EditableDocument {
-        let doc = Arc::try_unwrap(doc).unwrap_or_else(|shared| (*shared).clone());
+        let mut doc = Arc::try_unwrap(doc).unwrap_or_else(|shared| (*shared).clone());
+        doc.normalize_wrap(opts.chars_per_line_limit);
         let eol = doc.eol();
         let insert_eol = if eol.lf + eol.crlf + eol.cr > 0 {
             eol.dominant()
@@ -485,12 +486,40 @@ impl EditableDocument {
 
     /// True when a step can be undone.
     pub fn can_undo(&self) -> bool {
-        self.log.can_undo()
+        self.log.can_undo() && self.editability().editable()
     }
 
-    /// True when a step can be redone.
+    /// True when a step can be redone (and the pane is not blocked).
     pub fn can_redo(&self) -> bool {
-        self.log.can_redo()
+        self.log.can_redo() && self.editability().editable()
+    }
+
+    /// Undoes the last step (§1.10.4): its inverse changes, applied as one edit, so the live comparison sees an
+    /// edit. `None` when there is nothing to undo or the pane is blocked (undo changes the text like any edit;
+    /// [`EditableDocument::try_undo`] gives the block).
+    pub fn undo(&mut self) -> Option<EditOutcome> {
+        self.try_undo().ok().flatten()
+    }
+
+    /// Redoes the last undone step; `None` when there is none or the pane is blocked.
+    pub fn redo(&mut self) -> Option<EditOutcome> {
+        self.try_redo().ok().flatten()
+    }
+
+    /// [`EditableDocument::undo`] with the reason of a refusal: `Err(Blocked)` when the pane may not be edited.
+    pub fn try_undo(&mut self) -> Result<Option<EditOutcome>, EditError> {
+        if let Some(block) = self.editability().first() {
+            return Err(EditError::Blocked(block));
+        }
+        Ok(self.undo_unchecked())
+    }
+
+    /// [`EditableDocument::redo`] with the reason of a refusal.
+    pub fn try_redo(&mut self) -> Result<Option<EditOutcome>, EditError> {
+        if let Some(block) = self.editability().first() {
+            return Err(EditError::Blocked(block));
+        }
+        Ok(self.redo_unchecked())
     }
 
     /// Drops the undo log (W11's *Recompare Files*, a reload); marks stay.

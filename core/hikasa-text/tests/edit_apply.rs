@@ -327,3 +327,79 @@ fn a_batch_is_one_step() {
         .unwrap_err();
     assert_eq!(err, EditError::BadRange);
 }
+
+/// Undo and redo change the text like any edit: a blocked pane refuses them too (`try_undo` gives the block),
+/// `can_undo`/`can_redo` are false while it is blocked, and nothing changes; once editable again they work.
+#[test]
+fn undo_and_redo_respect_the_editability() {
+    use hikasa_text::edit::EditBlock;
+    let mut d = doc("one\ntwo\n");
+    replace(&mut d, (0, 0), (0, 3), "ONE", false).unwrap();
+    replace(&mut d, (1, 0), (1, 3), "TWO", false).unwrap();
+    d.undo().unwrap();
+    assert_eq!(text(&d), "ONE\ntwo\n");
+    let generation = d.generation();
+    d.set_editability(Editability::with_blocks(
+        [EditBlock::ReadOnlyLocation],
+        true,
+    ));
+    assert!(!d.can_undo() && !d.can_redo());
+    assert_eq!(d.undo(), None);
+    assert_eq!(d.redo(), None);
+    assert_eq!(
+        d.try_undo().unwrap_err(),
+        EditError::Blocked(EditBlock::ReadOnlyLocation)
+    );
+    assert_eq!(
+        d.try_redo().unwrap_err(),
+        EditError::Blocked(EditBlock::ReadOnlyLocation)
+    );
+    assert_eq!(text(&d), "ONE\ntwo\n");
+    assert_eq!(d.generation(), generation);
+    d.set_editability(Editability::EDITABLE);
+    assert!(d.can_undo() && d.can_redo());
+    d.redo().unwrap();
+    assert_eq!(text(&d), "ONE\nTWO\n");
+    assert!(d.try_undo().unwrap().is_some());
+    assert_eq!(text(&d), "ONE\ntwo\n");
+}
+
+/// An editor wraps edited physical lines at its own characters-per-line limit, so `EditableDocument::new`
+/// re-wraps a document loaded with another limit (or none) once: an edit and its undo then give back the table
+/// the editor started from, whichever limit the load used.
+#[test]
+fn the_editor_wraps_at_its_own_limit_from_the_start() {
+    use hikasa_text::{DocOrigin, LoadOptions};
+    let source = "abcdefghijklmnop\nxy\nqrstuvwxyz";
+    let format = hikasa_text::CompiledFormat::everything_else();
+    for (load, edit) in [
+        (None, Some(6)),
+        (Some(6), None),
+        (Some(4), Some(6)),
+        (Some(6), Some(6)),
+    ] {
+        let opts = LoadOptions {
+            chars_per_line_limit: load,
+            ..LoadOptions::default()
+        };
+        let loaded =
+            TextDocument::from_bytes(source.as_bytes(), &format, &opts, DocOrigin::default())
+                .unwrap();
+        let mut d = EditableDocument::new(
+            Arc::new(loaded),
+            EditOptions {
+                chars_per_line_limit: edit,
+                ..EditOptions::default()
+            },
+            Editability::EDITABLE,
+        );
+        d.document().check_line_table(edit).unwrap();
+        let start = lines(&d);
+        assert_eq!(text(&d), source);
+        replace(&mut d, (0, 2), (0, 2), "Z", false).unwrap();
+        d.document().check_line_table(edit).unwrap();
+        d.undo().unwrap();
+        assert_eq!(lines(&d), start, "load {load:?}, edit {edit:?}");
+        d.document().check_line_table(edit).unwrap();
+    }
+}

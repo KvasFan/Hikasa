@@ -483,8 +483,9 @@ impl EditableDocument {
         Ok(outcome(id, &deltas, selection))
     }
 
-    /// Undoes the last step: its inverse changes, applied as an edit (the live comparison sees it as one).
-    pub fn undo(&mut self) -> Option<EditOutcome> {
+    /// Undoes the last step: its inverse changes, applied as an edit (the live comparison sees it as one). The
+    /// editability is checked by [`EditableDocument::try_undo`].
+    pub(crate) fn undo_unchecked(&mut self) -> Option<EditOutcome> {
         let mut step = self.log.take_undo()?;
         self.generation += 1;
         let generation = self.generation;
@@ -511,8 +512,8 @@ impl EditableDocument {
         Some(outcome(id, &deltas, selection))
     }
 
-    /// Redoes the last undone step.
-    pub fn redo(&mut self) -> Option<EditOutcome> {
+    /// Redoes the last undone step (the editability is checked by [`EditableDocument::try_redo`]).
+    pub(crate) fn redo_unchecked(&mut self) -> Option<EditOutcome> {
         let mut step = self.log.take_redo()?;
         self.generation += 1;
         let generation = self.generation;

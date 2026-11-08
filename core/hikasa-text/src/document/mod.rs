@@ -412,6 +412,39 @@ impl TextDocument {
         Ok(())
     }
 
+    /// Makes the artificial breaks those of the characters-per-line limit `cpl` (§1.10.3: an editor wraps every
+    /// edited physical line at its own limit, so a document loaded with another limit, or without one, is
+    /// re-wrapped once when it opens; else an undo would not restore the loaded table). A document already wrapped
+    /// at `cpl` is left as it is (marks kept); the check is O(lines) and re-wrapping O(text). True when the table
+    /// changed.
+    pub(crate) fn normalize_wrap(&mut self, cpl: Option<u32>) -> bool {
+        let t = &self.lines;
+        let no_artificial = t.artificial_count() == 0;
+        let fits =
+            |c: u32| (0..t.len()).all(|l| t.content(l).is_none_or(|(s, e)| e - s <= c as usize));
+        if no_artificial && cpl.is_none_or(fits) {
+            return false;
+        }
+        let text = self.rope.to_string();
+        let Ok((built, eol)) =
+            LineTable::build(text.as_bytes(), cpl, "edit", &CancelToken::never())
+        else {
+            return false;
+        };
+        let same = built.len() == t.len()
+            && (0..built.len()).all(|l| {
+                built.content(l) == t.content(l)
+                    && built.eol(l) == t.eol(l)
+                    && built.physical(l) == t.physical(l)
+            });
+        if same {
+            return false;
+        }
+        self.lines = built;
+        self.eol = eol;
+        true
+    }
+
     /// The block layout: lines per block, whether line → block is a division, and an identity per block (equal
     /// identities are shared blocks). **Not a stable API** (tests of D-260).
     #[doc(hidden)]

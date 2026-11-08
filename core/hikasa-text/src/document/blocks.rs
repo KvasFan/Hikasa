@@ -234,6 +234,12 @@ impl LineTable {
         self.len
     }
 
+    /// Number of `Artificial` lines.
+    #[inline]
+    pub(crate) fn artificial_count(&self) -> usize {
+        self.artificial.len()
+    }
+
     /// Bytes of the text.
     #[inline]
     pub(crate) fn text_len(&self) -> u32 {
