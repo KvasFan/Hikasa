@@ -479,6 +479,23 @@ pub(crate) fn run_segments(
             });
         }
     }
+    // Myers never applies closeness: `align` warns on every input, so the segments do too, even when no segment
+    // reached the engine (empty input, only 1:1 pairs).
+    if opts.algorithm == Algorithm::Myers
+        && opts.closeness.is_some()
+        && !auto
+        && !warnings
+            .iter()
+            .any(|w| w.code == hikasa_core::WarningCode::ClosenessIgnored)
+    {
+        warnings.push(hikasa_core::Warning {
+            code: hikasa_core::WarningCode::ClosenessIgnored,
+            message: "closeness matching does not apply to the Myers algorithm; differing lines are paired by \
+                      position"
+                .to_owned(),
+            spec: None,
+        });
+    }
     let reported = if !auto {
         opts.algorithm
     } else if any_standard {
