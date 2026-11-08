@@ -1,0 +1,477 @@
+{
+  "schema": "hikasa.text_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a.txt",
+      "size": 84,
+      "mtime": "2026-10-19T13:12:00Z",
+      "lines": 16,
+      "encoding": "UTF-8",
+      "encoding_source": "locale_fallback",
+      "bom": false,
+      "eol": "lf",
+      "binary": false,
+      "malformed": 0,
+      "converted": false
+    },
+    "right": {
+      "spec": "<TMP>/b.txt",
+      "size": 103,
+      "mtime": "2026-10-19T13:12:00Z",
+      "lines": 17,
+      "encoding": "UTF-8",
+      "encoding_source": "locale_fallback",
+      "bom": false,
+      "eol": "lf",
+      "binary": false,
+      "malformed": 0,
+      "converted": false
+    },
+    "format": {
+      "id": null,
+      "name": "Everything Else",
+      "kind": "text",
+      "reason": {
+        "reason": "fallback",
+        "id": null,
+        "mask": null
+      }
+    },
+    "detection": {
+      "left": {
+        "reason": "fallback",
+        "id": null,
+        "mask": null
+      },
+      "right": {
+        "reason": "fallback",
+        "id": null,
+        "mask": null
+      }
+    },
+    "algorithm": "standard",
+    "rules": {
+      "schema_version": 1,
+      "importance": {
+        "elements": {},
+        "leading_whitespace": true,
+        "embedded_whitespace": true,
+        "trailing_whitespace": true,
+        "everything_else": true,
+        "everything_else_case_sensitive": true,
+        "unimportant": [],
+        "orphans_always_important": true,
+        "compare_line_endings": false
+      },
+      "alignment": {
+        "algorithm": "auto",
+        "skew_tolerance": 300,
+        "closeness": true,
+        "closeness_threshold_permille": 500,
+        "never_align_differences": false
+      }
+    },
+    "anchors": [
+      {
+        "kind": "pair",
+        "left": [
+          10,
+          15
+        ],
+        "right": [
+          12,
+          14
+        ],
+        "side": null,
+        "lines": null
+      }
+    ],
+    "ignore_unimportant": false,
+    "verdict": {
+      "result": "important_differences"
+    },
+    "stats": {
+      "rows": 21,
+      "same_rows": 12,
+      "changed_rows": 0,
+      "left_only_rows": 4,
+      "right_only_rows": 5,
+      "important_rows": 9,
+      "unimportant_rows": 0,
+      "important": {
+        "added": 2,
+        "deleted": 0,
+        "changed": 3,
+        "original": 4
+      },
+      "unimportant": {
+        "added": 0,
+        "deleted": 0,
+        "changed": 0,
+        "original": 0
+      },
+      "sections": 3,
+      "important_sections": 3,
+      "left_lines": 16,
+      "right_lines": 17
+    },
+    "sections": [
+      {
+        "id": 0,
+        "kind": "add",
+        "importance": "important",
+        "rows": [
+          0,
+          2
+        ],
+        "left_lines": [
+          1,
+          1
+        ],
+        "right_lines": [
+          1,
+          3
+        ]
+      },
+      {
+        "id": 1,
+        "kind": "change",
+        "importance": "important",
+        "rows": [
+          11,
+          13
+        ],
+        "left_lines": [
+          10,
+          11
+        ],
+        "right_lines": [
+          12,
+          13
+        ]
+      },
+      {
+        "id": 2,
+        "kind": "change",
+        "importance": "important",
+        "rows": [
+          14,
+          19
+        ],
+        "left_lines": [
+          12,
+          15
+        ],
+        "right_lines": [
+          14,
+          16
+        ]
+      }
+    ],
+    "display": {
+      "mode": "all",
+      "lines": null,
+      "toggles": [
+        "same",
+        "left_orphans",
+        "right_orphans",
+        "differences"
+      ]
+    },
+    "items": [
+      {
+        "type": "row",
+        "row": 0,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 1,
+          "text": "header one"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 1,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 2,
+          "text": "header two"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 2,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 1,
+          "text": "alpha"
+        },
+        "right": {
+          "line": 3,
+          "text": "alpha"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 3,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 2,
+          "text": "beta"
+        },
+        "right": {
+          "line": 4,
+          "text": "beta"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 4,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 3,
+          "text": "gamma"
+        },
+        "right": {
+          "line": 5,
+          "text": "gamma"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 5,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 4,
+          "text": "delta"
+        },
+        "right": {
+          "line": 6,
+          "text": "delta"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 6,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 5,
+          "text": "epsilon"
+        },
+        "right": {
+          "line": 7,
+          "text": "epsilon"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 7,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 6,
+          "text": "zeta"
+        },
+        "right": {
+          "line": 8,
+          "text": "zeta"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 8,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 7,
+          "text": "eta"
+        },
+        "right": {
+          "line": 9,
+          "text": "eta"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 9,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 8,
+          "text": "theta"
+        },
+        "right": {
+          "line": 10,
+          "text": "theta"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 10,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 9,
+          "text": "iota"
+        },
+        "right": {
+          "line": 11,
+          "text": "iota"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 11,
+        "state": "left_only",
+        "importance": "important",
+        "left": {
+          "line": 10,
+          "text": "kappa"
+        },
+        "right": null,
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 12,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 12,
+          "text": "KAPPA"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 13,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 11,
+          "text": "lambda"
+        },
+        "right": {
+          "line": 13,
+          "text": "lambda"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 14,
+        "state": "left_only",
+        "importance": "important",
+        "left": {
+          "line": 12,
+          "text": "mu"
+        },
+        "right": null,
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 15,
+        "state": "left_only",
+        "importance": "important",
+        "left": {
+          "line": 13,
+          "text": "nu"
+        },
+        "right": null,
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 16,
+        "state": "left_only",
+        "importance": "important",
+        "left": {
+          "line": 14,
+          "text": "xi"
+        },
+        "right": null,
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 17,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 14,
+          "text": "mu"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 18,
+        "state": "right_only",
+        "importance": "important",
+        "left": null,
+        "right": {
+          "line": 15,
+          "text": "nu"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 19,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 15,
+          "text": "omicron"
+        },
+        "right": {
+          "line": 16,
+          "text": "omicron"
+        },
+        "inline": null
+      },
+      {
+        "type": "row",
+        "row": 20,
+        "state": "same",
+        "importance": "none",
+        "left": {
+          "line": 16,
+          "text": "pi"
+        },
+        "right": {
+          "line": 17,
+          "text": "pi"
+        },
+        "inline": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

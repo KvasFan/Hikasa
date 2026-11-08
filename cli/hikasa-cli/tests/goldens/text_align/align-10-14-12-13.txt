@@ -1,0 +1,27 @@
+Text Compare
+Left: <TMP>/a.txt (UTF-8, lf)
+Right: <TMP>/b.txt (UTF-8, lf)
+Mode: display: all; ignore unimportant: no
+Rules: format: Everything Else; algorithm: standard (auto); skew: 300; closeness: 500‰; never align: no; unimportant: none; line endings: ignored; orphan lines: always important
+
+                             >  1 header one
+                             >  2 header two
+ 1 alpha                        3 alpha
+ 2 beta                         4 beta
+ 3 gamma                        5 gamma
+ 4 delta                        6 delta
+ 5 epsilon                      7 epsilon
+ 6 zeta                         8 zeta
+ 7 eta                          9 eta
+ 8 theta                       10 theta
+ 9 iota                        11 iota
+10 kappa                     <
+                             > 12 KAPPA
+11 lambda                      13 lambda
+12 mu                        <
+13 nu                        <
+14 xi                        <
+                             > 14 mu
+                             > 15 nu
+15 omicron                     16 omicron
+16 pi                          17 pi

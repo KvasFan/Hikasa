@@ -2,12 +2,15 @@
 //! ([`super::report::run_text`]; the annotated unified diff by default) or `hikasa.text_compare.v1`
 //! (`TextCompareResponse::json`, display `mismatches` by default). `--output`/`--output-to` writes the report to its
 //! target and prints nothing (with `--json` the envelope still goes to stdout). `--gui` sends the request to the GUI
-//! instead (D-50).
+//! instead (D-50). `--align` and `--isolate` (M2 W10a, D-266) become the request's anchors (`parse_anchors`); a line
+//! beyond a document is exit 100.
 
 use hikasa_core::Pair;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{GUI_OPEN_SCHEMA, TEXT_COMPARE_SCHEMA};
-use hikasa_session::api::{ApiOp, GuiOpenRequest, TextCompareRequest, ViewWords, parse_algorithm};
+use hikasa_session::api::{
+    ApiOp, GuiOpenRequest, TextCompareRequest, ViewWords, parse_algorithm, parse_anchors,
+};
 use std::ffi::OsString;
 
 use super::report::{Shape, run_text};
@@ -21,6 +24,13 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
         Err(e) => return fail(ctx, args, &e),
     };
     if args.gui {
+        if !request.anchors.is_empty() {
+            let refused = ApiError::InvalidArgument(
+                "--align and --isolate do not apply with --gui (the window sets its anchors itself)"
+                    .to_owned(),
+            );
+            return fail(ctx, args, &refused);
+        }
         let words = ViewWords {
             display: args.report.display.clone(),
             context_lines: args.report.context,
@@ -74,6 +84,6 @@ pub fn request_of(
         ignore_unimportant: rule.ignore_unimportant,
         base_rules: None,
         format_overrides: Default::default(),
-        anchors: Vec::new(),
+        anchors: parse_anchors(&rule.anchors.align, &rule.anchors.isolate)?,
     })
 }

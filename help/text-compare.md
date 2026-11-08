@@ -14,6 +14,17 @@ verdict.
   `--no-closeness`, `--closeness-threshold <‰>`, `--never-align` tune the alignment.
 - `--ignore-unimportant` (`--iu`) treats unimportant differences as same.
 
+## Anchors
+
+- `--align <L>:<R>` (repeatable) aligns left lines `L` with right lines `R` in a segment of their own: one line
+  number or a range `a-b` on each side, counted from 1 (`--align 10:12`, `--align 10-14:12-13`). Nothing outside
+  the pair is aligned with lines inside it.
+- `--isolate left:<a>[-<b>]`, `--isolate right:<a>[-<b>]` (repeatable) make those lines align with nothing: they
+  are always shown as deleted or inserted.
+- A line beyond the end of a file is an error (exit 100). A pair that overlaps or crosses an earlier one is dropped
+  with the warning `anchor_dropped`. With `--json` the document lists the kept anchors under `anchors`.
+- `hikasa report text` and `hikasa session run` of a Text Compare session take the same flags; `--gui` does not.
+
 ## Reports
 
 - `--display all|mismatches|context|matches` and `--context <n>` choose the lines shown.

@@ -330,9 +330,32 @@ pub struct TextRuleArgs {
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
+    /// Alignment anchors.
+    #[command(flatten)]
+    pub anchors: AnchorArgs,
     /// File name of standard input, for format detection.
     #[arg(long, value_name = "NAME")]
     pub stdin_name: Option<String>,
+}
+
+/// The anchor flags of `text compare`, `report text` and `session run` (M2 W10a, D-266): one owner. The words are
+/// parsed by the core (`parse_anchors`, T11).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct AnchorArgs {
+    /// Align left lines with right lines: `<L>:<R>`, 1-based lines or ranges `a-b` (`10:12`, `10-14:12-13`;
+    /// repeatable).
+    #[arg(long, value_name = "L:R")]
+    pub align: Vec<String>,
+    /// Lines of one side that align with nothing: `left:<a>[-<b>]` or `right:<a>[-<b>]` (repeatable).
+    #[arg(long, value_name = "SIDE:LINES")]
+    pub isolate: Vec<String>,
+}
+
+impl AnchorArgs {
+    /// True when no anchor flag was given.
+    pub fn is_empty(&self) -> bool {
+        self.align.is_empty() && self.isolate.is_empty()
+    }
 }
 
 /// REPORT (M2 W7, §1.7.15): the report flags of `text compare`, `folder compare`, `session run`, `report text` and
@@ -1387,6 +1410,9 @@ pub struct SessionRunArgs {
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
+    /// Text Compare: alignment anchors.
+    #[command(flatten)]
+    pub anchors: AnchorArgs,
     /// The report.
     #[command(flatten)]
     pub report: ReportArgs,

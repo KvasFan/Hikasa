@@ -6,11 +6,12 @@
 use hikasa_core::ExitCode;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{
-    FOLDER_COMPARE_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
-    TEXT_COMPARE_SCHEMA,
+    FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA,
+    SESSION_WRITE_SCHEMA, TEXT_COMPARE_SCHEMA,
 };
 use hikasa_session::api::{
-    ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_assignment,
+    ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_anchors,
+    parse_assignment,
 };
 use hikasa_session::sessions::{SessionRef, SessionType};
 
@@ -186,25 +187,41 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         SessionRef::parse(&args.reference).and_then(|r| ctx.service.session_run_request(&r));
     match request {
         Ok(SessionRunRequest::Text(mut request)) => {
-            if let Err(e) = only_for_sync(args) {
-                return ctx.fail(TEXT_COMPARE_SCHEMA, &e, ApiOp::TextCompare, &[]);
+            let anchors = only_for_sync(args)
+                .and_then(|()| parse_anchors(&args.anchors.align, &args.anchors.isolate));
+            match anchors {
+                Ok(anchors) => request.anchors = anchors,
+                Err(e) => return ctx.fail(TEXT_COMPARE_SCHEMA, &e, ApiOp::TextCompare, &[]),
             }
             request.ignore_unimportant = args.ignore_unimportant;
             report::run_text(ctx, &args.report, request, "unified", Shape::Compare)
         }
         Ok(SessionRunRequest::Folder(mut request)) => {
-            if let Err(e) = only_for_sync(args) {
+            if let Err(e) = only_for_sync(args).and_then(|()| only_for_text(args)) {
                 return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::FolderCompare, &[]);
             }
             request.ignore_unimportant = args.ignore_unimportant;
             report::run_folder(ctx, &args.report, request, "list", Shape::Compare)
         }
         Ok(SessionRunRequest::Sync { request, options }) => {
+            if let Err(e) = only_for_text(args) {
+                return ctx.fail(FOLDER_SYNC_SCHEMA, &e, ApiOp::FolderSync, &[]);
+            }
             folder_sync::run_session(ctx, args, request, options)
         }
         // The kind of the session is not known yet: the folder schema stands for both (exit 100 either way).
         Err(e) => ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::Other, &[]),
     }
+}
+
+/// `--align` and `--isolate` mean something to a Text Compare session only (M2 W10a).
+fn only_for_text(args: &SessionRunArgs) -> Result<(), ApiError> {
+    if !args.anchors.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "--align and --isolate apply to text-compare sessions".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// `--yes`, `--confirm`, `--allow-empty-source`, `--all-rows` mean something to a folder-sync session only: a

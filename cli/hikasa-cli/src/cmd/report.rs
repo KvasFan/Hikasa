@@ -89,6 +89,7 @@ fn text_request(ctx: &Ctx<'_>, args: &ReportTextArgs) -> Result<TextCompareReque
             }
             request.rules_patch = flags.rules_patch;
             request.ignore_unimportant |= flags.ignore_unimportant;
+            request.anchors = flags.anchors;
             Ok(request)
         }
         SessionRunRequest::Folder(_) | SessionRunRequest::Sync { .. } => {
