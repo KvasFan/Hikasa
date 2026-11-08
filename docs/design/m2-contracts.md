@@ -10,16 +10,17 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-258, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-291, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
   Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7 W7 Reports (parts W7a Core, W7b Service and CLI) ·
   §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9 W9 GUI Folder Compare and Folder
-  Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10–§1.14 W10–W14 (outline in plan §6,
-  written before each wave)
+  Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10 W10 Text engine: editing,
+  save, search, overrides (parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
+  navigation) · §1.11–§1.14 W11–W14 (outline in plan §6, written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8 · §6.9 W9
+  §6.8 W8 · §6.9 W9 · §6.10 W10
 
 ---
 
@@ -241,6 +242,39 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-256 | **Beep after long operations** (OPT-015). An operation, a sync or a content compare that ran ≥ 10 s beeps at its end when `beep_after_long_operations` (the W8 beep: a request for attention). **Open default:** 10 s. | OPT-015 is P0 and names no threshold; FC-082 (P1) mentions the option too: the P0 key wins. | 15 |
 | D-257 | **G15 folder GUI** (§1.9.21). M1's folder scan gate with every column and a Size sort; Select All/Invert/restrict ≤ 16.7 ms; a 100,000-item preview's first frame < 1 s and ≤ 16 bytes an item; a 100,000-file sync view plan ≤ 0.5 s after the comparison and per override; completion ≤ 200 ms over 10,000 entries; browsing 100,000 entries ≤ 1 s; scrolling frame work < 16.7 ms everywhere; ARCH-GUI-003 unchanged. A failure is reported, not relaxed. | The plan keeps M1's folder gate with all columns and asks for ARCH-GUI-003 unchanged; the new views need bounds of their own. | 02 |
 | D-258 | **Dependencies** (§1.9.22). No crate; `Cargo.lock` unchanged. Check 2: the reveal commands and arboard's `file_list` only in `host.rs`. Check 7: the model list grows; `gui/` names no planner, executor, resolver, `item_line` or `sync_marker`; planted-violation self-tests. | Plan §3 adds nothing for W9; the rules make *no recomputation* checkable. | 02 |
+| D-259 | **W10 in three sequential parts** (§1.10.1). W10a *Editing and recompare* (block line table, `EditableDocument`, undo, marks, bookmarks, editing commands, editability, anchors and `--align`/`--isolate`, the derivation and INV-ALIGN-8, chunked rows, `LiveComparison`, the exact incremental recompare, G8), W10b *Save, conversions, formats* (save content and plans, questions, targets, archives, backups, CLI-003, conversions and `text convert`, a format per pane, Ignored lines), W10c *Search and navigation* (find and replace, Find in Files and `text find` with `--replace`, navigation and details data, the session link, Text Edit and text pairs, help, docs). Each ends green with its acceptance subset. | W10b saves W10a's documents, W10c's replace is a W10a edit and its replace-in-files a W10b save; W11 can start its editor on W10a. | 16 |
+| D-260 | **Block line table** (§1.10.2). Every `TextDocument`'s line table is a list of `Arc` blocks (512 lines built, split above 1,024, merged below 128) with relative `u32` starts and prefix sums; snapshots share untouched blocks and the rope (copy-on-write); edit marks (8 bytes a line) only in blocks an edit touched. The per-line memory table of §1.10.2 is binding. | O(lines) per edit with M1's flat table; one representation keeps G1/G5 measured on what views use; copy-on-write keeps a live 1M-line comparison within ARCH-GUI-003's margin. | 05 |
+| D-261 | **Positions and edits** (§1.10.3). `TextPos` = line + UTF-8 byte offset in the content; `EditRequest` (`Replace`, `Batch`, `SetEols`, `SetEncoding`); a joined line keeps the later line's terminator; inserted breaks take the document's `insert_eol` (the loaded dominant terminator, else `default_line_ending`), except `keep_eols` copies between panes; edits of wrapped lines re-wrap the physical line. **Open default:** pasted text's line breaks are normalized to `insert_eol`. | One deterministic reading of every edit on mixed-ending files; a paste must not make an LF file mixed; byte offsets are what the rope and the line table index. | 05 |
+| D-262 | **Undo** (TC-060; §1.10.4). Unbounded per document; steps store edits (removed text, displaced marks and bookmarks, selections), never copies; one request = one step (copy section, Replace All, conversions, save options are one each); typing coalesces with the adapter's monotonic time. **Open default:** coalescing within 1,000 ms and at most one word per step. | TC-060's *unbounded, per pane, including copy-section operations*; G8's 10 MiB per 1,000 edits; T1 forbids a clock in core. | 05 |
+| D-263 | **Marks and bookmarks** (TC-061, TC-050; §1.10.5). Line `gen` against `saved_gen` gives Original / Edited / SavedEdit; undo restores marks of steps made after the last save, gives a fresh `gen` to lines restored past a save; a save rebases `orig`. Bookmarks 0–9 per document follow their lines; a removed line's bookmark moves to the removal's start and undo puts it back. **Open default:** bookmarks are not persisted. | Edit + undo = identity (P-EDIT-1) including marks, and a mark never claims a line equals the file when it does not; TC-001 lists bookmarks as document metadata only. | 05 |
+| D-264 | **Editing commands in core** (TC-060, TC-062; §1.10.6). `plan_command` turns each TC-060 command and the selection into an `EditRequest` (normative table: overwrite never replaces a terminator, auto indent copies the split line's leading blanks, backspace unindents to the previous tab stop, word = letters, digits, `_` and the format's `word_chars`); `copy_rows` makes a row range equal to one side as one step. Cursor geometry stays in W11. | T11: the GUI computes no text; the CLI and tests reach the same rules. | 05, 14 |
+| D-265 | **Editability** (TC-003, TC-004, FF-031; §1.10.7). `EditBlock` per cause with *Read-only* / *Editing disabled* texts; new `Vfs::writable` (access check through `rustix`, DOS `R`, archives' writability); `Binary` is lifted only by the user's *edit anyway*; a document without location is editable, Save becomes Save As; `ApiError::EditBlocked` refuses a write of a blocked side in the Service. | TC-004's list made testable; D-184's rule (the Service enforces, views only grey). | 05, 11 |
+| D-266 | **Anchors** (TC-013; §1.10.8). `Anchor::Pair` (Align With: two ranges form their own segment, 1:1 = one row) and `Anchor::Isolate` (lines align with nothing, out of gap pairing); crossing or overlapping pairs dropped with `anchor_dropped`; the alignment is the concatenation of per-segment `align` calls; INV-ALIGN-9; anchors move with edits and survive recompares; `text compare --align`, `--isolate`. No anchors = M1's result bit for bit. | TC-013 in `hikasa-diff` as the plan asks; segments keep each engine untouched and budgets deterministic; the CLI form makes anchors testable and scriptable. | 05, 12 |
+| D-267 | **Derivation and renaming invariance** (§1.10.9). `align_traced` returns the runs of `align` plus a record of each anchor-stage node (ranges, prefix/suffix, chain, blocks, children, work, window slack) and the budget totals; gaps under 64 lines a side are not recorded. INV-ALIGN-8: every engine's runs are invariant under a bijective renaming of token ids (P-ALIGN-REN); an engine found otherwise is fixed by renumbering at entry with M1's goldens unchanged. | An exact incremental recompare needs the full run's decisions and the freedom to re-intern a node's lines locally. | 05 |
+| D-268 | **Live comparison** (TC-061; §1.10.10). `note_edit` splices provisional rows at once (normative splice; rows pending until installed), the recompare runs as a job on snapshots after the adapter's debounce, results carry their generation, a stale result is installed and the newer edits replayed. **Open default:** W11's debounce is 100 ms after the last edit. | A keystroke must repaint in one frame (plan W11) while the exact re-alignment runs off the UI thread; the plan gives the debounce to the adapter. | 05 |
+| D-269 | **Exact incremental recompare** (TC-061; §1.10.11, normative). Dirty lines (keys and weights changed, multi-line grammar states re-converged at checkpoints); descend the derivation while each node's certificate holds (range and prefix/suffix unchanged, no removed or inserted key is or becomes a unique-on-both-sides candidate — exact counts by 16-bit fingerprints verified up to three hits, window slack, budget totals), re-run the first uncertified node, re-extend touched chain blocks, splice; a failed segment root is a full alignment of the segment; T6 fallback to `compare` beyond 25 % of the lines or 200,000 lines. Result = a fresh `compare` (P-EDIT-2). **Open default:** the 25 % / 200,000-line fallback. | The plan's property *incremental = full* holds by construction instead of by luck, while the G1 pair's typical edits re-run one small gap; ≤ 4.6 MiB extra state at 1M lines (fingerprints, checkpoints, derivation). | 05 |
+| D-270 | **Chunked rows** (§1.10.10). `TextComparison` rows in `Arc` chunks of ≤ 1,024 with per-chunk line bases; shifts O(chunks), splices replace touched chunks, comparisons share the rest; `row()` keeps G5. `TextComparison::provisional()` and `anchors()` added. | A provisional splice per keystroke and 1,000 undos under 1 s need sub-linear row updates; sharing keeps memory flat across recompares. | 05 |
+| D-271 | **G8 editing** (§1.10.26). On the G1 pair: one-character edits in same and changed lines, Enter, line delete, 100-line paste, section copy each re-aligned < 50 ms; `note_edit` < 1 ms; 1,000 undos with their splices and one recompare < 1 s; RSS growth < 10 MiB per 1,000 edits (counting-allocator CI test on 100,000 lines); save ≤ 1.5 × `vfs cp` + 0.1 s; find < 150 / 400 ms; Find in Files over 10,000 files ≤ 1 s and thread-independent order; cancels ≤ 100 ms; G1, G5 unchanged; the root re-run case reported. | The plan's G8 thresholds made concrete on the input G1 already defines; save and search need bounds of their own. | 02 |
+| D-272 | **Save content** (TC-001, TC-003, TC-005; §1.10.12). Unchanged line runs are spliced byte for byte from the source (re-read, checked by stamp and CRC-32 taken at load; line offsets by a terminator scan valid for every supported encoding); edited lines encoded; BOM kept; artificial breaks removed; a Ctrl-Z tail kept; a whole re-encode only on an encoding change, no source, an overwritten changed source, or an edited ISO-2022-JP document. Format *when saving* options on edited and new lines, applied as an undo step before writing. **Open default:** save options apply to edited lines only; a Ctrl-Z tail is written back. | Byte-exact unchanged lines for lossy decodes and non-round-trip encodings, which re-encoding cannot give; unchanged lines must not be rewritten by an option. | 05, 10 |
+| D-273 | **Save is a T12 plan** (§1.10.13). An `ops::Plan` of kind `Batch` with the new `Action::Write`, content streamed from `SaveSource` (a read-only one-file `Vfs`), `expect.target` = the stamp at planning, W6's backups and archive batches, W3's per-item results; several documents are one plan; a save without a question executes at once after planning. | §1.6.2: `ops` is the only writer; a stamp refuses exactly what changed; streaming keeps memory O(edited text). | 01, 11 |
+| D-274 | **Save questions** (§1.10.14). `ChangedOnDisk` (content differs: overwrite re-encodes), `ReadOnlyTarget`, `Unmappable` (never numeric references; replace with the encoding's substitute, or Save as UTF-8 in the GUI), `LossyRewritten`, `ReplaceExisting`, `OverwriteBackup`, driven by W6's machine; CLI `--force`, `--yes`, `--unmappable`. **Open default:** unmappable characters are asked, not refused or replaced silently. | W4c/W5's *changed since* pattern for files the user edited; a save must never alter text the user did not see. | 05 |
+| D-275 | **Save targets** (§1.10.14). Links followed (the link stays), special files refused, Save As moves the document's location, `--savetarget` redirects the in-place save of a Text Edit view or of a Text Compare's **right** pane (the source stays the splice source), a document without location saves as. **Open default:** `--savetarget` applies to the right pane. | docs/11's save semantics; a version-control tool hands the working copy on the right; docs/12 does not name a side. | 11, 12 |
+| D-276 | **Archive members are editable** when their archive can be written (zip, tar family, nested; revises TC-002's W5 *read-only* note): a save is the member's `open_write`, one rebuild, one archive backup; single-stream members are `ArchiveReadOnly`. | Q8 = a made those writes possible (D-63, D-148); TC-004 makes only *read-only archives* read-only. | 05, 11 |
+| D-277 | **Backups of saves** (OPT-008; §1.10.14). `back_up_before_save` (default true) with `naming`/`folder`, `BackupPolicy::target(…, rel = None)` (the hook of §1.6.23), one generation, Save As backs up the replaced file; `--nobackups`, `--no-backup` off, `--backup` on; a failed backup fails the item. | W6's rules reused; the hook of D-167. | 15 |
+| D-278 | **CLI-003 switches** (§1.10.22). `--edit` opens Text Edit views (one per spec; `--fv` last wins; `unsupported_view` until W11), `--ro*` block panes, `--savetarget` is `OpenOptions::save_target` (additive), `--nobackups` covers saves; `--edit` and `--savetarget` leave `switch_ignored`. **Open default:** `--edit` with two specs opens two views. | docs/12 §2 meanings with M2's parser (D-51) and D-190's precedent. | 12 |
+| D-279 | **Conversions** (TC-063; §1.10.15). Normative per-line rules for TrimTrailing (Unicode `White_Space`), LeadingSpacesToTabs, TabsToSpaces (display columns), LineEndings (also changes `insert_eol`); one step each; *Converted N lines*; idempotent (P-CONVERT). **Open default:** a selection spanning lines converts its lines, else the file. | TC-063's items with one reading each; counting lines changed matches *Converted N lines*. | 05 |
+| D-280 | **`hikasa text convert`** (§1.10.15). Several conversions in a fixed order, `--encoding`, `--bom`/`--no-bom`, `--lines`; stdout without `--in-place`/`--output`; `--in-place` is one plan with backups; `no_change` items are not rewritten; questions as D-274; `hikasa.text_convert.v1`; exit 0/100. **Open default:** stdout as the default target; no operation question for an explicit file list. | docs/12's row extended to what the editor can do (T11); unchanged lines stay byte-exact on this path too. | 12 |
+| D-281 | **A format per pane** (FF-003; revises D-15, plan §5.3). Default unchanged (D-15); on request (`--left-format`, `--right-format`, `[specs] left_format`/`right_format`, the pane picker) each side is tokenized with its own grammar, rules apply by element name, a side without grammar is plain text; Auto picks Histogram when either side has a grammar; `right_format` in JSON. **Open default:** per-side formats only when asked. | M1 goldens and G1 stay; FF-003's pick per pane works without a merged grammar. | 05, 10, 12 |
+| D-282 | **Ignored lines** (TC-024; §1.10.17). Line ranges per side; an ignored row counts as same for display, navigation, statistics (`ignored_rows`), verdict, exit code and reports, alignment unchanged; marks follow edits; `[specs] ignored_left/right` + `ignored_check_left/right` (CRC of the marked text; a mismatch drops them with `ignored_lines_dropped`); `--ignored`. **Open default:** ignored rows count as same for the verdict; auto-saved sessions keep them too. | D-171's reading for folders (Ignored changes the category, not the content); line numbers are only meaningful for the file they were set on. | 03, 05, 12 |
+| D-283 | **Find and replace** (TC-064; §1.10.18). `hikasa_formats::Pattern` (regex, then fancy-regex with T9 limits), per line (a line-break-only pattern refused), whole word by the format's word characters, comparison order by row then left side, wrap once; replacements `$1`, `${name}`, `$$` — D-180's expansion moves to `hikasa_formats::template` and the rename uses it. **Open default:** matches never span lines. | One engine policy (T11, D-180) and no new crate; per-line matching is what grammars and the element inserter (FF-028) assume. | 05, 10 |
+| D-284 | **Find in Files** (TC-064; §1.10.19). A cancellable job over the VFS: sorted pre-order traversal, FC-050 masks, recursion, hidden items, archives as files or opened, detected encodings, binary and too-large files skipped, External conversion only with `convert`; parallel per file with an ordered window (results independent of threads); events streamed to a sink; limits. **Open default:** 100,000 hits, 10,000 per file, 128 MiB per file, 400-character previews, archives not opened, no conversion. | Deterministic output (T2) with parallel reads; the sink owns the results so memory does not grow with them. | 05 |
+| D-285 | **`hikasa text find`** (§1.10.19). docs/12's form plus `--mask`, `--include-hidden`, `--archives`, `--encoding`, `--convert`, limits, `--files-with-matches`, `--count`, `--replace` (a T12 plan with W6's operation question, `--yes`, `--confirm`, `--dry-run`, backups); `hikasa.text_find.v1`. **Open default:** exit 0 whether or not something matched; replace-in-files is offered. | CLI-004 gives 1 to *binary same*; a headless replace over many files is the mutation T12 was made for. | 12 |
+| D-286 | **Navigation data** (TC-050, TC-051; §1.10.20). `nav::step` per browse mode (sections skipping ignored and, with Ignore Unimportant, unimportant ones; inline differences range by range; edits; find), `existing_line`, Go To on physical lines and character columns, wrap from OPT-007. **Open default:** columns count characters (the ruler shows display columns). | One implementation for toolbar arrows, menus and tests; TC-003's physical numbering is what the gutter shows. | 05 |
+| D-287 | **Details data** (TC-033; §1.10.20). Hex Details encode the current line with the document's encoding (capped), Alignment Details align characters with M1's inline engine and its classes, the ruler's marks; Text Details is an editor on the same document. | The panel shows what a save would write and the same colours as the panes. | 05 |
+| D-288 | **Session link** (TC-052; §1.10.21). `next_difference_file` over every scanned row (pairs of files with differences, not ignored, under the display filter, optionally the folder only, wrap); Copy File and Open Next as a list of steps (save source edits, discard target edits, W6's copy plan, next pair). **Open default:** with the parent view closed, the parent session is compared again in a job. | The child view must work when its parent tab is gone (a restored workspace); the copy reuses W6's plan and read-only rules. | 05 |
+| D-289 | **Text Edit and text pairs** (TE-001, TC-064; §1.10.21). `text_edit_open` (one document, session type `text-edit` with `left_*` keys); `text_compare_texts` for Compare Selection to Clipboard (documents from text, no location). | TE-001's model without a comparison; clipboard comparisons need no file. | 05 |
+| D-290 | **`[text_editing] default_line_ending`** (OPT-006, P0): `platform` (default; CRLF on Windows, LF elsewhere, resolved by the host), `lf`, `crlf`, `cr`; used for documents without a terminated line. **Open default:** `platform`. | A new or one-line file needs a terminator for Enter; T1 keeps the platform out of core. | 15 |
+| D-291 | **Dependencies** (§1.10.25). No crate; every manifest unchanged; `Pattern` reused for search, `rustix` for `access`, the VFS's CRC primitive (+ `crc32_bytes`) for stamps. Check 2: no fs, process, net or clock in `hikasa-text`/`hikasa-diff`; check 7: the adapters name no engine, planner or encoder entry point and mutate no rope. | Plan §3 adds nothing for W10; the rules make *logic in core* checkable for text. | 02 |
 
 ### 0.4 Dependencies
 
@@ -272,6 +306,9 @@ already holds through `fontique` (no new package), and `xmllint` is a CI tool, n
 check 2, check 4 and check 7 change as §1.8.16 says.
 **W9** (D-258) adds no crate: arboard 3.7's file lists need no feature and no package; `Cargo.lock` and the member
 manifests of check 3 are unchanged; check 2 and check 7 gain the rules of §1.9.22.
+**W10** (D-291) adds no crate: search reuses `hikasa_formats::Pattern` (`regex`, `fancy-regex`), the access check `rustix`
+(already `hikasa-vfs`'s), stamps the VFS's CRC primitive; `Cargo.lock` and the member manifests of check 3 are unchanged;
+check 2 and check 7 gain the rules of §1.10.25.
 
 ### 0.5 Documentation updates of W0
 
@@ -9135,7 +9172,1075 @@ Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`,
 | F16: Shift+F10 and the Menu key open nothing | `pointer::w9c_the_keyboard_opens_the_pane_menu` |
 | F17: Enter applies while the view is busy | `tabs::a_busy_view_keeps_the_typed_filter_and_presets_leave_the_field` |
 
-### 1.10–1.14 W10–W14
+### 1.10 W10 — Text engine: editing, save, search, overrides
+
+**Ids.** TC-001 (preservation on save: encoding, BOM, line endings; the per-pane encoding override as data), TC-003 (the
+artificial breaks removed on save; *edit anyway?* as data), TC-004 (editability), TC-005 (Save, Save As, backups,
+`--savetarget`, the format's *when saving* options; *Using Profile* P1), TC-013 (Align With, Isolate; saved anchors P1),
+TC-024 (Ignored lines), TC-033 (the Details panel's and the ruler's data), TC-050 (the navigation set's data, Go To,
+bookmarks, browse modes; merge entries D-59), TC-052 (the child-session link: Next/Previous Difference Files, Copy File
+and Open Next; merge entries D-59), TC-060 (the editor's model and commands), TC-061 (incremental recompare, edited
+marks), TC-062 (copy section and line), TC-063 (conversions), TC-064 (Find, Replace, Find in Files, Compare Selection to
+Clipboard), TE-001 (the Text Edit model), FF-003 (a format per pane; D-15 revised), FF-031 (a save conversion makes a
+converted document editable), CLI-003 (`--edit`, `--ro`, `--ro1`, `--ro2`, `--savetarget`, `--nobackups`), CLI-004 (exit
+codes of the two new subcommands), gate G8. Decisions D-259…D-291. Out of scope: every view, panel, dialog and key
+binding (W11: the editor widget, cursor geometry, IME, word wrap, the gutter buttons, the File Info header, the status
+bar, the find panels, the results list, the File Formats dialog), TC-006 *Reload*/*Recompare Files* and the on-disk
+change prompt (P1; W10 gives the data, §1.10.14), TC-013's anchors saved with the session (P1), TC-023 replacements and
+their navigation (P1), Text Merge and every merge or *taken* entry (P1), *Save File Using Profile As…* (P1), remote and
+HTTP sources (P1), the built-in document converters (D-59), TC-065 *Open Clipboard* (W11 over W3's clipboard).
+
+This section is written like §1.8: **core contracts** — types, algorithms (normative where marked), `Service` calls,
+subcommands, JSON, errors, exit codes — that W11 renders without later breaking changes. Every rule that decides what a
+text, a row, a plan or a match is lives here (T11, D-105); W11 adds geometry and input only.
+
+**Files.**
+
+- *`core/hikasa-text/src/`*: `document/` (`mod.rs`; new `blocks.rs`: the block line table; `lines.rs` builds blocks;
+  `load.rs`: the load stamp and CRC); new `edit/` (`mod.rs` `EditableDocument`, `pos.rs`, `apply.rs`, `undo.rs`,
+  `marks.rs`, `commands.rs`, `words.rs`, `editability.rs`); new `live/` (`mod.rs` `LiveComparison`, `splice.rs`,
+  `recompare.rs`, `certify.rs`, `fingerprint.rs`); `compare/` (`mod.rs`, new `store.rs`: chunked rows; `rows.rs`,
+  `sections.rs`, `keys.rs`: per-side formats, checkpoints; new `ignored.rs`); new `save/` (`mod.rs`, `content.rs`,
+  `source.rs` `SaveSource`, `plan.rs`); new `transform.rs` (TC-063); new `find/` (`mod.rs`, `replace.rs`, `files.rs`);
+  new `nav.rs`, `details.rs`; `lib.rs` (exports); tests of §6.10.
+- *`core/hikasa-diff/src/`*: new `anchors.rs`, new `trace.rs` (`Derivation`, `align_traced`); `options.rs` (`anchors`);
+  `algo/` (records); tests.
+- *`core/hikasa-formats/src/`*: new `template.rs` (the `$` expansion of D-180, moved here); `regex_engine.rs` unchanged;
+  `encoding.rs` (`Encoder` per piece, `unmappable_in`).
+- *`core/hikasa-vfs/src/`*: `ops/plan.rs` (`Action::Write`), `ops/copy.rs` (the write path), `vfs.rs` (`Vfs::writable`),
+  `local/mod.rs`, `local/unix.rs`, `memory.rs`, `archive/mod.rs` (`writable`), `stream.rs` (`crc32_bytes`).
+- *`core/hikasa-folder/src/`*: `view.rs` (`next_difference_file`), `ops/rename.rs` (uses `hikasa_formats::template`).
+- *`core/hikasa-core/src/`*: `job.rs` (`JobKind::TextRecompare`, `TextSave`, `TextFind`, `TextConvert`), `progress.rs`
+  (`Phase::Searching`), `warning.rs` (§1.10.23).
+- *`core/hikasa-session/src/`*: new `api/text_edit.rs` (open live, editability, save), new `api/text_find.rs`, new
+  `api/text_convert.rs`; `api/requests.rs`, `api/responses.rs`, `api/compare.rs` (per-side formats, anchors, ignored),
+  `api/dto.rs` (two schemas), `api/error.rs`, `api/human.rs`, `api/gui.rs` (CLI-003), `ipc/protocol.rs` (`OpenOptions`),
+  `sessions/file.rs` (`[specs]` keys), `settings/options.rs` (`default_line_ending`), `help.rs`; tests of §6.10.
+- *`cli/hikasa-cli/src/`*: `args.rs`, `cmd/mod.rs`, `cmd/text.rs` (compare flags), new `cmd/text_convert.rs`, new
+  `cmd/text_find.rs`, `confirm.rs` (save questions); tests.
+- *Help* (§1.10.28). No file of `gui/` changes, except where an additive field (`OpenOptions::save_target`, a new
+  request field) needs its default in an existing struct literal; W11 renders everything.
+
+#### 1.10.1 Parts (D-259)
+
+W10 is one wave in three sequential parts, one implementer each. W9 is complete, so only W11 may run beside W10 (plan
+§0 rule 6, disjoint crates): it may start on `gui/` once W10a is committed, since W10b and W10c change no file of
+`gui/` beyond such defaults and keep W10a's types. A part starts when the previous one is committed on `feat/m2` and ends with the tree green
+and its acceptance subset of §6.10.
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W10a Editing and recompare** | the block line table; `EditableDocument` (positions, edits, line-ending rules, undo, marks, bookmarks, the editing commands, editability); anchors and `text compare --align`/`--isolate`; the derivation and INV-ALIGN-8; the chunked row store; `LiveComparison` with the provisional splice and the exact incremental recompare; G8 | §1.10.2–§1.10.11, §1.10.26 (edit rows) | A10.1…A10.12, A10.28…A10.31, A10.33 | a comparison that edits, undoes and recompares exactly, headless |
+| **W10b Save, conversions, formats** | save content, plans (`Action::Write`), questions, targets, archives, backups; CLI-003 switches and IPC; conversions and `hikasa text convert`; a format per pane; Ignored lines | §1.10.12–§1.10.17, §1.10.22 | A10.13…A10.21, A10.28, A10.30…A10.33 | every write of an edited document; `text convert` |
+| **W10c Search and navigation** | find and replace; Find in Files and `hikasa text find` (with `--replace`); navigation and details data; the session link; Text Edit and text pairs; help, docs | §1.10.18–§1.10.21, §1.10.23–§1.10.28 | A10.12 (its rows), A10.22…A10.33 | the wave |
+
+The order is forced: W10b saves W10a's documents and plans its conversions as W10a edits; W10c's replace is an edit
+(W10a) and its replace-in-files a save (W10b), and its navigation walks W10a's marks and W10b's Ignored rows. Each part
+is shippable: W11 can start its editor on W10a.
+
+#### 1.10.2 The block line table and memory per line (D-260)
+
+M1's `LineTable` (one `Vec<u32>` of starts, one `Vec<LineEnding>`, 5 bytes a line) cannot take an edit in less than
+O(lines). It becomes a **block table** for every document, loaded or edited (one representation, so G1 and G5 are
+measured on it):
+
+```rust
+// hikasa_text::document::blocks (crate-private types; the public API of TextDocument is unchanged)
+pub(crate) const BLOCK_TARGET: u32 = 512;     // lines a block is built with
+pub(crate) const BLOCK_MAX: u32 = 1024;       // an edit that grows a block past this splits it in two
+pub(crate) const BLOCK_MIN: u32 = 128;        // a block below this merges with a neighbour (unless it is the only one)
+pub(crate) struct LineBlock {
+    starts: Box<[u32]>,          // content start of each line, relative to the block's first byte
+    eols: Box<[LineEnding]>,     // terminator of each line
+    bytes: u32,                  // the block's text length, terminators included
+    marks: Option<Box<BlockMarks>>,   // §1.10.5: present only in a block an edit touched
+}
+pub(crate) struct BlockMarks { gen: Box<[u32]>, orig: Box<[u32]> /* NO_ORIG = u32::MAX */ }
+pub(crate) struct LineTable {
+    blocks: Vec<Arc<LineBlock>>,  // copy-on-write: a snapshot shares every block an edit did not touch
+    first_line: Vec<u32>,         // prefix sums, rebuilt O(blocks) per edit
+    first_byte: Vec<u64>,         // prefix sums of `bytes`
+    uniform: bool,                // every block but the last has BLOCK_TARGET lines: line → block is a division
+    artificial: Vec<u32>,         // as M1: sorted indices of `Artificial` lines (rebuilt per touched block)
+    text_len: u32,
+}
+```
+
+- **Lookups.** line → block: a division while `uniform` (every loaded document), else a binary search over `first_line`
+  (≤ 12 steps for 2,000 blocks); the line's byte offset = `first_byte[b] + starts[i]`. `LineCursor` walks blocks forward
+  as it walks the rope's chunks, so sequential passes keep M1's speed (G1 unchanged). The D-43 limits stand: 4 GiB − 1
+  bytes, `MAX_LINES` lines; `u32` offsets stay valid because a block's relative starts are below its `bytes`.
+- **Snapshots.** `TextDocument` keeps its public API and stays immutable, `Send + Sync`; a snapshot of an edited
+  document is a `TextDocument` that shares the rope's nodes (`ropey::Rope::clone`, O(1)) and every untouched
+  `Arc<LineBlock>`. `TextDocument::edited()` (additive) says whether it came from an edit; `marks(line)` reads its marks
+  (§1.10.5).
+- **Memory per line** (binding; measured by A10.1 with a counting allocator on 1,000,000 lines of 48 bytes):
+
+| Part | Bytes a line | When |
+|---|---|---|
+| rope | the text's UTF-8 bytes × ≤ 1.1 (ropey's chunks and nodes) | always |
+| line table | 5 (start + terminator) + ≤ 0.1 (block headers, prefix sums) | always |
+| marks | + 8 (`gen`, `orig`) in a block an edit touched; 0 elsewhere | after an edit |
+| fingerprints (§1.10.11) | + 2 per side | a live comparison |
+| tokenizer checkpoints (§1.10.11) | + 0.2 per side (one `LineState` per 64 lines) | a live comparison with a multi-line grammar |
+| rows (§1.10.10) | 12 per row + ≤ 0.1 (chunk headers) | a comparison, as M1 |
+
+  A live 1,000,000-line comparison of the G1 pair therefore holds ≤ 4.6 MiB more than M1's comparison of it before the
+  first edit, and ≤ 8 MiB more per 1,000 edited blocks after (the worst case of edits each in another block; G8's growth
+  bound is 10 MiB per 1,000 edits, §1.10.26).
+
+#### 1.10.3 `EditableDocument`: positions and edits (TC-060; D-261, D-290)
+
+One `EditableDocument` per pane, editable or not (bookmarks, marks and find work on read-only panes too); Text Compare
+has two, Text Edit one. It is a plain value owned by its view: every call below is in-memory and returns in O(edit size
+plus log lines plus blocks), so the UI thread may call it (D-105's in-memory rule).
+
+```rust
+// hikasa_text::edit
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct TextPos { pub line: LineIdx, pub byte: u32 }      // byte offset in the line's content, at a char boundary
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Selection { pub anchor: TextPos, pub caret: TextPos }   // empty when equal; ordered by `range()`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditRequest {
+    /// Replaces `range` with `text`. Line breaks in `text` (LF, CRLF, CR) become the document's insert terminator
+    /// (`insert_eol`), except with `keep_eols` (a copy from the other pane, §1.10.6), which keeps them as given.
+    Replace { range: Range<TextPos>, text: String, keep_eols: bool },
+    /// Several replacements applied as one step, ranges in document order and disjoint (replace-all, conversions,
+    /// indent of a selection, copy of a section).
+    Batch { edits: Vec<(Range<TextPos>, String)>, keep_eols: bool },
+    /// Sets the terminator of lines `lines` (Line Endings conversions; `None` only for the last line).
+    SetEols { lines: Range<u32>, eol: LineEnding },
+    /// The save encoding and BOM (§1.10.12): a property of the document, undone like an edit.
+    SetEncoding { encoding: TextEncoding, bom: bool },
+}
+pub struct EditOptions {
+    pub tab_size: u8, pub tab_as_spaces: bool, pub word_chars: String,    // from the pane's format (FF-003, §1.10.16)
+    pub auto_indent: bool, pub backspace_unindents: bool,                 // OPT-006
+    pub default_eol: LineEnding,                                          // D-290: for a document without a terminated line
+    pub chars_per_line_limit: Option<u32>,                                // the pane's CPL (TC-003)
+}
+pub struct EditOutcome {
+    pub step: UndoId, pub delta: LineDelta, pub selection: Selection,      // the caret after the edit
+    pub changed: Range<u32>,           // lines whose text or terminator changed (new numbering)
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineDelta { pub at: u32, pub removed: u32, pub inserted: u32 }  // lines [at, at+removed) became [at, at+inserted)
+impl EditableDocument {
+    pub fn new(doc: Arc<TextDocument>, opts: EditOptions, editability: Editability) -> EditableDocument;
+    pub fn apply(&mut self, req: &EditRequest, group: GroupHint) -> Result<EditOutcome, EditError>;
+    pub fn snapshot(&self) -> Arc<TextDocument>;                           // O(blocks); shares rope and blocks
+    pub fn text(&self, range: Range<TextPos>) -> String;                  // terminators as stored
+    pub fn line(&self, line: LineIdx) -> Cow<'_, str>; pub fn line_ending(&self, line: LineIdx) -> LineEnding;
+    pub fn line_count(&self) -> u32; pub fn insert_eol(&self) -> LineEnding;
+    pub fn encoding(&self) -> (TextEncoding, bool /* bom */); pub fn is_modified(&self) -> bool;
+    pub fn generation(&self) -> u64;                                       // +1 per applied edit, undo or redo
+    pub fn clamp(&self, pos: TextPos) -> TextPos;                          // in range, at a char boundary (left)
+}
+pub enum EditError { Blocked(EditBlock) /* §1.10.7 */, BadRange, TooLarge /* D-43 */, Unsupported(&'static str) }
+```
+
+**Normative rules.**
+
+| Rule | Text |
+|---|---|
+| Positions | `byte` counts UTF-8 bytes of the line's content (terminator excluded); `TextPos { line, byte: len }` is the end of the line. A range end before its start is swapped; a position past the content or inside a char is `BadRange` for `apply` (callers clamp first). The last position of a document is `(line_count − 1, len)`; an empty document has one empty line for positions (`line_count()` stays 0 until text exists, as M1). |
+| Ranges across lines | a range from `(a, x)` to `(b, y)` with `a < b` covers the rest of line `a`, its terminator, the lines between with theirs, and line `b` up to `y`. Removing it joins line `a`'s head with line `b`'s tail; the joined line keeps **line `b`'s terminator**. |
+| Insert terminator | `insert_eol()` = the loaded document's dominant terminator (`EolSummary::dominant`, ties Lf > CrLf > Cr) when it has a terminated line, else `default_eol` (D-290). It does not change while editing (a document of LF lines stays LF after a pasted CRLF block). A conversion of every line (§1.10.15) changes it to the new kind. |
+| Breaks in inserted text | LF, CRLF and a lone CR in `text` each make one break with `insert_eol()`; with `keep_eols` each keeps its own kind. Splitting line `L` (terminator `e`) at `p` with text `"x⏎y"` gives `L[..p] + "x"` with `insert_eol()` and `"y" + L[p..]` with `e`. A break inserted at the end of a last line without terminator gives that line `insert_eol()` and a new last line without one. |
+| Other separators | VT, FF, NEL, LS, PS are ordinary characters, as INV-DOC-1. A NUL or other control character is inserted as given. |
+| Artificial breaks | the pieces of a wrapped physical line (TC-003) are lines for positions; an edit works on the physical line: the touched physical lines are joined, edited, and wrapped again by `chars_per_line_limit`. A range that ends at an artificial break is the same as one that ends at the start of the next piece. |
+| Limits | an edit that would pass `MAX_DOCUMENT_BYTES` or `MAX_LINES` is `TooLarge`; nothing changes. |
+| Encoding | `SetEncoding` checks nothing (unmappable characters are a save question, §1.10.14); on a document whose format converts (External with `save`) it is `Unsupported` (the save program decides the bytes). |
+
+D-290 adds `[text_editing] default_line_ending` (OPT-006, P0): `platform` (default: CRLF on Windows, LF elsewhere,
+resolved by the host into `EnvFacts`, T1), `lf`, `crlf`, `cr`.
+
+#### 1.10.4 Undo and redo (TC-060; D-262)
+
+- **Unbounded, per document.** One undo log per `EditableDocument`; no limit on steps (TC-060) — memory is bounded by
+  what the steps store, never by copies of the document: a step keeps the removed text, the inserted text's length, the
+  displaced marks and bookmarks, and the selections before and after (≈ 96 bytes + the removed text).
+- **One request, one step.** Every `apply` makes one step; a copy of a section to the other pane (TC-062), a Replace
+  All, a conversion, an indent of a selection and the format's *when saving* edits (§1.10.12) are one request each, so
+  one step.
+- **Coalescing (adapter time).** `GroupHint::Typing { at_ms }` merges a one-character insert or a one-character delete
+  with the previous step when that step was typing of the same kind, its caret is where this edit starts, `at_ms −
+  previous at_ms < 1,000`, and the new character is not the first word character after a non-word character (so a step
+  is at most one word). `at_ms` is the adapter's monotonic clock (T1: core reads none). `GroupHint::None` never merges;
+  `GroupHint::Group(id)` merges every request with the same id until another id (the replace-all of the find panel).
+- **Undo, redo.** `undo()` and `redo()` return the `EditOutcome` of the inverse edit, so the live comparison sees them
+  as edits (§1.10.10). A new edit after an undo drops the redo branch. `is_modified()` is true unless the log stands at
+  the last save point (or at load when never saved); undoing back to it clears it.
+- **Clear.** `clear_undo()` (W11's *Recompare Files*, P1, and a reload) drops the log; marks stay.
+
+#### 1.10.5 Line marks and bookmarks (TC-061, TC-050; D-263)
+
+- **Generations.** Every applied edit, undo or redo takes the next document generation `g`. A line's `gen` is the
+  generation of the edit that last changed its content or terminator (0 = as loaded). `saved_gen` is the generation at
+  the last save (0 before). Mark of a line: `Original` when `gen = 0`; `Edited` when `gen > saved_gen`; `SavedEdit` when
+  `0 < gen ≤ saved_gen` (TC-031's two colours). `orig` is the line's index in the file as last saved or loaded, or none.
+- **Undo restores marks** of the lines it brings back (their `gen` and `orig` as the step stored them) when the step was
+  applied after the last save; undoing a step that was saved gives the restored lines a fresh `gen` (they now differ
+  from the file) and no `orig`. So P-EDIT-1 (edit + undo = identity, A10.3) holds for marks too, and a mark never claims
+  that a line equals the file when it does not.
+- **A save** sets `saved_gen` to the current generation and every line's `orig` to its own index (the saved file is the
+  new splice source, §1.10.12); `Edited` lines become `SavedEdit`. Blocks keep `gen` arrays only where a `gen` is not 0.
+- **Bookmarks 0–9** (TC-050): `EditableDocument::{toggle_bookmark(n, line), bookmark(n) -> Option<LineIdx>, bookmarks()
+  -> [Option<LineIdx>; 10], clear_bookmarks()}`; one line per number; toggling a number on its own line removes it,
+  elsewhere moves it. Bookmarks follow their line through edits; a bookmark on a removed line moves to the line at the
+  start of the removal (the joined line), and the step stores where it was, so undo puts it back. Not persisted (TC-001
+  lists them as document metadata; the session keeps none).
+- **Edited ranges** for navigation: `EditableDocument::edited_ranges(from, dir) -> Option<Range<u32>>` returns the next
+  maximal run of `Edited` or `SavedEdit` lines (EditNext/EditPrev, §1.10.20).
+
+#### 1.10.6 Editing commands (TC-060, TC-062; D-264)
+
+The editor's commands are pure functions in core that turn a command and the selection into an `EditRequest` and the
+caret after it, so the GUI computes no text (T11); W11 maps catalogue ids to them and keeps cursor geometry (visual
+lines, pixel columns, word wrap) to itself.
+
+```rust
+// hikasa_text::edit::commands (pure)
+pub enum EditCommand {
+    Type { text: String, overwrite: bool }, Paste { text: String },       // overwrite replaces chars, never a terminator
+    NewLine, Tab, BackTab, Backspace, Delete,
+    DeleteLine, DeleteToLineStart, DeleteToLineEnd, DeleteWord, DeleteToWordStart, DeleteToWordEnd,
+    InsertLineBefore, InsertLineAfter, IncreaseIndent, DecreaseIndent,
+}
+pub fn plan_command(doc: &EditableDocument, sel: Selection, cmd: &EditCommand) -> Option<(EditRequest, Selection)>;
+pub fn word_at(doc: &EditableDocument, pos: TextPos) -> Range<TextPos>;   // `init_find_with_current_word`, double-click
+pub fn word_boundary(doc: &EditableDocument, pos: TextPos, dir: Dir) -> TextPos;   // Ctrl+Left/Right
+pub fn line_home(doc: &EditableDocument, pos: TextPos) -> TextPos;        // first non-blank, then column 0 (smart Home)
+pub fn select_section(cmp: &TextComparison, side: Side, line: LineIdx) -> Option<Range<TextPos>>;   // Ctrl+D
+```
+
+| Command | Normative effect |
+|---|---|
+| `Type`, `Paste` | replace the selection; `overwrite` (Ins) replaces as many characters (grapheme clusters) of the line as typed, never the terminator; `Paste` follows §1.10.3's break rule |
+| `NewLine` | a break; with `auto_indent` the new line starts with the leading blanks (spaces and tabs) of the line it was split from, up to the caret |
+| `Tab` | empty selection: a tab, or with `tab_as_spaces` spaces to the next tab stop of the display column (tabs expand to `tab_size`); a selection over several lines: `IncreaseIndent` |
+| `BackTab`, `DecreaseIndent` | each line of the selection (or the caret's) loses one indent unit from its start: one tab, or up to `tab_size` spaces, or the spaces before a tab |
+| `IncreaseIndent` | each line (blank ones excepted) gains one tab, or `tab_size` spaces with `tab_as_spaces` |
+| `Backspace` | a selection is deleted; else with `backspace_unindents` and the caret inside the leading blanks, back to the previous tab stop; else one grapheme cluster, or the previous terminator at a line start |
+| `Delete` | a selection, else one grapheme cluster, or the terminator at a line end |
+| `DeleteLine` | the lines of the selection with their terminators (the last line: the terminator before it) |
+| `DeleteToLineStart`, `…End` | to column 0, to the line end |
+| `DeleteWord` and its two forms | the word at the caret (word = letters, digits, `_` and the format's `word_chars`, D-58), to its start, to its end; between words, the run of blanks |
+| `InsertLineBefore`, `…After` | an empty line (with auto indent) before or after the caret's line, caret on it |
+
+**Copy to the other side (TC-062).** `hikasa_text::edit::copy_rows(cmp: &TextComparison, rows: Range<u32>, from: Side)
+-> CopyEdit` gives the `EditRequest::Replace { keep_eols: true }` for the other pane that makes rows `rows` equal to
+`from`'s lines: the target lines those rows cover are replaced by the source lines, in row order; a range of rows with
+no target line inserts at the position after the target line of the last row above it (or at the start). *Copy to
+Right/Left* takes the selected rows or the current section; *Copy Line* the current row; one step on the target
+document; its `LineDelta` drives the live comparison (§1.10.10). A copy into a blocked pane is `EditError::Blocked`.
+
+#### 1.10.7 Editability (TC-003, TC-004, FF-031; D-265)
+
+```rust
+// hikasa_text::edit::editability
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "snake_case")]
+pub enum EditBlock { LoadFailed, Cancelled, ReadOnlyLocation, ArchiveReadOnly, Converted, Truncated,
+                     ParentReadOnly, SessionReadOnly, CommandLine, Binary }
+pub struct Editability { pub blocks: Vec<EditBlock> /* every cause, in this enum's order */, pub can_save_in_place: bool }
+impl Editability { pub fn editable(&self) -> bool; pub fn status_text(&self) -> &'static str; }
+```
+
+| Cause (TC-004) | Block | Found by | Status text |
+|---|---|---|---|
+| the side could not be loaded | `LoadFailed` | the open | (no document) |
+| the comparison was cancelled | `Cancelled` | the open; a later run clears it | Editing disabled |
+| the location cannot be written: a read-only file system, a file without write access for this process, media | `ReadOnlyLocation` | the new `Vfs::writable(spec) -> Result<Option<bool>, VfsError>` (local: `access(W_OK)` through `rustix` on Unix, the DOS `R` bit and the volume's read-only flag on Windows; `None` = cannot tell, treated as writable and left to the save) | Read-only |
+| a member of an archive that cannot be written (single-stream `gz`, `bz2`, `xz`, `zst`, or any level of its chain read-only) | `ArchiveReadOnly` | `Vfs::writable` of the archive back-end (zip and the tar family write, D-63) | Read-only |
+| a conversion without a save path: *Sorted*, *External* without `save` | `Converted` | the format (FF-031) | Read-only |
+| a document cut by `from_text` (D-43) | `Truncated` | `TextDocument::truncated` | Read-only |
+| the parent folder session's side is read-only | `ParentReadOnly` | `LiveOptions::parent_read_only` (D-184's *child views carry the flag*; the request had no field yet) | Editing disabled |
+| the session's `[specs] read_only_*` | `SessionReadOnly` | the session | Editing disabled |
+| `--ro`, `--ro1`, `--ro2` | `CommandLine` | `OpenOptions::read_only` | Editing disabled |
+| binary content (TC-003) | `Binary` | the binary verdict | Editing disabled |
+
+- `Binary` is the only block the user may lift: `EditableDocument::allow_binary_edits()` after the view's *contains
+  binary data, edit anyway?* prompt (W11). It is not lifted by a session or a switch.
+- A document without a location (`-`, `clipboard://`, text pairs of §1.10.21) is editable with `can_save_in_place =
+  false`: Save becomes Save As. *External* with a `save` command line is editable (its save runs that program,
+  §1.10.13).
+- **Enforced by the Service** (D-184's rule): `apply` refuses with `EditError::Blocked(first block)`, and every
+  `Service` call that writes a pane (`text_save_plan`, `text_copy_file_steps`, replace-in-files over an open document)
+  refuses a blocked side with the new `ApiError::EditBlocked { side, block }` (kind `permission_denied`, exit 100)
+  before anything is planned. The view greys its commands from the same value.
+- A lossy decode (`malformed > 0`) does not block: its unchanged lines are saved byte for byte (§1.10.12), and an edited
+  line holding U+FFFD is a save question.
+
+#### 1.10.8 Alignment anchors: Align With and Isolate (TC-013; D-266)
+
+```rust
+// hikasa_diff::anchors (additive; AlignOptions gains `anchors: Vec<Anchor>`, default empty)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)] #[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Anchor {
+    /// Align With: left lines `left` and right lines `right` form one segment of their own (a pair of single lines is
+    /// one row). Both ranges non-empty.
+    Pair { left: Range<u32>, right: Range<u32> },
+    /// Isolate: these lines of `side` align with nothing.
+    Isolate { side: AnchorSide, lines: Range<u32> },
+}
+pub fn normalize_anchors(anchors: &[Anchor], n: u32, m: u32) -> (Vec<Anchor>, Vec<DiffWarning>);
+```
+
+**Semantics (normative).** `normalize_anchors` sorts `Pair`s by `left.start`, drops each one that overlaps or crosses an
+earlier kept one (`right` not after it) or leaves a range (warning `anchor_dropped`, naming it), and clips `Isolate`
+ranges to the lines. The alignment with anchors is the concatenation, in order, of: the alignment of the lines between
+two consecutive pairs (each such segment is an `align` call of its own: prefix and suffix stripped, Auto decided,
+budgets sized from the segment); then the pair's own segment (a 1:1 pair is one row, `Equal` when the keys are equal,
+else `Changed`; a larger pair is aligned by the engine inside its two ranges, as a segment); and so on. **Isolated
+lines** take a key that matches nothing (a fresh id outside the interned ones) and are excluded from gap pairing, so
+they are always `Delete`/`Insert` runs; this holds inside pair segments too. Without anchors the result is M1's, bit for
+bit (A10.7).
+
+- INV-ALIGN-1…7 hold with anchors; INV-ALIGN-9 (new): every kept pair's ranges are exactly one segment of the runs (no
+  run crosses its boundaries) and every isolated line is in a `Delete` or `Insert` run.
+- **In the views** anchors live in the `LiveComparison` (§1.10.10), are moved by edits like bookmarks (a pair whose
+  lines are all removed is dropped, warning `anchor_dropped`), survive every recompare (TC-013) and are not saved with
+  the session (P1). `TextComparison::anchors()` (additive) returns the kept ones.
+- **CLI** (for tests and scripts): `text compare … --align <L>:<R>` (repeatable; `L` and `R` are 1-based lines or ranges
+  `a-b`, e.g. `--align 10:12`, `--align 10-14:12-13`) and `--isolate left:<a>[-<b>]` / `--isolate right:<a>[-<b>]`; a
+  line beyond the document is exit 100 (`invalid_input`). `hikasa.text_compare.v1` gains `anchors: [{kind, left, right,
+  side, lines}]` (1-based, additive) and the warnings.
+
+#### 1.10.9 The derivation and renaming invariance (D-267)
+
+Incremental exactness (§1.10.11) needs to know why the full alignment looks as it does. `hikasa_diff` gains:
+
+```rust
+// hikasa_diff::trace (additive)
+pub fn align_traced(input: &AlignInput<'_>, opts: &AlignOptions, scorer: Option<&dyn PairScorer>,
+                    sink: Option<&mut dyn RunSink>, cancel: &CancelToken) -> Result<(Alignment, Derivation), DiffError>;
+pub struct Derivation { pub segments: Vec<SegmentTrace> /* one per anchor segment */, pub work: WorkTotals }
+pub struct SegmentTrace { pub left: Range<u32>, pub right: Range<u32>, pub prefix: u32, pub suffix: u32,
+                          pub engine: Algorithm /* Auto resolved */, pub root: Option<NodeId>, pub nodes: Vec<TraceNode> }
+pub struct TraceNode {
+    pub left: Range<u32>, pub right: Range<u32>,      // the node's range pair (after its parent's decisions)
+    pub prefix: u32, pub suffix: u32,                  // its common prefix and suffix
+    pub stage: Stage,                                  // AnchorsUnique (Standard stage A, Patience, the fallback's
+                                                       // unique split) | Block (stage B or C) | Flat
+    pub chain: Vec<(u32, u32)>,                        // the anchor pairs of an AnchorsUnique node, in order
+    pub blocks: Vec<(u32, u32, u32)>,                  // the extended blocks (x, y, len)
+    pub children: Vec<NodeId>,                         // its gaps, in order (gaps under 64 lines a side are not recorded)
+    pub work: u64, pub cells: u64,                     // budget units it spent (Standard's work, closeness cells)
+    pub slack: u32,                                    // §1.10.11 condition 3
+}
+pub struct WorkTotals { pub standard: u64, pub standard_budget: u64, pub fallback: u64, pub fallback_budget: u64,
+                        pub closeness: u64, pub closeness_budget: u64, pub exhausted: bool }
+```
+
+- `align` = `align_traced` without keeping the record: **the same runs on every input** (A10.8 compares both on
+  P-ALIGN's generators), and the record costs ≤ 64 bytes a recorded node plus 8 bytes a chain pair. A gap under 64 lines
+  a side is part of its parent's record (re-running the parent's gap is cheaper than storing it).
+- **INV-ALIGN-8 (renaming invariance, new).** For every engine, mapping the token ids of both sides through any
+  bijection (trivial ids to trivial ids) gives the same runs and the same derivation. The engines already renumber per
+  call (D-16's `DenseRemap`, Standard's local ids); P-ALIGN-REN (A10.8) proves it on every engine, and a W10a finding
+  that one is not is fixed by renumbering at its entry, with the M1 goldens unchanged. This is what lets §1.10.11
+  re-intern a node's lines locally and still get the full run's answer.
+
+#### 1.10.10 Live comparison and the provisional splice (TC-061; D-268, D-270)
+
+```rust
+// hikasa_text::live
+pub struct LiveComparison { /* current: Arc<TextComparison>, derivation, fingerprints, checkpoints, anchors,
+                               ignored lines, pending deltas since `base_gen`, generation */ }
+impl LiveComparison {
+    pub fn new(cmp: TextComparison, trace: Derivation, keys: LiveKeys) -> LiveComparison;   // from `compare_live`
+    pub fn current(&self) -> &Arc<TextComparison>;      // rows valid for the live documents at every moment
+    pub fn is_pending(&self, row: RowIdx) -> bool;      // a row the provisional splice made or touched
+    pub fn note_edit(&mut self, side: Side, doc: &EditableDocument, out: &EditOutcome);   // ≤ 1 ms (G8)
+    pub fn set_anchors(&mut self, anchors: Vec<Anchor>); pub fn set_ignored(&mut self, ignored: IgnoredLines);
+    pub fn recompare_job(&self, docs: Pair<&EditableDocument>) -> RecompareJob;           // owned, `Send`
+    pub fn install(&mut self, done: Recompared, docs: Pair<&EditableDocument>) -> Installed;   // stale → replays
+    pub fn generation(&self) -> u64;
+}
+impl RecompareJob { pub fn run(self, pool: Option<&rayon::ThreadPool>, ctl: &Ctl<'_>) -> Result<Recompared, TextError>; }
+pub enum Installed { Current, Replayed { pending: u32 } }
+pub fn compare_live(input: CompareInput, limits: &RegexLimits, pool: Option<&rayon::ThreadPool>, ctl: &Ctl<'_>,
+                    observer: Option<&mut dyn CompareObserver>) -> Result<LiveComparison, TextError>;
+```
+
+- **Two steps per edit.** (1) `note_edit`, on the UI thread at once: the provisional splice (below) keeps `current()`
+  consistent with the live documents, so a keystroke repaints in the same frame (W11's typing gate). (2) After the
+  adapter's debounce (W11: 100 ms after the last edit, **open default**), `recompare_job` takes snapshots (O(blocks))
+  and the job runs §1.10.11 off the UI thread (`JobKind::TextRecompare`); `install` puts the exact result in place when
+  no edit came meanwhile, else re-applies the edits since the snapshot as provisional splices on top (`Replayed`) and
+  the adapter schedules the next job. A newer job cancels the older one's `JobControl`; results carry the generation
+  they were made for.
+- **Provisional splice (normative).** For a `LineDelta { at, removed, inserted }` on side `s`: rows whose `s` line is in
+  `[at, at + min(removed, inserted))` keep their pairing and become pending; lines of `s` beyond that, when `inserted >
+  removed`, become pending orphan rows of `s` right after the row of line `at + removed − 1` (or before the row of line
+  `at` when `removed = 0`); when `removed > inserted`, rows whose `s` line is in the surplus lose their `s` side and a
+  row left with no line is removed; every later row's `s` line shifts by `inserted − removed`. Pending rows keep their
+  state (new orphans are `LeftOnly`/`RightOnly`, important); stats, sections and class runs are adjusted over the
+  touched rows only. `current().stats()` and `verdict()` are then provisional (`TextComparison::provisional()`,
+  additive, is true until `install`).
+- **Chunked rows (D-270).** `TextComparison`'s rows become a chunk store: chunks of ≤ 1,024 `PackedRow`s in `Arc`s, each
+  with the `left`/`right` line bases its rows are relative to, plus prefix sums of row counts. A shift of later lines is
+  an O(chunks) change of bases; a splice replaces the chunks it touches; a new comparison shares every other chunk with
+  the old one. `row()` stays O(1) with a division while chunks are full and ≤ 12 steps of binary search otherwise: **G5
+  unchanged** (< 200 ns) is acceptance (A10.11). `runs()`, `sections()` and class runs stay vectors, shifted and spliced
+  in O(their length) per edit (thousands, not millions).
+- **What a view reads.** Rows from `current()`; line text from its own `EditableDocument` (never from the snapshot),
+  whose numbering `current()` follows after every `note_edit`. Inline differences of a pending row are computed from the
+  live lines on demand (`LiveComparison::inline(row, docs)`).
+
+#### 1.10.11 Incremental recompare (normative; TC-061; D-269)
+
+**Contract.** For any documents, rules, anchors and edit script, the comparison `install` puts in place equals a fresh
+`compare` of the snapshots with the same rules and anchors: the same runs, rows, sections, statistics, warnings, verdict
+and `hikasa.text_compare.v1` document (P-EDIT-2, A10.9). The incremental path is only a way to compute that result;
+which path ran never changes it (T6).
+
+**Kept state** (built by `compare_live`, from the full run's own data): the `Derivation` (§1.10.9); per side, a 16-bit
+**fingerprint** of every line's key (`fp = (hash64(key) >> 48) as u16`; trivial keys get 0 and are never looked up); for
+a grammar with multi-line items, the tokenizer's start **checkpoint** every 64 lines (a line's start state = tokenizing
+from its checkpoint, ≤ 63 lines); the documents of the last exact result (snapshots sharing rope and blocks), whose
+lines give the old keys of dirty lines; the per-row classification inputs it already has. Keys and interned ids are not
+kept.
+
+**Step 1 — dirty lines.** The deltas since the base are merged into dirty ranges per side (new numbering). Keys of the
+dirty lines are rebuilt; with a multi-line grammar, tokenizing continues past a dirty range until a line's start state
+equals the stored one at a checkpoint, and every line whose key changed joins the dirty range (an opened block comment
+can make it reach the end). A line whose key and line weight (Standard only) are unchanged is not dirty for alignment;
+its row is only re-classified (Same or Unimportant). Fingerprints and checkpoints of the dirty lines are updated.
+
+**Step 2 — the node to re-run.** In the segment holding the dirty lines (an edit across an anchor boundary re-runs both
+segments; an anchor whose lines changed is re-normalized), descend from the segment's root through `TraceNode`s while
+the node's **certificate** holds; the first node where it fails is re-run whole by its engine on the new lines (keys
+interned locally; INV-ALIGN-8 makes that the full run's answer for that node). A node's certificate holds when all of:
+
+1. **Range.** The dirty lines lie strictly inside the node's ranges, outside its stripped common prefix and suffix, and
+   the new common prefix and suffix of the node's ranges have the recorded lengths (checked outward from the dirty
+   lines, O(dirty)). At the segment level the same holds for the segment's prefix and suffix, and *Auto* resolves to the
+   recorded engine on the new sizes.
+2. **Candidates.** The node's stage is `AnchorsUnique` (a `Block` or `Flat` node is re-run), and no key of a removed or
+   inserted dirty line is, or becomes, unique on both sides inside the node's ranges and window, and no dirty line is
+   itself one of the node's candidates (a changed weight would change the chain's score). Counts are exact: a
+   fingerprint scan of the node's lines finds candidates, each verified by rebuilding that line's key (raw text on the
+   identity path, else tokenized from its checkpoint); counting stops at 3 verified hits a side, which decides every
+   case; a key whose verification would pass 4,096 lines ends the certificate (T6: the node is re-run).
+3. **Window.** With Δ the net line-count change of the dirty region, `|Δ| < slack`, where `slack` is the recorded
+   distance of the node's unique-on-both-sides pairs to the skew window's edge (window membership of every candidate is
+   then unchanged). Patience and the fallback's split have no window: `slack = ∞`.
+4. **Budgets.** The recorded run exhausted no budget (`WorkTotals::exhausted` false), and the new totals (old totals
+   minus the re-run nodes' recorded work plus their new work) stay within the budgets sized from the new line counts;
+   else the segment is re-run from its root (§1.10.9's totals tell exactly what the full run would have spent).
+
+When the certificate holds, the node's chain is unchanged (its candidates and their scores are); chain blocks whose
+extension reaches a dirty line are re-extended from their anchors, and the dirty lines with the gaps they now touch form
+one child range, processed as the engine processes a gap (Step 2 again inside it when it has a recorded node). A root
+that fails is a full alignment of the segment from keys rebuilt from the text: exact by definition, and the slow path
+(bounded by G1's align phase).
+
+**Step 3 — splice.** The re-run node's runs replace its old runs; gap pairing (closeness, never-align) runs for the
+changed gaps only, its cells counted into condition 4; rows of the changed runs are classified (D-14's rules, per row);
+sections are rebuilt between the nearest unchanged `Same` rows around the change; statistics change by the difference of
+the removed and added rows; warnings are recomputed from the totals; the derivation is updated in place. Ignored lines
+(§1.10.17) and the display filters are applied after, as on a full run.
+
+**Fallback (T6).** When the dirty lines of all sides exceed 25 % of the lines, or 200,000 lines, the job runs `compare`
+on the snapshots instead (the same result); a cancelled job leaves `current()` as it was. Cancellation is checked every
+65,536 steps as in M1 (G4 ≤ 100 ms).
+
+**Why it is exact.** Each engine's output on a node is a function of the node's keys and line weights only (the engines
+are deterministic, T1, and renaming-invariant, INV-ALIGN-8); a certified ancestor makes the same decisions on the new
+input (conditions 1–3 fix its range, candidate set, scores, chain and window), so its children are the same ranges as in
+a full run, and condition 4 fixes every budget decision. P-EDIT-2 checks it on random scripts, and A10.9 checks that
+each condition is reached and that each one, removed by a mutation, makes the property fail.
+
+#### 1.10.12 Save content (TC-001, TC-003, TC-005; D-272)
+
+**Rule.** A save writes the document so that every line that is unchanged since the load (or the last save) comes out
+**byte for byte as it was in the file**, whatever the encoding, BOM, line endings, malformed bytes or stateful encoding;
+only edited and new lines are encoded. The content is described before anything is written, and streamed when written:
+
+```rust
+// hikasa_text::save::content
+pub struct SaveContent { pub pieces: Vec<Piece>, pub bytes: u64, pub encoding: TextEncoding, pub bom: bool,
+                         pub eols: EolSummary /* of what is written */, pub spliced_bytes: u64, pub encoded_lines: u32,
+                         pub issues: Vec<ContentIssue> }
+pub enum Piece {
+    Bom,                                                  // the encoding's BOM (`TextEncoding::bom`)
+    Source { offset: u64, len: u64 },                     // bytes of the splice source, verbatim
+    Encoded(Arc<[u8]>),                                   // edited lines with their terminators, encoded
+}
+pub enum ContentIssue {
+    Unmappable { count: u64, first: Vec<(LineIdx, u32 /* char column, 1-based */, char)> },   // ≤ 20 listed
+    LossyRewritten { lines: u64 },     // edited lines holding U+FFFD in a document whose decode replaced malformed bytes
+    Reencoded { reason: ReencodeReason },   // the whole text is encoded: EncodingChanged, NoSource, SourceChanged, Stateful
+}
+pub fn save_content(doc: &EditableDocument, source: Option<&SourceMap>, opts: &ContentOptions) -> SaveContent;
+```
+
+| Piece of the file | Written as |
+|---|---|
+| BOM | the source's BOM when it had one (`bom_len > 0`), else none; `SetEncoding`/`text convert --bom/--no-bom` change it |
+| a run of unchanged lines (`orig` = k, k+1, … in order) | `Source` of their bytes, terminators included, in the splice source; adjacent runs merge |
+| an edited or new line | its text and its terminator, encoded with the document's encoding (`hikasa_formats::encode`, per piece) |
+| artificial breaks (TC-003) | nothing: the pieces of a physical line are written as one line |
+| the tail after a Ctrl-Z that ended the document at load (`ctrl_z_eof`) | `Source` of the tail, after the last line, unchanged |
+
+- **The splice source** is the file as it was loaded or last saved, re-read through the VFS at execution and checked by
+  its stamp and CRC-32 (`LoadStamp { size, mtime, crc32 }`, taken while the load read the bytes, §1.10.13). `SourceMap`
+  gives the byte offset of each original line: it is rebuilt at save time by one scan of the source for terminators,
+  which is exact for every supported encoding (CR and LF never occur inside a multi-byte sequence of an ASCII-compatible
+  encoding; UTF-16 and UTF-32 are scanned by code unit), and checked against the document's original line count.
+- **Whole re-encode** (`Reencoded`): when the encoding changed (`SetEncoding`, `text convert --encoding`); when there is
+  no source (stdin, clipboard, text pairs, a new file); when the source changed on disk and the user overwrote it
+  (§1.10.14); and for an ISO-2022-JP document with an edited line (its shift state may cross lines; without an edit the
+  file is one unchanged run). Then unchanged lines are encoded from their text: their malformed bytes become U+FFFD's
+  encoding, which `LossyRewritten` reports.
+- **Unmappable characters** (an edited line holding a character the encoding cannot write): never written as numeric
+  references (encoding_rs's default); `save_content` lists them and the plan asks (§1.10.14). UTF-8, UTF-16 and UTF-32
+  map everything; the scan costs one pass over the edited lines only.
+- **Format *when saving* options** (`save_trim_trailing_ws`, `save_leading_spaces_to_tabs`, docs/10 §1) apply to the
+  **edited and new lines only**, so unchanged lines stay byte-exact (**open default**: the whole-file forms are the
+  TC-063 conversions). The save applies them to the live document first as one undo step ("Save options"), so what is
+  shown is what is written; the plan counts them.
+- **External save conversion** (FF-030/FF-031): with a `save` command line, the encoded document (whole re-encode, no
+  splice) is `%s`, the program writes `%t`, and `%t`'s bytes are the content (D-39's rules: no shell, timeout, cleanup).
+
+#### 1.10.13 Save plans and execution (T12; D-273)
+
+A save is a T12 plan computed by core, confirmed by the adapter, executed by core with per-item results; `--dry-run`
+prints it. **`hikasa_vfs::ops` stays the only place that writes** (§1.6.2): the plan is an `ops::Plan` of kind `Batch`
+whose items use the new action `Write`.
+
+```rust
+// hikasa_vfs::ops (additive)
+pub enum Action { /* … */ Write }      // as_str "write": `source` = `target` read through `src`; needs_absent_target false
+// Exec: a `write` item streams `src.open_read(source)` onto `target` with save semantics: no metadata copied from the
+// source (Preserve::NONE), the replaced file's permissions kept (D-158), `expect.target` checked (D-163), `backup` as
+// §1.6.5 (rename aside, commit, rename back on failure), archives through the root's batch (D-148) and
+// `archive_backups`; a missing target is created (Save As to a new file).
+
+// hikasa_text::save
+pub struct SaveRequest { pub target: Option<Spec> /* None: in place */,
+    pub backup: Option<BackupPolicy> /* None: no backup */, pub unmappable: UnmappablePolicy }
+    // encoding and terminators are the document's (`SetEncoding`, `SetEols`)
+pub enum UnmappablePolicy { Ask, Refuse, Replace /* '?' or the encoding's own substitute byte */ }
+pub struct SaveItem { pub side: Option<Side>, pub target: Spec, pub via_link: Option<Spec>, pub creates: bool,
+    pub content: SaveContentSummary /* bytes, encoding, bom, eols, spliced_bytes, encoded_lines, pre_save */,
+    pub issues: Vec<SaveIssue>, pub external: Option<String> /* the save program */ }
+pub struct SavePlan { pub plan: hikasa_vfs::ops::Plan, pub items: Vec<SaveItem>, pub exec: ExecOptions,
+                      pub warnings: Vec<Warning> }
+pub fn plan_save(vfs: &dyn Vfs, docs: &[(Option<Side>, &EditableDocument, &SaveRequest)], ctl: &Ctl<'_>)
+    -> Result<SavePlan, TextError>;
+pub struct SaveSource { /* a read-only one-file-per-item `Vfs`: open_read(target) streams that item's pieces */ }
+pub fn execute_save(vfs: &dyn Vfs, plan: SavePlan, contents: SaveSource, ctl: &Ctl<'_>) -> SaveReport;
+pub struct SaveReport { pub op: OpReport /* per-item results, W3's shape */, pub written: Vec<Option<LoadStamp>> }
+```
+
+- **Planning** (a job, `JobKind::TextSave`): resolve the target (§1.10.14), `stat` it, compare with the document's
+  `LoadStamp` (size and time; when they differ, read and CRC: equal content → warning `source_touched` and no question;
+  else `ChangedOnDisk`), build the `SaveContent` (scan of the source, encoding of the edited lines), name the backup
+  (`BackupNames::assign` with `rel = None`, the hook of §1.6.23 W10) or the archive's backup, collect the questions. The
+  plan's item carries `expect.target` = the stamp seen now, so a change between plan and execution fails the item
+  (`changed since the plan was made`), never overwrites.
+- **Execution** streams each item's pieces from `SaveSource` (`Source` pieces read from the splice source in 1 MiB
+  steps, its CRC compared at the end of the read — a mismatch fails the item before the commit, target untouched), so
+  memory is O(edited text + 1 MiB) whatever the file size; `Phase::Writing` reports bytes; cancellation per 1 MiB and
+  before the commit (G4). The written bytes' CRC and the new stamp are returned, and `EditableDocument::saved(stamp)`
+  makes them the next splice source (§1.10.5): marks become `SavedEdit`, `is_modified()` false. A failed item leaves the
+  document modified and the file untouched (INV-VFS-3).
+- **Several documents** (Save All of a Text Compare, `text convert` of several files, replace-in-files) are one plan:
+  members of one archive are one rebuild and one archive backup (D-148, D-168).
+- `SavePlan` serializes (`hikasa.text_convert.v1`'s and `hikasa.text_find.v1`'s `plan`, and W11's confirmation list);
+  its human dry-run line is `write <target> (<bytes> bytes, <encoding>[ BOM], <eol style>[, backup <spec>][, via
+  <link>])`.
+
+#### 1.10.14 Save questions and targets (TC-005, CLI-003; D-274…D-277)
+
+**Questions** are asked by `hikasa_text::save::SaveConfirmation`, which has the shape of W6's machine (§1.6.11:
+`new(&plan, policy, mode)`, `next()`, `reply(Reply)`, `finish(plan) -> Result<SavePlan, Declined>`); `Reply`,
+`ConfirmMode` and `Declined` move to `hikasa_core::confirm` and `hikasa_folder::ops::confirm` re-exports them (no change
+for its users), so the CLI's `confirm.rs` (`[y]es [n]o [a]ll [s]kip all [c]ancel`, `--yes`, `--confirm`) drives both,
+W11's prompts too, and `--dry-run` lists the questions:
+
+| Question | When | Yes | No | CLI without a terminal |
+|---|---|---|---|---|
+| `ChangedOnDisk` | the target's content differs from the splice source | write (whole re-encode, `Reencoded { SourceChanged }`) | item `skipped declined` | exit 100 unless `--force` |
+| `ReadOnlyTarget` | DOS `R`, or `Vfs::writable` = false on an existing target (W6's `READ_ONLY` rule, `confirm_read_only`) | clear `R` (`clear_read_only`) or write through the folder (the mode stays) | skipped | `--yes` |
+| `Unmappable` | `ContentIssue::Unmappable` and `UnmappablePolicy::Ask` | `Replace` | skipped; the GUI offers *Save as UTF-8* (a `SetEncoding` step, then a new plan) | `--unmappable replace` |
+| `LossyRewritten` | `ContentIssue::LossyRewritten` | write | skipped | `--yes` |
+| `ReplaceExisting` | Save As (or `--output`) onto an existing file that is not the document's own | write (with its backup) | skipped | `--yes` |
+| `OverwriteBackup` | as W6 (§1.6.11) | as W6 | as W6 | `--yes` |
+
+**Targets (D-275).**
+
+- **In place**: the document's spec. A **symbolic link** is followed at planning (as `open_write` with `replace_link =
+  false`, docs/11 "Local writes"): the item targets the file it leads to, `via_link` names the link, the link stays. A
+  target that is not a regular file (FIFO, device, folder) is an item error `invalid_target` ("is not a regular file"),
+  never written directly by a save.
+- **Save As** (`SaveRequest::target`): any spec the VFS can write; the document's location becomes it after success
+  (title, stamp, splice source); the old file is untouched.
+- **`--savetarget=<file>`** (CLI-003): the view's in-place Save of the pane it applies to writes there instead; the
+  document keeps its own location as the splice source and keeps saving to the target (each save replaces it). It
+  applies to a Text Edit view's file and to the **right** pane of a Text Compare view (the side a version-control tool
+  hands as the working copy; **open default**); the other pane saves in place. An existing target asks `ReplaceExisting`
+  once.
+- **No location** (`can_save_in_place = false`): Save is Save As.
+
+**Archives (D-276; revises the W5 note of TC-002).** A member of a writable archive (zip, the tar family, also nested,
+D-63) is editable and saves through a `write` item on the member: the item's root is one batch, so the archive is
+rebuilt once (D-148) and backed up once as a file (`archive_backups`, D-168) when backups are on. Its `LoadStamp` is the
+member's (size, time, the zip CRC when given); a rebuild that finds the outermost file changed since the plan fails the
+item (D-149). A member of a single-stream archive (`gz`, `bz2`, `xz`, `zst`) or below a read-only level is
+`ArchiveReadOnly`.
+
+**Backups (D-277).** `[backups] back_up_before_save` (OPT-008, default true) with `naming` and `folder`:
+`BackupPolicy::target(vfs, target, None)` (the file name, no base: §1.6.5's `folder` style puts it at
+`<folder>/<name>`); one generation; an existing backup is replaced (`OverwriteBackup` only when the name holds a file
+the plan did not make). Save As onto an existing file backs that file up. `--nobackups` (`OpenOptions::no_backups`) and
+`--no-backup` turn backups off for that view or command; `--backup` turns them on. A failed backup fails the item, file
+untouched (W6).
+
+#### 1.10.15 Conversions and `text convert` (TC-063; D-279, D-280)
+
+```rust
+// hikasa_text::transform (pure)
+pub enum Transform { TrimTrailing, LeadingSpacesToTabs, TabsToSpaces, LineEndings(LineEnding) }
+pub struct TransformOutcome { pub request: Option<EditRequest> /* None: nothing to do */, pub lines: u64 }
+pub fn transform(doc: &EditableDocument, t: Transform, lines: Option<Range<u32>> /* None: every line */, tab_size: u8)
+    -> TransformOutcome;
+```
+
+| Conversion | Normative effect on each line in range | Counted when |
+|---|---|---|
+| `TrimTrailing` | removes the trailing run of characters with Unicode `White_Space` (space, tab, NBSP, …); terminators untouched | the line changed |
+| `LeadingSpacesToTabs` | in the leading blanks, each run of spaces that reaches a tab stop (display columns, tabs expanding to `tab_size`) becomes one tab; spaces that do not reach the next stop stay; text after the first non-blank untouched | the line changed |
+| `TabsToSpaces` | every tab of the line becomes spaces to the next tab stop of its display column | the line changed |
+| `LineEndings(e)` | every terminated line's terminator becomes `e` (the last line keeps *no terminator*); the document's `insert_eol` becomes `e` | its terminator changed |
+
+- In a view each conversion is one `EditRequest` (one undo step) and the status *Converted N lines* (TC-063) gets
+  `lines`. `lines: Some(range)` converts a selection's lines (W11 offers it when the selection spans lines; **open
+  default**: the catalogue's *Convert File* acts on the whole file when nothing is selected).
+- Idempotent (P-CONVERT, A10.18): a conversion applied twice equals once; `TabsToSpaces` after `LeadingSpacesToTabs`
+  restores leading blanks made only of spaces.
+
+**`hikasa text convert`** (D-280) loads each file as a text compare would (format detection or `--format`, encoding
+detection or `--encoding-in`), applies the conversions in the fixed order *trim, tabs, line endings, encoding*, and
+writes through §1.10.13's plan (so unchanged lines stay byte-exact and the BOM stays unless asked):
+
+```
+hikasa text convert <FILE>… [--trim-trailing] [--tabs-to-spaces | --spaces-to-tabs] [--tab-size <1-32>]
+                    [--line-endings lf|crlf|cr] [--encoding <label>] [--bom | --no-bom] [--lines <a>-<b>]
+                    [--format <id|name>] [--encoding-in <label>] [--unmappable refuse|replace]
+                    [--in-place | --output <FILE>] [--backup | --no-backup] [--force] [--dry-run] [--yes]
+```
+
+- At least one conversion flag (`--trim-trailing`, `--tabs-to-spaces`, `--spaces-to-tabs`, `--line-endings`,
+  `--encoding`, `--bom`, `--no-bom`), else exit 100 ("nothing to convert"). `--tab-size` defaults to the format's.
+- **Targets.** Neither `--in-place` nor `--output`: the converted bytes of the one `<FILE>` go to stdout (several files
+  with stdout: exit 100), no plan, no backup. `--in-place`: each file is the target of one `write` item, one plan for
+  all, with backups by `back_up_before_save` unless `--no-backup`. `--output <FILE>` (one input): the target; an
+  existing one asks `ReplaceExisting`.
+- **Plan and questions.** `--dry-run` prints the plan and each file's counts, writes nothing. A converted file
+  (*Sorted*/*External* without save), a binary one, a read-only one without `--yes`, or an unmappable character with
+  `--unmappable refuse` (the default without a terminal) fail that item; a file with nothing to change is `skipped`
+  (`no_change`, new `SkipReason`) and not rewritten. `--force` answers `ChangedOnDisk` (a file changed between load and
+  write). Without a terminal, open questions exit 100 as W6 (§1.6.11).
+- Exit codes: 0 when every item is done or skipped, 100 otherwise (also on a cancel); human output: one line per file
+  `converted <n> lines: <spec>` (`--dry-run`: `would convert …`), then the plan's lines with `--verbose`.
+
+#### 1.10.16 Formats per pane (FF-003; D-281, revises D-15)
+
+- **Default unchanged.** Without a per-side choice, one effective format applies to both sides exactly as D-15 (forced,
+  else the first named side's detection, `format_mismatch`): every M1 golden and G1 stay as they are.
+- **A format per side** when asked: `TextCompareRequest::formats: Pair<Option<String>>` (`--left-format`,
+  `--right-format`; `--format` still sets both and conflicts with either, exit 100), the session's `[specs]
+  left_format`, `right_format` (additive, `""` = follow `format`), and the pane's format picker (W11, which re-runs the
+  comparison). `CompareInput` gains `right_format: Option<Arc<CompiledFormat>>` (`None` = `format` for both).
+- **Keys by element names.** Each side is tokenized and classified with its own grammar; the rules' element table
+  (importance, case) is looked up **by element name** in each side's format; an element a side's format lacks does not
+  exist there; a side whose format has no grammar is plain text (everything is *Everything Else*). Two lines compare by
+  their keys (D-14) as always, so a C file against an identical plain-text copy is *rules same* under the default rules
+  (everything important), while with comments unimportant every line holding a comment differs (the plain side has no
+  comment to remove): per-side formats serve files of different formats that share element names.
+- Auto (D-36): Histogram when either side's format has a grammar (and the cost fits), else Standard. Line weights come
+  from each side's own format. The identity fast path (D-53) is decided per side. Inline classification uses each side's
+  spans.
+- JSON: `hikasa.text_compare.v1`'s `format` stays the left (or only) one; `right_format` is added when the sides differ.
+  The session's encoding overrides (`left_encoding`, `right_encoding`, TC-001's per-pane override) are unchanged and now
+  also reachable as `--left-encoding`/`--right-encoding` from the pane (W11).
+
+#### 1.10.17 Ignored lines (TC-024; D-282)
+
+```rust
+// hikasa_text::compare::ignored
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IgnoredLines { pub left: RangeSet, pub right: RangeSet }    // 0-based line ranges, merged and sorted
+```
+
+- **Meaning.** A row is *ignored* when its left line is in `left` or its right line is in `right`. Alignment does not
+  change; for display, navigation, statistics, the verdict, the exit code and reports an ignored row counts as **same**
+  (as *Ignore Unimportant Differences* does for unimportant rows), with its own class `Ignored` for colour (TC-031) and
+  the status bar (TC-037). `TextStats` gains `ignored_rows` (additive); a section entirely ignored is skipped by
+  `DiffSectionNext/Prev` (*next unignored section*, TC-050). Folder content tests never see ignored lines (they belong
+  to one session's files).
+- **Marking.** The *Ignored* command (W11) adds the selected rows' lines on each side, or the current section's; marking
+  again removes them. Lines follow edits (§1.10.10, moved as bookmarks; a fully removed range disappears).
+- **Persistence** (TC-024: *for named sessions*; auto-saved ones keep them too, **open default**): `[specs]
+  ignored_left`, `ignored_right`, arrays of 1-based `"a-b"` or `"a"` strings, plus `ignored_check_left`,
+  `ignored_check_right`, the CRC-32 of each side's marked lines' text; on load a side whose marked lines no longer have
+  that CRC drops its marks with warning `ignored_lines_dropped` (the file changed: line numbers would point elsewhere).
+- **CLI.** `text compare … --ignored left:<a>[-<b>]` / `--ignored right:<a>[-<b>]` (repeatable, 1-based); `session run`
+  reads the session's; `hikasa.text_compare.v1` rows gain `ignored: true` where set, and `stats.ignored_rows`.
+
+#### 1.10.18 Find and replace (TC-064; D-283)
+
+```rust
+// hikasa_text::find (pure)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindQuery { pub text: String, pub regex: bool, pub match_case: bool, pub whole_word: bool }
+pub struct Finder { /* compiled: a hikasa_formats::Pattern (regex: as written; plain: escaped), word chars, limits */ }
+impl Finder {
+    pub fn new(q: &FindQuery, word_chars: &str, limits: &RegexLimits) -> Result<Finder, FindError>;   // invalid_input
+    pub fn find_in_line(&self, line: &str, from: u32) -> Result<Option<Range<u32>>, FindError>;
+    pub fn next(&self, doc: &EditableDocument, from: TextPos, dir: Dir, wrap: bool) -> Result<Option<Hit>, FindError>;
+    /// Every hit up to `limit` (Select All matching lines).
+    pub fn all(&self, doc: &EditableDocument, limit: u64, ctl: &Ctl<'_>) -> Result<Vec<Hit>, FindError>;
+}
+pub struct Hit { pub range: Range<TextPos>, pub wrapped: bool }
+pub struct Replacement { /* a hikasa_formats::template::Template (regex) or the literal text (plain) */ }
+pub fn replace_one(doc: &EditableDocument, f: &Finder, hit: &Hit, with: &Replacement) -> Result<EditRequest, FindError>;
+pub fn replace_all(doc: &EditableDocument, f: &Finder, with: &Replacement, scope: Option<Range<TextPos>>, ctl: &Ctl<'_>)
+    -> Result<(Option<EditRequest>, u64 /* count */), FindError>;
+pub fn find_in_comparison(cmp: &TextComparison, docs: Pair<&EditableDocument>, f: &Finder, from: (RowIdx, Side),
+    sides: FindSides /* Left | Right | Both */, dir: Dir, wrap: bool) -> Result<Option<(Side, Hit)>, FindError>;
+```
+
+- **Engine.** `hikasa_formats::Pattern` (§2.11 of M1, D-180): `regex` first, `fancy-regex` only for backreferences and
+  look-around, with `RegexLimits` (T9); a backtrack limit hit on a line counts as no match there and adds warning
+  `regex_runtime_error` once per search. No new crate. `match_case = false` is `Pattern`'s case-insensitive flag
+  (Unicode simple folding); plain text is `regex::escape`d.
+- **Per line.** A match never spans a terminator (`^`, `$`, `\b` see the line, as the grammars do); a pattern that can
+  only match a line break (`\n`, `\r`) is refused (`invalid_input`, "a search does not cross line ends"). Empty matches
+  are skipped (the search moves one character on).
+- **Whole word.** A hit must start and end at word boundaries: the character before it and after it (or the line edge)
+  is not a word character (letters, digits, `_`, the format's `word_chars`, D-58), while its own first and last are
+  checked only when they are word characters (so `+=` matches as itself).
+- **Order and wrap.** In a document: by position. In a comparison with `Both`: by row, the left side first in a row
+  (`FindSides`). Wrap continues from the other end once and marks the hit `wrapped` (the panel's *passed the end*).
+- **Replacement.** Plain: the literal text. Regex: `$1`, `${1}`, `${name}`, `$$`, with an unknown group refused at
+  `Replacement::new` — **the in-house expansion of D-180 moves to `hikasa_formats::template`** and `hikasa-folder`'s
+  rename uses it from there (one rule, T11). A replacement holding line breaks inserts them by §1.10.3's rule. Replace
+  All is one step; its count is returned for the confirmation (*Replace N occurrences?*, W11) and the status.
+- **Current word** (OPT-006 `init_find_with_current_word`): `edit::commands::word_at`.
+
+#### 1.10.19 Find in Files and `text find` (TC-064; D-284, D-285)
+
+```rust
+// hikasa_text::find::files
+pub struct FilesQuery { pub find: FindQuery, pub roots: Vec<Spec>, pub masks: NameFilter /* hikasa_core, FC-050 syntax */,
+    pub recursive: bool, pub include_hidden: bool, pub archives: FindArchives /* Files | Opened */,
+    pub limits: FilesLimits, pub encoding: Option<TextEncoding>, pub convert: bool }
+pub struct FilesLimits { pub max_matches: u64 /* 100,000 */, pub max_matches_per_file: u32 /* 10,000 */,
+    pub max_file_bytes: u64 /* DEFAULT_RULES_MAX_BYTES = 128 MiB */, pub preview_chars: u32 /* 400 */ }
+pub enum FilesEvent<'a> { File { index: u64, spec: &'a Spec, encoding: TextEncoding },
+    Hit { file: u64, line: u32 /* 1-based */, column: u32 /* 1-based chars */, len_chars: u32, preview: &'a str,
+          preview_range: Range<u32>, truncated: bool },
+    Skipped { spec: &'a Spec, reason: SkipWhy }, Done { file: u64, hits: u64 } }
+pub enum SkipWhy { Binary, TooLarge, Unreadable(ErrorReport), Converted, Filtered }
+pub trait FilesSink { fn event(&mut self, e: FilesEvent<'_>); }
+pub fn find_in_files(vfs: &dyn Vfs, registry: &FormatRegistry, q: &FilesQuery, sink: &mut dyn FilesSink,
+    pool: Option<&rayon::ThreadPool>, ctl: &Ctl<'_>) -> Result<FilesSummary, TextError>;
+```
+
+- **Traversal.** Each root: a file is searched as given; a folder is listed through the VFS (`list`, sorted by
+  `Listing::sort_by_name`), files filtered by `masks` (names only, D-10's case rule), subfolders descended with
+  `recursive`, hidden items only with `include_hidden`, links followed for files and not for folders (no loops),
+  archives opened as folders with `archives = opened` (default `files`: an archive file is skipped as binary). Order of
+  results = this pre-order, **whatever the pool**: files are searched in parallel (one file a task, a reorder window of
+  64 files) and their events are delivered in order, so the JSON and the stream are deterministic (T2).
+- **Each file.** Read through `load_document` with the registry's detected format (encoding detection D-42, or
+  `encoding`), no External conversion unless `convert` (then `Converted` files are searched in their converted text;
+  else they are skipped `Converted`); binary content is skipped `Binary`; larger than `max_file_bytes` skipped
+  `TooLarge` before reading. Search per line with the `Finder` (§1.10.18).
+- **Limits.** At `max_matches` the search stops (the rest is `not searched`, warning `find_limit_reached` with the
+  count); at `max_matches_per_file` that file stops (its `Done` says so). A preview is the line cut to `preview_chars`
+  characters around the hit (`truncated`). Memory: O(files in flight × their size) bounded by the pool and the window,
+  never by the result count — the sink owns the results.
+- **Job.** `JobKind::TextFind`, `Phase::Searching` (files and bytes); cancellable within 100 ms inside a large file
+  (G4); the GUI's results list (W11) receives events through a mailbox and opens a Text Edit view at a hit.
+
+**`hikasa text find`** (D-285):
+
+```
+hikasa text find <PATTERN> <PATH>… [--regex] [--case] [--word] [--recursive] [--mask <masks>] [--include-hidden]
+                 [--archives files|opened] [--encoding <label>] [--convert] [--max-matches <n>] [--max-file-size <bytes>]
+                 [--files-with-matches | --count]
+                 [--replace <TEXT> [--dry-run] [--yes] [--confirm prompt|yes-to-all|no-to-all] [--backup|--no-backup]]
+```
+
+- Human output streams `<spec>:<line>:<column>: <preview>` per hit (`--files-with-matches`: one spec per matching file;
+  `--count`: `<spec>:<n>`), skipped files on stderr with `--verbose`. Exit code **0** whether or not anything matched
+  (CLI-004 gives 1 to *binary same*; `--json`'s counts say how many; **open default**), 100 for an invalid pattern, a
+  missing root, a cancel or a failed replace item.
+- **`--replace`** (replace in files, a mutation, T12): every matching file becomes one `write` item of §1.10.13's plan
+  (its document with `replace_all` applied; unchanged lines byte-exact); `--dry-run` prints the plan and the counts per
+  file; otherwise the operation question *Replace N occurrences in M files?* is asked as W6's (`--yes`/`--confirm`;
+  without a terminal and without them exit 100), then the plan runs with backups by `back_up_before_save` (`--no-backup`
+  off). A file changed between the search and the write fails its item (`changed since the plan was made`).
+
+#### 1.10.20 Navigation and details data (TC-033, TC-050; D-286, D-287)
+
+```rust
+// hikasa_text::nav (pure)
+pub enum BrowseMode { DiffSection, Difference, Edit, Find }      // TC-050's selector; Replacement and Taken are P1
+pub fn step(mode: BrowseMode, ctx: &NavContext<'_>, from: NavPos, dir: Dir, wrap: bool) -> Option<NavTarget>;
+pub struct NavContext<'a> { pub cmp: Option<&'a TextComparison>, pub docs: Pair<Option<&'a EditableDocument>>,
+    pub view: Option<&'a FilteredView>, pub ignore_unimportant: bool, pub finder: Option<&'a Finder>, pub sides: FindSides }
+pub struct NavTarget { pub row: Option<RowIdx>, pub side: Side, pub range: Range<TextPos>, pub wrapped: bool }
+pub fn existing_line(cmp: &TextComparison, from: RowIdx, side: Side, dir: Dir) -> Option<RowIdx>;   // Alt+Down/Up
+pub fn parse_goto(text: &str) -> Result<(u32, Option<u32>), String>;        // "120", "120:7", ":7"
+pub fn goto(doc: &EditableDocument, line: u32, column: Option<u32>) -> TextPos;   // physical line (TC-003), 1-based chars
+pub fn column_of(line: &str, byte: u32) -> (u32 /* char column */, u32 /* display column, tabs expanded */);
+```
+
+| Mode / command | Target (normative) |
+|---|---|
+| `DiffSection` (Ctrl+N/P) | the next section that is not same under the view's filter, skipping ignored sections (§1.10.17) and, with *Ignore Unimportant Differences*, unimportant ones; M1's `sections()` order |
+| `Difference` (Shift+Ctrl+N/P) | the next inline difference range (`inline()`) of the current row after the caret, then of the following non-same rows: so a long changed line is walked range by range |
+| `Edit` (EditNext/Prev) | the next run of `Edited` or `SavedEdit` lines of the focus pane (§1.10.5) |
+| `Find` | `find_in_comparison` / `Finder::next` with the panel's query |
+| `ExistsNext/Prev` (Alt+Down/Up) | the next row where the focus side has a line (skips gaps) |
+| Go To (Ctrl+G) | `line[:column]`: physical line numbers (as shown in the gutter, TC-003), columns in characters, both 1-based; out of range clamps to the last line or column; the row is the line's row |
+| Bookmarks | §1.10.5 |
+
+- **Wrap and *no more differences*** (TC-051): `wrap` = `[next_difference] wrap_around`; `None` lets the view show
+  OPT-007's message or beep. *Go to first difference on load* is `step(DiffSection, …, from = start)`.
+- **Status bar data** (TC-037, W11): `column_of` gives the column shown (characters, **open default**; the ruler shows
+  display columns); the current row's state, `Ignored` included, is `LiveComparison::current().row(..)` plus the ignored
+  class; the element under the caret is `TextComparison::spans` (per side's format, §1.10.16).
+
+```rust
+// hikasa_text::details (pure)
+pub fn hex_details(doc: &EditableDocument, line: LineIdx, max_bytes: u32) -> HexDetails;   // TC-033 Hex Details
+pub struct HexDetails { pub bytes: Vec<u8>, pub encoding: TextEncoding, pub eol: Vec<u8>, pub truncated: bool,
+                        pub unmappable: Vec<Range<u32>> /* byte ranges written as '?' */ }
+pub fn char_alignment(left: &str, right: &str, opts: &InlineOptions) -> Vec<CharCell>;   // Alignment Details
+pub struct CharCell { pub left: Option<char>, pub right: Option<char>,
+                     pub class: CellClass /* Same, Changed, Unimportant, LeftOnly, RightOnly */ }
+pub fn ruler(tab_size: u8, from: u32, to: u32) -> Vec<RulerMark>;      // a tick every column, a label every 10
+```
+
+- *Hex Details* encode the line's current text with the document's encoding (for an unchanged line these are its bytes
+  in the file, except malformed bytes and the few characters an encoding can write in two ways, which show as a save
+  would write them for an edited line), then the terminator's bytes; capped at `max_bytes` (W11: 4,096). *Text Details*
+  is an editor on the same `EditableDocument`. *Alignment Details* aligns characters with M1's inline engine (§2.16) and
+  classifies them as the row's inline ranges are classified, so its colours equal the panes'.
+
+#### 1.10.21 The session link and Text Edit (TC-052, TE-001, TC-064; D-288, D-289)
+
+**Next/Previous Difference Files (TC-052).**
+
+```rust
+// hikasa_folder::view (pure, additive)
+pub fn next_difference_file(read: &TreeRead<'_>, from: NodeId, dir: Dir, opts: &NextFileOptions) -> Option<NodeId>;
+pub struct NextFileOptions { pub limit_to_folder: bool /* OPT-007 */, pub wrap: bool /* OPT-007 wrap_around */,
+                             pub display: DisplayOptions, pub ignore_unimportant: bool }
+```
+
+- Candidates: rows with a **file on both sides** whose category is different (important, or unimportant unless
+  `ignore_unimportant`), not Ignored, shown by the display filter, in the tree's pre-order over **every** scanned row
+  (closed folders included, as Find Filename, D-241); with `limit_to_folder`, only `from`'s siblings. Orphans and
+  folders are never targets. `None` when there is none (the view's message).
+- The child view finds its row by its `ParentLink` (`left`/`right` relative paths) in the parent's model: the parent
+  folder view when it is open in this process; otherwise **open default**: the parent session is compared again in a job
+  (`folder_prepare_in` + `folder_run` of `ParentLink::session`), then navigated. The next pair opens **in this view**
+  (TC-052): the GUI asks to save or discard edits first, as a close does (D-84).
+- **Copy File to Right/Left and Open Next Difference** (Ctrl+Alt+R/L). `Service::text_copy_file_steps(req:
+  &CopyFileRequest<'_> { parent: &PreparedFolderCompare, row: NodeId, from: Side, docs: Pair<&EditableDocument>,
+  read_only: ReadOnlySides }, job) -> CopyFileSteps { save_source: Option<SavePlan> /* the source pane's unsaved edits,
+  saved first */, discard_target: bool /* the target pane's edits are lost */, copy: OpPlan /* W6's folder_op_plan: Copy
+  of this row toward the other side */, next: Option<NodeId> }`; the confirmation lists the steps (TC-052); executed in
+  order (save, copy, refresh the parent's row, open next); a failed step stops the chain. A read-only target side
+  refuses (D-184).
+
+**Text Edit (TE-001).** One `EditableDocument`, no comparison: `Service::text_edit_open(req: &TextEditRequest, job) ->
+Result<TextEditResponse, ApiError>` (`spec`, `format`, `encoding`, `read_only`, `save_target`; response: the document,
+its `Editability`, its `LoadStamp`, the format choice with its reason, warnings). Session type `text-edit` (exists,
+D-80): `[specs] left` is the file, `left_format`, `left_encoding`, `read_only_left`; Find in Files, find/replace,
+conversions, bookmarks, Go To, save work as in a pane.
+
+**Text pairs** (Compare Selection to Clipboard, TC-064; also W11's *Open Clipboard* and the drop of text):
+`Service::text_compare_texts(left: NamedText, right: NamedText, req: &TextCompareRequest, job) -> Result<LiveTextView,
+ApiError>` with `NamedText { name: String /* for format detection */, text: String }`: documents by
+`TextDocument::from_text`, no location (Save is Save As), otherwise a comparison like any other.
+
+#### 1.10.22 Command line switches and IPC (CLI-003; D-278)
+
+| Switch | M2 W10 meaning (parsed by the one legacy parser, D-51) |
+|---|---|
+| `--edit` | each file spec opens a **Text Edit** view (`ViewKind::TextEdit`); with two specs, two views; with `--fv` the last wins (as `--sync`, D-190). Until W11 the GUI answers `unsupported_view` (D-190's precedent). |
+| `--ro`, `--ro1`, `--ro2` (and aliases) | `OpenOptions::read_only` (exists): `CommandLine` block on those panes (§1.10.7); a Text Edit view's file is side 1 |
+| `--savetarget=<file>` | `OpenOptions::save_target: Option<String>` (additive, an absolute canonical spec made by `resolve_open`; left out of the wire when absent): §1.10.14's rule; with `--wait` the view's outcome is still its verdict (D-23) |
+| `--nobackups` | `OpenOptions::no_backups` (exists): no backup on any save of that view |
+
+`--edit` and `--savetarget` leave `switch_ignored`; the `hikasa-gui` usage text and `gui open --help` list them.
+`OpenView` of a `TextEdit` view carries one spec; `TextCompare` views gain the read-only and save-target fields above.
+`ViewOutcome` of a Text Edit view: exit 0 (no verdict, D-23), 100 when it failed to load.
+
+#### 1.10.23 Service, errors and warnings
+
+*Exists* = on `feat/m2` when W10 starts; *new* = added by the named part. Calls that read or write files run in jobs
+(D-105); the in-memory calls on `EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform` are pure
+core the adapters call directly (D-105's rule for pure functions).
+
+| Need | Call | Status |
+|---|---|---|
+| open a live comparison | `Service::text_compare_live(req, opts: LiveOptions { read_only: ReadOnlySides, parent_read_only: ReadOnlySides, save_target, no_backups }, job, observer) -> LiveTextView { response: TextCompareResponse, live: LiveComparison, docs: Pair<EditableDocument>, stamps: Pair<Option<LoadStamp>> }` | new (W10a; saves W10b) |
+| recompare | `LiveComparison::recompare_job(..).run(Service::pool(), ctl)` in `Service::spawn` | new (W10a) |
+| Text Edit, text pairs | `text_edit_open`, `text_compare_texts` | new (W10c) |
+| save | `text_save_plan(&[(Option<Side>, &EditableDocument, &SaveRequest)], job) -> SavePlan`, `SaveConfirmation` (pure), `text_save_execute(SavePlan, &[&EditableDocument], job) -> SaveReport` | new (W10b) |
+| backup policy | `Service::backup_policy_for_save(no_backups) -> Option<BackupPolicy>` | new (W10b) |
+| convert files | `text_convert(req: &TextConvertRequest, job) -> TextConvertOutcome` (plan, dry run, execute) | new (W10b) |
+| find in files | `text_find(req: &TextFindRequest, sink, job) -> TextFindOutcome`; `text_find_replace_plan`, `…_execute` | new (W10c) |
+| session link | `TreeRead::next_difference_file` (pure), `text_copy_file_steps`, `folder_op_plan`/`folder_op_execute` | first two new (W10c) |
+| per-side formats, anchors, ignored | `TextCompareRequest::{formats, anchors, ignored}` (additive fields) | new (W10a anchors; W10b the rest) |
+| sessions | `[specs] left_format`, `right_format`, `ignored_left`, `ignored_right`, `ignored_check_left`, `ignored_check_right` through `session_for_view` / `session_apply_scope` | new (W10b) |
+
+**Errors.** `ApiError::EditBlocked { side: Option<Side>, block: EditBlock }` (kind `permission_denied`, exit 100);
+`TextError::Find(FindError)` (`invalid_input`: pattern, replacement template, line-break pattern; `cancelled`);
+`TextError::Save { item, source }` wraps VFS errors per item in reports (items fail, the call does not). `ApiOp` gains
+`TextSave`, `TextConvert`, `TextFind`. **Warnings** (`WarningCode`, additive): `anchor_dropped`,
+`ignored_lines_dropped`, `source_touched`, `save_reencoded`, `lossy_line_rewritten`, `unmappable_replaced`,
+`find_limit_reached`. `SkipReason` gains `no_change`. The JSON names are the snake_case words above.
+
+#### 1.10.24 CLI and JSON
+
+```
+hikasa text compare <L> <R> … [--align <L>:<R>]… [--isolate left|right:<a>[-<b>]]… [--left-format <id|name>]
+                    [--right-format <id|name>] [--ignored left|right:<a>[-<b>]]…        (additive to M1's flags)
+hikasa text convert <FILE>… …      (§1.10.15)
+hikasa text find <PATTERN> <PATH>… …      (§1.10.19)
+```
+
+`--align`, `--isolate`, `--ignored` are also accepted by `report text` and `session run` of a text session (one rules
+group, D-205); their words are parsed by core (`api::vocab::parse_anchor`, `parse_ignored`), never by the CLI (T11). The
+legacy `gui open` switches as §1.10.22.
+
+**JSON.** Appended to `SCHEMAS`, 41 → 43:
+
+| Schema | `result` |
+|---|---|
+| `hikasa.text_convert.v1` | `{dry_run, target: "in_place"\|"output"\|"stdout", files: [{spec, format: FormatJson, encoding: {from, to}, bom: {from, to}, line_endings: {from: EolStyle, to: EolStyle}, conversions: [{kind: "trim_trailing"\|"spaces_to_tabs"\|"tabs_to_spaces"\|"line_endings"\|"encoding"\|"bom", lines: u64}], converted_lines: u64, status: "planned"\|"done"\|"skipped"\|"failed"\|"not_run", skip: null\|str, error: ErrorReport\|null, questions: [str], warnings: [Warning]}], plan: [PlanItemJson], summary: {files, converted_lines, done, skipped, failed, not_run}}` |
+| `hikasa.text_find.v1` | `{query: {pattern, regex, match_case, whole_word}, roots: [spec], mask: str\|null, recursive, include_hidden, archives, files: [{spec, encoding, hits: [{line, column, len, preview, preview_range: [a, b], truncated}], hit_count, stopped: bool}], skipped: [{spec, reason, error: ErrorReport\|null}], counts: {files_searched, files_matched, hits, skipped}, limit_reached: bool, replace: null\|{text, dry_run, plan: [PlanItemJson], results: [{spec, replaced: u64, status, error}], summary: {done, skipped, failed, not_run}}}` |
+
+- `PlanItemJson` is W3's item (`action: "write"`, `target`, `backup`, `expect`, …) plus `via_link`, `encoding`, `bom`,
+  `bytes`, `spliced_bytes`, `encoded_lines`. `hikasa.text_compare.v1` gains `anchors`, `right_format`, rows' `ignored`,
+  `stats.ignored_rows` (additive). Envelope as `hikasa.folder_op.v1`: a run that wrote with failed items is `ok: true`
+  with exit 100 and the items' errors; a refused request is `ok: false`.
+- Hit lists in JSON are capped by `--max-matches` (the document holds what the stream printed).
+
+#### 1.10.25 Dependencies and architecture test (D-291)
+
+- **No new crate.** `regex` and `fancy-regex` are reached through `hikasa_formats::Pattern` (already in the workspace,
+  M1); `ropey`, `encoding_rs`, `memchr`, `rayon` are already `hikasa-text` dependencies; `rustix` is already
+  `hikasa-vfs`'s (the `access` call is in `src/local/unix.rs`). `LoadStamp`'s CRC-32 comes from the VFS primitive
+  (VFS-020; additive `hikasa_vfs::crc32_bytes(&[u8]) -> u32` beside `crc32_reader`), so `hikasa-text` gains no
+  dependency. `hikasa-folder` keeps `hikasa-formats` (D-180) for `template`. `Cargo.lock` gains no package; `cargo deny`
+  passes without new exceptions; `docs/02` gains no line.
+- **Check 3.** Every manifest unchanged; the table is unchanged.
+- **Check 2.** In `core/hikasa-text/src` and `core/hikasa-diff/src`: no `std::fs`, `std::process`, `std::net`, no clock
+  (`Instant::now`, `SystemTime::now`): typing time comes from the adapter (`GroupHint::Typing`), the save program runs
+  through the injected `ProcessRunner` (D-39). `save/source.rs` reads only through `&dyn Vfs`.
+- **Check 7.** Nothing in `cli/` or `gui/` names `hikasa_diff::align`, `align_traced`, `hikasa_text::compare(`,
+  `compare_with_limits`, `compare_live`, `save_content`, `plan_save`, `execute_save`, `execute_with`,
+  `Pattern::compile`, `template::` or `hikasa_formats::encode`: adapters reach them through the Service or the pure
+  entry points of §1.10.23 (`EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform`, `commands`);
+  `gui/` computes no text edit (no `rope` mutation, no `ropey::Rope::insert`/`remove`). Each new rule has a
+  planted-violation self-test. No `unsafe`.
+
+#### 1.10.26 Gate G8 and budgets (D-271)
+
+Measured at the end of W10a (edit rows) and W10c (all rows), release build, idle machine, inputs generated by the test
+(the G1 pair `c_pair(1,000,000, 0x5EED_0001)` and its rules: c-cpp, Auto → Standard); harness
+`core/hikasa-text/tests/gates.rs` (`g8_*`, `#[ignore]`), median of 20 edits at seeded random places unless stated,
+figures in `docs/02`.
+
+| Item | Scenario | Threshold |
+|---|---|---|
+| G8 type | one character typed into a **same** line; `note_edit`, then `recompare_job(..).run` + `install` | recompare: every one of the 20 < 50 ms; `note_edit` < 1 ms |
+| G8 changed | one character into a changed line (inside a change cluster) | < 50 ms each |
+| G8 lines | Enter in the middle of a line; deleting a line; pasting 100 lines | < 50 ms each |
+| G8 copy | Copy Section to Right of a 10-line section | < 50 ms |
+| G8 undo | 1,000 single-character edits at random places (each `note_edit`, a recompare after every 50), then 1,000 `undo` calls each with `note_edit`, then one recompare | the 1,000 undos + their `note_edit`s + the recompare < 1 s; the result equals the original comparison (P-EDIT-1 on the gate input) |
+| G8 memory | the edits and undos above | RSS growth after the 1,000 edits and their recompares < 10 MiB; live heap growth (counting allocator, CI on 100,000 lines with the same per-edit bound: `core/hikasa-text/tests/edit_memory.rs`) < 10 MiB per 1,000 edits |
+| G8 worst (reported) | one character in the common prefix (the segment's root re-runs) | reported; ≤ G1's align phase on the pair |
+| G8 save | save of the 48 MB left side with 1,000 edited lines, `MemoryVfs` and local disk | ≤ 1.5 × `vfs cp` of the same file + 0.1 s; peak heap ≤ 8 MiB + the edited text |
+| G8 find | `Finder::all` of a plain word and of a regex `\b\w+_17\b` over the 1M-line side | < 150 ms; < 400 ms |
+| G8 find files | `text find` of a word over G7's 10,000 small files, warm | ≤ 1 s; output order identical with 1 and 8 threads |
+| Cancel | a recompare, a save, a find in files cancelled midway | returns ≤ 100 ms (G4) |
+| G1, G5 | the M1 gates on the block line table and the chunked rows | unchanged (G1 < 3 s; G5 `row` < 200 ns, `FilteredView::get` < 200 ns, `inline` p99 < 50 µs) |
+
+A failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule. W11 re-measures the typing latency
+in the window and ARCH-GUI-003 with an edited document and 1,000 undo steps (plan W11).
+
+#### 1.10.27 Hooks for later waves
+
+- **W11.** Catalogue ids → core (W11 flips the statuses; W10 changes no status): `Undo`/`Redo` →
+  `EditableDocument::undo/redo`; `Cut`/`Copy`/`Paste` (text-view predicates of D-252) → `text`/`plan_command(Paste)`;
+  `Delete…`, `InsertItemBefore`/`InsertItemAfter`, `IncreaseIndent`/`DecreaseIndent`, `Overwriting` → `EditCommand`;
+  `SelectSection` → `select_section`; `CopyRight`/`CopyLeft`/`CopySide`/`CopyItem*` → `copy_rows`; `AlignWith`/`Isolate`
+  → `set_anchors`; `Ignored` → `set_ignored` + session keys; `TrimTrailWS`, `LeadSpaceToTab`, `TabToSpace`, `ToWindows`,
+  `ToUnix` → `transform` (W11 adds `ToMac`, *To Macintosh*, missing from the catalogue); `Find`, `FindNext`, `FindPrev`,
+  `Replace` → `Finder`, `replace_*`; `FindInFiles` → `text_find`; `CompareToClipboard` → `text_compare_texts`; `GoTo` →
+  `parse_goto`/`goto`; `Bookmark*` → §1.10.5; `DiffNext/Prev`, `DiffSectionNext/Prev`, `EditNext/Prev`,
+  `ExistsNext/Prev` → `nav::step`; `DiffFileNext/Prev`, `CopyFileRight/Left` → §1.10.21; `Save`, `SaveAs`, `SaveAsLocal`
+  → §1.10.13; `FileFormat` → the per-pane format (§1.10.16);
+  `ShowTextDetails`/`ShowHexDetails`/`ShowAlignDetails`/`ShowRuler` → `details`; `EditTextFile` → `text_edit_open`. The
+  File Info header shows `EditableDocument::encoding`, the EOL summary, the format choice, `TextDocument::converted`,
+  `is_modified`, `Editability::status_text`; the status bar §1.10.20's data.
+- **W11 notices.** An input changed on disk (D-118): with unsaved edits always the warning notice with *Reload* (never
+  an automatic reload); W10's `LoadStamp` and the save's `ChangedOnDisk` give the data; TC-006's prompt is P1.
+- **W12.** Hex Details may later read the original bytes through `hikasa-hex`'s document; the table engine does not
+  edit.
+- **M3.** TC-006 (Reload, Recompare Files with `clear_undo`), TC-013 anchors saved as line-content anchors, TC-023
+  replacements (`BrowseMode::Replacement`), Text Merge (an output `EditableDocument`, `BrowseMode::Taken`), Save Using
+  Profile, remote save targets.
+
+#### 1.10.28 Documentation and version
+
+`docs/05` TC-001 (the save rule: unchanged lines byte-exact; re-encode cases), TC-003 (artificial breaks on save, *edit
+anyway* as data), TC-004 (§1.10.7's table), TC-005 (Save As, `--savetarget`, backups, the save options on edited lines),
+TC-013 (§1.10.8), TC-024 (§1.10.17), TC-033, TC-050, TC-052, TC-060…TC-064 (*M2 W10 notes*), TE-001, §11 (D-281 beside
+D-15); `docs/10` FF-003 (per side, keys by element names), FF-030/FF-031 (the save program); `docs/11` (save semantics:
+links, special files, archives' members editable, D-276); `docs/12` (§1 the `text convert` and `text find` rows with
+every flag, `text compare`'s new flags; §2 `--edit`, `--ro*`, `--savetarget`, `--nobackups` no longer `switch_ignored`
+where they were; §4 the two schemas, 43, the warnings, exit codes); `docs/03` (`[specs] left_format`, `right_format`,
+`ignored_*`; text-edit sessions); `docs/15` OPT-006 (`default_line_ending`, D-290), OPT-008 (saves); `docs/01` §3
+(`Action::Write`, `Vfs::writable`, the live comparison in the text architecture); `docs/02` (G8 figures, no crate);
+`docs/16` (M2 progress).
+
+**Help** (`cargo xtask help-check` clean; both topics in `help.rs`'s list): new `text-convert`, `text-find`; updated
+`text-compare` (`--align`, `--isolate`, `--left-format`, `--right-format`, `--ignored`), `gui` (`--edit`,
+`--savetarget`, `--ro*`, `--nobackups`), `exit-codes`, `json-output` (two schemas, 43, the new warnings), `cli`,
+`index`.
+
+**CHANGELOG.** One W10 section in `## Unreleased` (Added; Changed for D-15's per-side formats and the switches that left
+`switch_ignored`), updated in place by each part and review. **Version.** The parts bump nothing; W10 ships as the
+pre-release **0.1.96** after W10c's review, by the orchestrator (the steps of 0.1.95, §6.10 A10.33). No product name of
+docs/17 §5 anywhere: grep before each commit.
+
+#### 1.10.29 W10 notes (implementation)
+
+*To be written by each part*, as §1.9.25: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property and integration test was checked by (§6.10 rules).
+
+**W10a.** (none yet)
+
+**W10b.** (none yet)
+
+**W10c.** (none yet)
+
+### 1.11–1.14 W11–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -10361,3 +11466,209 @@ can fail, goldens, help and text), and:
   and its §1.9.25 notes. W9c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.95 and publishes the pre-release
   after W9c's review (§1.9.24). The product name of docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.10 W10 acceptance
+
+Rules for every item: those of §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests can fail,
+platform blind spots, goldens, help and text), and:
+
+- **Headless.** Every item is tested on core types and the Service (`MemoryVfs` where possible, disk where a back-end
+  matters), never through a window: W10 has no view. Documents are generated by the tests (seeded xorshift, §6.1),
+  fixtures of encodings come from `core/hikasa-formats/tests/fixtures/encoding/` plus generated legacy-encoding files;
+  nothing large is committed.
+- **Exactness by comparison.** Wherever a result must equal another path's (incremental vs full, a save vs the source
+  bytes, `text convert` vs a view's conversion, `text find` vs `Finder`), the test compares the two complete results
+  (the `hikasa.text_compare.v1` document, the file bytes, the JSON), not a summary.
+- **Tests can fail.** Each property test of W10 (P-BLOCK, P-EDIT-1, P-EDIT-2, P-ALIGN-REN, P-ANCHOR, P-SAVE, P-CONVERT,
+  P-FIND) and each integration test that stands in for one (A10.6, A10.13, A10.15, A10.23) is checked by mutation
+  (docs/17 §3 point 6): at least one named hand mutation of the code it guards makes it fail, and is reverted. The
+  mutations named in each item below are the minimum; §1.10.29 lists each mutation, the test that caught it and the seed
+  where there is one.
+- **Time.** Undo coalescing takes explicit `at_ms`; no test sleeps; debounces are the adapter's (W11).
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| edit model, recompare, anchors, find, navigation, details (A10.1…A10.11, A10.22, A10.25) | yes | yes | yes | yes |
+| save on `MemoryVfs` and disk, conversions, formats, Ignored (A10.13…A10.21) | yes | yes | yes | yes |
+| `Vfs::writable` on disk (A10.6) | `access` (a 0o444 file, a read-only bind mount where the runner allows, else `#[ignore]` with the reason) | DOS `R`, a read-only volume by hand | `access` | DOS `R` |
+| links followed by a save (A10.17) | disk | disk with developer mode, else skipped with the reason | disk | — |
+| G8 (A10.12, A10.29) | by hand, `#[ignore]`, release | — | — | — |
+| the counting-allocator memory tests (A10.1, A10.12) | yes | yes | yes | yes |
+
+**W10a — Editing and recompare**
+
+- A10.1 **Block line table (D-260) [W10a].** `core/hikasa-text/tests/blocks.rs`: P-BLOCK — random documents (mixed
+  terminators, CPL wrapping, multi-byte text, empty lines, a last line without terminator) and random edit scripts:
+  after every edit the block table equals `LineTable::build` of the resulting text (starts, terminators, physical lines,
+  artificial breaks), blocks stay within 128…1,024 lines (except a single block), `uniform` is true exactly when it may
+  be; snapshots taken before an edit are unchanged after it. The memory table of §1.10.2 by a counting allocator on
+  1,000,000 lines (load, live comparison, 1,000 edits in distinct blocks). Mutations: a split that keeps one line in
+  both halves; a prefix sum not rebuilt after a merge.
+- A10.2 **Edits and terminators (D-261, D-290) [W10a].** `core/hikasa-text/tests/edit_apply.rs`: goldens of §1.10.3's
+  rule table — a join keeps the later terminator, a paste of `a\r\nb\rc\n` into an LF document, `keep_eols`, Enter at
+  the end of a last line without terminator, an edit across an artificial break re-wraps, `TooLarge` changes nothing,
+  `BadRange`; `insert_eol` from the dominant kind and from `default_line_ending` (`platform` resolved by a fixed
+  `EnvFacts`).
+- A10.3 **Undo and redo, P-EDIT-1 (D-262) [W10a].** `core/hikasa-text/tests/props_edit.rs`: random scripts of every
+  `EditRequest` kind, `copy_rows`, conversions and `SetEncoding`, then full undo: text, terminators, encoding, marks,
+  bookmarks, `is_modified()` equal the start; redo replays to the end state; an edit after an undo drops the redo
+  branch; coalescing table with explicit `at_ms` (merge, break at 1,000 ms, break at a word start, `Group`). Mutations:
+  an undo step that forgets a displaced bookmark; coalescing across a caret jump.
+- A10.4 **Marks and bookmarks (D-263) [W10a].** `core/hikasa-text/tests/edit_marks.rs`: Original/Edited/SavedEdit
+  through edit, save (`saved`), edit, undo past the save (fresh `gen`, no `orig`), redo; `edited_ranges` both ways;
+  bookmarks: toggle, move, removal of their line, undo restores, `clear_bookmarks`.
+- A10.5 **Editing commands (D-264) [W10a].** `core/hikasa-text/tests/edit_commands.rs`: one table row per command of
+  §1.10.6 with tab and space formats, `auto_indent` on/off, `backspace_unindents` on/off, overwrite at a line end and
+  over a combining mark, word commands with the format's `word_chars`, smart Home, `select_section`; `copy_rows` makes
+  the rows equal (a fresh compare shows them same) for change, insert and delete sections and a single line, and is one
+  step. Mutation: auto indent copying past the caret.
+- A10.6 **Editability (D-265) [W10a].** `core/hikasa-session/tests/text_editability.rs`: every row of §1.10.7's table
+  (`MemoryVfs` read-only flags; disk: a 0o444 file, a zip member (editable), a `.gz` member (`ArchiveReadOnly`), a
+  Sorted format, External with and without `save`, `--ro2`, session `read_only_left`, a parent read-only side, a
+  cancelled comparison, binary content and `allow_binary_edits`, stdin (`can_save_in_place = false`)); `apply` refuses
+  with the first block; `text_save_plan` and `text_copy_file_steps` refuse with `ApiError::EditBlocked` (exit 100)
+  before planning. Mutation: `Vfs::writable`'s `None` treated as read-only.
+- A10.7 **Anchors (D-266) [W10a].** `core/hikasa-diff/tests/anchors.rs`: P-ANCHOR — random sequences and anchor sets:
+  INV-ALIGN-1…7 and 9 hold, the result equals the concatenation of `align` per segment, isolated lines are in
+  Delete/Insert runs and never paired by closeness; crossing, overlapping and out-of-range pairs dropped with
+  `anchor_dropped`; no anchors = `align` bit for bit on P-ALIGN's generators. CLI goldens
+  `cli/hikasa-cli/tests/cli_text_align.rs`: `--align 10:12`, `--align 10-14:12-13`, `--isolate left:5-6`, a line beyond
+  the file (exit 100), the JSON `anchors`. Mutation: a pair segment aligned with its neighbour.
+- A10.8 **Derivation and INV-ALIGN-8 (D-267) [W10a].** `core/hikasa-diff/tests/props_align.rs` gains P-ALIGN-REN: for
+  every engine (Unaligned, Standard with and without weights, Myers, Patience, Histogram, the budget fallback through
+  `testing::align_with_fallback_budget`), a random bijection of the ids (trivial to trivial) gives the same runs and the
+  same derivation; `align_traced`'s runs equal `align`'s; M1's `golden_align.rs` unchanged. Mutation: a tie in stage B
+  broken by token id.
+- A10.9 **Incremental = full, P-EDIT-2 (D-269) [W10a].** `core/hikasa-text/tests/props_incremental.rs`: random document
+  pairs from four generators (the G1-like clustered pair at 2,000–20,000 lines, repetitive lines, source with block
+  comments and multi-line strings, CPL-wrapped and mixed-terminator text), every algorithm, closeness on and off,
+  never-align, anchors, ignored lines, identity and tokenized paths; random edit scripts applied through `note_edit`
+  with recompares after random batches: after each `install` the comparison's `hikasa.text_compare.v1` document, runs,
+  rows, sections, stats, warnings and verdict equal a fresh `compare_with_limits` of the snapshots. Path counters show
+  each certificate condition both holding and failing and the T6 fallback taken. Mutations (each must fail the
+  property): condition 3 ignored (no slack check); an inserted key that becomes unique not counted; budget totals not
+  recomputed; a re-extended block not re-extended; tokenizer states not re-converged past a dirty line.
+- A10.10 **Provisional splice (D-268) [W10a].** `core/hikasa-text/tests/live_splice.rs`: after every `note_edit` each
+  live line of each side is in exactly one row, rows are in line order, pending flags mark exactly the touched rows,
+  stats equal a recount of `current()`'s rows; `install` with no newer edit is `Current`, with newer edits `Replayed`
+  and still consistent; a stale generation is never shown. Mutation: an inserted orphan row placed before its split
+  line.
+- A10.11 **Row store and G5 (D-270) [W10a].** `core/hikasa-text/tests/row_store.rs`: chunk invariants after random
+  splices (≤ 1,024 rows a chunk, bases, prefix sums), sharing (an untouched chunk is the same `Arc` in both
+  comparisons); `tests/gates.rs` G5 unchanged on the chunked store (also after 1,000 splices).
+- A10.12 **G8 (D-271) [W10a, W10c].** `core/hikasa-text/tests/gates.rs` `g8_*` rows of §1.10.26 (W10a: type, changed,
+  lines, copy, undo, memory, worst; W10c: save, find, find files) and `core/hikasa-text/tests/edit_memory.rs` (CI): live
+  heap growth ≤ 10 MiB per 1,000 edits on 100,000 lines; figures in `docs/02`.
+
+**W10b — Save, conversions, formats**
+
+- A10.13 **Save round trip, P-SAVE (D-272) [W10b].** `core/hikasa-text/tests/save_roundtrip.rs`: for **every**
+  encoding/BOM/terminator fixture (UTF-8 with and without BOM, UTF-16 LE/BE with BOM and BOM-less, UTF-32 LE/BE,
+  windows-1252, ISO-8859-2, KOI8-R, Shift_JIS, EUC-JP, GB18030, Big5, EUC-KR, IBM866, ISO-2022-JP; LF, CRLF, CR, mixed,
+  no final terminator; malformed bytes; a Ctrl-Z tail; CPL-wrapped lines): load → save without edits = the source bytes
+  exactly; P-SAVE: random edits → every unchanged run appears verbatim at its place, every edited line is its encoded
+  text followed by its encoded terminator, the BOM is the source's, the tail is kept; an edited ISO-2022-JP document and
+  an encoding change are whole re-encodes with `save_reencoded`; format save options touch edited lines only and form
+  one undo step. Mutations: a splice offset not shifted by the BOM length; save options applied to every line.
+- A10.14 **Save plans and `Action::Write` (D-273) [W10b].** `core/hikasa-vfs/tests/ops_write.rs` (A3's fault injection
+  on `MemoryVfs`: a failure at every write call leaves the target as it was; `expect` refuses a changed target; backup
+  rename and rename-back; permissions kept on disk; a new target created). `core/hikasa-text/tests/save_plan.rs`: the
+  dry-run JSON golden; the executed plan is the planned one; `SaveSource` streams in ≤ 1 MiB steps (counting allocator:
+  peak ≤ 8 MiB + edited text for a 48 MB document); a source changed between plan and execution (CRC at the end of the
+  read) fails the item before the commit; `saved()` rebases marks and stamp. Mutation: `Preserve` left at its default
+  (the source's time copied).
+- A10.15 **Questions (D-274) [W10b].** `core/hikasa-session/tests/text_save.rs`: each question of §1.10.14 produced and
+  answered (Yes, No, YesToAll, Cancel) through the W6 machine; `ChangedOnDisk` vs `source_touched` (same content, new
+  time); unmappable characters with `Ask`/`Refuse`/`Replace` in windows-1252 and Shift_JIS (never `&#…;`);
+  `LossyRewritten`; CLI drivers: `--force`, `--yes`, `--unmappable`, no terminal → exit 100 with the counts. Mutation:
+  `ChangedOnDisk` decided by size only.
+- A10.16 **Archives (D-276) [W10b].** `core/hikasa-session/tests/text_save_archive.rs` (disk): a member of a zip, a
+  tar.gz and a zip inside a tar saved: the archive rebuilt once, every other member byte-identical (W5's comparison
+  helpers), the archive's backup when on; a gz member `ArchiveReadOnly`; a rebuild finding the archive changed fails the
+  item.
+- A10.17 **Targets, backups, switches (D-275, D-277, D-278) [W10b].** `core/hikasa-session/tests/text_save_targets.rs`:
+  a link followed (the link stays), a FIFO refused (Unix), Save As moves the location, `--savetarget` on a Text Edit
+  file and on a Text Compare's right pane (the left saves in place), every `naming` style once, `folder` style,
+  `--nobackups`, a failed backup fails the item. `core/hikasa-session/tests/legacy_args.rs` (extended): `--edit` (one
+  and two specs, with `--fv`), `--savetarget` made absolute, `--ro`, `--ro1`, `--ro2`, `--nobackups` into `OpenOptions`;
+  the IPC `OpenView` golden with and without `save_target`; `switch_ignored` no longer emitted for them.
+- A10.18 **Conversions, P-CONVERT (D-279) [W10b].** `core/hikasa-text/tests/transform_golden.rs` with fixtures in
+  `core/hikasa-text/tests/fixtures/convert/` (tabs and spaces at sizes 2, 4, 8; trailing NBSP; mixed terminators; CPL):
+  goldens of each conversion and its *Converted N lines* count; a line range; P-CONVERT: idempotence,
+  LeadingSpacesToTabs then TabsToSpaces restores space-only indents; a conversion is one undo step. Mutation: a tab stop
+  counted from byte offsets instead of display columns.
+- A10.19 **`hikasa text convert` (D-280) [W10b].** `cli/hikasa-cli/tests/cli_text_convert.rs`: stdout, `--output`,
+  `--in-place` of three files (one plan, backups), `--dry-run` JSON golden (`hikasa.text_convert.v1`), `no_change` not
+  rewritten (file time unchanged), `--encoding UTF-16LE --bom`, `--unmappable`, a Sorted format refused, exit codes
+  0/100; the bytes equal a view's `transform` + save of the same file (exactness rule).
+- A10.20 **A format per pane (D-281) [W10b].** `core/hikasa-text/tests/format_per_side.rs`: without per-side formats
+  every M1 golden of `golden_compare.rs` and `regressions.rs` unchanged; a C file against its plain-text copy with
+  comments unimportant; an element the other format lacks; Auto with one grammar; per-side identity paths; JSON
+  `right_format`; `--left-format`/`--right-format` and the conflict with `--format`; `[specs] left_format` through
+  `session run`.
+- A10.21 **Ignored lines (D-282) [W10b].** `core/hikasa-text/tests/ignored.rs`: rows, `ignored_rows`, verdict and exit
+  code (a pair whose only differences are ignored is *rules same*), display filters, `DiffSectionNext` skipping,
+  reports' marks; marks follow edits; session round trip with `ignored_check_left/right`, a changed file dropping them
+  with `ignored_lines_dropped`; `--ignored` on `text compare`, `report text`, `session run`. Mutation: an ignored row
+  counted as important in `stats`.
+
+**W10c — Search and navigation**
+
+- A10.22 **Find and replace, P-FIND (D-283) [W10c].** `core/hikasa-text/tests/find_golden.rs`: goldens for plain, regex,
+  case on/off (Unicode folding), whole word with and without `word_chars`, `+=` as a whole word, sides and row order in
+  a comparison, wrap, `all` with its limit, a fancy pattern (backreference), the backtrack limit (`regex_runtime_error`,
+  the search goes on), a line-break pattern refused, empty matches; replacements `$1`, `${1}`, `${name}`, `$$`, an
+  unknown group refused, a replacement with a line break; Replace All one step with its count. P-FIND: plain search
+  equals a naive scan on random text. `core/hikasa-folder/tests/rename_masks.rs` unchanged after the template moved.
+  Mutation: whole word checking only the start boundary.
+- A10.23 **Find in Files (D-284) [W10c].** `core/hikasa-session/tests/text_find_files.rs`: `MemoryVfs` and disk trees
+  (masks with excludes, recursion on/off, hidden, a zip with `files` and `opened`, binary, too large, unreadable, UTF-16
+  and windows-1252 files, an External format with and without `convert`); the event order equals the sorted pre-order
+  with 1, 2 and 8 threads (identical streams); limits (`find_limit_reached`, per-file stop); a cancel inside a 256 MiB
+  file returns ≤ 100 ms (G4); peak memory with 100,000 hits does not grow with them (counting allocator, a sink that
+  drops). Mutation: the reorder window delivering a file early.
+- A10.24 **`hikasa text find` (D-285) [W10c].** `cli/hikasa-cli/tests/cli_text_find.rs`: human lines,
+  `--files-with-matches`, `--count`, the JSON golden (`hikasa.text_find.v1`), exit 0 with and without hits, 100 for a
+  bad pattern and a missing root; `--replace` with `--dry-run` (plan golden), `--yes` (files rewritten, unchanged lines
+  byte-exact, backups), no terminal without `--yes` (exit 100, nothing written), a file changed between search and write
+  (its item fails).
+- A10.25 **Navigation and details (D-286, D-287) [W10c].** `core/hikasa-text/tests/nav.rs`: every row of §1.10.20's
+  table on a fixture comparison (ignored sections, Ignore Unimportant, a 50,000-character changed line walked range by
+  range, edits, find), wrap and `None`, `existing_line` over gaps, `parse_goto` forms and errors, `goto` on CPL physical
+  lines and clamping, `column_of` with tabs and combining marks. `tests/details.rs`: Hex Details for UTF-8, UTF-16BE
+  with BOM, Shift_JIS, an unmappable character, the cap; Alignment Details' classes equal `inline()`'s on the same row;
+  the ruler.
+- A10.26 **Session link (D-288) [W10c].** `core/hikasa-folder/tests/next_file.rs`: candidates and order on a fixture
+  tree (orphans and folders skipped, ignored rows, display filter, closed folders included, `limit_to_folder`, wrap,
+  both directions). `core/hikasa-session/tests/text_session_link.rs`: the child's row found by its `ParentLink`; with
+  the parent closed the parent session compared again; `text_copy_file_steps` (source edits saved first, target edits
+  discarded, W6's copy plan equal to `folder op copy … --select <row>`, a read-only target refused).
+- A10.27 **Text Edit and text pairs (D-289) [W10c].** `core/hikasa-session/tests/text_edit_open.rs`: open, edit, save,
+  Save As, find, conversions on one document; a `text-edit` session's keys round trip; `text_compare_texts` with format
+  detection by name, no location (Save As only).
+
+**All parts**
+
+- A10.28 **Architecture (D-291) [W10a, W10b, W10c].** Check 2's and check 7's rules of §1.10.25, each with a
+  planted-violation self-test; `Cargo.lock`'s package count and every manifest unchanged; no `unsafe`.
+- A10.29 **Gates [W10a, W10c].** G8's rows per part (A10.12); G1, G4 (a recompare, a save, a find), G5 unchanged at the
+  end of W10a and of W10c; figures in `docs/02`. ARCH-GUI-003 is W11's to re-measure (plan W11).
+- A10.30 **Help and documents [W10a, W10b, W10c].** The topics of §1.10.28 per part (W10a `text-compare`'s anchors; W10b
+  `text-convert`, `text-compare`'s formats and Ignored, `gui`; W10c `text-find`, `json-output`, `exit-codes`, `cli`,
+  `index`), `cargo xtask help-check` and `cargo xtask commands-doc --check` clean, the help list golden; the docs of
+  §1.10.28 updated by the part that changes the behaviour.
+- A10.31 **Mutation record [W10a, W10b, W10c].** §1.10.29 holds, per part, each property and integration test of the
+  third rule with at least one mutation that failed it. A reviewer re-runs two of them.
+- A10.32 **Platforms [W10b, W10c].** Automated: non-UTF-8 file names (Linux) through save, convert and Find in Files;
+  Windows drive, UNC and `\\?\` targets in Save As and `--savetarget` (pure tables everywhere, disk on Windows CI and
+  wine); case-insensitive masks on Windows and macOS; macOS `/private/var` canonicalized in path assertions. The Windows
+  tests run under wine and the heavy proptests (P-EDIT-2 at 10,000 cases) once per part before a push; the known
+  wine-only exemptions of §6.6 stay and no new test joins them.
+- A10.33 **Part and wave end.** Each part: whole workspace green as A8.25 (`fmt`, `clippy -D warnings` also for the
+  Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, the architecture
+  test), the Windows tests under wine and the heavy proptests before a push, its §1.10.28 documents, its CHANGELOG entry
+  and its §1.10.29 notes. W10c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
+  `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.96 and publishes the pre-release
+  after W10c's review (§1.10.28). The product name of docs/17 §5 appears nowhere: grep before each commit.
