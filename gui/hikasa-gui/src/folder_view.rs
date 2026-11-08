@@ -4103,7 +4103,7 @@ enum Ready {
 }
 
 /// The sides `id` has an item on.
-fn present_sides(read: &TreeRead<'_>, id: NodeId) -> SideSet {
+pub(crate) fn present_sides(read: &TreeRead<'_>, id: NodeId) -> SideSet {
     read.node(id).map_or(SideSet::empty(), |n| {
         let mut sides = SideSet::empty();
         if n.left.is_some() {

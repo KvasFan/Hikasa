@@ -566,3 +566,216 @@ fn f12_the_latest_clipboard_write_wins() {
         );
     }
 }
+
+// ---- F6: the guards the review's mutations found untested ---------------------------------------------------------
+
+/// A drop's prompt with its plans made (a file dropped on the right base).
+fn prompt_on_the_right(world: &World, app: &mut TestApp, source: std::path::PathBuf) {
+    let w = app.win();
+    app.0.drop_paths(
+        w,
+        DropTarget::PaneTree {
+            side: Side::Right,
+            folder: None,
+        },
+        vec![source],
+    );
+    world.settle(app);
+    planned(world, app);
+}
+
+/// A changed overwrite choice: the buttons wait for its plan (M1); Cancel keeps the remembered choice, a run records
+/// it (M2); with none remembered (or a word that is none) the choice is Fail (M3).
+#[test]
+fn f6_the_overwrite_choice_waits_for_its_plan_and_is_remembered_by_a_run() {
+    let world = World::new();
+    let (mut app, _) = fixture(&world);
+    let new = world.write("work/src/a.txt", "new a\n");
+    let _view = open(&world, &mut app.0);
+    assert_eq!(
+        crate::drop_dialog::overwrite_of(None),
+        hikasa_vfs::ops::OverwritePolicy::Fail
+    );
+    assert_eq!(
+        crate::drop_dialog::overwrite_of(Some("no such word")),
+        hikasa_vfs::ops::OverwritePolicy::Fail
+    );
+    prompt_on_the_right(&world, &mut app, new.clone());
+    let d = drop_dialog(&mut app).expect("prompt");
+    assert_eq!(
+        d.overwrite,
+        hikasa_vfs::ops::OverwritePolicy::Fail,
+        "the default"
+    );
+    assert!(enabled(d, ButtonRole::Other(1)));
+    d.set_overwrite(hikasa_vfs::ops::OverwritePolicy::Always);
+    assert!(!enabled(d, ButtonRole::Other(1)), "waits for the new plan");
+    assert!(matches!(
+        d.on_button(ButtonRole::Other(1), &world.service),
+        crate::dialog::DialogStep::Stay
+    ));
+    assert!(d.take_answer().is_none());
+    // Cancel: nothing remembered.
+    press(&world, &mut app, ButtonRole::Cancel);
+    prompt_on_the_right(&world, &mut app, new.clone());
+    let d = drop_dialog(&mut app).expect("prompt");
+    assert_eq!(
+        d.overwrite,
+        hikasa_vfs::ops::OverwritePolicy::Fail,
+        "Cancel kept nothing"
+    );
+    d.set_overwrite(hikasa_vfs::ops::OverwritePolicy::Always);
+    planned(&world, &mut app);
+    press(&world, &mut app, ButtonRole::Other(1));
+    assert_eq!(
+        std::fs::read_to_string(world.path("work/r/a.txt"))
+            .ok()
+            .as_deref(),
+        Some("new a\n")
+    );
+    prompt_on_the_right(&world, &mut app, new);
+    let d = drop_dialog(&mut app).expect("prompt");
+    assert_eq!(
+        d.overwrite,
+        hikasa_vfs::ops::OverwritePolicy::Always,
+        "a run records it"
+    );
+    press(&world, &mut app, ButtonRole::Cancel);
+}
+
+/// A drop on a folder row the side does not have goes into its nearest folder there, the base here (M5).
+#[test]
+fn f6_a_drop_on_a_folder_the_side_lacks_goes_up() {
+    let world = World::new();
+    let (mut app, _) = fixture(&world);
+    put(&world, "r", "e/z.txt", "z\n", 1_000);
+    let new = world.write("work/src/new.txt", "new\n");
+    let view = open(&world, &mut app.0);
+    let e = node_of(&mut app.0, view, "e").expect("e, on the right only");
+    let w = app.win();
+    app.0.drop_paths(
+        w,
+        DropTarget::PaneTree {
+            side: Side::Left,
+            folder: Some(e),
+        },
+        vec![new],
+    );
+    world.settle(&mut app);
+    let d = drop_dialog(&mut app).expect("prompt");
+    let into = d.into.clone().expect("a pane");
+    assert_eq!(into.shown, world.path("work/l").display().to_string());
+    assert_eq!(into.folder, None);
+    press(&world, &mut app, ButtonRole::Cancel);
+}
+
+/// Paste goes into the current row's folder on the focus side (a file's folder, M6); with both sides focused and no
+/// pane named it asks for a row instead of guessing (M7).
+#[test]
+fn f6_where_a_paste_goes() {
+    let world = World::new();
+    let (mut app, fixed) = fixture(&world);
+    let new = world.write("work/src/new.txt", "new\n");
+    fixed.set_files(vec![new]);
+    let view = open(&world, &mut app.0);
+    app.execute(CommandId::ExpandAll);
+    select(&mut app.0, view, "d/c.txt");
+    folder_model(&mut app.0, view).with_selection(|sel, _, _| sel.focus = SideSet::RIGHT);
+    app.execute(CommandId::Paste);
+    world.settle(&mut app);
+    let d = drop_dialog(&mut app).expect("prompt");
+    assert_eq!(
+        d.into.as_ref().map(|i| (i.side, i.shown.clone())),
+        Some((Side::Right, world.path("work/r/d").display().to_string()))
+    );
+    press(&world, &mut app, ButtonRole::Cancel);
+    folder_model(&mut app.0, view).with_selection(|sel, _, _| sel.focus = SideSet::all());
+    app.execute(CommandId::Paste);
+    world.settle(&mut app);
+    assert!(drop_dialog(&mut app).is_none());
+    assert_eq!(
+        app.tabs()[app.active()]
+            .message
+            .as_ref()
+            .map(|m| m.text.clone()),
+        Some(crate::folder_view::pane::PASTE_WHERE.to_owned())
+    );
+}
+
+/// A move refreshes the folders its sources left (M21); a copy's failed items go to the log (M22).
+#[test]
+fn f6_a_move_refreshes_its_sources_and_failures_are_logged() {
+    let world = World::new();
+    let (mut app, _) = fixture(&world);
+    let view = open(&world, &mut app.0);
+    let w = app.win();
+    app.0.drop_paths_moving(
+        w,
+        DropTarget::PaneTree {
+            side: Side::Right,
+            folder: None,
+        },
+        vec![world.path("work/l/b.txt")],
+        true,
+    );
+    world.settle(&mut app);
+    planned(&world, &mut app);
+    press(&world, &mut app, ButtonRole::Other(2));
+    crate::tests_folder_ops::poll_until(&world, &mut app.0, |app| {
+        crate::tests::folder_model(app, view).idle()
+    });
+    assert!(!exists(&world, "work/l/b.txt") && exists(&world, "work/r/b.txt"));
+    let b = node_of(&mut app.0, view, "b.txt").expect("b.txt");
+    let sides = {
+        let m = folder_model(&mut app.0, view);
+        let model = Arc::clone(m.prepared().expect("p").model());
+        let read = model.read();
+        crate::folder_view::present_sides(&read, b)
+    };
+    assert_eq!(sides, SideSet::RIGHT, "the left folder was refreshed too");
+    // A copy over an existing item with Fail: the failure is logged.
+    prompt_on_the_right(&world, &mut app, world.path("work/l/a.txt"));
+    press(&world, &mut app, ButtonRole::Other(1));
+    crate::tests_folder_ops::poll_until(&world, &mut app.0, |app| {
+        crate::tests::folder_model(app, view).idle()
+    });
+    let errors = crate::tests_folder_ops::logged(&app, hikasa_session::log::LogKind::Error);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("failed ") && e.contains("a.txt")),
+        "{errors:?}"
+    );
+}
+
+/// Rows dragged with Shift onto a folder: Move to Folder only when it could run (M29: the left side read-only, its
+/// item on the left only).
+#[test]
+fn f6_a_move_to_a_folder_from_a_read_only_side_is_not_offered() {
+    let world = World::new();
+    let (mut app, _) = fixture(&world);
+    let view = open_with(&world, &mut app.0, |o| o.read_only.left = true);
+    select(&mut app.0, view, "b.txt");
+    let rows = folder_model(&mut app.0, view).selection().items.clone();
+    let folder = node_of(&mut app.0, view, "d").expect("d");
+    let w = app.win();
+    let before = crate::tests_folder_ops::dialogs(&app);
+    app.0.drop_rows(
+        w,
+        &RowDrag {
+            from: Some(Side::Left),
+            rows,
+        },
+        RowTarget::Pane {
+            side: Side::Right,
+            folder: Some(folder),
+        },
+        true,
+    );
+    world.settle(&mut app);
+    assert_eq!(
+        crate::tests_folder_ops::dialogs(&app),
+        before,
+        "no Move to Folder"
+    );
+}

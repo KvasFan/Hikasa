@@ -963,3 +963,31 @@ fn a_preset_name_is_trimmed() {
     let text = std::fs::read_to_string(world.path("config/filters.toml")).expect("filters.toml");
     assert!(text.contains("name = \"Rust\""), "{text}");
 }
+
+/// A matrix cell changed while a preset is chosen starts from that preset's matrix (note 11; review F6, M16).
+#[test]
+fn a_cell_changed_from_a_preset_keeps_the_preset_s_other_cells() {
+    let world = World::new();
+    fixture(&world);
+    let mut app = world.app(None);
+    let options = hikasa_folder::sync::SyncOptions {
+        preset: hikasa_folder::sync::SyncPreset::MirrorRight,
+        ..hikasa_folder::sync::SyncOptions::default()
+    };
+    let preset = options.effective_matrix();
+    assert_ne!(
+        preset, options.matrix,
+        "the stored custom matrix differs from the preset's"
+    );
+    let _view = crate::tests_sync_view::open_sync(&world, &mut app.0, options);
+    settings(&world, &mut app, CommandId::Rules);
+    let t = tab::<SyncTab>(&mut app);
+    t.set_cell(Situation::AddedLeft, SyncAction::Leave);
+    assert_eq!(
+        t.fields.options.preset,
+        hikasa_folder::sync::SyncPreset::Custom
+    );
+    let mut expected = preset;
+    expected.set(Situation::AddedLeft, SyncAction::Leave);
+    assert_eq!(t.fields.options.matrix, expected);
+}

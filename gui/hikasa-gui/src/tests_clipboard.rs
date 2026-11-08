@@ -275,6 +275,20 @@ fn a9_20_a_text_field_keeps_its_editing_keys() {
             .dispatch_keys(bw, &[sc("Ctrl+X")], FocusArea::TextField),
         None
     );
+    // Shift with them is no editing key: a binding of Shift+Ctrl+C reaches the window from a field (review F6, M13).
+    let world = World::with_files(&[(
+        "commands.toml",
+        "schema_version = 1\n[view.folder-compare.command.FullRefresh]\nshortcuts = [\"Shift+Ctrl+C\"]\n",
+    )]);
+    let (mut shifted, _, _) = fixture(&world);
+    let sw = shifted.win();
+    shifted.0.set_text_focus(sw, true);
+    assert_eq!(
+        shifted
+            .0
+            .dispatch_keys(sw, &[sc("Shift+Ctrl+C")], FocusArea::TextField),
+        Some(CommandId::FullRefresh)
+    );
     // With a text field focused the pane's Edit entries are off in the menus too.
     app.0.set_text_focus(w, true);
     for id in [CommandId::Copy, CommandId::Paste, CommandId::SelectAll] {

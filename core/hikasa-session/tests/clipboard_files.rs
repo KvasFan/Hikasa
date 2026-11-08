@@ -110,6 +110,11 @@ fn a9_20_the_file_clipboard_keeps_one_path_a_line() {
         .write_files(&[PathBuf::from("/a\nb")])
         .unwrap_err();
     assert!(matches!(err, ClipboardError::Failed(_)), "{err:?}");
+    // A carriage return neither (it would end a line read back; review F6, M25).
+    let err = clipboard
+        .write_files(&[PathBuf::from("/a\rb")])
+        .unwrap_err();
+    assert!(matches!(err, ClipboardError::Failed(_)), "{err:?}");
 }
 
 /// Linux: a name that is not valid UTF-8 keeps its bytes through the file.
