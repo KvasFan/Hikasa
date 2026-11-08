@@ -59,6 +59,11 @@ pub trait AppLauncher: Send + Sync {
     }
     /// FC-062 *Associated Application*.
     fn open_associated(&self, path: &Path) -> Result<(), ApiError>;
+    /// FC-063 *Open Folder in File Manager* (D-254; W9c note 34): the system handler opens the folder `path`. Default:
+    /// [`AppLauncher::open_associated`].
+    fn open_folder(&self, path: &Path) -> Result<(), ApiError> {
+        self.open_associated(path)
+    }
     /// FC-063 *Show in File Manager* (M2 W9c, D-254): the file manager shows `path` selected in its folder. Default:
     /// `unsupported`.
     fn reveal(&self, path: &Path) -> Result<(), ApiError> {
@@ -101,6 +106,8 @@ pub enum Recorded {
     Associated(PathBuf),
     /// [`AppLauncher::reveal`] (M2 W9c).
     Reveal(PathBuf),
+    /// [`AppLauncher::open_folder`] (W9c note 34).
+    OpenFolder(PathBuf),
 }
 
 /// For tests: records each call and answers from a script: one answer per call, in order, then exit code 0. An answer
@@ -151,6 +158,13 @@ impl AppLauncher for RecordingLauncher {
 
     fn reveal(&self, path: &Path) -> Result<(), ApiError> {
         self.calls.lock().push(Recorded::Reveal(path.to_path_buf()));
+        self.answer(&path.display().to_string()).map(drop)
+    }
+
+    fn open_folder(&self, path: &Path) -> Result<(), ApiError> {
+        self.calls
+            .lock()
+            .push(Recorded::OpenFolder(path.to_path_buf()));
         self.answer(&path.display().to_string()).map(drop)
     }
 }

@@ -610,7 +610,9 @@ fn a6_23_wait_for_previous_keeps_the_order_and_all_at_once_starts_each() {
         .into_iter()
         .map(|call| match call {
             Recorded::Run(command) => command.program,
-            Recorded::Associated(path) | Recorded::Reveal(path) => path.into_os_string(),
+            Recorded::Associated(path) | Recorded::Reveal(path) | Recorded::OpenFolder(path) => {
+                path.into_os_string()
+            }
         })
         .collect();
     assert_eq!(order, ["first", "second", "third"]);

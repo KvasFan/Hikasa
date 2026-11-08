@@ -1716,7 +1716,7 @@ impl Service {
     }
 
     /// FC-063 *Open Folder in File Manager* (D-254): the folder itself, a file's folder, a member's outermost archive's
-    /// folder, opened with the system handler (`AppLauncher::open_associated`). `folder`: the spec is a folder.
+    /// folder, opened with the system handler (`AppLauncher::open_folder`). `folder`: the spec is a folder.
     pub fn open_folder_in_file_manager(
         &self,
         spec: &Spec,
@@ -1726,7 +1726,7 @@ impl Service {
         run_guarded(|| {
             job.cancel.check().map_err(|_| ApiError::Cancelled)?;
             let targets = file_manager_targets(spec, folder).ok_or_else(|| not_local(spec))?;
-            self.launcher().open_associated(&targets.folder)
+            self.launcher().open_folder(&targets.folder)
         })
     }
 }

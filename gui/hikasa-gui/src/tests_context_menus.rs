@@ -264,10 +264,10 @@ fn a9_22_the_file_manager_entries() {
         launcher.calls(),
         [
             Recorded::Reveal(world.path("work/r/d/x.txt")),
-            Recorded::Associated(world.path("work/l/d")),
-            Recorded::Associated(world.path("work/l/e")),
+            Recorded::OpenFolder(world.path("work/l/d")),
+            Recorded::OpenFolder(world.path("work/l/e")),
             Recorded::Reveal(world.path("work/l/z.zip")),
-            Recorded::Associated(world.path("work/l")),
+            Recorded::OpenFolder(world.path("work/l")),
         ]
     );
     // The entries are enabled for these; a side without the item has them disabled.

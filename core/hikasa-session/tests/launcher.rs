@@ -12,7 +12,8 @@ use common::{facts, fixed_clock, job};
 use hikasa_core::{JobKind, LocalPath, Spec};
 use hikasa_session::api::file_manager_targets;
 use hikasa_session::host::{
-    Platform, explorer_path, file_uri, launch_dir, local_uri_paths, reveal_command, reveal_fallback,
+    Platform, explorer_path, file_uri, launch_dir, local_uri_paths, open_folder_command,
+    reveal_command, reveal_fallback,
 };
 use hikasa_session::launcher::{AppLauncher, NoLauncher, Recorded, RecordingLauncher};
 use hikasa_session::{ApiError, Service, ServiceInit};
@@ -52,6 +53,33 @@ fn a9_22_the_command_line_of_each_platform() {
                 "string:",
             ]
         );
+        assert_eq!(linux.cwd, PathBuf::from("/"));
+    }
+}
+
+/// *Open Folder in File Manager*'s command line on each platform (W9c note 34): the folder's handler, started in the
+/// fixed folder as Show in File Manager's command is (never the process's own folder, never the item's).
+#[test]
+fn the_folder_opener_of_each_platform_starts_in_the_fixed_folder() {
+    let system = launch_dir(Platform::Windows, None, Some(Path::new(r"D:\Win")));
+    let windows = open_folder_command(Platform::Windows, Path::new(r"C:\Data\a b"), &system);
+    assert_eq!(windows.program, "explorer.exe");
+    assert_eq!(texts(&windows.args), [r#""C:\Data\a b""#]);
+    assert_eq!(windows.cwd, Path::new(r"D:\Win").join("System32"));
+    let home = Path::new("/Users/me");
+    let mac = open_folder_command(
+        Platform::MacOs,
+        Path::new("/Users/me/x y"),
+        &launch_dir(Platform::MacOs, Some(home), None),
+    );
+    assert_eq!(mac.program, "open");
+    assert_eq!(texts(&mac.args), ["/Users/me/x y"]);
+    assert_eq!(mac.cwd, home);
+    for platform in [Platform::Linux, Platform::OtherUnix] {
+        let cwd = launch_dir(platform, None, None);
+        let linux = open_folder_command(platform, Path::new("/home/me/a b,c"), &cwd);
+        assert_eq!(linux.program, "xdg-open");
+        assert_eq!(texts(&linux.args), ["/home/me/a b,c"]);
         assert_eq!(linux.cwd, PathBuf::from("/"));
     }
 }
@@ -140,19 +168,26 @@ fn a9_22_uris_and_the_fallback_folder() {
 
 #[test]
 fn a9_22_the_recording_launcher_records_and_the_default_refuses() {
-    let launcher = RecordingLauncher::with_answers(vec![Some(0), None]);
+    let launcher = RecordingLauncher::with_answers(vec![Some(0), None, None]);
     launcher.reveal(Path::new("/a/one")).unwrap();
     let err = launcher.reveal(Path::new("/a/two")).unwrap_err();
     assert!(err.to_string().contains("/a/two"), "{err}");
+    let err = launcher.open_folder(Path::new("/a/three")).unwrap_err();
+    assert!(err.to_string().contains("/a/three"), "{err}");
     assert_eq!(
         launcher.calls(),
         [
             Recorded::Reveal(PathBuf::from("/a/one")),
-            Recorded::Reveal(PathBuf::from("/a/two"))
+            Recorded::Reveal(PathBuf::from("/a/two")),
+            Recorded::OpenFolder(PathBuf::from("/a/three")),
         ]
     );
     assert!(matches!(
         NoLauncher.reveal(Path::new("/a")),
+        Err(ApiError::Unsupported(_))
+    ));
+    assert!(matches!(
+        NoLauncher.open_folder(Path::new("/a")),
         Err(ApiError::Unsupported(_))
     ));
 }
@@ -201,9 +236,9 @@ fn a9_22_the_service_reveals_local_items_and_members_by_their_archive() {
         [
             Recorded::Reveal(file.clone()),
             Recorded::Reveal(archive.clone()),
-            Recorded::Associated(root.join("data")),
-            Recorded::Associated(root.join("data")),
-            Recorded::Associated(root.join("data")),
+            Recorded::OpenFolder(root.join("data")),
+            Recorded::OpenFolder(root.join("data")),
+            Recorded::OpenFolder(root.join("data")),
         ]
     );
     // Not on a local disk: refused, nothing started; the pure targets say the same.

@@ -914,47 +914,139 @@ impl AppLauncher for SystemLauncher {
     /// *Show in File Manager* (D-254): [`reveal_command`] of this platform, started in [`launch_dir`] (never the
     /// item's folder: a program found through a `PATH` entry `.` would be taken from there; review F14) and run to its
     /// end; when it cannot start, or (outside Windows) it ends with an error, the folder is opened instead
-    /// ([`reveal_fallback`]). `explorer.exe` exits 1 when it worked, so on Windows the item is checked first: it must
-    /// exist and have a form explorer selects ([`explorer_path`], `\\?\` taken off), else the folder is opened.
+    /// ([`reveal_fallback`], [`AppLauncher::open_folder`]). `explorer.exe` exits 1 when it worked, so on Windows the
+    /// item is checked first: it must exist and have a form explorer selects ([`explorer_path`], `\\?\` taken off),
+    /// else the folder is opened.
     fn reveal(&self, path: &std::path::Path) -> Result<(), ApiError> {
         let platform = Platform::HOST;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
-        let cwd = launch_dir(platform, home.as_deref(), system_root.as_deref());
         let shown_path = if platform == Platform::Windows {
             match explorer_path(path).filter(|_| path.exists()) {
                 Some(plain) => plain,
-                None => return self.open_associated(&reveal_fallback(path)),
+                None => return self.open_folder(&reveal_fallback(path)),
             }
         } else {
             path.to_path_buf()
         };
-        let command = reveal_command(platform, &shown_path, &cwd);
-        let mut process = std::process::Command::new(&command.program);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt as _;
-            // `/select,"<path>"` as one word: the standard quoting would quote the `/select,` too.
-            for arg in &command.args {
-                process.raw_arg(arg);
-            }
-        }
-        #[cfg(not(windows))]
-        process.args(&command.args);
-        let status = process
-            .current_dir(&command.cwd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let shown = match status {
+        let command = reveal_command(platform, &shown_path, &host_launch_dir());
+        let shown = match system_command(&command).status() {
             Ok(status) => platform == Platform::Windows || status.success(),
             Err(_) => false,
         };
         if shown {
             return Ok(());
         }
-        self.open_associated(&reveal_fallback(path))
+        self.open_folder(&reveal_fallback(path))
+    }
+
+    /// *Open Folder in File Manager* (D-254; W9c note 34): [`open_folder_command`] of this platform, started in
+    /// [`launch_dir`] as [`AppLauncher::reveal`]'s command is (never through `open::that_detached`, which keeps the
+    /// process's own folder). A started `explorer.exe` counts as opened whatever its exit code; elsewhere an opener
+    /// that ends with an error within [`OPEN_CHECK`] is an error, one still running then has handed the folder on.
+    /// When the program cannot start, `open`'s openers of this platform are tried in turn, in the same folder.
+    fn open_folder(&self, path: &std::path::Path) -> Result<(), ApiError> {
+        let platform = Platform::HOST;
+        let shown_path = match platform {
+            Platform::Windows => explorer_path(path).unwrap_or_else(|| path.to_path_buf()),
+            _ => path.to_path_buf(),
+        };
+        let cwd = host_launch_dir();
+        let command = open_folder_command(platform, &shown_path, &cwd);
+        let failed =
+            |e: String| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display()));
+        let first = match system_command(&command).spawn() {
+            Ok(child) if platform == Platform::Windows => {
+                drop(reap(child));
+                return Ok(());
+            }
+            Ok(child) => return opened(child, &command.program).map_err(failed),
+            Err(e) => e,
+        };
+        for mut opener in open::commands(path) {
+            let started = opener
+                .current_dir(&cwd)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            if let Ok(child) = started
+                && opened(child, opener.get_program()).is_ok()
+            {
+                return Ok(());
+            }
+        }
+        Err(failed(first.to_string()))
+    }
+}
+
+/// How long [`SystemLauncher`]'s folder opener is watched for an early error (W9c note 34): an opener still running
+/// then is taken to have handed the folder on.
+pub const OPEN_CHECK: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A started opener: `Ok` when it ends successfully within [`OPEN_CHECK`] or is still running then, else its status as
+/// the error. It is waited for on a thread of its own (as [`reap`]), so it never stays a zombie of the window.
+fn opened(mut child: std::process::Child, program: &std::ffi::OsStr) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || drop(tx.send(child.wait())));
+    match rx.recv_timeout(OPEN_CHECK) {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("{} ended with {status}", program.to_string_lossy())),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Ok(()),
+    }
+}
+
+/// The process of a file-manager command: its program and arguments, started in its `cwd`, stdio null. On Windows the
+/// arguments go as they are (`raw_arg`): `/select,"<path>"` is one word, the standard quoting would quote the
+/// `/select,` too, and [`open_folder_command`]'s argument is quoted already.
+fn system_command(command: &OpenCommand) -> std::process::Command {
+    let mut process = std::process::Command::new(&command.program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        for arg in &command.args {
+            process.raw_arg(arg);
+        }
+    }
+    #[cfg(not(windows))]
+    process.args(&command.args);
+    process
+        .current_dir(&command.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    process
+}
+
+/// [`launch_dir`] of this host, from `HOME` and `SystemRoot`.
+fn host_launch_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
+    launch_dir(Platform::HOST, home.as_deref(), system_root.as_deref())
+}
+
+/// What *Open Folder in File Manager* runs for the folder `path` on `platform` (D-254; W9c note 34), a pure builder as
+/// [`reveal_command`] is: Windows `explorer.exe "<path>"` (one word, quoted), macOS `open <path>`, Linux and the other
+/// Unix systems `xdg-open <path>` (the folder's handler, as `open` would pick first). The command starts in `cwd`
+/// ([`launch_dir`]). The path is absolute, so no opener takes it for an option.
+pub fn open_folder_command(
+    platform: Platform,
+    path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> OpenCommand {
+    let (program, arg) = match platform {
+        Platform::Windows => {
+            let mut arg = OsString::from("\"");
+            arg.push(path.as_os_str());
+            arg.push("\"");
+            ("explorer.exe", arg)
+        }
+        Platform::MacOs => ("open", path.as_os_str().to_owned()),
+        Platform::Linux | Platform::OtherUnix => ("xdg-open", path.as_os_str().to_owned()),
+    };
+    OpenCommand {
+        program: program.into(),
+        args: vec![arg],
+        cwd: cwd.to_path_buf(),
     }
 }
 
