@@ -363,6 +363,8 @@ struct Tree {
     write_errors: Vec<(String, u64, ErrorKind)>,
     /// Device numbers of subtrees: (path key of the prefix, dev).
     devices: Vec<(String, u64)>,
+    /// Files whose saves write in place (path keys; `MemoryVfs::save_in_place`).
+    in_place: Vec<String>,
     /// `Some` while the journal records.
     journal: Option<Vec<(VfsOp, String)>>,
     /// Original paths moved to the trash, in order.
@@ -949,6 +951,7 @@ impl MemoryVfs {
                     read_errors: Vec::new(),
                     write_errors: Vec::new(),
                     devices: Vec::new(),
+                    in_place: Vec::new(),
                     journal: None,
                     trashed: Vec::new(),
                     journal_writes: false,
@@ -1077,6 +1080,16 @@ impl MemoryVfs {
         if let Some(key) = lexical_key(&tree, prefix) {
             tree.devices.retain(|(k, _)| *k != key);
             tree.devices.push((key, dev));
+        }
+    }
+
+    /// Saves of the file at `path` write in place (M2 W10b, F2): its writer of [`Vfs::open_save`] answers
+    /// [`AtomicWrite::in_place`], as `LocalVfs`'s does for a file with another hard link. Nothing else changes: a
+    /// commit here keeps the node anyway, and a failed one writes nothing, which is what a restored file shows.
+    pub fn save_in_place(&self, path: &str) {
+        let mut tree = self.shared.write();
+        if let Some(key) = lexical_key(&tree, path) {
+            tree.in_place.push(key);
         }
     }
 
@@ -1357,85 +1370,26 @@ impl Vfs for MemoryVfs {
         spec: &Spec,
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
-        let path = local(spec)?;
-        let spec_text = spec.canonical();
-        let target = parsed(path, &spec_text)?;
-        let (Some(Comp::Name(name)), Some(parent)) = (target.comps.last().cloned(), path.parent())
-        else {
-            return Err(VfsError::IsADirectory { spec: spec_text });
-        };
-        let parent = parsed(&parent, &spec_text)?;
-        let mut tree = self.shared.write();
-        if let Some(kind) = tree.fault(&target, VfsOp::Write) {
-            return Err(fault_error(&spec_text, VfsOp::Write, kind));
-        }
-        let dir = match tree.resolve(&parent, true) {
-            Ok(dir) if tree.is_dir(dir) => dir,
-            Ok(_) => return Err(VfsError::NotADirectory { spec: spec_text }),
-            Err(Miss::NotFound) if opts.create_parents => {
-                let root = tree.root_or_create(&parent.root);
-                tree.make_dirs(root, &parent.comps)
-                    .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::Write))?
-            }
-            Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
-        };
-        let key = tree.key(&name);
-        let (mut write_parent, mut write_name) = (parent, name);
-        if let Some(existing) = tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
-            if tree.is_dir(existing) {
-                return Err(VfsError::IsADirectory { spec: spec_text });
-            }
-            if !opts.overwrite {
-                return Err(VfsError::AlreadyExists { spec: spec_text });
-            }
-            // Without `replace_link` a link is followed: the file it points to is replaced (M1 save semantics).
-            let is_link = matches!(
-                tree.node(existing).map(|n| &n.kind),
-                Some(NodeKind::Symlink(_))
-            );
-            if is_link && !opts.replace_link {
-                match tree.follow_link(existing) {
-                    Ok(resolved) => {
-                        if tree.is_dir(resolved) {
-                            return Err(VfsError::IsADirectory { spec: spec_text });
-                        }
-                        let resolved_path = tree.node_path(resolved);
-                        if let (Some(dir_path), Some(file_name)) =
-                            (resolved_path.parent(), resolved_path.file_name())
-                            && let Some(dir_parsed) = parse_path(dir_path)
-                        {
-                            write_parent = dir_parsed;
-                            write_name = file_name.to_string_lossy().into_owned();
-                        }
-                    }
-                    // A dangling link: the file it names is created (as `LocalVfs`), the link stays.
-                    Err(Miss::NotFound) => match tree.dangling_end(existing) {
-                        Ok((dir, name)) => {
-                            write_parent = dir;
-                            write_name = name;
-                        }
-                        Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
-                    },
-                    Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
-                }
-            }
-        }
-        let fail_after = Tree::after_fault(&tree.write_errors, &tree.path_key(&target));
-        if tree.journal_writes {
-            tree.record(VfsOp::Write, &spec_text);
-        }
-        Ok(Box::new(MemWriter {
-            shared: Arc::clone(&self.shared),
-            target,
-            parent: write_parent,
-            name: write_name,
-            spec: spec_text,
-            overwrite: opts.overwrite,
-            durability: opts.durability,
-            buf: Vec::new(),
-            pos: 0,
-            fail_after,
-        }))
+        Ok(Box::new(self.writer(spec, opts)?))
+    }
+
+    /// `open_write`, in place for a file of [`MemoryVfs::save_in_place`] that exists.
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        _keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let mut writer = self.writer(spec, opts)?;
+        let tree = self.shared.read();
+        let key = tree.path_key(&writer.target);
+        writer.in_place = opts.overwrite
+            && tree.in_place.contains(&key)
+            && tree.resolve(&writer.target, false).is_ok_and(|idx| {
+                matches!(tree.node(idx).map(|n| &n.kind), Some(NodeKind::File(_)))
+            });
+        drop(tree);
+        Ok(Box::new(writer))
     }
 
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
@@ -1718,6 +1672,93 @@ impl Vfs for MemoryVfs {
     }
 }
 
+impl MemoryVfs {
+    /// The writer of `open_write` and `open_save`.
+    fn writer(&self, spec: &Spec, opts: &WriteOptions) -> Result<MemWriter, VfsError> {
+        let path = local(spec)?;
+
+        let spec_text = spec.canonical();
+        let target = parsed(path, &spec_text)?;
+        let (Some(Comp::Name(name)), Some(parent)) = (target.comps.last().cloned(), path.parent())
+        else {
+            return Err(VfsError::IsADirectory { spec: spec_text });
+        };
+        let parent = parsed(&parent, &spec_text)?;
+        let mut tree = self.shared.write();
+        if let Some(kind) = tree.fault(&target, VfsOp::Write) {
+            return Err(fault_error(&spec_text, VfsOp::Write, kind));
+        }
+        let dir = match tree.resolve(&parent, true) {
+            Ok(dir) if tree.is_dir(dir) => dir,
+            Ok(_) => return Err(VfsError::NotADirectory { spec: spec_text }),
+            Err(Miss::NotFound) if opts.create_parents => {
+                let root = tree.root_or_create(&parent.root);
+                tree.make_dirs(root, &parent.comps)
+                    .map_err(|miss| miss_error(miss, spec_text.clone(), VfsOp::Write))?
+            }
+            Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
+        };
+        let key = tree.key(&name);
+        let (mut write_parent, mut write_name) = (parent, name);
+        if let Some(existing) = tree.node(dir).and_then(|n| n.children.get(&key).copied()) {
+            if tree.is_dir(existing) {
+                return Err(VfsError::IsADirectory { spec: spec_text });
+            }
+            if !opts.overwrite {
+                return Err(VfsError::AlreadyExists { spec: spec_text });
+            }
+            // Without `replace_link` a link is followed: the file it points to is replaced (M1 save semantics).
+            let is_link = matches!(
+                tree.node(existing).map(|n| &n.kind),
+                Some(NodeKind::Symlink(_))
+            );
+            if is_link && !opts.replace_link {
+                match tree.follow_link(existing) {
+                    Ok(resolved) => {
+                        if tree.is_dir(resolved) {
+                            return Err(VfsError::IsADirectory { spec: spec_text });
+                        }
+                        let resolved_path = tree.node_path(resolved);
+                        if let (Some(dir_path), Some(file_name)) =
+                            (resolved_path.parent(), resolved_path.file_name())
+                            && let Some(dir_parsed) = parse_path(dir_path)
+                        {
+                            write_parent = dir_parsed;
+                            write_name = file_name.to_string_lossy().into_owned();
+                        }
+                    }
+                    // A dangling link: the file it names is created (as `LocalVfs`), the link stays.
+                    Err(Miss::NotFound) => match tree.dangling_end(existing) {
+                        Ok((dir, name)) => {
+                            write_parent = dir;
+                            write_name = name;
+                        }
+                        Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
+                    },
+                    Err(miss) => return Err(miss_error(miss, spec_text, VfsOp::Write)),
+                }
+            }
+        }
+        let fail_after = Tree::after_fault(&tree.write_errors, &tree.path_key(&target));
+        if tree.journal_writes {
+            tree.record(VfsOp::Write, &spec_text);
+        }
+        Ok(MemWriter {
+            shared: Arc::clone(&self.shared),
+            target,
+            parent: write_parent,
+            name: write_name,
+            spec: spec_text,
+            overwrite: opts.overwrite,
+            durability: opts.durability,
+            buf: Vec::new(),
+            pos: 0,
+            fail_after,
+            in_place: false,
+        })
+    }
+}
+
 /// A reader whose first read fails with an injected fault.
 #[derive(Debug)]
 struct FaultReader {
@@ -1776,6 +1817,8 @@ struct MemWriter {
     pos: usize,
     /// `inject_write_error_after`: the bytes accepted before writes fail, and the kind.
     fail_after: Option<(u64, ErrorKind)>,
+    /// A save in place ([`MemoryVfs::save_in_place`]).
+    in_place: bool,
 }
 
 impl Write for MemWriter {
@@ -1827,6 +1870,10 @@ impl Seek for MemWriter {
 }
 
 impl AtomicWrite for MemWriter {
+    fn in_place(&self) -> bool {
+        self.in_place
+    }
+
     fn commit(self: Box<Self>) -> Result<(), VfsError> {
         let writer = *self;
         let mut tree = writer.shared.write();

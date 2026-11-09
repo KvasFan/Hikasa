@@ -250,6 +250,13 @@ pub trait AtomicWrite: Write + Seek + Send {
 
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;
+
+    /// True for a writer of [`Vfs::open_save`] that writes into the existing file itself (W10b, F2): nothing touches
+    /// the file before `commit`, which truncates it and writes the content, so the file stays the same file. A caller
+    /// that backs the file up copies it (a rename would take the file away) and leaves its mode alone. Default: false.
+    fn in_place(&self) -> bool {
+        false
+    }
 }
 
 /// The reason of [`VfsError::Unavailable`] when another operation holds a file or an archive (§1.5.10).
@@ -302,6 +309,24 @@ pub trait Vfs: Send + Sync {
     fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
         let _ = spec;
         Ok(None)
+    }
+    /// The writer of a save (`Action::Write`; M2 W10b, F2): [`Vfs::open_write`] with what a save keeps of the
+    /// regular file it replaces. Where a new file renamed onto it would lose what belongs to the file — on Unix
+    /// another hard link, an owner other than this process's user, a folder this process cannot write, a group or a
+    /// POSIX ACL the new file cannot take; anywhere a folder that refuses a new file — and the file can be written,
+    /// the writer writes in place ([`AtomicWrite::in_place`]): the content goes to a spool, and `commit` copies it into
+    /// the file (truncate, write, sync), giving the old content back from a copy when that fails. `keep` is such a copy
+    /// the caller made just before `commit` (the save's backup), which the writer then need not make. Otherwise the
+    /// writer is `open_write`'s, and the new file takes the replaced one's owner and group where permitted and its
+    /// extended attributes (POSIX ACLs included) before the rename. Default: `open_write`.
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let _ = keep;
+        self.open_write(spec, opts)
     }
     /// The spec of child `name` inside folder `dir`.
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError>;

@@ -359,6 +359,21 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        match self.route(spec) {
+            Route::Local => self.local.open_save(spec, opts, keep),
+            Route::Archive(archive) => archive.open_save(spec, opts, keep),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => {
+                Err(write_unsupported(spec))
+            }
+        }
+    }
+
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError> {
         match self.route(dir) {
             Route::Local => self.local.child(dir, name),

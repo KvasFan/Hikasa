@@ -3,7 +3,8 @@
 //! target as it was; `expect` refuses a changed target; a target planned absent that appeared is refused; what is not a
 //! regular file is refused; the backup is renamed aside and back; nothing of the source is applied (the replaced file's
 //! mode and, on disk, a time of its own); a new target is created; members of an archive are one rebuild and one
-//! archive backup.
+//! archive backup. W10b fix F2: a save keeps the file (its hard links, its extended attributes and POSIX ACLs, a file in
+//! a folder that takes no new file), in place where a rename would lose it, with the backup a copy.
 
 mod common;
 
@@ -407,6 +408,115 @@ fn a10_14_a_failure_at_every_write_call_leaves_the_target() {
     assert!(swept >= 20, "{swept} faults");
 }
 
+/// The tree without the backup, and the backup's content: a save in place that failed after copying its backup leaves
+/// that copy, which holds the file as it still is.
+fn split_backup(vfs: &MemoryVfs) -> (Vec<MemDump>, Option<Vec<u8>>) {
+    let rest = vfs
+        .dump()
+        .into_iter()
+        .filter(|d| d.path != host("/d/t.bak"))
+        .collect();
+    (rest, read(vfs, "/d/t.bak"))
+}
+
+/// W10b F2 in memory: where a save writes in place (`MemoryVfs::save_in_place`, as `LocalVfs` for a file with another
+/// hard link), the backup is a copy made just before the commit, never a rename of the file; the file keeps its
+/// attributes. A3's fault sweep over every call of such a save, and read and write faults after every few bytes: each
+/// failure fails the item and leaves the file as it was; a backup it made holds the file's content.
+#[test]
+fn a10_14_a_save_in_place_copies_its_backup_and_a_failure_leaves_the_file() {
+    let target = mspec("/d/t");
+    let content = Content::of(&[(&target, NEW)]);
+    let fixture = || {
+        let vfs = replaced();
+        vfs.save_in_place("/d/t");
+        vfs
+    };
+    let mut swept = 0;
+    for backup in [None, Some("/d/t.bak")] {
+        let probe = fixture();
+        probe.set_journal(true);
+        probe.set_journal_writes(true);
+        let report = save(
+            &content,
+            &probe,
+            vec![write_item(&probe, &target, NEW.len(), backup)],
+        );
+        assert!(report.ok(), "{:?}", report.results);
+        assert_eq!(read(&probe, "/d/t").unwrap(), NEW);
+        assert_eq!(
+            dump_of(&probe, "/d/t").unwrap().attrs,
+            meta(0, 0o640).attrs.unwrap()
+        );
+        let calls = probe.journal();
+        assert!(
+            calls.iter().all(|(op, _)| *op != VfsOp::Rename),
+            "no rename: {calls:?}"
+        );
+        if backup.is_some() {
+            assert_eq!(read(&probe, "/d/t.bak").unwrap(), b"old");
+            let commits: Vec<&String> = calls
+                .iter()
+                .filter(|(op, _)| *op == VfsOp::Commit)
+                .map(|(_, spec)| spec)
+                .collect();
+            assert_eq!(
+                commits,
+                [&host("/d/t.bak"), &host("/d/t")],
+                "the backup first"
+            );
+        }
+        for (op, spec) in calls {
+            let vfs = fixture();
+            let item = write_item(&vfs, &target, NEW.len(), backup);
+            vfs.inject(Fault {
+                path: spec.clone(),
+                op,
+                kind: ErrorKind::Io,
+            });
+            let (before, _) = split_backup(&vfs);
+            let report = save(&content, &vfs, vec![item]);
+            let what = format!("{op:?} at {spec} ({backup:?})");
+            assert_eq!(report.results[0].status, ItemStatus::Failed, "{what}");
+            let (after, kept) = split_backup(&vfs);
+            assert_eq!(after, before, "{what}");
+            assert!(kept.is_none_or(|kept| kept == b"old"), "{what}");
+            swept += 1;
+        }
+        for after in [0, 1, 7, NEW.len() - 1] {
+            for read_fault in [true, false] {
+                let vfs = fixture();
+                let item = write_item(&vfs, &target, NEW.len(), backup);
+                let content = Content::of(&[(&target, NEW)]);
+                if read_fault {
+                    *content.fail_after.lock().unwrap() = Some(after);
+                } else {
+                    vfs.inject_write_error_after(&host("/d/t"), after as u64, ErrorKind::Io);
+                }
+                let before = vfs.dump();
+                let report = save(&content, &vfs, vec![item]);
+                assert_eq!(report.results[0].status, ItemStatus::Failed);
+                assert_eq!(vfs.dump(), before, "after {after} bytes, read {read_fault}");
+                swept += 1;
+            }
+        }
+        // A cancel before the commit: nothing.
+        let vfs = fixture();
+        let before = vfs.dump();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let report = ops::execute(
+            &content,
+            &vfs,
+            batch(vec![write_item(&vfs, &target, NEW.len(), backup)]),
+            &common::ctl(&cancel),
+        );
+        assert!(report.cancelled);
+        assert_eq!(vfs.dump(), before);
+    }
+    assert!(swept >= 20, "{swept} faults");
+}
+
 /// A cancel before the commit leaves the target.
 #[test]
 fn a10_14_a_cancel_leaves_the_target() {
@@ -691,4 +801,191 @@ fn a10_14_a_link_at_the_target_is_refused_on_disk() {
             .file_type()
             .is_symlink()
     );
+}
+
+// ---- on disk: a save keeps the file (W10b, F2) -----------------------------------------------------------------
+
+/// Saves `content` into the file at `path` with the backup `backup`, as a save plans it.
+#[cfg(unix)]
+fn save_on_disk(
+    path: &std::path::Path,
+    content: &[u8],
+    backup: Option<&std::path::Path>,
+) -> OpReport {
+    let disk = hikasa_vfs::LocalVfs::default();
+    let spec = common::lspec_new(path);
+    let mut item = write_item(&disk, &spec, content.len(), None);
+    item.backup = backup.map(common::lspec_new);
+    let source = Content::of(&[(&spec, content)]);
+    ops::execute(&source, &disk, batch(vec![item]), &Ctl::detached())
+}
+
+/// The inode and the link count.
+#[cfg(unix)]
+fn inode(path: &std::path::Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).unwrap();
+    (meta.ino(), meta.nlink())
+}
+
+/// A file with another hard link: the save writes into it, so the other name shows the new content, the inode and the
+/// link count stay, the mode stays; a backup is a copy, a file of its own with the old content.
+#[cfg(unix)]
+#[test]
+fn a10_14_a_hard_link_keeps_its_file_on_disk() {
+    use std::os::unix::fs::PermissionsExt;
+    for backup in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (file, link, kept) = (root.join("t"), root.join("link"), root.join("t.bak"));
+        std::fs::write(&file, b"old").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::fs::hard_link(&file, &link).unwrap();
+        let before = inode(&file);
+        assert_eq!(before.1, 2);
+        let report = save_on_disk(&file, NEW, backup.then_some(kept.as_path()));
+        assert!(report.ok(), "{:?}", report.results);
+        assert_eq!(std::fs::read(&file).unwrap(), NEW);
+        assert_eq!(std::fs::read(&link).unwrap(), NEW, "the other name");
+        assert_eq!(inode(&file), before, "the same inode, two names");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o640);
+        if backup {
+            assert_eq!(std::fs::read(&kept).unwrap(), b"old");
+            assert_ne!(inode(&kept).0, before.0, "the backup is a copy");
+        }
+        let names: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().all(|n| !n.starts_with(".hikasa")),
+            "nothing left: {names:?}"
+        );
+    }
+}
+
+/// Sets the extended attribute `name` of `path`, or says why the file system refuses it.
+#[cfg(target_os = "linux")]
+fn set_xattr(path: &std::path::Path, name: &str, value: &[u8]) -> Result<(), String> {
+    rustix::fs::setxattr(path, name, value, rustix::fs::XattrFlags::empty())
+        .map_err(|e| format!("{name}: {e}"))
+}
+
+/// The extended attribute `name` of `path`.
+#[cfg(target_os = "linux")]
+fn xattr(path: &std::path::Path, name: &str) -> Option<Vec<u8>> {
+    let mut buffer = vec![0u8; 4096];
+    let len = rustix::fs::getxattr(path, name, &mut buffer[..]).ok()?;
+    buffer.truncate(len);
+    Some(buffer)
+}
+
+/// A POSIX ACL as Linux stores it in `system.posix_acl_access`: the file's owner, a named user, the file's group, the
+/// mask, others.
+#[cfg(target_os = "linux")]
+fn acl_with_named_user(uid: u32) -> Vec<u8> {
+    const UNDEFINED: u32 = u32::MAX;
+    let mut acl = 2u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01u16, 6u16, UNDEFINED),
+        (0x02, 4, uid),
+        (0x04, 4, UNDEFINED),
+        (0x10, 4, UNDEFINED),
+        (0x20, 0, UNDEFINED),
+    ] {
+        acl.extend_from_slice(&tag.to_le_bytes());
+        acl.extend_from_slice(&perm.to_le_bytes());
+        acl.extend_from_slice(&id.to_le_bytes());
+    }
+    acl
+}
+
+/// A file of one name, renamed by the save as before (a new inode), keeps its `user.*` attribute and its POSIX ACL, with
+/// and without a backup. A file system that refuses either is skipped for it, with a note.
+#[cfg(target_os = "linux")]
+#[test]
+fn a10_14_extended_attributes_and_acls_are_kept_on_disk() {
+    let acl = acl_with_named_user(54_321);
+    for backup in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (file, kept) = (root.join("t"), root.join("t.bak"));
+        std::fs::write(&file, b"old").unwrap();
+        let mut set = Vec::new();
+        for (name, value) in [
+            ("user.hikasa.note", &b"kept"[..]),
+            ("system.posix_acl_access", &acl[..]),
+        ] {
+            match set_xattr(&file, name, value) {
+                Ok(()) => set.push((name, xattr(&file, name).unwrap())),
+                Err(why) => eprintln!("skipped, the file system refuses it: {why}"),
+            }
+        }
+        if set.is_empty() {
+            return;
+        }
+        let before = inode(&file);
+        let report = save_on_disk(&file, NEW, backup.then_some(kept.as_path()));
+        assert!(report.ok(), "{:?}", report.results);
+        assert_eq!(std::fs::read(&file).unwrap(), NEW);
+        assert_ne!(
+            inode(&file).0,
+            before.0,
+            "renamed: a new file took the name"
+        );
+        for (name, value) in &set {
+            assert_eq!(
+                xattr(&file, name).as_ref(),
+                Some(value),
+                "{name}, backup {backup}"
+            );
+        }
+    }
+}
+
+/// A writable file in a folder that takes no new file is saved in place: without a backup, and with one in a folder that
+/// does. A backup that would go into the read-only folder fails the item before anything is written: the error names
+/// the backup, the file is as it was. Skipped where the folder's mode does not stop this process (root).
+#[cfg(unix)]
+#[test]
+fn a10_14_a_file_in_a_read_only_folder_is_saved_in_place() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (locked, open) = (root.join("locked"), root.join("open"));
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::create_dir(&open).unwrap();
+    let file = locked.join("t");
+    std::fs::write(&file, b"old").unwrap();
+    let mode = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    mode(&locked, 0o555);
+    if std::fs::write(locked.join("probe"), b"").is_ok() {
+        mode(&locked, 0o755);
+        eprintln!("skipped: the folder's mode does not stop this process");
+        return;
+    }
+    let before = inode(&file);
+    let report = save_on_disk(&file, NEW, None);
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(std::fs::read(&file).unwrap(), NEW);
+    assert_eq!(inode(&file), before);
+
+    let kept = open.join("t.bak");
+    let report = save_on_disk(&file, b"third", Some(&kept));
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(std::fs::read(&file).unwrap(), b"third");
+    assert_eq!(std::fs::read(&kept).unwrap(), NEW);
+
+    let beside = locked.join("t.bak");
+    let report = save_on_disk(&file, b"fourth", Some(&beside));
+    mode(&locked, 0o755);
+    assert_eq!(report.results[0].status, ItemStatus::Failed);
+    let error = report.results[0].error.as_ref().unwrap();
+    assert_eq!(error.kind, ErrorKind::PermissionDenied, "{error:?}");
+    assert!(error.message.contains("t.bak"), "{}", error.message);
+    assert_eq!(std::fs::read(&file).unwrap(), b"third");
+    assert!(!beside.exists());
 }

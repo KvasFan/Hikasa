@@ -132,7 +132,28 @@ mod platform {
     ) -> std::io::Result<()> {
         Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
     }
+    pub(super) fn links(_meta: &Metadata) -> u64 {
+        1
+    }
+    pub(super) fn owner(_meta: &Metadata) -> Option<u32> {
+        None
+    }
+    pub(super) fn saver() -> Option<u32> {
+        None
+    }
+    pub(super) fn folder_writable(_dir: &Path) -> bool {
+        true
+    }
+    pub(super) fn dos_attributes(_meta: &Metadata) -> u32 {
+        0
+    }
+    pub(super) fn temp_attributes(_options: &mut std::fs::OpenOptions, _attributes: u32) {}
+    pub(super) fn take_identity(_new: &std::fs::File, _old: &Path, _old_meta: &Metadata) -> bool {
+        true
+    }
 }
+
+mod save;
 
 use std::ffi::OsStr;
 use std::fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError};
@@ -415,10 +436,22 @@ impl Vfs for LocalVfs {
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         let path = local(spec)?;
-        match prepare_write(path, &spec.canonical(), opts)? {
-            Prepared::Direct(writer) => Ok(Box::new(writer)),
-            Prepared::Temp(writer) => Ok(Box::new(writer)),
-        }
+        Ok(prepare_write(path, &spec.canonical(), opts)?.boxed())
+    }
+
+    /// W10b F2: in place, or a temporary sibling that took over what the file had (module `save`).
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let path = local(spec)?;
+        let keep = match keep {
+            Some(keep) => Some(local(keep)?.as_path().to_path_buf()),
+            None => None,
+        };
+        Ok(save::prepare_save(path, &spec.canonical(), opts, keep)?.boxed())
     }
 
     /// `.<name>.hikasa-lock` next to the file a link names, for as long as the lock is held (`lock`).
@@ -750,7 +783,7 @@ impl Vfs for LocalVfs {
             return Ok(None);
         }
         let mut writer = match prepare_write(to_path, &to.canonical(), opts)? {
-            Prepared::Direct(_) => return Ok(None),
+            Prepared::Direct(_) | Prepared::InPlace(_) => return Ok(None),
             Prepared::Temp(writer) => writer,
         };
         // Stream into the handle `prepare_write` opened (never reopened by name: a read-only source must not
@@ -1035,6 +1068,18 @@ enum Prepared {
     Direct(DirectWriter),
     /// A temporary sibling renamed onto the target by `commit`.
     Temp(LocalWriter),
+    /// A save that writes into the file itself (W10b, F2).
+    InPlace(save::InPlaceWriter),
+}
+
+impl Prepared {
+    fn boxed(self) -> Box<dyn AtomicWrite> {
+        match self {
+            Prepared::Direct(writer) => Box::new(writer),
+            Prepared::Temp(writer) => Box::new(writer),
+            Prepared::InPlace(writer) => Box::new(writer),
+        }
+    }
 }
 
 /// The target resolution of `open_write` (and of `copy_file_fast`): a folder is `IsADirectory`, an existing item
@@ -1046,6 +1091,16 @@ fn prepare_write(
     path: &LocalPath,
     spec_text: &str,
     opts: &WriteOptions,
+) -> Result<Prepared, VfsError> {
+    prepare_write_with(path, spec_text, opts, 0)
+}
+
+/// [`prepare_write`], the temporary file created with the DOS `attributes` (Windows; a save's, W10b F2).
+fn prepare_write_with(
+    path: &LocalPath,
+    spec_text: &str,
+    opts: &WriteOptions,
+    attributes: u32,
 ) -> Result<Prepared, VfsError> {
     let spec_text = spec_text.to_owned();
     if path.parent().is_none() || path.file_name().is_none() {
@@ -1094,7 +1149,7 @@ fn prepare_write(
     if opts.create_parents {
         fs::create_dir_all(parent).map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
     }
-    let (file, tmp, made) = create_temp(parent, name).map_err(io_error)?;
+    let (file, tmp, made) = create_temp(parent, name, attributes).map_err(io_error)?;
     let dir = parent.to_path_buf();
     Ok(Prepared::Temp(LocalWriter {
         file: Some(BufWriter::new(file)),
@@ -1143,11 +1198,18 @@ fn resolve_links(path: &Path) -> io::Result<PathBuf> {
 /// writer, so a later rebuild can tell it from what a dead one left, and private until it is renamed: the bytes of a
 /// private file must not lie around under a wider mode. The result's second path is the file; the mode it was made
 /// with comes third, for a target that gives it no other.
-fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf, Option<fs::Permissions>)> {
+fn create_temp(
+    dir: &Path,
+    name: &OsStr,
+    attributes: u32,
+) -> io::Result<(File, PathBuf, Option<fs::Permissions>)> {
     let base = lock::temp_base(name);
     for attempt in 0..lock::TEMP_NAMES {
         let tmp = dir.join(lock::temp_name(&base, attempt));
-        match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        platform::temp_attributes(&mut options, attributes);
+        match options.open(&tmp) {
             Ok(file) => {
                 // Before anything else: where nothing shows that a file is new (Windows), a rebuild can look at it now.
                 // It locks first, and the file goes, or it locked and went: either way the next name is free of that.
