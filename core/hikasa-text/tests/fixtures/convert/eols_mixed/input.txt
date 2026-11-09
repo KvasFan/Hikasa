@@ -1,0 +1,6 @@
+lf
+crlf
+crlf again
+
+empty above
+crno terminator

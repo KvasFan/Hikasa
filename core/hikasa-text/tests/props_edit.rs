@@ -1,5 +1,6 @@
 //! A10.3 (D-262): undo and redo. P-EDIT-1 — random scripts of every `EditRequest` kind, `copy_rows`, line-ending
-//! conversions and `SetEncoding`, then a full undo: text, terminators, encoding, marks, bookmarks and
+//! conversions, the conversions of `transform` (§1.10.15, whole documents and line ranges) and `SetEncoding`, then
+//! a full undo: text, terminators, encoding, marks, bookmarks and
 //! `is_modified()` equal the start; redo replays to the end state; an edit after an undo drops the redo branch.
 //! The coalescing table with explicit `at_ms`.
 
@@ -13,6 +14,7 @@ use hikasa_text::edit::{
     EditOptions, EditRequest, Editability, EditableDocument, GroupHint, Selection, TextPos,
     copy_rows,
 };
+use hikasa_text::transform::{Transform, transform};
 use hikasa_text::{
     CompareInput, CompiledFormat, LineEnding, LineIdx, TextDocument, TextRules, compare,
 };
@@ -101,7 +103,7 @@ fn request(
     doc: &EditableDocument,
     other: &Arc<TextDocument>,
 ) -> Option<EditRequest> {
-    match rng.below(9) {
+    match rng.below(11) {
         0..=3 => {
             let a = position(rng, doc);
             let b = if rng.below(2) == 0 {
@@ -143,6 +145,25 @@ fn request(
             let s = if rng.below(2) == 0 { 0 } else { s };
             let eol = [LineEnding::Lf, LineEnding::CrLf, LineEnding::Cr][rng.below(3) as usize];
             Some(EditRequest::SetEols { lines: s..e, eol })
+        }
+        9 | 10 => {
+            // A conversion (TC-063) of every line or of a range.
+            let t = match rng.below(6) {
+                0 => Transform::TrimTrailing,
+                1 => Transform::LeadingSpacesToTabs,
+                2 => Transform::TabsToSpaces,
+                3 => Transform::LineEndings(LineEnding::Lf),
+                4 => Transform::LineEndings(LineEnding::CrLf),
+                _ => Transform::LineEndings(LineEnding::Cr),
+            };
+            let n = doc.line_count();
+            let lines = if rng.below(2) == 0 || n == 0 {
+                None
+            } else {
+                let a = rng.below(u64::from(n)) as u32;
+                Some(a..a + 1 + rng.below(u64::from(n - a)) as u32)
+            };
+            transform(doc, t, lines, [1u8, 2, 4, 8][rng.below(4) as usize]).request
         }
         6 => Some(EditRequest::SetEncoding {
             encoding: if rng.below(2) == 0 {

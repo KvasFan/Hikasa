@@ -1,0 +1,153 @@
+== input, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs\t\t" cr_lf
+"nbsp " cr_lf
+"mixed \t  　" cr_lf
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol \t" none
+
+== trim_trailing: converted 8 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces" cr_lf *
+"tabs" cr_lf *
+"nbsp" cr_lf *
+"mixed" cr_lf *
+"" cr_lf *
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator" cr_lf *
+"vertical" cr_lf *
+"last no eol" none *
+
+== leading_spaces_to_tabs tab size 2: converted 1 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs\t\t" cr_lf
+"nbsp " cr_lf
+"mixed \t  　" cr_lf
+"\t\t" cr_lf *
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol \t" none
+
+== tabs_to_spaces tab size 2: converted 3 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs    " cr_lf *
+"nbsp " cr_lf
+"mixed     　" cr_lf *
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol   " none *
+
+== leading_spaces_to_tabs tab size 4: converted 1 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs\t\t" cr_lf
+"nbsp " cr_lf
+"mixed \t  　" cr_lf
+"\t" cr_lf *
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol \t" none
+
+== tabs_to_spaces tab size 4: converted 3 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs        " cr_lf *
+"nbsp " cr_lf
+"mixed     　" cr_lf *
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol     " none *
+
+== leading_spaces_to_tabs tab size 8: converted 0 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs\t\t" cr_lf
+"nbsp " cr_lf
+"mixed \t  　" cr_lf
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol \t" none
+
+== tabs_to_spaces tab size 8: converted 3 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs            " cr_lf *
+"nbsp " cr_lf
+"mixed     　" cr_lf *
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol     " none *
+
+== line_endings lf: converted 11 lines, insert_eol lf
+"clean" lf *
+"spaces   " lf *
+"tabs\t\t" lf *
+"nbsp " lf *
+"mixed \t  　" lf *
+"    " lf *
+"" lf *
+"zero width​" lf *
+"inner  space kept" lf *
+"line separator " lf *
+"vertical\u000b\f" lf *
+"last no eol \t" none
+
+== line_endings cr_lf: converted 0 lines, insert_eol cr_lf
+"clean" cr_lf
+"spaces   " cr_lf
+"tabs\t\t" cr_lf
+"nbsp " cr_lf
+"mixed \t  　" cr_lf
+"    " cr_lf
+"" cr_lf
+"zero width​" cr_lf
+"inner  space kept" cr_lf
+"line separator " cr_lf
+"vertical\u000b\f" cr_lf
+"last no eol \t" none
+
+== line_endings cr: converted 11 lines, insert_eol cr
+"clean" cr *
+"spaces   " cr *
+"tabs\t\t" cr *
+"nbsp " cr *
+"mixed \t  　" cr *
+"    " cr *
+"" cr *
+"zero width​" cr *
+"inner  space kept" cr *
+"line separator " cr *
+"vertical\u000b\f" cr *
+"last no eol \t" none

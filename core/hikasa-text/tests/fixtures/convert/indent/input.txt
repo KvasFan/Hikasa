@@ -1,0 +1,17 @@
+no indent
+  two spaces
+    four spaces
+      six spaces
+        eight spaces
+	tab
+		two tabs
+  	spaces then tab
+	    tab then four
+ 	 	 mixed
+   	  
+
+code	after	text
+界	wide then tab
+é	combining then tab
+    lead	and inner tab  
+   nbsp first

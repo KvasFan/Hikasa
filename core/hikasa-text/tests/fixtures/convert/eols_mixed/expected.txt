@@ -1,0 +1,109 @@
+== input, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== trim_trailing: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== leading_spaces_to_tabs tab size 2: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== tabs_to_spaces tab size 2: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== leading_spaces_to_tabs tab size 4: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== tabs_to_spaces tab size 4: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== leading_spaces_to_tabs tab size 8: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== tabs_to_spaces tab size 8: converted 0 lines, insert_eol lf
+"lf" lf
+"crlf" cr_lf
+"cr" cr
+"lf again" lf
+"" lf
+"empty above" cr_lf
+"cr" cr
+"no terminator" none
+
+== line_endings lf: converted 4 lines, insert_eol lf
+"lf" lf
+"crlf" lf *
+"cr" lf *
+"lf again" lf
+"" lf
+"empty above" lf *
+"cr" lf *
+"no terminator" none
+
+== line_endings cr_lf: converted 5 lines, insert_eol cr_lf
+"lf" cr_lf *
+"crlf" cr_lf
+"cr" cr_lf *
+"lf again" cr_lf *
+"" cr_lf *
+"empty above" cr_lf
+"cr" cr_lf *
+"no terminator" none
+
+== line_endings cr: converted 5 lines, insert_eol cr
+"lf" cr *
+"crlf" cr *
+"cr" cr
+"lf again" cr *
+"" cr *
+"empty above" cr *
+"cr" cr
+"no terminator" none

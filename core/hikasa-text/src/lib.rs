@@ -10,6 +10,7 @@
 //! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF block line table), [`load_document`], [`LoadOptions`] |
 //! | [`live`] | [`LiveComparison`]: provisional splices and the exact incremental recompare (§1.10.10–§1.10.11) |
 //! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
+//! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
 //! | [`compare`](mod@compare) | [`compare()`](fn@compare::compare), [`TextComparison`] (rows, sections, inline, spans, navigation, thumbnail) |
@@ -68,6 +69,7 @@ pub mod live;
 pub mod quick;
 pub mod rules;
 pub mod stats;
+pub mod transform;
 mod util;
 pub mod view;
 
@@ -98,6 +100,7 @@ pub use rules::{
     TextRules, TextRulesPatch, UnimportantItem,
 };
 pub use stats::{ChangeCounts, TextStats};
+pub use transform::{Transform, TransformOutcome, transform};
 pub use view::{FilteredView, TextDisplayFilter, TextToggles, ViewItem, ViewOptions};
 
 // Re-exports (§0.4 rule 8), so that hikasa-report and hikasa-cli need no extra manifest edges.

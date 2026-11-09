@@ -1,0 +1,12 @@
+clean
+spaces   
+tabs		
+nbsp 
+mixed 	  　
+    
+
+zero width​
+inner  space kept
+line separator 
+vertical
+last no eol 	

@@ -1,0 +1,7 @@
+short
+            twelve spaces lead the way
+			tabs wrapped over pieces	and inside
+text then a long trailing run                 
+     
+αβγδεζηθικλμ	greek
+unterminated 	 

@@ -1,5 +1,8 @@
 //! Applying edits (§1.10.3): every request becomes a list of [`Change`]s, each replacing bytes inside a span of
-//! whole physical lines; a change applied returns its inverse, so undo and redo are changes too.
+//! whole physical lines; a change applied returns its inverse, so undo and redo are changes too. A request of
+//! several edits (a `Batch`, the runs of a `SetEols`) is one change over the span covering them that knows its
+//! [`Hole`]s, so it costs one table splice whatever the number of edits, and every line outside the holes keeps
+//! its marks.
 
 use hikasa_core::cancel::CancelToken;
 
@@ -28,6 +31,18 @@ pub(crate) struct Change {
     pub(crate) displaced: Vec<(u8, u32)>,
     /// Generation at which the change was applied (decides whether its inverse restores marks, §1.10.5).
     pub(crate) generation: u64,
+    /// The edits the change is made of, in order (empty: one edit, the whole of `[byte, byte + remove)`); a
+    /// line none of them touches keeps its marks.
+    pub(crate) holes: Vec<Hole>,
+}
+
+/// One edit inside a [`Change`]: bytes `[at, at + remove)` (from the change's `byte`, in the text before it)
+/// become `insert` bytes of the change's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Hole {
+    pub(crate) at: u32,
+    pub(crate) remove: u32,
+    pub(crate) insert: u32,
 }
 
 /// A change applied.
@@ -106,12 +121,27 @@ impl EditableDocument {
                     },
                     _ => return Err(EditError::Unsupported("an empty batch")),
                 };
-                // Applied last first: an earlier range's positions stay valid after a later one changed.
-                let pending = changes
-                    .into_iter()
-                    .rev()
-                    .map(|(a, b, t)| Pending::Range(a, b, t))
-                    .collect();
+                let pending = if changes.len() > 1 {
+                    // One change over the covering span, the edits its holes.
+                    let n = self.line_count();
+                    let (first, last) = (changes[0].0, changes[changes.len() - 1].1);
+                    let at = self.phys_start(first.line.0.min(n));
+                    let end = if last.line.0 >= n {
+                        n
+                    } else {
+                        self.phys_end(last.line.0)
+                    };
+                    let edits = changes
+                        .into_iter()
+                        .map(|(a, b, t)| (self.abs(a), self.abs(b) - self.abs(a), t))
+                        .collect();
+                    vec![Pending::Ready(self.combined(at, end, edits))]
+                } else {
+                    changes
+                        .into_iter()
+                        .map(|(a, b, t)| Pending::Range(a, b, t))
+                        .collect()
+                };
                 let kind = group_kind(group);
                 self.run_step(pending, before, kind, None, None)
             }
@@ -125,16 +155,39 @@ impl EditableDocument {
                 {
                     return Err(EditError::BadRange);
                 }
-                if lines.is_empty() {
+                // Every terminated line covered (the last line may keep *no terminator*): a conversion of the
+                // whole document, which also sets the insert terminator (§1.10.3, §1.10.15).
+                let terminated =
+                    if n > 0 && self.doc.line_ending(LineIdx(n - 1)) == LineEnding::None {
+                        n - 1
+                    } else {
+                        n
+                    };
+                let whole = lines.start == 0 && lines.end >= terminated && *eol != LineEnding::None;
+                // A document without a terminated line converts its insert terminator alone.
+                if lines.is_empty() && !(whole && self.insert_eol != *eol) {
                     return Err(EditError::Unsupported("no lines"));
                 }
-                let change = self.eol_change(lines.clone(), *eol);
-                self.check_limits(change.remove, &change.insert)?;
-                let whole = lines.start == 0 && lines.end == n && *eol != LineEnding::None;
+                let changes = self.eol_changes(lines.clone(), *eol);
+                let removed: u32 = changes.iter().map(|c| c.remove).sum();
+                let inserted: String = changes.iter().map(|c| c.insert.as_str()).collect();
+                self.check_limits(removed, &inserted)?;
                 let new_eol = whole.then_some(*eol);
                 let pos = TextPos::new(lines.start, 0);
+                let pending = match changes.as_slice() {
+                    [] | [_] => changes.into_iter().map(Pending::Ready).collect(),
+                    [first, .., last] => {
+                        let (at, end) = (first.at, last.at + last.count);
+                        let t = self.doc.table();
+                        let edits = changes
+                            .iter()
+                            .map(|c| (t.start_of(c.at) + c.byte, c.remove, c.insert.clone()))
+                            .collect();
+                        vec![Pending::Ready(self.combined(at, end, edits))]
+                    }
+                };
                 self.run_step(
-                    vec![Pending::Ready(change)],
+                    pending,
                     Selection::caret(pos),
                     group_kind(group),
                     new_eol,
@@ -215,13 +268,94 @@ impl EditableDocument {
             marks: None,
             displaced: Vec::new(),
             generation: 0,
+            holes: Vec::new(),
         }
     }
 
-    /// The change that sets the terminator of `lines` to `eol` (artificial pieces keep theirs).
-    fn eol_change(&self, lines: std::ops::Range<u32>, eol: LineEnding) -> Change {
-        let at = self.phys_start(lines.start);
-        let end = self.phys_end(lines.end - 1);
+    /// One change over the physical lines `[at, end)` made of `edits` (absolute byte offset, bytes removed, text;
+    /// in document order, disjoint, inside the span): its text is the edits' texts with the bytes between them.
+    fn combined(&self, at: u32, end: u32, edits: Vec<(u32, u32, String)>) -> Change {
+        let span_start = self.doc.table().start_of(at);
+        let first = edits.first().map_or(span_start, |e| e.0);
+        let stop = edits.last().map_or(first, |e| e.0 + e.1);
+        let mut insert = String::new();
+        let mut holes = Vec::with_capacity(edits.len());
+        let mut cursor = first;
+        for (abs, remove, text) in edits {
+            if abs > cursor {
+                insert.push_str(&self.span_text(cursor, abs));
+            }
+            holes.push(Hole {
+                at: abs - first,
+                remove,
+                insert: text.len() as u32,
+            });
+            insert.push_str(&text);
+            cursor = abs + remove;
+        }
+        Change {
+            at,
+            count: end - at,
+            byte: first - span_start,
+            remove: stop - first,
+            insert,
+            marks: None,
+            displaced: Vec::new(),
+            generation: 0,
+            holes,
+        }
+    }
+
+    /// The changes that set the terminator of `lines` to `eol` (artificial pieces keep theirs): one per maximal
+    /// run of physical lines whose terminator changes, in document order, so a line whose terminator is already
+    /// `eol` keeps its marks (§1.10.5) and the bytes of a line whose terminator does not change stay untouched.
+    fn eol_changes(&self, lines: std::ops::Range<u32>, eol: LineEnding) -> Vec<Change> {
+        let mut out = Vec::new();
+        if lines.is_empty() {
+            return out;
+        }
+        let first = self.phys_start(lines.start);
+        let last = self.phys_end(lines.end - 1);
+        // The physical line at `p` ends at `q`; it changes when its real terminator is in range and differs.
+        let changes_at = |p: u32| -> (u32, bool) {
+            let q = self.phys_end(p);
+            let term = q - 1;
+            let current = self.doc.line_ending(LineIdx(term));
+            (
+                q,
+                lines.contains(&term) && current != LineEnding::Artificial && current != eol,
+            )
+        };
+        let mut p = first;
+        while p < last {
+            let (q, changed) = changes_at(p);
+            if !changed {
+                p = q;
+                continue;
+            }
+            // A run of changed physical lines [p, end).
+            let mut end = q;
+            while end < last {
+                let (next, changed) = changes_at(end);
+                if !changed {
+                    break;
+                }
+                end = next;
+            }
+            out.push(self.eol_change(p, end, &lines, eol));
+            p = end;
+        }
+        out
+    }
+
+    /// The change that sets the terminator of the lines of `lines` within the physical lines `[at, end)` to `eol`.
+    fn eol_change(
+        &self,
+        at: u32,
+        end: u32,
+        lines: &std::ops::Range<u32>,
+        eol: LineEnding,
+    ) -> Change {
         let span_start = self.doc.table().start_of(at);
         let span_end = self.doc.table().start_of(end);
         let old = self.span_text(span_start, span_end);
@@ -347,17 +481,33 @@ impl EditableDocument {
         let g = u32::try_from(generation).unwrap_or(u32::MAX);
         let restored = if restore { ch.marks.take() } else { None };
         let restored = restored.filter(|m| m.len() == new_n);
+        // With holes: the marks of every line no hole touched (found at its moved offset, same bytes).
+        let kept = if restored.is_none() && !ch.holes.is_empty() {
+            let old_starts: Vec<u32> = (ch.at..=ch.at + ch.count)
+                .map(|l| t.start_of(l) - span_start)
+                .collect();
+            Some(hole_marks(
+                &ch,
+                &old_starts,
+                &old_recs,
+                &built,
+                new.len() as u32,
+            ))
+        } else {
+            None
+        };
         let mut recs: Vec<LineRec> = Vec::with_capacity(new_n);
         for j in 0..new_n {
             let r = built.rec(j as u32);
-            let (generation, orig) = match &restored {
-                Some(m) => m[j],
-                None if j < prefix => (old_recs[j].generation, old_recs[j].orig),
-                None if j >= new_n - suffix => {
+            let (generation, orig) = match (&restored, &kept) {
+                (Some(m), _) => m[j],
+                (None, Some(k)) => k[j].unwrap_or((g, NO_ORIG)),
+                (None, None) if j < prefix => (old_recs[j].generation, old_recs[j].orig),
+                (None, None) if j >= new_n - suffix => {
                     let i = old_recs.len() - (new_n - j);
                     (old_recs[i].generation, old_recs[i].orig)
                 }
-                None => (g, NO_ORIG),
+                (None, None) => (g, NO_ORIG),
             };
             recs.push(LineRec {
                 generation,
@@ -396,6 +546,21 @@ impl EditableDocument {
             }
         }
         let growth = ch.insert.len() as i64 - i64::from(ch.remove);
+        // The inverse's holes: each edit's inserted bytes (in the text after the change) become its removed ones.
+        let mut moved = 0i64;
+        let inverse_holes = ch
+            .holes
+            .iter()
+            .map(|h| {
+                let hole = Hole {
+                    at: (i64::from(h.at) + moved) as u32,
+                    remove: h.insert,
+                    insert: h.remove,
+                };
+                moved += i64::from(h.insert) - i64::from(h.remove);
+                hole
+            })
+            .collect();
         Applied {
             inverse: Change {
                 at: ch.at,
@@ -406,6 +571,7 @@ impl EditableDocument {
                 marks: Some(inverse_marks),
                 displaced,
                 generation,
+                holes: inverse_holes,
             },
             delta,
             end: at_byte + ch.insert.len() as u32,
@@ -576,7 +742,60 @@ fn minimal_change(at: u32, count: u32, old: &str, new: &str) -> Change {
         marks: None,
         displaced: Vec::new(),
         generation: 0,
+        holes: Vec::new(),
     }
+}
+
+/// The marks of the lines a change with holes leaves untouched, per new line of its span (`None`: a new line).
+/// An old line keeps its marks when no hole starts inside it or removes any of its bytes, and the new table has
+/// a line of the same length and terminator at its moved offset (a join of a lone CR with a following LF, or a
+/// re-wrap, makes a different line).
+fn hole_marks(
+    ch: &Change,
+    old_starts: &[u32],
+    old_recs: &[LineRec],
+    built: &LineTable,
+    new_len: u32,
+) -> Vec<Option<(u32, u32)>> {
+    let new_n = built.len();
+    let mut out = vec![None; new_n as usize];
+    let new_start = |j: u32| {
+        if j < new_n {
+            built.start_of(j)
+        } else {
+            new_len
+        }
+    };
+    let mut k = 0usize;
+    let mut growth = 0i64;
+    let mut j = 0u32;
+    for (i, rec) in old_recs.iter().enumerate() {
+        let (os, ot) = (old_starts[i], old_starts[i + 1]);
+        // Holes wholly before the line (a point at its start included) move it.
+        while let Some(h) = ch.holes.get(k) {
+            if ch.byte + h.at + h.remove > os {
+                break;
+            }
+            growth += i64::from(h.insert) - i64::from(h.remove);
+            k += 1;
+        }
+        let touched = ch.holes.get(k).is_some_and(|h| ch.byte + h.at < ot);
+        if touched {
+            continue;
+        }
+        let mapped = (i64::from(os) + growth) as u32;
+        while j < new_n && new_start(j) < mapped {
+            j += 1;
+        }
+        if j < new_n
+            && new_start(j) == mapped
+            && new_start(j + 1) - mapped == ot - os
+            && built.eol(j) == rec.eol
+        {
+            out[j as usize] = Some((rec.generation, rec.orig));
+        }
+    }
+    out
 }
 
 /// The outcome of a step: the covering delta of its changes (each in the numbering after the previous ones):
