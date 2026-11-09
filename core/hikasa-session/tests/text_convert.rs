@@ -100,3 +100,43 @@ fn a_cancelled_conversion_is_exit_100() {
         Err(ApiError::Cancelled)
     ));
 }
+
+/// W10b note 64: standard output holds the converted bytes (up to `STDOUT_HELD`) until the source's check at the end
+/// of its read, so a file that changed between the plan and the execution writes nothing to the sink (exit 100).
+#[test]
+fn standard_output_holds_the_bytes_until_the_source_is_checked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.txt", b"one \ntwo\nthree\n");
+    let req = TextConvertRequest {
+        files: vec![os(&a)],
+        trim_trailing: true,
+        target: ConvertTarget::Stdout,
+        ..TextConvertRequest::default()
+    };
+    let job = job(&service, JobKind::TextConvert);
+    let plan = service.text_convert_plan(&req, &job).unwrap();
+    // The same length, other bytes: only the CRC at the end of the read finds it.
+    std::fs::write(&a, b"one \ntwo\nthreE\n").unwrap();
+    let mut sink = Vec::new();
+    let outcome = service.text_convert_execute(plan, &mut sink, &job).unwrap();
+    assert_eq!(outcome.exit_code, ExitCode::UnknownError);
+    assert_eq!(outcome.dto.files[0].status, ItemStatus::Failed);
+    assert!(sink.is_empty(), "{:?}", String::from_utf8_lossy(&sink));
+    // Another length: the same.
+    std::fs::write(&a, b"one \ntwo\nthree\n").unwrap();
+    let plan = service.text_convert_plan(&req, &job).unwrap();
+    std::fs::write(&a, b"other\n").unwrap();
+    let mut sink = Vec::new();
+    let outcome = service.text_convert_execute(plan, &mut sink, &job).unwrap();
+    assert_eq!(outcome.exit_code, ExitCode::UnknownError);
+    assert!(sink.is_empty());
+    // Unchanged: the converted bytes.
+    std::fs::write(&a, b"one \ntwo\nthree\n").unwrap();
+    let plan = service.text_convert_plan(&req, &job).unwrap();
+    let mut sink = Vec::new();
+    let outcome = service.text_convert_execute(plan, &mut sink, &job).unwrap();
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    assert_eq!(sink, b"one\ntwo\nthree\n");
+}

@@ -232,6 +232,88 @@ fn a10_19_a_file_with_nothing_to_change_is_not_rewritten() {
     assert!(stdout(&out).starts_with("no change: "), "{}", stdout(&out));
 }
 
+/// W10b note 54: `no_change` skips only `--in-place`. Standard output gets the file's bytes as they are (malformed
+/// bytes, BOM and terminators included; from a pipe too, and with `--lines` past the end), and `--output` gets a copy,
+/// asking before it replaces a file and creating a missing one.
+#[test]
+fn a10_19_nothing_to_change_still_goes_to_stdout_and_output() {
+    let s = Sandbox::new();
+    let bytes: &[u8] = b"\xEF\xBB\xBFa\nb\xFF\r\nc";
+    let a = s.file("a.txt", bytes);
+    let out = convert(&s, &["a.txt", "--line-endings", "lf", "--lines", "1-1"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(out.stdout, bytes);
+    let out = convert(&s, &["a.txt", "--trim-trailing"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(out.stdout, bytes);
+    // `--lines` past the end: nothing to convert, the bytes still come.
+    let out = convert(&s, &["a.txt", "--trim-trailing", "--lines", "5-9"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(out.stdout, bytes);
+    // A pipe: its bytes as read.
+    let out = s
+        .cmd()
+        .args(["text", "convert", "-", "--trim-trailing"])
+        .write_stdin(bytes)
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(out.stdout, bytes);
+    // `--output`: an existing file is asked about (refused without a terminal), then replaced with `--yes`.
+    s.file("o.txt", b"stale\n");
+    let out = convert(&s, &["a.txt", "--trim-trailing", "--output", "o.txt"]);
+    assert_eq!(code(&out), 100);
+    assert!(
+        stderr(&out).contains("replace_existing 1"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(read(&s.join("o.txt")), b"stale\n");
+    let out = convert(
+        &s,
+        &["a.txt", "--trim-trailing", "--output", "o.txt", "--yes"],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s.join("o.txt")), bytes);
+    // A missing one is created.
+    let out = convert(&s, &["a.txt", "--trim-trailing", "--output", "new.txt"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&s.join("new.txt")), bytes);
+    // The source is never touched.
+    assert_eq!(read(&a), bytes);
+    assert_eq!(mtime(&a), MTIME);
+}
+
+/// W10b note 65: `--in-place` refuses what is not a regular file before reading it, so a FIFO without a writer never
+/// blocks the command (Unix).
+#[cfg(unix)]
+#[test]
+fn a10_19_in_place_refuses_a_fifo_without_reading_it() {
+    let s = Sandbox::new();
+    let fifo = s.join("pipe");
+    if !std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        eprintln!("skipped: mkfifo is not available");
+        return;
+    }
+    let out = s
+        .cmd()
+        .args(["text", "convert", "pipe", "--trim-trailing", "--in-place"])
+        .timeout(std::time::Duration::from_secs(60))
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("is not a regular file"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(!s.join("pipe.bak").exists());
+}
+
 #[test]
 fn a10_19_utf16le_with_a_bom() {
     let s = Sandbox::new();

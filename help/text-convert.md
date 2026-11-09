@@ -25,20 +25,31 @@ flags: trim, tabs, line endings, then the encoding and the BOM.
 Each file is read as `hikasa text compare` reads it: the format by its name, or `--format <id|name>`; the encoding
 detected, or `--encoding-in <label>`. `-` reads standard input (`--stdin-name <name>` for the format). A file that
 cannot be read, a binary one, or one whose format converts it without a way back (*Sorted*, an *External* format
-without a save program) fails, and the others go on. A file the conversions do not change is skipped (`no change`)
-and never rewritten: its time stays.
+without a save program) fails, and the others go on. With `--in-place`, a file the conversions do not change is
+skipped (`no change`) and never rewritten: its time stays. To stdout such a file still comes out, byte for byte as it
+is, and `--output` gets a copy of it.
+
+A file is read once and held once: the conversions run line by line while the result is written, so a large file
+takes about its own size in memory, whatever the conversions. With `--in-place`, what is not a regular file (a FIFO,
+a device) is refused before it is read; to stdout or `--output` a pipe is read as its content.
 
 ## Where the result goes
 
 - Without `--in-place` or `--output`, the converted bytes of the one file go to stdout; the file is untouched and
-  the summary line goes to stderr. Several files need `--in-place`.
+  the summary line goes to stderr. Several files need `--in-place`. Lines kept from the file are checked against the
+  file as it was read when the reading ends: up to 64 MiB of output is held until then, so a file that changed
+  meanwhile writes nothing (exit 100). A larger result is written as it is made, and a change found at the end
+  leaves the part already written on stdout (still exit 100): do not use it.
 - `--in-place` rewrites every file, as one plan. Each replaced file is backed up first when
   `[backups] back_up_before_save` says so (the default; `naming` and `folder` name the backup); `--backup` and
   `--no-backup` decide for this run. A failed backup fails that file, which stays as it was.
 - `--output <FILE>` (one input) writes the converted file there; an existing file is replaced only after a
   question, and is backed up first.
 - A file is written through a symbolic link (the link stays); what is not a regular file is refused. A member of a
-  zip or tar archive is written by rebuilding the archive once.
+  zip or tar archive is written by rebuilding the archive once; it keeps its place and its header (owner, mode).
+- A rewritten file stays the same file: its other hard links, owner, group, ACLs and extended attributes stay with
+  it. When a rename would lose them (another hard link, another owner, a folder Hikasa cannot write), the file is
+  written in place, after its backup was copied; a failure puts the old content back.
 
 ## Questions
 
