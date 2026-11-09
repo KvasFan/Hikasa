@@ -142,6 +142,57 @@ fn a10_27_open_edit_save_and_save_as() {
 }
 
 #[test]
+fn a10_27_find_and_replace_on_one_document() {
+    use hikasa_text::find::{Dir, FindQuery, Finder, Replacement, replace_all};
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let file = write(
+        &w,
+        "find.c",
+        b"int old_a = 1;\r\nint b = old_a;\r\nint old_ab;\r\n",
+    );
+    let mut resp = open(&service, &request(&file));
+    // Whole words by the format's word characters, from the document's own options.
+    let q = FindQuery {
+        text: r"old_(\w)\b".into(),
+        regex: true,
+        match_case: true,
+        whole_word: true,
+    };
+    let finder = Finder::new(
+        &q,
+        &resp.doc.options().word_chars,
+        &hikasa_text::RegexLimits::default(),
+    )
+    .unwrap();
+    let first = finder
+        .next(&resp.doc, TextPos::ZERO, Dir::Forward, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.range, TextPos::new(0, 4)..TextPos::new(0, 9));
+    let with = Replacement::new("new_${1}", &finder).unwrap();
+    let (edit, count) = replace_all(
+        &resp.doc,
+        &finder,
+        &with,
+        None,
+        &hikasa_core::Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!(count, 2);
+    resp.doc.apply(&edit.unwrap(), GroupHint::None).unwrap();
+    let req = service.text_edit_save_request(&resp).unwrap();
+    let report = save(&service, &mut resp.doc, &req);
+    assert!(report.ok());
+    // The untouched line and the terminators stay byte for byte.
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"int new_a = 1;\r\nint b = new_a;\r\nint old_ab;\r\n"
+    );
+}
+
+#[test]
 fn a10_27_conversions_on_one_document() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
