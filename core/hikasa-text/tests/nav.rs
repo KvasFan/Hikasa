@@ -128,6 +128,27 @@ fn sections_forward_backward_and_wrap() {
         ),
         None
     );
+    // A display filter that hides every difference hides every section and difference from the steps.
+    let view = f.cmp.view(&hikasa_text::ViewOptions {
+        filter: hikasa_text::TextDisplayFilter::Same,
+        ..hikasa_text::ViewOptions::default()
+    });
+    let hidden = NavContext {
+        view: Some(&view),
+        ..c
+    };
+    for mode in [BrowseMode::DiffSection, BrowseMode::Difference] {
+        assert_eq!(
+            step(
+                mode,
+                &hidden,
+                at(0, Side::Left, 0, 0),
+                Direction::Forward,
+                true
+            ),
+            None
+        );
+    }
 }
 
 #[test]

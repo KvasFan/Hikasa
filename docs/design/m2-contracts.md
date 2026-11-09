@@ -11130,6 +11130,7 @@ by its PID and counts as caught):
 | `nav` `existing_lines_skip_gaps` | `existing_line` backward one line late | fails |
 | `nav` `go_to_physical_lines_with_cpl_and_clamping` | Go To stays in the first CPL piece | fails |
 | `nav` `unimportant_and_ignored_sections_are_skipped` | sections ignore *Ignore Unimportant* | fails |
+| `nav` `sections_forward_backward_and_wrap` | sections ignore the display filter | fails |
 | `nav` `edits_are_walked_by_runs` | Edit steps from the first line instead of the caret | fails |
 | `details` `hex_details_of_shift_jis_and_an_unmappable_character` | an unmappable character's `?` not located | fails |
 | `details` `the_ruler` | tab stops one column late | fails |
