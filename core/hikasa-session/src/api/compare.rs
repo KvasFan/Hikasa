@@ -61,7 +61,7 @@ pub(crate) struct ChosenFormat {
 }
 
 /// What a failed input of a file comparison is.
-fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
+pub(crate) fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
     if source.is_cancelled() {
         ApiError::Cancelled
     } else {
@@ -146,7 +146,7 @@ impl LoadedPair {
 /// The request's ignored lines against the loaded documents (§1.10.17): a side with a saved check keeps its marks
 /// only while its marked lines still have that check (else they are dropped with `ignored_lines_dropped`); a
 /// side without one must name lines of its document (else `InvalidArgument`, exit 100).
-fn check_ignored(
+pub(crate) fn check_ignored(
     req: &TextCompareRequest,
     docs: Pair<&TextDocument>,
     specs: Pair<&Spec>,
@@ -206,7 +206,7 @@ fn check_ignored(
 /// The request's anchors against the loaded documents (§1.10.8): every line an anchor names must exist, else
 /// `InvalidArgument` (exit 100) naming the anchor and the document's line count. Crossing and overlapping pairs
 /// are left to the engine, which drops them with `anchor_dropped`.
-fn check_anchors(
+pub(crate) fn check_anchors(
     anchors: &[Anchor],
     left: &TextDocument,
     right: &TextDocument,
@@ -827,7 +827,7 @@ impl Service {
     /// `base`, D-15's format of the pair; the right one is returned only when it differs from the left one.
     /// `--format` sets both sides and conflicts with either side's own (`InvalidArgument`, exit 100). With a
     /// side's own format, D-15's `format_mismatch` ("… is used for both") no longer applies and is dropped.
-    fn per_side_formats(
+    pub(crate) fn per_side_formats(
         &self,
         req: &TextCompareRequest,
         base: ChosenFormat,

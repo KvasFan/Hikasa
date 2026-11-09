@@ -285,7 +285,7 @@ impl Service {
 
 /// The facts of one loaded pane (§1.10.7): where it saves (its file, or its `--savetarget`) through `vfs.writable`
 /// (an error counts as "cannot tell"), the format, the document and the options.
-fn edit_facts(
+pub(crate) fn edit_facts(
     vfs: &dyn Vfs,
     side: Side,
     spec: &Spec,

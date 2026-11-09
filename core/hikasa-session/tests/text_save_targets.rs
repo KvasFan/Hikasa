@@ -14,8 +14,8 @@ use common::{job, os, service, write};
 use hikasa_core::{ExitCode, JobKind, PathStyle, Side, Spec, SpecContext};
 use hikasa_session::Service;
 use hikasa_session::api::{
-    LiveOptions, LiveTextView, SaveAnswers, TextCompareRequest, apply_save_report, save_exit_code,
-    save_target_spec,
+    LiveOptions, LiveTextView, SaveAnswers, TextCompareRequest, TextEditRequest, apply_save_report,
+    save_exit_code, save_target_spec,
 };
 use hikasa_text::save::{
     SaveMode, SavePlan, SaveQuestion, SaveReport, SaveRequest, UnmappablePolicy,
@@ -379,28 +379,39 @@ fn a10_17_savetarget_of_a_text_edit_document() {
     let service = service(tmp.path());
     let w = tmp.path().join("work");
     let file = write(&w, "edit.txt", b"text\n");
-    let other = write(&w, "o.txt", b"o\n");
     let target = w.join("out.txt");
-    // A Text Edit view's document (W10c opens it; here the pane of a live view, saved with no side).
-    let mut view = open(&service, &file, &other);
-    let mut doc = view.docs.left.clone();
-    doc.set_save_target(Some(spec(&service, &target)));
-    type_x(&mut doc);
-    let req = in_place(&service);
-    let plan = plan(&service, &[(None, &doc, &req)]);
+    // A Text Edit view opened with `--savetarget` (W10c's `text_edit_open`; the target made absolute as
+    // `resolve_open` makes it).
+    let raw = save_target_spec(target.as_os_str(), &service.spec_context()).unwrap();
+    let mut resp = service
+        .text_edit_open(
+            &TextEditRequest {
+                spec: file.as_os_str().to_owned(),
+                save_target: Some(raw),
+                ..TextEditRequest::default()
+            },
+            &job(&service, JobKind::TextCompare),
+        )
+        .unwrap();
+    assert_eq!(
+        resp.doc.save_target().map(Spec::canonical),
+        Some(spec(&service, &target).canonical())
+    );
+    type_x(&mut resp.doc);
+    let req = service.text_edit_save_request(&resp).unwrap();
+    let plan = plan(&service, &[(None, &resp.doc, &req)]);
     assert_eq!(plan.items[0].side, None);
     assert_eq!(plan.items[0].mode, SaveMode::SaveTarget);
     assert!(plan.items[0].questions().is_empty());
-    let report = run(&service, plan, &[&doc]);
+    let report = run(&service, plan, &[&resp.doc]);
     assert!(report.ok());
-    apply_save_report(&report, &mut [&mut doc]);
+    apply_save_report(&report, &mut [&mut resp.doc]);
     assert_eq!(read(&target), b"Xtext\n");
     assert_eq!(read(&file), b"text\n");
     assert_eq!(
-        doc.location().map(Spec::canonical),
+        resp.doc.location().map(Spec::canonical),
         Some(spec(&service, &file).canonical())
     );
-    let _ = &mut view;
 }
 
 // ---- backups -----------------------------------------------------------------------------------------------------

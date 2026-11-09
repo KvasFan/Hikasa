@@ -23,6 +23,8 @@
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
 //! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_snapshot_partial`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`], [`Service::sessions_stamp`] |
 //! | live text comparisons (M2 W10a) | [`Service::text_compare_live`], [`ensure_editable`] |
+//! | the session link (M2 W10c) | [`parent_row`], [`Service::text_parent_compare`], [`Service::text_copy_file_steps`], [`Service::text_copy_file_execute`], [`Service::next_file_options`] |
+//! | Text Edit, text pairs (M2 W10c) | [`Service::text_edit_open`], [`Service::text_edit_session`], [`Service::text_edit_request_of`], [`Service::text_compare_texts`] |
 //! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
 //! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
@@ -48,6 +50,7 @@ pub mod sessions;
 pub mod settings;
 pub mod text_convert;
 pub mod text_edit;
+pub mod text_edit_open;
 pub mod text_link;
 pub mod text_live;
 pub mod vfs_ops;
@@ -115,6 +118,7 @@ pub use text_convert::{
 pub use text_edit::{
     SaveAnswers, SaveDriver, apply_save_report, save_exit_code, save_policy, save_question_words,
 };
+pub use text_edit_open::{NamedText, TextEditRequest, TextEditResponse};
 pub use text_link::{
     CopyFileExecute, CopyFileReport, CopyFileRequest, CopyFileStep, CopyFileSteps, ParentCompare,
     parent_link_of, parent_row,
