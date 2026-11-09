@@ -452,8 +452,6 @@ impl Service {
             (_, policy) => policy,
         };
         let options = self.fresh_options();
-        let router = self.router();
-        let vfs: &dyn Vfs = &*router;
         let mut files = Vec::with_capacity(req.files.len());
         let mut docs: Vec<(EditableDocument, SaveRequest)> = Vec::new();
         let mut warnings = Vec::new();
@@ -482,7 +480,7 @@ impl Service {
                 questions: Vec::new(),
                 warnings: Vec::new(),
             };
-            let pre = match self.convert_one(vfs, req, raw, &options, &mut file, job)? {
+            let pre = match self.convert_one(req, raw, &options, &mut file, job)? {
                 Err(error) => Pre::Failed(error),
                 Ok(None) => Pre::NoChange,
                 Ok(Some(converted)) => {
@@ -513,8 +511,10 @@ impl Service {
         let save = if docs.is_empty() {
             None
         } else {
+            // The router as it stands after the specs were read (standard input is captured into it).
+            let router = self.router();
             let triples: Vec<_> = docs.iter().map(|(doc, save)| (None, doc, save)).collect();
-            Some(self.plan_save_in(vfs, &triples, job)?)
+            Some(self.plan_save_in(&*router, &triples, job)?)
         };
         let docs = docs.into_iter().map(|(doc, _)| doc).collect();
         Ok(TextConvertPlan {
@@ -551,7 +551,6 @@ impl Service {
     #[allow(clippy::type_complexity)]
     fn convert_one(
         &self,
-        vfs: &dyn Vfs,
         req: &TextConvertRequest,
         raw: &std::ffi::OsStr,
         options: &crate::settings::options::Options,
@@ -565,6 +564,9 @@ impl Service {
             Err(e) => return Ok(Err(e.report())),
         };
         file.spec = spec.canonical();
+        // After the spec: reading standard input puts it into the router.
+        let router = self.router();
+        let vfs: &dyn Vfs = &*router;
         let name = self.detection_name(&spec);
         let chosen =
             match self.choose_format(req.format.as_deref(), Pair::new(name.as_deref(), None)) {
@@ -592,13 +594,11 @@ impl Service {
                 drop(raw_bytes);
                 doc
             }
-            Err(e) => {
-                return fail(ApiError::from_text(
-                    e,
-                    hikasa_core::Side::Left,
-                    &spec.canonical(),
-                ));
+            Err(e) if e.is_cancelled() => return Err(ApiError::Cancelled),
+            Err(hikasa_text::TextError::Load { source, .. }) => {
+                return fail(ApiError::Vfs(source));
             }
+            Err(e) => return fail(ApiError::Text(e)),
         };
         let (from_enc, from_bom) = (doc.encoding().encoding, doc.encoding().bom_len > 0);
         file.encoding.from = Some(from_enc.name());
@@ -1027,7 +1027,7 @@ fn synthetic_item(
         reason,
         error,
         via_link: None,
-        encoding: file.encoding.to.or(file.encoding.from).unwrap_or(""),
+        encoding: file.encoding.to.or(file.encoding.from),
         bom: file.bom.to.or(file.bom.from).unwrap_or(false),
         bytes: 0,
         spliced_bytes: 0,

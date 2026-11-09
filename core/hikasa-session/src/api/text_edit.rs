@@ -407,8 +407,8 @@ pub struct SavePlanItemDto {
     pub error: Option<ErrorReport>,
     /// The link the save was asked through (it stays a link).
     pub via_link: Option<String>,
-    /// The encoding written.
-    pub encoding: &'static str,
+    /// The encoding written (`null` for a file refused before its content was made).
+    pub encoding: Option<&'static str>,
     /// A BOM is written.
     pub bom: bool,
     /// Bytes written (as `size`).
@@ -455,7 +455,7 @@ pub fn save_plan_items(plan: &SavePlan, report: Option<&OpReport>) -> Vec<SavePl
                 reason: result.skip.or(planned.skip),
                 error: result.error.clone(),
                 via_link: item.via_link.as_ref().map(Spec::canonical),
-                encoding: item.content.encoding.name(),
+                encoding: Some(item.content.encoding.name()),
                 bom: item.content.bom,
                 bytes: item.content.bytes,
                 spliced_bytes: item.content.spliced_bytes,
