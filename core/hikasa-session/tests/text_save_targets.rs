@@ -318,6 +318,61 @@ fn a10_17_savetarget_redirects_the_right_pane_and_the_left_saves_in_place() {
     );
 }
 
+/// W10b note 59: the right pane of a version-control tool is a read-only temporary file whose `--savetarget` is the
+/// writable working copy: the pane takes its writability from the target, so it is editable and saves there.
+#[test]
+fn a10_17_a_read_only_right_file_with_a_writable_savetarget_is_editable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let l = write(&w, "base.txt", b"base\n");
+    let r = write(&w, "tmp-right.txt", b"right\n");
+    let target = write(&w, "working.txt", b"right\n");
+    let mut perms = std::fs::metadata(&r).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&r, perms).unwrap();
+    // Without a target the read-only file blocks the pane (unless the process may write anything, as root).
+    let view = open(&service, &l, &r);
+    let read_only = view.docs.right.editability().first();
+    let raw = save_target_spec(target.as_os_str(), &service.spec_context()).unwrap();
+    let opts = LiveOptions {
+        save_target: Some(raw),
+        ..LiveOptions::default()
+    };
+    let mut view = open_with(&service, &l, &r, opts);
+    assert_eq!(
+        view.docs.right.editability().first(),
+        None,
+        "was {read_only:?}"
+    );
+    hikasa_session::api::ensure_editable(Some(Side::Right), &view.docs.right.editability())
+        .unwrap();
+    type_x(&mut view.docs.right);
+    let req = service.live_save_request(&view, Side::Right).unwrap();
+    let first = plan(&service, &[(Some(Side::Right), &view.docs.right, &req)]);
+    let report = run(&service, first, &[&view.docs.right]);
+    assert!(report.ok(), "{:?}", report.op.results);
+    assert_eq!(read(&target), b"Xright\n");
+    assert_eq!(read(&r), b"right\n");
+    // A read-only target makes the pane read-only, whatever the right file is.
+    let mut perms = std::fs::metadata(&r).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&r, perms).unwrap();
+    let mut perms = std::fs::metadata(&target).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&target, perms).unwrap();
+    if read_only.is_some() {
+        let raw = save_target_spec(target.as_os_str(), &service.spec_context()).unwrap();
+        let opts = LiveOptions {
+            save_target: Some(raw),
+            ..LiveOptions::default()
+        };
+        let view = open_with(&service, &l, &r, opts);
+        assert!(view.docs.right.editability().first().is_some());
+    }
+}
+
 #[test]
 fn a10_17_savetarget_of_a_text_edit_document() {
     let tmp = tempfile::tempdir().unwrap();

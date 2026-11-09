@@ -224,6 +224,13 @@ impl Service {
         let fresh = self.fresh_options();
         let specs = loaded.specs.clone();
         let docs = loaded.docs.clone();
+        // `--savetarget` redirects the right pane's in-place save (D-275); the left one saves in place. The pane's
+        // writability is the target's (W10b note 59): a read-only temporary right file saved to a writable working
+        // copy is editable.
+        let save_target = match &opts.save_target {
+            Some(raw) => Some(self.save_target_of(vfs, raw, &job.cancel)?),
+            None => None,
+        };
         let editable = |side: Side, spec: &Spec, doc: &Arc<TextDocument>| {
             let format = if side == Side::Right {
                 &right_format
@@ -231,7 +238,11 @@ impl Service {
                 &left_format
             };
             let edit = edit_options(format, &fresh, self.env().platform);
-            let facts = edit_facts(vfs, side, spec, doc, format, &opts);
+            let writes = match (&save_target, side) {
+                (Some(target), Side::Right) => target,
+                _ => spec,
+            };
+            let facts = edit_facts(vfs, side, writes, doc, format, &opts);
             EditableDocument::new(Arc::clone(doc), edit, facts.editability())
         };
         let stamps = Pair::new(docs.left.load_stamp(), docs.right.load_stamp());
@@ -239,9 +250,7 @@ impl Service {
             editable(Side::Left, &specs.left, &docs.left),
             editable(Side::Right, &specs.right, &docs.right),
         );
-        // `--savetarget` redirects the right pane's in-place save (D-275); the left one saves in place.
-        if let Some(raw) = &opts.save_target {
-            let target = self.save_target_of(vfs, raw, &job.cancel)?;
+        if let Some(target) = save_target {
             docs.right.set_save_target(Some(target));
         }
         let response = loaded.respond(req, Arc::clone(live.current()));
@@ -274,8 +283,8 @@ impl Service {
     }
 }
 
-/// The facts of one loaded pane (§1.10.7): its location through `vfs.writable` (an error counts as "cannot
-/// tell"), the format, the document and the options.
+/// The facts of one loaded pane (§1.10.7): where it saves (its file, or its `--savetarget`) through `vfs.writable`
+/// (an error counts as "cannot tell"), the format, the document and the options.
 fn edit_facts(
     vfs: &dyn Vfs,
     side: Side,
