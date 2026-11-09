@@ -484,25 +484,21 @@ impl Service {
                 Err(error) => Pre::Failed(error),
                 Ok(None) => Pre::NoChange,
                 Ok(Some(converted)) => {
-                    if req.bom == Some(true) && converted.doc.encoding().0.bom().is_empty() {
-                        Pre::Failed(no_bom(&file.spec, converted.doc.encoding().0))
-                    } else {
-                        let target = match (&req.target, &output) {
-                            (_, Some(output)) => Some(output.clone()),
-                            (ConvertTarget::Stdout, None) if !converted.doc.can_save_in_place() => {
-                                Some(self.stdout_spec(job)?)
-                            }
-                            _ => None,
-                        };
-                        let save = SaveRequest {
-                            target,
-                            backup: backup.clone(),
-                            unmappable,
-                            conversion: SaveRequest::conversion_of(&converted.format),
-                        };
-                        docs.push((converted.doc, save));
-                        Pre::Planned(docs.len() - 1)
-                    }
+                    let target = match (&req.target, &output) {
+                        (_, Some(output)) => Some(output.clone()),
+                        (ConvertTarget::Stdout, None) if !converted.doc.can_save_in_place() => {
+                            Some(self.stdout_spec(job)?)
+                        }
+                        _ => None,
+                    };
+                    let save = SaveRequest {
+                        target,
+                        backup: backup.clone(),
+                        unmappable,
+                        conversion: SaveRequest::conversion_of(&converted.format),
+                    };
+                    docs.push((converted.doc, save));
+                    Pre::Planned(docs.len() - 1)
                 }
             };
             warnings.extend(file.warnings.iter().cloned());
@@ -761,6 +757,20 @@ impl Service {
             warnings.extend(save.warnings.iter().cloned());
             let plan_lines = save.human_lines();
             if plan.target == ConvertTarget::Stdout {
+                // Standard output asks nothing: rewritten undecodable lines are a warning.
+                for item in &save.items {
+                    for issue in &item.issues {
+                        if let hikasa_text::save::SaveIssue::LossyRewritten { lines } = issue {
+                            warnings.push(Warning {
+                                code: hikasa_core::WarningCode::LossyLineRewritten,
+                                message: format!(
+                                    "{lines} lines with undecodable bytes were written as U+FFFD"
+                                ),
+                                spec: Some(item.target.canonical()),
+                            });
+                        }
+                    }
+                }
                 let results = self.stream_stdout(vfs, &plan, &save, out, job)?;
                 return Ok(finish_stdout(plan, results, warnings, plan_lines));
             }
@@ -960,7 +970,13 @@ fn build(
                 dto.skip = skip;
                 dto.error = error;
                 if let Some(item) = save_items.get(i) {
-                    dto.questions = item.questions().iter().map(|q| q.as_str()).collect();
+                    // Standard output writes no file: of the questions only a changed file stands.
+                    dto.questions = item
+                        .questions()
+                        .iter()
+                        .filter(|q| !stdout || **q == SaveQuestion::ChangedOnDisk)
+                        .map(|q| q.as_str())
+                        .collect();
                     let target = item.target.canonical();
                     dto.warnings.extend(
                         warnings

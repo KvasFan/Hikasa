@@ -161,6 +161,7 @@ impl SaveDriver {
         }
         let total: u64 = open.values().sum();
         let mut flags: Vec<&str> = open.keys().map(|k| SaveAnswers::flag_of(*k)).collect();
+        flags.sort_unstable();
         flags.dedup();
         Some(ApiError::InvalidArgument(format!(
             "{total} questions need an answer: pass {}, or --dry-run to see the plan ({})",
