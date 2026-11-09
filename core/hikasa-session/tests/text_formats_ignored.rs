@@ -54,11 +54,19 @@ fn a_format_per_pane_from_the_request() {
     // D-15: the left name's format for both.
     let one = compare(&svc, &req).unwrap();
     assert!(one.right_format.is_none() && one.comparison.right_format().is_none());
+    let mismatch = |r: &hikasa_session::api::TextCompareResponse| {
+        r.warnings
+            .iter()
+            .any(|w| w.code == hikasa_core::WarningCode::FormatMismatch)
+    };
+    assert!(mismatch(&one), "{:?}", one.warnings);
     // The right pane as plain text: every comment line differs.
     req.formats = Pair::new(None, Some("Everything Else".into()));
     let two = compare(&svc, &req).unwrap();
     let rf = two.right_format.as_ref().unwrap();
     assert_eq!(rf.name, "Everything Else");
+    // A pane with its own format: no `format_mismatch` (W10b note 10).
+    assert!(!mismatch(&two), "{:?}", two.warnings);
     assert_eq!(two.format.name, one.format.name);
     let differing = |r: &hikasa_session::api::TextCompareResponse| {
         let s = r.comparison.stats();

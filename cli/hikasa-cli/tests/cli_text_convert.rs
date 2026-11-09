@@ -284,6 +284,28 @@ fn a10_19_nothing_to_change_still_goes_to_stdout_and_output() {
     assert_eq!(mtime(&a), MTIME);
 }
 
+/// The BOM stays when only a content conversion runs, and a BOM-only change (`--no-bom`, `--bom`) is a change that is
+/// written in place (W10b note 66's mutation table).
+#[test]
+fn a10_19_the_bom_stays_unless_asked_and_its_change_is_written() {
+    let s = Sandbox::new();
+    let a = s.file("a.txt", b"\xEF\xBB\xBFx \ny\n");
+    let out = convert(&s, &["a.txt", "--trim-trailing"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(out.stdout, b"\xEF\xBB\xBFx\ny\n");
+    let out = convert(&s, &["a.txt", "--no-bom", "--in-place", "--no-backup"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        stdout(&out).starts_with("converted 0 lines: "),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(read(&a), b"x \ny\n");
+    let out = convert(&s, &["a.txt", "--bom", "--in-place", "--no-backup"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&a), b"\xEF\xBB\xBFx \ny\n");
+}
+
 /// W10b note 65: `--in-place` refuses what is not a regular file before reading it, so a FIFO without a writer never
 /// blocks the command (Unix).
 #[cfg(unix)]

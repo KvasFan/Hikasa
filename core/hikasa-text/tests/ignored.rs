@@ -17,6 +17,7 @@ use hikasa_core::{ContentResult, Ctl, Pair, Side};
 use hikasa_text::{
     CompareInput, CompiledFormat, Direction, IgnoredLines, Importance, RangeSet, RowIdx, RowState,
     TextComparison, TextDisplayFilter, TextRules, ThumbCell, ViewItem, ViewOptions, compare,
+    ignored_check,
 };
 
 fn set(ranges: &[std::ops::Range<u32>]) -> RangeSet {
@@ -416,4 +417,24 @@ fn marks_set_during_a_recompare_are_applied_at_install() {
         common::canonical_json_all(&want)
     );
     assert_eq!(lc.current().verdict(false), ContentResult::RulesSame);
+}
+
+/// The check of the marked lines is pinned (§1.10.17, W10b note 9): the CRC-32 of their text, each followed by `\n`,
+/// whatever the file's terminators; a mark beyond the document gives none.
+#[test]
+fn the_check_of_marked_lines_is_pinned() {
+    for text in ["alpha\nbeta\ngamma", "alpha\r\nbeta\rgamma\n"] {
+        let doc = hikasa_text::TextDocument::from_text(text);
+        assert_eq!(
+            ignored_check(&doc, &set(&[0..2])),
+            Some(0x6e30_506e),
+            "{text:?}"
+        );
+        assert_eq!(
+            ignored_check(&doc, &set(&[0..1, 1..3])),
+            Some(0xad9e_bb83),
+            "{text:?}"
+        );
+        assert_eq!(ignored_check(&doc, &set(&[2..4])), None, "{text:?}");
+    }
 }

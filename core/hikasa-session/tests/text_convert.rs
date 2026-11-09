@@ -140,3 +140,57 @@ fn standard_output_holds_the_bytes_until_the_source_is_checked() {
     assert_eq!(outcome.exit_code, ExitCode::Success);
     assert_eq!(sink, b"one\ntwo\nthree\n");
 }
+
+/// A file that changes on disk between its load and the plan (here when the load reports its first read; Unix, where
+/// a file can be replaced while it is open): standard
+/// output asks nothing, so `changed_on_disk` fails the file unless `--force` answers it, which converts the text as
+/// loaded (§1.10.15; W10b note 66's mutation table).
+#[cfg(unix)]
+#[test]
+fn standard_output_refuses_a_file_changed_since_its_load_unless_forced() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.txt", b"one \ntwo\n");
+    for force in [false, true] {
+        std::fs::write(&a, b"one \ntwo\n").unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let (path, flag) = (a.clone(), Arc::clone(&done));
+        let job = service.job(
+            JobKind::TextConvert,
+            Arc::new(move |_: hikasa_core::progress::Progress| {
+                if !flag.swap(true, Ordering::SeqCst) {
+                    // A new file in its place: a read under way keeps the old one.
+                    let new = path.with_extension("new");
+                    std::fs::write(&new, b"changed on disk\n").unwrap();
+                    std::fs::rename(&new, &path).unwrap();
+                }
+            }),
+        );
+        let req = TextConvertRequest {
+            files: vec![os(&a)],
+            trim_trailing: true,
+            target: ConvertTarget::Stdout,
+            answers: SaveAnswers {
+                force,
+                ..SaveAnswers::default()
+            },
+            ..TextConvertRequest::default()
+        };
+        let mut sink = Vec::new();
+        let outcome = service.text_convert(&req, &mut sink, &job).unwrap();
+        assert!(done.load(Ordering::SeqCst));
+        assert_eq!(outcome.dto.files[0].questions, vec!["changed_on_disk"]);
+        if force {
+            assert_eq!(outcome.exit_code, ExitCode::Success);
+            assert_eq!(sink, b"one\ntwo\n");
+        } else {
+            assert_eq!(outcome.exit_code, ExitCode::UnknownError);
+            assert!(sink.is_empty());
+            let error = outcome.dto.files[0].error.as_ref().unwrap();
+            assert!(error.message.contains("--force"), "{}", error.message);
+        }
+    }
+}

@@ -449,6 +449,78 @@ fn a10_14_a_source_changed_since_the_plan_fails_before_the_commit() {
     }
 }
 
+/// A source that grew since the plan is read past its stamp's size and fails (a Save As, which no target stamp
+/// guards); one with another length but the stamp's CRC (4 bytes forged onto it) is changed at planning: the size and
+/// the CRC are checked together (W10b note 66).
+#[test]
+fn a10_14_a_source_that_grew_or_keeps_its_crc_is_changed() {
+    let vfs = memory();
+    put(&vfs, "/w/a.txt", b"alpha\nbeta\n");
+    let mut doc = doc_of(&vfs, "/w/a.txt");
+    type_at(&mut doc, 0, 0, "x");
+    let req = SaveRequest {
+        target: Some(spec("/w/copy.txt")),
+        ..SaveRequest::default()
+    };
+    let planned = plan(&vfs, &doc, &req);
+    put(&vfs, "/w/a.txt", b"alpha\nbeta\ngamma\n");
+    let report = execute(&vfs, planned, &mut doc);
+    assert_eq!(report.op.results[0].status, ItemStatus::Failed);
+    assert!(read(&vfs, "/w/copy.txt").is_none());
+    // Four bytes that keep the CRC-32, with another time: the same CRC, another length.
+    let vfs = memory();
+    let old = b"alpha\nbeta\n".to_vec();
+    put(&vfs, "/w/a.txt", &old);
+    let mut doc = doc_of(&vfs, "/w/a.txt");
+    type_at(&mut doc, 0, 0, "x");
+    let mut grown = old.clone();
+    grown.extend_from_slice(&forge(&old));
+    assert_eq!(
+        hikasa_vfs::crc32_bytes(&grown),
+        hikasa_vfs::crc32_bytes(&old)
+    );
+    vfs.insert_file(&common::host("/w/a.txt"), grown, meta(1_700_000_100))
+        .unwrap();
+    let planned = plan(&vfs, &doc, &SaveRequest::default());
+    assert_eq!(questions(&planned, 0), vec![SaveQuestion::ChangedOnDisk]);
+}
+
+/// Four bytes that, appended to `data`, keep its CRC-32 (IEEE, reflected): the register after them is the one after
+/// `data`.
+fn forge(data: &[u8]) -> [u8; 4] {
+    let mut table = [0u32; 256];
+    let mut inverse = [0u8; 256];
+    for i in 0..256u32 {
+        let mut c = i;
+        for _ in 0..8 {
+            c = if c & 1 == 1 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+        }
+        table[i as usize] = c;
+        inverse[(c >> 24) as usize] = i as u8;
+    }
+    let start = !hikasa_vfs::crc32_bytes(data);
+    // The table entries the four steps must use, found from the end.
+    let mut indices = [0u8; 4];
+    let mut want = start;
+    for k in (0..4).rev() {
+        let i = inverse[(want >> 24) as usize];
+        indices[k] = i;
+        want = (want ^ table[i as usize]) << 8;
+    }
+    let mut out = [0u8; 4];
+    let mut register = start;
+    for k in 0..4 {
+        let i = indices[k];
+        out[k] = (register as u8) ^ i;
+        register = (register >> 8) ^ table[i as usize];
+    }
+    out
+}
+
 /// An item whose document changed after the plan is refused; a plan read back has no content and is refused too.
 #[test]
 fn a10_14_a_document_changed_since_the_plan_is_refused() {
@@ -843,6 +915,29 @@ fn a10_15_core_every_question_class() {
         b"1a\n",
         "one generation"
     );
+    // A file of the backup's size at its name, with another time: not the one the last save made, so asked.
+    let vfs = memory();
+    put(&vfs, "/w/a.txt", b"a\n");
+    let mut doc = doc_of(&vfs, "/w/a.txt");
+    type_at(&mut doc, 0, 0, "1");
+    assert!(
+        execute(
+            &vfs,
+            confirm_all(plan(&vfs, &doc, &with_backup())),
+            &mut doc
+        )
+        .ok()
+    );
+    assert_eq!(read(&vfs, "/w/a.txt.bak").unwrap(), b"a\n");
+    vfs.insert_file(
+        &common::host("/w/a.txt.bak"),
+        &b"z\n"[..],
+        meta(1_600_000_000),
+    )
+    .unwrap();
+    type_at(&mut doc, 0, 0, "2");
+    let planned = plan(&vfs, &doc, &with_backup());
+    assert_eq!(questions(&planned, 0), vec![SaveQuestion::OverwriteBackup]);
 }
 
 /// The machine over several items: `YesToAll` answers a class, `NoToAll` as a mode declines every asking item,
@@ -1035,6 +1130,42 @@ impl Vfs for Members {
     fn remove(&self, spec: &Spec) -> Result<(), VfsError> {
         self.0.remove(&self.map(spec))
     }
+    /// Members of `ro.zip` are in an archive that cannot be written.
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        Ok(match spec {
+            Spec::ArchiveMember { archive, .. }
+                if archive.file_name().as_deref() == Some("ro.zip") =>
+            {
+                Some(false)
+            }
+            _ => None,
+        })
+    }
+}
+
+/// A member of an archive that cannot be written is an item error at planning (`permission_denied`), not a
+/// `ReadOnlyTarget` question a `--yes` would answer (§1.10.14, W10b note 35).
+#[test]
+fn a10_16_core_a_member_of_a_read_only_archive_fails_at_planning() {
+    let mem = memory();
+    put(&mem, "/w/ro.zip", b"PK archive bytes");
+    mem.insert_dir(&common::host("/w/ro.zip.d"), MemMeta::default())
+        .unwrap();
+    put(&mem, "/w/ro.zip.d/x.txt", b"x\n");
+    let vfs = Members(mem);
+    let member = Spec::archive_member(spec("/w/ro.zip"), "x.txt");
+    let mut x = open(&vfs, &member, &ee(), DecodeOptions::default(), None);
+    type_at(&mut x, 0, 0, "1");
+    let planned = plan(&vfs, &x, &with_backup());
+    let error = planned.plan.items[0].error.as_ref().expect("an item error");
+    assert_eq!(error.kind, hikasa_core::ErrorKind::PermissionDenied);
+    assert!(
+        error.message.contains("cannot be written"),
+        "{}",
+        error.message
+    );
+    assert!(planned.items[0].questions().is_empty());
+    assert!(planned.exec.archive_backups.is_empty());
 }
 
 /// Two members of one archive saved in one plan: no backup of their own, one backup of the archive, and an existing
