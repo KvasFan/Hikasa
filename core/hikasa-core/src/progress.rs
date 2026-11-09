@@ -37,11 +37,13 @@ pub enum Phase {
     Reporting,
     /// Writing files (VFS write operations, M2 W3; additive).
     Writing,
+    /// Searching files (Find in Files, M2 W10c, §1.10.19; additive).
+    Searching,
 }
 
 impl Phase {
     /// Number of phases (size of per-phase tables).
-    const COUNT: usize = 10;
+    const COUNT: usize = 11;
 
     /// Dense index of the phase.
     const fn index(self) -> usize {
@@ -56,6 +58,7 @@ impl Phase {
             Phase::Hashing => 7,
             Phase::Reporting => 8,
             Phase::Writing => 9,
+            Phase::Searching => 10,
         }
     }
 
@@ -72,6 +75,7 @@ impl Phase {
             Phase::Hashing => "hashing",
             Phase::Reporting => "reporting",
             Phase::Writing => "writing",
+            Phase::Searching => "searching",
         }
     }
 }

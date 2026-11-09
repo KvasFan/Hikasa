@@ -122,6 +122,8 @@ pub enum WarningCode {
     /// A save replaced characters the encoding cannot write by its substitute (`UnmappablePolicy::Replace`; M2 W10b,
     /// §1.10.12).
     UnmappableReplaced,
+    /// A Find in Files stopped at its `max_matches`: the rest was not searched (M2 W10c, §1.10.19).
+    FindLimitReached,
 }
 
 impl WarningCode {
@@ -173,6 +175,7 @@ impl WarningCode {
             WarningCode::SaveReencoded => "save_reencoded",
             WarningCode::LossyLineRewritten => "lossy_line_rewritten",
             WarningCode::UnmappableReplaced => "unmappable_replaced",
+            WarningCode::FindLimitReached => "find_limit_reached",
         }
     }
 }
@@ -236,6 +239,7 @@ mod tests {
             WarningCode::SaveReencoded,
             WarningCode::LossyLineRewritten,
             WarningCode::UnmappableReplaced,
+            WarningCode::FindLimitReached,
         ];
         for code in all {
             assert_eq!(

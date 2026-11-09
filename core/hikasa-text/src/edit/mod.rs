@@ -19,7 +19,7 @@ pub mod commands;
 pub mod editability;
 mod pos;
 mod undo;
-mod words;
+pub(crate) mod words;
 
 use std::borrow::Cow;
 use std::ops::Range;

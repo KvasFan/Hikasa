@@ -11,6 +11,7 @@
 //! | [`live`] | [`LiveComparison`]: provisional splices and the exact incremental recompare (§1.10.10–§1.10.11) |
 //! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
 //! | [`save`] | [`save::plan_save`], [`save::SaveConfirmation`], [`save::SaveSource`], [`save::execute_save`]: saving edited documents (§1.10.12–§1.10.14) |
+//! | [`find`] | [`find::Finder`], [`find::replace_all`], [`find::find_in_comparison`], [`find::files::find_in_files`]: find, replace and Find in Files (§1.10.18–§1.10.19) |
 //! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
@@ -66,6 +67,7 @@ pub mod compare;
 pub mod document;
 pub mod edit;
 pub mod error;
+pub mod find;
 pub mod live;
 pub mod quick;
 pub mod rules;

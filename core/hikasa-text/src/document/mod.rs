@@ -337,6 +337,12 @@ impl TextDocument {
         }
     }
 
+    /// The table line holding rope byte `off` (its content or terminator); the line count at or past the end.
+    pub(crate) fn line_at_byte(&self, off: usize) -> u32 {
+        self.lines
+            .line_at_byte(u32::try_from(off).unwrap_or(u32::MAX))
+    }
+
     /// Byte content range of a line, for crate-internal bulk passes.
     pub(crate) fn content_range(&self, idx: u32) -> Option<(usize, usize)> {
         self.lines.content(idx)

@@ -64,6 +64,10 @@ pub enum TextError {
     /// Cancelled.
     #[error("operation cancelled")]
     Cancelled,
+    /// A search or replacement refused (M2 W10c, §1.10.23): `invalid_input` (a pattern, a replacement template, a
+    /// line-break pattern) or `cancelled`.
+    #[error(transparent)]
+    Find(#[from] crate::find::FindError),
     /// A save's item failed (M2 W10b, §1.10.23): the VFS error of item `item` of the plan. Items fail in reports; a
     /// caller that needs one error makes it of this.
     #[error("save item {item}: {source}")]
@@ -121,6 +125,7 @@ impl Classify for TextError {
             TextError::Diff(e) => e.kind(),
             TextError::Cancelled => ErrorKind::Cancelled,
             TextError::Save { source, .. } => source.kind(),
+            TextError::Find(e) => e.kind(),
         }
     }
 }
