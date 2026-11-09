@@ -58,6 +58,9 @@ pub(crate) struct Item {
     pub(crate) link_target: Option<Box<str>>,
     /// Older records that came with this member from another archive, oldest first (D-156).
     pub(crate) older: Option<Arc<Vec<Item>>>,
+    /// New content written over the file of node `replaces` of the base tree (W10b, F6): the rebuild writes it in
+    /// that record's place, under its header (owner, mode, type, extension records), as a save rewrites a member.
+    pub(crate) replaces: Option<u32>,
 }
 
 impl Item {
@@ -82,6 +85,7 @@ impl Item {
             crc32: node.crc32,
             link_target: node.link_target.clone(),
             older: None,
+            replaces: None,
         }
     }
 
@@ -105,6 +109,7 @@ impl Item {
             crc32: None,
             link_target,
             older: None,
+            replaces: None,
         }
     }
 
@@ -126,6 +131,18 @@ impl Item {
             crc32: None,
             link_target: None,
             older: None,
+            replaces: None,
+        }
+    }
+
+    /// The base node whose record new content written over this item takes the place of: its own, when it is a regular
+    /// file of the archive, or the one it took already. A sparse member keeps a block map no new content fits, and
+    /// goes after the kept ones as before.
+    fn record_of_file(&self) -> Option<u32> {
+        match self.origin {
+            Origin::Kept { node, .. } if self.kind == MemberKind::File => Some(node),
+            Origin::Staged(_) => self.replaces,
+            _ => None,
         }
     }
 
@@ -656,7 +673,8 @@ impl Overlay {
     }
 
     /// Enters a staged file at `path` (the `commit` of `open_write`). A file or link at the target is replaced, never
-    /// followed; a replaced file gives its attributes to the new one, as a local write keeps a file's permissions.
+    /// followed; a replaced file gives its attributes to the new one, as a local write keeps a file's permissions, and its
+    /// record: the rebuild writes the new content in its place, under its header (W10b, F6).
     pub(crate) fn put_file(
         &mut self,
         path: &str,
@@ -666,6 +684,7 @@ impl Overlay {
         scope: &Scope<'_>,
     ) -> Result<(), VfsError> {
         let mut attrs = None;
+        let mut replaces = None;
         match self.get(path) {
             Some(item) if item.kind == MemberKind::Dir => {
                 return Err(VfsError::IsADirectory {
@@ -674,13 +693,17 @@ impl Overlay {
             }
             Some(_) if !overwrite => return Err(scope.exists(path)),
             Some(item) if item.kind == MemberKind::Symlink => {}
-            Some(item) => attrs = Some(item.attrs),
+            Some(item) => {
+                attrs = Some(item.attrs);
+                replaces = item.record_of_file();
+            }
             None => self.ready_parent(path, parents, scope)?,
         }
         let size = file.len();
         let mut item = Item::fresh(MemberKind::File, Origin::Staged(file), FILE_MODE, scope.now);
         item.size = size;
         item.crc32 = crc32;
+        item.replaces = replaces;
         if let Some(attrs) = attrs {
             item.attrs = attrs;
         }
@@ -699,6 +722,7 @@ impl Overlay {
             return false;
         };
         let set = matches!(item.origin, Origin::Kept { touched: true, .. });
+        item.replaces = item.record_of_file();
         item.size = file.len();
         item.crc32 = None;
         item.origin = Origin::Staged(file);

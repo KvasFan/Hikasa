@@ -6,6 +6,11 @@
 //! never decoded. A shadowed duplicate shares the fate of the record that won its path (rule 3): it stays while that
 //! record stays, follows it to a new path, and goes when it is removed or replaced, with a warning.
 //!
+//! A regular member written over (a save, W10b F6) keeps its place and its header: tar keeps the header and extension
+//! blocks (owner, names, mode, type, PAX records but `size`, `mtime` and a link's), zip the central record's name bytes,
+//! flag, "made by" host, external attributes, comment and owner fields, with the new data, size, CRC and the time of the
+//! write. A sparse member, or one that brings older records of another archive, still goes after the kept ones.
+//!
 //! This module only writes to the `out` it is given: `batch` decides where that is and commits it.
 
 use std::cell::Cell;
@@ -73,19 +78,22 @@ enum Fate<'a> {
     },
     /// A hard link that lost what it names: a regular member at its own place, with the content of `Plan::staged`.
     Materialize(usize),
+    /// A regular member whose content was written over (W10b, F6): the new content of `Plan::staged` at its own place,
+    /// under its own header. What it shadowed goes, and a hard link to it keeps the old content, as before.
+    Replace(usize),
 }
 
 /// What [`Rebuild::plan`] decides.
 struct Planned<'a> {
     fates: Vec<Fate<'a>>,
     new: Vec<New<'a>>,
-    /// The content of each [`Fate::Materialize`].
+    /// The content of each [`Fate::Materialize`] and [`Fate::Replace`].
     staged: Vec<Staged<'a>>,
     /// Shadowed records that went with their winner.
     dropped: u64,
 }
 
-/// A hard link written as a regular member.
+/// New content at the place of a record: a hard link written as a regular member, or a member written over.
 struct Staged<'a> {
     path: &'a str,
     item: &'a Item,
@@ -93,6 +101,7 @@ struct Staged<'a> {
 }
 
 /// A member written after the kept ones.
+#[derive(Clone)]
 struct New<'a> {
     path: &'a str,
     item: &'a Item,
@@ -116,6 +125,48 @@ impl<'a> New<'a> {
                     _ => None,
                 },
             })
+    }
+}
+
+/// A zip `ZipWriter` wrote in the cache, to carry records from.
+struct StagedZip {
+    input: Box<dyn ReadSeek>,
+    headers: Vec<Central>,
+    starts: Vec<u64>,
+    /// Where its central directory starts.
+    start: u64,
+}
+
+/// The members written over, staged ([`Rebuild::stage_replaced`]).
+struct Replaced {
+    zip: StagedZip,
+    /// The header of the staged content of each [`Fate::Replace`].
+    by_staged: HashMap<usize, usize>,
+    /// The bytes they bring.
+    bytes: u64,
+}
+
+impl Replaced {
+    /// Carries the record of `Fate::Replace(at)` to `zip`, under `patch`.
+    fn record(
+        &mut self,
+        zip: &mut ZipOut<'_>,
+        at: usize,
+        patch: &Patch,
+        text: &str,
+    ) -> Result<(), VfsError> {
+        let StagedZip {
+            input,
+            headers,
+            starts,
+            start,
+        } = &mut self.zip;
+        let header = self
+            .by_staged
+            .get(&at)
+            .and_then(|&n| headers.get(n))
+            .ok_or_else(|| corrupt(text, "inconsistent overlay"))?;
+        zip.record(&mut **input, header, patch, starts, *start)
     }
 }
 
@@ -545,7 +596,7 @@ impl Rebuild<'_> {
     /// What became of the winner `winner` is what becomes of a record it shadows.
     fn follow<'a>(&'a self, fates: &[Fate<'a>], winner: u32) -> Fate<'a> {
         match fates.get(winner as usize).copied() {
-            Some(Fate::Drop) => Fate::Drop,
+            Some(Fate::Drop | Fate::Replace(_)) => Fate::Drop,
             Some(Fate::Follow { from, to, folder }) => Fate::Follow { from, to, folder },
             Some(Fate::Rewrite(to, item)) => match self.kept_path(item) {
                 Some(from) if from != to => Fate::Follow {
@@ -569,7 +620,7 @@ impl Rebuild<'_> {
 
     /// What becomes of each record, and the members written after the kept ones, sorted by path. Shadows are decided
     /// before hard links: a link to a kept shadow stays a link, and a winner that is a link written as a file does not
-    /// take its shadow along.
+    /// take its shadow along. A member written over takes its record's place (W10b, F6).
     fn plan(&self) -> Result<Planned<'_>, VfsError> {
         let tree = &self.view.index.tree;
         let mut fates: Vec<Fate<'_>> = vec![Fate::Keep; tree.records.len()];
@@ -577,6 +628,8 @@ impl Rebuild<'_> {
             set_fate(&mut fates, node.record, Fate::Drop);
         }
         let mut new: Vec<New<'_>> = Vec::new();
+        let mut staged = Vec::new();
+        let mut claimed = HashSet::new();
         for (path, item) in self.view.overlay.items() {
             match &item.origin {
                 Origin::Kept {
@@ -598,11 +651,21 @@ impl Rebuild<'_> {
                     item,
                     file: None,
                 }),
-                Origin::Staged(file) => new.push(New {
-                    path,
-                    item,
-                    file: Some(Arc::clone(file)),
-                }),
+                Origin::Staged(file) => match self.replaced_record(item) {
+                    Some(record) if claimed.insert(record) => {
+                        set_fate(&mut fates, record, Fate::Replace(staged.len()));
+                        staged.push(Staged {
+                            path,
+                            item,
+                            file: Arc::clone(file),
+                        });
+                    }
+                    _ => new.push(New {
+                        path,
+                        item,
+                        file: Some(Arc::clone(file)),
+                    }),
+                },
             }
         }
         let mut dropped = 0;
@@ -611,7 +674,6 @@ impl Rebuild<'_> {
             dropped += u64::from(matches!(fate, Fate::Drop));
             set_fate(&mut fates, shadow.record, fate);
         }
-        let mut staged = Vec::new();
         if !tree.hard_links.is_empty() {
             self.keep_hard_links(&mut fates, &mut staged, &mut dropped)?;
         }
@@ -623,6 +685,14 @@ impl Rebuild<'_> {
             staged,
             dropped,
         })
+    }
+
+    /// The record new content takes the place of: the regular member it was written over, when that one has a record
+    /// and the item brings no older records of another archive along (those go after the kept ones, with it).
+    fn replaced_record(&self, item: &Item) -> Option<u32> {
+        let node = self.node(item.replaces?)?;
+        (node.record != NO_RECORD && node.kind == MemberKind::File && item.older.is_none())
+            .then_some(node.record)
     }
 
     /// A refused member stays in the archive, and one refused only for a conflict with a path that is gone, its own or
@@ -687,7 +757,7 @@ impl Rebuild<'_> {
                     .get(at)
                     .zip(nodes.get(&target))
                     .is_some_and(|(file, node)| file.path == node.path()),
-                Some(Fate::Drop | Fate::Follow { .. }) | None => false,
+                Some(Fate::Drop | Fate::Follow { .. } | Fate::Replace(_)) | None => false,
             };
             let (Some(&(path, item)), Some(&node)) = (owners.get(&record), nodes.get(&record))
             else {
@@ -807,7 +877,8 @@ impl Rebuild<'_> {
             .map(|tail| (tail, data.container_len() - tail));
         // Records are bytes, not decoded output, so a sound zip of any size can be rewritten. The limit is there for
         // records that overlap: each would be written whole.
-        let staged = new_bytes(new);
+        let mut replaced = self.stage_replaced(planned, text)?;
+        let staged = new_bytes(new).saturating_add(replaced.as_ref().map_or(0, |r| r.bytes));
         let output_max = data
             .container_len()
             .saturating_add(staged)
@@ -837,6 +908,19 @@ impl Rebuild<'_> {
                     let patch = self.patch(header, path, item)?;
                     zip.record(&mut *input, header, &patch, &starts, start)?;
                 }
+                Fate::Replace(at) => {
+                    let (Some(replaced), Some(staged)) =
+                        (replaced.as_mut(), planned.staged.get(at))
+                    else {
+                        return Err(corrupt(text, "inconsistent overlay"));
+                    };
+                    let mut patch = header.kept();
+                    let node = self.kept_node(staged.item, text)?;
+                    if node.path() != staged.path {
+                        patch.rename(moved_name(header.name(), node.path(), staged.path, false));
+                    }
+                    replaced.record(&mut zip, at, &patch, text)?;
+                }
                 Fate::Follow { from, to, folder } => {
                     let patch = Patch {
                         name: Some(moved_name(header.name(), from, to, folder)),
@@ -859,7 +943,7 @@ impl Rebuild<'_> {
             zip.tail(&mut *input, tail, len)?;
             written += len;
         }
-        let grew = new.iter().any(|member| member.file.is_some());
+        let grew = new.iter().any(|member| member.file.is_some()) || replaced.is_some();
         self.check_ratio(grew, declared, written, text)?;
         Ok(dropped)
     }
@@ -911,8 +995,83 @@ impl Rebuild<'_> {
         new: &[New<'_>],
         text: &str,
     ) -> Result<(), VfsError> {
+        // `ZipWriter` refuses a name twice, so an older record goes in under a name of its own and gets its path as it is
+        // carried over. The name is not ASCII, so the record says UTF-8 whatever its path turns out to be.
+        let mut aliases: HashMap<Vec<u8>, &str> = HashMap::new();
+        let mut members = Vec::new();
+        for member in new {
+            for older in member.older() {
+                let alias = format!("\0\u{e9}{}", aliases.len());
+                aliases.insert(alias.clone().into_bytes(), older.path);
+                members.push((alias, older));
+            }
+            members.push((member.path.to_owned(), member.clone()));
+        }
+        let mut stage = self.stage_zip(&members, new_bytes(new), text)?;
+        for header in &stage.headers {
+            let patch = Patch {
+                name: aliases
+                    .get(header.name())
+                    .map(|path| path.as_bytes().to_vec()),
+                ..Patch::default()
+            };
+            zip.record(
+                &mut *stage.input,
+                header,
+                &patch,
+                &stage.starts,
+                stage.start,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The members written over (W10b, F6), in a zip of their own like the new ones, each under a name of its own; their
+    /// records take the places of the old ones, under the old headers ([`Central::kept`]). `None` without any.
+    fn stage_replaced(
+        &self,
+        planned: &Planned<'_>,
+        text: &str,
+    ) -> Result<Option<Replaced>, VfsError> {
+        let mut members = Vec::new();
+        let mut by_staged = HashMap::new();
+        let mut bytes = 0u64;
+        for fate in &planned.fates {
+            let Fate::Replace(at) = *fate else {
+                continue;
+            };
+            let Some(staged) = planned.staged.get(at) else {
+                return Err(corrupt(text, "inconsistent overlay"));
+            };
+            by_staged.insert(at, members.len());
+            bytes = bytes.saturating_add(staged.item.size);
+            let member = New {
+                path: staged.path,
+                item: staged.item,
+                file: Some(Arc::clone(&staged.file)),
+            };
+            members.push((format!("\0\u{e9}{}", members.len()), member));
+        }
+        if members.is_empty() {
+            return Ok(None);
+        }
+        let zip = self.stage_zip(&members, bytes, text)?;
+        Ok(Some(Replaced {
+            zip,
+            by_staged,
+            bytes,
+        }))
+    }
+
+    /// `members` (name, member) written by `ZipWriter` to a zip in the cache, and its central directory.
+    fn stage_zip(
+        &self,
+        members: &[(String, New<'_>)],
+        bytes: u64,
+        text: &str,
+    ) -> Result<StagedZip, VfsError> {
         // The members are in the cache already: this file is their second copy, and must not fail for that.
-        let room = self.config.limits.cache_max.saturating_add(new_bytes(new));
+        let room = self.config.limits.cache_max.saturating_add(bytes);
         let stage = self.core.cache.stage(&self.config.cache_root, room, text)?;
         let now = (self.config.clock)();
         let zone = now.time_zone().clone();
@@ -922,25 +1081,9 @@ impl Rebuild<'_> {
             zip::result::ZipError::Io(error) => VfsError::from_io(text, VfsOp::Write, error),
             other => corrupt(text, other.to_string()),
         };
-        // `ZipWriter` refuses a name twice, so an older record goes in under a name of its own and gets its path as it is
-        // carried over. The name is not ASCII, so the record says UTF-8 whatever its path turns out to be.
-        let mut aliases: HashMap<Vec<u8>, &str> = HashMap::new();
         let mut buffer = vec![0u8; codec::BUFFER];
-        for member in new {
-            for older in member.older() {
-                let alias = format!("\0\u{e9}{}", aliases.len());
-                self.add_new(&mut writer, &alias, &older, now, &zone, &mut buffer, text)?;
-                aliases.insert(alias.into_bytes(), older.path);
-            }
-            self.add_new(
-                &mut writer,
-                member.path,
-                member,
-                now,
-                &zone,
-                &mut buffer,
-                text,
-            )?;
+        for (name, member) in members {
+            self.add_new(&mut writer, name, member, now, &zone, &mut buffer, text)?;
         }
         let stage = writer.finish().map_err(fail)?;
         let staged = stage.finish_staged()?;
@@ -951,16 +1094,12 @@ impl Rebuild<'_> {
         let mut input: Box<dyn ReadSeek> = Box::new(reader);
         let headers = read_central(&mut *input, start, staged.len(), text)?;
         let starts = record_starts(&headers);
-        for header in &headers {
-            let patch = Patch {
-                name: aliases
-                    .get(header.name())
-                    .map(|path| path.as_bytes().to_vec()),
-                ..Patch::default()
-            };
-            zip.record(&mut *input, header, &patch, &starts, start)?;
-        }
-        Ok(())
+        Ok(StagedZip {
+            input,
+            headers,
+            starts,
+            start,
+        })
     }
 
     /// One new member, as `name`.
@@ -1108,7 +1247,7 @@ impl Rebuild<'_> {
                     let node = self.kept_node(item, text)?;
                     self.change_of(node, to, item, None)
                 }
-                Fate::Materialize(at) => {
+                Fate::Materialize(at) | Fate::Replace(at) => {
                     let Some(file) = staged.get(at) else {
                         return Err(corrupt(text, "inconsistent overlay"));
                     };
@@ -1199,7 +1338,8 @@ impl Rebuild<'_> {
         let decoded = stream_out.written;
         stream_out.inner.finish().map_err(fail)?;
         if codec.is_some() {
-            let grew = new.iter().any(|member| member.file.is_some());
+            let grew = new.iter().any(|member| member.file.is_some())
+                || fates.iter().any(|fate| matches!(fate, Fate::Replace(_)));
             self.check_ratio(grew, decoded, written.get(), text)?;
         }
         Ok(())
@@ -1225,9 +1365,11 @@ impl Rebuild<'_> {
         }
     }
 
+    /// The base node of an item: the one it is, or the one it was written over (W10b, F6).
     fn kept_node(&self, item: &Item, text: &str) -> Result<&Node, VfsError> {
         match item.origin {
             Origin::Kept { node, .. } => self.node(node),
+            Origin::Staged(_) => item.replaces.and_then(|node| self.node(node)),
             _ => None,
         }
         .ok_or_else(|| corrupt(text, "inconsistent overlay"))

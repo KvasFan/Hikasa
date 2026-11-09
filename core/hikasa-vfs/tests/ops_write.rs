@@ -718,6 +718,273 @@ fn a10_14_a_failing_member_leaves_the_archive() {
     assert_eq!(memory.mem.dump(), before);
 }
 
+/// Saves `bytes` into the member `path` of the archive `file` through a `write` item, as a save does.
+fn save_member(memory: &OnMemory, file: &Spec, path: &str, bytes: &[u8]) {
+    let vfs: &dyn Vfs = &*memory.vfs;
+    let spec = Spec::archive_member(file.clone(), path);
+    let content = Content::of(&[(&spec, bytes)]);
+    let report = save(
+        &content,
+        vfs,
+        vec![write_item(vfs, &spec, bytes.len(), None)],
+    );
+    assert!(report.ok(), "{:?}", report.results);
+    assert_eq!(member_bytes(vfs, &spec), bytes);
+}
+
+/// One tar member as the test reads it back: its header block, its data, and what its header says of the owner.
+#[derive(Debug, PartialEq, Eq)]
+struct TarSeen {
+    path: String,
+    header: Vec<u8>,
+    data: Vec<u8>,
+    owner: (u64, u64, Option<String>, Option<String>, u32),
+    mtime: u64,
+}
+
+fn tar_members(stream: &[u8]) -> Vec<TarSeen> {
+    let mut archive = tar::Archive::new(Cursor::new(stream));
+    let mut out = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let header = entry.header().clone();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut data).unwrap();
+        let text = |field: Option<&str>| field.map(str::to_owned);
+        out.push(TarSeen {
+            path: entry.path().unwrap().to_string_lossy().into_owned(),
+            header: header.as_bytes().to_vec(),
+            data,
+            owner: (
+                header.uid().unwrap(),
+                header.gid().unwrap(),
+                text(header.username().unwrap()),
+                text(header.groupname().unwrap()),
+                header.mode().unwrap(),
+            ),
+            mtime: header.mtime().unwrap(),
+        });
+    }
+    out
+}
+
+/// W10b F6: a tar member written over by a save keeps its place and its header: uid, gid, the owner's names, the mode,
+/// its type; its time is the save's (the clock's), its size and data the new ones. The other members stay byte for byte,
+/// plain and through gzip.
+#[test]
+fn a10_14_a_rewritten_tar_member_keeps_its_header_and_place() {
+    let mut builder = tar::Builder::new(Vec::new());
+    for (path, uid, user, mode) in [
+        ("first.txt", 7, "root", 0o644),
+        ("a.txt", 1234, "alice", 0o640),
+        ("last.txt", 9, "bob", 0o600),
+    ] {
+        let mut header = tar::Header::new_ustar();
+        let data = format!("the old content of {path}");
+        header.set_size(data.len() as u64);
+        header.set_uid(uid);
+        header.set_gid(uid + 1);
+        header.set_username(user).unwrap();
+        header.set_groupname("staff").unwrap();
+        header.set_mode(mode);
+        header.set_mtime(1_500_000_000);
+        builder
+            .append_data(&mut header, path, data.as_bytes())
+            .unwrap();
+    }
+    let plain = builder.into_inner().unwrap();
+    let before = tar_members(&plain);
+    for format in [ArchiveFormat::Tar, ArchiveFormat::TarGz] {
+        let memory = on_memory(ArchiveLimits::default());
+        let name = common::archives::name_of(format);
+        let file = memory.put(name, common::archives::compress(format, &plain));
+        save_member(&memory, &file, "a.txt", b"saved");
+        let stored = memory.mem.read_back(&host(&format!("/{name}"))).unwrap();
+        let after = tar_members(&common::archives::decompress(format, &stored));
+        let paths: Vec<&str> = after.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(paths, ["first.txt", "a.txt", "last.txt"], "{format:?}");
+        assert_eq!(after[0], before[0], "{format:?}");
+        assert_eq!(after[2], before[2], "{format:?}");
+        assert_eq!(after[1].owner, before[1].owner, "{format:?}");
+        assert_eq!(
+            after[1].owner,
+            (
+                1234,
+                1235,
+                Some("alice".into()),
+                Some("staff".into()),
+                0o640
+            )
+        );
+        assert_eq!(after[1].data, b"saved");
+        assert_eq!(after[1].mtime, 0, "the save's time: the test clock's epoch");
+    }
+}
+
+/// W10b F6: a tar hard link to a member written over keeps the old content, as before (it becomes a regular member at
+/// its place), and a shadowed older record of the member goes with it: the new content stands at the winner's place.
+#[test]
+fn a10_14_a_rewritten_tar_member_leaves_its_links_and_takes_its_shadows() {
+    use common::archives::{RawTar, raw_tar};
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put(
+        "a.tar",
+        raw_tar(&[
+            RawTar::file(b"t.txt", b"shadowed"),
+            RawTar::file(b"t.txt", b"old"),
+            RawTar::link(b"l.txt", b'1', b"t.txt"),
+            RawTar::file(b"z.txt", b"last"),
+        ]),
+    );
+    save_member(&memory, &file, "t.txt", b"saved");
+    let vfs: &dyn Vfs = &*memory.vfs;
+    let read = |path: &str| member_bytes(vfs, &Spec::archive_member(file.clone(), path));
+    assert_eq!(read("l.txt"), b"old");
+    assert_eq!(read("z.txt"), b"last");
+    let stored = memory.mem.read_back(&host("/a.tar")).unwrap();
+    let paths: Vec<(String, Vec<u8>)> = tar_members(&stored)
+        .into_iter()
+        .map(|m| (m.path, m.data))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            ("t.txt".to_owned(), b"saved".to_vec()),
+            ("l.txt".to_owned(), b"old".to_vec()),
+            ("z.txt".to_owned(), b"last".to_vec()),
+        ]
+    );
+}
+
+/// One central record of a zip as the test reads it: the name, the "made by" field, the external attributes, the
+/// extra fields, the comment, and the bytes of its local record (header and data).
+#[derive(Debug, PartialEq, Eq)]
+struct ZipSeen {
+    name: Vec<u8>,
+    made_by: u16,
+    flags: u16,
+    external: u32,
+    extra: Vec<u8>,
+    comment: Vec<u8>,
+    local: Vec<u8>,
+}
+
+fn zip_members(bytes: &[u8]) -> Vec<ZipSeen> {
+    let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+    let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let end = bytes.len() - 22;
+    assert_eq!(&bytes[end..end + 4], b"PK\x05\x06");
+    let count = usize::from(u16_at(end + 10));
+    let start = u32_at(end + 16) as usize;
+    let mut at = start;
+    let mut rows = Vec::new();
+    for _ in 0..count {
+        assert_eq!(&bytes[at..at + 4], b"PK\x01\x02");
+        let (name_len, extra_len, comment_len) = (
+            usize::from(u16_at(at + 28)),
+            usize::from(u16_at(at + 30)),
+            usize::from(u16_at(at + 32)),
+        );
+        let name = at + 46;
+        rows.push((
+            u32_at(at + 42) as usize,
+            ZipSeen {
+                name: bytes[name..name + name_len].to_vec(),
+                made_by: u16_at(at + 4),
+                flags: u16_at(at + 8),
+                external: u32_at(at + 38),
+                extra: bytes[name + name_len..name + name_len + extra_len].to_vec(),
+                comment: bytes
+                    [name + name_len + extra_len..name + name_len + extra_len + comment_len]
+                    .to_vec(),
+                local: Vec::new(),
+            },
+        ));
+        at = name + name_len + extra_len + comment_len;
+    }
+    let mut offsets: Vec<usize> = rows.iter().map(|(offset, _)| *offset).collect();
+    offsets.push(start);
+    assert!(
+        offsets.is_sorted(),
+        "local order is central order: {offsets:?}"
+    );
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, (offset, mut seen))| {
+            seen.local = bytes[offset..offsets[i + 1]].to_vec();
+            seen
+        })
+        .collect()
+}
+
+/// W10b F6: a zip member written over by a save keeps its place (in the central directory and among the local records)
+/// and its central header: the name's bytes, the "made by" host, the external attributes as they were (here a mode
+/// with no file type bits), the comment and the Unix owner field. The other members stay byte for byte.
+#[test]
+fn a10_14_a_rewritten_zip_member_keeps_its_place_and_attributes() {
+    use common::archives::{RawEntry, raw_zip};
+    // Info-ZIP's Unix owner field: version 1, 4-byte uid 1000, 4-byte gid 100.
+    let mut owner = vec![0x75, 0x78, 11, 0, 1, 4];
+    owner.extend_from_slice(&1000u32.to_le_bytes());
+    owner.push(4);
+    owner.extend_from_slice(&100u32.to_le_bytes());
+    let a = RawEntry {
+        version_made_by: 0x0314,
+        external: 0o600 << 16,
+        extra: owner.clone(),
+        comment: b"a note".to_vec(),
+        ..RawEntry::new(b"a.txt", b"the old content of a")
+    };
+    let entries = [
+        RawEntry::new(b"first.txt", b"the first member").unix(0o100_644),
+        a,
+        RawEntry::new(b"last.txt", b"the last member").unix(0o100_600),
+    ];
+    let bytes = raw_zip(&entries);
+    let before = zip_members(&bytes);
+    let memory = on_memory(ArchiveLimits::default());
+    let file = memory.put("a.zip", bytes);
+    save_member(&memory, &file, "a.txt", b"saved");
+    let after = zip_members(&memory.mem.read_back(&host("/a.zip")).unwrap());
+    let names: Vec<&[u8]> = after.iter().map(|m| m.name.as_slice()).collect();
+    assert_eq!(names, [&b"first.txt"[..], b"a.txt", b"last.txt"]);
+    assert_eq!(after[0], before[0]);
+    assert_eq!(after[2], before[2]);
+    let (old, new) = (&before[1], &after[1]);
+    assert_eq!(new.external, 0o600 << 16, "{:o}", new.external >> 16);
+    assert_eq!(new.made_by >> 8, 3, "made by Unix");
+    assert_eq!(
+        new.flags & (1 << 11),
+        old.flags & (1 << 11),
+        "the UTF-8 flag"
+    );
+    assert_eq!(new.comment, b"a note");
+    assert!(
+        new.extra.windows(owner.len()).any(|field| field == owner),
+        "the owner field: {:?}",
+        new.extra
+    );
+    let vfs: &dyn Vfs = &*memory.vfs;
+    for (path, content) in [
+        ("first.txt", &b"the first member"[..]),
+        ("a.txt", b"saved"),
+        ("last.txt", b"the last member"),
+    ] {
+        assert_eq!(
+            member_bytes(vfs, &Spec::archive_member(file.clone(), path)),
+            content
+        );
+    }
+    // Another reader agrees, the CRC included.
+    let stored = memory.mem.read_back(&host("/a.zip")).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(stored.to_vec())).unwrap();
+    let mut saved = archive.by_name("a.txt").unwrap();
+    assert_eq!(saved.unix_mode(), Some(0o600));
+    let mut data = Vec::new();
+    std::io::Read::read_to_end(&mut saved, &mut data).unwrap();
+    assert_eq!(data, b"saved");
+}
+
 // ---- on disk ---------------------------------------------------------------------------------------------------
 
 /// On disk: the replaced file's permissions are kept (with and without a backup), the time is the write's, never the
