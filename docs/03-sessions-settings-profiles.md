@@ -420,7 +420,10 @@ saved_at = ""                  # RFC 3339; auto-saved files only
                                # format, "" = follow format), ignored_left, ignored_right (TC-024, D-282: 1-based
                                # "a-b" or "a" strings), ignored_check_left, ignored_check_right (the CRC-32 of the
                                # marked lines' text, 8 hex digits: on load a side whose marked lines no longer have
-                               # it drops its marks with warning ignored_lines_dropped)
+                               # it drops its marks with warning ignored_lines_dropped); text-edit (M2 W10c):
+                               # left (stdin and clipboard not stored: spec_not_saved), left_format,
+                               # left_encoding, read_only_left (the session's Disable editing, never --ro); opening it
+                               # opens a Text Edit view of that file, a session without a file cannot be opened
 [rules]                        # folder-compare: the TOML of --rules-file; folder-sync: the same, and [rules.sync];
                                # text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests

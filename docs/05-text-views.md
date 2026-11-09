@@ -307,6 +307,11 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   copy of the current line pair), *Hex Details* (read-only hex of the current lines),
   *Alignment Details* (editable character alignment view); *Ruler*; "Lock Visible
   Whitespace"; hide.
+  *M2 W10c notes (D-287; contract §1.10.20):* Hex Details show the current line as a save would write it in the
+  document's encoding (never the BOM), then its terminator's bytes, up to 4,096 bytes; characters the encoding cannot
+  write show as the `?` a save would write, and are marked. Alignment Details align the characters of the row's two
+  lines with the inline engine of the panes and colour them as the panes do. The ruler ticks every column, labels every
+  tenth and marks the tab stops.
 - **TC-034** (P0): Line numbers; Word Wrap (both panes wrap to width, alignment rows
   grow to the tallest side); Display Font / Increase / Decrease / Reset (Ctrl+Num+/−/0);
   Extra line spacing; column guide line at N; dim inactive pane by N%; single vertical
@@ -353,6 +358,13 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   Bookmarks 0–9 (toggle Ctrl+Shift+digit, go to Ctrl+digit, Clear Bookmarks), browse
   mode selector for the toolbar arrows (by difference section / difference / edit /
   find / replacement / taken).
+  *M2 W10c notes (D-286; contract §1.10.20):* Next Difference Section skips ignored sections, sections the display
+  filter hides and, with *Ignore Unimportant Differences*, unimportant ones. Next Difference walks the inline ranges of
+  the current row after the caret, then of the following rows, so a long changed line is visited range by range; a line
+  of one side only is one difference. Next Edit goes to the next run of edited lines. Each wraps once when *wrap around*
+  is on. Go To takes `line`, `line:column` or `:column`, with the line numbers the gutter shows (a line cut by the
+  characters-per-line limit has one number) and columns in characters; numbers out of range go to the last line or
+  column. The status bar's column counts characters; the ruler counts display columns.
 - **TC-051** (P0): Options: go to first difference on load; go to next difference after
   copying to the other side; wrap around at end; show message panel/beep when none
   found; limit "Next Difference Files" to the current folder.
@@ -361,6 +373,16 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   in this view; **Copy File to Right/Left and Open Next Difference** (Ctrl+Alt+R/L)
   with a confirmation listing the steps (save/discard edits, copy entire file, open next);
   Take Left/Right File and Open Next Difference in merge.
+  *M2 W10c notes (D-288; contract §1.10.21):* Next and Previous Difference Files go to the next pair of files with
+  differences in the parent folder comparison, in the tree's order over every scanned row, closed folders included;
+  they skip orphans, folders, same pairs, Ignored rows, rows the parent's display filter hides and, when unimportant
+  differences are ignored, pairs with only those. The current pair is never its own next. `[next_difference]` decides
+  whether the search stays in the current folder and whether it wraps. A child view finds its row by the left and right
+  paths of its parent link; when the parent view is closed (a restored workspace) the parent session is compared again
+  in a job. Copy File and Open Next Difference lists its steps (save the source's edits, lose the target's edits, copy
+  the whole file as `folder op copy --path` does, open the next pair), runs them in order, and a step that fails or is
+  declined stops the rest. A source whose edits cannot be saved, or a read-only target side, refuses before anything is
+  written.
 - **TC-053** (P0): Pane navigation: Go Left/Right (Alt+Left/Right), Go Next/Prev
   pane (F6/Shift+F6), Go Input/Output (Alt+PgUp/PgDn) in merge.
 
@@ -418,6 +440,18 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   (Ctrl+H; replace one/all with confirmation), **Find in Files** (Shift+Ctrl+F: folder,
   mask, subfolders → results list opening Text Edit views), Compare Selection to
   Clipboard (new view).
+  *M2 W10c notes (D-283, D-284; contract §1.10.18–§1.10.19):* plain text or regular expressions (backreferences and
+  look-around run on the backtracking engine, with its limits); *match case* off folds Unicode letters; *whole words*
+  uses the format's word characters, and a hit's own ends are checked only where they are word characters, so `+=` is a
+  word as itself. A search never crosses a line end (a pattern that can only match a line break is refused) but finds a
+  word the characters-per-line limit cut; empty matches are skipped. In a comparison hits go by row, the left side first.
+  Wrap continues once from the other end and says so. Replacements in a regular expression search use `$1`, `${1}`,
+  `${name}` and `$$` (the rule of folder renames); Replace All is one undo step and counts its replacements. A line on
+  which a pattern runs out of its backtracking budget counts as no match, with one warning. Find in Files searches the
+  files under the folders in name order through masks, subfolders and hidden items when asked, archives as folders when
+  asked; binary files, files larger than 128 MiB and files whose format converts them are skipped (the last searched
+  converted when asked); it stops at 100,000 hits and a file at 10,000, each hit with a preview of up to 400 characters
+  around it. Files are read in parallel and the results come in the same order whatever the number of threads.
 - **TC-065** (P0): Open Clipboard (Shift+Ctrl+V) loads clipboard text into the picked
   pane.
 
@@ -451,6 +485,12 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   bookmarks, format/encoding/line-ending handling, syntax highlighting, word wrap,
   webpages panel; opened from Tools ▸ Edit Text File, Open With ▸ Text Edit, or the
   `--edit` switch.
+  *M2 W10c notes (D-289; contract §1.10.21):* a Text Edit view holds one editable document and no comparison, read as a
+  side of a Text Compare is read (the format by name or forced, the encoding forced, External conversions). Editing,
+  find and replace, conversions, bookmarks, Go To and saves work as in a pane. `--ro`, the session's read-only flag and a
+  read-only parent side make it read-only; with `--savetarget` Save writes the target, and the target's writability
+  decides whether the document can be edited. Compare Selection to Clipboard and other text pairs compare two texts the
+  same way: the names choose the formats, the documents have no file, and Save becomes Save As.
 
 ## 10. Text Patch
 

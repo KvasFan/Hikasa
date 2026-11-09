@@ -10949,7 +10949,203 @@ over the save, convert, format and VFS test binaries, plus the fixes' own; each 
 P-SAVE ran 40,000 release cases green; P-EDIT-1 and P-EDIT-2 ran 1,000–5,000 release cases after the edit-model changes
 of notes 19 and 33.
 
-**W10c.** (none yet)
+**W10c.** Interpretations and extensions of §1.10.18–§1.10.21 and the W10c share of §1.10.23–§1.10.26 (in progress):
+
+*Find and replace (§1.10.18)*
+
+1. The `$` expansion of D-180 is `hikasa_formats::template::Template` (`parse` against a pattern's group names,
+   `expand`/`expand_into`, `literal` when it names no group; `TemplateError { template, message }`). The folder rename
+   uses it and keeps its error text (`rename `new`: why`); `rename_masks.rs` is unchanged and green.
+2. `FindQuery` derives `Default` and `Hash`; `FindError { InvalidInput, Cancelled }` is `TextError::Find`. An empty
+   query is refused, so is plain text holding a line break. A regex is refused as *can only match a line break* when it
+   writes `\n`, `\r` (or their `\x`/`\u` forms, or a raw break) outside a class, or holds a class made of line breaks
+   only: `a|\n` is refused too (its `\n` branch could never match inside a line); `\s` and `[^\n]` are accepted.
+3. Whole word: plain text checks §1.10.18's boundaries per candidate and moves one character on after a rejected one
+   (exact: one candidate per start). A regex is searched as `B(?:X)B` with `B = (?:(?<!W)|(?!W))` and
+   `W = [\p{Alphabetic}\p{N}_<the format's word characters>]` (`char::is_alphanumeric` plus `_` and D-58's
+   extras), so an alternative that fails a boundary is not lost (`ab|abc` finds `abc` as a word); the look-around
+   runs such a pattern on fancy-regex. Group numbers and names are unchanged.
+4. A search sees **physical lines**: the pieces CPL cut (TC-003) are joined, since an artificial break is no
+   terminator and has no byte, so a word cut by the limit is found; hits are reported in table lines (a hit may start in
+   one piece and end in a later one; at a piece boundary a start belongs to the later piece and an end to the earlier).
+   `^`, `$`, `\b` see the physical line.
+5. The document is searched in windows of whole physical lines copied once from the rope: the first 16 KiB, each next
+   one twice as large up to 1 MiB (a hit near the caret costs little; the cancel is checked per window). Plain text asks
+   a prefilter over the whole window first (`memmem` with case, the case-folded escaped literal without), so lines
+   without a candidate are never searched one by one; a regex is run line by line. Hits in a line are non-overlapping,
+   left to right; empty matches are skipped.
+6. `next`: forward the first hit that starts at or after `from`, backward the last that starts before it; wrap searches
+   the whole document once from the other end and marks the hit. `all` stops at its limit (0 gives none). Additive:
+   `Finder::scan` (the visitor gets each hit with its physical line and byte range), `hits_in_line`, `next_in`/`all_in`
+   on a `TextDocument`, `query`, `group_names`, `take_warning`.
+7. `regex_runtime_error`: the finder counts the lines where the backtrack limit was hit (no match there, the search goes
+   on); `take_warning` gives one warning naming the count and resets it: once per search.
+8. `find_in_comparison(cmp, docs, f, (row, side), …)` starts at that cell's start (forward: its own hits count;
+   backward: only cells before it). Additive `find_in_comparison_at(…, (row, side, byte), …)` starts at a caret, so a
+   repeated Find Next walks a line hit by hit. Each side's next (previous) hit in document order is its next in row
+   order (rows grow with lines), found by the document search from the side's first line at or after the row (a binary
+   search of `row_for_line`), and the two are ordered by (row, left before right, position).
+9. `Replacement::new(text, &finder)`: literal for plain text (no `$` meaning), a template for a regex (an unknown group
+   refused there; a template without groups is kept as its literal). `replace_one` verifies that the hit still matches
+   exactly where it was (`invalid_input` "the text at the hit no longer matches" otherwise). `replace_all` replaces the
+   hits that end inside `scope`, as one `Batch` with `keep_eols = false`, and returns `(None, 0)` without a hit.
+
+*Find in Files (§1.10.19)*
+
+10. `FilesQuery` gains `format` (one forced format), `overrides` (FF-002) and `locale` (the detection's fallback), and
+    `FilesQuery::new(find, roots)` fills the defaults; `find_in_files_with(…, external, …)` takes the temporary folder and
+    runner of External conversions (`convert`). `FilesEvent::Done` gains `stopped`. `SkipWhy::Filtered` is a link to a
+    folder (links are followed for files only). `FilesSummary { files_searched, files_matched, hits, skipped,
+    limit_reached, warnings }`.
+11. Roots: a missing or unreadable root refuses the search (`TextError::Load`, exit 100); a file root is searched as given
+    whatever the masks; a folder root, and with `archives = opened` an archive root, is walked in its place. Hidden = a
+    name starting with `.` or the DOS hidden attribute. With `opened`, an archive in a folder is a folder for the masks
+    and for `recursive`. A folder that cannot be listed, and a name whose metadata cannot be read, are `Skipped
+    Unreadable` in their place.
+12. A format with a conversion (External, and *Sorted*, whose text is not the file's line order) is `Skipped Converted`
+    unless `convert`. Files load with no CPL (hits are on physical lines) and with `max_bytes = max_file_bytes`, so a file
+    that grew past the limit after the listing is `TooLarge` too.
+13. Hit `line` is the physical line, `column` and `len_chars` count characters in it, `preview_range` counts characters
+    in the preview (as `column` does). A preview is the line when it fits; otherwise the hit centred in
+    `preview_chars` characters, the room a line edge leaves given to the other side, and a hit longer than the preview
+    shown from its start. A line's columns are counted once (hits come in order), so many hits on a long line stay linear.
+14. Order with a pool: the caller's thread walks and delivers; files are searched on the pool (`in_place_scope`, never
+    the global pool) in a window of at most 64 files and 256 MiB of file bytes; a worker buffers at most 1,024 hits of a
+    file, and the caller's thread continues that file itself, streaming, when it is delivered. So the stream is the same
+    with 1, 2 or 8 threads and memory is bounded by the window, never by the hits. At `max_matches` the search stops (the
+    workers in flight stop at their next check) with `find_limit_reached`. Progress: `Phase::Searching` in bytes of the
+    files delivered. `JobKind::TextFind` and `WarningCode::FindLimitReached` are additive.
+
+*Navigation and details (§1.10.20)*
+
+15. `NavPos { row: Option<RowIdx>, side, pos: TextPos }` (the contract names it only); a focus side other than Right
+    reads as Left; `NavTarget.range` is empty for a place (a section without lines on the focus side: its insertion
+    point).
+16. `DiffSection`: `TextComparison::next_section` with *Ignore Unimportant* (ignored sections are always skipped); a
+    section whose rows the view hides is passed over; the target is the section's first row and its lines on the focus
+    side. Wrap restarts from the first section (inclusive) or after the last.
+17. `Difference`: the caret row's ranges that start at or after the caret (forward) or before it (backward), then the
+    rows of the caret's section after (before) it, then the next sections, walked section by section (same stretches
+    cost nothing); a one-sided row is its whole line on the side that has it, a row without a line on the focus side is
+    passed over, ignored and hidden rows too; with *Ignore Unimportant* only important rows and ranges.
+18. `Edit`: `EditableDocument::edited_ranges` of the focus pane; a forward wrap counts a run that starts at line 0.
+    `Find`: `find_in_comparison_at` from the caret with the panel's sides; without a comparison `Finder::next`.
+19. `existing_line` finds the side's first line after (last before) the row by a binary search of `row_for_line`,
+    so a gap of any length costs O(log² n).
+20. `parse_goto`: `:7` gives line 0, standing for the current line; 0, an empty text and a missing number are refused;
+    blanks are allowed. `goto` finds the physical line by a binary search of `physical_line` and walks its pieces by
+    characters; a line or column out of range clamps to the last. `column_of` returns 1-based character and display
+    columns with tabs of 4; additive `column_of_tabs(line, byte, tab_size)` takes the pane's tab size.
+21. `hex_details` encodes the line run by run, so the `?` of each character the encoding cannot write is located
+    (`unmappable` byte ranges); a line's bytes never include the BOM (it is the file's); the terminator is encoded in
+    the same encoder state. `char_alignment(left, right, &InlineOptions)` treats every difference as important;
+    additive `char_alignment_of_row(cmp, row)` uses the row's classified inline ranges, so its classes equal the panes'
+    colours: ranges at the same offset of the common text form a hunk whose characters pair by position, the longer
+    side's rest one-sided. `ruler(tab_size, from, to)` gives `RulerMark { column, label (every 10), tab_stop }`.
+
+*The session link and Text Edit (§1.10.21; implemented by a helper, cherry-picked a436e58..23c28b0)*
+
+22. `next_difference_file` lives in `hikasa_folder::view` with the method `TreeRead::next_difference_file`; the folder
+    crate gains `Dir { Forward, Backward }` (it had no direction type; the names follow `hikasa_text::Direction`).
+23. Candidates: `NodeKind::File` rows (a link followed to a file counts) with items on both sides, not Ignored, of
+    category `different`, `left_newer` or `right_newer`, shown by `display` with every folder open;
+    `opts.ignore_unimportant` decides the category, `display.ignore_unimportant` only what the view shows. A row inside
+    a hidden folder is never a target (the walk never enters the highest hidden ancestor).
+24. `from` is never its own answer (wrap with one candidate gives `None`); `from = NodeId::ROOT` starts at the first
+    row (the last going backward); an unknown id gives `None`. `limit_to_folder` looks at `from`'s siblings only (not
+    below its sub-folders) and gives `None` when a folder above is hidden. The walk follows the parents' child ranges
+    and builds no row list: O(rows passed + depth), a whole walk of 100,000 rows about 0.3 ms (release).
+25. `parent_row(read, link)` looks each side's path up by that side's names, exact first, then by the comparison's case
+    rule; the last component prefers a file row, the others a folder row (D-20); a flat comparison or a missed path falls
+    back to a scan of the per-side paths; when the sides name different rows the row with both items wins.
+    `parent_link_of` is the inverse (an orphan gets an empty path on its missing side).
+26. `text_parent_compare(link, job, observer)` loads the parent as `session_apply_scope` does (a named reference or
+    `_autosaved/<id>`), resolves its own parent, then `folder_prepare_in` + `folder_run` (a folder-sync parent through
+    `folder_sync_prepare`); a text session as parent is `invalid_argument`, a missing one `not_found`. The result
+    (`ParentCompare`) carries the session's read-only sides and `row: Option` (`None` when the parent lost the row; the
+    comparison still comes back).
+27. `CopyFileRequest` gains `next: NextFileOptions` (`Service::next_file_options` reads `[next_difference]`) and
+    `save: Option<&SaveRequest>` (`None`: in place with `back_up_before_save`, unmappable characters asked; a live view
+    passes `live_save_request`).
+28. Refusal order of `text_copy_file_steps`: `from` must be Left or Right; a source with edits whose document is blocked
+    is `EditBlocked` (`ensure_editable`, the A10.6 deferral); a read-only target side is `ReadOnlySide` (the parent's
+    read-only sides, or the target pane's `ParentReadOnly`, `SessionReadOnly` or `CommandLine` block); a target whose
+    location is not writable is left to W6's copy questions. Then the save is planned, then the copy. A blocked source
+    without edits plans its copy.
+29. The copy plan is `folder op copy --to <other> --path <row>`'s (`Copy { overwrite: Always }`, the row's selection,
+    display `all`, the parent's effective *ignore unimportant*), equal to the CLI request's plan (tested).
+30. `text_copy_file_execute(steps, &CopyFileExecute, &mut source, job, observer) -> CopyFileReport` runs save → copy →
+    refresh → next: after a save the row's folder is refreshed, the row found again by its link and the copy planned
+    again (W6's plan expects the stamp it saw); `copy_mode` answers the copy's questions (`YesToAll`: the confirmation
+    that listed the steps answered them; `NoToAll` declines; `Prompt`: an open question stops at Copy). A copy item not
+    `done` stops the chain at Copy, a refresh error at Refresh; `next` is computed after the refresh. The caller drops
+    the target pane's edits.
+31. `text_edit_open(&TextEditRequest { spec, format, encoding, read_only, save_target, session_read_only,
+    parent_read_only, no_backups }, job)` (and `_on(vfs, …)`) loads the file as a Text Compare side (format forced or by
+    name, encoding override, External conversion); `--savetarget` is resolved first and the §1.10.7 facts come from it
+    (W10b note 59); blocks `CommandLine`, `SessionReadOnly`, `ParentReadOnly`; warnings: the format's and the
+    document's. `TextEditResponse { doc, editability, stamp, spec, format, compiled, request, warnings }`;
+    `text_edit_save_request` mirrors `live_save_request` (a Text Edit save is planned with side `None`). A10.17's Text
+    Edit `--savetarget` case now opens through it.
+32. A `text-edit` session stores `[specs] left` (`-` and `clipboard://` stay empty with `spec_not_saved`),
+    `left_format`, `left_encoding`, `read_only_left` (the session's own flag, never `--ro`) with the type's default rules
+    (`text_edit_session`); `text_edit_request_of` reads `left_format`, falling back to `format`; `session_text_edit`
+    opens one by reference. No `ViewRequest` variant (it would break the adapters' exhaustive matches): W11 opens a Text
+    Edit through these calls; `session view` and `session run` still answer `unsupported` for `text-edit`.
+33. `text_compare_texts(left: NamedText, right: NamedText, req, job)` takes rules, formats, anchors and ignored lines from
+    `req` (not its specs); each pane is `EditableDocument::new(TextDocument::from_text(..))` wrapped at its format's CPL,
+    and the comparison reads the panes' snapshots so rows and documents agree. No location (Save is Save As), not
+    `Converted`, `Truncated`/`Binary` as found; `specs` show `clipboard://`, `stamps` are `None`; an empty name means no
+    name (Everything Else).
+34. Open: Copy File in a flat parent comparison (`folder_refresh` cannot refresh a flat model, so after a save the
+    re-planned copy sees a stale stamp and that item fails); a source pane with `--savetarget` saves to the target while
+    the copy copies the row's file (not special-cased).
+
+Mutations of W10c (docs/17 §3 point 6; each failed its test and was reverted; runner `mut/run.py` over `find_golden`,
+`props_find`, `find_files` and the crate's unit tests at 256 cases; a mutant that made a test loop forever was stopped
+by its PID and counts as caught):
+
+| Test | Mutation | Result |
+|---|---|---|
+| A10.22 `find_golden`, P-FIND | whole word checking only the start boundary (§6.10's named mutation) | 5 fail (`whole_word_checks_both_ends`, `p_find_plain_equals_a_naive_scan`, …) |
+| A10.22 `find_golden`, `a_literal_equals_its_escaped_regex` | a whole-word regex bounded at its start only | 3 fail |
+| `find_golden` `empty_matches_are_skipped`, `regex_hits_equal_the_engine_line_by_line` | empty matches not skipped | both loop forever (stopped): caught |
+| `find_files` `a_tree_in_pre_order_by_name`, P-FIND | the prefilter jumps to the candidate, not to its line's start | fail |
+| unit `find::tests::units`, P-FIND | CRLF read as two terminators | fail |
+| `find_golden` `a_word_cut_by_the_characters_per_line_limit_is_found` | a hit ending at a CPL piece boundary ends in the later piece | fails |
+| `find_golden` `a_comparison_by_row_and_left_side_first`, `next_walks_every_hit_both_ways`, `windows_are_seamless` | backward keeps a hit that starts at the caret | fail (two loop forever) |
+| A10.23 `find_files` `the_stream_does_not_depend_on_the_pool` | the reorder window delivering a file early (§6.10's named mutation) | fails |
+| `find_golden` `a_comparison_by_row_and_left_side_first` | a row's right side ordered before its left side | fails |
+| `find_golden` `replace_all_is_one_step_with_its_count` | Replace All's scope tested by the hit's start | survived the first run; the test gained a hit that straddles the scope's end and fails (re-run) |
+| `find_files` `limits_stop_a_file_and_the_search` | a file stops one hit late | fails |
+| `find_files` `a_tree_in_pre_order_by_name`, `masks_recursion_and_hidden_items` | hidden items always searched | fail |
+| `find_golden` `case_folding_is_unicode`, `plain_text_with_and_without_case`, P-FIND | case never ignored | fail |
+| — | the literal prefilter's candidate one byte late | **equivalent**: the prefilter only chooses the physical line to search, and the byte after a hit's first byte is in the same line |
+| `find_golden` `the_backtrack_limit_is_no_match_and_one_warning` | no warning for a single line over the backtrack limit | survived the first run (two lines in the test); the test gained a one-line case and fails (re-run) |
+| unit `line_break_patterns`, `a_search_does_not_cross_line_ends` | a class of line breaks accepted | fail |
+| `find_files` `limits_stop_a_file_and_the_search` | the search's `max_matches` not checked | fails |
+| `find_golden` `a_comparison_by_row_and_left_side_first` | a comparison's caret byte ignored on its own side | fails |
+| A10.25 `nav` `one_sided_rows_are_whole_lines_and_wrap` | a one-sided row is no difference | fails |
+| `nav` `a_long_changed_line_is_walked_range_by_range` | backward Difference keeps the range at the caret | fails |
+| `nav` `existing_lines_skip_gaps` | `existing_line` backward one line late | fails |
+| `nav` `go_to_physical_lines_with_cpl_and_clamping` | Go To stays in the first CPL piece | fails |
+| `nav` `unimportant_and_ignored_sections_are_skipped` | sections ignore *Ignore Unimportant* | fails |
+| `nav` `edits_are_walked_by_runs` | Edit steps from the first line instead of the caret | fails |
+| `details` `hex_details_of_shift_jis_and_an_unmappable_character` | an unmappable character's `?` not located | fails |
+| `details` `the_ruler` | tab stops one column late | fails |
+| `details` `alignment_details_follow_the_row_s_classes`, `alignment_details_of_two_texts` | an important hunk coloured unimportant | both fail |
+
+The helper's mutations of §1.10.21 (notes 22–34; `next_file.rs` P-NEXT-FILE at 5,000 cases): 14 caught — `limit_to_folder`
+ignored, wrap ignored, the display filter not asked, `ignore_unimportant` not passed to the category, the backward step
+not descending into the previous sibling, `text_copy_file_steps` without its read-only refusal, target edits not
+reported discarded, the A10.6 `ensure_editable` left out (`text_editability.rs`), the copy not planned again after the
+save, a declined copy not stopping the chain, the parent re-run dropping the session's read-only sides,
+`text_edit_open` ignoring the save target's writability, text pairs given a location, `read_only_left` not stored — and
+3 equivalent: an orphan accepted (its category is never a difference), the explicit Ignored check dropped (the category
+reads Ignored as same, D-171), the hidden ancestor not skipped (the display never shows a file under a hidden folder;
+P-NEXT-FILE agrees at 5,000 cases).
+
+P-FIND and the find properties ran 20,000 release cases green.
 
 ### 1.11–1.14 W11–W14
 

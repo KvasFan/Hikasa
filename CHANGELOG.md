@@ -114,6 +114,27 @@
   conversion changes only the lines whose terminator differs, so lines an edit leaves unchanged are saved byte for
   byte.
 
+### Added (W10 text engine, part c: search and navigation; in progress)
+- **Find and replace** (core, rendered by W11): plain text or regular expressions (backreferences and look-around too),
+  case on or off with Unicode folding, whole words by the format's word characters (`+=` is a word as itself), Find
+  Next and Previous with wrap, Select All with a limit, a comparison searched by row with the left side first;
+  replacements with `$1`, `${1}`, `${name}` and `$$`, Replace All as one undo step. A search never crosses a line end
+  but finds a word cut by the characters-per-line limit; a pattern that runs out of its backtracking budget on a line
+  counts as no match there with one warning.
+- **Find in Files** (core): files and folders searched through the VFS in name order, with name masks, recursion,
+  hidden items, archives opened as folders, detected encodings, binary and too-large files skipped, limits of hits per
+  search and per file, previews around each hit; files are read in parallel and reported in the same order whatever the
+  number of threads, and memory does not grow with the hits. New warning `find_limit_reached`.
+- **Navigation and details data** (core): next and previous difference section, inline difference (a long changed
+  line range by range), edited lines and find hit, each with wrap; the next line of a side over gaps; Go To `line`,
+  `line:column` or `:column` on the gutter's line numbers; Hex Details of a line in the save encoding (unwritable
+  characters marked), Alignment Details with the panes' colours, the ruler.
+- **Session link and Text Edit** (core): Next and Previous Difference Files over the parent folder comparison (closed
+  folders included; the parent session compared again when its view is closed), Copy File and Open Next Difference as a
+  list of steps (save the source's edits, copy the file as `folder op copy`, open the next pair), Text Edit documents
+  and `text-edit` sessions, two texts compared without files (Compare Selection to Clipboard).
+- The `$` replacement of folder renames and text replace is one shared rule.
+
 ### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
   the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,
