@@ -37,6 +37,61 @@
   files) no longer re-derives it per keystroke.
 - `align_traced` reports that Myers ignores closeness on every input, as `align` does.
 
+### Added (W10 text engine, part b: save, conversions, formats)
+- **Save** (TC-001, TC-003, TC-005; core and Service, rendered by W11): an edited document is written so that every
+  unchanged line keeps its exact bytes in every encoding (BOM, every line-ending kind, malformed bytes, ISO-2022-JP, a
+  Ctrl-Z tail, lines wrapped at the characters-per-line limit); only edited lines are encoded. The whole text is
+  encoded only on an encoding change, without a source, over a file changed on disk, or for an edited ISO-2022-JP
+  document (warning `save_reencoded`). A save is a plan of the new VFS action `write`: the content is streamed in 1 MiB
+  steps (a 48 MB save needs about 1 MiB of extra memory), the source it splices from is checked by CRC-32 at the end of
+  its read, and the target by the stamp the plan saw. `load_document` records each file's size, time and CRC-32 while
+  reading it (G1 unchanged).
+- **Save questions** through W6's question machine (`Reply`, `ConfirmMode`, `Declined` now live in `hikasa_core::confirm`
+  with an `Ask` trait, so one prompt drives both): *changed on disk* (only the time changed: warning `source_touched`,
+  no question), *read-only target*, *unmappable characters* (written as `?` when replaced, never as numeric
+  references; warning `unmappable_replaced`), *malformed bytes rewritten* (`lossy_line_rewritten`), *replace existing*,
+  *overwrite backup*. Targets: a symbolic link is followed and stays, special files are refused, Save As moves the
+  document, `--savetarget` redirects the right pane's save and is the next save's source after the first one, a
+  document without a location saves as. Backups: `[backups] back_up_before_save` with `naming`/`folder`, one generation
+  (the backup the last save made is replaced without asking), `--nobackups`; a member of a zip or tar archive (also
+  nested) is saved by rebuilding its archive once, with one backup of the archive.
+- **Format save options** (`save_trim_trailing_ws`, `save_leading_spaces_to_tabs`) change edited lines only, as one
+  undo step before the save.
+- **Conversions** (TC-063): Trim Trailing Whitespace, Leading Spaces to Tabs, Tabs to Spaces and Line Endings are one
+  undo step each over the file or a selection's lines, counting the lines changed (*Converted N lines*); tab stops are
+  display columns; converting every line's endings also changes the terminator new lines get. A request of many edits
+  (a conversion, later Replace All) is one splice of the line table: trimming every second line of a 1,000,000-line
+  file takes 0.2 s instead of 18 s, and lines it leaves unchanged keep their marks.
+- **`hikasa text convert <FILE>…`**: `--trim-trailing`, `--tabs-to-spaces`/`--spaces-to-tabs` (`--tab-size`),
+  `--line-endings lf|crlf|cr`, `--encoding`, `--bom`/`--no-bom`, `--lines`, applied in the fixed order trim, tabs, line
+  endings, encoding; `--format`, `--encoding-in`; output to stdout (default), `--in-place` (one plan for all files,
+  backups unless `--no-backup`) or `--output`; files with nothing to change are skipped (`no_change`) and never
+  rewritten; `--yes`, `--force`, `--confirm`, `--unmappable refuse|replace`; without a terminal open questions exit 100
+  with their counts; `--dry-run`; JSON `hikasa.text_convert.v1` (42 schemas); exit 0 or 100. Help topic
+  `text-convert`.
+- **A format per pane** (FF-003): `hikasa text compare --left-format`/`--right-format <id|name>` (also on `report
+  text`; `[specs] left_format`/`right_format`): each side is tokenized and classified with its own grammar and the
+  rules' elements are matched by name; `--format` with either is refused (exit 100); `hikasa.text_compare.v1` gains
+  `right_format`.
+- **Ignored lines** (TC-024): `--ignored left|right:<a>[-<b>]` on `text compare`, `report text` and `session run`;
+  ignored rows count as same for the verdict, the exit code, statistics, display filters, the thumbnail, section
+  navigation and every report, the alignment unchanged; marks follow edits in a live comparison and are kept by
+  sessions (`[specs] ignored_left/right` with `ignored_check_left/right`); a changed file drops them with warning
+  `ignored_lines_dropped`. `hikasa.text_compare.v1` gains `ignored`, rows' and sections' `ignored` and
+  `stats.ignored_rows`.
+- **`gui open` / `hikasa-gui` switches** (CLI-003): `--edit` opens each file in a Text Edit view (two files, two
+  views; `--wait` waits for every view; with `--fv` or `--sync` the last wins; the window answers `unsupported_view`
+  until W11 builds the view); `--savetarget=<file>` is sent as an absolute path; `--ro`, `--ro1`, `--ro2` block those
+  panes of text views; `--nobackups` covers saves.
+
+### Changed (W10b)
+- D-15 revised: one effective format still applies to both sides unless a pane has its own; `format_mismatch` is not
+  given when a pane has its own format.
+- `--edit` and `--savetarget` no longer warn `switch_ignored`.
+- Editing: the pieces of a line wrapped at the characters-per-line limit keep their marks together, and a Line Endings
+  conversion changes only the lines whose terminator differs, so lines an edit leaves unchanged are saved byte for
+  byte.
+
 ### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
   the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,

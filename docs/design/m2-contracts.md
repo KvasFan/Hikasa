@@ -9786,7 +9786,7 @@ W11's prompts too, and `--dry-run` lists the questions:
 - **Save As** (`SaveRequest::target`): any spec the VFS can write; the document's location becomes it after success
   (title, stamp, splice source); the old file is untouched.
 - **`--savetarget=<file>`** (CLI-003): the view's in-place Save of the pane it applies to writes there instead; the
-  document keeps its own location as the splice source and keeps saving to the target (each save replaces it). It
+  document keeps its own location and keeps saving to the target (each save replaces it; from the first such save the target is the splice source, W10b note 30). It
   applies to a Text Edit view's file and to the **right** pane of a Text Compare view (the side a version-control tool
   hands as the working copy; **open default**); the other pane saves in place. An existing target asks `ReplaceExisting`
   once.
@@ -10104,9 +10104,9 @@ core the adapters call directly (D-105's rule for pure functions).
 | open a live comparison | `Service::text_compare_live(req, opts: LiveOptions { read_only: ReadOnlySides, parent_read_only: ReadOnlySides, save_target, no_backups }, job, observer) -> LiveTextView { response: TextCompareResponse, live: LiveComparison, docs: Pair<EditableDocument>, stamps: Pair<Option<LoadStamp>> }` | new (W10a; saves W10b) |
 | recompare | `LiveComparison::recompare_job(..).run(Service::pool(), ctl)` in `Service::spawn` | new (W10a) |
 | Text Edit, text pairs | `text_edit_open`, `text_compare_texts` | new (W10c) |
-| save | `text_save_plan(&[(Option<Side>, &EditableDocument, &SaveRequest)], job) -> SavePlan`, `SaveConfirmation` (pure), `text_save_execute(SavePlan, &[&EditableDocument], job) -> SaveReport` | new (W10b) |
-| backup policy | `Service::backup_policy_for_save(no_backups) -> Option<BackupPolicy>` | new (W10b) |
-| convert files | `text_convert(req: &TextConvertRequest, job) -> TextConvertOutcome` (plan, dry run, execute) | new (W10b) |
+| save | `text_save_plan(&[(Option<Side>, &EditableDocument, &SaveRequest)], job) -> Result<SavePlan, ApiError>`, `SaveConfirmation` (pure; `Service::save_confirmation` wraps it as `SaveDriver`), `text_save_execute(SavePlan, &[&EditableDocument], job) -> Result<SaveReport, ApiError>`, `api::apply_save_report` (W10b notes 41–42) | new (W10b) |
+| backup policy | `Service::backup_policy_for_save(no_backups) -> Result<Option<BackupPolicy>, ApiError>` (W10b note 43) | new (W10b) |
+| convert files | `text_convert(req: &TextConvertRequest, out: &mut dyn Write, job) -> TextConvertOutcome` (plan, dry run, execute; W10b note 45) | new (W10b) |
 | find in files | `text_find(req: &TextFindRequest, sink, job) -> TextFindOutcome`; `text_find_replace_plan`, `…_execute` | new (W10c) |
 | session link | `TreeRead::next_difference_file` (pure), `text_copy_file_steps`, `folder_op_plan`/`folder_op_execute` | first two new (W10c) |
 | per-side formats, anchors, ignored | `TextCompareRequest::{formats, anchors, ignored}` (additive fields) | new (W10a anchors; W10b the rest) |
@@ -10486,7 +10486,300 @@ mutations above were checked: a run whose scorer ran out not counted as exhauste
 change only; boundaries inside spans whose line count changed treated as fixed; a span stopping at the end of a document
 before absorbing an adjacent one.
 
-**W10b.** (none yet)
+**W10b.** Interpretations and extensions of §1.10.12–§1.10.17, §1.10.22 and the W10b share of §1.10.23–§1.10.28 (the
+owner's rule where the text leaves a choice: the option with more functionality and performance). The part was built in
+four slices (formats and Ignored; conversions and CLI-003; the save core; the Service and the CLI), each on the previous
+one.
+
+*Formats per pane and Ignored lines (§1.10.16, §1.10.17)*
+
+1. `CompareInput` gains `right_format: Option<Arc<CompiledFormat>>` and `ignored: IgnoredLines`; a right format equal
+   to the left one (the same `Arc`, or the same id and name) counts as `None`. `TextComparison` keeps the right side's
+   format, compiled rules and identity flag; `format()` stays the left one; `right_format()`, `format_of(side)`,
+   `ignored()`, `section_ignored(id)` are additive.
+2. Each side is keyed, weighted, tokenized and classified with its own format; elements are looked up by name
+   (`RuleSet::new` per side). *Auto* gives Histogram when either side resolves to it, then D-36's size check (the
+   anchored per-segment *Auto* too). Sections are one per row only when both formats are `lines_independent`. The
+   identity fast path is decided per side; the raw-equality pass is skipped only when both sides took it, and
+   `used_identity_path()` is true only then. In inline classification a side whose rules are all important passes no
+   spans.
+3. The live path stays exact and incremental with per-side formats: the recompare re-keys each side with its own keyer
+   (the hash-collision check of `intern` and the per-side `or_line_one` rule included); weights count when the engine
+   is Standard and either side has weights. P-EDIT-2 gives the right side its own format in a quarter of its cases
+   (`per_side_formats_and_ignored_lines_stay_incremental` shows the incremental path taken).
+4. `IgnoredLines { left, right: RangeSet }` (sorted, merged; serialized as a list of ranges); core clips lines beyond a
+   document and never fails. Rows carry the flag in bit 4 of `PackedRow` (still 12 bytes); `Row::ignored` is serialized
+   only when true. The flag is set on every row touching a marked line, *same* rows included (the colour class
+   `Ignored`).
+5. *Counts as same*: the row-state counts still describe the alignment; `important_rows` and `unimportant_rows` leave
+   ignored rows out, so the verdict and exit code treat them as same; `TextStats::ignored_rows` counts every ignored
+   row. A section whose rows are all ignored is in neither `sections`, `important_sections` nor D-18's counts; a partly
+   ignored section counts whole, its importance taken from its other rows. `identities_hold` keeps the exact
+   identities when nothing is ignored and becomes bounds otherwise.
+6. Sections stay alignment-based; `SectionCounts` gains an ignored count; section navigation skips all-ignored sections
+   both ways; class runs are split by the flag and ignored runs are in the *same* display category; `ThumbCell::IGNORED`
+   (additive) is set with `SAME` on ignored differing rows.
+7. Marks follow edits (`RangeSet::move_through`): range ends move as line boundaries; lines inserted exactly at a
+   range's start or end stay outside it; a change that replaces a range's last line puts its new lines inside (Enter
+   inside an ignored block keeps both halves ignored); a range that loses every line goes. The test oracle
+   (`IgnoredModel`) keeps one mark per line.
+8. `LiveComparison::ignored()`/`set_ignored()`: the provisional splice moves the marks per delta and re-flags its
+   window; `set_ignored` re-derives by difference (`TextComparison::reignore`: the lines whose mark changed give rows,
+   the rows windows widened to whole sections and joined within 4,096 rows; above an eighth of the rows everything),
+   needs no recompare and bumps the generation. The recompare job carries the live marks; the incremental build moves
+   the base's marks through the log, flags the rebuilt rows, then applies the job's; `install` of a replayed result
+   re-applies the live marks.
+9. `hikasa_text::ignored_check(doc, lines)` is the CRC-32 of the marked lines' text, each followed by `\n`
+   (terminators and BOM left out, so a line-ending or encoding change keeps the marks); `None` when a marked line is
+   beyond the document. Sessions store it as 8 lowercase hex digits; a value that is not hex never matches.
+10. `TextCompareRequest` gains `formats`, `ignored` and `ignored_check: Pair<Option<u32>>`; a side without its own
+    format takes D-15's format of the pair; `format` beside a side's own is `invalid_input` (exit 100);
+    `format_mismatch` is dropped when a side has its own; each document is loaded with its side's format and the live
+    view takes each pane's edit options from it. Per-side formats also accept *Everything Else* (reason `fallback`). A
+    side whose saved check no longer matches drops its marks with `ignored_lines_dropped` (naming that side's file); a
+    side without a check whose lines go beyond the file is `invalid_input`. `TextCompareResponse` gains
+    `right_format` and `ignored_check`; `TextCompareRequest::with_ignored` puts flag marks on top per side and clears
+    that side's check.
+11. The `[specs]` keys are written only when set (existing session files and goldens unchanged), filled by
+    `session_for_view`, read by `view_of` and `session run`; a session `format` together with a side's own becomes the
+    other side's format; `session edit --set` reaches them; Swap Sides exchanges them; auto-saved sessions keep them.
+12. CLI: `--left-format`/`--right-format` are text rule flags; `--ignored` joins the shared anchor flags (`text
+    compare`, `report text`, `session run`; folder and sync sessions refuse it), its words parsed by
+    `api::vocab::parse_ignored`. On `session run` and `report text --session` it replaces the session's marks of each
+    side it names; `--format` there clears the session's per-side formats. `--gui` refuses `--ignored` and per-side
+    formats (`OpenOptions` has neither; W11 may add them).
+13. Reports: an ignored row reads as same (side-by-side and interleaved marks blank, no tones; HTML class `ign`, XML
+    `ignored="true"`); patches give ignored rows importance *none* and leave out a cluster of ignored rows only, while a
+    hunk with any other difference writes every row.
+14. JSON: `right_format` only when the sides' formats differ; `ignored: {left, right}` (1-based half-open) always,
+    right after `anchors`; rows' and sections' `ignored` only when true (the section key is an extension);
+    `stats.ignored_rows` always.
+
+*Conversions (§1.10.15, first half)*
+
+15. Conversions work on physical lines: a `lines` range is a range of table lines, clipped; every physical line it
+    touches converts whole (CPL pieces never split a rule); `TransformOutcome::lines` counts physical lines.
+16. Display columns are the editor's (`edit::words::column`): a tab to the next multiple of `tab_size` (0 counts as 1),
+    wide and fullwidth characters 2 columns (ambiguous ones 1), combining marks and controls 0, others 1, counted from
+    the physical line's start.
+17. `LeadingSpacesToTabs`: the leading blanks are spaces and tabs (an NBSP ends them); spaces before a tab that do not
+    reach a stop stay (`"  \t"` unchanged); a blank-only line converts. `TrimTrailing` uses Unicode `White_Space`
+    (`char::is_whitespace`; U+200B is not one). A line trimmed to empty with LF right after a lone-CR line gives `\r\n`,
+    read as one CRLF line as a load would (W10a note 3); the count includes it.
+18. A content conversion is one `Batch { keep_eols: true }` with one edit per run of consecutive changed physical lines;
+    `LineEndings(e)` is one `SetEols` over the range's terminated lines (a last line without terminator keeps none;
+    `None`/`Artificial` do nothing). When it covers every terminated line it sets `insert_eol` even when no terminator
+    changes (`lines` 0, request present); `SetEols`'s whole-document test became `start == 0 && end ≥ terminated
+    lines`, and an empty range that changes only the insert terminator is a step without byte change. A range
+    conversion of line endings also takes the neighbours that would otherwise join a converted line into one CRLF line
+    (to `Cr`: the empty LF lines after it; to `Lf`: a lone-CR line before an empty line) and counts them.
+19. `SetEols` changes only the runs whose terminator differs, each as a minimal change, so a line already of the target
+    kind keeps its marks and bytes (W10a's single change marked every line between, which a save would have
+    re-encoded). A `Batch` of two or more edits and a `SetEols` of two or more runs are applied as one change with
+    holes (`Change::holes`): one table splice whatever the number of edits (1,000,000 lines, every second line trimmed:
+    18.0 s → 0.21 s, its undo 18.0 s → 0.15 s). An old line no hole starts inside or removes bytes from keeps its marks;
+    the inverse change carries mirrored holes; `EditOutcome::deltas` holds one covering delta for such a step.
+20. P-EDIT-1's scripts include `transform` requests (2 of 11 draws, whole or on a range, tab sizes 1, 2, 4, 8). P-CONVERT
+    compares every conversion with an independent line-by-line reference of §1.10.15's table, the count included, and
+    checks that exactly the changed lines are marked *Edited*.
+
+*CLI-003 (§1.10.22)*
+
+21. The last of `--edit`, `--sync`, `--fv` wins; `--edit` takes one or more specs (none: `invalid_input`); the pure
+    `ResolvedOpen::requests(wait)` builds one `OpenView` per spec, sent in order; with `--wait` every view is awaited
+    and the highest exit code reported (the first view's on a tie); `GuiOpenReport::views` (additive) lists them.
+22. `--savetarget` is kept as typed by the parser (not UTF-8: `invalid_input`); `resolve_open` makes it absolute and
+    canonical through the pure `api::save_target_spec(raw, &SpecContext)` (Windows: drive upper-cased, `/` → `\`, `..`
+    folded, `\\?\` and `\\?\UNC\` verbatim; Unix keeps `..`); `-` and `clipboard://` are `invalid_input`; the target need
+    not exist. `check_open` validates a Text Edit view's forced format and encoding before the GUI is contacted;
+    `hikasa-gui --edit a` exits 100 naming `text_edit` until W11.
+23. `LiveOptions::from_open(&OpenOptions)` (pure) maps `--ro*` (a Text Edit view's file is side 1), `save_target` and
+    `no_backups`; `ViewOutcome::for_text_edit(loaded)` gives `NoVerdict` (0) or `LoadFailed` (100). `--edit` and
+    `--savetarget` are view switches: with an `@script` they warn `switch_ignored` like the other view switches.
+
+*The save core (§1.10.12–§1.10.14)*
+
+24. `Action::Write` runs with full durability and `replace_link = false` and never creates parents. A target that is
+    not a regular file at execution (a link included; planning resolved links) fails `invalid_target` "is not a
+    regular file"; an item without `replaces` whose target appeared fails "changed since the plan was made" (the
+    absent-target check lives in the runner, `needs_absent_target` being false). Without a backup the writer keeps the
+    mode (D-158); with one, the replaced file's Unix mode is set again after the commit, and a failure there renames the
+    backup back. `crc32_update(crc, bytes)` is the streamed form of `crc32_bytes`.
+25. `hikasa_core::confirm::Ask` (additive) is the object-safe face of a question machine (`question`, `answer`,
+    `remaining`); W6's `Confirmation` and the save's machine implement it and the CLI driver takes `&mut dyn Ask`.
+26. `hikasa_formats::Encoder` writes `?` (`SUBSTITUTE`) for an unmappable character and counts it (no WHATWG encoding
+    has a distinct substitute byte; `?` maps everywhere, through the ASCII state in ISO-2022-JP); a stateful encoding
+    keeps its state across pieces; UTF-16 and UTF-32 are encoded by Hikasa. `unmappable_in` returns 0-based char
+    indexes and short-circuits for UTF-8/16/32, GB18030 and ASCII text.
+27. `LoadStamp`'s CRC covers the raw bytes read (before an External conversion), updated per chunk of ≤ 1 MiB; `mtime`
+    comes from the stat before the read; an archive member has its own stat and Hikasa's CRC; `from_bytes` and
+    `from_text` give no stamp. G1 measured before/after: unchanged (within noise).
+28. The Ctrl-Z tail: the document records the format's `ctrl_z_eof`; the source is cut at the first 0x1A when the flag
+    is on and the encoding is ASCII-compatible, as the load does, and the tail is written back as a `Source` piece, also
+    for a whole re-encode while the source is verified; not when the source changed or there is none.
+29. `EditableDocument`'s save state: location = the origin spec when `can_save_in_place`; splice source = that spec and
+    its stamp (a converted or truncated document is not spliceable); with CPL the artificial lines of the document as
+    loaded or last saved (`Arc<[u32]>`, empty otherwise) and the original line count, rebuilt by `new` and by a save of
+    the current generation. `saved(stamp)` is an in-place save, `saved_to(&SavedFile)` the general form: at the same
+    generation marks are rebased and the target becomes the splice source; at a later one (edited after the plan) the
+    document stays modified and the next save is a whole re-encode (`NoSource`); Save As moves the location.
+30. **After a `--savetarget` save the splice source is the file just written** (the rebased `orig` indexes point into
+    it), while the document's location stays its own. §1.10.14 said the document keeps its own location *as the splice
+    source*; that cannot hold once `orig` is rebased, and splicing from the target keeps every unchanged line
+    byte-exact.
+31. Save options: `apply_save_options` is a pure call before `plan_save` (which takes `&EditableDocument`); it touches
+    the physical lines holding an *Edited* piece, Trim Trailing then Leading Spaces to Tabs composed per line into one
+    `Batch` (one undo step); the document records (generation, lines) for `SaveContentSummary::pre_save`.
+32. `SourceMap::scan`: one scan per item in 1 MiB steps (cancel and `reading` progress per step), `u32` line starts,
+    length and CRC; a source of 4 GiB or more has no map (whole re-encode); its physical line count is checked against
+    the original lines minus the artificial ones, a mismatch giving `NoSource`. A physical line is spliced only when
+    its first piece's `orig` starts a source physical line, its pieces keep consecutive `orig`, and it lies beyond the
+    last spliced line; other lines are encoded, consecutive ones together in 1 MiB pieces; a non-increasing `orig`
+    would make a whole re-encode (never seen by P-SAVE: a save never seeks back).
+33. W10a's `edit/apply.rs` matches a change's unchanged prefix and suffix in whole physical lines, so the pieces of a
+    wrapped line keep their marks together (no change without CPL). P-SAVE found it: deleting a wrapped line before one
+    with an equal first piece kept `orig` on part of the remaining line, which was re-encoded and lost its malformed
+    bytes.
+34. Re-encode reasons: `EncodingChanged`; `NoSource` (no source, converted or truncated, no map, a line-count mismatch,
+    an older generation, an External save); `SourceChanged`; `Stateful` (ISO-2022-JP with any encoded line).
+    `save_reencoded` is warned only when the document has a splice source. `LossyRewritten` counts encoded physical
+    lines holding U+FFFD in a document whose load replaced bytes.
+35. Targets: the save target, else the location, else an item error `invalid_input` "Save As needs a target". Link
+    chains (≤ 40 hops) are followed relative to the link's folder, `via_link` naming the spec asked; a non-regular file
+    is `invalid_target`; a second item on the same resolved target is skipped `duplicate_target`. DOS `R` or
+    `writable == Some(false)` asks `ReadOnlyTarget`; on an archive member `Some(false)` is `permission_denied`.
+36. `ChangedOnDisk` applies when the resolved target is the resolved splice source: the source is read and CRC'd
+    whenever the save splices or its stat differs from the stamp; same bytes with a new time give `source_touched` and
+    no question; a vanished target asks, Yes creating it by a whole re-encode; a changed source with another target is a
+    `SourceChanged` re-encode without question. `ReplaceExisting` is asked when the target exists and is neither the
+    splice source nor the location (Save As, `--savetarget` the first time).
+37. `OverwriteBackup` follows W6, with the one-generation rule: a backup the document's last save made that still holds
+    that file's stamp is replaced without asking (`SavedFile::backup`). Archive members: one archive backup per
+    outermost file per plan (`BackupNames::assign` on that file, `rel = None`) whenever a member is written.
+38. `SaveConfirmation` has no operation question; `NoToAll` declines every asking item; `SavePolicy` drops
+    `ReadOnlyTarget` (`confirm_read_only`) and `OverwriteBackup` (`confirm_overwrite_newer`, as W6 asks a backup over a
+    file). `finish`: declined items become `skip declined` without backup, archive backups no item needs any more go,
+    `unmappable_replaced`/`lossy_line_rewritten` are added for items answered Yes, and the plan is marked `confirmed`
+    (`plan_save` sets it when nothing asks; `execute_save` fails the asking items of an unconfirmed plan).
+    `UnmappablePolicy::Refuse` is an item error naming the count and the first character (U+XXXX, line, column);
+    `Replace` warns and asks nothing.
+39. `SaveSource` reads the splice source sequentially once: `Source` ranges in ≤ 1 MiB steps, the bytes between pieces
+    read and CRC'd too (returning `Interrupted` after such a step so the ops pump checks the cancel token at least every
+    1 MiB), then the rest; length and CRC are compared with the stamp at the end and a mismatch fails the item before
+    the commit. It refuses an item whose document changed generation, and a plan read back from JSON (contents are not
+    serialized).
+40. Additive beyond the text: `SaveReport::saved` (the new stamps: content bytes, mtime from a stat after the write, the
+    streamed CRC), `SaveItem::mode`/`generation`, `SavePlan::confirmed`, `SaveRequest::conversion`, the `SaveIssue`
+    facts `Reencoded` and `SourceTouched`; the plan's options carry `Preserve::NONE`. The External save conversion runs
+    at planning (`plan_save_with` and `SaveEnv` with the injected runner): the whole text encoded (BOM included) is
+    `%s`, the program's output one `Encoded` piece; without a runner the item is `unsupported`. `TextError::Save`
+    exists for callers; core reports items through the `OpReport`.
+
+*The Service and the CLI (§1.10.13–§1.10.15, §1.10.23, §1.10.24)*
+
+41. `text_save_plan(docs, job) -> Result<SavePlan, ApiError>` (and `_on(vfs, …)`) checks every side with
+    `api::ensure_editable` first (a blocked side refuses the whole call, A10.6), then plans on the router with the
+    Service's temporary folder and runner. `text_save_execute -> Result<SaveReport, ApiError>` errs only on a panic;
+    `api::apply_save_report` calls `saved_to` for each done item and `api::save_exit_code` is 0 when every item is done
+    or skipped.
+42. `Service::save_confirmation(&plan, SaveAnswers) -> SaveDriver` wraps `SaveConfirmation` with `[file_operations]`'s
+    policy; `SaveAnswers` answer whole classes: `--force` *changed on disk*, `--unmappable replace` *unmappable*,
+    `--yes`/`--confirm yes-to-all` the other four, `--confirm no-to-all` declines every asking item. `refusal()` is W6's
+    no-terminal refusal naming the counts and the flags.
+43. `backup_policy_for_save(no_backups)` returns `Result<Option<BackupPolicy>, ApiError>` (§1.10.23 said `Option`): a
+    relative or empty `[backups] folder` with `naming = "folder"` is refused as W6's copies refuse it;
+    `backup_policy_for_save_with(Option<bool>)` serves `--backup`/`--no-backup`. W6's policy code is shared, unchanged.
+44. `LiveTextView` gains `stamps` (each pane's `load_stamp`) and `save_options(side)`; `text_compare_live` resolves
+    `LiveOptions::save_target` (an archive member may be one) and sets it on the **right** document (D-275);
+    `Service::live_save_request(view, side)` builds the request (in place or to the target, backups unless
+    `--nobackups`, unmappable asked, the side format's External save). `ApiOp::TextSave`/`TextConvert`: every error is
+    exit 100.
+45. `text convert` in the Service is `text_convert_plan`, `text_convert_confirmation` (none for stdout or when nothing
+    is written), `text_convert_dry_run`, `text_convert_execute(plan, out, job)`, and the one call `text_convert(req,
+    out, job)`; the contract's signature gains the `out` sink for the stdout target. Files load as `text compare`
+    loads them (standard input captured); a refused request (no conversion flag, several files to stdout or with
+    `--output`, an unknown label or format, a tab size outside 1–32) is `ok: false` with nothing written; a file that
+    cannot be loaded fails its item only.
+46. Convert refuses a file with §1.10.7's words (an `EditBlocked` report): `Binary`, `Converted`, `Truncated`,
+    `ArchiveReadOnly`; a read-only file is no block there but the plan's `ReadOnlyTarget` question. Its documents have
+    no CPL limit, so `--lines` counts the file's lines. `converted_lines` counts the physical lines holding an edited
+    piece after every conversion (every line when the encoding changes); each conversion's count is its
+    `TransformOutcome::lines`; `bom` counts 0. Without `--bom`/`--no-bom` the BOM stays when the written encoding has
+    one; `--bom` with an encoding without one fails the file.
+47. `no_change` (nothing converted, same encoding and BOM): the file is not in the save plan and never rewritten; the
+    JSON `plan` still has one item per file (a synthetic `skip` item; a file refused before planning a failed `write`
+    item).
+48. The stdout target makes the file's in-place plan (no backup) and streams its content from `SaveSource` into the
+    sink: exactly the bytes an in-place save would write, the source CRC-checked, nothing written. Stdout asks nothing:
+    unmappable characters are refused, *changed on disk* fails unless `--force`, lossy lines warn; `--json` with stdout
+    needs `--dry-run`; human lines go to stderr.
+49. Without a terminal open questions refuse the whole command before anything is written (exit 100, counts and flags
+    named), which is how "a read-only one without `--yes` fails" is read; `--confirm no-to-all` skips the asking files
+    and writes the others. `--unmappable` defaults to `refuse` without a terminal and `ask` with one. Accepted beyond
+    the synopsis: `--confirm`, `--stdin-name`, `-o`, `-y`, the line-ending words `unix`/`windows`/`mac`.
+50. `hikasa.text_convert.v1` follows §1.10.24; `encoding`, `bom`, `line_endings` are `null` for a file not loaded;
+    `PlanItemJson` is `SavePlanItemDto` (W3's fields plus `backup` — a member's archive backup —, `expect`, `via_link`,
+    `encoding`, `bom`, `bytes`, `spliced_bytes`, `encoded_lines`), shared with W10c's `text_find`. `SCHEMAS` is 42 after
+    W10b (W10c's `text_find` makes 43).
+51. Help: `text-convert` after `text-compare`; `index`, `cli`, `exit-codes` and `json-output` (42 schemas, the save
+    warnings) updated; `docs/reference/commands.md` needed no change.
+52. Platforms (A10.32): the save and convert tests run a non-UTF-8 file name on Linux; the Windows drive, UNC and `\\?\`
+    spellings of Save As and `--savetarget` targets are pure tables run everywhere; the new test binaries pass under
+    wine. A10.17's Text Edit `--savetarget` case uses a pane document until W10c's `text_edit_open` exists.
+
+Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P-EDIT-2 at 1,000 release cases):
+
+| Test | Mutation | Result |
+|---|---|---|
+| A10.21 `ignored.rs` | an ignored row counted as important in `stats` | 3 of 8 fail (`only_ignored_differences_are_rules_same`, …) |
+| P-EDIT-2, `live_marks_follow_edits_and_toggles` | the provisional splice does not move the ignored lines | both fail, seed 219394846590914756 |
+| P-EDIT-2, `per_side_formats_and_ignored_lines_stay_incremental` | the recompare's rebuilt rows take no ignored flag | fail, seed 6103969554376144500 |
+| P-EDIT-2 (per-line oracle) | lines inserted at a range's end join it | fail, seed 13740141999782955920 |
+| P-EDIT-2 | `set_ignored` re-derives the changed rows only, not their sections | fail, seed 9889640237290371316 |
+| A10.20 `format_per_side.rs` | the right side keyed with the left format and rules | 3 of 7 fail |
+| P-EDIT-2 | the recompare re-keys the right side with the left keyer | fail, seed 16765717568329023166 |
+| A10.21 `ignored.rs` | section navigation does not skip all-ignored sections | 2 fail |
+| A10.21 session and CLI | a side whose marked lines changed keeps its marks | `ignored_lines_round_trip_through_a_session`, `sessions_keep_pane_formats_and_ignored_lines` fail |
+| A10.21 reports | a patch keeps a hunk of ignored rows only | 2 fail |
+| A10.18 `transform_golden.rs` (goldens, P-CONVERT) | a tab stop counted from byte offsets instead of display columns | fail, seed 1777089480223520453 |
+| P-CONVERT | spaces before a tab that do not reach a stop dropped | fail, seed 11325058313623238778 |
+| P-CONVERT | Trim Trailing trims only space and tab | fail, seed 11464241368999081 |
+| `edit_apply`, `transform_golden` | a whole-document `SetEols` never sets the insert terminator | `the_insert_terminator` fails |
+| P-CONVERT, P-EDIT-1 | the marks of a change with holes ignore the holes | fail, seed 12165690265440099057 |
+| `transform_golden` | one count per run of lines instead of per line | 3 fail |
+| P-CONVERT | no neighbour extension of a range conversion to CR | fail, seed 11739383161171737632 |
+| A10.17 `legacy_args.rs` | `--savetarget` kept relative | fails |
+| A10.17 `legacy_args.rs` | `switch_ignored` still emitted for `--edit` | 2 fail |
+| A10.17 `legacy_args.rs` | `--ro2` mapped to the left side | fails |
+| A10.17 `legacy_args.rs` | a Text Edit view's specs not split into one `OpenView` each | fails |
+| A10.17 `legacy_args.rs` | `save_target` written to the wire when absent | the IPC golden fails |
+| A10.17 `legacy_args.rs` | `from_open` drops `--nobackups` | fails |
+| A10.17 `legacy_args.rs` | a Text Edit view's load failure exits 0 | fails |
+| A10.17 `legacy_args.rs` | `--edit` not a view switch with a script | fails |
+| A10.14 `ops_write.rs` | the write applies `Preserve::default` (the source's time and mode) | 4 fail |
+| A10.14 `ops_write.rs` | a failed mode restore after the backup rename not rolled back | `a_failure_at_every_write_call_leaves_the_target` fails |
+| A10.14 `ops_write.rs` | a target planned absent that appeared is not refused | fails |
+| A10.14 `ops_write.rs` | the not-a-regular-file check only for folders | 2 fail |
+| A10.14 `ops_write.rs` | the mode not set again after the backup rename | `permissions_are_kept_on_disk` fails |
+| A10.13 P-SAVE (`save_roundtrip.rs`) | a splice offset not shifted by the BOM length | the fixture table, the generated files and `p_save` fail |
+| A10.13 `save_roundtrip.rs` | save options applied to every line | `save_options_touch_edited_lines_only_in_one_step` fails |
+| A10.13 `save_roundtrip.rs` | W10a's per-piece prefix rule in `apply.rs` | `a_wrapped_line_kept_by_an_edit_is_spliced` fails |
+| A10.14 `save_plan.rs` | `SaveSource`'s end check by length only | `a_source_changed_since_the_plan_fails_before_the_commit` fails |
+| A10.14 `save_plan.rs` | `OverwriteBackup` ignores the last save's backup | 2 fail |
+| A10.14 `save_plan.rs` | symbolic links not followed | `targets`, the dry-run golden fail |
+| A10.14 `save_plan.rs` | `execute_save` ignores `confirmed` | fails |
+| A10.15 `text_save.rs` (and `save_plan.rs`) | `ChangedOnDisk` decided by size only | 2 fail (and `changed_on_disk_and_source_touched`) |
+| A10.6 `text_editability.rs` | `text_save_plan` without the `ensure_editable` check | `text_save_plan_refuses_a_blocked_side_before_planning` fails |
+| A10.6 `text_editability.rs` (W10a's, re-checked) | `Vfs::writable`'s `None` treated as read-only | 3 fail |
+| A10.19 `cli_text_convert.rs` | `no_change` files rewritten | 3 fail |
+| A10.19 `cli_text_convert.rs` | the conversion order changed (tabs before trim) | 2 fail |
+| A10.17 `text_save_targets.rs` | `--savetarget` applied to the left pane | fails |
+| A10.17 `text_save_targets.rs` | backups on despite `--nobackups` | fails |
+| A10.15, A10.17 | the driver's flags answer only *unmappable* | 3 fail |
+| — | the CPL "exactly the pieces of one line" check of the splice left out | survives 40,000 release cases of P-SAVE: equivalent, implied by `orig`'s meaning (kept as a defensive check) |
+
+P-SAVE ran 40,000 release cases green; P-EDIT-1 and P-EDIT-2 ran 1,000–5,000 release cases after the edit-model changes
+of notes 19 and 33.
 
 **W10c.** (none yet)
 
