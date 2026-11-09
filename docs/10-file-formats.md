@@ -42,6 +42,10 @@ FileFormat {
 - **FF-003** (P0): File views show the detected format ("Detected (C/C++ Source)") in
   the File Info header; the user can pick another format for a pane or all panes;
   the session's Format tab stores per-side overrides and encoding overrides.
+  *M2 W10b note (D-281):* a format per pane: each side is tokenized with its own grammar
+  and the rules' elements are matched by name in each side's format (`05-text-views.md`
+  §11); `--left-format`/`--right-format` and the session's `left_format`/`right_format`
+  take an id or a name (or `Everything Else` for plain text).
 - **FF-004** (P0): Formats are stored one per TOML file; built-ins are embedded in
   the binary and written to the config dir on first run (so they can be edited; "Restore
   Factory Defaults" restores them). Changes on disk are detected ("File Format(s)

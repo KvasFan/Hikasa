@@ -415,7 +415,12 @@ favorite = false               # SES-031 Favorite
 saved_at = ""                  # RFC 3339; auto-saved files only
 [parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
 [specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding,
-                               # read_only_left, read_only_right (FC-003, per side)
+                               # read_only_left, read_only_right (FC-003, per side); text-compare (M2 W10b,
+                               # written only when set): left_format, right_format (FF-003, D-281: a pane's own
+                               # format, "" = follow format), ignored_left, ignored_right (TC-024, D-282: 1-based
+                               # "a-b" or "a" strings), ignored_check_left, ignored_check_right (the CRC-32 of the
+                               # marked lines' text, 8 hex digits: on load a side whose marked lines no longer have
+                               # it drops its marks with warning ignored_lines_dropped)
 [rules]                        # folder-compare: the TOML of --rules-file; folder-sync: the same, and [rules.sync];
                                # text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests

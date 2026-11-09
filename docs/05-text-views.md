@@ -225,6 +225,18 @@ All four views share the text document model (`hikasa-text`), the alignment engi
 - **TC-024** (P0): "Ignored" marks the selected lines/section as ignored (persisted in
   the session for named sessions); *Ignore Unimportant Differences* (view) treats
   unimportant as same for display, navigation, counts and reports.
+  *M2 W10b notes (D-282):* a row is ignored when its left or its right line is marked;
+  the alignment does not change, and an ignored row counts as same for the display
+  filters, the thumbnail, the section navigation (a section whose rows are all ignored is
+  skipped: *next unignored section*), the importance counts, the verdict, the exit code
+  and every report (a patch leaves out a hunk of ignored rows only). Its rows keep their
+  state and importance and carry `ignored`; `stats.ignored_rows` counts them, and a
+  section of ignored rows only is not counted. Marking again removes the marks; the
+  marks follow edits (a range that loses every line goes). Sessions keep them, named and
+  auto-saved alike (`[specs] ignored_*`, `03-sessions-settings-profiles.md`), with a CRC
+  of the marked lines' text: when a file changed under them its marks are dropped with
+  warning `ignored_lines_dropped`. `hikasa text compare … --ignored left|right:<a>[-<b>]`
+  (also `report text`, `session run`) marks lines from the command line.
 
 ## 4. Display
 
@@ -402,6 +414,16 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   name (left, then right; standard input uses the `--stdin-name` hint), else "Everything
   Else". When both sides have names and their detections differ, warning
   `format_mismatch` says which one was used.
+- *M2 W10b note (D-281, revises D-15):* a pane can have its own format
+  (`--left-format`, `--right-format`, the session's `left_format`/`right_format`, the
+  pane's format picker); the other side keeps the format of the pair, and `--format`
+  with either is refused. Each side is read, tokenized and classified with its own
+  grammar, and the rules' elements are looked up by name in each side's format (an
+  element a format lacks does not exist there; a format without a grammar is plain
+  text): a C file against its plain-text copy is the same under the default rules, while
+  with comments unimportant every line holding a comment differs. *Auto* aligns with
+  Histogram when either side has a grammar; line weights, the identity fast path and the
+  inline spans are each side's own. Without a per-side choice nothing changes.
 - Grammar (what a comment *is*) lives in the file format. Importance (whether comments
   *matter*) lives in the session rules. Defaults for the Text Compare session type are
   edited from Home ▸ New ▸ Text Compare ▸ Edit; per-view overrides use the scope selector;
