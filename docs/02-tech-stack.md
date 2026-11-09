@@ -878,3 +878,15 @@ fixes):
 | G8 worst (prefix edit) | 8.3 ms | reported | reported |
 | G8 `note_edit` in one huge section | worst 0.027 ms | < 1 ms | met |
 
+
+### M2 W10c: gate G8 find (in progress)
+
+Release, `cargo test --release -p hikasa-text --test gates -- --ignored --nocapture --exact g8_find`, load 22.7 (other
+builds on the machine); `Finder::all` over the 1,000,000-line left side of the G1 pair (`c_pair(1,000,000,
+0x5EED_0001)`), median of 5. No crate added (§1.10.25).
+
+| Row | Measured | Threshold | Verdict |
+|---|---|---|---|
+| G8 find, plain word `return` (49,586 hits) | median **21.6 ms** (20.9–24.0) | < 150 ms | met |
+| G8 find, regex `\b\w+_17\b` (1 hit) | median **108.7 ms** (101.9–110.8) | < 400 ms | met |
+| G8 save, G8 find files, the W10c cancel rows, G1/G4/G5 at the end of W10c | not yet measured | §1.10.26 | open |

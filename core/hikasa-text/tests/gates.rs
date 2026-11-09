@@ -1052,3 +1052,44 @@ fn g8_note_edit_in_one_huge_section() {
     );
     assert!(pass);
 }
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_find() {
+    // G8 find (§1.10.26): `Finder::all` of a plain word and of the regex `\b\w+_17\b` over the 1M-line left side of the
+    // G1 pair: < 150 ms and < 400 ms (median of 5; every run printed).
+    use hikasa_text::find::{FindQuery, Finder};
+    let (left, _) = c_pair(LINES, 0x5EED_0001);
+    let format = format("c-cpp");
+    let doc = TextDocument::from_bytes(&left, &format, &LoadOptions::default(), DocOrigin::default()).unwrap();
+    let doc = EditableDocument::new(Arc::new(doc), EditOptions::default(), Editability::EDITABLE);
+    let mut pass = true;
+    for (text, regex, limit_ms) in [("return", false, 150.0), (r"\b\w+_17\b", true, 400.0)] {
+        let q = FindQuery {
+            text: text.to_owned(),
+            regex,
+            match_case: true,
+            whole_word: false,
+        };
+        let f = Finder::new(&q, "", &RegexLimits::default()).unwrap();
+        let mut times = Vec::new();
+        let mut hits = 0;
+        for _ in 0..5 {
+            let t = Instant::now();
+            hits = f.all(&doc, u64::MAX, &Ctl::detached()).unwrap().len();
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let mut sorted = times.clone();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[2];
+        let ok = median < limit_ms;
+        pass &= ok;
+        println!(
+            "gate G8 find {text:?} ({}): {hits} hits, median {median:.1} ms, runs {times:.1?} (limit {limit_ms} ms); load {} {}",
+            if regex { "regex" } else { "plain" },
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+    }
+    assert!(pass);
+}
