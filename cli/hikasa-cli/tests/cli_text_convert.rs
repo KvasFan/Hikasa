@@ -440,6 +440,66 @@ fn a10_19_lines_limit_the_content_conversions() {
     assert_eq!(out.stdout, b"1 \n2\n3\n4 \n");
 }
 
+/// The conversions run in the fixed order trim, tabs, line endings, encoding, whatever the order of the flags: a
+/// line of blanks is trimmed before its tab could become spaces, and the counts say so.
+#[test]
+fn a10_19_conversions_run_in_the_fixed_order() {
+    let s = Sandbox::new();
+    s.file("a.txt", b"\t \nx\t\ty\r\n");
+    let out = s
+        .cmd()
+        .args(["--json", "text", "convert", "a.txt", "--dry-run"])
+        .args([
+            "--encoding",
+            "UTF-16LE",
+            "--line-endings",
+            "lf",
+            "--tabs-to-spaces",
+        ])
+        .args(["--tab-size", "2", "--trim-trailing"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    let conversions: Vec<(String, u64)> = doc["result"]["files"][0]["conversions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap().to_owned(),
+                c["lines"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("trim_trailing", 1),
+        ("tabs_to_spaces", 1),
+        ("line_endings", 1),
+        ("encoding", 2),
+    ];
+    assert_eq!(
+        conversions,
+        expected
+            .iter()
+            .map(|(k, n)| ((*k).to_owned(), *n))
+            .collect::<Vec<_>>()
+    );
+    let out = convert(
+        &s,
+        &[
+            "a.txt",
+            "--line-endings",
+            "lf",
+            "--tabs-to-spaces",
+            "--tab-size",
+            "2",
+            "--trim-trailing",
+        ],
+    );
+    assert_eq!(out.stdout, b"\nx   y\n");
+}
+
 #[test]
 fn a10_19_the_bytes_equal_a_views_conversion_and_save() {
     use hikasa_core::{JobKind, NullProgress, Pair, Side};
