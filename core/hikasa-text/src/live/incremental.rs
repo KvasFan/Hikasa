@@ -1045,15 +1045,16 @@ impl Inc<'_, '_> {
         for side in 0..2 {
             let view = &self.sides.views[side];
             // The lines already known to hold a key (dirty or moved lines of the middle) count at once, and the
-            // walk skips them.
-            let mut skip: std::collections::HashSet<u32> = Default::default();
+            // walk skips them for that entry only: `ids` may hold one id several times (the window's entering
+            // pairs, one entry per pair), and a line known for one entry still counts for the others.
+            let mut skip: std::collections::HashSet<(u32, usize)> = Default::default();
             for (k, kn) in known.iter().enumerate() {
                 for &x in &kn[side] {
                     if counts[k][side] < caps[k][side] {
                         counts[k][side] += 1;
                         hits[k][side].push(x);
                     }
-                    skip.insert(x);
+                    skip.insert((x, k));
                 }
             }
             // How many each key can still find on this side (the whole document's count bounds the middle's,
@@ -1080,11 +1081,9 @@ impl Inc<'_, '_> {
                     cancelled = true;
                     return false;
                 }
-                if let Some(ks) = index.get(&id)
-                    && !skip.contains(&x)
-                {
+                if let Some(ks) = index.get(&id) {
                     for &k in ks {
-                        if left[k] > 0 {
+                        if left[k] > 0 && !skip.contains(&(x, k)) {
                             counts[k][side] += 1;
                             hits[k][side].push(x);
                             left[k] -= 1;

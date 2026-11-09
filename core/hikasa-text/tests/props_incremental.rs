@@ -948,3 +948,68 @@ fn per_side_formats_and_ignored_lines_stay_incremental() {
         );
     }
 }
+
+/// Found by 4,000 cases (seed 8157550749541230652, shrunk): a diagonal run enters Standard's window (the middle's
+/// lengths change) holding two pairs of one key (`k17`, twice on each side). Each pair was counted on its own, the
+/// other pair's lines skipped as known, so both looked unique and joined the chain as anchors; a key known for one
+/// pair still counts for the others.
+#[test]
+fn pairs_of_one_key_entering_the_window_are_counted_together() {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    let text = |lines: &[&str]| -> String { lines.iter().map(|l| format!("{l}\n")).collect() };
+    let left = text(&[
+        "k22", "k1", "k13", "k17", "k24", "k17", "k16", "k17", "k7", "k19", "k11", "k17", "k3",
+        "k22",
+    ]);
+    let right = text(&[
+        "k22", "k1", "k13", "k17", "k23", "k12", "k24", "k17", "k16", "k17", "k7", "k16", "k19",
+        "k28", "k11", "k17", "k3", "k22",
+    ]);
+    let opts = edit_options(Gen::Clustered);
+    let (mut left, mut right) = (editable(&left, &opts), editable(&right, &opts));
+    let mut rules = common::rules_with(AlgorithmChoice::Standard);
+    rules.alignment.closeness = false;
+    rules.alignment.skew_tolerance = 1;
+    let setup = Setup {
+        format: common::format("ee"),
+        rules,
+        force_tokenize: false,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
+    };
+    let mut lc = live(&setup, Pair::new(&left, &right));
+    for (side, range, text) in [
+        (Side::Left, (8, 8), "k19\nk19\n"),
+        (Side::Right, (4, 5), "k24\n"),
+    ] {
+        let doc = if side == Side::Left {
+            &mut left
+        } else {
+            &mut right
+        };
+        let out = doc
+            .apply(
+                &EditRequest::Replace {
+                    range: TextPos::new(range.0, 0)..TextPos::new(range.1, 0),
+                    text: text.into(),
+                    keep_eols: false,
+                },
+                GroupHint::None,
+            )
+            .unwrap();
+        lc.note_edit(side, doc, &out);
+    }
+    let done = lc
+        .recompare_job(Pair::new(&left, &right))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    assert_eq!(done.path.incremental, 1, "{:?}", done.path);
+    assert_eq!(done.path.window_held, 1, "{:?}", done.path);
+    lc.install(done, Pair::new(&left, &right));
+    let want = fresh(&setup, Pair::new(&left, &right), &[]);
+    assert_eq!(
+        common::canonical_json_all(lc.current()),
+        common::canonical_json_all(&want)
+    );
+}
