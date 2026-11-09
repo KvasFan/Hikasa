@@ -138,11 +138,24 @@ from a source, and the replaced file's permissions kept. A target that is a symb
 made (chains of up to 40 links, relative to each link's folder): the item writes the file it leads to, and the link
 stays. A target that is not a regular file (a FIFO, a device, a folder) is an item error, `is not a regular file`:
 unlike `--output`, a save never writes one directly. The target's size and time seen by the plan are checked again
-before the write (`changed since the plan was made`). Save As to a file that does not exist creates it; its folder must
+before the write (`changed since the plan was made`). **A save keeps the file it replaces (W10b F2):** where a new file
+renamed onto it would lose what belongs to the file — another hard link, an owner other than the saving user, a folder
+Hikasa cannot write (or that refuses a temporary file), a group or a POSIX ACL the new file cannot take — the file is
+written in place: the content is spooled in a private file first, the backup is a copy made just before (without a
+backup, a private copy of the old content), then the file is truncated, written and synced; a failure writes the old
+content back into the same file and says so (or where the old content is kept). Otherwise the temporary file takes the
+owner and group (where permitted) and every extended attribute it may set (`user.*`, `security.*` such as the SELinux
+label, the POSIX ACLs) before the rename. Windows keeps the hidden, system and archive attributes; it cannot see hard
+links without platform calls, so a hard-linked file saved in a writable folder is split there, and the file's own ACL,
+owner and alternate data streams are not carried (the new file inherits the folder's). A writable file in a read-only
+folder saves without a backup or with one in a writable folder; a backup that would go into the read-only folder fails
+the item before anything is written. Save As to a file that does not exist creates it; its folder must
 exist. **Archive members are editable (D-276, revising the M2 W5 read-only note):** a member of a zip or a tar-family
 archive, also nested, saves through a `write` item on the member, so its archive is rebuilt once (also with several
 members saved in one plan) and, when backups are on, backed up once as a file; a rebuild that finds the outermost file
-changed since the plan fails the item. A member of a single-stream archive (gz, bz2, xz, zst) or below a read-only level
+changed since the plan fails the item. The member keeps its place in the archive and its header (W10b F6): tar's owner
+and group ids and names, mode, type and PAX records, zip's name bytes, made-by host, external attributes, comment and
+owner fields; it gets the new data and the time of the write. A member of a single-stream archive (gz, bz2, xz, zst) or below a read-only level
 cannot be edited (`ArchiveReadOnly`). **Backups** of saves follow `[backups] back_up_before_save` (default on) with the
 `naming` and `folder` of copies (a `folder` backup is `<folder>/<file name>`, no path below a base), one generation: the
 backup the document's last save made is replaced without a question.

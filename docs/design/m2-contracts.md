@@ -9849,7 +9849,8 @@ hikasa text convert <FILE>… [--trim-trailing] [--tabs-to-spaces | --spaces-to-
 - **Plan and questions.** `--dry-run` prints the plan and each file's counts, writes nothing. A converted file
   (*Sorted*/*External* without save), a binary one, a read-only one without `--yes`, or an unmappable character with
   `--unmappable refuse` (the default without a terminal) fail that item; a file with nothing to change is `skipped`
-  (`no_change`, new `SkipReason`) and not rewritten. `--force` answers `ChangedOnDisk` (a file changed between load and
+  (`no_change`, new `SkipReason`) and not rewritten with `--in-place` (stdout and `--output` get its bytes, W10b note
+  54). `--force` answers `ChangedOnDisk` (a file changed between load and
   write). Without a terminal, open questions exit 100 as W6 (§1.6.11).
 - Exit codes: 0 when every item is done or skipped, 100 otherwise (also on a cancel); human output: one line per file
   `converted <n> lines: <spec>` (`--dry-run`: `would convert …`), then the plan's lines with `--verbose`.
@@ -10738,6 +10739,107 @@ one.
     frame. A known line is now skipped only for the entry that knows it. The regular test
     `pairs_of_one_key_entering_the_window_are_counted_together` (14 × 18 lines, two edits in one recompare, the
     incremental path asserted) fails without the fix; P-EDIT-2 at 4,000 and 10,000 release cases is green.
+
+*Review fixes (the independent review of 925e3e5..893d2b1, findings F1–F8; the owner's rule decided each)*
+
+54. **`no_change` skips only `--in-place` (F1).** A file the conversions leave unchanged is still converted output:
+    stdout gets its bytes as they are (a file through the in-place plan's full splice, CRC-checked; standard input and
+    the clipboard, which have no file, read back verbatim from their capture, malformed bytes included), and
+    `--output` plans a full write (the copy) with its `ReplaceExisting` question, creating a missing file. Such items
+    are `done` with `converted_lines` 0. Before, stdout and `--output` got nothing (`f > f.new && mv` emptied a file).
+55. **A save keeps the file it replaces (F2; revises §1.10.13's `Exec` line and note 24).** `Action::Write` opens its
+    writer with `Vfs::open_save` (additive; default `open_write`). On a local regular file the writer writes **in
+    place** when a rename would lose what belongs to the file and the file can be written: another hard link (nlink >
+    1), an owner other than the effective user, a folder this process cannot write (`access(W_OK)`) or one that
+    refuses the temporary file (`EACCES`), a group or a POSIX ACL the new file cannot take (`fchown`, `fsetxattr` of
+    `system.posix_acl_*` failing). Otherwise it renames as before, after the temporary file took the owner and group
+    where permitted and every extended attribute the process may set (`user.*`, `security.*` with the SELinux label,
+    `trusted.*` when privileged, the POSIX ACLs as `system.posix_acl_access`/`_default`), and on Windows the hidden,
+    system and archive attributes (`OpenOptionsExt::attributes`). Attributes other than ACLs are best effort.
+56. **The in-place protocol (F2).** The content is spooled into a private file (`.hikasa-save-*`, mode 0600) in the
+    file's folder, else the system temporary folder; nothing touches the file before `commit`. The backup is then a
+    **copy** made just before the commit (never a rename: the inode, links, owner and attributes stay with the saved
+    file); without a backup the writer makes and syncs a private copy of its own. `commit` looks at the file a last
+    time (identity, size and time as at the open; else `changed since the plan was made`), truncates it, copies the
+    spool in 1 MiB steps and syncs. A failure after the file was opened writes the old content back into the same inode
+    from the copy, syncs it, gives the old time back and fails the item with "…; the file was restored from its backup
+    <path>" or "…from a copy of its old content"; when the write-back fails too, "the file's old content is kept as
+    <path> (<why>)" and the copy stays. Cancellation is checked up to the commit, as for the rename. The mode, owner,
+    links and attributes are never touched. Cost: the spool and, without a backup, the copy (about twice the I/O of a
+    rename). A crash inside the copy leaves the spool or copy on disk for the user (no automatic recovery).
+57. **A read-only folder and the API (F2).** A writable file in a folder that takes no new file saves in place, with no
+    backup or a backup in a writable folder; a backup that would go into the read-only folder fails the item before
+    anything is written (`permission_denied` naming the backup). Additive: `Vfs::open_save(spec, opts, keep:
+    Option<&Spec>)` (`keep`: the backup, used as the restore copy), `AtomicWrite::in_place()` (default false),
+    `MemoryVfs::save_in_place(path)` (a test hook); W3/W6 copies keep `open_write`. `rustix` gains `process` (for
+    `geteuid`, a feature the workspace already compiles) and is named in `local/unix.rs` and, for its Linux xattr
+    test, `tests/ops_write.rs`.
+58. **What a save does not keep (F2).** Windows: hard links (stable std cannot read the link count, and the VFS has no
+    `unsafe`), so a hard-linked file in a writable folder is split; the file's own ACL (the new file inherits the
+    folder's), its owner, alternate data streams (`Zone.Identifier` included) and the not-indexed, compressed and
+    encrypted attributes. Unix rename path: `chattr`/`chflags` flags, macOS ACLs (not xattrs), the birth time. The
+    outer file of an archive rebuild still takes the temporary file and rename (that path serves W3/W5 copies too).
+    The safety copy without a backup in a read-only folder goes to the system temporary folder (tmpfs on many hosts).
+59. **A pane takes its writability from its save target (F3).** `text_compare_live` resolves `--savetarget` before it
+    builds the panes and gives the right pane's §1.10.7 facts (`writable`, archive member, location) from the target:
+    a version-control tool's read-only temporary right file with a writable working copy as target is editable and
+    saves there; a read-only target makes the pane read-only. Before, the pane was `ReadOnlyLocation` and
+    `ensure_editable` refused the save.
+60. **`text convert` streams its conversions (F4; revises note 45–46's "converted documents").** Convert no longer
+    edits its documents (no Batch strings, no undo inverse, no `Encoded` copy of the file): `hikasa_text::save` gains
+    `ConvertSpec { steps, lines, tab_size }`, `convert_counts(doc, spec, ctl)` (each step's
+    `TransformOutcome::lines`, the changed lines, the result's lines and terminators, one pass without encoding),
+    `converted_content(doc, map, spec, reencode, ctl)` (the plan's pass: the `SaveContent` of the converted text, its
+    pieces `[Bom], Converted(ConvertStream)`) and `SaveRequest::transform` (additive). The stages emulate the editor
+    exactly: each conversion is a stage over the lines the stages before made (so `--lines` counts as `transform`
+    does), a content stage joins a lone-CR line and an empty LF line a trim made into one CRLF line and drops an emptied
+    last line without terminator, a line-ending stage takes `transform`'s neighbours (to `Lf` the lone-CR run before
+    the range, to `Cr` the empty LF lines after it). A line no stage touched is spliced from the source; the others are
+    encoded in steps of at most 1 MiB, through one encoder for a whole re-encode; an ISO-2022-JP file with an encoded
+    line, a changed encoding, a changed source or no source is a whole re-encode, as `save_content` decides.
+    `SaveSource`'s reader makes a `Converted` piece's pieces as it streams them. The plan pass and the execution make
+    the pieces twice (plus the count pass): CPU for memory. `TextConvertPlan::documents()` are the loaded documents
+    with the encoding and BOM written. P-CONVERT-STREAM (`convert_stream.rs`, 256 cases; 60,000 green) compares the
+    bytes, counts, issues, splice and the file a plan writes with the editor's `transform` steps and `save_content`.
+61. **Memory of `text convert` (F4).** Release, 51,000,000 bytes, 1,000,000 lines, peak RSS under the 8 GiB scope
+    (`getrusage` of the process): `--trim-trailing --in-place` 414.4 → 119.9 MiB, to stdout 414.6 → 126.5 MiB,
+    `--spaces-to-tabs --line-endings crlf --in-place` 437.4 → 119.8 MiB, `--encoding utf-16le --in-place` 178.4 →
+    120.0 MiB, nothing to change to stdout 120.0 → 127.1 MiB (it wrote nothing before, note 54); 120 MiB is the loaded
+    document (the load's own peak). The bytes written are those of before. docs/02 has the row.
+62. **What the encoder cannot write is never written silently (F5).** `maps_everything` no longer names GB18030 (the
+    WHATWG encoder has no bytes for U+E5E5) and `unmappable_in` finds U+E5E5 there; ISO-2022-JP's half-width
+    katakana U+FF61–U+FF9F, which the WHATWG encoder writes as full-width ones, are unmappable: `unmappable_in` lists
+    them and the `Encoder` writes `?` and counts them. The save counts the encoder's replacements too: the
+    `Unmappable` count is the larger of the scan's and the encoder's, so `UnmappablePolicy` decides every `?` (a
+    question, a refusal, or `--unmappable replace`), also if a table missed one.
+63. **An archive member written over keeps its place and header (F6; revises §1.5.10's "New or changed members" row
+    and D-276).** The overlay item records the base node it replaces (`replaces`), and the rebuild writes it at that
+    record's place (`Fate::Replace`): tar keeps the header and extension blocks (uid, gid, uname, gname, mode, type,
+    PAX records but `size`, `mtime` and a link's), zip the central record's name bytes and UTF-8 flag, made-by host,
+    external attributes as they were (0o600 stays 0o600), comment and the owner and Unicode fields 0x7875, 0x7855,
+    0x756e, 0x7075, 0x6375; the data, size, CRC, method and time are the new member's (the time of the write, the
+    clock's now, as for a new member). Other members stay byte for byte; shadowed older records go with it (warning as
+    before); a tar hard link to it keeps the old content; a sparse member and items that bring older records go last.
+64. **Standard output holds 64 MiB (F7).** `text convert` to stdout holds the bytes until the source's check at the end
+    of its read when the result is at most `STDOUT_HELD` (64 MiB): a file that changed since the plan writes nothing
+    (exit 100). A larger result is written as it is made, and a change found at the end leaves the bytes written so
+    far (exit 100); help and docs/12 say so.
+65. **`--in-place` refuses what is not a regular file before reading it (F8).** Each file is `stat`ed (links followed)
+    before the load; a FIFO, a device or a folder fails its item `invalid_target` "is not a regular file", so a FIFO
+    without a writer never blocks the command. Stdout and `--output` still read a pipe as its content (process
+    substitution), blocking until a writer comes as any reader does.
+66. **Tests of the review.** The review's save probe is P-SAVE-2 (`save_intra_line.rs`, 256 cases; 20,000 green):
+    random edits inside and across lines, `SetEols`, encoding changes, undo and redo across saves of one document,
+    with the Ctrl-Z tail (kept across an encoding change), GB18030's U+E5E5 and ISO-2022-JP's half-width katakana
+    (encoding_rs is the oracle of what is unmappable: `Unmappable` asked exactly then, until a save wrote `?` for one,
+    whose line is then spliced as written). Each mutation the review left alive has a test now (the table below):
+    `a10_16_core_a_member_of_a_read_only_archive_fails_at_planning`, the time case of the one-generation rule in
+    `a10_15_core_every_question_class`, `a10_14_a_source_that_grew_or_keeps_its_crc_is_changed` (a Save As of a grown
+    source; four bytes forged onto the source keep its CRC-32, so only the length tells),
+    `standard_output_refuses_a_file_changed_since_its_load_unless_forced` (the file replaced while its load reads it,
+    Unix), `the_check_of_marked_lines_is_pinned` (literal CRCs), `a_format_per_pane_from_the_request`'s
+    `format_mismatch` assertions, `a10_19_the_bom_stays_unless_asked_and_its_change_is_written`, and
+    `a10_15_core_what_the_encoder_cannot_write_is_asked` (also a literal U+FFFD, no `LossyRewritten`).
 
 Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P-EDIT-2 at 1,000 release cases):
 

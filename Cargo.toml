@@ -116,8 +116,9 @@ open = { version = "5.4.5", default-features = false }
 fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
 # The kernel's no-replace rename (renameat2 RENAME_NOREPLACE, renameatx_np RENAME_EXCL) of hikasa-vfs on Unix
-# (W8a review): the version and the feature set tempfile already compiles, so no new package. Named only in
-# core/hikasa-vfs/src/local/unix.rs.
+# (W8a review), and since W10b F2 the saver's user, `fchown` and the extended attributes of a save: the version and the
+# feature set tempfile already compiles, so no new package. Named only in core/hikasa-vfs/src/local/unix.rs and, for its
+# Linux extended-attribute test, core/hikasa-vfs/tests/ops_write.rs.
 rustix = { version = "1.1.5", features = ["fs"] }
 
 # --- dev / test ---

@@ -88,6 +88,24 @@
 - The live recompare could pair lines of a repeated key as if each were unique when an edit widened the part's window
   (found by the heavy property run; latent since W10a): the result now always equals a fresh compare.
 
+### Fixed (W10b review)
+- **A save keeps the file it replaces**: other hard links, the owner and group, POSIX ACLs and extended attributes
+  (SELinux label, `user.*`) stay with the saved file. Where a rename would lose them (another hard link, another owner,
+  a folder Hikasa cannot write) the file is written in place after its backup was copied, and a failure puts the old
+  content back; a writable file in a read-only folder can now be saved. Windows keeps the hidden, system and archive
+  attributes (what it cannot keep is in docs/11).
+- Saving an archive member keeps its place in the archive and its header (owner, group, mode, zip attributes).
+- `hikasa text convert` holds a file once: the conversions run line by line while the result is written (a 51 MB,
+  1,000,000-line file: 414 MiB → 120 MiB at the peak).
+- `text convert` of a file with nothing to change writes it to stdout as it is (it wrote nothing) and copies it to
+  `--output`; only `--in-place` skips it. Stdout holds up to 64 MiB until the file's check at the end of its read, so
+  a file changed meanwhile writes nothing; `--in-place` refuses a FIFO or device before reading it (it could block).
+- A pane with `--savetarget` is editable when the target is writable, also when its own file is a read-only temporary
+  file.
+- GB18030 saves ask about U+E5E5 (which it cannot write) instead of writing `?` silently; ISO-2022-JP saves ask about
+  half-width katakana (written full-width before); a save counts what the encoder replaced, so nothing is replaced
+  without the question or `--unmappable replace`.
+
 ### Changed (W10b)
 - D-15 revised: one effective format still applies to both sides unless a pane has its own; `format_mismatch` is not
   given when a pane has its own format.
