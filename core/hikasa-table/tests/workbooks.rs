@@ -286,3 +286,21 @@ fn sparse_sheets_cost_their_cells_and_limits_hold() {
         Err(TableError::TooLarge { .. })
     ));
 }
+
+#[test]
+fn spreadsheet_text_conversion_writes_every_sheet() {
+    let bytes = xlsx(|b| {
+        let s = b.add_worksheet();
+        s.set_name("A").unwrap();
+        s.write_string(0, 0, "x\ty").unwrap();
+        s.write_number(0, 1, 1.5).unwrap();
+        let t = b.add_worksheet();
+        t.set_name("B").unwrap();
+        t.write_boolean(0, 0, true).unwrap();
+    });
+    let wb = load(bytes, "two.xlsx").unwrap();
+    assert_eq!(
+        hikasa_table::spreadsheet_to_text(&wb),
+        "--- A ---\n\"x\ty\"\t1.5\n--- B ---\nTRUE\n"
+    );
+}

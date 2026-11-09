@@ -191,6 +191,33 @@ impl Workbook {
     }
 }
 
+/// The *Spreadsheet text* conversion (contract T-22): every sheet as tab-separated display texts (fields with a tab,
+/// a line break or a `"` quoted, `"` doubled), a `--- <sheet name> ---` line before each sheet when there are several.
+pub fn spreadsheet_to_text(workbook: &Workbook) -> String {
+    let opts = crate::format::DelimitedOptions::with('\t');
+    let several = workbook.sheets.len() > 1;
+    let mut out = String::new();
+    for sheet in &workbook.sheets {
+        if several {
+            out.push_str("--- ");
+            out.push_str(sheet.name());
+            out.push_str(" ---\n");
+        }
+        let rows: Vec<Vec<String>> = (0..sheet.stored_count())
+            .map(|r| {
+                sheet
+                    .stored_row(r)
+                    .values()
+                    .map(|v| v.display().into_owned())
+                    .collect()
+            })
+            .collect();
+        // A qualifier is set, so nothing is lost.
+        out.push_str(&crate::delimited::write_delimited(&rows, &opts).unwrap_or_default());
+    }
+    out
+}
+
 /// A row of a sheet.
 #[derive(Debug, Clone, Copy)]
 pub struct RowView<'a> {

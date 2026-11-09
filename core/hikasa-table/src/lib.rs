@@ -53,6 +53,6 @@ pub use load::{LoadOptions, load_bytes, load_workbook, read_spec, spec_name};
 pub use regional::{DateOrder, Parsed, Regional};
 pub use sheet::{
     ColumnKind, Region, RowView, Sheet, SheetBuilder, SheetInfo, SourceKind, Workbook,
-    column_letters, parse_column_letters,
+    column_letters, parse_column_letters, spreadsheet_to_text,
 };
 pub use workbook::{SpreadsheetOptions, detect_workbook, load_spreadsheet};
