@@ -38,6 +38,8 @@ pub struct PathCounters {
     pub budgets_failed: u64,
     /// Nodes re-run by their engine.
     pub reruns: u64,
+    /// Lines (both sides) of the ranges re-run by the engine.
+    pub rerun_lines: u64,
     /// Lines whose keys were rebuilt.
     pub rekeyed: u64,
 }
@@ -57,6 +59,7 @@ impl PathCounters {
         self.budgets_held += other.budgets_held;
         self.budgets_failed += other.budgets_failed;
         self.reruns += other.reruns;
+        self.rerun_lines += other.rerun_lines;
         self.rekeyed += other.rekeyed;
     }
 }

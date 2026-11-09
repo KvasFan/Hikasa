@@ -392,3 +392,133 @@ impl IdView<'_> {
         [0, 1].map(|k| (base[k] != u16::MAX).then(|| (i64::from(base[k]) + d[k]).max(0) as u64))
     }
 }
+
+/// One node of a live comparison's derivation (G8 d): the recorded node, shared by `Arc` with every later
+/// derivation that keeps it unchanged, its coordinates moved lazily by `(dx, dy)`, and its children.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveNode {
+    /// The node as recorded (its own `children` are not read: `children` below are).
+    pub(crate) node: Arc<hikasa_diff::TraceNode>,
+    pub(crate) dx: i64,
+    pub(crate) dy: i64,
+    pub(crate) children: Vec<hikasa_diff::NodeId>,
+}
+
+impl LiveNode {
+    /// A node in place (no move).
+    pub(crate) fn new(node: hikasa_diff::TraceNode) -> LiveNode {
+        let children = node.children.clone();
+        LiveNode {
+            node: Arc::new(node),
+            dx: 0,
+            dy: 0,
+            children,
+        }
+    }
+
+    /// The node with its coordinates moved: borrowed when nothing moves (its `children` are then the recorded
+    /// ones; read `LiveNode::children`).
+    pub(crate) fn absolute(&self) -> std::borrow::Cow<'_, hikasa_diff::TraceNode> {
+        let n = &*self.node;
+        if self.dx == 0 && self.dy == 0 {
+            return std::borrow::Cow::Borrowed(n);
+        }
+        let mx = |x: u32| (i64::from(x) + self.dx) as u32;
+        let my = |y: u32| (i64::from(y) + self.dy) as u32;
+        std::borrow::Cow::Owned(hikasa_diff::TraceNode {
+            left: mx(n.left.start)..mx(n.left.end),
+            right: my(n.right.start)..my(n.right.end),
+            chain: n.chain.iter().map(|&(x, y)| (mx(x), my(y))).collect(),
+            blocks: n
+                .blocks
+                .iter()
+                .map(|&(x, y, l)| (mx(x), my(y), l))
+                .collect(),
+            diag: n.diag.iter().map(|&(x, y, l)| (mx(x), my(y), l)).collect(),
+            ..n.clone()
+        })
+    }
+
+    /// The node's moved ranges.
+    pub(crate) fn ranges(&self) -> (Range<u32>, Range<u32>) {
+        let n = &self.node;
+        let mx = |x: u32| (i64::from(x) + self.dx) as u32;
+        let my = |y: u32| (i64::from(y) + self.dy) as u32;
+        (
+            mx(n.left.start)..mx(n.left.end),
+            my(n.right.start)..my(n.right.end),
+        )
+    }
+}
+
+/// One anchor segment of a live derivation: the segment's record (its `nodes` empty) and its live nodes.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveSegment {
+    pub(crate) seg: hikasa_diff::SegmentTrace,
+    pub(crate) nodes: Vec<LiveNode>,
+}
+
+/// A live comparison's derivation: nodes shared with the earlier ones (G8 d).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LiveTrace {
+    pub(crate) segments: Vec<LiveSegment>,
+    pub(crate) work: hikasa_diff::WorkTotals,
+}
+
+impl LiveTrace {
+    /// The live form of a full run's derivation.
+    pub(crate) fn from_derivation(d: hikasa_diff::Derivation) -> LiveTrace {
+        LiveTrace {
+            work: d.work,
+            segments: d
+                .segments
+                .into_iter()
+                .map(|mut seg| {
+                    let nodes = std::mem::take(&mut seg.nodes)
+                        .into_iter()
+                        .map(LiveNode::new)
+                        .collect();
+                    LiveSegment { seg, nodes }
+                })
+                .collect(),
+        }
+    }
+
+    /// The derivation with every node's coordinates in place (tests and measurements).
+    pub(crate) fn to_derivation(&self) -> hikasa_diff::Derivation {
+        hikasa_diff::Derivation {
+            work: self.work,
+            segments: self
+                .segments
+                .iter()
+                .map(|s| hikasa_diff::SegmentTrace {
+                    nodes: s
+                        .nodes
+                        .iter()
+                        .map(|n| {
+                            let mut t = n.absolute().into_owned();
+                            t.children = n.children.clone();
+                            t
+                        })
+                        .collect(),
+                    ..s.seg.clone()
+                })
+                .collect(),
+        }
+    }
+
+    /// Bytes held (each shared node counted once per derivation).
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.segments
+            .iter()
+            .flat_map(|s| s.nodes.iter())
+            .map(|n| {
+                let t = &n.node;
+                136 + 8 * t.chain.capacity()
+                    + 12 * t.blocks.capacity()
+                    + 12 * t.diag.capacity()
+                    + 4 * (t.children.capacity() + n.children.capacity())
+            })
+            .sum()
+    }
+}

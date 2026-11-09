@@ -41,7 +41,7 @@ pub use recompare::{PathCounters, RecompareJob, Recompared};
 /// tokenizer's start state every 64 lines per side (multi-line grammars only).
 #[derive(Debug, Clone, Default)]
 pub struct LiveKeys {
-    pub(crate) trace: Arc<Derivation>,
+    pub(crate) trace: Arc<ids::LiveTrace>,
     pub(crate) ids: [ids::IdLines; 2],
     pub(crate) table: Arc<ids::IdTable>,
     /// A recompare's table changes, applied by `settle` (at `install`, in place when no job shares the table).
@@ -51,10 +51,11 @@ pub struct LiveKeys {
 }
 
 impl LiveKeys {
-    /// The derivation of the last exact result. **Not a stable API** (tests and measurements).
+    /// The derivation of the last exact result, every node in place. **Not a stable API** (tests and
+    /// measurements).
     #[doc(hidden)]
-    pub fn derivation(&self) -> &Derivation {
-        &self.trace
+    pub fn derivation(&self) -> Derivation {
+        self.trace.to_derivation()
     }
 
     /// Bytes held (memory accounting): ids, their table, checkpoints, the derivation's nodes, chains and runs.
@@ -66,18 +67,7 @@ impl LiveKeys {
             .iter()
             .map(|c| std::mem::size_of::<LineState>() * c.capacity())
             .sum();
-        let trace: usize = self
-            .trace
-            .segments
-            .iter()
-            .flat_map(|s| s.nodes.iter())
-            .map(|n| {
-                96 + 8 * n.chain.capacity()
-                    + 12 * n.blocks.capacity()
-                    + 12 * n.diag.capacity()
-                    + 4 * n.children.capacity()
-            })
-            .sum();
+        let trace = self.trace.heap_bytes();
         fp + cp + trace
     }
 
@@ -193,7 +183,7 @@ pub(crate) fn full_live<'o>(
     Ok((
         cmp,
         LiveKeys {
-            trace: Arc::new(live.trace),
+            trace: Arc::new(ids::LiveTrace::from_derivation(live.trace)),
             ids: [ids::IdLines::from_vec(&il), ids::IdLines::from_vec(&ir)],
             table: Arc::new(table),
             delta: None,

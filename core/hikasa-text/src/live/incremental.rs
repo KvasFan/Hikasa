@@ -31,13 +31,13 @@ use hikasa_core::cancel::{CancelToken, Cancelled};
 use hikasa_core::progress::Ctl;
 use hikasa_core::warning::{Warning, WarningCode};
 use hikasa_diff::{
-    Algorithm, AlignInput, AlignOptions, Closeness, Derivation, NodeId, Run, RunKind, SegmentTrace,
-    Stage, TraceNode, TrivialSet, WorkTotals, align_traced, canonical_runs, intern_pair,
+    Algorithm, AlignInput, AlignOptions, Closeness, NodeId, Run, RunKind, SegmentTrace, Stage,
+    TraceNode, TrivialSet, WorkTotals, align_traced, canonical_runs, intern_pair,
 };
 use hikasa_formats::LineState;
 
 use super::dirty::{Keyed, Keyer, LineMap, Rekeyed, SideView};
-use super::ids::{IdView, TableDelta};
+use super::ids::{IdView, LiveNode, LiveSegment, LiveTrace, TableDelta};
 use super::recompare::{PathCounters, RecompareJob};
 use super::{LiveKeys, splice};
 use crate::classify::KeyShape;
@@ -55,6 +55,8 @@ use crate::rules::AlgorithmChoice;
 const FALLBACK_SHARE: f64 = 0.25;
 /// T6: … or beyond this many dirty lines.
 const FALLBACK_LINES: u64 = 200_000;
+/// T6: the incremental work may always take this much, more only up to an eighth of the lines (`Inc::spend`).
+const WORK_SHARE_LIMIT: u64 = 65_536;
 
 /// Why the incremental path gave up (the full compare runs).
 enum Fail {
@@ -100,9 +102,10 @@ fn attempt(
         return Ok(None);
     }
     let trace = &job.keys.trace;
-    let [seg] = trace.segments.as_slice() else {
+    let [lseg] = trace.segments.as_slice() else {
         return Ok(None);
     };
+    let seg = &lseg.seg;
     let Some(root) = seg.root else {
         return Ok(None);
     };
@@ -110,7 +113,7 @@ fn attempt(
         return Ok(None);
     }
     // Condition 4, recorded part: no budget refused anything in the last exact run.
-    if seg.work.exhausted || seg.nodes.iter().any(|n| n.refusals > 0) {
+    if seg.work.exhausted || lseg.nodes.iter().any(|n| n.node.refusals > 0) {
         path.budgets_failed += 1;
         return Ok(None);
     }
@@ -210,7 +213,7 @@ fn attempt(
         && rules.algorithm_for(&base.format) == Algorithm::Histogram;
     let mut inc = Inc {
         base,
-        seg,
+        old_nodes: &lseg.nodes,
         sides: &sides,
         opts,
         shape,
@@ -230,6 +233,8 @@ fn attempt(
         mapped_chain: Vec::new(),
         weights,
         threshold: a.closeness_threshold_permille,
+        total_lines: u64::from(n) + u64::from(m),
+        work: std::cell::Cell::new(0),
     };
     let la = 0..n;
     let ra = 0..m;
@@ -249,7 +254,16 @@ fn attempt(
             return Ok(None);
         }
     }
-    let new_root = inc.node(root, la, ra, hikasa_diff::NO_NODE)?;
+    let new_root = match inc.node(root, la, ra, hikasa_diff::NO_NODE) {
+        Ok(id) => id,
+        Err(Fail::Full) => {
+            if inc.work.get() > WORK_SHARE_LIMIT.max(inc.total_lines / 8) {
+                inc.path.fallback += 1;
+            }
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    };
     // Condition 4: the totals within the budgets of the new line counts.
     let (std_budget, cells_budget, scorer_cap) = inc.budgets;
     if inc.bound.standard > std_budget
@@ -265,7 +279,7 @@ fn attempt(
     let refusals = inc.refusals;
     let bound = inc.bound;
     let nodes = std::mem::take(&mut inc.nodes);
-    let new_root_node = &nodes[new_root as usize];
+    let new_root_node = &nodes[new_root as usize].node;
     let new_seg = SegmentTrace {
         left: 0..n,
         right: 0..m,
@@ -274,7 +288,7 @@ fn attempt(
         engine: seg.engine,
         pair: false,
         root: Some(new_root),
-        nodes,
+        nodes: Vec::new(),
         work: WorkTotals {
             standard: bound.standard,
             standard_budget: std_budget,
@@ -283,6 +297,10 @@ fn attempt(
             scorer: bound.scorer,
             ..WorkTotals::default()
         },
+    };
+    let new_seg = LiveSegment {
+        seg: new_seg,
+        nodes,
     };
     let cmp = build_comparison(job, &sides, &rekeyed, runs, refusals, cancel)?;
     let keys = build_keys(job, &sides, &rekeyed, new_seg, &idview, new_hash)?;
@@ -490,6 +508,8 @@ struct MiddleChanges {
 struct KeyInfo {
     dirty: [(i64, i64); 2],
     old_lines: [Vec<u32>; 2],
+    /// The new lines of the middle known to hold it (dirty or moved in).
+    new_lines: [Vec<u32>; 2],
 }
 
 /// The window of Standard's stage A (range-local coordinates): the start or the end diagonal within the skew.
@@ -502,7 +522,8 @@ fn window_holds(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> bool {
 /// The incremental alignment of one segment.
 struct Inc<'a, 'p> {
     base: &'a TextComparison,
-    seg: &'a SegmentTrace,
+    /// The last exact result's nodes (shared, moved lazily).
+    old_nodes: &'a [LiveNode],
     sides: &'a Sides<'a>,
     opts: AlignOptions,
     shape: KeyShape,
@@ -510,7 +531,7 @@ struct Inc<'a, 'p> {
     /// The new runs in order (canonicalized at the end).
     out: Vec<Run>,
     /// The new derivation's nodes.
-    nodes: Vec<TraceNode>,
+    nodes: Vec<LiveNode>,
     /// Upper bounds of the totals (old totals plus every re-run's and re-extension's work).
     bound: WorkTotals,
     /// (work, closeness cells, scorer units) budgets of the new line counts.
@@ -523,9 +544,24 @@ struct Inc<'a, 'p> {
     mapped_chain: Vec<Option<(u32, u32)>>,
     weights: bool,
     threshold: u16,
+    /// Lines of both new documents (the work guard).
+    total_lines: u64,
+    /// Work done so far (lines re-run, lines moved between a middle and its ends, ids walked): past an eighth
+    /// of the lines the full compare is cheaper and runs instead (T6, the same result).
+    work: std::cell::Cell<u64>,
 }
 
 impl Inc<'_, '_> {
+    /// Counts `n` units of work; `Fail::Full` once the work passes an eighth of the lines (T6).
+    fn spend(&self, n: u64) -> Result<(), Fail> {
+        let w = self.work.get() + n;
+        self.work.set(w);
+        if w > WORK_SHARE_LIMIT.max(self.total_lines / 8) {
+            return Err(Fail::Full);
+        }
+        Ok(())
+    }
+
     /// True when an alignment-dirty span of `side` touches the old range `old` (a span without old lines touches
     /// it when it sits inside or at its ends).
     fn dirty_in(&self, side: usize, old: &Range<u32>) -> bool {
@@ -658,35 +694,32 @@ impl Inc<'_, '_> {
 
     /// Copies the recorded subtree `id` (a clean region) into the new derivation; returns its new id.
     fn copy_subtree(&mut self, id: NodeId, parent: NodeId) -> NodeId {
-        let old = &self.seg.nodes[id as usize];
+        // The node and its subtree are shared: only their offsets change (the region is clean, so every line of
+        // it moves by the same shift).
+        let old = &self.old_nodes[id as usize];
+        let (l, r) = old.ranges();
         let [lv, rv] = &self.sides.views;
-        let ml = |x: u32| lv.pos(x);
-        let mr = |x: u32| rv.pos(x);
-        let node = TraceNode {
-            left: ml(old.left.start)..ml(old.left.end),
-            right: mr(old.right.start)..mr(old.right.end),
-            chain: old.chain.iter().map(|&(x, y)| (ml(x), mr(y))).collect(),
-            blocks: old
-                .blocks
-                .iter()
-                .map(|&(x, y, l)| (ml(x), mr(y), l))
-                .collect(),
-            diag: old
-                .diag
-                .iter()
-                .map(|&(x, y, l)| (ml(x), mr(y), l))
-                .collect(),
+        let moved = LiveNode {
+            node: old.node.clone(),
+            dx: old.dx + i64::from(lv.pos(l.start)) - i64::from(l.start),
+            dy: old.dy + i64::from(rv.pos(r.start)) - i64::from(r.start),
             children: Vec::new(),
-            ..old.clone()
         };
-        let new_id = self.push_node(node, parent);
-        for &c in &old.children.clone() {
+        let kids = old.children.clone();
+        let new_id = self.push_live(moved, parent);
+        for c in kids {
             self.copy_subtree(c, new_id);
         }
         new_id
     }
 
     fn push_node(&mut self, node: TraceNode, parent: NodeId) -> NodeId {
+        let mut node = node;
+        node.children = Vec::new();
+        self.push_live(LiveNode::new(node), parent)
+    }
+
+    fn push_live(&mut self, node: LiveNode, parent: NodeId) -> NodeId {
         let id = self.nodes.len() as NodeId;
         self.nodes.push(node);
         if let Some(p) = self.nodes.get_mut(parent as usize) {
@@ -705,7 +738,7 @@ impl Inc<'_, '_> {
         parent: NodeId,
     ) -> Result<NodeId, Fail> {
         self.cancel.check().map_err(|_| Fail::Cancelled)?;
-        let old = &self.seg.nodes[id as usize];
+        let old = self.old_nodes[id as usize].absolute();
         let [lv, rv] = &self.sides.views;
         let same_ranges = la == (lv.pos(old.left.start)..lv.pos(old.left.end))
             && ra == (rv.pos(old.right.start)..rv.pos(old.right.end));
@@ -741,9 +774,9 @@ impl Inc<'_, '_> {
         }
         self.path.range_held += 1;
         let nm = [la.start + p..la.end - s, ra.start + p..ra.end - s];
-        let (oml, omr) = self.seg.nodes[id as usize].stripped();
+        let (oml, omr) = self.old_nodes[id as usize].absolute().stripped();
         let om = [oml, omr];
-        let old = &self.seg.nodes[id as usize];
+        let old = self.old_nodes[id as usize].absolute();
         // 2. Candidates.
         let chain = if old.stage == Stage::AnchorsUnique {
             self.new_chain(id, &om, &nm)?
@@ -784,7 +817,7 @@ impl Inc<'_, '_> {
         nm: &[Range<u32>; 2],
         mut chain: Vec<(u32, u32)>,
     ) -> Result<Option<(Vec<(u32, u32)>, Vec<(u32, u32, u32)>)>, Fail> {
-        let old = &self.seg.nodes[id as usize];
+        let old = self.old_nodes[id as usize].absolute();
         let skew = self.opts.skew_tolerance;
         let windowed = self.opts.algorithm == Algorithm::Standard && skew != u32::MAX;
         let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
@@ -854,7 +887,9 @@ impl Inc<'_, '_> {
             if !lines.is_empty() {
                 let ids: Vec<u32> = lines.iter().map(|l| l.2).collect();
                 let caps = vec![[2i64, 2i64]; ids.len()];
-                let (counts, _) = self.count_ids(&ids, &caps, nm)?;
+                let known: Vec<[Vec<u32>; 2]> =
+                    lines.iter().map(|&(x, y, _)| [vec![x], vec![y]]).collect();
+                let (counts, _) = self.count_ids(&ids, &caps, nm, &known)?;
                 for (k, &(x, y, _)) in lines.iter().enumerate() {
                     if counts[k] == [1, 1] {
                         chain.push((x, y));
@@ -962,6 +997,12 @@ impl Inc<'_, '_> {
             mapped.start..mapped.end.min(nm.start),
             mapped.start.max(nm.end)..mapped.end,
         ];
+        let moved: u64 = moved_in
+            .iter()
+            .chain(&moved_out)
+            .map(|r| u64::from(r.end.saturating_sub(r.start)))
+            .sum();
+        self.spend(moved)?;
         for r in moved_in {
             for x in r {
                 if view.old_of(x).is_some() && !view.trivial(x) {
@@ -990,6 +1031,7 @@ impl Inc<'_, '_> {
         ids: &[u32],
         caps: &[[i64; 2]],
         middle: &[Range<u32>; 2],
+        known: &[[Vec<u32>; 2]],
     ) -> Result<(Vec<[i64; 2]>, Vec<[Vec<u32>; 2]>), Fail> {
         let mut index: HashMap<u32, Vec<usize>> = HashMap::with_capacity(ids.len());
         for (k, &id) in ids.iter().enumerate() {
@@ -999,13 +1041,28 @@ impl Inc<'_, '_> {
         let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; ids.len()];
         for side in 0..2 {
             let view = &self.sides.views[side];
-            // How many each key can still find on this side (the whole document's count bounds the middle's).
+            // The lines already known to hold a key (dirty or moved lines of the middle) count at once, and the
+            // walk skips them.
+            let mut skip: std::collections::HashSet<u32> = Default::default();
+            for (k, kn) in known.iter().enumerate() {
+                for &x in &kn[side] {
+                    if counts[k][side] < caps[k][side] {
+                        counts[k][side] += 1;
+                        hits[k][side].push(x);
+                    }
+                    skip.insert(x);
+                }
+            }
+            // How many each key can still find on this side (the whole document's count bounds the middle's,
+            // so a key whose every occurrence is known needs no walk).
             let mut left: Vec<i64> = ids
                 .iter()
                 .zip(caps)
-                .map(|(&id, cap)| {
+                .enumerate()
+                .map(|(k, (&id, cap))| {
                     let total = view.table.counts(id)[side].map_or(i64::MAX, |c| c as i64);
-                    cap[side].min(total)
+                    let known = known.get(k).map_or(0, |kn| kn[side].len() as i64);
+                    (cap[side].min(total) - known.min(counts[k][side])).max(0)
                 })
                 .collect();
             let mut open = left.iter().filter(|&&n| n > 0).count();
@@ -1020,7 +1077,9 @@ impl Inc<'_, '_> {
                     cancelled = true;
                     return false;
                 }
-                if let Some(ks) = index.get(&id) {
+                if let Some(ks) = index.get(&id)
+                    && !skip.contains(&x)
+                {
                     for &k in ks {
                         if left[k] > 0 {
                             counts[k][side] += 1;
@@ -1034,6 +1093,8 @@ impl Inc<'_, '_> {
                 }
                 open > 0
             });
+            // A walk step (one id compared) costs far less than a re-run or a moved line: one unit per 128.
+            self.spend(u64::from(steps) / 128)?;
             if cancelled {
                 return Err(Fail::Cancelled);
             }
@@ -1052,7 +1113,7 @@ impl Inc<'_, '_> {
         om: &[Range<u32>; 2],
         nm: &[Range<u32>; 2],
     ) -> Result<Option<Vec<(u32, u32)>>, Fail> {
-        let old = &self.seg.nodes[id as usize];
+        let old = self.old_nodes[id as usize].absolute();
         let middle = nm.clone();
         // What the window check and the new record read is this node's alone (an early return below keeps it
         // empty, never the previous node's).
@@ -1069,14 +1130,20 @@ impl Inc<'_, '_> {
                 info.dirty[side].0 += 1;
                 info.old_lines[side].push(x);
             }
-            for (_, key) in changes.new {
-                keys.entry(key).or_default().dirty[side].1 += 1;
+            for (x, key) in changes.new {
+                let info = keys.entry(key).or_default();
+                info.dirty[side].1 += 1;
+                info.new_lines[side].push(x);
             }
         }
         let [lv, rv] = &self.sides.views;
         // The old chain in the new numbering (both coordinates ascending: one walk each).
-        let xs = lv.new_of_sorted(old.chain.iter().map(|c| c.0));
-        let ys = rv.new_of_sorted(old.chain.iter().map(|c| c.1));
+        let (xs, ys) = {
+            (
+                lv.new_of_sorted(old.chain.iter().map(|c| c.0)),
+                rv.new_of_sorted(old.chain.iter().map(|c| c.1)),
+            )
+        };
         self.mapped_chain = xs
             .into_iter()
             .zip(ys)
@@ -1107,17 +1174,70 @@ impl Inc<'_, '_> {
                 ]
             })
             .collect();
-        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
-        let (counts, hits) = self.count_ids(&ids, &caps, &middle)?;
         let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
+        // A key missing from one whole side after the edit is unique nowhere: with an all-candidate chain it
+        // only leaves the chain when one of its lines did (its candidate pair has a removed or moved-out line,
+        // found in the chain by that line), so it is not counted. Every other key is counted by a walk.
+        let table = self.sides.views[0].table;
+        let walk: Vec<bool> = list
+            .iter()
+            .map(|(id, _)| !all || table.counts(*id).iter().all(|c| c.is_none_or(|c| c > 0)))
+            .collect();
+        let ids: Vec<u32> = list
+            .iter()
+            .zip(&walk)
+            .filter(|(_, w)| **w)
+            .map(|((id, _), _)| *id)
+            .collect();
+        let walk_caps: Vec<[i64; 2]> = caps
+            .iter()
+            .zip(&walk)
+            .filter(|(_, w)| **w)
+            .map(|(c, _)| *c)
+            .collect();
+        let walk_known: Vec<[Vec<u32>; 2]> = list
+            .iter()
+            .zip(&walk)
+            .filter(|(_, w)| **w)
+            .map(|((_, info), _)| info.new_lines.clone())
+            .collect();
+        let (walked_counts, walked_hits) =
+            self.count_ids(&ids, &walk_caps, &middle, &walk_known)?;
+        let mut counts = vec![[0i64; 2]; list.len()];
+        let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; list.len()];
+        let mut fast: Vec<usize> = Vec::new();
+        let (mut wc, mut wh) = (walked_counts.into_iter(), walked_hits.into_iter());
+        for (k, &w) in walk.iter().enumerate() {
+            if w {
+                counts[k] = wc.next().unwrap_or([0, 0]);
+                hits[k] = wh.next().unwrap_or_default();
+            } else {
+                fast.push(k);
+            }
+        }
         let (na, nb) = (
             middle[0].end - middle[0].start,
             middle[1].end - middle[1].start,
         );
         let mut removed: std::collections::HashSet<u32> = Default::default();
-        let mut gone_lines: Vec<u32> = Vec::new();
         let mut added: Vec<(u32, u32)> = Vec::new();
+        for &k in &fast {
+            let info = &list[k].1;
+            for &x in &info.old_lines[0] {
+                if old.chain.binary_search_by_key(&x, |c| c.0).is_ok() {
+                    removed.insert(x);
+                }
+            }
+            for &y in &info.old_lines[1] {
+                if let Ok(i) = old.chain.binary_search_by_key(&y, |c| c.1) {
+                    removed.insert(old.chain[i].0);
+                }
+            }
+        }
         for (k, (_, info)) in list.iter().enumerate() {
+            if !walk[k] {
+                continue;
+            }
             let new = counts[k];
             let before = [
                 new[0] - info.dirty[0].1 + info.dirty[0].0,
@@ -1130,17 +1250,6 @@ impl Inc<'_, '_> {
             }
             if !all {
                 return Ok(None);
-            }
-            if was && !is {
-                // The pair stops being unique: drop it from the recorded pairs.
-                if let Some(&x) = info.old_lines[0].first() {
-                    gone_lines.push(x);
-                } else if let Some(x) = hits[k][0]
-                    .iter()
-                    .find_map(|&h| lv.old_of(h).filter(|o| om[0].contains(o)))
-                {
-                    gone_lines.push(x);
-                }
             }
             if was {
                 // The candidate's old left line: the dirty old line with the key, else the clean hit.
@@ -1171,7 +1280,6 @@ impl Inc<'_, '_> {
                 self.added_outside.push((x, y));
             }
         }
-        let _ = gone_lines;
         let Some(mut chain) = mapped(&old.chain, &removed) else {
             return Ok(None);
         };
@@ -1200,7 +1308,7 @@ impl Inc<'_, '_> {
         parent: NodeId,
         cert: Cert,
     ) -> Result<NodeId, Fail> {
-        let old = self.seg.nodes[id as usize].clone();
+        let old = self.old_nodes[id as usize].absolute();
         let Cert {
             chain,
             prefix: p,
@@ -1236,7 +1344,7 @@ impl Inc<'_, '_> {
                 prefix: p,
                 suffix: s,
                 diag,
-                ..old.clone()
+                ..old.as_ref().clone()
             },
             parent,
         );
@@ -1244,12 +1352,13 @@ impl Inc<'_, '_> {
         // The gaps between the new blocks, in order.
         let (mut x0, mut y0) = (ma, na);
         let old_gaps = old_gaps(&old);
+        let kids = self.old_nodes[id as usize].children.clone();
         for &(x, y, len) in &blocks {
-            self.gap(&old, &old_gaps, x0..x, y0..y, new_id)?;
+            self.gap(&kids, &old_gaps, x0..x, y0..y, new_id)?;
             self.out.push(equal_run(x, y, len));
             (x0, y0) = (x + len, y + len);
         }
-        self.gap(&old, &old_gaps, x0..mb, y0..nb, new_id)?;
+        self.gap(&kids, &old_gaps, x0..mb, y0..nb, new_id)?;
         self.out.push(equal_run(mb, nb, s));
         Ok(new_id)
     }
@@ -1259,7 +1368,7 @@ impl Inc<'_, '_> {
     /// gap it overlaps, processed on the new ranges (its prefix and suffix adjusted by `node`); else a re-run.
     fn gap(
         &mut self,
-        old: &TraceNode,
+        kids: &[NodeId],
         old_gaps: &[(Range<u32>, Range<u32>)],
         a: Range<u32>,
         b: Range<u32>,
@@ -1292,12 +1401,15 @@ impl Inc<'_, '_> {
                 meets(&ma, &a) || meets(&mb, &b)
             })
             .collect();
+        let child_of = |oa: &Range<u32>, ob: &Range<u32>| {
+            kids.iter().copied().find(|&c| {
+                let (l, r) = self.old_nodes[c as usize].ranges();
+                l == *oa && r == *ob
+            })
+        };
         if let [(oa, ob)] = overlapping.as_slice() {
             let (oa, ob) = (oa.clone(), ob.clone());
-            let child = old.children.iter().copied().find(|&c| {
-                let n = &self.seg.nodes[c as usize];
-                n.left == oa && n.right == ob
-            });
+            let child = child_of(&oa, &ob);
             let same = lv.pos(oa.start) == a.start
                 && lv.pos(oa.end) == a.end
                 && rv.pos(ob.start) == b.start
@@ -1314,7 +1426,7 @@ impl Inc<'_, '_> {
                 return Ok(());
             }
         }
-        self.rerun(a, b, parent).map(|_| ())
+        (self.rerun(a, b, parent)).map(|_| ())
     }
 
     /// Re-extends the blocks of a certified Standard node from its (new) chain, exactly as stage A extends
@@ -1469,6 +1581,8 @@ impl Inc<'_, '_> {
     /// answer for the node), within what is left of the budgets.
     fn rerun(&mut self, a: Range<u32>, b: Range<u32>, parent: NodeId) -> Result<NodeId, Fail> {
         self.path.reruns += 1;
+        self.path.rerun_lines += u64::from(a.end - a.start) + u64::from(b.end - b.start);
+        self.spend(u64::from(a.end - a.start) + u64::from(b.end - b.start))?;
         let [lv, rv] = &self.sides.views;
         let (lk, lw) = lv.keys_range(a.clone())?;
         let (rk, rw) = rv.keys_range(b.clone())?;
@@ -1573,7 +1687,7 @@ impl Inc<'_, '_> {
                     children: n.children.iter().map(|&c| c + first).collect(),
                     ..n
                 };
-                self.nodes.push(moved);
+                self.nodes.push(LiveNode::new(moved));
                 if k == 0 {
                     root_id = first;
                 }
@@ -1917,7 +2031,7 @@ fn build_keys(
     job: &RecompareJob,
     sides: &Sides<'_>,
     rekeyed: &[Vec<Rekeyed>; 2],
-    seg: SegmentTrace,
+    seg: LiveSegment,
     idview: &IdView<'_>,
     new_hash: Vec<u64>,
 ) -> Result<LiveKeys, Fail> {
@@ -1986,8 +2100,8 @@ fn build_keys(
         counts: idview.delta.clone(),
     };
     Ok(LiveKeys {
-        trace: Arc::new(Derivation {
-            work: seg.work,
+        trace: Arc::new(LiveTrace {
+            work: seg.seg.work,
             segments: vec![seg],
         }),
         ids,
