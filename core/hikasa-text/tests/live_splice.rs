@@ -355,3 +355,60 @@ fn anchors_move_with_their_lines() {
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].code, hikasa_core::WarningCode::AnchorDropped);
 }
+
+/// F10: inside one very large section (two unrelated files are one) the provisional splice changes the section by
+/// difference instead of re-deriving it: after every edit inside it — typing, new and removed lines, undo — the
+/// sections, class runs and statistics still equal a recount.
+#[test]
+fn edits_inside_a_huge_section_keep_it_exact() {
+    let n = 12_000u32;
+    let left: String = (0..n).map(|k| format!("left {k}\n")).collect();
+    let right: String = (0..n).map(|k| format!("right {k}\n")).collect();
+    let opts = edit_options(Gen::Clustered);
+    let (mut l, mut r) = (editable(&left, &opts), editable(&right, &opts));
+    let setup = setup(Gen::Clustered);
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    assert_eq!(lc.current().sections().len(), 1);
+    let mut rng = XorShift(0x0F10);
+    for step in 0..80 {
+        let s = side(&mut rng);
+        let doc = if s == Side::Left { &mut l } else { &mut r };
+        let out = if step % 9 == 8 {
+            doc.undo()
+        } else {
+            // Away from the ends, so the change is strictly inside the section.
+            let line = 100 + rng.below(u64::from(doc.line_count() - 200)) as u32;
+            let at = hikasa_text::edit::TextPos::new(line, 1);
+            let text = ["x", "\n", "a\nb\nc\n", ""][rng.below(4) as usize];
+            let to = if text.is_empty() {
+                hikasa_text::edit::TextPos::new(line + 1 + rng.below(3) as u32, 0)
+            } else {
+                at
+            };
+            doc.apply(
+                &hikasa_text::edit::EditRequest::Replace {
+                    range: at..to,
+                    text: text.into(),
+                    keep_eols: false,
+                },
+                hikasa_text::edit::GroupHint::None,
+            )
+            .ok()
+        };
+        if let Some(out) = out {
+            lc.note_edit(s, doc, &out);
+        }
+        lc.current().check_structure().unwrap();
+        lc.check_invariants().unwrap();
+    }
+    let done = lc
+        .recompare_job(Pair::new(&l, &r))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    lc.install(done, Pair::new(&l, &r));
+    let want = fresh(&setup, Pair::new(&l, &r), &[]);
+    assert_eq!(
+        common::canonical_json(lc.current()),
+        common::canonical_json(&want)
+    );
+}

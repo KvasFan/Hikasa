@@ -174,6 +174,9 @@ impl TextComparison {
         if recount.sections != self.sections {
             return fail("INV-TC-3", "sections differ from a recount".into());
         }
+        if recount.counts != self.section_counts {
+            return fail("INV-TC-3", "section counts differ from a recount".into());
+        }
         if recount.stats != self.stats || !self.stats.identities_hold() {
             return fail(
                 "INV-TC-4",

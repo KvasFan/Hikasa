@@ -569,6 +569,7 @@ impl Prepared {
             run_rows,
             rows: store::RowStore::from_vec(rows),
             sections: derived.sections,
+            section_counts: derived.counts,
             class_runs: derived.class_runs,
             stats: derived.stats,
             warnings,
@@ -986,6 +987,8 @@ pub struct TextComparison {
     pub(crate) run_rows: Vec<u32>,
     pub(crate) rows: store::RowStore,
     pub(crate) sections: Vec<Section>,
+    /// Per section, its rows by class (kind and importance by difference, §1.10.10).
+    pub(crate) section_counts: Vec<sections::SectionCounts>,
     pub(crate) class_runs: Vec<ClassRun>,
     pub(crate) stats: TextStats,
     pub(crate) warnings: Vec<Warning>,

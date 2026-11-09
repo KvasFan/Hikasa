@@ -24,6 +24,9 @@ use crate::compare::rows::{Importance, PackedRow, RowState};
 use crate::compare::sections::{self, ClassRun, Section, SectionId};
 use crate::edit::LineDelta;
 
+/// A section of more rows than this takes an edit inside it by difference (`replace_inside`).
+const LARGE_SECTION: u32 = 4096;
+
 /// Sorted, disjoint row ranges that are pending.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Pending(pub(crate) Vec<Range<u32>>);
@@ -125,9 +128,20 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         }
     };
     // Widen to whole sections (a section boundary is a Same row or an end), so the window's sections and
-    // statistics can be re-derived; runs are cut at the window's edges instead.
+    // statistics can be re-derived; runs are cut at the window's edges instead. Inside one very large section
+    // (two unrelated files are one section) the window stays the touched rows and the section changes by
+    // difference (its rows by class), so a keystroke costs O(touched rows + runs + sections), not O(section).
+    let inside = (|| {
+        if cmp.format.text().lines_independent || t0 == 0 || t1 >= len || t0 >= t1 {
+            return None;
+        }
+        let a = cmp.section_at(crate::compare::RowIdx(t0 - 1))?;
+        let b = cmp.section_at(crate::compare::RowIdx(t1))?;
+        let rows = &cmp.sections[a.0 as usize].rows;
+        (a == b && rows.end - rows.start > LARGE_SECTION).then_some(a.0 as usize)
+    })();
     let (mut w0, mut w1) = (t0, t1);
-    loop {
+    while inside.is_none() {
         let (a, b) = (w0, w1);
         if w0 > 0
             && let Some(id) = cmp.section_at(crate::compare::RowIdx(w0 - 1))
@@ -342,14 +356,24 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         cmp.run_rows.push(at);
         at += run.rows();
     }
-    replace_window(
-        cmp,
-        w0..w1,
-        &old_rows,
-        &new_rows,
-        (lc, rc),
-        (dl_shift, dr_shift),
-    );
+    match inside {
+        Some(section) => replace_inside(
+            cmp,
+            w0..w1,
+            &old_rows,
+            &new_rows,
+            (dl_shift, dr_shift),
+            section,
+        ),
+        None => replace_window(
+            cmp,
+            w0..w1,
+            &old_rows,
+            &new_rows,
+            (lc, rc),
+            (dl_shift, dr_shift),
+        ),
+    }
     // Pending rows.
     let flags: Vec<bool> = new.iter().map(|i| i.pending).collect();
     pending.splice(w0..w1, &flags);
@@ -397,6 +421,8 @@ pub(crate) fn replace_window(
     cmp.sections.truncate(sa);
     cmp.sections.extend(window_sections);
     cmp.sections.extend(tail);
+    cmp.section_counts
+        .splice(sa..sb, after.counts.iter().copied());
     for (k, s) in cmp.sections.iter_mut().enumerate().skip(renumber_from) {
         s.id = SectionId(k as u32);
     }
@@ -425,4 +451,110 @@ pub(crate) fn replace_window(
     cmp.stats.rows = u64::from(cmp.rows.len());
     cmp.stats.left_lines = (cmp.stats.left_lines as i64 + dl_shift) as u64;
     cmp.stats.right_lines = (cmp.stats.right_lines as i64 + dr_shift) as u64;
+}
+
+/// Replaces rows `w` (strictly inside section `section`, whose rows all stay non-Same: pending rows keep their
+/// states and new or orphaned rows are LeftOnly or RightOnly) by `new_rows`: the section's rows by class, kind,
+/// importance and line ranges change by difference, later sections move, the class runs of the window are
+/// rebuilt and joined to their neighbours, the statistics change by difference.
+fn replace_inside(
+    cmp: &mut TextComparison,
+    w: Range<u32>,
+    old_rows: &[PackedRow],
+    new_rows: &[PackedRow],
+    shift: (i64, i64),
+    section: usize,
+) {
+    let (w0, w1) = (w.start, w.end);
+    let (dl, dr) = shift;
+    let growth = new_rows.len() as i64 - old_rows.len() as i64;
+    let before = sections::derive(old_rows, 0, 0, false);
+    let after = sections::derive(new_rows, 0, 0, false);
+    cmp.rows.splice(w0..w1, new_rows, shift);
+    // Statistics: the rows by class, then the section's own share.
+    let rows_only = |s: &crate::stats::TextStats| crate::stats::TextStats {
+        sections: 0,
+        important_sections: 0,
+        important: Default::default(),
+        unimportant: Default::default(),
+        ..*s
+    };
+    cmp.stats.merge_counts(&rows_only(&before.stats), -1);
+    cmp.stats.merge_counts(&rows_only(&after.stats), 1);
+    cmp.stats
+        .merge_counts(&sections::section_stats(&cmp.sections[section]), -1);
+    let counts = &mut cmp.section_counts[section];
+    counts.add_rows(old_rows, -1);
+    counts.add_rows(new_rows, 1);
+    let counts = *counts;
+    let moved =
+        |r: &Range<u32>, d: i64| (i64::from(r.start) + d) as u32..(i64::from(r.end) + d) as u32;
+    {
+        let s = &mut cmp.sections[section];
+        s.rows.end = (i64::from(s.rows.end) + growth) as u32;
+        s.left_lines.end = (i64::from(s.left_lines.end) + dl) as u32;
+        s.right_lines.end = (i64::from(s.right_lines.end) + dr) as u32;
+        s.kind = counts.kind();
+        s.importance = if counts.important > 0 {
+            Importance::Important
+        } else {
+            Importance::Unimportant
+        };
+    }
+    cmp.stats
+        .merge_counts(&sections::section_stats(&cmp.sections[section]), 1);
+    for s in &mut cmp.sections[section + 1..] {
+        s.rows = moved(&s.rows, growth);
+        s.left_lines = moved(&s.left_lines, dl);
+        s.right_lines = moved(&s.right_lines, dr);
+    }
+    // Class runs: the window's rebuilt, cut neighbours kept, equal neighbours joined.
+    let ca = cmp.class_runs.partition_point(|c| c.end <= w0);
+    let cb = cmp.class_runs.partition_point(|c| c.start < w1);
+    let mut mid: Vec<ClassRun> = Vec::new();
+    if let Some(c) = cmp.class_runs.get(ca)
+        && c.start < w0
+    {
+        mid.push(ClassRun { end: w0, ..*c });
+    }
+    mid.extend(after.class_runs.iter().map(|c| ClassRun {
+        start: c.start + w0,
+        end: c.end + w0,
+        ..*c
+    }));
+    if cb > 0
+        && let Some(c) = cmp.class_runs.get(cb - 1)
+        && c.end > w1
+    {
+        let new_w1 = (i64::from(w1) + growth) as u32;
+        mid.push(ClassRun {
+            start: new_w1,
+            end: (i64::from(c.end) + growth) as u32,
+            ..*c
+        });
+    }
+    let tail: Vec<ClassRun> = cmp.class_runs[cb..]
+        .iter()
+        .map(|c| ClassRun {
+            start: (i64::from(c.start) + growth) as u32,
+            end: (i64::from(c.end) + growth) as u32,
+            ..*c
+        })
+        .collect();
+    cmp.class_runs.truncate(ca);
+    for c in mid.into_iter().chain(tail) {
+        match cmp.class_runs.last_mut() {
+            Some(last)
+                if last.end == c.start
+                    && last.state == c.state
+                    && last.importance == c.importance =>
+            {
+                last.end = c.end;
+            }
+            _ => cmp.class_runs.push(c),
+        }
+    }
+    cmp.stats.rows = u64::from(cmp.rows.len());
+    cmp.stats.left_lines = (cmp.stats.left_lines as i64 + dl) as u64;
+    cmp.stats.right_lines = (cmp.stats.right_lines as i64 + dr) as u64;
 }

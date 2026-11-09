@@ -62,10 +62,62 @@ pub(crate) struct ClassRun {
     pub(crate) importance: Importance,
 }
 
+/// The rows of one section by class, which decide its kind and importance (kept beside the sections so that an
+/// edit inside a very large section changes them by difference, §1.10.10).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SectionCounts {
+    pub(crate) left_only: u32,
+    pub(crate) right_only: u32,
+    pub(crate) changed: u32,
+    pub(crate) important: u32,
+}
+
+impl SectionCounts {
+    /// Adds (`sign` 1) or takes out (`-1`) the non-Same rows of `rows`.
+    pub(crate) fn add_rows(&mut self, rows: &[PackedRow], sign: i64) {
+        let f = |a: &mut u32, b: bool| *a = (i64::from(*a) + sign * i64::from(b)) as u32;
+        for r in rows {
+            f(&mut self.left_only, r.state() == RowState::LeftOnly);
+            f(&mut self.right_only, r.state() == RowState::RightOnly);
+            f(&mut self.changed, r.state() == RowState::Changed);
+            f(&mut self.important, r.importance() == Importance::Important);
+        }
+    }
+
+    /// The kind these rows give a section.
+    pub(crate) fn kind(&self) -> SectionKind {
+        if self.left_only == 0 && self.changed == 0 {
+            SectionKind::Add
+        } else if self.right_only == 0 && self.changed == 0 {
+            SectionKind::Delete
+        } else {
+            SectionKind::Change
+        }
+    }
+}
+
+/// What one section adds to the statistics (its section count and change counts).
+pub(crate) fn section_stats(section: &Section) -> TextStats {
+    let mut s = TextStats {
+        sections: 1,
+        ..TextStats::default()
+    };
+    let class = if section.importance == Importance::Important {
+        s.important_sections = 1;
+        &mut s.important
+    } else {
+        &mut s.unimportant
+    };
+    add_counts(class, section);
+    s
+}
+
 /// Everything derived from the rows.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Derived {
     pub(crate) sections: Vec<Section>,
+    /// Per section, its rows by class.
+    pub(crate) counts: Vec<SectionCounts>,
     pub(crate) class_runs: Vec<ClassRun>,
     pub(crate) stats: TextStats,
 }
@@ -80,6 +132,7 @@ struct Open {
     only_left: bool,
     only_right: bool,
     important: bool,
+    counts: SectionCounts,
 }
 
 /// Sections, class runs and statistics of `rows` in one pass (§2.17.2, §2.17.3).
@@ -92,7 +145,8 @@ pub(crate) fn derive(
     let mut d = Derived::default();
     let mut open: Option<Open> = None;
     let (mut left_seen, mut right_seen) = (0u32, 0u32);
-    let s = &mut d.stats;
+    let mut stats = TextStats::default();
+    let s = &mut stats;
     s.rows = rows.len() as u64;
     s.left_lines = u64::from(left_lines);
     s.right_lines = u64::from(right_lines);
@@ -113,7 +167,7 @@ pub(crate) fn derive(
         }
         if state == RowState::Same {
             if let Some(o) = open.take() {
-                close(&mut d.sections, o, k);
+                close(&mut d, o, k);
             }
         } else {
             // Class runs.
@@ -129,7 +183,7 @@ pub(crate) fn derive(
                 }),
             }
             if lines_independent && let Some(o) = open.take() {
-                close(&mut d.sections, o, k);
+                close(&mut d, o, k);
             }
             let o = open.get_or_insert(Open {
                 start: k,
@@ -140,6 +194,7 @@ pub(crate) fn derive(
                 only_left: true,
                 only_right: true,
                 important: false,
+                counts: SectionCounts::default(),
             });
             let has_left = row.left().is_some();
             let has_right = row.right().is_some();
@@ -148,12 +203,13 @@ pub(crate) fn derive(
             o.only_left &= state == RowState::LeftOnly;
             o.only_right &= state == RowState::RightOnly;
             o.important |= importance == Importance::Important;
+            o.counts.add_rows(std::slice::from_ref(row), 1);
         }
         left_seen += u32::from(row.left().is_some());
         right_seen += u32::from(row.right().is_some());
     }
     if let Some(o) = open.take() {
-        close(&mut d.sections, o, rows.len() as u32);
+        close(&mut d, o, rows.len() as u32);
     }
     for section in &d.sections {
         let class = if section.importance == Importance::Important {
@@ -165,10 +221,13 @@ pub(crate) fn derive(
         add_counts(class, section);
     }
     s.sections = d.sections.len() as u64;
+    d.stats = stats;
     d
 }
 
-fn close(sections: &mut Vec<Section>, o: Open, end: u32) {
+fn close(d: &mut Derived, o: Open, end: u32) {
+    d.counts.push(o.counts);
+    let sections = &mut d.sections;
     let kind = if o.only_right {
         SectionKind::Add
     } else if o.only_left {
